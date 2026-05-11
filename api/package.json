@@ -1,0 +1,25 @@
+{
+  "name": "@bible-editor/api",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply bible_editor --local",
+    "db:migrate:remote": "wrangler d1 migrations apply bible_editor --remote",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "jose": "^5.9.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240925.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.78.0"
+  }
+}

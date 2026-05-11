@@ -1,0 +1,41 @@
+name = "bible-editor-api"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Local dev binds to 8787 by default; the web app proxies /api/* to it.
+[dev]
+port = 8787
+
+# D1 database — replace `database_id` once we run `wrangler d1 create bible_editor`.
+[[d1_databases]]
+binding = "DB"
+database_name = "bible_editor"
+database_id = "REPLACE_AFTER_wrangler_d1_create"
+migrations_dir = "migrations"
+
+# R2 bucket — for USFM originals and export snapshots. Create with `wrangler r2 bucket create bible-editor-blobs`.
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "bible-editor-blobs"
+
+# Durable Object for per-chapter presence + fanout.
+[[durable_objects.bindings]]
+name = "CHAPTER_ROOM"
+class_name = "ChapterRoom"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ChapterRoom"]
+
+# Nightly export to DCS at 06:00 UTC.
+[triggers]
+crons = ["0 6 * * *"]
+
+# Public-safe defaults; secrets go in `wrangler secret put` (DCS_CLIENT_ID, DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN).
+[vars]
+DCS_BASE_URL = "https://git.door43.org"
+DCS_OAUTH_AUTHORIZE_URL = "https://git.door43.org/login/oauth/authorize"
+DCS_OAUTH_TOKEN_URL = "https://git.door43.org/login/oauth/access_token"
+JWT_ISSUER = "bible-editor"
+JWT_TTL_SECONDS = "1209600"

@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Hybrid views — gatewayEdit × tcCreate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Kalam:wght@300;400;700&family=Caveat:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ink:#1a1a1a;
+    --ink-2:#3a3a3a;
+    --muted:#7a7a7a;
+    --line:#1a1a1a;
+    --paper:#fbfaf6;
+    --paper-2:#f1efe7;
+    --hl:#fff48a;
+    --hl-soft:#fff8c4;
+    --active:#cfe8ff;
+    --active-edge:#3b82c4;
+    --warn:oklch(62% 0.14 35);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:"Kalam",cursive;}
+  body{min-height:100vh;}
+  .page{max-width:1480px;margin:0 auto;padding:28px 28px 80px;}
+  h1{font-family:"Caveat",cursive;font-weight:700;font-size:42px;margin:0 0 4px;letter-spacing:.5px}
+  .sub{font-family:"Kalam";color:var(--ink-2);font-size:17px;max-width:920px;line-height:1.45}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0 22px;font-size:14px;color:var(--ink-2)}
+  .swatch{display:inline-flex;align-items:center;gap:6px}
+  .swatch i{display:inline-block;width:14px;height:14px;border:1.5px solid var(--ink);border-radius:3px}
+  .swatch .s-hl{background:var(--hl)}
+  .swatch .s-active{background:var(--active);border-color:var(--active-edge)}
+  .swatch .s-ctx{background:var(--paper-2)}
+  .tabs{display:flex;gap:0;border-bottom:2px solid var(--ink);margin-bottom:14px;flex-wrap:wrap}
+  .tab{font-family:"Caveat",cursive;font-size:24px;padding:10px 18px 8px;border:2px solid var(--ink);border-bottom:none;background:var(--paper-2);margin-right:-2px;cursor:pointer;border-top-left-radius:14px 8px;border-top-right-radius:14px 8px;transform:rotate(-.3deg);}
+  .tab:nth-child(2){transform:rotate(.2deg)}
+  .tab:nth-child(3){transform:rotate(-.15deg)}
+  .tab:nth-child(4){transform:rotate(.25deg)}
+  .tab:nth-child(5){transform:rotate(-.1deg)}
+  .tab.on{background:var(--paper);position:relative}
+  .tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:4px;background:var(--paper)}
+  .tab .num{font-family:"Kalam";font-size:13px;color:var(--muted);display:block;line-height:1}
+  .panes > .pane{display:none}
+  .panes > .pane.on{display:block}
+
+  .mock{
+    border:2.5px solid var(--ink);
+    border-radius:14px;
+    background:var(--paper);
+    box-shadow: 3px 4px 0 0 var(--ink);
+    overflow:hidden;
+    position:relative;
+  }
+  .mock .chrome{
+    display:flex;align-items:center;gap:10px;
+    padding:8px 12px;border-bottom:2px solid var(--ink);
+    background:var(--paper-2);font-family:"Caveat",cursive;font-size:22px;
+  }
+  .chrome .dots{display:flex;gap:6px}
+  .chrome .dots i{width:11px;height:11px;border:1.5px solid var(--ink);border-radius:50%}
+  .chrome .ref{margin-left:auto;font-family:"JetBrains Mono",monospace;font-size:13px;border:1.5px solid var(--ink);padding:2px 8px;border-radius:6px;background:var(--paper)}
+  .desc{display:grid;grid-template-columns:1.1fr 1fr;gap:14px;margin:14px 0 16px;font-size:15px;color:var(--ink-2);line-height:1.4}
+  .desc h3{font-family:"Caveat",cursive;font-weight:700;font-size:26px;color:var(--ink);margin:0 0 4px}
+  .desc ul{margin:4px 0 0;padding-left:18px}
+  .desc li{margin:2px 0}
+  .desc .pros li::marker{content:"+ "}
+  .desc .cons li::marker{content:"– "}
+  .badge{display:inline-block;font-family:"JetBrains Mono",monospace;font-size:11px;border:1.2px solid var(--ink);padding:1px 6px;border-radius:4px;background:var(--paper-2);margin-right:4px;color:var(--ink)}
+
+  /* sketchy primitives */
+  .box{border:1.8px solid var(--ink);border-radius:8px;background:var(--paper);padding:8px 10px;position:relative}
+  .box.dashed{border-style:dashed}
+  .box.ctx{background:var(--paper-2);color:var(--ink-2)}
+  .box.active{background:#e9f3ff;border-color:var(--active-edge);box-shadow: inset 0 0 0 1.5px var(--active-edge)}
+  .box.active::before{
+    content:"ACTIVE";position:absolute;top:-10px;left:10px;
+    font-family:"JetBrains Mono",monospace;font-size:10px;
+    background:var(--active-edge);color:#fff;padding:2px 6px;border-radius:4px;letter-spacing:.5px;
+  }
+  .label{font-family:"Caveat",cursive;font-size:20px;color:var(--ink);margin:0 0 4px;display:flex;align-items:center;gap:8px}
+  .label .tag{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted);border:1px solid var(--muted);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:.5px}
+  .vref{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .hl{background:var(--hl);padding:0 2px;border-radius:2px}
+  .squiggle{font-family:"Kalam";font-size:14px;color:var(--ink-2);line-height:1.4}
+  .scroll-indicator{position:absolute;top:6px;right:6px;font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted);writing-mode:vertical-rl;border:1px solid var(--muted);padding:2px 3px;border-radius:3px;}
+  .lines{display:block}
+  .lines span{display:block;height:7px;background:repeating-linear-gradient(90deg,var(--ink-2) 0 6px, transparent 6px 9px);opacity:.45;border-radius:2px;margin:6px 0}
+  .lines span.short{width:62%}
+  .lines span.shorter{width:42%}
+  .pin{display:inline-flex;align-items:center;gap:4px;font-family:"Caveat",cursive;font-size:16px;border:1.5px solid var(--ink);background:var(--paper);padding:2px 8px;border-radius:99px}
+  .pin.warm{background:#ffe7c0}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:"JetBrains Mono",monospace;font-size:11px;border:1.5px solid var(--ink);background:var(--paper);padding:3px 8px;border-radius:99px}
+  .pill.on{background:var(--ink);color:var(--paper)}
+  .arrow{font-family:"Caveat";font-size:22px;color:var(--ink-2)}
+  .snapback{
+    position:absolute;
+    bottom:14px;right:14px;
+    background:#fff;
+    border:2px solid var(--ink);
+    border-radius:99px;
+    padding:6px 14px;
+    font-family:"Caveat",cursive;font-size:18px;
+    box-shadow:2px 2px 0 0 var(--ink);
+    display:inline-flex;align-items:center;gap:6px;
+  }
+  .arrow-curve{position:absolute;font-family:"Caveat";font-size:16px;color:var(--warn);transform:rotate(-4deg)}
+
+  /* OPTION 1 — Spine + Detail */
+  .opt1{display:grid;grid-template-columns:300px 1fr 320px;height:640px}
+  .opt1 .spine{border-right:2px dashed var(--ink);padding:10px;overflow:hidden;background:var(--paper-2)}
+  .opt1 .spine .verseStrip{border:1.5px solid var(--ink);border-radius:8px;background:var(--paper);padding:6px 8px;margin:6px 0;font-size:13px;line-height:1.3;cursor:pointer;position:relative}
+  .opt1 .spine .verseStrip.active{background:#e9f3ff;border-color:var(--active-edge);box-shadow:inset 0 0 0 1.5px var(--active-edge)}
+  .opt1 .spine .verseStrip .vno{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);margin-right:6px}
+  .opt1 .spine .verseStrip .dot{position:absolute;top:6px;right:6px;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--ink);background:var(--hl)}
+  .opt1 .spine .verseStrip .dot.muted{background:var(--paper-2)}
+  .opt1 .center{padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;position:relative}
+  .opt1 .scripture{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .opt1 .resources{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1}
+  .opt1 .right{border-left:2px dashed var(--ink);padding:10px;background:var(--paper-2);overflow:hidden}
+  .opt1 .right h4{font-family:"Caveat";font-size:20px;margin:0 0 6px}
+
+  /* OPTION 2 — Freeze active row, browse below */
+  .opt2{height:660px;display:flex;flex-direction:column}
+  .opt2 .freeze{border-bottom:3px solid var(--ink);background:#f7fbff;padding:10px}
+  .opt2 .freeze .row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .opt2 .browse{padding:10px;flex:1;overflow:hidden;position:relative;background:repeating-linear-gradient(0deg,var(--paper) 0 36px, var(--paper-2) 36px 37px)}
+  .opt2 .browseRow{display:grid;grid-template-columns:80px 1.3fr 1fr 1fr 1fr 1fr;gap:6px;align-items:start;padding:6px 4px;border-bottom:1px dashed var(--ink-2);}
+  .opt2 .browseRow .v{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .opt2 .browseRow .mini{font-size:13px;line-height:1.25;color:var(--ink-2)}
+  .opt2 .browseRow.pinned{background:#fff7da}
+  .opt2 .freezeLabel{font-family:"Caveat";font-size:20px;color:var(--active-edge);margin:0 0 6px;display:flex;align-items:center;gap:8px}
+  .opt2 .freezeLabel .pill{border-color:var(--active-edge);color:var(--active-edge)}
+  .opt2 .browseLabel{font-family:"Caveat";font-size:20px;margin:0 0 6px;color:var(--ink)}
+
+  /* OPTION 3 — Verse column timeline + resource tabs */
+  .opt3{display:grid;grid-template-columns:64px 1fr 1fr;height:660px}
+  .opt3 .timeline{background:var(--paper-2);border-right:2px solid var(--ink);padding:8px 6px;overflow:hidden;position:relative}
+  .opt3 .timeline .t{font-family:"JetBrains Mono",monospace;font-size:11px;text-align:center;padding:4px 0;color:var(--muted);border-radius:4px;margin:1px 0;cursor:pointer;position:relative}
+  .opt3 .timeline .t.has::after{content:"";position:absolute;right:4px;top:50%;width:6px;height:6px;border-radius:50%;background:var(--hl);border:1.2px solid var(--ink);transform:translateY(-50%)}
+  .opt3 .timeline .t.active{background:var(--active-edge);color:#fff;font-weight:700}
+  .opt3 .timeline .indicator{position:absolute;left:-2px;width:4px;background:var(--active-edge);border-radius:0 2px 2px 0}
+  .opt3 .scripCol{border-right:2px dashed var(--ink);padding:10px;overflow:hidden;position:relative}
+  .opt3 .scripVerse{padding:8px;border-radius:6px;margin:4px 0;font-size:14px;line-height:1.35}
+  .opt3 .scripVerse.active{background:#e9f3ff;border:1.5px solid var(--active-edge)}
+  .opt3 .scripVerse.dim{color:var(--muted)}
+  .opt3 .scripVerse .v{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);margin-right:6px}
+  .opt3 .resCol{padding:10px;overflow:hidden;position:relative}
+  .opt3 .resTabs{display:flex;gap:0;border-bottom:1.5px solid var(--ink);margin-bottom:8px}
+  .opt3 .resTab{font-family:"JetBrains Mono",monospace;font-size:11px;padding:4px 8px;border:1.5px solid var(--ink);border-bottom:none;margin-right:-1.5px;background:var(--paper-2);border-radius:6px 6px 0 0}
+  .opt3 .resTab.on{background:var(--paper);position:relative}
+  .opt3 .resTab.on::after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:3px;background:var(--paper)}
+  .opt3 .resTab .n{display:inline-block;background:var(--ink);color:var(--paper);padding:0 4px;border-radius:8px;margin-left:4px;font-size:10px}
+  .opt3 .noteCard{border:1.5px solid var(--ink);border-radius:6px;padding:8px;margin:6px 0;font-size:13px}
+  .opt3 .noteCard.active{background:#e9f3ff;border-color:var(--active-edge)}
+  .opt3 .noteCard.ctx{background:var(--paper-2);color:var(--ink-2)}
+  .opt3 .noteCard .h{display:flex;justify-content:space-between;align-items:center;font-family:"JetBrains Mono",monospace;font-size:11px;margin-bottom:4px;color:var(--muted)}
+
+  /* OPTION 4 — Focus halo + peek strips */
+  .opt4{height:660px;position:relative;padding:12px;overflow:hidden}
+  .opt4 .peek{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;height:60px;opacity:.55}
+  .opt4 .focus{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:10px 0;background:var(--paper);border:2.5px solid var(--ink);border-radius:10px;padding:10px;box-shadow:0 0 0 6px var(--active),0 0 0 8px var(--active-edge);}
+  .opt4 .focus .box{border:1.5px solid var(--ink);min-height:200px}
+  .opt4 .peek .box{font-size:11px;padding:4px 6px;overflow:hidden;background:var(--paper-2);border-style:dashed}
+  .opt4 .focus h5{margin:0 0 6px;font-family:"Caveat";font-size:18px}
+  .opt4 .peek h6{margin:0 0 2px;font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted)}
+  .opt4 .fade-top, .opt4 .fade-bot{height:14px;background:linear-gradient(to bottom, transparent, rgba(0,0,0,.06));margin-bottom:-14px;pointer-events:none}
+  .opt4 .fade-bot{transform:scaleY(-1);margin-bottom:0;margin-top:-14px}
+
+  /* OPTION 5 — Notebook columns: each resource is a long scroll, "lock-to-verse" */
+  .opt5{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr;height:660px}
+  .opt5 .col{border-right:2px dashed var(--ink);padding:8px;overflow:hidden;position:relative}
+  .opt5 .col:last-child{border-right:none}
+  .opt5 .colHead{display:flex;justify-content:space-between;align-items:center;font-family:"Caveat";font-size:20px;border-bottom:1.5px solid var(--ink);padding-bottom:4px;margin-bottom:6px}
+  .opt5 .colHead .lock{display:inline-flex;align-items:center;gap:4px;font-family:"JetBrains Mono",monospace;font-size:10px;border:1.5px solid var(--ink);padding:2px 6px;border-radius:99px;background:var(--paper-2)}
+  .opt5 .colHead .lock.on{background:var(--active-edge);color:#fff;border-color:var(--active-edge)}
+  .opt5 .row{font-size:13px;border-radius:6px;padding:6px 8px;margin:3px 0;border:1.5px solid transparent;line-height:1.3}
+  .opt5 .row.ctx{color:var(--muted)}
+  .opt5 .row.active{background:#e9f3ff;border-color:var(--active-edge)}
+  .opt5 .row .v{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted);margin-right:6px}
+  .opt5 .syncbar{position:absolute;left:0;right:0;height:2px;background:var(--active-edge);opacity:.4}
+
+  /* misc */
+  .notes-callout{
+    display:flex;gap:14px;align-items:flex-start;
+    background:#fff7da;border:2px dashed var(--ink);border-radius:10px;
+    padding:10px 14px;margin:18px 0 0;font-size:15px;line-height:1.5;
+  }
+  .notes-callout b{font-family:"Caveat",cursive;font-weight:700;font-size:20px}
+  .footer{margin-top:30px;color:var(--muted);font-size:13px;text-align:center;font-family:"JetBrains Mono",monospace}
+  .ann{font-family:"Caveat";font-size:17px;color:var(--warn);}
+  .ann.up{display:inline-block;transform:rotate(-3deg)}
+  .arrow-line{display:inline-block;border-bottom:1.5px solid var(--warn);width:30px;vertical-align:middle;margin:0 4px}
+
+  /* responsive */
+  @media (max-width: 1100px){
+    .opt1{grid-template-columns:220px 1fr 240px}
+    .opt3{grid-template-columns:52px 1fr 1fr}
+    .opt5{grid-template-columns:1fr 1fr 1fr}
+    .opt5 .col:nth-child(4){display:none}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Hybrid views — context + control</h1>
+  <p class="sub">
+    Sketches exploring how to combine gatewayEdit's "all resources in one glance" with tcCreate's
+    "scroll through verses for context" — while keeping a clearly <i>active</i> verse/note so
+    edits never lose their place. Each option treats <b>scroll</b>, <b>active state</b>, and
+    <b>snap-back</b> a little differently. Toggle through and let me know which threads are worth pulling.
+  </p>
+
+  <div class="legend">
+    <span class="swatch"><i class="s-active"></i>Active verse / note (where you're editing)</span>
+    <span class="swatch"><i class="s-ctx"></i>Context (scrollable, dimmed)</span>
+    <span class="swatch"><i class="s-hl"></i>Highlight on quote</span>
+    <span class="swatch">📍 = snap-back-to-active</span>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-i="0"><span class="num">01</span>Spine + Detail</button>
+    <button class="tab" data-i="1"><span class="num">02</span>Freeze Row</button>
+    <button class="tab" data-i="2"><span class="num">03</span>Timeline + Tabs</button>
+    <button class="tab" data-i="3"><span class="num">04</span>Focus Halo</button>
+    <button class="tab" data-i="4"><span class="num">05</span>Locked Columns</button>
+  </div>
+
+  <div class="panes" id="panes">
+
+    <!-- ============================ OPTION 1 ============================ -->
+    <div class="pane on">
+      <div class="desc">
+        <div>
+          <h3>01 — Spine + Detail</h3>
+          <p>A tall left "spine" lists every verse in the chapter as a one-line strip — read it like a table of contents. Center is the active verse with all 3 scripture columns + the notes/words/questions cards (gatewayEdit-style). Right rail keeps tA / tW reference articles pinned.</p>
+          <p><span class="badge">scroll</span>spine + right rail scroll independently. Center pinned to active.</p>
+        </div>
+        <div>
+          <ul class="pros"><li>Whole chapter visible at all times → strong context</li>
+            <li>Center never moves → never lose your edit</li>
+            <li>Reference articles always at hand</li></ul>
+          <ul class="cons"><li>Only 1 verse worth of resources visible</li>
+            <li>Spine items must be terse</li></ul>
+        </div>
+      </div>
+
+      <div class="mock">
+        <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>Spine + Detail<span class="ref">Ruth 1 · v.4 of 22</span></div>
+        <div class="opt1">
+
+          <div class="spine">
+            <div class="label" style="font-family:'Caveat';font-size:22px;margin-bottom:8px">Ruth 1<span class="tag">chapter spine</span></div>
+            <div class="verseStrip"><span class="vno">1:1</span>Now it happened in the days of the ruling… <span class="dot"></span></div>
+            <div class="verseStrip"><span class="vno">1:2</span>The name of the man was Elimelech… <span class="dot muted"></span></div>
+            <div class="verseStrip"><span class="vno">1:3</span>Then Elimelech, Naomi's husband, died… <span class="dot"></span></div>
+            <div class="verseStrip active"><span class="vno">1:4</span>And they took for themselves Moabite wives… <span class="dot"></span></div>
+            <div class="verseStrip"><span class="vno">1:5</span>Then both Mahlon and Kilion also died… <span class="dot"></span></div>
+            <div class="verseStrip"><span class="vno">1:6</span>Then she arose, she and her daughters-in-law… <span class="dot muted"></span></div>
+            <div class="verseStrip"><span class="vno">1:7</span>So she went out from the place where she was… <span class="dot"></span></div>
+            <div class="verseStrip"><span class="vno">1:8</span>And Naomi said to her two daughters-in-law… <span class="dot"></span></div>
+            <div class="verseStrip"><span class="vno">1:9</span>"May Yahweh grant to you that you find rest…" <span class="dot muted"></span></div>
+            <div class="verseStrip"><span class="vno">1:10</span>And they said to her, "No, we will return…" <span class="dot"></span></div>
+            <div class="scroll-indicator">↕ scroll</div>
+          </div>
+
+          <div class="center">
+            <div class="scripture">
+              <div class="box active" style="min-height:90px">
+                <div class="label">ULT<span class="tag">v.4</span></div>
+                <div class="squiggle">And they took for themselves <span class="hl">Moabite wives</span>; the name of the first was Orpah and the name of the second was Ruth, and they lived there about ten years.</div>
+              </div>
+              <div class="box active" style="min-height:90px">
+                <div class="label">UHB<span class="tag">v.4</span></div>
+                <div class="squiggle" style="direction:rtl;text-align:right">וַיִּשְׂא֣וּ לָהֶ֔ם <span class="hl">נָשִׁ֖ים מֹֽאֲבִיּ֑וֹת</span> שֵׁ֤ם הָֽאַחַת֙ עָרְפָּ֔ה…</div>
+              </div>
+              <div class="box active" style="min-height:90px">
+                <div class="label">UST<span class="tag">v.4</span></div>
+                <div class="squiggle">The two sons married <span class="hl">women from Moab</span>; one was named Orpah and the other Ruth. They lived in Moab for about ten years.</div>
+              </div>
+            </div>
+
+            <div class="resources">
+              <div class="box active">
+                <div class="label">translationNotes<span class="tag">3 notes · v.4</span></div>
+                <div class="squiggle">
+                  <b>Note 1</b> · <span style="font-family:'JetBrains Mono',monospace;font-size:11px">figs-explicit</span><br/>
+                  Moabite women were foreigners. The author assumes the reader knows the law forbade…
+                </div>
+                <div class="lines"><span></span><span class="short"></span></div>
+                <div style="display:flex;gap:6px;margin-top:6px"><span class="pill on">1</span><span class="pill">2</span><span class="pill">3</span></div>
+              </div>
+              <div class="box active">
+                <div class="label">translationWords<span class="tag">4 words</span></div>
+                <div class="squiggle">• Moab · • Orpah · • Ruth · • ten years</div>
+                <div class="lines"><span class="short"></span><span class="shorter"></span></div>
+              </div>
+              <div class="box active">
+                <div class="label">translationQuestions<span class="tag">1 question</span></div>
+                <div class="squiggle">Who did Mahlon and Kilion marry?</div>
+              </div>
+              <div class="box active">
+                <div class="label">translationAcademy<span class="tag">linked tA</span></div>
+                <div class="squiggle">figs-explicit — assumed knowledge and implicit information…</div>
+                <div class="lines"><span></span><span class="short"></span></div>
+              </div>
+            </div>
+            <span class="snapback">📍 Back to v.4</span>
+          </div>
+
+          <div class="right">
+            <h4>Reference</h4>
+            <div class="box ctx" style="margin-bottom:8px">
+              <div class="label" style="font-size:16px">tA · figs-explicit</div>
+              <div class="squiggle">When a speaker omits things he assumes the hearer already knows…</div>
+              <div class="lines"><span></span><span></span><span class="short"></span></div>
+            </div>
+            <div class="box ctx">
+              <div class="label" style="font-size:16px">tW · Moab</div>
+              <div class="squiggle">Moab was a country east of the Dead Sea, descended from Lot…</div>
+              <div class="lines"><span></span><span class="short"></span></div>
+            </div>
+            <div class="scroll-indicator">↕ scroll</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================ OPTION 2 ============================ -->
+    <div class="pane">
+      <div class="desc">
+        <div>
+          <h3>02 — Freeze Row</h3>
+          <p>The top of the screen is your <i>frozen active row</i> — full gatewayEdit-style cards for the current verse, never moves. Below it, a dense tcCreate-style stream of every other verse (compact). Click any row to promote it to the frozen position. Multi-select pins to compare.</p>
+          <p><span class="badge">scroll</span>only the bottom stream scrolls. Frozen row stays put.</p>
+        </div>
+        <div>
+          <ul class="pros"><li>Direct parallel to mental model: "what I'm on" vs "everything else"</li>
+            <li>Scrolling never loses edit position</li>
+            <li>Easy to "pin" a comparison verse</li></ul>
+          <ul class="cons"><li>Vertical real-estate cost: frozen row takes ~40%</li>
+            <li>Only one full-detail verse at a time</li></ul>
+        </div>
+      </div>
+
+      <div class="mock">
+        <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>Freeze Row<span class="ref">Habakkuk 3 · v.15</span></div>
+        <div class="opt2">
+
+          <div class="freeze">
+            <div class="freezeLabel">📌 Active verse <span class="pill">FROZEN · Hab 3:15</span><span class="ann up">stays here even when you scroll ↓</span></div>
+            <div class="row">
+              <div class="box active">
+                <div class="label">ULT<span class="tag">3:15</span></div>
+                <div class="squiggle">You trod the sea with your horses, {through} the <span class="hl">heap of great waters</span>.</div>
+              </div>
+              <div class="box active">
+                <div class="label">UST<span class="tag">3:15</span></div>
+                <div class="squiggle">You rode your horses through the sea, churning through the great surging waves.</div>
+              </div>
+              <div class="box active">
+                <div class="label">UHB<span class="tag">3:15</span></div>
+                <div class="squiggle" style="direction:rtl;text-align:right">דָּרַ֥כְתָּ בַיָּ֖ם <span class="hl">סוּסֶ֑יךָ</span></div>
+              </div>
+              <div class="box active">
+                <div class="label">Notes (2)<span class="tag">edit</span></div>
+                <div class="squiggle">Habakkuk speaks of God as a warrior riding horses through the sea…</div>
+                <div class="lines"><span class="short"></span></div>
+              </div>
+              <div class="box active">
+                <div class="label">Words · Qs</div>
+                <div class="squiggle">• horse · • sea · • chariot</div>
+                <div class="lines"><span class="shorter"></span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="browse">
+            <div class="browseLabel">📜 Context stream — click any verse to promote · drag a pin to compare</div>
+
+            <div class="browseRow"><span class="v">3:12</span><span class="mini">In indignation you marched through the earth…</span><span class="mini">You stomped on the nations in your anger.</span><span class="mini" style="direction:rtl;text-align:right">בְּזַ֖עַם תִּצְעַד־אָ֑רֶץ</span><span class="mini">Notes: 1 · figs-personification</span><span class="mini">Qs: 1 · Words: 2</span></div>
+            <div class="browseRow"><span class="v">3:13</span><span class="mini">You went out for the salvation of your people…</span><span class="mini">You went out to save your chosen people.</span><span class="mini" style="direction:rtl;text-align:right">יָצָ֖אתָ לְיֵ֣שַׁע עַמֶּ֑ךָ</span><span class="mini">Notes: 3 · ⚠ unresolved</span><span class="mini">Qs: 2</span></div>
+            <div class="browseRow"><span class="v">3:14</span><span class="mini">You pierced the head of his warriors with his own staffs…</span><span class="mini">With his own spears you killed the leader…</span><span class="mini" style="direction:rtl;text-align:right">נָקַ֤בְתָּ בְמַטָּיו֙ רֹ֣אשׁ פְּרָזָ֔יו</span><span class="mini">Notes: 4</span><span class="mini">Words: 3</span></div>
+            <div class="browseRow pinned"><span class="v">3:15 <span class="pin warm">📌pinned</span></span><span class="mini">You trod the sea with your horses…</span><span class="mini">You rode your horses through the sea…</span><span class="mini" style="direction:rtl;text-align:right">דָּרַ֥כְתָּ בַיָּ֖ם סוּסֶ֑יךָ</span><span class="mini">Notes: 2 · editing</span><span class="mini">Qs: 1 · Words: 2</span></div>
+            <div class="browseRow"><span class="v">3:16</span><span class="mini">I heard, and my inner parts trembled…</span><span class="mini">When I heard all this, my body shook…</span><span class="mini" style="direction:rtl;text-align:right">שָׁמַ֣עְתִּי ׀ וַתִּרְגַּ֣ז בִּטְנִ֗י</span><span class="mini">Notes: 5</span><span class="mini">Qs: 2 · Words: 4</span></div>
+            <div class="browseRow"><span class="v">3:17</span><span class="mini">Though the fig tree does not bud…</span><span class="mini">Even if the fig trees have no fruit…</span><span class="mini" style="direction:rtl;text-align:right">כִּי־תְאֵנָ֣ה לֹֽא־תִפְרָ֔ח</span><span class="mini">Notes: 2</span><span class="mini">Words: 3</span></div>
+            <div class="browseRow"><span class="v">3:18</span><span class="mini">Yet I will exult in Yahweh…</span><span class="mini">But I will still be glad…</span><span class="mini" style="direction:rtl;text-align:right">וַאֲנִ֖י בַּיהוָ֣ה אֶעְל֑וֹזָה</span><span class="mini">Notes: 1</span><span class="mini">Qs: 1</span></div>
+            <div class="browseRow"><span class="v">3:19</span><span class="mini">Yahweh, the Lord, is my strength…</span><span class="mini">The Lord Yahweh gives me strength…</span><span class="mini" style="direction:rtl;text-align:right">יְהוִ֤ה אֲדֹנָי֙ חֵילִ֔י</span><span class="mini">Notes: 3</span><span class="mini">Words: 2</span></div>
+
+            <span class="snapback">📍 Snap to 3:15</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================ OPTION 3 ============================ -->
+    <div class="pane">
+      <div class="desc">
+        <div>
+          <h3>03 — Timeline + Tabs</h3>
+          <p>Far-left is a thin vertical timeline of every verse in the book — yellow dots show "has resources / unresolved notes". Middle column is scripture with prev/next verses always visible (dimmed). Right column is resources for the active verse, in tabs (Notes / Words / Qs / tA / tW Article).</p>
+          <p><span class="badge">scroll</span>scripture column scrolls smoothly · timeline scrubs to any verse · tabs swap resource focus.</p>
+        </div>
+        <div>
+          <ul class="pros"><li>Whole-book navigation at a glance</li>
+            <li>Prev/next verses always visible → great context</li>
+            <li>Resource panel keeps maximum room for notes</li></ul>
+          <ul class="cons"><li>Only one resource type visible at a time (mitigated by counts)</li>
+            <li>Hebrew may need its own toggle/inline view</li></ul>
+        </div>
+      </div>
+
+      <div class="mock">
+        <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>Timeline + Tabs<span class="ref">Ruth · 1:4</span></div>
+        <div class="opt3">
+
+          <div class="timeline">
+            <div class="t">1:1</div>
+            <div class="t has">1:2</div>
+            <div class="t has">1:3</div>
+            <div class="t active has">1:4</div>
+            <div class="t has">1:5</div>
+            <div class="t">1:6</div>
+            <div class="t has">1:7</div>
+            <div class="t has">1:8</div>
+            <div class="t">1:9</div>
+            <div class="t has">1:10</div>
+            <div class="t has">1:11</div>
+            <div class="t">1:12</div>
+            <div class="t has">1:13</div>
+            <div class="t has">1:14</div>
+            <div class="t">1:15</div>
+            <div class="t has">1:16</div>
+            <div class="t has">1:17</div>
+            <div class="t">1:18</div>
+            <div class="t has">1:19</div>
+            <div class="t has">1:20</div>
+            <div class="t">1:21</div>
+            <div class="t has">1:22</div>
+            <div class="scroll-indicator">↕</div>
+          </div>
+
+          <div class="scripCol">
+            <div class="label" style="display:flex;justify-content:space-between">
+              <span>Scripture <span class="tag">ULT · UST · UHB</span></span>
+              <span class="pill">📍 stick</span>
+            </div>
+            <div class="scripVerse dim"><span class="v">1:2</span>The name of the man was Elimelech, and the name of his wife was Naomi, and the name of his two sons were Mahlon and Kilion…</div>
+            <div class="scripVerse dim"><span class="v">1:3</span>Then Elimelech, Naomi's husband, died, and she was left with her two sons.</div>
+            <div class="scripVerse active"><span class="v">1:4</span>And they took for themselves <span class="hl">Moabite wives</span>; the name of the first was Orpah and the name of the second was Ruth, and they lived there about ten years.<br/>
+              <span class="vref">UST →</span> The two sons married <span class="hl">women from Moab</span>; one was named Orpah and the other Ruth. They lived in Moab for about ten years.<br/>
+              <span class="vref">UHB →</span> <span style="direction:rtl">וַיִּשְׂא֣וּ לָהֶ֔ם <span class="hl">נָשִׁ֖ים מֹֽאֲבִיּ֑וֹת</span>…</span>
+            </div>
+            <div class="scripVerse dim"><span class="v">1:5</span>Then both Mahlon and Kilion also died, and the woman was left without her two children and without her husband.</div>
+            <div class="scripVerse dim"><span class="v">1:6</span>Then she arose, she and her daughters-in-law, and she returned from the fields of Moab…</div>
+            <span class="snapback">📍 To 1:4</span>
+          </div>
+
+          <div class="resCol">
+            <div class="resTabs">
+              <div class="resTab on">Notes <span class="n">3</span></div>
+              <div class="resTab">Words <span class="n">4</span></div>
+              <div class="resTab">Qs <span class="n">1</span></div>
+              <div class="resTab">tA</div>
+              <div class="resTab">tW Art</div>
+            </div>
+            <div class="noteCard ctx">
+              <div class="h"><span>← prev verse 1:3 · 2 notes</span><span>collapse</span></div>
+              <div>Elimelech's death · figs-euphemism…</div>
+            </div>
+            <div class="noteCard active">
+              <div class="h"><span>1:4 · note 1 of 3 · figs-explicit</span><span>✏ editing</span></div>
+              <div>The author assumes the reader knows Moabite women were foreigners and that the law of Moses forbade Israelite men from marrying foreign women…</div>
+              <div class="lines"><span></span><span class="short"></span></div>
+              <div style="display:flex;gap:6px;margin-top:6px"><span class="pill on">1</span><span class="pill">2</span><span class="pill">3</span></div>
+            </div>
+            <div class="noteCard ctx">
+              <div class="h"><span>1:4 · note 2 of 3</span><span>expand</span></div>
+              <div>Orpah and Ruth — translatenames…</div>
+            </div>
+            <div class="noteCard ctx">
+              <div class="h"><span>1:4 · note 3 of 3</span><span>expand</span></div>
+              <div>"about ten years" — figs-idiom…</div>
+            </div>
+            <div class="noteCard ctx">
+              <div class="h"><span>→ next verse 1:5 · 4 notes</span><span>peek</span></div>
+              <div>Mahlon and Kilion died · figs-euphemism…</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================ OPTION 4 ============================ -->
+    <div class="pane">
+      <div class="desc">
+        <div>
+          <h3>04 — Focus Halo</h3>
+          <p>Pure gatewayEdit grid in the middle, surrounded by a glowing halo so the active verse is unmistakable. Above and below sit thin "peek strips" of the previous and next verse with the same panel layout — same column for ULT, same for notes, etc., so your eye can scan vertically. Scrolling the whole grid shifts which verse is the halo.</p>
+          <p><span class="badge">scroll</span>page scrolls top→bottom of book. Halo follows the verse closest to viewport center (or whichever you click).</p>
+        </div>
+        <div>
+          <ul class="pros"><li>Familiar gatewayEdit ergonomics, with context</li>
+            <li>Column alignment makes A/B comparison effortless</li>
+            <li>Halo is unambiguous active indicator</li></ul>
+          <ul class="cons"><li>Halo brightness must be tuned — could fight content</li>
+            <li>Peek strips are necessarily abbreviated</li></ul>
+        </div>
+      </div>
+
+      <div class="mock">
+        <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>Focus Halo<span class="ref">Ruth 1 · v.4</span></div>
+        <div class="opt4">
+
+          <div class="fade-top"></div>
+          <div class="peek">
+            <div class="box"><h6>ULT · 1:3</h6><div class="squiggle">Then Elimelech died…</div></div>
+            <div class="box"><h6>UST · 1:3</h6><div class="squiggle">Then Naomi's husband died…</div></div>
+            <div class="box"><h6>UHB · 1:3</h6><div class="squiggle" style="direction:rtl;text-align:right">וַיָּ֥מָת אֱלִימֶ֖לֶךְ…</div></div>
+            <div class="box"><h6>tN · 1:3 · 2</h6><div class="squiggle">euphemism for death…</div></div>
+            <div class="box"><h6>tW · 1:3</h6><div class="squiggle">died · widow</div></div>
+          </div>
+
+          <div class="focus">
+            <div class="box">
+              <h5>ULT · 1:4</h5>
+              <div class="squiggle">And they took for themselves <span class="hl">Moabite wives</span>; the name of the first was Orpah and the name of the second was Ruth, and they lived there about ten years.</div>
+            </div>
+            <div class="box">
+              <h5>UST · 1:4</h5>
+              <div class="squiggle">The two sons married <span class="hl">women from Moab</span>; one was named Orpah and the other Ruth. They lived there about ten years.</div>
+            </div>
+            <div class="box">
+              <h5>UHB · 1:4</h5>
+              <div class="squiggle" style="direction:rtl;text-align:right">וַיִּשְׂא֣וּ לָהֶ֔ם <span class="hl">נָשִׁ֖ים מֹֽאֲבִיּ֑וֹת</span>…</div>
+            </div>
+            <div class="box">
+              <h5>tN · 1:4 <span class="vref">(3 notes)</span></h5>
+              <div class="squiggle">Moabite women — figs-explicit. The author assumes…</div>
+              <div class="lines"><span></span><span class="short"></span></div>
+              <div style="display:flex;gap:5px;margin-top:6px"><span class="pill on">1</span><span class="pill">2</span><span class="pill">3</span></div>
+            </div>
+            <div class="box">
+              <h5>tW · 1:4</h5>
+              <div class="squiggle">• Moab · • Orpah · • Ruth · • ten years</div>
+              <h5 style="margin-top:8px">tQ · 1:4</h5>
+              <div class="squiggle">Who did the two sons marry?</div>
+            </div>
+          </div>
+
+          <div class="peek">
+            <div class="box"><h6>ULT · 1:5</h6><div class="squiggle">Then both Mahlon and Kilion also died…</div></div>
+            <div class="box"><h6>UST · 1:5</h6><div class="squiggle">Then both Mahlon and Kilion died…</div></div>
+            <div class="box"><h6>UHB · 1:5</h6><div class="squiggle" style="direction:rtl;text-align:right">וַיָּמ֥וּתוּ גַם־שְׁנֵיהֶ֖ם…</div></div>
+            <div class="box"><h6>tN · 1:5 · 4</h6><div class="squiggle">euphemism · figs-events…</div></div>
+            <div class="box"><h6>tW · 1:5</h6><div class="squiggle">died · son · husband</div></div>
+          </div>
+          <div class="fade-bot"></div>
+
+          <span class="snapback">📍 Center on 1:4</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================ OPTION 5 ============================ -->
+    <div class="pane">
+      <div class="desc">
+        <div>
+          <h3>05 — Locked Columns</h3>
+          <p>Every resource is its own long, vertical column listing every verse in the chapter (scripture, notes, words, questions). Each column has a "🔒 lock to active" toggle. Locked columns auto-scroll to the active verse; unlocked columns can be scrolled freely (e.g. flip ahead 5 verses in notes while keeping scripture put). A blue sync-bar across all columns shows where the active verse <i>would</i> be.</p>
+          <p><span class="badge">scroll</span>each column independent. Per-column lock keeps them aligned when wanted.</p>
+        </div>
+        <div>
+          <ul class="pros"><li>Massive context — see 10+ verses of every resource</li>
+            <li>Power-user mode: scroll notes ahead without losing scripture</li>
+            <li>Mirrors gatewayEdit panels but each one infinite-scroll</li></ul>
+          <ul class="cons"><li>Lots of vertical scanning</li>
+            <li>Locking model needs onboarding</li></ul>
+        </div>
+      </div>
+
+      <div class="mock">
+        <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>Locked Columns<span class="ref">Ruth 1 · active 1:4</span></div>
+        <div class="opt5">
+
+          <div class="col">
+            <div class="colHead">Scripture <span class="lock on">🔒 locked</span></div>
+            <div class="row ctx"><span class="v">1:2</span>The name of the man was Elimelech…</div>
+            <div class="row ctx"><span class="v">1:3</span>Then Elimelech, Naomi's husband, died…</div>
+            <div class="row active"><span class="v">1:4</span>And they took for themselves <span class="hl">Moabite wives</span>; Orpah and Ruth, ten years.</div>
+            <div class="row ctx"><span class="v">1:5</span>Then both Mahlon and Kilion also died…</div>
+            <div class="row ctx"><span class="v">1:6</span>Then she arose, she and her daughters-in-law…</div>
+            <div class="row ctx"><span class="v">1:7</span>So she went out from the place where she was…</div>
+            <div class="row ctx"><span class="v">1:8</span>And Naomi said to her two daughters-in-law…</div>
+          </div>
+
+          <div class="col">
+            <div class="colHead">Notes <span class="lock">🔓 free</span></div>
+            <div class="row ctx"><span class="v">1:3</span>Elimelech died — figs-euphemism</div>
+            <div class="row ctx"><span class="v">1:3</span>"left with her two sons" — figs-explicit</div>
+            <div class="row active"><span class="v">1:4</span>Moabite wives — figs-explicit · <i>editing</i></div>
+            <div class="row ctx"><span class="v">1:4</span>Orpah / Ruth — translatenames</div>
+            <div class="row ctx"><span class="v">1:4</span>"about ten years" — figs-idiom</div>
+            <div class="row ctx"><span class="v">1:5</span>both also died — figs-euphemism</div>
+            <div class="row ctx"><span class="v">1:5</span>"the woman was left" — figs-explicit ⚠</div>
+            <div class="row ctx"><span class="v">1:6</span>she arose — figs-idiom</div>
+            <div class="syncbar" style="top:140px"></div>
+          </div>
+
+          <div class="col">
+            <div class="colHead">Words <span class="lock on">🔒 locked</span></div>
+            <div class="row ctx"><span class="v">1:2</span>Elimelech · Naomi · Mahlon · Kilion</div>
+            <div class="row ctx"><span class="v">1:3</span>die · husband</div>
+            <div class="row active"><span class="v">1:4</span>Moab · Orpah · Ruth · ten years</div>
+            <div class="row ctx"><span class="v">1:5</span>die · son · husband</div>
+            <div class="row ctx"><span class="v">1:6</span>daughter-in-law · Moab</div>
+            <div class="row ctx"><span class="v">1:7</span>Judah · return</div>
+          </div>
+
+          <div class="col">
+            <div class="colHead">Questions <span class="lock">🔓 free</span></div>
+            <div class="row ctx"><span class="v">1:2</span>Who was Elimelech?</div>
+            <div class="row ctx"><span class="v">1:3</span>What happened to Elimelech?</div>
+            <div class="row active"><span class="v">1:4</span>Who did Mahlon and Kilion marry?</div>
+            <div class="row ctx"><span class="v">1:5</span>What happened to Mahlon and Kilion?</div>
+            <div class="row ctx"><span class="v">1:6</span>Why did Naomi leave Moab?</div>
+            <div class="row ctx"><span class="v">1:8</span>What did Naomi say to her daughters-in-law?</div>
+            <span class="snapback">📍 Snap all to 1:4</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="notes-callout">
+    <div>💡</div>
+    <div>
+      <b>Shared patterns across all 5:</b>
+      <ul style="margin:6px 0 0;padding-left:18px">
+        <li>One <span class="badge">📍 snap-back</span> control per scrollable region — never lose the active verse.</li>
+        <li>Active state is always <span style="background:#e9f3ff;border:1.5px solid var(--active-edge);padding:0 4px;border-radius:3px">blue-edged</span> and stays consistent across resource panels.</li>
+        <li>"Hover-peek" prev/next is implied — hovering a context strip can expand it in place without losing focus.</li>
+        <li>Keyboard: <span class="badge">J/K</span> or <span class="badge">↑/↓</span> = move active verse · <span class="badge">G</span> = snap-back · <span class="badge">[ ]</span> = move active note within verse.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">wireframes · low-fi · explore, don't commit</div>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('#tabs .tab');
+  const panes = document.querySelectorAll('#panes .pane');
+  tabs.forEach((t,i)=>{
+    t.addEventListener('click',()=>{
+      tabs.forEach(x=>x.classList.remove('on'));
+      panes.forEach(x=>x.classList.remove('on'));
+      t.classList.add('on');
+      panes[i].classList.add('on');
+    });
+  });
+</script>
+</body>
+</html>
