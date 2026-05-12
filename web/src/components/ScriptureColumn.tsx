@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button } from "@mui/material";
 import LinkIcon from "@mui/icons-material/Link";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
@@ -54,12 +54,23 @@ export function ScriptureColumn({
   onEditVerse,
 }: Props) {
   const activeRef = useRef<HTMLDivElement | null>(null);
+  // Bumped on "go to active" clicks so columns-mode DocColumns can re-scroll
+  // to their active span even when activeVerse hasn't changed.
+  const [scrollNonce, setScrollNonce] = useState(0);
 
   useEffect(() => {
     if (mode === "stacked") {
       activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [activeVerse, mode]);
+
+  const scrollToActive = () => {
+    if (mode === "stacked") {
+      activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else {
+      setScrollNonce((n) => n + 1);
+    }
+  };
 
   const isHebrew = !!versesByVersion["UHB"];
 
@@ -123,7 +134,7 @@ export function ScriptureColumn({
           <Button
             size="small"
             startIcon={<UndoIcon fontSize="small" />}
-            onClick={() => activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            onClick={scrollToActive}
             sx={{ textTransform: "none" }}
           >
             go to active
@@ -160,6 +171,7 @@ export function ScriptureColumn({
               rtl={v === "UHB"}
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
+              scrollNonce={scrollNonce}
               onSelectVerse={onSelectVerse}
               onEditVerse={(verseNum, plain, base) => onEditVerse(verseNum, v, plain, base)}
               onOpenAligner={(verseNum) => onOpenAligner(verseNum, v)}

@@ -462,6 +462,9 @@ function AlignmentGrid({
                       twHint={twHintFor(twlForVerse, verseNum, s.content)}
                     />
                   }
+                  // Click-through the popper so it doesn't swallow hover for
+                  // adjacent source words when the user sweeps across them.
+                  slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
                 >
                   <Paper
                     elevation={0}

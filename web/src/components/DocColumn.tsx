@@ -14,6 +14,9 @@ interface Props {
   rtl?: boolean;
   activeNoteQuote?: string | null;
   activeNoteOccurrence?: number | null;
+  // Increment to request a scroll-to-active even when activeVerse hasn't
+  // changed — used by ScriptureColumn's "go to active" button in columns mode.
+  scrollNonce?: number;
   onSelectVerse: (v: number) => void;
   onEditVerse: (verseNum: number, plain: string, base: VerseDto) => void;
   onOpenAligner: (verseNum: number) => void;
@@ -37,6 +40,7 @@ export function DocColumn({
   rtl,
   activeNoteQuote,
   activeNoteOccurrence,
+  scrollNonce,
   onSelectVerse,
   onEditVerse,
   onOpenAligner,
@@ -46,7 +50,7 @@ export function DocColumn({
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeVerse]);
+  }, [activeVerse, scrollNonce]);
 
   return (
     <Box
