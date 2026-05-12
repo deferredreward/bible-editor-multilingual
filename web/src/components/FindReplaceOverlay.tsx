@@ -52,8 +52,11 @@ interface Props {
     newPlainText: string,
     base: VerseDto,
   ) => void;
-  // Active-match callback so the caller can scroll the right cell into view.
-  onActiveMatchChange: (match: FindMatch | null) => void;
+  // Fires only on user-initiated navigation (find/regex/case change, prev,
+  // next, replace-this). Typing in a verse cell while the overlay is open
+  // reshapes the match list but should NOT pull the user away — those
+  // reshapes only update the internal "X of Y" label.
+  onScrollToMatch: (match: FindMatch | null) => void;
   // Lift the query state up so VerseCell can paint inline marks alongside the
   // existing note-quote highlights.
   onQueryChange: (query: { find: string; regex: boolean; caseSensitive: boolean } | null) => void;
@@ -67,7 +70,7 @@ export function FindReplaceOverlay({
   onLoadChapter,
   enabledVersions,
   onReplaceVerse,
-  onActiveMatchChange,
+  onScrollToMatch,
   onQueryChange,
 }: Props) {
   const [find, setFind] = useState("");
@@ -77,6 +80,12 @@ export function FindReplaceOverlay({
   const [activeIdx, setActiveIdx] = useState(0);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  // Set right before any user action that should pull the active match
+  // into view (prev/next, replace-this, find query change). The next
+  // matches-reshape effect consumes the flag and fires onScrollToMatch.
+  // External content edits never set this, so the user isn't yanked away
+  // while they're typing.
+  const wantsScrollRef = useRef(false);
 
   // Focus the find input when the overlay opens (Ctrl/Cmd+F flow).
   useEffect(() => {
@@ -87,11 +96,14 @@ export function FindReplaceOverlay({
   }, [open]);
 
   // Push query down to the caller so verse cells can paint match marks.
+  // Any change to the search inputs counts as user navigation — once the
+  // new matches settle, scroll to the first hit.
   useEffect(() => {
     if (!open || !find) {
       onQueryChange(null);
       return;
     }
+    wantsScrollRef.current = true;
     onQueryChange({ find, regex, caseSensitive });
   }, [open, find, regex, caseSensitive, onQueryChange]);
 
@@ -103,25 +115,37 @@ export function FindReplaceOverlay({
     return collectMatches(chapters, enabledVersions, compiled.re);
   }, [open, compiled.re, chapters, enabledVersions]);
 
-  // Clamp activeIdx whenever the match list reshapes.
+  // Clamp activeIdx whenever the match list reshapes. Only fire
+  // onScrollToMatch if a user action flagged that they want the scroll —
+  // ambient reshapes (external typing) clamp silently.
   useEffect(() => {
     if (matches.length === 0) {
       setActiveIdx(0);
-      onActiveMatchChange(null);
+      if (wantsScrollRef.current) {
+        wantsScrollRef.current = false;
+        onScrollToMatch(null);
+      }
       return;
     }
     const idx = Math.min(activeIdx, matches.length - 1);
-    setActiveIdx(idx);
-    onActiveMatchChange(matches[idx]);
-  }, [matches, activeIdx, onActiveMatchChange]);
+    if (idx !== activeIdx) setActiveIdx(idx);
+    if (wantsScrollRef.current) {
+      wantsScrollRef.current = false;
+      onScrollToMatch(matches[idx]);
+    }
+  }, [matches, activeIdx, onScrollToMatch]);
 
   const goPrev = () => {
     if (matches.length === 0) return;
-    setActiveIdx((i) => (i - 1 + matches.length) % matches.length);
+    const next = (activeIdx - 1 + matches.length) % matches.length;
+    setActiveIdx(next);
+    onScrollToMatch(matches[next]);
   };
   const goNext = () => {
     if (matches.length === 0) return;
-    setActiveIdx((i) => (i + 1) % matches.length);
+    const next = (activeIdx + 1) % matches.length;
+    setActiveIdx(next);
+    onScrollToMatch(matches[next]);
   };
 
   const doReplaceMatch = (m: FindMatch) => {
@@ -140,6 +164,9 @@ export function FindReplaceOverlay({
       replace,
     );
     if (result.plainText === text) return;
+    // The replace will trigger a matches reshape (the current match is
+    // gone); flag the upcoming reshape so we scroll to whatever's next.
+    wantsScrollRef.current = true;
     onReplaceVerse(m.chapter, m.verse, m.bibleVersion, result.content, result.plainText, verse);
   };
 

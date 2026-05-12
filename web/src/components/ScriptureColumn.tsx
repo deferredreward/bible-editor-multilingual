@@ -90,7 +90,19 @@ export function ScriptureColumn({
   const activeRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState<FindQuery | null>(null);
-  const [findActiveMatch, setFindActiveMatch] = useState<FindMatch | null>(null);
+  // Set only when the overlay reports a user-initiated scroll target; the
+  // BookView's scroll effect keys off this so external content changes
+  // don't yank the user to the next match.
+  const [findScrollTarget, setFindScrollTarget] = useState<FindMatch | null>(null);
+  // Remember the most recent non-book mode so toggling book off returns to
+  // wherever the user was (stacked vs columns). Initialized to the current
+  // mode if it isn't book, else stacked as a safe default.
+  const [lastNonBookMode, setLastNonBookMode] = useState<ScriptureMode>(
+    mode === "book" ? "stacked" : mode,
+  );
+  useEffect(() => {
+    if (mode !== "book") setLastNonBookMode(mode);
+  }, [mode]);
 
   // Ctrl/Cmd+F opens the find overlay (book mode only). Esc inside the
   // overlay closes it via the overlay's own handler.
@@ -107,7 +119,7 @@ export function ScriptureColumn({
 
   // Stable callback identities so the overlay's effect deps don't churn.
   const onFindQueryChange = useCallback((q: FindQuery | null) => setFindQuery(q), []);
-  const onFindActiveMatchChange = useCallback((m: FindMatch | null) => setFindActiveMatch(m), []);
+  const onFindScrollToMatch = useCallback((m: FindMatch | null) => setFindScrollTarget(m), []);
 
   useEffect(() => {
     if (mode === "stacked") {
@@ -166,12 +178,12 @@ export function ScriptureColumn({
         >
           {mode === "columns" ? `${enabledVersions.length} col${enabledVersions.length === 1 ? "" : "s"}` : "columns"}
         </Button>
-        <Tooltip title={mode === "book" ? "back to single-chapter view" : "scroll the whole book across all enabled versions (lazy loads as you scroll)"}>
+        <Tooltip title={mode === "book" ? `back to ${lastNonBookMode}` : "scroll the whole book across all enabled versions (lazy loads as you scroll)"}>
           <Button
             size="small"
             variant={mode === "book" ? "contained" : "outlined"}
             startIcon={<MenuBookIcon fontSize="small" />}
-            onClick={() => onModeChange(mode === "book" ? "columns" : "book")}
+            onClick={() => onModeChange(mode === "book" ? lastNonBookMode : "book")}
             sx={{ textTransform: "none" }}
           >
             book
@@ -247,7 +259,7 @@ export function ScriptureColumn({
               onLoadChapter={onLoadBookChapter}
               enabledVersions={enabledVersions}
               onReplaceVerse={onReplaceBookVerse}
-              onActiveMatchChange={onFindActiveMatchChange}
+              onScrollToMatch={onFindScrollToMatch}
               onQueryChange={onFindQueryChange}
             />
           )}
@@ -262,7 +274,7 @@ export function ScriptureColumn({
             activeNoteOccurrence={activeNoteOccurrence}
             scrollNonce={scrollNonce}
             findQuery={findQuery}
-            findActiveMatch={findActiveMatch}
+            findActiveMatch={findScrollTarget}
             onLoadChapter={onLoadBookChapter}
             onSelectVerse={onSelectBookVerse}
             onEditVerse={onEditBookVerse}
