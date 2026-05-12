@@ -402,11 +402,14 @@ function StackedBody({
             onClick={() => onSelectVerse(v)}
             sx={{
               display: "grid",
-              gridTemplateColumns: "auto auto 1fr",
+              // One narrow gutter column for the verse-number + L/S
+              // markers stacked vertically, plus the wide text column.
+              gridTemplateColumns: "32px 1fr",
               columnGap: 0.75,
               rowGap: 0.25,
+              alignItems: "start",
               px: 1,
-              py: 0.75,
+              py: 0.5,
               my: 0.25,
               borderRadius: 1,
               cursor: "pointer",
@@ -416,52 +419,49 @@ function StackedBody({
               "&:hover": { bgcolor: "action.hover" },
             }}
           >
-            <Typography
-              component="span"
-              variant="caption"
+            <Box
               sx={{
                 gridColumn: 1,
                 gridRow: 1,
-                fontFamily: "monospace",
-                color: "text.disabled",
-                pt: 0.25,
-                whiteSpace: "nowrap",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                lineHeight: 1.1,
               }}
             >
-              {v === 0 ? "intro" : `${chapter}:${v}`}
-            </Typography>
-            <Typography
-              component="span"
-              variant="caption"
-              sx={{
-                gridColumn: 2,
-                gridRow: 1,
-                fontFamily: "monospace",
-                color: "text.disabled",
-                fontWeight: 600,
-                pt: 0.25,
-              }}
-            >
-              L
-            </Typography>
-            <Box sx={{ gridColumn: 3, gridRow: 1, minWidth: 0 }}>{ultV?.plain_text ?? ""}</Box>
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{ fontFamily: "monospace", color: "text.disabled", fontSize: 10 }}
+              >
+                {v === 0 ? "intro" : `${chapter}:${v}`}
+              </Typography>
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{ fontFamily: "monospace", color: "text.disabled", fontWeight: 600, fontSize: 11 }}
+              >
+                L
+              </Typography>
+            </Box>
+            <Box sx={{ gridColumn: 2, gridRow: 1, minWidth: 0 }}>{ultV?.plain_text ?? ""}</Box>
             {ustV && (
               <>
                 <Typography
                   component="span"
                   variant="caption"
                   sx={{
-                    gridColumn: 2,
+                    gridColumn: 1,
                     gridRow: 2,
                     fontFamily: "monospace",
                     color: "text.disabled",
                     fontWeight: 600,
-                    pt: 0.25,
+                    fontSize: 11,
                   }}
                 >
                   S
                 </Typography>
-                <Box sx={{ gridColumn: 3, gridRow: 2, minWidth: 0 }}>{ustV.plain_text ?? ""}</Box>
+                <Box sx={{ gridColumn: 2, gridRow: 2, minWidth: 0 }}>{ustV.plain_text ?? ""}</Box>
               </>
             )}
           </Box>
