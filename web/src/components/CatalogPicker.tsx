@@ -67,11 +67,21 @@ export function CatalogPicker({
           {display ? display(opt) : opt}
         </li>
       )}
-      onChange={(_e, next) => {
-        onChange(typeof next === "string" ? next : null);
-        setOpen(false);
+      onChange={(_e, next, reason) => {
+        const val = typeof next === "string" ? next : null;
+        onChange(val);
+        // Clicking the × clears the value but should leave the input
+        // open so the user can immediately type a replacement; only
+        // close on an actual selection.
+        if (val !== null && reason !== "clear") setOpen(false);
       }}
-      onClose={() => setOpen(false)}
+      onClose={(_e, reason) => {
+        // MUI's "blur" and "escape" close us; "clear" doesn't (it just
+        // fires onChange) but guard anyway. Selecting an option closes.
+        if (reason === "blur" || reason === "escape" || reason === "selectOption") {
+          setOpen(false);
+        }
+      }}
       sx={{ minWidth: 260, display: "inline-flex" }}
       renderInput={(params) => (
         <TextField

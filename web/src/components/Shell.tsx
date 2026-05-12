@@ -356,12 +356,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
             if (!ref) return;
             const list = sortedForVerse(data.tn, ref.verse);
             const sort_order = pickSortOrder(list, refId, "after");
+            // No inherited support_reference — fresh notes get an empty
+            // chip so the user can typeahead in immediately.
             const created = (await api.createRow<TnRow>("tn", {
               book,
               chapter,
               verse: ref.verse,
               ref_raw: ref.ref_raw,
-              support_reference: ref.support_reference,
               note: "",
               sort_order,
             }));
