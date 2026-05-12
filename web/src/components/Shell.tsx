@@ -2,11 +2,13 @@ import { useMemo, useState } from "react";
 import { Box, Typography, CircularProgress, Alert } from "@mui/material";
 import { useChapter } from "../hooks/useChapter";
 import { outbox } from "../sync/outbox";
+import { api } from "../sync/api";
 import type { TnRow, TqRow, TwlRow } from "../sync/api";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn } from "./ResourceColumn";
 import { AlignmentDialog } from "./AlignmentDialog";
+import { TopBar } from "./TopBar";
 
 interface AlignerTarget {
   verse: number;
@@ -38,10 +40,11 @@ interface Props {
   book: string;
   chapter: number;
   initialVerse?: number;
+  onNavigate?: (book: string, chapter: number) => void;
 }
 
-export function Shell({ book, chapter, initialVerse = 1 }: Props) {
-  const { status, data, error, applyLocalRowPatch } = useChapter(book, chapter);
+export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
+  const { status, data, error, applyLocalRowPatch, refetch } = useChapter(book, chapter);
   const [activeVerse, setActiveVerse] = useState(initialVerse);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [mode, setMode] = useState<ScriptureMode>(() =>
@@ -53,17 +56,19 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
   const [alignerTarget, setAlignerTarget] = useState<AlignerTarget | null>(null);
 
   const tileSet = useMemo(() => {
-    if (!data) return [] as Array<{ verse: number; has: boolean }>;
+    if (!data) return [] as Array<{ verse: number; has: boolean; done?: boolean }>;
     const versesWithSomething = new Set<number>();
     Object.values(data.verses).forEach((byVerse) => {
       Object.keys(byVerse).forEach((v) => versesWithSomething.add(parseInt(v, 10)));
     });
     const hasResource = new Set<number>();
     for (const r of [...data.tn, ...data.tq, ...data.twl]) hasResource.add(r.verse);
-    const tiles: Array<{ verse: number; has: boolean }> = [];
-    if (hasResource.has(0)) tiles.push({ verse: 0, has: true });
+    const doneMap = new Map<number, boolean>();
+    for (const s of data.verseStatuses ?? []) doneMap.set(s.verse, !!s.done);
+    const tiles: Array<{ verse: number; has: boolean; done?: boolean }> = [];
+    if (hasResource.has(0)) tiles.push({ verse: 0, has: true, done: doneMap.get(0) });
     const verseNums = [...versesWithSomething].filter((v) => v > 0).sort((a, b) => a - b);
-    for (const v of verseNums) tiles.push({ verse: v, has: hasResource.has(v) });
+    for (const v of verseNums) tiles.push({ verse: v, has: hasResource.has(v), done: doneMap.get(v) });
     return tiles;
   }, [data]);
 
@@ -109,19 +114,15 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
 
   return (
     <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <Box
-        sx={{
-          px: 2,
-          py: 1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "background.paper",
+      <TopBar
+        book={book}
+        chapter={chapter}
+        onNavigate={(b, c) => {
+          setActiveVerse(1);
+          setActiveNoteId(null);
+          onNavigate?.(b, c);
         }}
-      >
-        <Typography variant="h6" sx={{ fontWeight: 500 }}>
-          Bible Editor · {book} {chapter}
-        </Typography>
-      </Box>
+      />
       <Box sx={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <TimelineRail
           book={book}
@@ -129,6 +130,10 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
           tiles={tileSet}
           activeVerse={activeVerse}
           onSelect={setActiveVerse}
+          onToggleDone={async (v, done) => {
+            await api.setVerseDone(book, chapter, v, done);
+            await refetch();
+          }}
         />
         <ScriptureColumn
           book={book}
@@ -176,7 +181,55 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
             const row = data.tn.find((r) => r.id === id);
             if (row) enqueueRow("tn", row, patch);
           }}
-          onNoteFocus={setActiveNoteId}
+          onNoteFocus={(row) => {
+            setActiveNoteId(row.id);
+            if (row.verse !== activeVerse) setActiveVerse(row.verse);
+          }}
+          onNoteCreate={async () => {
+            await api.createRow("tn", {
+              book,
+              chapter,
+              verse: activeVerse,
+              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+              note: "",
+            });
+            await refetch();
+          }}
+          onNoteInsertAfter={async (refId) => {
+            const ref = data.tn.find((r) => r.id === refId);
+            if (!ref) return;
+            await api.createRow("tn", {
+              book,
+              chapter,
+              verse: ref.verse,
+              ref_raw: ref.ref_raw,
+              support_reference: ref.support_reference,
+              note: "",
+            });
+            await refetch();
+          }}
+          onWordCreate={async () => {
+            await api.createRow("twl", {
+              book,
+              chapter,
+              verse: activeVerse,
+              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+              orig_words: "",
+              tw_link: "",
+            });
+            await refetch();
+          }}
+          onQuestionCreate={async () => {
+            await api.createRow("tq", {
+              book,
+              chapter,
+              verse: activeVerse,
+              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+              question: "",
+              response: "",
+            });
+            await refetch();
+          }}
           onNoteDelete={(id) => {
             const row = data.tn.find((r) => r.id === id);
             if (row) void outbox.enqueueDeleteRow("tn", id, row.version);

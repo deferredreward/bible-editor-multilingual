@@ -49,6 +49,93 @@ const TwlPatch = z.object({
 
 const PATCH_SCHEMA = { tn: TnPatch, tq: TqPatch, twl: TwlPatch };
 
+// Generate a 4-char alphanumeric ID matching the DCS sticky-id convention.
+function newRowId(): string {
+  const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < 4; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+const CreateTn = z.object({
+  book: z.string(),
+  chapter: z.number().int().nonnegative(),
+  verse: z.number().int().nonnegative(),
+  ref_raw: z.string(),
+  tags: z.string().nullable().optional(),
+  support_reference: z.string().nullable().optional(),
+  quote: z.string().nullable().optional(),
+  occurrence: z.number().int().nullable().optional(),
+  note: z.string().nullable().optional(),
+});
+const CreateTq = z.object({
+  book: z.string(),
+  chapter: z.number().int().nonnegative(),
+  verse: z.number().int().nonnegative(),
+  ref_raw: z.string(),
+  tags: z.string().nullable().optional(),
+  quote: z.string().nullable().optional(),
+  occurrence: z.number().int().nullable().optional(),
+  question: z.string().nullable().optional(),
+  response: z.string().nullable().optional(),
+});
+const CreateTwl = z.object({
+  book: z.string(),
+  chapter: z.number().int().nonnegative(),
+  verse: z.number().int().nonnegative(),
+  ref_raw: z.string(),
+  tags: z.string().nullable().optional(),
+  orig_words: z.string().nullable().optional(),
+  occurrence: z.number().int().nullable().optional(),
+  tw_link: z.string().nullable().optional(),
+});
+const CREATE_SCHEMA = { tn: CreateTn, tq: CreateTq, twl: CreateTwl };
+
+rows.post("/:kind", async (c) => {
+  const kind = c.req.param("kind");
+  if (!isRowKind(kind)) return c.json({ error: "invalid_kind" }, 400);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const parsed = CREATE_SCHEMA[kind].safeParse(body);
+  if (!parsed.success) return c.json({ error: "invalid_body", details: parsed.error.format() }, 400);
+  const data = parsed.data as Record<string, unknown>;
+
+  // Generate ids until we miss any existing collision. With 32^4 = ~1M space
+  // a collision is rare; this loop is paranoia.
+  let id = newRowId();
+  for (let i = 0; i < 8; i++) {
+    const exists = await c.env.DB.prepare(`SELECT 1 FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1`).bind(id).first();
+    if (!exists) break;
+    id = newRowId();
+  }
+
+  const cols = ["id", ...Object.keys(data)];
+  const placeholders = cols.map((_c, i) => `?${i + 1}`).join(", ");
+  const values: unknown[] = [id, ...Object.values(data)];
+  await c.env.DB.prepare(
+    `INSERT INTO ${KIND_TO_TABLE[kind]} (${cols.join(", ")}) VALUES (${placeholders})`,
+  )
+    .bind(...values)
+    .run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO edit_log (kind, row_key, prev_version, new_version, action, payload_json) VALUES (?1, ?2, NULL, 1, 'create', ?3)`,
+  )
+    .bind(kind, id, JSON.stringify(data))
+    .run();
+
+  const created = await c.env.DB.prepare(
+    `SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1`,
+  )
+    .bind(id)
+    .first();
+  return c.json(created, 201);
+});
+
 rows.get("/:kind/:id", async (c) => {
   const kind = c.req.param("kind");
   const id = c.req.param("id");

@@ -1,27 +1,40 @@
 import { useEffect, useRef, useState } from "react";
-import { Paper, Stack, Chip, IconButton, Typography, Box, TextField } from "@mui/material";
+import { Paper, Stack, Chip, IconButton, Typography, Box, TextField, Tooltip } from "@mui/material";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import AddIcon from "@mui/icons-material/Add";
 import type { TnRow } from "../sync/api";
+import { useCatalogs } from "../hooks/useCatalogs";
+import { CatalogPicker } from "./CatalogPicker";
 
 interface Props {
   row: TnRow;
   active: boolean;
   onChange: (patch: Partial<TnRow>) => void;
   onDelete: () => void;
+  onInsertAfter: () => void;
   onFocus?: () => void;
 }
 
-export function NoteCard({ row, active, onChange, onDelete, onFocus }: Props) {
-  const [quote, setQuote] = useState(row.quote ?? "");
-  const [note, setNote] = useState(row.note ?? "");
+// Notes coming from TSV imports use literal "\n" (two characters) as the
+// line-break marker. tcCreate renders those as real newlines; we do the same
+// on read, and on save we write back whatever the user typed verbatim. The
+// data in D1 transitions to true newlines as users edit.
+function tsvToDisplay(s: string | null): string {
+  return (s ?? "").replace(/\\n/g, "\n");
+}
+
+export function NoteCard({ row, active, onChange, onDelete, onInsertAfter, onFocus }: Props) {
+  const [quote, setQuote] = useState(tsvToDisplay(row.quote));
+  const [note, setNote] = useState(tsvToDisplay(row.note));
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const catalogs = useCatalogs();
 
   // Re-sync when the row changes from outside (e.g. server-confirmed update).
   useEffect(() => {
-    setQuote(row.quote ?? "");
+    setQuote(tsvToDisplay(row.quote));
   }, [row.id, row.version, row.quote]);
   useEffect(() => {
-    setNote(row.note ?? "");
+    setNote(tsvToDisplay(row.note));
   }, [row.id, row.version, row.note]);
 
   const queue = (patch: Partial<TnRow>) => {
@@ -65,25 +78,36 @@ export function NoteCard({ row, active, onChange, onDelete, onFocus }: Props) {
           variant="outlined"
           sx={{ fontFamily: "monospace", fontSize: 11, height: 22 }}
         />
-        {row.support_reference && (
-          <Chip
-            label={shortSupport(row.support_reference)}
-            size="small"
-            color="primary"
-            variant={active ? "filled" : "outlined"}
-            sx={{ fontFamily: "monospace", fontSize: 11, height: 22 }}
-          />
-        )}
+        <CatalogPicker
+          value={row.support_reference}
+          options={catalogs.supportReferences}
+          display={(v) => (v ? shortSupport(v) : "+ support ref")}
+          placeholder="figs-, translate-, writing-, …"
+          color="primary"
+          variant={active ? "filled" : "outlined"}
+          onChange={(next) => onChange({ support_reference: next })}
+        />
         <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace" }}>
           {row.ref_raw}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace" }}>
-          v{row.version}
-        </Typography>
-        <IconButton size="small" onClick={onDelete} color="error" sx={{ p: 0.25 }}>
-          <DeleteOutlineIcon fontSize="inherit" />
-        </IconButton>
+        <Tooltip
+          title={`v${row.version} — row was saved ${row.version - 1} time${row.version - 1 === 1 ? "" : "s"}; last update ${new Date(row.updated_at * 1000).toLocaleString()}`}
+        >
+          <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace", cursor: "help" }}>
+            v{row.version}
+          </Typography>
+        </Tooltip>
+        <Tooltip title="add a new note after this one">
+          <IconButton size="small" onClick={onInsertAfter} color="success" sx={{ p: 0.25 }}>
+            <AddIcon fontSize="inherit" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="delete this note">
+          <IconButton size="small" onClick={onDelete} color="error" sx={{ p: 0.25 }}>
+            <DeleteOutlineIcon fontSize="inherit" />
+          </IconButton>
+        </Tooltip>
       </Stack>
       <Box sx={{ p: 1 }}>
         <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ mb: 0.5 }}>
@@ -111,9 +135,15 @@ export function NoteCard({ row, active, onChange, onDelete, onFocus }: Props) {
             fullWidth
             size="small"
             spellCheck={false}
+            onFocus={onFocus}
             inputProps={{
               dir: "rtl",
-              style: { fontFamily: "monospace", fontSize: 12, textAlign: "right" },
+              style: {
+                fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
+                fontSize: 16,
+                textAlign: "right",
+                lineHeight: 1.5,
+              },
             }}
           />
         </Stack>
@@ -143,7 +173,8 @@ export function NoteCard({ row, active, onChange, onDelete, onFocus }: Props) {
             minRows={2}
             size="small"
             spellCheck
-            inputProps={{ style: { fontSize: 13, lineHeight: 1.45 } }}
+            onFocus={onFocus}
+            inputProps={{ style: { fontSize: 13, lineHeight: 1.5, fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif' } }}
           />
         </Stack>
       </Box>

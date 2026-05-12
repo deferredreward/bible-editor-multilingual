@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Box, Stack, Typography, Chip, Button } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import type { TnRow, TqRow, TwlRow } from "../sync/api";
@@ -13,11 +14,15 @@ interface Props {
   activeNoteId: string | null;
   onNoteChange: (id: string, patch: Partial<TnRow>) => void;
   onNoteDelete: (id: string) => void;
-  onNoteFocus: (id: string) => void;
+  onNoteInsertAfter: (refId: string) => void;
+  onNoteFocus: (row: TnRow) => void;
+  onNoteCreate: () => void;
   onWordChange: (id: string, patch: Partial<TwlRow>) => void;
   onWordDelete: (id: string) => void;
+  onWordCreate: () => void;
   onQuestionChange: (id: string, patch: Partial<TqRow>) => void;
   onQuestionDelete: (id: string) => void;
+  onQuestionCreate: () => void;
 }
 
 export function ResourceColumn({
@@ -28,15 +33,25 @@ export function ResourceColumn({
   activeNoteId,
   onNoteChange,
   onNoteDelete,
+  onNoteInsertAfter,
   onNoteFocus,
+  onNoteCreate,
   onWordChange,
   onWordDelete,
+  onWordCreate,
   onQuestionChange,
   onQuestionDelete,
+  onQuestionCreate,
 }: Props) {
   const tnForVerse = tn.filter((r) => r.verse === activeVerse);
   const tqForVerse = tq.filter((r) => r.verse === activeVerse);
   const twlForVerse = twl.filter((r) => r.verse === activeVerse);
+
+  const notesRef = useRef<HTMLDivElement | null>(null);
+  const wordsRef = useRef<HTMLDivElement | null>(null);
+  const questionsRef = useRef<HTMLDivElement | null>(null);
+  const scrollTo = (r: React.RefObject<HTMLDivElement | null>) =>
+    r.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   return (
     <Box
@@ -64,12 +79,31 @@ export function ResourceColumn({
           Resources · {activeVerse === 0 ? "intro" : activeVerse}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Chip label={`${tnForVerse.length} notes`} size="small" variant="outlined" />
-        <Chip label={`${twlForVerse.length} words`} size="small" variant="outlined" />
-        <Chip label={`${tqForVerse.length} Q`} size="small" variant="outlined" />
+        <Chip
+          label={`${tnForVerse.length} notes`}
+          size="small"
+          variant="outlined"
+          clickable
+          onClick={() => scrollTo(notesRef)}
+        />
+        <Chip
+          label={`${twlForVerse.length} words`}
+          size="small"
+          variant="outlined"
+          clickable
+          onClick={() => scrollTo(wordsRef)}
+        />
+        <Chip
+          label={`${tqForVerse.length} Q`}
+          size="small"
+          variant="outlined"
+          clickable
+          onClick={() => scrollTo(questionsRef)}
+        />
       </Stack>
       <Box sx={{ flex: 1, overflowY: "auto", px: 2, py: 1 }}>
-        <SectionHead title="Notes" count={tnForVerse.length} />
+        <div ref={notesRef} />
+        <SectionHead title="Notes" count={tnForVerse.length} onAdd={onNoteCreate} sticky />
         {tnForVerse.length === 0 && (
           <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
             no notes for this verse
@@ -82,23 +116,26 @@ export function ResourceColumn({
             active={r.id === activeNoteId}
             onChange={(p) => onNoteChange(r.id, p)}
             onDelete={() => onNoteDelete(r.id)}
-            onFocus={() => onNoteFocus(r.id)}
+            onInsertAfter={() => onNoteInsertAfter(r.id)}
+            onFocus={() => onNoteFocus(r)}
           />
         ))}
 
         <Box sx={{ height: 16 }} />
-        <SectionHead title="Words" count={twlForVerse.length} />
+        <div ref={wordsRef} />
+        <SectionHead title="Words" count={twlForVerse.length} onAdd={onWordCreate} />
         <WordsTable rows={twlForVerse} onChange={onWordChange} onDelete={onWordDelete} />
 
         <Box sx={{ height: 16 }} />
-        <SectionHead title="Questions" count={tqForVerse.length} />
+        <div ref={questionsRef} />
+        <SectionHead title="Questions" count={tqForVerse.length} onAdd={onQuestionCreate} />
         <QuestionsTable rows={tqForVerse} onChange={onQuestionChange} onDelete={onQuestionDelete} />
       </Box>
     </Box>
   );
 }
 
-function SectionHead({ title, count }: { title: string; count: number }) {
+function SectionHead({ title, count, onAdd, sticky }: { title: string; count: number; onAdd: () => void; sticky?: boolean }) {
   return (
     <Stack
       direction="row"
@@ -109,6 +146,15 @@ function SectionHead({ title, count }: { title: string; count: number }) {
         mb: 0.5,
         borderBottom: "1px solid",
         borderColor: "divider",
+        ...(sticky
+          ? {
+              position: "sticky",
+              top: 0,
+              bgcolor: "background.paper",
+              zIndex: 2,
+              pt: 0.5,
+            }
+          : {}),
       }}
     >
       <Typography variant="subtitle2">{title}</Typography>
@@ -123,10 +169,9 @@ function SectionHead({ title, count }: { title: string; count: number }) {
         size="small"
         startIcon={<AddIcon fontSize="small" />}
         color="success"
-        variant="text"
+        variant="outlined"
         sx={{ minWidth: 0, fontSize: 11 }}
-        disabled
-        title="adding new rows lands in the next iteration"
+        onClick={onAdd}
       >
         new
       </Button>

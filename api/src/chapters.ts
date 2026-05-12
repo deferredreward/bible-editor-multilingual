@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { Env } from "./index";
-import type { ChapterPayload, TnRow, TqRow, TwlRow, VerseRow, VerseDto } from "./types";
+import type { ChapterPayload, TnRow, TqRow, TwlRow, VerseRow, VerseDto, VerseStatus } from "./types";
 
 export const chapters = new Hono<{ Bindings: Env }>();
 
@@ -13,7 +14,7 @@ chapters.get("/:book/:chapter", async (c) => {
   }
   const db = c.env.DB;
 
-  const [verses, tn, tq, twl] = await Promise.all([
+  const [verses, tn, tq, twl, statuses] = await Promise.all([
     db
       .prepare(
         "SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 ORDER BY verse, bible_version",
@@ -38,6 +39,12 @@ chapters.get("/:book/:chapter", async (c) => {
       )
       .bind(book, chapter)
       .all<TwlRow>(),
+    db
+      .prepare(
+        "SELECT * FROM verse_statuses WHERE book = ?1 AND chapter = ?2",
+      )
+      .bind(book, chapter)
+      .all<VerseStatus>(),
   ]);
 
   // Reshape verses → verses[bibleVersion][verseNum] = VerseDto for easy client lookup.
@@ -61,8 +68,43 @@ chapters.get("/:book/:chapter", async (c) => {
     tn: tn.results,
     tq: tq.results,
     twl: twl.results,
+    verseStatuses: statuses.results,
   };
   return c.json(payload);
+});
+
+// Toggle / set the done flag for a verse.
+const StatusPatch = z.object({ done: z.boolean() });
+chapters.patch("/:book/:chapter/:verse/status", async (c) => {
+  const book = c.req.param("book").toUpperCase();
+  const chapter = parseInt(c.req.param("chapter"), 10);
+  const verse = parseInt(c.req.param("verse"), 10);
+  if (!book || !Number.isFinite(chapter) || !Number.isFinite(verse)) {
+    return c.json({ error: "invalid_params" }, 400);
+  }
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const parsed = StatusPatch.safeParse(body);
+  if (!parsed.success) return c.json({ error: "invalid_body" }, 400);
+  const done = parsed.data.done ? 1 : 0;
+  const now = Math.floor(Date.now() / 1000);
+  await c.env.DB.prepare(
+    `INSERT INTO verse_statuses (book, chapter, verse, done, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(book, chapter, verse) DO UPDATE SET done = ?4, updated_at = ?5`,
+  )
+    .bind(book, chapter, verse, done, now)
+    .run();
+  const row = await c.env.DB.prepare(
+    `SELECT * FROM verse_statuses WHERE book = ?1 AND chapter = ?2 AND verse = ?3`,
+  )
+    .bind(book, chapter, verse)
+    .first<VerseStatus>();
+  return c.json(row);
 });
 
 // Book-level summary: chapter list + row counts. Useful for the timeline.

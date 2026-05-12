@@ -66,6 +66,14 @@ export interface VerseDto {
   content: unknown;
 }
 
+export interface VerseStatus {
+  book: string;
+  chapter: number;
+  verse: number;
+  done: 0 | 1;
+  updated_at: number;
+}
+
 export interface ChapterPayload {
   book: string;
   chapter: number;
@@ -73,6 +81,7 @@ export interface ChapterPayload {
   tn: TnRow[];
   tq: TqRow[];
   twl: TwlRow[];
+  verseStatuses: VerseStatus[];
 }
 
 export interface BookSummary {
@@ -116,12 +125,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface Catalogs {
+  supportReferences: string[];
+  twLinks: string[];
+}
+
+export interface BookListEntry {
+  book: string;
+  imported_at: number;
+}
+
 export const api = {
   getBookSummary: (book: string) =>
     request<BookSummary>(`/api/chapters/${encodeURIComponent(book)}`),
 
   getChapter: (book: string, chapter: number) =>
     request<ChapterPayload>(`/api/chapters/${encodeURIComponent(book)}/${chapter}`),
+
+  getCatalogs: () => request<Catalogs>(`/api/catalogs`),
+
+  getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
+
+  setVerseDone: (book: string, chapter: number, verse: number, done: boolean) =>
+    request<VerseStatus>(
+      `/api/chapters/${encodeURIComponent(book)}/${chapter}/${verse}/status`,
+      { method: "PATCH", body: JSON.stringify({ done }) },
+    ),
+
+  createRow: <T = unknown>(kind: RowKind, body: Record<string, unknown>) =>
+    request<T>(`/api/rows/${kind}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   patchRow: <T = unknown>(
     kind: RowKind,

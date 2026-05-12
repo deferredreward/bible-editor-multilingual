@@ -89,8 +89,11 @@ export function DocColumn({
           overflowY: "auto",
           px: 1.5,
           py: 1,
-          lineHeight: 1.6,
-          fontSize: 14.5,
+          lineHeight: 1.7,
+          fontSize: rtl ? 17 : 15,
+          fontFamily: rtl
+            ? '"Times New Roman","SBL Hebrew","Cardo",serif'
+            : '"Source Serif Pro","Cambria","Times New Roman",serif',
           direction: rtl ? "rtl" : "ltr",
           textAlign: rtl ? "right" : "left",
         }}

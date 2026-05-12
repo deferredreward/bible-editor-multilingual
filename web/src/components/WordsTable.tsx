@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Box, Paper, Stack, TextField, IconButton, Typography, Chip } from "@mui/material";
+import { Box, Paper, Stack, TextField, IconButton, Typography } from "@mui/material";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import type { TwlRow } from "../sync/api";
+import { useCatalogs } from "../hooks/useCatalogs";
+import { CatalogPicker } from "./CatalogPicker";
 
 interface Props {
   rows: TwlRow[];
@@ -60,6 +62,7 @@ function WordRow({
   const [ref, setRef] = useState(row.ref_raw);
   const [quote, setQuote] = useState(row.orig_words ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const catalogs = useCatalogs();
 
   useEffect(() => setRef(row.ref_raw), [row.id, row.version, row.ref_raw]);
   useEffect(() => setQuote(row.orig_words ?? ""), [row.id, row.version, row.orig_words]);
@@ -108,15 +111,20 @@ function WordRow({
         spellCheck={false}
         inputProps={{
           dir: "rtl",
-          style: { fontSize: 13, padding: "3px 6px", textAlign: "right" },
+          style: {
+            fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
+            fontSize: 15,
+            padding: "3px 6px",
+            textAlign: "right",
+          },
         }}
       />
-      <Chip
-        label={twShort(row.tw_link)}
-        size="small"
-        variant="outlined"
-        title={row.tw_link ?? ""}
-        sx={{ justifySelf: "start" }}
+      <CatalogPicker
+        value={row.tw_link}
+        options={catalogs.twLinks}
+        display={(v) => (v ? twShort(v) : "+ TW article")}
+        placeholder="names/, kt/, other/, …"
+        onChange={(next) => onChange({ tw_link: next })}
       />
       <IconButton size="small" onClick={onDelete} color="error" sx={{ p: 0.25 }}>
         <DeleteOutlineIcon fontSize="inherit" />

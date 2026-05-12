@@ -242,30 +242,42 @@ function AlignmentGrid({
           <Tooltip
             title={
               <>
-                <div>{g.source.strong}</div>
-                <div>{g.source.lemma}</div>
-                <div>{g.source.morph}</div>
+                {g.source.map((s, i) => (
+                  <div key={i}>
+                    {s.strong} · {s.lemma} · {s.morph}
+                  </div>
+                ))}
               </>
             }
           >
-            <Paper
-              elevation={0}
+            <Stack
+              direction="column"
+              spacing={0.25}
               sx={{
-                bgcolor: "grey.900",
-                color: "grey.50",
-                px: 1.2,
-                py: 0.5,
-                fontFamily: "monospace",
-                fontSize: 16,
-                textAlign: "center",
-                direction: "rtl",
-                borderRadius: 0.5,
                 mb: 0.5,
-                cursor: "help",
               }}
             >
-              {g.source.content}
-            </Paper>
+              {g.source.map((s, i) => (
+                <Paper
+                  key={i}
+                  elevation={0}
+                  sx={{
+                    bgcolor: "grey.900",
+                    color: "grey.50",
+                    px: 1.2,
+                    py: 0.5,
+                    fontFamily: '"Times New Roman", "SBL Hebrew", "Cardo", serif',
+                    fontSize: 17,
+                    textAlign: "center",
+                    direction: "rtl",
+                    borderRadius: 0.5,
+                    cursor: "help",
+                  }}
+                >
+                  {s.content}
+                </Paper>
+              ))}
+            </Stack>
           </Tooltip>
           <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5}>
             {g.targets.length === 0 ? (

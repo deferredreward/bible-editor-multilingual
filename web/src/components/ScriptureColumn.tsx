@@ -114,14 +114,14 @@ export function ScriptureColumn({
           </ToggleButtonGroup>
         )}
         <Box sx={{ flex: 1 }} />
-        <Tooltip title="snap back to active verse">
+        <Tooltip title="scroll the active verse back into view if you've scrolled away">
           <Button
             size="small"
             startIcon={<PushPinIcon fontSize="small" />}
             onClick={() => activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
             sx={{ textTransform: "none" }}
           >
-            stick
+            go to active
           </Button>
         </Tooltip>
         <Typography variant="caption" color="text.secondary">
@@ -230,16 +230,20 @@ function StackedBody({
               borderRadius: 1,
               cursor: "pointer",
               color: "text.secondary",
+              fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+              lineHeight: 1.5,
               "&:hover": { bgcolor: "action.hover" },
             }}
           >
             <Typography
+              component="span"
               variant="caption"
               sx={{ fontFamily: "monospace", mr: 0.5, color: "text.disabled" }}
             >
               {v === 0 ? "intro" : `${chapter}:${v}`}
             </Typography>
             <Typography
+              component="span"
               variant="caption"
               sx={{ fontFamily: "monospace", mr: 0.5, textTransform: "uppercase" }}
             >
@@ -249,6 +253,7 @@ function StackedBody({
             {ustV && (
               <Box sx={{ pl: 2, mt: 0.25 }}>
                 <Typography
+                  component="span"
                   variant="caption"
                   sx={{ fontFamily: "monospace", mr: 0.5, textTransform: "uppercase" }}
                 >
@@ -313,10 +318,13 @@ function ActiveLine({
           borderRadius: 0.5,
           px: 1,
           py: 0.5,
-          fontSize: 14,
-          lineHeight: 1.4,
+          fontSize: rtl ? 17 : 14.5,
+          lineHeight: 1.5,
           direction: rtl ? "rtl" : "ltr",
           textAlign: rtl ? "right" : "left",
+          fontFamily: rtl
+            ? '"Times New Roman","SBL Hebrew","Cardo",serif'
+            : '"Source Serif Pro","Cambria","Times New Roman",serif',
           outline: "none",
           "&:focus": readOnly
             ? {}

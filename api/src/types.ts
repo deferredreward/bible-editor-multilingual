@@ -64,6 +64,14 @@ export interface VerseRow {
   updated_at: number;
 }
 
+export interface VerseStatus {
+  book: string;
+  chapter: number;
+  verse: number;
+  done: 0 | 1;
+  updated_at: number;
+}
+
 export interface ChapterPayload {
   book: string;
   chapter: number;
@@ -71,6 +79,7 @@ export interface ChapterPayload {
   tn: TnRow[];
   tq: TqRow[];
   twl: TwlRow[];
+  verseStatuses: VerseStatus[];
 }
 
 export interface VerseDto extends Omit<VerseRow, "content_json"> {

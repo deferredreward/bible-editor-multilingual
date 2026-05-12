@@ -28,7 +28,7 @@ export interface TargetWord {
 
 export interface AlignmentGroup {
   id: string;             // local-only id
-  source: SourceWord;
+  source: SourceWord[];   // 1+ source words; 2+ = compound (nested milestones)
   targets: TargetWord[];
 }
 
@@ -42,6 +42,68 @@ export interface AlignmentState {
 }
 
 type ParsedNode = Record<string, unknown>;
+
+function nodeIsZaln(n: ParsedNode | undefined): boolean {
+  return !!n && n["type"] === "milestone" && n["tag"] === "zaln";
+}
+
+function nodeIsWord(n: ParsedNode | undefined): boolean {
+  return !!n && n["type"] === "word" && n["tag"] === "w";
+}
+
+function sourceOf(node: ParsedNode): SourceWord {
+  return {
+    strong: String(node["strong"] ?? ""),
+    lemma: String(node["lemma"] ?? ""),
+    morph: String(node["morph"] ?? ""),
+    occurrence: String(node["occurrence"] ?? "1"),
+    occurrences: String(node["occurrences"] ?? "1"),
+    content: String(node["content"] ?? ""),
+  };
+}
+
+function targetOf(node: ParsedNode): TargetWord {
+  return {
+    id: uid(),
+    text: String(node["text"] ?? ""),
+    occurrence: String(node["occurrence"] ?? "1"),
+    occurrences: String(node["occurrences"] ?? "1"),
+  };
+}
+
+// Walk a list of nodes, accumulating alignment groups and unaligned words.
+// `sourceChain` carries the stack of source words from outer milestones —
+// when a (possibly nested) milestone has its own \w children, we emit a
+// group whose `source` is the full chain. This handles compound alignments
+// (one phrase mapped to multiple Hebrew/Greek words) correctly.
+function walk(
+  nodes: ParsedNode[],
+  sourceChain: SourceWord[],
+  groups: AlignmentGroup[],
+  unaligned: TargetWord[],
+): void {
+  for (const node of nodes ?? []) {
+    if (!node || typeof node !== "object") continue;
+    if (nodeIsZaln(node)) {
+      const chain = [...sourceChain, sourceOf(node)];
+      const children = (node["children"] as ParsedNode[] | undefined) ?? [];
+      const directTargets: TargetWord[] = [];
+      const nestedMilestones: ParsedNode[] = [];
+      for (const child of children) {
+        if (nodeIsWord(child)) directTargets.push(targetOf(child));
+        else if (nodeIsZaln(child)) nestedMilestones.push(child);
+      }
+      if (directTargets.length > 0) {
+        groups.push({ id: uid(), source: chain, targets: directTargets });
+      }
+      if (nestedMilestones.length > 0) {
+        walk(nestedMilestones, chain, groups, unaligned);
+      }
+    } else if (nodeIsWord(node) && sourceChain.length === 0) {
+      unaligned.push(targetOf(node));
+    }
+  }
+}
 
 function uid(): string {
   // Browser + worker support crypto.randomUUID. Node 19+ does too.
@@ -57,65 +119,48 @@ export function parseAlignment(verseObjects: unknown[]): AlignmentState {
   const tail: ParsedNode[] = [];
 
   let seenContent = false;
+  const inputs = (verseObjects ?? []) as ParsedNode[];
 
-  for (const raw of verseObjects ?? []) {
-    const node = raw as ParsedNode;
+  for (const node of inputs) {
     if (!node || typeof node !== "object") continue;
-
-    if (node["type"] === "milestone" && node["tag"] === "zaln") {
+    if (nodeIsZaln(node) || nodeIsWord(node)) {
       seenContent = true;
-      const source: SourceWord = {
-        strong: String(node["strong"] ?? ""),
-        lemma: String(node["lemma"] ?? ""),
-        morph: String(node["morph"] ?? ""),
-        occurrence: String(node["occurrence"] ?? "1"),
-        occurrences: String(node["occurrences"] ?? "1"),
-        content: String(node["content"] ?? ""),
-      };
-      const targets: TargetWord[] = [];
-      for (const child of (node["children"] as ParsedNode[] | undefined) ?? []) {
-        if (child && child["type"] === "word" && child["tag"] === "w") {
-          targets.push({
-            id: uid(),
-            text: String(child["text"] ?? ""),
-            occurrence: String(child["occurrence"] ?? "1"),
-            occurrences: String(child["occurrences"] ?? "1"),
-          });
-        }
-        // Nested milestones (compound source) — store verbatim by tucking
-        // the whole milestone back as a passthrough. v1 doesn't render
-        // these but keeps them safe.
-      }
-      groups.push({ id: uid(), source, targets });
       continue;
     }
-
-    if (node["type"] === "word" && node["tag"] === "w") {
-      seenContent = true;
-      unaligned.push({
-        id: uid(),
-        text: String(node["text"] ?? ""),
-        occurrence: String(node["occurrence"] ?? "1"),
-        occurrences: String(node["occurrences"] ?? "1"),
-      });
-      continue;
-    }
-
     if (!seenContent) prefix.push(node);
     else tail.push(node);
   }
 
+  // Now do the alignment walk over only the milestone/word nodes.
+  walk(inputs.filter((n) => nodeIsZaln(n) || nodeIsWord(n)), [], groups, unaligned);
+
   return { groups, unaligned, prefix, passthroughTail: tail };
+}
+
+function buildMilestone(source: SourceWord, children: ParsedNode[]): ParsedNode {
+  return {
+    tag: "zaln",
+    type: "milestone",
+    strong: source.strong,
+    lemma: source.lemma,
+    morph: source.morph,
+    occurrence: source.occurrence,
+    occurrences: source.occurrences,
+    content: source.content,
+    children,
+    endTag: "zaln-e\\*",
+  };
 }
 
 export function serializeAlignment(state: AlignmentState): unknown[] {
   const out: ParsedNode[] = [...state.prefix];
 
   state.groups.forEach((group, idx) => {
-    const children: ParsedNode[] = [];
+    // Build the innermost children: \w word tokens with separators.
+    const targetTokens: ParsedNode[] = [];
     group.targets.forEach((t, ti) => {
-      if (ti > 0) children.push({ type: "text", text: " " });
-      children.push({
+      if (ti > 0) targetTokens.push({ type: "text", text: " " });
+      targetTokens.push({
         text: t.text,
         tag: "w",
         type: "word",
@@ -123,18 +168,16 @@ export function serializeAlignment(state: AlignmentState): unknown[] {
         occurrences: t.occurrences,
       });
     });
-    out.push({
-      tag: "zaln",
-      type: "milestone",
-      strong: group.source.strong,
-      lemma: group.source.lemma,
-      morph: group.source.morph,
-      occurrence: group.source.occurrence,
-      occurrences: group.source.occurrences,
-      content: group.source.content,
-      children,
-      endTag: "zaln-e\\*",
-    });
+
+    // Nest from the innermost source outward.
+    let node: ParsedNode = buildMilestone(
+      group.source[group.source.length - 1],
+      targetTokens,
+    );
+    for (let i = group.source.length - 2; i >= 0; i--) {
+      node = buildMilestone(group.source[i], [node]);
+    }
+    out.push(node);
     if (idx < state.groups.length - 1) {
       out.push({ type: "text", text: " " });
     }
