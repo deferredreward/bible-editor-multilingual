@@ -218,6 +218,27 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
           onOpenBookAligner={(ch, v, bv) =>
             setAlignerTarget({ chapter: ch, verse: v, bibleVersion: bv })
           }
+          onReplaceBookVerse={(ch, verseNum, bibleVersion, newContent, newPlainText, base) => {
+            // Find/replace ships pre-built content from smartReplaceVerse —
+            // alignment is preserved when word counts match, fully
+            // re-tokenized otherwise.
+            bookHook?.applyLocalVerse({
+              ...base,
+              chapter: ch,
+              verse: verseNum,
+              bible_version: bibleVersion,
+              plain_text: newPlainText,
+              content: newContent,
+            } as VerseDto);
+            void outbox.enqueueVerse(
+              book,
+              ch,
+              verseNum,
+              bibleVersion,
+              base.version,
+              { content: newContent, plain_text: newPlainText },
+            );
+          }}
           onSelectVerse={setActiveVerse}
           onModeChange={(m) => {
             setMode(m);

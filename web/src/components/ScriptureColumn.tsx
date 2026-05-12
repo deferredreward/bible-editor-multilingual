@@ -39,6 +39,7 @@ interface Props {
   onSelectBookVerse?: (chapter: number, verse: number) => void;
   onEditBookVerse?: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
   onOpenBookAligner?: (chapter: number, verse: number, bibleVersion: string) => void;
+  onReplaceBookVerse?: (chapter: number, verse: number, bibleVersion: string, newContent: unknown, newPlainText: string, base: VerseDto) => void;
   onSelectVerse: (v: number) => void;
   onOpenAligner: (verse: number, bibleVersion: string) => void;
   onModeChange: (mode: ScriptureMode) => void;
@@ -72,6 +73,7 @@ export function ScriptureColumn({
   onSelectBookVerse,
   onEditBookVerse,
   onOpenBookAligner,
+  onReplaceBookVerse,
   onSelectVerse,
   onOpenAligner,
   onModeChange,
@@ -228,13 +230,13 @@ export function ScriptureColumn({
         />
       ) : mode === "book" && bookChapterList && bookChapters && onLoadBookChapter && onSelectBookVerse && onEditBookVerse && onOpenBookAligner ? (
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {findOpen && (
+          {findOpen && onReplaceBookVerse && (
             <FindReplaceOverlay
               open
               onClose={() => setFindOpen(false)}
               chapters={bookChapters}
               enabledVersions={enabledVersions}
-              onReplaceVerse={onEditBookVerse}
+              onReplaceVerse={onReplaceBookVerse}
               onActiveMatchChange={onFindActiveMatchChange}
               onQueryChange={onFindQueryChange}
             />

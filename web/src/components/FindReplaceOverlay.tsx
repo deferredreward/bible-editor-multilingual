@@ -23,6 +23,7 @@ import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import type { ChapterState } from "../hooks/useBook";
 import type { VerseDto } from "../sync/api";
+import { smartReplaceVerse } from "../lib/replace";
 
 export interface FindMatch {
   chapter: number;
@@ -38,13 +39,14 @@ interface Props {
   onClose: () => void;
   chapters: Map<number, ChapterState>;
   enabledVersions: string[];
-  // Replace target: caller provides a way to PATCH a verse with new plain
-  // text. The overlay computes new content (text-only — alignment is lost
-  // for replaced verses, same as plain-text editing in DocColumn).
+  // Replace target: caller persists the rewritten content. The overlay
+  // builds the new verseObjects + plain text via smartReplaceVerse so
+  // alignment is preserved whenever the find/replace word counts line up.
   onReplaceVerse: (
     chapter: number,
     verse: number,
     bibleVersion: string,
+    newContent: unknown,
     newPlainText: string,
     base: VerseDto,
   ) => void;
@@ -122,24 +124,33 @@ export function FindReplaceOverlay({
     if (!state || state.kind !== "ready") return;
     const verse = state.data.verses[m.bibleVersion]?.[m.verse];
     if (!verse) return;
+    if (!compiled.re) return;
     const text = verse.plain_text ?? "";
-    const replaced = applyReplacement(text, m, replace, compiled.re);
-    if (replaced === text) return;
-    onReplaceVerse(m.chapter, m.verse, m.bibleVersion, replaced, verse);
+    const result = smartReplaceVerse(
+      verse.content,
+      text,
+      compiled.re,
+      m.startIndex,
+      m.endIndex - m.startIndex,
+      replace,
+    );
+    if (result.plainText === text) return;
+    onReplaceVerse(m.chapter, m.verse, m.bibleVersion, result.content, result.plainText, verse);
   };
 
   const doReplaceAll = () => {
     if (!compiled.re || matches.length === 0) return;
-    // Group by (chapter, verse, version) and rewrite each whole verse in one
-    // pass so multiple matches in the same verse fold into one PATCH.
-    const grouped = new Map<string, FindMatch[]>();
+    // Sort matches per-verse from end → start so each rewrite doesn't
+    // invalidate the indices of later ones; we still ship one PATCH per
+    // verse by collapsing the intermediate results.
+    const byVerse = new Map<string, FindMatch[]>();
     for (const m of matches) {
       const key = `${m.chapter}|${m.verse}|${m.bibleVersion}`;
-      const list = grouped.get(key) ?? [];
+      const list = byVerse.get(key) ?? [];
       list.push(m);
-      grouped.set(key, list);
+      byVerse.set(key, list);
     }
-    for (const key of grouped.keys()) {
+    for (const [key, list] of byVerse) {
       const [chStr, vStr, bv] = key.split("|");
       const ch = parseInt(chStr, 10);
       const v = parseInt(vStr, 10);
@@ -147,13 +158,25 @@ export function FindReplaceOverlay({
       if (!state || state.kind !== "ready") continue;
       const verse = state.data.verses[bv]?.[v];
       if (!verse) continue;
-      const text = verse.plain_text ?? "";
-      // Rebuild a fresh regex with the same options — applyReplacement uses
-      // its own lastIndex.
-      const re = new RegExp(compiled.re.source, compiled.re.flags);
-      const replaced = text.replace(re, replace);
-      if (replaced === text) continue;
-      onReplaceVerse(ch, v, bv, replaced, verse);
+      // Apply replacements in reverse plain-text order so the earlier
+      // matches' indices stay valid as we mutate.
+      const ordered = [...list].sort((a, b) => b.startIndex - a.startIndex);
+      let content: unknown = verse.content;
+      let plainText = verse.plain_text ?? "";
+      for (const mm of ordered) {
+        const result = smartReplaceVerse(
+          content,
+          plainText,
+          compiled.re,
+          mm.startIndex,
+          mm.endIndex - mm.startIndex,
+          replace,
+        );
+        content = result.content;
+        plainText = result.plainText;
+      }
+      if (plainText === verse.plain_text) continue;
+      onReplaceVerse(ch, v, bv, content, plainText, verse);
     }
   };
 
@@ -347,23 +370,6 @@ function collectMatches(
     }
   }
   return out;
-}
-
-function applyReplacement(
-  text: string,
-  match: FindMatch,
-  replace: string,
-  re: RegExp | null,
-): string {
-  if (!re) return text;
-  // Replace only the run at match.startIndex by re-running the regex from
-  // that anchor. We can't rely on String.replace because we need the Nth
-  // occurrence, not just the first.
-  const localRe = new RegExp(re.source, re.flags);
-  localRe.lastIndex = match.startIndex;
-  const m = localRe.exec(text);
-  if (!m || m.index !== match.startIndex) return text;
-  return text.slice(0, m.index) + replace + text.slice(m.index + m[0].length);
 }
 
 function countChapterStates(chapters: Map<number, ChapterState>): {
