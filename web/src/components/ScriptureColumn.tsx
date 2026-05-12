@@ -235,6 +235,8 @@ export function ScriptureColumn({
               open
               onClose={() => setFindOpen(false)}
               chapters={bookChapters}
+              chapterList={bookChapterList}
+              onLoadChapter={onLoadBookChapter}
               enabledVersions={enabledVersions}
               onReplaceVerse={onReplaceBookVerse}
               onActiveMatchChange={onFindActiveMatchChange}

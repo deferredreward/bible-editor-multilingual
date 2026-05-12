@@ -38,6 +38,8 @@ interface Props {
   open: boolean;
   onClose: () => void;
   chapters: Map<number, ChapterState>;
+  chapterList: number[];
+  onLoadChapter: (ch: number) => void;
   enabledVersions: string[];
   // Replace target: caller persists the rewritten content. The overlay
   // builds the new verseObjects + plain text via smartReplaceVerse so
@@ -61,6 +63,8 @@ export function FindReplaceOverlay({
   open,
   onClose,
   chapters,
+  chapterList,
+  onLoadChapter,
   enabledVersions,
   onReplaceVerse,
   onActiveMatchChange,
@@ -72,6 +76,7 @@ export function FindReplaceOverlay({
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const findInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
 
   // Focus the find input when the overlay opens (Ctrl/Cmd+F flow).
   useEffect(() => {
@@ -211,6 +216,12 @@ export function FindReplaceOverlay({
             } else if (e.key === "Escape") {
               e.preventDefault();
               onClose();
+            } else if (e.key === "Tab" && !e.shiftKey) {
+              // Skip the toggles/buttons in between so Tab lands directly
+              // on the replace input, matching VS Code's behaviour.
+              e.preventDefault();
+              replaceInputRef.current?.focus();
+              replaceInputRef.current?.select();
             }
           }}
           size="small"
@@ -264,8 +275,25 @@ export function FindReplaceOverlay({
         </Tooltip>
         <Box sx={{ flex: 1 }} />
         <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace" }}>
-          scope: {counts.ready}/{counts.total} ch loaded
+          scope: {counts.ready}/{chapterList.length} ch loaded
         </Typography>
+        {counts.ready < chapterList.length && (
+          <Tooltip title="fetch every chapter of this book now so search covers the whole book — only useful once per session">
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                for (const ch of chapterList) {
+                  const cur = chapters.get(ch);
+                  if (!cur || cur.kind === "unloaded") onLoadChapter(ch);
+                }
+              }}
+              sx={{ textTransform: "none", fontSize: 11 }}
+            >
+              load full book
+            </Button>
+          </Tooltip>
+        )}
         <Tooltip title="close (Esc)">
           <IconButton size="small" onClick={onClose}>
             <CloseIcon fontSize="small" />
@@ -274,8 +302,19 @@ export function FindReplaceOverlay({
       </Stack>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.75 }}>
         <TextField
+          inputRef={replaceInputRef}
           value={replace}
           onChange={(e) => setReplace(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onClose();
+            } else if (e.key === "Tab" && e.shiftKey) {
+              e.preventDefault();
+              findInputRef.current?.focus();
+              findInputRef.current?.select();
+            }
+          }}
           size="small"
           placeholder="replace"
           sx={{ minWidth: 240 }}
