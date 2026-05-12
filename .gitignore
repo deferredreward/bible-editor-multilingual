@@ -16,3 +16,9 @@ Thumbs.db
 coverage/
 .cache/
 spikes/out/
+
+# generated output from one-shot importers (scripts/import-*.mjs). The
+# scripts themselves are tracked; their SQL output and downloaded tarballs
+# are not.
+scripts/out/
+scripts/tmp/

@@ -4,6 +4,7 @@ import { chapters } from "./chapters";
 import { rows } from "./rows";
 import { verses } from "./verses";
 import { catalogs } from "./catalogs";
+import { lexicon } from "./lexicon";
 
 export interface Env {
   DB: D1Database;
@@ -43,6 +44,7 @@ app.route("/api/chapters", chapters);
 app.route("/api/rows", rows);
 app.route("/api/verses", verses);
 app.route("/api/catalogs", catalogs);
+app.route("/api/lexicon", lexicon);
 
 app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 

@@ -24,8 +24,10 @@ import {
   serializeAlignment,
   type AlignmentGroup,
   type AlignmentState,
+  type SourceWord,
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
+import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
 
 const WORD_IDS_MIME = "text/word-ids";
 const SOURCE_ID_MIME = "text/source-id";
@@ -145,11 +147,27 @@ export function AlignmentDialog({
     const sortKey = (g: (typeof state.groups)[number]) => {
       if (g.source.length === 0) return Number.MAX_SAFE_INTEGER;
       const s = g.source[0];
-      const k = `${s.content}|${s.occurrence}`;
-      return sourceIndexMap.get(k) ?? Number.MAX_SAFE_INTEGER;
+      const byStrong = sourceIndexMap.get(`s:${s.strong}|${s.occurrence}`);
+      if (byStrong !== undefined) return byStrong;
+      return (
+        sourceIndexMap.get(`t:${s.content}|${s.occurrence}`) ??
+        Number.MAX_SAFE_INTEGER
+      );
     };
     return [...state.groups].sort((a, b) => sortKey(a) - sortKey(b));
   }, [state, sourceIndexMap]);
+
+  // Pre-load lexicon entries for every unique Strong's referenced by the
+  // current alignment so tooltips don't shimmer on hover.
+  const allStrongs = useMemo(() => {
+    if (!state) return [] as string[];
+    const set = new Set<string>();
+    for (const g of state.groups) {
+      for (const s of g.source) if (s.strong) set.add(s.strong);
+    }
+    return [...set];
+  }, [state]);
+  const lexiconMap = useLexicon(allStrongs);
 
   const handleReset = () => {
     setState(initial);
@@ -209,6 +227,7 @@ export function AlignmentDialog({
               <AlignmentGrid
                 groups={displayGroups}
                 twlForVerse={twlForVerse}
+                lexiconMap={lexiconMap}
                 verseNum={verseNum}
                 onTargetsDrop={handleTargetsDrop}
                 onSourceDrop={handleSourceDrop}
@@ -390,6 +409,7 @@ function UnalignedBag({
 function AlignmentGrid({
   groups,
   twlForVerse,
+  lexiconMap,
   verseNum,
   onTargetsDrop,
   onSourceDrop,
@@ -397,6 +417,7 @@ function AlignmentGrid({
 }: {
   groups: AlignmentGroup[];
   twlForVerse: TwlRow[];
+  lexiconMap: Map<string, LexiconEntry | null>;
   verseNum: number;
   onTargetsDrop: (dest: string, wordIds: string[]) => void;
   onSourceDrop: (destGroupId: string, sourceId: string) => void;
@@ -430,14 +451,11 @@ function AlignmentGrid({
                 <Tooltip
                   key={s.id}
                   title={
-                    <Box sx={{ fontSize: 12 }}>
-                      <div>strong: {s.strong || "—"}</div>
-                      <div>lemma: {s.lemma || "—"}</div>
-                      <div>morph: {s.morph || "—"}</div>
-                      {twHintFor(twlForVerse, verseNum, s.content) && (
-                        <div>tw: {twHintFor(twlForVerse, verseNum, s.content)}</div>
-                      )}
-                    </Box>
+                    <SourceTooltipBody
+                      source={s}
+                      lex={lexiconMap.get(s.strong) ?? null}
+                      twHint={twHintFor(twlForVerse, verseNum, s.content)}
+                    />
                   }
                 >
                   <Paper
@@ -493,6 +511,44 @@ function AlignmentGrid({
           </Stack>
         </DropTargetBox>
       ))}
+    </Box>
+  );
+}
+
+function SourceTooltipBody({
+  source,
+  lex,
+  twHint,
+}: {
+  source: SourceWord;
+  lex: LexiconEntry | null;
+  twHint: string | null;
+}) {
+  // Compact body keyed to data we have. UHAL/UGL coverage is patchy: many
+  // entries carry POS but no gloss/definition. We show whatever is present
+  // and fall back to the in-USFM lemma/morph if the lexicon row is empty.
+  const lemma = lex?.lemma || source.lemma || "—";
+  const pos = lex?.part_of_speech || source.morph || "—";
+  return (
+    <Box sx={{ fontSize: 12, maxWidth: 280, lineHeight: 1.45 }}>
+      <Box sx={{ fontFamily: '"Times New Roman","SBL Hebrew",serif', fontSize: 16, mb: 0.25 }}>
+        {lemma}
+      </Box>
+      <Box sx={{ opacity: 0.85 }}>
+        {source.strong || "—"} · {pos}
+      </Box>
+      {lex?.gloss && (
+        <Box sx={{ mt: 0.5, fontWeight: 600 }}>{lex.gloss}</Box>
+      )}
+      {lex?.definition && (
+        <Box sx={{ mt: 0.25, opacity: 0.9 }}>{lex.definition}</Box>
+      )}
+      {!lex?.gloss && !lex?.definition && (
+        <Box sx={{ mt: 0.5, opacity: 0.55, fontStyle: "italic" }}>
+          no lexicon entry — stub in source resource
+        </Box>
+      )}
+      {twHint && <Box sx={{ mt: 0.5 }}>tw: {twHint}</Box>}
     </Box>
   );
 }
@@ -650,25 +706,33 @@ function twShort(link: string | null): string | null {
   return m ? m[1] : link;
 }
 
-// Walk the source verse's USFM tree and build a "text|occurrence" → index
-// map for every \w token. Used to order alignment blocks by their first
-// source word's position in the source-language verse.
+// Walk the source verse's USFM tree and build an index map of every \w
+// token. Two keys per token — by strong+occurrence ("s:b:H2320|1") and by
+// text+occurrence ("t:בַּ⁠חֹ֨דֶשׁ֙|1") — so callers can match either way.
+// Strong-based lookup is more robust because cantillation marks sometimes
+// differ between the ULT/UST milestone's `content` attribute and the UHB
+// \w token's `text`. UHB tokens lack an explicit `occurrence` field, so we
+// derive it by counting same-strong tokens seen so far in the verse.
 function buildSourceIndexMap(sourceVerse: VerseDto | null): Map<string, number> {
   const map = new Map<string, number>();
   if (!sourceVerse?.content) return map;
   const verseObjects = (sourceVerse.content as { verseObjects?: unknown[] }).verseObjects;
   if (!Array.isArray(verseObjects)) return map;
   let idx = 0;
+  const strongCount = new Map<string, number>();
   const walk = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
       const o = n as Record<string, unknown> | null;
       if (!o) continue;
       if (o["type"] === "word" && o["tag"] === "w") {
         const text = String(o["text"] ?? "");
-        const occ = String(o["occurrence"] ?? "1");
-        if (!map.has(`${text}|${occ}`)) {
-          map.set(`${text}|${occ}`, idx);
-        }
+        const strong = String(o["strong"] ?? "");
+        const occ = (strongCount.get(strong) ?? 0) + 1;
+        strongCount.set(strong, occ);
+        const textKey = `t:${text}|${occ}`;
+        const strongKey = `s:${strong}|${occ}`;
+        if (!map.has(textKey)) map.set(textKey, idx);
+        if (!map.has(strongKey)) map.set(strongKey, idx);
         idx++;
       } else if (o["type"] === "milestone") {
         walk((o["children"] as unknown[] | undefined) ?? []);
