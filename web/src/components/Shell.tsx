@@ -7,6 +7,7 @@ import { outbox } from "../sync/outbox";
 import { api } from "../sync/api";
 import type { TnRow, TqRow, TwlRow, VerseDto } from "../sync/api";
 import { smartEditVerse } from "../lib/replace";
+import { verseHasUnalignedWork } from "../lib/alignment";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn } from "./ResourceColumn";
@@ -82,14 +83,29 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
     Object.values(data.verses).forEach((byVerse) => {
       Object.keys(byVerse).forEach((v) => versesWithSomething.add(parseInt(v, 10)));
     });
-    const hasResource = new Set<number>();
-    for (const r of [...data.tn, ...data.tq, ...data.twl]) hasResource.add(r.verse);
+    const sourceByVerse = data.verses.UHB ?? data.verses.UGNT ?? {};
+    const ult = data.verses.ULT ?? {};
+    const ust = data.verses.UST ?? {};
+    const getVO = (dto: VerseDto | undefined) => {
+      const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+      return Array.isArray(vo) ? vo : null;
+    };
+    const hasUnalignedFor = (verse: number) => {
+      if (verse === 0) return false;
+      const sourceVO = getVO(sourceByVerse[verse]);
+      const ultVO = getVO(ult[verse]);
+      if (ultVO && verseHasUnalignedWork(ultVO, sourceVO)) return true;
+      const ustVO = getVO(ust[verse]);
+      if (ustVO && verseHasUnalignedWork(ustVO, sourceVO)) return true;
+      return false;
+    };
+    const introHasResource = [...data.tn, ...data.tq, ...data.twl].some((r) => r.verse === 0);
     const doneMap = new Map<number, boolean>();
     for (const s of data.verseStatuses ?? []) doneMap.set(s.verse, !!s.done);
     const tiles: Array<{ verse: number; has: boolean; done?: boolean }> = [];
-    if (hasResource.has(0)) tiles.push({ verse: 0, has: true, done: doneMap.get(0) });
+    if (introHasResource) tiles.push({ verse: 0, has: false, done: doneMap.get(0) });
     const verseNums = [...versesWithSomething].filter((v) => v > 0).sort((a, b) => a - b);
-    for (const v of verseNums) tiles.push({ verse: v, has: hasResource.has(v), done: doneMap.get(v) });
+    for (const v of verseNums) tiles.push({ verse: v, has: hasUnalignedFor(v), done: doneMap.get(v) });
     return tiles;
   }, [data]);
 

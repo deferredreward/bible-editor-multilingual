@@ -91,6 +91,8 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, onSelect, onTo
                 {t.verse === 0 ? "intro" : t.verse}
                 {t.has && !active && (
                   <Box
+                    aria-label="unaligned words remain"
+                    title="unaligned words remain"
                     sx={{
                       position: "absolute",
                       right: 4,

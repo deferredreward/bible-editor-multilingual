@@ -191,6 +191,16 @@ export function parseAlignment(
   return withSourceCoverage(state, sourceVerseObjects);
 }
 
+export function verseHasUnalignedWork(
+  targetVerseObjects: unknown[] | null | undefined,
+  sourceVerseObjects: unknown[] | null | undefined,
+): boolean {
+  if (!Array.isArray(targetVerseObjects)) return false;
+  const state = parseAlignment(targetVerseObjects, sourceVerseObjects ?? null);
+  if (state.unaligned.length > 0) return true;
+  return state.groups.some((g) => g.targets.length === 0);
+}
+
 interface CollectedSourceWord {
   position: number;
   strong: string;
