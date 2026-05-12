@@ -16,6 +16,12 @@ export interface UseChapterReturn {
   refetch: () => Promise<void>;
   applyLocalRowPatch: (kind: "tn" | "tq" | "twl", id: string, patch: Partial<TnRow & TqRow & TwlRow>) => void;
   applyLocalRowReplacement: (kind: "tn" | "tq" | "twl", row: TnRow | TqRow | TwlRow) => void;
+  applyLocalRowDelete: (kind: "tn" | "tq" | "twl", id: string) => void;
+  applyLocalRowInsert: (
+    kind: "tn" | "tq" | "twl",
+    row: TnRow | TqRow | TwlRow,
+    position?: { afterId?: string },
+  ) => void;
 }
 
 export function useChapter(book: string, chapter: number): UseChapterReturn {
@@ -71,6 +77,44 @@ export function useChapter(book: string, chapter: number): UseChapterReturn {
     [],
   );
 
+  const applyLocalRowDelete = useCallback<UseChapterReturn["applyLocalRowDelete"]>(
+    (kind, id) => {
+      setData((prev) => {
+        if (!prev) return prev;
+        const list = prev[kind] as Array<TnRow | TqRow | TwlRow>;
+        const next = list.filter((r) => r.id !== id);
+        return { ...prev, [kind]: next } as ChapterPayload;
+      });
+    },
+    [],
+  );
+
+  const applyLocalRowInsert = useCallback<UseChapterReturn["applyLocalRowInsert"]>(
+    (kind, row, position) => {
+      setData((prev) => {
+        if (!prev) return prev;
+        const list = prev[kind] as Array<TnRow | TqRow | TwlRow>;
+        // Skip if a row with this id is already present (e.g. createRow response
+        // racing with an outbox replacement).
+        if (list.some((r) => r.id === row.id)) return prev;
+        let next: Array<TnRow | TqRow | TwlRow>;
+        const afterId = position?.afterId;
+        if (afterId) {
+          const idx = list.findIndex((r) => r.id === afterId);
+          if (idx >= 0) {
+            next = [...list.slice(0, idx + 1), row, ...list.slice(idx + 1)];
+          } else {
+            next = [...list, row];
+          }
+        } else {
+          next = [...list, row];
+        }
+        return { ...prev, [kind]: next } as ChapterPayload;
+      });
+    },
+    [],
+  );
+
   // Adopt server-confirmed values when an outbox op succeeds.
   useEffect(() => {
     return onOutboxResult((op, result) => {
@@ -83,5 +127,14 @@ export function useChapter(book: string, chapter: number): UseChapterReturn {
     });
   }, [book, chapter, applyLocalRowReplacement]);
 
-  return { status, data, error, refetch, applyLocalRowPatch, applyLocalRowReplacement };
+  return {
+    status,
+    data,
+    error,
+    refetch,
+    applyLocalRowPatch,
+    applyLocalRowReplacement,
+    applyLocalRowDelete,
+    applyLocalRowInsert,
+  };
 }

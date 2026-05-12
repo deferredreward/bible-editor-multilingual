@@ -7,11 +7,13 @@ import { CatalogPicker } from "./CatalogPicker";
 
 interface Props {
   rows: TwlRow[];
+  activeId: string | null;
   onChange: (id: string, patch: Partial<TwlRow>) => void;
   onDelete: (id: string) => void;
+  onFocus: (row: TwlRow) => void;
 }
 
-export function WordsTable({ rows, onChange, onDelete }: Props) {
+export function WordsTable({ rows, activeId, onChange, onDelete, onFocus }: Props) {
   if (rows.length === 0) {
     return (
       <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
@@ -44,7 +46,14 @@ export function WordsTable({ rows, onChange, onDelete }: Props) {
         <span />
       </Box>
       {rows.map((r) => (
-        <WordRow key={r.id} row={r} onChange={(p) => onChange(r.id, p)} onDelete={() => onDelete(r.id)} />
+        <WordRow
+          key={r.id}
+          row={r}
+          active={r.id === activeId}
+          onChange={(p) => onChange(r.id, p)}
+          onDelete={() => onDelete(r.id)}
+          onFocus={() => onFocus(r)}
+        />
       ))}
     </Paper>
   );
@@ -52,12 +61,16 @@ export function WordsTable({ rows, onChange, onDelete }: Props) {
 
 function WordRow({
   row,
+  active,
   onChange,
   onDelete,
+  onFocus,
 }: {
   row: TwlRow;
+  active: boolean;
   onChange: (patch: Partial<TwlRow>) => void;
   onDelete: () => void;
+  onFocus: () => void;
 }) {
   const [ref, setRef] = useState(row.ref_raw);
   const [quote, setQuote] = useState(row.orig_words ?? "");
@@ -76,6 +89,8 @@ function WordRow({
     <Stack
       direction="row"
       spacing={1}
+      onMouseDown={onFocus}
+      onFocus={onFocus}
       sx={{
         display: "grid",
         gridTemplateColumns: "60px 1fr 1.2fr 36px",
@@ -85,6 +100,8 @@ function WordRow({
         py: 0.5,
         borderBottom: "1px dashed",
         borderColor: "divider",
+        bgcolor: active ? "primary.50" : "transparent",
+        boxShadow: active ? "inset 2px 0 0 0 var(--mui-palette-primary-main, #1976d2)" : "none",
         "&:last-of-type": { borderBottom: "none" },
       }}
     >

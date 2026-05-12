@@ -44,9 +44,18 @@ interface Props {
 }
 
 export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
-  const { status, data, error, applyLocalRowPatch, refetch } = useChapter(book, chapter);
+  const {
+    status,
+    data,
+    error,
+    applyLocalRowPatch,
+    applyLocalRowDelete,
+    applyLocalRowInsert,
+    refetch,
+  } = useChapter(book, chapter);
   const [activeVerse, setActiveVerse] = useState(initialVerse);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [activeWordId, setActiveWordId] = useState<string | null>(null);
   const [mode, setMode] = useState<ScriptureMode>(() =>
     loadFromStorage<ScriptureMode>(SCRIPTURE_MODE_KEY, "stacked"),
   );
@@ -87,14 +96,22 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
     [enabledVersions, availableVersions],
   );
 
-  // When a note is "active" (focused or clicked), look up its quote +
-  // occurrence so the scripture column can highlight aligned target words.
-  const activeNote = useMemo(
-    () => (activeNoteId && data ? data.tn.find((r) => r.id === activeNoteId) ?? null : null),
-    [activeNoteId, data],
-  );
-  const activeNoteQuote = activeNote?.quote ?? null;
-  const activeNoteOccurrence = activeNote?.occurrence ?? null;
+  // When a tn note OR a twl word row is "active", treat its quote as the
+  // highlight source. Notes and words are mutually exclusive; clicking one
+  // clears the other. Words use `orig_words` (Hebrew source words) which the
+  // same matcher handles directly for UHB and via \zaln-s for ULT/UST.
+  const { activeQuote, activeOccurrence } = useMemo(() => {
+    if (!data) return { activeQuote: null, activeOccurrence: null };
+    if (activeNoteId) {
+      const r = data.tn.find((r) => r.id === activeNoteId);
+      return { activeQuote: r?.quote ?? null, activeOccurrence: r?.occurrence ?? null };
+    }
+    if (activeWordId) {
+      const r = data.twl.find((r) => r.id === activeWordId);
+      return { activeQuote: r?.orig_words ?? null, activeOccurrence: r?.occurrence ?? null };
+    }
+    return { activeQuote: null, activeOccurrence: null };
+  }, [activeNoteId, activeWordId, data]);
 
   if (status === "loading" || status === "idle") {
     return (
@@ -129,6 +146,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
         onNavigate={(b, c) => {
           setActiveVerse(1);
           setActiveNoteId(null);
+          setActiveWordId(null);
           onNavigate?.(b, c);
         }}
       />
@@ -150,8 +168,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
           versesByVersion={data.verses}
           verseNumbers={verseNumbers}
           activeVerse={activeVerse}
-          activeNoteQuote={activeNoteQuote}
-          activeNoteOccurrence={activeNoteOccurrence}
+          activeNoteQuote={activeQuote}
+          activeNoteOccurrence={activeOccurrence}
           mode={mode}
           enabledVersions={visibleVersions.length > 0 ? visibleVersions : availableVersions.slice(0, 1)}
           availableVersions={availableVersions}
@@ -188,62 +206,78 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
           tq={data.tq}
           twl={data.twl}
           activeNoteId={activeNoteId}
+          activeWordId={activeWordId}
           onNoteChange={(id, patch) => {
             const row = data.tn.find((r) => r.id === id);
             if (row) enqueueRow("tn", row, patch);
           }}
           onNoteFocus={(row) => {
             setActiveNoteId(row.id);
+            setActiveWordId(null);
+            if (row.verse !== activeVerse) setActiveVerse(row.verse);
+          }}
+          onWordFocus={(row) => {
+            setActiveWordId(row.id);
+            setActiveNoteId(null);
             if (row.verse !== activeVerse) setActiveVerse(row.verse);
           }}
           onNoteCreate={async () => {
-            await api.createRow("tn", {
+            const created = (await api.createRow<TnRow>("tn", {
               book,
               chapter,
               verse: activeVerse,
               ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
               note: "",
-            });
-            await refetch();
+            }));
+            applyLocalRowInsert("tn", created);
+            setActiveNoteId(created.id);
+            setActiveWordId(null);
           }}
           onNoteInsertAfter={async (refId) => {
             const ref = data.tn.find((r) => r.id === refId);
             if (!ref) return;
-            await api.createRow("tn", {
+            const created = (await api.createRow<TnRow>("tn", {
               book,
               chapter,
               verse: ref.verse,
               ref_raw: ref.ref_raw,
               support_reference: ref.support_reference,
               note: "",
-            });
-            await refetch();
+            }));
+            applyLocalRowInsert("tn", created, { afterId: refId });
+            setActiveNoteId(created.id);
+            setActiveWordId(null);
           }}
           onWordCreate={async () => {
-            await api.createRow("twl", {
+            const created = (await api.createRow<TwlRow>("twl", {
               book,
               chapter,
               verse: activeVerse,
               ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
               orig_words: "",
               tw_link: "",
-            });
-            await refetch();
+            }));
+            applyLocalRowInsert("twl", created);
+            setActiveWordId(created.id);
+            setActiveNoteId(null);
           }}
           onQuestionCreate={async () => {
-            await api.createRow("tq", {
+            const created = (await api.createRow<TqRow>("tq", {
               book,
               chapter,
               verse: activeVerse,
               ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
               question: "",
               response: "",
-            });
-            await refetch();
+            }));
+            applyLocalRowInsert("tq", created);
           }}
           onNoteDelete={(id) => {
             const row = data.tn.find((r) => r.id === id);
-            if (row) void outbox.enqueueDeleteRow("tn", id, row.version);
+            if (!row) return;
+            applyLocalRowDelete("tn", id);
+            if (activeNoteId === id) setActiveNoteId(null);
+            void outbox.enqueueDeleteRow("tn", id, row.version);
           }}
           onWordChange={(id, patch) => {
             const row = data.twl.find((r) => r.id === id);
@@ -251,7 +285,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
           }}
           onWordDelete={(id) => {
             const row = data.twl.find((r) => r.id === id);
-            if (row) void outbox.enqueueDeleteRow("twl", id, row.version);
+            if (!row) return;
+            applyLocalRowDelete("twl", id);
+            if (activeWordId === id) setActiveWordId(null);
+            void outbox.enqueueDeleteRow("twl", id, row.version);
           }}
           onQuestionChange={(id, patch) => {
             const row = data.tq.find((r) => r.id === id);
@@ -259,7 +296,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate }: Props) {
           }}
           onQuestionDelete={(id) => {
             const row = data.tq.find((r) => r.id === id);
-            if (row) void outbox.enqueueDeleteRow("tq", id, row.version);
+            if (!row) return;
+            applyLocalRowDelete("tq", id);
+            void outbox.enqueueDeleteRow("tq", id, row.version);
           }}
         />
       </Box>

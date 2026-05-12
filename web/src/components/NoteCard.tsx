@@ -49,6 +49,7 @@ export function NoteCard({ row, active, onChange, onDelete, onInsertAfter, onFoc
     <Paper
       elevation={0}
       variant="outlined"
+      onMouseDown={onFocus}
       onFocus={onFocus}
       sx={{
         my: 1,

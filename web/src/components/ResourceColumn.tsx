@@ -12,6 +12,7 @@ interface Props {
   tq: TqRow[];
   twl: TwlRow[];
   activeNoteId: string | null;
+  activeWordId: string | null;
   onNoteChange: (id: string, patch: Partial<TnRow>) => void;
   onNoteDelete: (id: string) => void;
   onNoteInsertAfter: (refId: string) => void;
@@ -20,6 +21,7 @@ interface Props {
   onWordChange: (id: string, patch: Partial<TwlRow>) => void;
   onWordDelete: (id: string) => void;
   onWordCreate: () => void;
+  onWordFocus: (row: TwlRow) => void;
   onQuestionChange: (id: string, patch: Partial<TqRow>) => void;
   onQuestionDelete: (id: string) => void;
   onQuestionCreate: () => void;
@@ -31,6 +33,7 @@ export function ResourceColumn({
   tq,
   twl,
   activeNoteId,
+  activeWordId,
   onNoteChange,
   onNoteDelete,
   onNoteInsertAfter,
@@ -39,6 +42,7 @@ export function ResourceColumn({
   onWordChange,
   onWordDelete,
   onWordCreate,
+  onWordFocus,
   onQuestionChange,
   onQuestionDelete,
   onQuestionCreate,
@@ -124,7 +128,13 @@ export function ResourceColumn({
         <Box sx={{ height: 16 }} />
         <div ref={wordsRef} />
         <SectionHead title="Words" count={twlForVerse.length} onAdd={onWordCreate} />
-        <WordsTable rows={twlForVerse} onChange={onWordChange} onDelete={onWordDelete} />
+        <WordsTable
+          rows={twlForVerse}
+          activeId={activeWordId}
+          onChange={onWordChange}
+          onDelete={onWordDelete}
+          onFocus={onWordFocus}
+        />
 
         <Box sx={{ height: 16 }} />
         <div ref={questionsRef} />
