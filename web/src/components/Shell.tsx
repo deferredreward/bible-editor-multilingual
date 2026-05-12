@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Box, Typography, CircularProgress, Alert } from "@mui/material";
 import { useChapter } from "../hooks/useChapter";
 import type { UseBookReturn } from "../hooks/useBook";
+import { useLexicon } from "../hooks/useLexicon";
 import { outbox } from "../sync/outbox";
 import { api } from "../sync/api";
 import type { TnRow, TqRow, TwlRow, VerseDto } from "../sync/api";
@@ -10,6 +11,7 @@ import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn } from "./ResourceColumn";
 import { AlignmentDialog } from "./AlignmentDialog";
 import { TopBar } from "./TopBar";
+import { collectStrongs } from "./HebrewLine";
 
 interface AlignerTarget {
   chapter: number;
@@ -104,6 +106,30 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
     () => enabledVersions.filter((v) => availableVersions.includes(v)),
     [enabledVersions, availableVersions],
   );
+
+  // Pre-load lexicon entries for every UHB Strong's in the loaded chapter
+  // AND every loaded chapter in book mode, so the per-word tooltips in the
+  // scripture column don't have to fetch on first hover. useLexicon
+  // dedupes at module level, so passing this repeatedly is cheap.
+  const uhbStrongs = useMemo(() => {
+    const set = new Set<string>();
+    const collect = (verses: Record<number, VerseDto> | undefined) => {
+      if (!verses) return;
+      for (const v of Object.values(verses)) {
+        const objs = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+        if (Array.isArray(objs)) for (const s of collectStrongs(objs)) set.add(s);
+      }
+    };
+    collect(data?.verses?.UHB);
+    if (bookHook) {
+      for (const cs of bookHook.chapters.values()) {
+        if (cs.kind !== "ready") continue;
+        collect(cs.data.verses?.UHB);
+      }
+    }
+    return [...set];
+  }, [data?.verses, bookHook?.chapters]);
+  const lexiconMap = useLexicon(uhbStrongs);
 
   // When a tn note OR a twl word row is "active", treat its quote as the
   // highlight source. Notes and words are mutually exclusive; clicking one
@@ -283,6 +309,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
           }
           scrollNonce={scrollNonce}
           onRequestScrollToActive={requestScrollToActive}
+          lexiconMap={lexiconMap}
         />
         <ResourceColumn
           activeVerse={activeVerse}

@@ -3,6 +3,8 @@ import { Box, Stack, Typography, IconButton, Tooltip } from "@mui/material";
 import LinkIcon from "@mui/icons-material/Link";
 import type { VerseDto } from "../sync/api";
 import { highlightsFor, renderHighlightedHTML } from "../lib/highlight";
+import { HebrewLine } from "./HebrewLine";
+import type { LexiconEntry } from "../hooks/useLexicon";
 
 interface Props {
   bibleVersion: string;
@@ -17,6 +19,9 @@ interface Props {
   // Increment to request a scroll-to-active even when activeVerse hasn't
   // changed — used by ScriptureColumn's "go to active" button in columns mode.
   scrollNonce?: number;
+  // Present only when this column is UHB — caller pre-loads the lexicon
+  // and we render each \w with a hover tooltip.
+  lexiconMap?: Map<string, LexiconEntry | null>;
   onSelectVerse: (v: number) => void;
   onEditVerse: (verseNum: number, plain: string, base: VerseDto) => void;
   onOpenAligner: (verseNum: number) => void;
@@ -41,6 +46,7 @@ export function DocColumn({
   activeNoteQuote,
   activeNoteOccurrence,
   scrollNonce,
+  lexiconMap,
   onSelectVerse,
   onEditVerse,
   onOpenAligner,
@@ -131,6 +137,7 @@ export function DocColumn({
               isActive={isActive}
               readOnly={!!readOnly}
               rtl={!!rtl}
+              lexiconMap={lexiconMap}
               spanRef={isActive ? activeRef : null}
               onClick={() => onSelectVerse(v)}
               onAlign={() => onOpenAligner(v)}
@@ -152,6 +159,7 @@ function VerseSpan({
   isActive,
   readOnly,
   rtl,
+  lexiconMap,
   spanRef,
   onClick,
   onAlign,
@@ -165,6 +173,7 @@ function VerseSpan({
   isActive: boolean;
   readOnly: boolean;
   rtl: boolean;
+  lexiconMap?: Map<string, LexiconEntry | null>;
   spanRef: React.MutableRefObject<HTMLSpanElement | null> | null;
   onClick: () => void;
   onAlign: () => void;
@@ -247,6 +256,23 @@ function VerseSpan({
           </IconButton>
         </Tooltip>
       )}{" "}
+      {rtl && lexiconMap ? (
+        <span
+          style={{
+            fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
+            fontSize: 20,
+            direction: "rtl",
+            unicodeBidi: "isolate",
+          }}
+        >
+          <HebrewLine
+            verseObjects={(content as { verseObjects?: unknown[] } | null)?.verseObjects}
+            lexiconMap={lexiconMap}
+            highlights={highlights ?? undefined}
+            fallbackText={text}
+          />
+        </span>
+      ) : (
       <span
         ref={(node) => {
           elRef.current = node;
@@ -270,7 +296,8 @@ function VerseSpan({
           background: "transparent",
         }}
         className="be-verse-span"
-      />{" "}
+      />
+      )}{" "}
     </span>
   );
 }

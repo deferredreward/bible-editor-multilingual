@@ -17,6 +17,8 @@ import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
 import type { FindMatch } from "./FindReplaceOverlay";
 import type { FindQuery } from "./ScriptureColumn";
+import { HebrewLine } from "./HebrewLine";
+import type { LexiconEntry } from "../hooks/useLexicon";
 
 const READ_ONLY = new Set(["UHB", "UGNT"]);
 
@@ -32,6 +34,7 @@ interface Props {
   scrollNonce?: number;
   findQuery: FindQuery | null;
   findActiveMatch: FindMatch | null;
+  lexiconMap: Map<string, LexiconEntry | null>;
   onLoadChapter: (ch: number) => void;
   onSelectVerse: (chapter: number, verse: number) => void;
   onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
@@ -50,6 +53,7 @@ export function BookView({
   scrollNonce,
   findQuery,
   findActiveMatch,
+  lexiconMap,
   onLoadChapter,
   onSelectVerse,
   onEditVerse,
@@ -153,6 +157,7 @@ export function BookView({
               activeNoteOccurrence={activeNoteOccurrence}
               activeRowRef={activeRowRef}
               findRe={compiledFindRe}
+              lexiconMap={lexiconMap}
               onLoadChapter={onLoadChapter}
               onSelectVerse={onSelectVerse}
               onEditVerse={onEditVerse}
@@ -183,6 +188,7 @@ function ChapterBlock({
   activeNoteOccurrence,
   activeRowRef,
   findRe,
+  lexiconMap,
   onLoadChapter,
   onSelectVerse,
   onEditVerse,
@@ -199,6 +205,7 @@ function ChapterBlock({
   activeNoteOccurrence: number | null;
   activeRowRef: React.MutableRefObject<HTMLDivElement | null>;
   findRe: RegExp | null;
+  lexiconMap: Map<string, LexiconEntry | null>;
   onLoadChapter: (ch: number) => void;
   onSelectVerse: (chapter: number, verse: number) => void;
   onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
@@ -325,6 +332,7 @@ function ChapterBlock({
             activeNoteOccurrence={isActive ? activeNoteOccurrence : null}
             rowRef={isActive ? activeRowRef : null}
             findRe={findRe}
+            lexiconMap={lexiconMap}
             onSelectVerse={() => onSelectVerse(chapter, v)}
             onEditVerse={(bv, plain, base) => onEditVerse(chapter, v, bv, plain, base)}
             onOpenAligner={(bv) => onOpenAligner(chapter, v, bv)}
@@ -346,6 +354,7 @@ function VerseRow({
   activeNoteOccurrence,
   rowRef,
   findRe,
+  lexiconMap,
   onSelectVerse,
   onEditVerse,
   onOpenAligner,
@@ -360,6 +369,7 @@ function VerseRow({
   activeNoteOccurrence: number | null;
   rowRef: React.MutableRefObject<HTMLDivElement | null> | null;
   findRe: RegExp | null;
+  lexiconMap: Map<string, LexiconEntry | null>;
   onSelectVerse: () => void;
   onEditVerse: (bv: string, plain: string, base: VerseDto) => void;
   onOpenAligner: (bv: string) => void;
@@ -393,6 +403,7 @@ function VerseRow({
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
               findRe={findRe}
+              lexiconMap={lexiconMap}
               onAlign={() => onOpenAligner(bv)}
               onEdit={(plain) => dto && onEditVerse(bv, plain, dto)}
             />
@@ -412,6 +423,7 @@ function VerseCell({
   activeNoteQuote,
   activeNoteOccurrence,
   findRe,
+  lexiconMap,
   onAlign,
   onEdit,
 }: {
@@ -423,6 +435,7 @@ function VerseCell({
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
   findRe: RegExp | null;
+  lexiconMap: Map<string, LexiconEntry | null>;
   onAlign: () => void;
   onEdit: (plain: string) => void;
 }) {
@@ -512,6 +525,22 @@ function VerseCell({
           </IconButton>
         </Tooltip>
       )}{" "}
+      {readOnly && rtl ? (
+        <span
+          style={{
+            fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
+            fontSize: rtl ? 18 : 14.5,
+            direction: "rtl",
+            unicodeBidi: "isolate",
+          }}
+        >
+          <HebrewLine
+            verseObjects={(dto.content as { verseObjects?: unknown[] } | null)?.verseObjects}
+            lexiconMap={lexiconMap}
+            fallbackText={dto.plain_text ?? ""}
+          />
+        </span>
+      ) : (
       <span
         ref={(node) => {
           elRef.current = node;
@@ -540,6 +569,7 @@ function VerseCell({
         }}
         className="be-verse-span"
       />
+      )}
     </Box>
   );
 }

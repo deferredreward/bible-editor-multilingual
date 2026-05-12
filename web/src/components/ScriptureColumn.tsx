@@ -10,6 +10,8 @@ import type { VerseDto } from "../sync/api";
 import { DocColumn } from "./DocColumn";
 import { BookView } from "./BookView";
 import { FindReplaceOverlay, type FindMatch } from "./FindReplaceOverlay";
+import { HebrewLine } from "./HebrewLine";
+import type { LexiconEntry } from "../hooks/useLexicon";
 import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
 
@@ -46,6 +48,9 @@ interface Props {
   // note/word/verse-group into view alongside the scripture.
   scrollNonce: number;
   onRequestScrollToActive: () => void;
+  // Pre-loaded UHB strong → entry map (Shell collects from useChapter +
+  // useBook) so per-word hover tooltips don't shimmer.
+  lexiconMap: Map<string, LexiconEntry | null>;
   onSelectVerse: (v: number) => void;
   onOpenAligner: (verse: number, bibleVersion: string) => void;
   onModeChange: (mode: ScriptureMode) => void;
@@ -82,6 +87,7 @@ export function ScriptureColumn({
   onReplaceBookVerse,
   scrollNonce,
   onRequestScrollToActive,
+  lexiconMap,
   onSelectVerse,
   onOpenAligner,
   onModeChange,
@@ -250,6 +256,7 @@ export function ScriptureColumn({
           isHebrew={isHebrew}
           activeNoteQuote={activeNoteQuote}
           activeNoteOccurrence={activeNoteOccurrence}
+          lexiconMap={lexiconMap}
           onSelectVerse={onSelectVerse}
           onOpenAligner={onOpenAligner}
         />
@@ -280,6 +287,7 @@ export function ScriptureColumn({
             scrollNonce={scrollNonce}
             findQuery={findQuery}
             findActiveMatch={findScrollTarget}
+            lexiconMap={lexiconMap}
             onLoadChapter={onLoadBookChapter}
             onSelectVerse={onSelectBookVerse}
             onEditVerse={onEditBookVerse}
@@ -301,6 +309,7 @@ export function ScriptureColumn({
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
               scrollNonce={scrollNonce}
+              lexiconMap={v === "UHB" ? lexiconMap : undefined}
               onSelectVerse={onSelectVerse}
               onEditVerse={(verseNum, plain, base) => onEditVerse(verseNum, v, plain, base)}
               onOpenAligner={(verseNum) => onOpenAligner(verseNum, v)}
@@ -321,6 +330,7 @@ function StackedBody({
   isHebrew,
   activeNoteQuote,
   activeNoteOccurrence,
+  lexiconMap,
   onSelectVerse,
   onOpenAligner,
 }: {
@@ -332,6 +342,7 @@ function StackedBody({
   isHebrew: boolean;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  lexiconMap: Map<string, LexiconEntry | null>;
   onSelectVerse: (v: number) => void;
   onOpenAligner: (verse: number, bibleVersion: string) => void;
 }) {
@@ -372,7 +383,15 @@ function StackedBody({
               <ActiveLine label="ULT" text={ultV?.plain_text ?? ""} content={ultV?.content} highlights={ultHL} editable onOpenAligner={() => onOpenAligner(v, "ULT")} />
               <ActiveLine label="UST" text={ustV?.plain_text ?? ""} content={ustV?.content} highlights={ustHL} editable onOpenAligner={() => onOpenAligner(v, "UST")} />
               {uhbV && (
-                <ActiveLine label={isHebrew ? "UHB" : "UGNT"} text={uhbV.plain_text ?? ""} content={uhbV.content} highlights={uhbHL} rtl={isHebrew} readOnly />
+                <ActiveLine
+                  label={isHebrew ? "UHB" : "UGNT"}
+                  text={uhbV.plain_text ?? ""}
+                  content={uhbV.content}
+                  highlights={uhbHL}
+                  rtl={isHebrew}
+                  readOnly
+                  lexiconMap={lexiconMap}
+                />
               )}
             </Paper>
           );
@@ -435,6 +454,7 @@ function ActiveLine({
   readOnly,
   editable,
   onOpenAligner,
+  lexiconMap,
 }: {
   label: string;
   text: string;
@@ -444,6 +464,7 @@ function ActiveLine({
   readOnly?: boolean;
   editable?: boolean;
   onOpenAligner?: () => void;
+  lexiconMap?: Map<string, LexiconEntry | null>;
 }) {
   const elRef = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
@@ -495,41 +516,67 @@ function ActiveLine({
           </Tooltip>
         )}
       </Stack>
-      <Box
-        ref={elRef}
-        contentEditable={editable && !readOnly}
-        suppressContentEditableWarning
-        spellCheck={!rtl}
-        sx={{
-          flex: 1,
-          bgcolor: readOnly ? "grey.100" : "background.paper",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
-          px: 1,
-          py: 0.5,
-          fontSize: rtl ? 20 : 14.5,
-          lineHeight: 1.5,
-          direction: rtl ? "rtl" : "ltr",
-          textAlign: rtl ? "right" : "left",
-          fontFamily: rtl
-            ? '"Times New Roman","SBL Hebrew","Cardo",serif'
-            : '"Source Serif Pro","Cambria","Times New Roman",serif',
-          outline: "none",
-          "& mark.be-hl": {
-            backgroundColor: "#fff48a",
-            padding: "0 2px",
+      {rtl && lexiconMap ? (
+        <Box
+          sx={{
+            flex: 1,
+            bgcolor: "grey.100",
+            border: "1px solid",
+            borderColor: "divider",
             borderRadius: 0.5,
-            color: "inherit",
-          },
-          "&:focus": readOnly
-            ? {}
-            : {
-                borderColor: "primary.main",
-                boxShadow: "0 0 0 2px rgba(49,173,227,0.2)",
-              },
-        }}
-      />
+            px: 1,
+            py: 0.5,
+            fontSize: 20,
+            lineHeight: 1.5,
+            direction: "rtl",
+            textAlign: "right",
+            fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
+          }}
+        >
+          <HebrewLine
+            verseObjects={(content as { verseObjects?: unknown[] } | null)?.verseObjects}
+            lexiconMap={lexiconMap}
+            highlights={highlights}
+            fallbackText={text}
+          />
+        </Box>
+      ) : (
+        <Box
+          ref={elRef}
+          contentEditable={editable && !readOnly}
+          suppressContentEditableWarning
+          spellCheck={!rtl}
+          sx={{
+            flex: 1,
+            bgcolor: readOnly ? "grey.100" : "background.paper",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 0.5,
+            px: 1,
+            py: 0.5,
+            fontSize: rtl ? 20 : 14.5,
+            lineHeight: 1.5,
+            direction: rtl ? "rtl" : "ltr",
+            textAlign: rtl ? "right" : "left",
+            fontFamily: rtl
+              ? '"Times New Roman","SBL Hebrew","Cardo",serif'
+              : '"Source Serif Pro","Cambria","Times New Roman",serif',
+            outline: "none",
+            "& mark.be-hl": {
+              backgroundColor: "#fff48a",
+              padding: "0 2px",
+              borderRadius: 0.5,
+              color: "inherit",
+            },
+            "&:focus": readOnly
+              ? {}
+              : {
+                  borderColor: "primary.main",
+                  boxShadow: "0 0 0 2px rgba(49,173,227,0.2)",
+                },
+          }}
+        />
+      )}
     </Stack>
   );
 }

@@ -28,6 +28,7 @@ import {
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
+import { SourceTooltipBody } from "./SourceTooltipBody";
 
 const WORD_IDS_MIME = "text/word-ids";
 const SOURCE_ID_MIME = "text/source-id";
@@ -640,44 +641,6 @@ function AlignmentGrid({
           </Stack>
         </DropTargetBox>
       ))}
-    </Box>
-  );
-}
-
-function SourceTooltipBody({
-  source,
-  lex,
-  twHint,
-}: {
-  source: SourceWord;
-  lex: LexiconEntry | null;
-  twHint: string | null;
-}) {
-  // Compact body keyed to data we have. UHAL/UGL coverage is patchy: many
-  // entries carry POS but no gloss/definition. We show whatever is present
-  // and fall back to the in-USFM lemma/morph if the lexicon row is empty.
-  const lemma = lex?.lemma || source.lemma || "—";
-  const pos = lex?.part_of_speech || source.morph || "—";
-  return (
-    <Box sx={{ fontSize: 12, maxWidth: 280, lineHeight: 1.45 }}>
-      <Box sx={{ fontFamily: '"Times New Roman","SBL Hebrew",serif', fontSize: 16, mb: 0.25 }}>
-        {lemma}
-      </Box>
-      <Box sx={{ opacity: 0.85 }}>
-        {source.strong || "—"} · {pos}
-      </Box>
-      {lex?.gloss && (
-        <Box sx={{ mt: 0.5, fontWeight: 600 }}>{lex.gloss}</Box>
-      )}
-      {lex?.definition && (
-        <Box sx={{ mt: 0.25, opacity: 0.9 }}>{lex.definition}</Box>
-      )}
-      {!lex?.gloss && !lex?.definition && (
-        <Box sx={{ mt: 0.5, opacity: 0.55, fontStyle: "italic" }}>
-          no lexicon entry — stub in source resource
-        </Box>
-      )}
-      {twHint && <Box sx={{ mt: 0.5 }}>tw: {twHint}</Box>}
     </Box>
   );
 }
