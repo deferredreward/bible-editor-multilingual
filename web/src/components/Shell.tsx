@@ -6,6 +6,7 @@ import { useLexicon } from "../hooks/useLexicon";
 import { outbox } from "../sync/outbox";
 import { api } from "../sync/api";
 import type { TnRow, TqRow, TwlRow, VerseDto } from "../sync/api";
+import { smartEditVerse } from "../lib/replace";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn } from "./ResourceColumn";
@@ -173,6 +174,38 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
     void outbox.enqueueRow(kind, row.id, row.version, patch as Record<string, unknown>);
   };
 
+  // Plain-text edit pipeline shared by the doc / book / aligner-strip
+  // entry points. Routes through smartEditVerse so unchanged regions of
+  // the verse keep their `\zaln-s` milestones and only the affected
+  // milestones get split / re-tokenized.
+  const persistVerseEdit = (
+    chapterNum: number,
+    verseNum: number,
+    bibleVersion: string,
+    plain: string,
+    base: VerseDto,
+  ) => {
+    const result = smartEditVerse(base.content, base.plain_text ?? "", plain);
+    const newDto = {
+      ...base,
+      chapter: chapterNum,
+      verse: verseNum,
+      bible_version: bibleVersion,
+      plain_text: result.plainText,
+      content: result.content,
+    } as VerseDto;
+    bookHook?.applyLocalVerse(newDto);
+    if (chapterNum === chapter) applyLocalVerse(newDto);
+    void outbox.enqueueVerse(
+      book,
+      chapterNum,
+      verseNum,
+      bibleVersion,
+      base.version,
+      { content: result.content, plain_text: result.plainText },
+    );
+  };
+
   return (
     <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <TopBar
@@ -227,29 +260,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
             }
           }}
           onEditBookVerse={(ch, verseNum, bibleVersion, plain, base) => {
-            const newContent = { verseObjects: [{ type: "text", text: plain + " " }] };
-            const newDto = {
-              ...base,
-              chapter: ch,
-              verse: verseNum,
-              bible_version: bibleVersion,
-              plain_text: plain,
-              content: newContent,
-            } as VerseDto;
-            bookHook?.applyLocalVerse(newDto);
-            // Dual-apply to useChapter when the edited verse is in the
-            // currently-loaded chapter, so the aligner (which pulls from
-            // useChapter for sameChapter targets) doesn't see stale data
-            // before the outbox round-trips.
-            if (ch === chapter) applyLocalVerse(newDto);
-            void outbox.enqueueVerse(
-              book,
-              ch,
-              verseNum,
-              bibleVersion,
-              base.version,
-              { content: newContent, plain_text: plain },
-            );
+            persistVerseEdit(ch, verseNum, bibleVersion, plain, base);
           }}
           onOpenBookAligner={(ch, v, bv) =>
             setAlignerTarget({ chapter: ch, verse: v, bibleVersion: bv })
@@ -289,20 +300,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
             saveToStorage(ENABLED_VERSIONS_KEY, versions);
           }}
           onEditVerse={(verseNum, bibleVersion, plain, base) => {
-            // Edits replace the verse content with a single text token. This
-            // intentionally invalidates any alignment markers for this verse
-            // — re-align via the ⌭ icon (Phase 3).
-            const newContent = {
-              verseObjects: [{ type: "text", text: plain + " " }],
-            };
-            void outbox.enqueueVerse(
-              book,
-              chapter,
-              verseNum,
-              bibleVersion,
-              base.version,
-              { content: newContent, plain_text: plain },
-            );
+            persistVerseEdit(chapter, verseNum, bibleVersion, plain, base);
           }}
           onOpenAligner={(v, bv) =>
             setAlignerTarget({ chapter, verse: v, bibleVersion: bv })
@@ -498,28 +496,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
               setAlignerTarget((cur) => (cur ? { ...cur, bibleVersion: bv } : cur));
             }}
             onEditVerseText={(bv, plain, base) => {
-              // Inline edits in the aligner strip flow through the same
-              // path as plain-text edits in the doc / book views: rewrite
-              // the verse content to a single text token, apply
-              // optimistically to both caches that might be observing,
-              // then enqueue the PATCH. After the round-trip the dialog's
-              // useEffect re-tokenizes and resets alignment state.
-              const newContent = { verseObjects: [{ type: "text", text: plain + " " }] };
-              const newDto = {
-                ...base,
-                plain_text: plain,
-                content: newContent,
-              } as VerseDto;
-              bookHook?.applyLocalVerse(newDto);
-              if (alignerTarget.chapter === chapter) applyLocalVerse(newDto);
-              void outbox.enqueueVerse(
-                book,
-                alignerTarget.chapter,
-                alignerTarget.verse,
-                bv,
-                base.version,
-                { content: newContent, plain_text: plain },
-              );
+              // Strip edits go through the shared persistVerseEdit pipe
+              // (smartEditVerse) so unchanged milestones in the verse
+              // survive a one-word change. The dialog's useEffect picks
+              // up the new content via the verse prop and re-derives the
+              // alignment state — only the touched milestones land in
+              // the unaligned bag.
+              persistVerseEdit(alignerTarget.chapter, alignerTarget.verse, bv, plain, base);
             }}
           />
         );

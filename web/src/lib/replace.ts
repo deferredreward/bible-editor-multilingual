@@ -1,17 +1,23 @@
-// Smart verse-content rewriter for find/replace.
+// Smart verse-content rewriter for find/replace and inline text edits.
 //
-// The naive replace path collapses the whole verse to a single text token —
+// The naive rewrite path collapses the whole verse to a single text token —
 // which destroys every `\w` word AND every `\zaln-s` alignment milestone, so
 // the aligner ends up with neither targets to drag nor any alignment to
-// re-use. This module tries harder: when a match falls cleanly on word
-// boundaries and the find/replace strings have matching word counts, we
-// rewrite the affected `\w` leaves in place and leave the surrounding
-// milestones intact, preserving alignment for that verse.
+// re-use. This module tries harder, in two tiers:
 //
-// When the structural conditions don't hold (match mid-word, word-count
-// mismatch, etc.) we fall back to a re-tokenized rewrite: the new text is
-// split into `\w` words + whitespace `text` nodes so the aligner at least
-// has draggable targets in the unaligned bag instead of an empty verse.
+//   1. Preserve path. When the change spans full words and the find/replace
+//      strings have matching word counts, rewrite each affected `\w` leaf's
+//      text in place. Surrounding (and even containing) `\zaln-s` milestones
+//      are untouched.
+//   2. Localized rewrite. When the preserve conditions don't hold, drop
+//      ONLY the top-level nodes (milestones / bare words / text segments)
+//      whose raw text overlaps the change range. Milestones outside the
+//      range round-trip verbatim; affected milestones are split into
+//      before/after halves around the change, so even partially-preserved
+//      milestones keep their source alignment for the surviving children.
+//
+// Pure insertions (oldLen === 0) and pure deletions (newSubstring === "")
+// flow through the localized rewrite path too.
 
 export interface SmartReplaceResult {
   content: unknown;
@@ -214,14 +220,250 @@ export function smartReplaceVerse(
     };
   }
 
-  // Structural mismatch — re-tokenize the whole verse. Alignment is lost,
-  // but the aligner gets back a verse full of \w nodes to drag instead of
-  // a single text token.
-  const before = raw.slice(0, rawStart);
-  const after = raw.slice(rawEnd);
-  const newRaw = before + replaceText + after;
+  // Structural mismatch — fall through to the localized rewrite so only
+  // the milestones overlapping the change are destroyed (rather than the
+  // whole verse).
+  return localizedRewriteVerse(content, plainText, matchStartInPlain, matchLenInPlain, replaceText);
+}
+
+// Plain-text diff: the smallest contiguous substring change that turns
+// `oldText` into `newText`. Returns the start, the length of the deleted
+// portion in `oldText`, and the inserted substring. Most user edits boil
+// down to exactly one such change (typing into a selection, replacing a
+// word, deleting a stretch); for arbitrary multi-region edits we still
+// produce a single bounding change, which the localized rewrite handles by
+// dropping anything inside that bounding range.
+function diffSingleChange(
+  oldText: string,
+  newText: string,
+): { start: number; oldLen: number; newSubstring: string } {
+  let prefix = 0;
+  const maxPrefix = Math.min(oldText.length, newText.length);
+  while (prefix < maxPrefix && oldText[prefix] === newText[prefix]) prefix++;
+  let oldSuffix = oldText.length;
+  let newSuffix = newText.length;
+  while (
+    oldSuffix > prefix &&
+    newSuffix > prefix &&
+    oldText[oldSuffix - 1] === newText[newSuffix - 1]
+  ) {
+    oldSuffix--;
+    newSuffix--;
+  }
   return {
-    content: { verseObjects: tokenizePlainText(newRaw) },
+    start: prefix,
+    oldLen: oldSuffix - prefix,
+    newSubstring: newText.slice(prefix, newSuffix),
+  };
+}
+
+// Top-level entry point for "the user just typed in a contentEditable
+// representation of this verse's plain text — please update the
+// verseObjects without nuking alignment for unchanged parts."
+//
+// First we try the preserve path via smartReplaceVerse on the diff; if the
+// word counts don't line up, we drop to localizedRewriteVerse.
+export function smartEditVerse(
+  content: unknown,
+  oldPlain: string,
+  newPlain: string,
+): SmartReplaceResult {
+  if (oldPlain === newPlain) {
+    return { content, plainText: oldPlain, preservedAlignment: true };
+  }
+  const diff = diffSingleChange(oldPlain, newPlain);
+  if (diff.oldLen === 0 && diff.newSubstring === "") {
+    return { content, plainText: oldPlain, preservedAlignment: true };
+  }
+  // Word-count-match preserve path lives in smartReplaceVerse.
+  if (diff.oldLen > 0) {
+    const matchText = oldPlain.slice(diff.start, diff.start + diff.oldLen);
+    const escaped = matchText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(escaped, "g");
+    return smartReplaceVerse(
+      content,
+      oldPlain,
+      re,
+      diff.start,
+      diff.oldLen,
+      diff.newSubstring,
+    );
+  }
+  // Pure insertion — no matchText, can't do word-count preserve.
+  return localizedRewriteVerse(
+    content,
+    oldPlain,
+    diff.start,
+    0,
+    diff.newSubstring,
+  );
+}
+
+// Full raw text length of a verseObjects node, recursing into milestone
+// children. Top-level node positions in raw text are the running sum of
+// this across the verseObjects array.
+function rawTextOfNode(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const o = node as Record<string, unknown>;
+  let txt = "";
+  if (typeof o["text"] === "string") txt += o["text"];
+  const children = o["children"];
+  if (Array.isArray(children)) {
+    for (const c of children) txt += rawTextOfNode(c);
+  }
+  return txt;
+}
+
+// Walk a milestone's children once and partition them by their raw-text
+// position relative to the change range. Children entirely before the
+// range go into `before`, entirely after into `after`, anything that
+// overlaps is dropped (its content is replaced by tokenizePlainText in the
+// outer walk). Recurses into nested milestones at the top level only — a
+// fully-contained nested milestone is treated as a single child.
+function partitionMilestoneChildren(
+  milestoneNode: Record<string, unknown>,
+  milestoneStart: number,
+  rawStart: number,
+  rawEnd: number,
+): { before: unknown[]; after: unknown[] } {
+  const before: unknown[] = [];
+  const after: unknown[] = [];
+  const children = (milestoneNode["children"] as unknown[] | undefined) ?? [];
+  let pos = milestoneStart;
+  for (const child of children) {
+    const len = rawTextOfNode(child).length;
+    const childStart = pos;
+    const childEnd = pos + len;
+    pos = childEnd;
+    if (childEnd <= rawStart) {
+      before.push(child);
+    } else if (childStart >= rawEnd) {
+      after.push(child);
+    }
+    // Overlapping children are dropped — the change region replaces them.
+  }
+  return { before, after };
+}
+
+// Localized rewrite: walk top-level nodes once, keep those entirely
+// outside the change range untouched, split any text node that straddles
+// a boundary, and split any milestone that straddles a boundary into a
+// before-half + after-half (each wrapping just the children outside the
+// range). Insert tokenizePlainText(newSubstring) at the position of the
+// change. Milestones that survive keep their source-alignment attributes,
+// so any unchanged children continue to align to the same Hebrew word.
+function localizedRewriteVerse(
+  content: unknown,
+  oldPlain: string,
+  start: number,
+  oldLen: number,
+  newSubstring: string,
+): SmartReplaceResult {
+  const verseObjects = (content as { verseObjects?: unknown[] } | null)?.verseObjects;
+  if (!Array.isArray(verseObjects)) {
+    const newPlain = oldPlain.slice(0, start) + newSubstring + oldPlain.slice(start + oldLen);
+    return {
+      content: { verseObjects: tokenizePlainText(newPlain) },
+      plainText: normalize(newPlain),
+      preservedAlignment: false,
+    };
+  }
+
+  const cloned = cloneVerseObjects(verseObjects);
+  const rawTotal = rebuildRaw(cloned);
+
+  // Map plain-text positions to raw-text positions by counting occurrences
+  // of the literal matchText. For pure insertions (oldLen === 0) we use
+  // plain position as a rough proxy — works as long as whitespace
+  // normalization didn't shift much, which is true for typical edits.
+  let rawStart = -1;
+  if (oldLen > 0) {
+    const matchText = oldPlain.slice(start, start + oldLen);
+    let occurrence = 1;
+    let scan = oldPlain.indexOf(matchText);
+    while (scan >= 0 && scan < start) {
+      occurrence++;
+      scan = oldPlain.indexOf(matchText, scan + 1);
+    }
+    let rawScan = rawTotal.indexOf(matchText);
+    let count = 0;
+    while (rawScan >= 0) {
+      count++;
+      if (count === occurrence) {
+        rawStart = rawScan;
+        break;
+      }
+      rawScan = rawTotal.indexOf(matchText, rawScan + 1);
+    }
+  } else {
+    rawStart = Math.min(start, rawTotal.length);
+  }
+  if (rawStart < 0) {
+    // Couldn't map — bail to flat tokenization so we at least emit \w
+    // tokens for the aligner to work with.
+    const newPlain = oldPlain.slice(0, start) + newSubstring + oldPlain.slice(start + oldLen);
+    return {
+      content: { verseObjects: tokenizePlainText(newPlain) },
+      plainText: normalize(newPlain),
+      preservedAlignment: false,
+    };
+  }
+  const rawEnd = rawStart + oldLen;
+
+  const out: unknown[] = [];
+  let emittedChange = false;
+  const emitChange = () => {
+    if (emittedChange) return;
+    emittedChange = true;
+    if (newSubstring.length > 0) {
+      for (const t of tokenizePlainText(newSubstring)) out.push(t);
+    }
+  };
+
+  let pos = 0;
+  for (const node of cloned) {
+    const len = rawTextOfNode(node).length;
+    const nodeStart = pos;
+    const nodeEnd = pos + len;
+    pos = nodeEnd;
+
+    if (nodeEnd <= rawStart) {
+      out.push(node);
+      continue;
+    }
+    if (nodeStart >= rawEnd) {
+      emitChange();
+      out.push(node);
+      continue;
+    }
+
+    const o = node as Record<string, unknown>;
+    if (o["type"] === "text" && typeof o["text"] === "string") {
+      const fullText = String(o["text"]);
+      const before = fullText.slice(0, Math.max(0, rawStart - nodeStart));
+      const after = fullText.slice(Math.max(0, rawEnd - nodeStart));
+      if (before) out.push({ type: "text", text: before });
+      emitChange();
+      if (after) out.push({ type: "text", text: after });
+    } else if (o["type"] === "milestone") {
+      const { before, after } = partitionMilestoneChildren(o, nodeStart, rawStart, rawEnd);
+      if (before.length > 0) {
+        out.push({ ...o, children: before });
+      }
+      emitChange();
+      if (after.length > 0) {
+        out.push({ ...o, children: after });
+      }
+    } else {
+      // Bare \w at top level overlapping the change — drop.
+      emitChange();
+    }
+  }
+  emitChange();
+
+  const newRaw = rebuildRaw(out);
+  return {
+    content: { verseObjects: out },
     plainText: normalize(newRaw),
     preservedAlignment: false,
   };
