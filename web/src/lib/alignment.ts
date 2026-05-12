@@ -11,6 +11,7 @@
 // and round-trip them unchanged if the user doesn't touch them.
 
 export interface SourceWord {
+  id: string;             // local-only id for drag/drop between groups
   strong: string;
   lemma: string;
   morph: string;
@@ -53,6 +54,7 @@ function nodeIsWord(n: ParsedNode | undefined): boolean {
 
 function sourceOf(node: ParsedNode): SourceWord {
   return {
+    id: uid(),
     strong: String(node["strong"] ?? ""),
     lemma: String(node["lemma"] ?? ""),
     morph: String(node["morph"] ?? ""),
@@ -211,6 +213,65 @@ export function alignmentPlainText(state: AlignmentState): string {
   for (const g of state.groups) for (const t of g.targets) words.push(t.text);
   for (const t of state.unaligned) words.push(t.text);
   return words.join(" ");
+}
+
+// Clear all target words from `groupId` (back to unaligned) and split any
+// compound source chain into singleton groups so the user can re-align each
+// Hebrew word independently. The source words themselves are preserved.
+export function clearGroup(state: AlignmentState, groupId: string): AlignmentState {
+  const idx = state.groups.findIndex((g) => g.id === groupId);
+  if (idx < 0) return state;
+  const target = state.groups[idx];
+  const orphanedTargets = target.targets;
+  // Replace the group in-place with one singleton group per source word.
+  const singletons: AlignmentGroup[] = target.source.map((s) => ({
+    id: uid(),
+    source: [s],
+    targets: [],
+  }));
+  const groups = [...state.groups.slice(0, idx), ...singletons, ...state.groups.slice(idx + 1)];
+  const unaligned = [...state.unaligned, ...orphanedTargets];
+  return { ...state, groups, unaligned };
+}
+
+// Move a source word (identified by SourceWord.id) into `destGroupId`'s
+// source chain, making that group compound. If the source's previous group
+// becomes empty (no remaining sources), its targets fall back to unaligned
+// and the empty group is removed.
+export function moveSource(
+  state: AlignmentState,
+  sourceId: string,
+  destGroupId: string,
+): AlignmentState {
+  let moving: SourceWord | null = null;
+  let fromGroupId: string | null = null;
+  for (const g of state.groups) {
+    const found = g.source.find((s) => s.id === sourceId);
+    if (found) {
+      moving = found;
+      fromGroupId = g.id;
+      break;
+    }
+  }
+  if (!moving || !fromGroupId || fromGroupId === destGroupId) return state;
+  const orphaned: TargetWord[] = [];
+  const groups: AlignmentGroup[] = [];
+  for (const g of state.groups) {
+    if (g.id === fromGroupId) {
+      const remainingSources = g.source.filter((s) => s.id !== sourceId);
+      if (remainingSources.length === 0) {
+        orphaned.push(...g.targets);
+        // skip this group — it's emptied out
+        continue;
+      }
+      groups.push({ ...g, source: remainingSources });
+    } else if (g.id === destGroupId) {
+      groups.push({ ...g, source: [...g.source, moving!] });
+    } else {
+      groups.push(g);
+    }
+  }
+  return { ...state, groups, unaligned: [...state.unaligned, ...orphaned] };
 }
 
 // Move a target word identified by `wordId` to a destination ("g:<groupId>"

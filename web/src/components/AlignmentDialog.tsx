@@ -17,6 +17,8 @@ import LinkIcon from "@mui/icons-material/Link";
 import CloseIcon from "@mui/icons-material/Close";
 import {
   alignmentPlainText,
+  clearGroup,
+  moveSource,
   moveTarget,
   parseAlignment,
   serializeAlignment,
@@ -59,9 +61,19 @@ export function AlignmentDialog({
     setState(initial);
   }, [initial]);
 
-  const handleDrop = (dest: string, wordId: string) => {
+  const handleTargetDrop = (dest: string, wordId: string) => {
     if (!state) return;
     setState(moveTarget(state, wordId, dest));
+  };
+
+  const handleSourceDrop = (destGroupId: string, sourceId: string) => {
+    if (!state) return;
+    setState(moveSource(state, sourceId, destGroupId));
+  };
+
+  const handleClearGroup = (groupId: string) => {
+    if (!state) return;
+    setState(clearGroup(state, groupId));
   };
 
   const handleReset = () => setState(initial);
@@ -99,8 +111,13 @@ export function AlignmentDialog({
           <>
             <VerseStrip verse={verse} other={contextOther} bibleVersion={bibleVersion} chapter={chapter} verseNum={verseNum} />
             <Box sx={{ display: "grid", gridTemplateColumns: "220px 1fr", height: 480, overflow: "hidden" }}>
-              <UnalignedBag state={state} onDrop={(wordId) => handleDrop("u", wordId)} />
-              <AlignmentGrid state={state} onDrop={handleDrop} />
+              <UnalignedBag state={state} onDrop={(wordId) => handleTargetDrop("u", wordId)} />
+              <AlignmentGrid
+                state={state}
+                onTargetDrop={handleTargetDrop}
+                onSourceDrop={handleSourceDrop}
+                onClearGroup={handleClearGroup}
+              />
             </Box>
           </>
         )}
@@ -221,11 +238,18 @@ function UnalignedBag({
 
 function AlignmentGrid({
   state,
-  onDrop,
+  onTargetDrop,
+  onSourceDrop,
+  onClearGroup,
 }: {
   state: AlignmentState;
-  onDrop: (dest: string, wordId: string) => void;
+  onTargetDrop: (dest: string, wordId: string) => void;
+  onSourceDrop: (destGroupId: string, sourceId: string) => void;
+  onClearGroup: (groupId: string) => void;
 }) {
+  // Hebrew/Greek reads RTL, so order the alignment cards right-to-left to
+  // match how the user reads the source verse. Card internals (the GL target
+  // chips) stay LTR via `direction: ltr` on the card itself.
   return (
     <Box
       sx={{
@@ -235,51 +259,66 @@ function AlignmentGrid({
         flexWrap: "wrap",
         gap: 1.5,
         alignContent: "flex-start",
+        direction: "rtl",
       }}
     >
       {state.groups.map((g) => (
-        <DropTargetBox key={g.id} groupId={g.id} onDrop={(wordId) => onDrop(`g:${g.id}`, wordId)}>
-          <Tooltip
-            title={
-              <>
-                {g.source.map((s, i) => (
-                  <div key={i}>
-                    {s.strong} · {s.lemma} · {s.morph}
-                  </div>
-                ))}
-              </>
-            }
-          >
-            <Stack
-              direction="column"
-              spacing={0.25}
-              sx={{
-                mb: 0.5,
-              }}
-            >
-              {g.source.map((s, i) => (
-                <Paper
-                  key={i}
-                  elevation={0}
-                  sx={{
-                    bgcolor: "grey.900",
-                    color: "grey.50",
-                    px: 1.2,
-                    py: 0.5,
-                    fontFamily: '"Times New Roman", "SBL Hebrew", "Cardo", serif',
-                    fontSize: 17,
-                    textAlign: "center",
-                    direction: "rtl",
-                    borderRadius: 0.5,
-                    cursor: "help",
-                  }}
+        <DropTargetBox
+          key={g.id}
+          groupId={g.id}
+          onTargetDrop={(wordId) => onTargetDrop(`g:${g.id}`, wordId)}
+          onSourceDrop={(sourceId) => onSourceDrop(g.id, sourceId)}
+        >
+          <Stack direction="row" alignItems="flex-start" sx={{ mb: 0.5, direction: "ltr" }}>
+            <Stack direction="column" spacing={0.25} sx={{ flex: 1 }}>
+              {g.source.map((s) => (
+                <Tooltip
+                  key={s.id}
+                  title={
+                    <Box>
+                      <div>{s.strong}</div>
+                      <div>{s.lemma}</div>
+                      <div>{s.morph}</div>
+                    </Box>
+                  }
                 >
-                  {s.content}
-                </Paper>
+                  <Paper
+                    elevation={0}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/source-id", s.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    sx={{
+                      bgcolor: "grey.900",
+                      color: "grey.50",
+                      px: 1.2,
+                      py: 0.5,
+                      fontFamily: '"Times New Roman", "SBL Hebrew", "Cardo", serif',
+                      fontSize: 20,
+                      textAlign: "center",
+                      direction: "rtl",
+                      borderRadius: 0.5,
+                      cursor: "grab",
+                      "&:active": { cursor: "grabbing" },
+                    }}
+                  >
+                    {s.content}
+                  </Paper>
+                </Tooltip>
               ))}
             </Stack>
-          </Tooltip>
-          <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5}>
+            <Tooltip title="clear alignment for this block (sends GL words back to the unaligned bag and splits compound source)">
+              <IconButton
+                size="small"
+                onClick={() => onClearGroup(g.id)}
+                sx={{ ml: 0.5, p: 0.25, color: "text.disabled", "&:hover": { color: "error.main" } }}
+              >
+                <CloseIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5} sx={{ direction: "ltr" }}>
             {g.targets.length === 0 ? (
               <Typography
                 variant="caption"
@@ -299,11 +338,13 @@ function AlignmentGrid({
 
 function DropTargetBox({
   groupId,
-  onDrop,
+  onTargetDrop,
+  onSourceDrop,
   children,
 }: {
   groupId: string;
-  onDrop: (wordId: string) => void;
+  onTargetDrop: (wordId: string) => void;
+  onSourceDrop: (sourceId: string) => void;
   children: React.ReactNode;
 }) {
   const [over, setOver] = useState(false);
@@ -319,7 +360,12 @@ function DropTargetBox({
         e.preventDefault();
         setOver(false);
         const wordId = e.dataTransfer.getData("text/word-id");
-        if (wordId) onDrop(wordId);
+        if (wordId) {
+          onTargetDrop(wordId);
+          return;
+        }
+        const sourceId = e.dataTransfer.getData("text/source-id");
+        if (sourceId) onSourceDrop(sourceId);
       }}
       data-group-id={groupId}
       sx={{
@@ -331,6 +377,7 @@ function DropTargetBox({
         borderStyle: "solid",
         display: "flex",
         flexDirection: "column",
+        direction: "ltr",
       }}
     >
       {children}
