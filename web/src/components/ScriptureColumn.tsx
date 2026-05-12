@@ -402,12 +402,15 @@ function StackedBody({
             onClick={() => onSelectVerse(v)}
             sx={{
               display: "grid",
-              // One narrow gutter column for the verse-number + L/S
-              // markers stacked vertically, plus the wide text column.
-              gridTemplateColumns: "32px 1fr",
+              // Narrow gutter for ULT/UST labels (right-aligned) + the
+              // wide text column. Verse-number gets its own row spanning
+              // both columns so it doesn't compete with the version
+              // labels for vertical space — the resulting extra row is
+              // tiny (10 px-ish) and pays for clean label/text baselines.
+              gridTemplateColumns: "28px 1fr",
               columnGap: 0.75,
-              rowGap: 0.25,
-              alignItems: "start",
+              rowGap: 0,
+              alignItems: "baseline",
               px: 1,
               py: 0.5,
               my: 0.25,
@@ -415,36 +418,42 @@ function StackedBody({
               cursor: "pointer",
               color: "text.secondary",
               fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
-              lineHeight: 1.5,
+              fontSize: 14.5,
+              lineHeight: 1.45,
               "&:hover": { bgcolor: "action.hover" },
             }}
           >
-            <Box
+            <Typography
+              component="span"
+              variant="caption"
               sx={{
-                gridColumn: 1,
+                gridColumn: "1 / -1",
                 gridRow: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                lineHeight: 1.1,
+                fontFamily: "monospace",
+                color: "text.disabled",
+                fontSize: 10,
+                lineHeight: 1.2,
+                mb: 0.25,
               }}
             >
-              <Typography
-                component="span"
-                variant="caption"
-                sx={{ fontFamily: "monospace", color: "text.disabled", fontSize: 10 }}
-              >
-                {v === 0 ? "intro" : `${chapter}:${v}`}
-              </Typography>
-              <Typography
-                component="span"
-                variant="caption"
-                sx={{ fontFamily: "monospace", color: "text.disabled", fontWeight: 600, fontSize: 10 }}
-              >
-                ULT
-              </Typography>
-            </Box>
-            <Box sx={{ gridColumn: 2, gridRow: 1, minWidth: 0 }}>{ultV?.plain_text ?? ""}</Box>
+              {v === 0 ? "intro" : `${chapter}:${v}`}
+            </Typography>
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{
+                gridColumn: 1,
+                gridRow: 2,
+                fontFamily: "monospace",
+                color: "text.disabled",
+                fontWeight: 600,
+                fontSize: 10,
+                textAlign: "right",
+              }}
+            >
+              ULT
+            </Typography>
+            <Box sx={{ gridColumn: 2, gridRow: 2, minWidth: 0 }}>{ultV?.plain_text ?? ""}</Box>
             {ustV && (
               <>
                 <Typography
@@ -452,7 +461,7 @@ function StackedBody({
                   variant="caption"
                   sx={{
                     gridColumn: 1,
-                    gridRow: 2,
+                    gridRow: 3,
                     fontFamily: "monospace",
                     color: "text.disabled",
                     fontWeight: 600,
@@ -462,7 +471,7 @@ function StackedBody({
                 >
                   UST
                 </Typography>
-                <Box sx={{ gridColumn: 2, gridRow: 2, minWidth: 0 }}>{ustV.plain_text ?? ""}</Box>
+                <Box sx={{ gridColumn: 2, gridRow: 3, minWidth: 0 }}>{ustV.plain_text ?? ""}</Box>
               </>
             )}
           </Box>
