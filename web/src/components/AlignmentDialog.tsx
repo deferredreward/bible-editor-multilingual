@@ -65,8 +65,13 @@ export function AlignmentDialog({
     if (!verse?.content) return null;
     const verseObjects = (verse.content as { verseObjects?: unknown[] }).verseObjects;
     if (!Array.isArray(verseObjects)) return null;
-    return parseAlignment(verseObjects);
-  }, [verse]);
+    const sourceVerseObjects =
+      sourceVerse?.content &&
+      Array.isArray((sourceVerse.content as { verseObjects?: unknown[] }).verseObjects)
+        ? (sourceVerse.content as { verseObjects: unknown[] }).verseObjects
+        : null;
+    return parseAlignment(verseObjects, sourceVerseObjects);
+  }, [verse, sourceVerse]);
 
   const [state, setState] = useState<AlignmentState | null>(initial);
   const [selectedUnaligned, setSelectedUnaligned] = useState<Set<string>>(new Set());
@@ -485,15 +490,17 @@ function AlignmentGrid({
                 </Tooltip>
               ))}
             </Stack>
-            <Tooltip title="clear alignment for this block (sends GL words back to the unaligned bag and splits compound source)">
-              <IconButton
-                size="small"
-                onClick={() => onClearGroup(g.id)}
-                sx={{ ml: 0.5, p: 0.25, color: "text.disabled", "&:hover": { color: "error.main" } }}
-              >
-                <CloseIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            </Tooltip>
+            {(g.targets.length > 0 || g.source.length > 1) && (
+              <Tooltip title="clear alignment for this block (sends GL words back to the unaligned bag and splits compound source)">
+                <IconButton
+                  size="small"
+                  onClick={() => onClearGroup(g.id)}
+                  sx={{ ml: 0.5, p: 0.25, color: "text.disabled", "&:hover": { color: "error.main" } }}
+                >
+                  <CloseIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            )}
           </Stack>
           <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5} sx={{ direction: "ltr" }}>
             {g.targets.length === 0 ? (

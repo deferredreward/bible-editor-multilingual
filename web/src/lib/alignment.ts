@@ -114,7 +114,10 @@ function uid(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function parseAlignment(verseObjects: unknown[]): AlignmentState {
+export function parseAlignment(
+  verseObjects: unknown[],
+  sourceVerseObjects?: unknown[] | null,
+): AlignmentState {
   const groups: AlignmentGroup[] = [];
   const unaligned: TargetWord[] = [];
   const prefix: ParsedNode[] = [];
@@ -136,7 +139,122 @@ export function parseAlignment(verseObjects: unknown[]): AlignmentState {
   // Now do the alignment walk over only the milestone/word nodes.
   walk(inputs.filter((n) => nodeIsZaln(n) || nodeIsWord(n)), [], groups, unaligned);
 
-  return { groups, unaligned, prefix, passthroughTail: tail };
+  const state: AlignmentState = { groups, unaligned, prefix, passthroughTail: tail };
+  if (!sourceVerseObjects) return state;
+  return withSourceCoverage(state, sourceVerseObjects);
+}
+
+interface CollectedSourceWord {
+  position: number;
+  strong: string;
+  lemma: string;
+  morph: string;
+  text: string;
+  occurrence: number;
+  occurrences: number;
+}
+
+// Walk the UHB/UGNT verse tree to enumerate every \w token with its
+// document-order position. UHB tokens lack an explicit `occurrence` field,
+// so we derive it by running count per `strong`. `occurrences` (total per
+// strong) is filled in after the walk.
+function collectSourceWords(verseObjects: unknown[]): CollectedSourceWord[] {
+  const out: CollectedSourceWord[] = [];
+  const counts = new Map<string, number>();
+  let pos = 0;
+  const walkSrc = (nodes: unknown[]) => {
+    for (const n of nodes ?? []) {
+      const o = n as ParsedNode | null;
+      if (!o) continue;
+      if (o["type"] === "word" && o["tag"] === "w") {
+        const strong = String(o["strong"] ?? "");
+        const occ = (counts.get(strong) ?? 0) + 1;
+        counts.set(strong, occ);
+        out.push({
+          position: pos++,
+          strong,
+          lemma: String(o["lemma"] ?? ""),
+          morph: String(o["morph"] ?? ""),
+          text: String(o["text"] ?? ""),
+          occurrence: occ,
+          occurrences: 0,
+        });
+      } else if (o["type"] === "milestone") {
+        walkSrc((o["children"] as unknown[] | undefined) ?? []);
+      }
+    }
+  };
+  walkSrc(verseObjects);
+  for (const sw of out) sw.occurrences = counts.get(sw.strong) ?? 0;
+  return out;
+}
+
+// Find a parsed source word's UHB position by (strong, occurrence). Falls
+// back to (text, occurrence) — cantillation marks sometimes differ between
+// the ULT/UST milestone's `content` and the UHB \w token's `text`.
+function findSourcePosition(
+  sourceWords: CollectedSourceWord[],
+  s: SourceWord,
+): number {
+  const want = parseInt(s.occurrence, 10) || 1;
+  let count = 0;
+  if (s.strong) {
+    for (const sw of sourceWords) {
+      if (sw.strong === s.strong) {
+        count++;
+        if (count === want) return sw.position;
+      }
+    }
+  }
+  count = 0;
+  for (const sw of sourceWords) {
+    if (sw.text === s.content) {
+      count++;
+      if (count === want) return sw.position;
+    }
+  }
+  return -1;
+}
+
+// Augment the parsed alignment with synthetic placeholder groups for any
+// UHB/UGNT source word the target USFM didn't reference. This makes
+// previously-invisible source words (e.g. UST has no milestone for
+// לֵאמֹר) appear in the dialog as empty drop slots the editor can fill.
+// On save, empty groups are filtered out so the USFM stays clean unless
+// the editor populates them.
+function withSourceCoverage(
+  state: AlignmentState,
+  sourceVerseObjects: unknown[],
+): AlignmentState {
+  const sourceWords = collectSourceWords(sourceVerseObjects);
+  if (sourceWords.length === 0) return state;
+  const covered = new Set<number>();
+  for (const g of state.groups) {
+    for (const s of g.source) {
+      const p = findSourcePosition(sourceWords, s);
+      if (p >= 0) covered.add(p);
+    }
+  }
+  const placeholders: AlignmentGroup[] = [];
+  for (const sw of sourceWords) {
+    if (covered.has(sw.position)) continue;
+    placeholders.push({
+      id: uid(),
+      source: [
+        {
+          id: uid(),
+          strong: sw.strong,
+          lemma: sw.lemma,
+          morph: sw.morph,
+          occurrence: String(sw.occurrence),
+          occurrences: String(sw.occurrences || 1),
+          content: sw.text,
+        },
+      ],
+      targets: [],
+    });
+  }
+  return { ...state, groups: [...state.groups, ...placeholders] };
 }
 
 function buildMilestone(source: SourceWord, children: ParsedNode[]): ParsedNode {
@@ -157,8 +275,12 @@ function buildMilestone(source: SourceWord, children: ParsedNode[]): ParsedNode 
 export function serializeAlignment(state: AlignmentState): unknown[] {
   const out: ParsedNode[] = [...state.prefix];
 
-  state.groups.forEach((group, idx) => {
-    // Build the innermost children: \w word tokens with separators.
+  // Drop empty groups: a synthesized placeholder (from UHB-coverage
+  // synthesis) or a cleared compound block with no targets shouldn't write
+  // an empty \zaln-s milestone back to USFM.
+  const emittable = state.groups.filter((g) => g.targets.length > 0);
+
+  emittable.forEach((group, idx) => {
     const targetTokens: ParsedNode[] = [];
     group.targets.forEach((t, ti) => {
       if (ti > 0) targetTokens.push({ type: "text", text: " " });
@@ -180,7 +302,7 @@ export function serializeAlignment(state: AlignmentState): unknown[] {
       node = buildMilestone(group.source[i], [node]);
     }
     out.push(node);
-    if (idx < state.groups.length - 1) {
+    if (idx < emittable.length - 1) {
       out.push({ type: "text", text: " " });
     }
   });
