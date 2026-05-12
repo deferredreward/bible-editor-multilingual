@@ -12,6 +12,14 @@
 // tolerates intervening unmatched runs so non-contiguous quotes still hit.
 // `occurrence` (1-based) picks the Nth match when the same phrase appears
 // multiple times in a verse.
+//
+// Hebrew note: TN/TQ quote text typically arrives NFC-normalized while UHB
+// stores legacy combining-mark order (see lib/hebrew.ts), so all source-
+// text equality checks go through `nfc()`. The Set keys still carry the
+// RAW verseObjects text — the consumer (HebrewLine, renderHighlightedHTML)
+// reads from the same tree, so raw matches raw with no further work.
+
+import { nfc } from "./hebrew";
 
 type WordToken = { text: string; occurrence: number };
 type Run = { source: string; occurrence: number; targets: WordToken[] };
@@ -108,14 +116,17 @@ export function findTargetHighlights(
   if (runs.length === 0 || words.length === 0) return out;
   const wantOcc = Math.max(1, occurrence | 0);
 
+  const normWords = words.map(nfc);
+  const normSources = runs.map((r) => nfc(r.source));
+
   const matches: number[][] = [];
   for (let start = 0; start < runs.length; start++) {
-    if (runs[start].source !== words[0]) continue;
+    if (normSources[start] !== normWords[0]) continue;
     let runIdx = start;
     let wordIdx = 0;
     const matched: number[] = [];
     while (runIdx < runs.length && wordIdx < words.length) {
-      if (runs[runIdx].source === words[wordIdx]) {
+      if (normSources[runIdx] === normWords[wordIdx]) {
         matched.push(runIdx);
         wordIdx++;
         runIdx++;
@@ -148,14 +159,17 @@ export function findSourceHighlights(
   if (words.length === 0 || tokens.length === 0) return out;
   const wantOcc = Math.max(1, occurrence | 0);
 
+  const normWords = words.map(nfc);
+  const normTokens = tokens.map((t) => nfc(t.text));
+
   const matches: number[][] = [];
   for (let start = 0; start < tokens.length; start++) {
-    if (tokens[start].text !== words[0]) continue;
+    if (normTokens[start] !== normWords[0]) continue;
     let tIdx = start;
     let wIdx = 0;
     const matched: number[] = [];
     while (tIdx < tokens.length && wIdx < words.length) {
-      if (tokens[tIdx].text === words[wIdx]) {
+      if (normTokens[tIdx] === normWords[wIdx]) {
         matched.push(tIdx);
         wIdx++;
         tIdx++;

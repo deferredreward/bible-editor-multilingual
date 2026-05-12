@@ -28,6 +28,7 @@ import {
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
+import { nfc } from "../lib/hebrew";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 
 const WORD_IDS_MIME = "text/word-ids";
@@ -110,7 +111,18 @@ export function AlignmentDialog({
 
   const handleClearGroup = (groupId: string) => {
     if (!state) return;
-    setState(clearGroup(state, groupId));
+    // The X button on a display card may represent multiple underlying
+    // groups that were visually merged (same source chain, e.g. Zec 3:4's
+    // two הָסִ֛ירוּ milestones). Clear them all together so the user
+    // doesn't see lingering chips inside the card after one click.
+    const target = state.groups.find((g) => g.id === groupId);
+    if (!target) return;
+    const key = sourceKey(target);
+    let next = state;
+    for (const g of state.groups) {
+      if (sourceKey(g) === key) next = clearGroup(next, g.id);
+    }
+    setState(next);
   };
 
   const handleClearSelection = () => {
@@ -161,17 +173,35 @@ export function AlignmentDialog({
   const sourceIndexMap = useMemo(() => buildSourceIndexMap(sourceVerse), [sourceVerse]);
   const displayGroups = useMemo(() => {
     if (!state) return [];
+    // Look up by text+occurrence, then text+1 (in case ULT/UST over-numbered
+    // occurrences against the UHB), then by strong with the same fallback.
+    // MAX as last resort so unrecognized sources land at the end instead of
+    // jamming next to position 0.
     const sortKey = (g: (typeof state.groups)[number]) => {
       if (g.source.length === 0) return Number.MAX_SAFE_INTEGER;
       const s = g.source[0];
-      const byStrong = sourceIndexMap.get(`s:${s.strong}|${s.occurrence}`);
-      if (byStrong !== undefined) return byStrong;
+      const c = nfc(s.content);
+      const byText =
+        sourceIndexMap.get(`t:${c}|${s.occurrence}`) ??
+        sourceIndexMap.get(`t:${c}|1`);
+      if (byText !== undefined) return byText;
       return (
-        sourceIndexMap.get(`t:${s.content}|${s.occurrence}`) ??
+        sourceIndexMap.get(`s:${s.strong}|${s.occurrence}`) ??
+        sourceIndexMap.get(`s:${s.strong}|1`) ??
         Number.MAX_SAFE_INTEGER
       );
     };
-    return [...state.groups].sort((a, b) => sortKey(a) - sortKey(b));
+    const sorted = [...state.groups].sort((a, b) => sortKey(a) - sortKey(b));
+    // Strip a compound's inner source words that ALSO appear as the sole
+    // source of another group — same Hebrew token tagged twice in the USFM
+    // (e.g. Zec 2:8's אָמַר֮ inside the compound + standalone milestone).
+    // Display-only; state.groups keeps the full chain so save round-trips.
+    const stripped = stripCompoundOverlaps(sorted);
+    // Merge adjacent groups whose source chain is identical (same content +
+    // occurrence per source word, in order). Two USFM milestones that point
+    // to the same UHB token end up as separate AlignmentGroups so save can
+    // re-emit the original split; the dialog renders them as one card.
+    return mergeAdjacentSameSource(stripped);
   }, [state, sourceIndexMap]);
 
   // Pre-load lexicon entries for every unique Strong's referenced by the
@@ -639,7 +669,7 @@ function AlignmentGrid({
           onSourceDrop={(sourceId) => onSourceDrop(g.id, sourceId)}
         >
           <Stack direction="row" alignItems="flex-start" sx={{ mb: 0.5, direction: "ltr" }}>
-            <Stack direction="column" spacing={0.25} sx={{ flex: 1 }}>
+            <Stack direction="row" spacing={0.25} sx={{ flex: 1, direction: "rtl", flexWrap: "wrap" }}>
               {g.source.map((s) => (
                 <Tooltip
                   key={s.id}
@@ -664,7 +694,7 @@ function AlignmentGrid({
                     sx={{
                       bgcolor: "grey.900",
                       color: "grey.50",
-                      px: 1.5,
+                      px: 1.25,
                       py: 0.5,
                       fontFamily: '"Times New Roman", "SBL Hebrew", "Cardo", serif',
                       fontSize: 26,
@@ -823,6 +853,56 @@ function SimpleDraggableChip({ wordId, text }: { wordId: string; text: string })
   );
 }
 
+// Stable signature for an alignment group's source chain. Two groups with
+// the same signature point at the same UHB tokens in the same order.
+function sourceKey(g: AlignmentGroup): string {
+  return g.source.map((s) => `${s.content}|${s.occurrence}`).join("~");
+}
+
+// Remove a compound group's inner source word(s) from DISPLAY when the same
+// Hebrew content also lives in another group as the sole source. Comes up
+// in Zec 2:8: the USFM nests אָמַר֮ inside the כִּי+כֹה+אָמַר֮ compound AND
+// also tags it standalone (with a different occurrence) — UHB has just one
+// אָמַר֮, so prod's editor shows it once. We keep the underlying compound
+// intact in state.groups (so serialize round-trips); the dialog merely
+// hides the overlap from the card. Compound groups never get stripped to
+// zero — if every source overlaps, leave the chain as-is.
+function stripCompoundOverlaps(groups: AlignmentGroup[]): AlignmentGroup[] {
+  const standaloneContents = new Set<string>();
+  for (const g of groups) {
+    if (g.source.length === 1) {
+      standaloneContents.add(nfc(g.source[0].content));
+    }
+  }
+  if (standaloneContents.size === 0) return groups;
+  return groups.map((g) => {
+    if (g.source.length <= 1) return g;
+    const kept = g.source.filter((s) => !standaloneContents.has(nfc(s.content)));
+    if (kept.length === g.source.length || kept.length === 0) return g;
+    return { ...g, source: kept };
+  });
+}
+
+// Visually collapse adjacent groups whose source chains are identical
+// (same content + occurrence per source word). Two USFM milestones that
+// point to the same UHB token — e.g. Zec 3:4's two `הָסִ֛ירוּ` milestones
+// wrapping the split "Take ... off" phrase — become one card showing all
+// the target chips together. The underlying AlignmentGroups stay separate
+// in `state.groups` so serialize re-emits the original split, preserving
+// GL word order.
+function mergeAdjacentSameSource(groups: AlignmentGroup[]): AlignmentGroup[] {
+  const out: AlignmentGroup[] = [];
+  for (const g of groups) {
+    const last = out[out.length - 1];
+    if (last && sourceKey(last) === sourceKey(g)) {
+      out[out.length - 1] = { ...last, targets: [...last.targets, ...g.targets] };
+    } else {
+      out.push(g);
+    }
+  }
+  return out;
+}
+
 // ---------- helpers ----------
 
 function readWordIds(dt: DataTransfer): string[] {
@@ -844,16 +924,20 @@ function readWordIds(dt: DataTransfer): string[] {
 // Find a TWL tw_link whose orig_words includes this source word, so the
 // tooltip can point the editor at the article path (e.g. "names/yahweh").
 // No definition text is shipped from the API yet — the link is the hint.
+// TWL `orig_words` and milestone `content` come from different pipelines
+// (TSV vs usfm-js JSON) and routinely differ in combining-mark order, so
+// match through NFC.
 function twHintFor(twlRows: TwlRow[], verseNum: number, content: string): string | null {
   if (!content) return null;
+  const needle = nfc(content);
   for (const r of twlRows) {
     if (r.verse !== verseNum) continue;
     const ow = r.orig_words ?? "";
     if (!ow) continue;
     // The TWL orig_words may be a single word or a phrase. Match if any
     // whitespace-separated chunk equals our content.
-    const chunks = ow.split(/\s+/).filter(Boolean);
-    if (chunks.includes(content)) {
+    const chunks = ow.split(/\s+/).filter(Boolean).map(nfc);
+    if (chunks.includes(needle)) {
       return twShort(r.tw_link);
     }
   }
@@ -867,30 +951,32 @@ function twShort(link: string | null): string | null {
 }
 
 // Walk the source verse's USFM tree and build an index map of every \w
-// token. Two keys per token — by strong+occurrence ("s:b:H2320|1") and by
-// text+occurrence ("t:בַּ⁠חֹ֨דֶשׁ֙|1") — so callers can match either way.
-// Strong-based lookup is more robust because cantillation marks sometimes
-// differ between the ULT/UST milestone's `content` attribute and the UHB
-// \w token's `text`. UHB tokens lack an explicit `occurrence` field, so we
-// derive it by counting same-strong tokens seen so far in the verse.
+// token. Each token gets two keys — by NFC text+occurrence ("t:כִּ֚י|1") and
+// by strong+occurrence ("s:H3588a|2"). Text-based lookup is the primary
+// path because milestones reference a specific x-content; strong-only
+// collides when multiple source words share a Strong's (e.g. H0413 covers
+// both אֶל and אֵלָיו in Zec 3:4, H3588a covers both כִּי in Zec 2:8).
 function buildSourceIndexMap(sourceVerse: VerseDto | null): Map<string, number> {
   const map = new Map<string, number>();
   if (!sourceVerse?.content) return map;
   const verseObjects = (sourceVerse.content as { verseObjects?: unknown[] }).verseObjects;
   if (!Array.isArray(verseObjects)) return map;
   let idx = 0;
+  const textCount = new Map<string, number>();
   const strongCount = new Map<string, number>();
   const walk = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
       const o = n as Record<string, unknown> | null;
       if (!o) continue;
       if (o["type"] === "word" && o["tag"] === "w") {
-        const text = String(o["text"] ?? "");
+        const text = nfc(String(o["text"] ?? ""));
         const strong = String(o["strong"] ?? "");
-        const occ = (strongCount.get(strong) ?? 0) + 1;
-        strongCount.set(strong, occ);
-        const textKey = `t:${text}|${occ}`;
-        const strongKey = `s:${strong}|${occ}`;
+        const tOcc = (textCount.get(text) ?? 0) + 1;
+        const sOcc = (strongCount.get(strong) ?? 0) + 1;
+        textCount.set(text, tOcc);
+        strongCount.set(strong, sOcc);
+        const textKey = `t:${text}|${tOcc}`;
+        const strongKey = `s:${strong}|${sOcc}`;
         if (!map.has(textKey)) map.set(textKey, idx);
         if (!map.has(strongKey)) map.set(strongKey, idx);
         idx++;

@@ -10,6 +10,8 @@
 // single phrase are a Phase 4 enhancement; for v1 we preserve them on read
 // and round-trip them unchanged if the user doesn't touch them.
 
+import { nfc } from "./hebrew";
+
 export interface SourceWord {
   id: string;             // local-only id for drag/drop between groups
   strong: string;
@@ -207,34 +209,39 @@ interface CollectedSourceWord {
   lemma: string;
   morph: string;
   text: string;
-  occurrence: number;
-  occurrences: number;
+  textKey: string;        // NFC-normalized text, used for milestone matching
+  textOccurrence: number; // running count keyed on textKey
 }
 
+
 // Walk the UHB/UGNT verse tree to enumerate every \w token with its
-// document-order position. UHB tokens lack an explicit `occurrence` field,
-// so we derive it by running count per `strong`. `occurrences` (total per
-// strong) is filled in after the walk.
+// document-order position. UHB tokens lack an explicit `occurrence` field;
+// we derive a text-keyed counter so a milestone whose x-content matches the
+// Nth same-text token in source resolves to that exact position. Strong-
+// keyed counting isn't useful because multiple source words can share a
+// Strong's (e.g. אֶל and אֵלָיו both H0413), and the milestone's occurrence
+// is measured relative to its content, not its strong.
 function collectSourceWords(verseObjects: unknown[]): CollectedSourceWord[] {
   const out: CollectedSourceWord[] = [];
-  const counts = new Map<string, number>();
+  const textCounts = new Map<string, number>();
   let pos = 0;
   const walkSrc = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
       const o = n as ParsedNode | null;
       if (!o) continue;
       if (o["type"] === "word" && o["tag"] === "w") {
-        const strong = String(o["strong"] ?? "");
-        const occ = (counts.get(strong) ?? 0) + 1;
-        counts.set(strong, occ);
+        const text = String(o["text"] ?? "");
+        const textKey = nfc(text);
+        const tOcc = (textCounts.get(textKey) ?? 0) + 1;
+        textCounts.set(textKey, tOcc);
         out.push({
           position: pos++,
-          strong,
+          strong: String(o["strong"] ?? ""),
           lemma: String(o["lemma"] ?? ""),
           morph: String(o["morph"] ?? ""),
-          text: String(o["text"] ?? ""),
-          occurrence: occ,
-          occurrences: 0,
+          text,
+          textKey,
+          textOccurrence: tOcc,
         });
       } else if (o["type"] === "milestone") {
         walkSrc((o["children"] as unknown[] | undefined) ?? []);
@@ -242,33 +249,50 @@ function collectSourceWords(verseObjects: unknown[]): CollectedSourceWord[] {
     }
   };
   walkSrc(verseObjects);
-  for (const sw of out) sw.occurrences = counts.get(sw.strong) ?? 0;
   return out;
 }
 
-// Find a parsed source word's UHB position by (strong, occurrence). Falls
-// back to (text, occurrence) — cantillation marks sometimes differ between
-// the ULT/UST milestone's `content` and the UHB \w token's `text`.
+// Find a parsed source word's UHB position. Multiple source words can share
+// a Strong's (e.g. אֶל and אֵלָיו are both H0413), so match by content text
+// first — the milestone's x-content uniquely identifies the UHB token. Fall
+// back to strong-only when content lookup fails (cantillation marks can
+// differ between an x-content attribute and a \w token's text).
+//
+// Over-numbered occurrence fallback: ULT/UST occasionally tag the same UHB
+// token across two milestones with x-occurrence="1/2" + "2/2" even when the
+// UHB has just one match (e.g. Zec 2:8's two אָמַר֮ milestones, one inside
+// a compound and one standalone, against a single UHB אָמַר֮). When the
+// requested occurrence overshoots the available matches, fall back to the
+// first match — both milestones reference the same Hebrew token.
 function findSourcePosition(
   sourceWords: CollectedSourceWord[],
   s: SourceWord,
 ): number {
   const want = parseInt(s.occurrence, 10) || 1;
-  let count = 0;
-  if (s.strong) {
+  if (s.content) {
+    const wantKey = nfc(s.content);
+    let count = 0;
+    let firstPos = -1;
     for (const sw of sourceWords) {
-      if (sw.strong === s.strong) {
+      if (sw.textKey === wantKey) {
         count++;
+        if (firstPos === -1) firstPos = sw.position;
         if (count === want) return sw.position;
       }
     }
+    if (firstPos !== -1) return firstPos;
   }
-  count = 0;
-  for (const sw of sourceWords) {
-    if (sw.text === s.content) {
-      count++;
-      if (count === want) return sw.position;
+  if (s.strong) {
+    let count = 0;
+    let firstPos = -1;
+    for (const sw of sourceWords) {
+      if (sw.strong === s.strong) {
+        count++;
+        if (firstPos === -1) firstPos = sw.position;
+        if (count === want) return sw.position;
+      }
     }
+    if (firstPos !== -1) return firstPos;
   }
   return -1;
 }
@@ -292,6 +316,10 @@ function withSourceCoverage(
       if (p >= 0) covered.add(p);
     }
   }
+  const textTotals = new Map<string, number>();
+  for (const sw of sourceWords) {
+    textTotals.set(sw.text, (textTotals.get(sw.text) ?? 0) + 1);
+  }
   const placeholders: AlignmentGroup[] = [];
   for (const sw of sourceWords) {
     if (covered.has(sw.position)) continue;
@@ -303,8 +331,8 @@ function withSourceCoverage(
           strong: sw.strong,
           lemma: sw.lemma,
           morph: sw.morph,
-          occurrence: String(sw.occurrence),
-          occurrences: String(sw.occurrences || 1),
+          occurrence: String(sw.textOccurrence),
+          occurrences: String(textTotals.get(sw.text) ?? 1),
           content: sw.text,
         },
       ],
