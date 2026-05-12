@@ -179,7 +179,8 @@ function VerseSpan({
 
   // Resync the editable span when (a) text changes from outside and the user
   // hasn't been typing since, or (b) highlights change. We let the user type
-  // freely between resyncs.
+  // freely between resyncs. On first render `lastSetRef.current` is null —
+  // treat that as "always write" so the verse paints at mount time.
   const lastSetRef = useRef<string | null>(null);
   useEffect(() => {
     if (!elRef.current) return;
@@ -193,7 +194,7 @@ function VerseSpan({
       return;
     }
     // Plain-text mode.
-    if (dom === lastTextRef.current) {
+    if (lastSetRef.current === null || dom === lastTextRef.current) {
       elRef.current.innerText = text;
       lastSetRef.current = text;
     }
@@ -228,18 +229,20 @@ function VerseSpan({
       >
         {verseNum === 0 ? "intro" : `${chapter}:${verseNum}`}
       </span>
-      <Tooltip title={`align verse ${verseNum}`}>
-        <IconButton
-          onClick={(e) => {
-            e.stopPropagation();
-            onAlign();
-          }}
-          size="small"
-          sx={{ color: "success.main", p: 0.25, verticalAlign: "-3px" }}
-        >
-          <LinkIcon sx={{ fontSize: 14 }} />
-        </IconButton>
-      </Tooltip>{" "}
+      {!readOnly && (
+        <Tooltip title={`align verse ${verseNum}`}>
+          <IconButton
+            onClick={(e) => {
+              e.stopPropagation();
+              onAlign();
+            }}
+            size="small"
+            sx={{ color: "success.main", p: 0.25, verticalAlign: "-3px" }}
+          >
+            <LinkIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </Tooltip>
+      )}{" "}
       <span
         ref={(node) => {
           elRef.current = node;
