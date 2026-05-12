@@ -1,6 +1,8 @@
-import { Fragment, useRef, useState } from "react";
-import { Box, Stack, Typography, Chip, Button } from "@mui/material";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import PushPinIcon from "@mui/icons-material/PushPin";
+import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
 import type { TnRow, TqRow, TwlRow } from "../sync/api";
 import { NoteCard, type DropPosition } from "./NoteCard";
 import { WordsTable, type WordDropPosition } from "./WordsTable";
@@ -29,6 +31,54 @@ interface Props {
   onQuestionCreate: () => void;
 }
 
+type PinKey = "notes" | "words" | "questions";
+type Pinned = Record<PinKey, boolean>;
+
+const PINNED_KEY = "be:pinned";
+
+function loadPinned(): Pinned {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<Pinned>;
+      return {
+        notes: !!parsed.notes,
+        words: !!parsed.words,
+        questions: !!parsed.questions,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { notes: false, words: false, questions: false };
+}
+
+function savePinned(p: Pinned) {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
+
+function sortBySortOrder<T extends { sort_order: number | null; id: string }>(rows: T[]): T[] {
+  return [...rows].sort(
+    (a, b) =>
+      (a.sort_order ?? Number.MAX_SAFE_INTEGER) -
+        (b.sort_order ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id),
+  );
+}
+
+function groupByVerse<T extends { verse: number }>(rows: T[]): Array<[number, T[]]> {
+  const map = new Map<number, T[]>();
+  for (const r of rows) {
+    const bucket = map.get(r.verse) ?? [];
+    bucket.push(r);
+    map.set(r.verse, bucket);
+  }
+  return [...map.entries()].sort(([a], [b]) => a - b);
+}
+
 export function ResourceColumn({
   activeVerse,
   tn,
@@ -51,21 +101,50 @@ export function ResourceColumn({
   onQuestionDelete,
   onQuestionCreate,
 }: Props) {
-  const tnForVerse = tn
-    .filter((r) => r.verse === activeVerse)
-    .sort(
-      (a, b) =>
-        (a.sort_order ?? Number.MAX_SAFE_INTEGER) -
-          (b.sort_order ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id),
-    );
-  const tqForVerse = tq.filter((r) => r.verse === activeVerse);
-  const twlForVerse = twl
-    .filter((r) => r.verse === activeVerse)
-    .sort(
-      (a, b) =>
-        (a.sort_order ?? Number.MAX_SAFE_INTEGER) -
-          (b.sort_order ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id),
-    );
+  const [pinned, setPinned] = useState<Pinned>(() => loadPinned());
+  const togglePinned = (k: PinKey) => {
+    const next = { ...pinned, [k]: !pinned[k] };
+    setPinned(next);
+    savePinned(next);
+  };
+
+  const tnForVerse = useMemo(
+    () => sortBySortOrder(tn.filter((r) => r.verse === activeVerse)),
+    [tn, activeVerse],
+  );
+  const tqForVerse = useMemo(
+    () => tq.filter((r) => r.verse === activeVerse),
+    [tq, activeVerse],
+  );
+  const twlForVerse = useMemo(
+    () => sortBySortOrder(twl.filter((r) => r.verse === activeVerse)),
+    [twl, activeVerse],
+  );
+
+  // Pinned sections show the whole chapter, grouped by verse. Within each
+  // verse the row order matches the unpinned view.
+  const tnGroups = useMemo(
+    () =>
+      pinned.notes
+        ? groupByVerse(tn).map(([v, rows]) => [v, sortBySortOrder(rows)] as [number, TnRow[]])
+        : null,
+    [pinned.notes, tn],
+  );
+  const tqGroups = useMemo(
+    () => (pinned.questions ? groupByVerse(tq) : null),
+    [pinned.questions, tq],
+  );
+  const twlGroups = useMemo(
+    () =>
+      pinned.words
+        ? groupByVerse(twl).map(([v, rows]) => [v, sortBySortOrder(rows)] as [number, TwlRow[]])
+        : null,
+    [pinned.words, twl],
+  );
+
+  const totalTn = pinned.notes ? tn.length : tnForVerse.length;
+  const totalTwl = pinned.words ? twl.length : twlForVerse.length;
+  const totalTq = pinned.questions ? tq.length : tqForVerse.length;
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<
@@ -105,21 +184,21 @@ export function ResourceColumn({
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Chip
-          label={`${tnForVerse.length} notes`}
+          label={`${totalTn} notes${pinned.notes ? " · ch" : ""}`}
           size="small"
           variant="outlined"
           clickable
           onClick={() => scrollTo(notesRef)}
         />
         <Chip
-          label={`${twlForVerse.length} words`}
+          label={`${totalTwl} words${pinned.words ? " · ch" : ""}`}
           size="small"
           variant="outlined"
           clickable
           onClick={() => scrollTo(wordsRef)}
         />
         <Chip
-          label={`${tqForVerse.length} Q`}
+          label={`${totalTq} Q${pinned.questions ? " · ch" : ""}`}
           size="small"
           variant="outlined"
           clickable
@@ -128,78 +207,150 @@ export function ResourceColumn({
       </Stack>
       <Box sx={{ flex: 1, overflowY: "auto", px: 2, py: 1 }}>
         <div ref={notesRef} />
-        <SectionHead title="Notes" count={tnForVerse.length} onAdd={onNoteCreate} sticky />
-        {tnForVerse.length === 0 && (
+        <SectionHead
+          title="Notes"
+          count={totalTn}
+          pinned={pinned.notes}
+          onTogglePin={() => togglePinned("notes")}
+          onAdd={onNoteCreate}
+          sticky
+        />
+        {tnGroups ? (
+          tnGroups.length === 0 ? (
+            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+              no notes in this chapter
+            </Typography>
+          ) : (
+            tnGroups.map(([verse, rows]) => (
+              <Fragment key={`tn-${verse}`}>
+                <VerseGroupHead verse={verse} active={verse === activeVerse} />
+                {rows.map((r) => renderNoteCard(r))}
+              </Fragment>
+            ))
+          )
+        ) : tnForVerse.length === 0 ? (
           <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
             no notes for this verse
           </Typography>
+        ) : (
+          tnForVerse.map((r) => renderNoteCard(r))
         )}
-        {tnForVerse.map((r) => {
-          const showBefore =
-            dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "before";
-          const showAfter =
-            dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "after";
-          return (
-            <Fragment key={r.id}>
-              {showBefore && <DropIndicator />}
-              <NoteCard
-                row={r}
-                active={r.id === activeNoteId}
-                dragging={dragId === r.id}
-                isDropTarget={dragId !== null && dragId !== r.id}
-                onChange={(p) => onNoteChange(r.id, p)}
-                onDelete={() => onNoteDelete(r.id)}
-                onInsertAfter={() => onNoteInsertAfter(r.id)}
-                onFocus={() => onNoteFocus(r)}
-                onGripDragStart={() => setDragId(r.id)}
-                onDragEnd={() => {
-                  setDragId(null);
-                  setDragOver(null);
-                }}
-                onCardDragOver={(position) => {
-                  setDragOver((cur) =>
-                    cur && cur.targetId === r.id && cur.position === position
-                      ? cur
-                      : { targetId: r.id, position },
-                  );
-                }}
-                onCardDragLeave={() => {
-                  // Don't clear on leave — the next onDragOver from the
-                  // adjacent card or the same card's other half will
-                  // immediately overwrite this. Clearing here causes flicker.
-                }}
-                onCardDrop={(position) => {
-                  if (dragId && dragId !== r.id) {
-                    onNoteReorder(dragId, r.id, position);
-                  }
-                  setDragId(null);
-                  setDragOver(null);
-                }}
-              />
-              {showAfter && <DropIndicator />}
-            </Fragment>
-          );
-        })}
 
         <Box sx={{ height: 16 }} />
         <div ref={wordsRef} />
-        <SectionHead title="Words" count={twlForVerse.length} onAdd={onWordCreate} />
-        <WordsTable
-          rows={twlForVerse}
-          activeId={activeWordId}
-          onChange={onWordChange}
-          onDelete={onWordDelete}
-          onFocus={onWordFocus}
-          onReorder={onWordReorder}
+        <SectionHead
+          title="Words"
+          count={totalTwl}
+          pinned={pinned.words}
+          onTogglePin={() => togglePinned("words")}
+          onAdd={onWordCreate}
         />
+        {twlGroups ? (
+          twlGroups.length === 0 ? (
+            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+              no words in this chapter
+            </Typography>
+          ) : (
+            twlGroups.map(([verse, rows]) => (
+              <Fragment key={`twl-${verse}`}>
+                <VerseGroupHead verse={verse} active={verse === activeVerse} />
+                <WordsTable
+                  rows={rows}
+                  activeId={activeWordId}
+                  onChange={onWordChange}
+                  onDelete={onWordDelete}
+                  onFocus={onWordFocus}
+                  onReorder={onWordReorder}
+                />
+              </Fragment>
+            ))
+          )
+        ) : (
+          <WordsTable
+            rows={twlForVerse}
+            activeId={activeWordId}
+            onChange={onWordChange}
+            onDelete={onWordDelete}
+            onFocus={onWordFocus}
+            onReorder={onWordReorder}
+          />
+        )}
 
         <Box sx={{ height: 16 }} />
         <div ref={questionsRef} />
-        <SectionHead title="Questions" count={tqForVerse.length} onAdd={onQuestionCreate} />
-        <QuestionsTable rows={tqForVerse} onChange={onQuestionChange} onDelete={onQuestionDelete} />
+        <SectionHead
+          title="Questions"
+          count={totalTq}
+          pinned={pinned.questions}
+          onTogglePin={() => togglePinned("questions")}
+          onAdd={onQuestionCreate}
+        />
+        {tqGroups ? (
+          tqGroups.length === 0 ? (
+            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+              no questions in this chapter
+            </Typography>
+          ) : (
+            tqGroups.map(([verse, rows]) => (
+              <Fragment key={`tq-${verse}`}>
+                <VerseGroupHead verse={verse} active={verse === activeVerse} />
+                <QuestionsTable rows={rows} onChange={onQuestionChange} onDelete={onQuestionDelete} />
+              </Fragment>
+            ))
+          )
+        ) : (
+          <QuestionsTable rows={tqForVerse} onChange={onQuestionChange} onDelete={onQuestionDelete} />
+        )}
       </Box>
     </Box>
   );
+
+  function renderNoteCard(r: TnRow) {
+    const showBefore =
+      dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "before";
+    const showAfter =
+      dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "after";
+    return (
+      <Fragment key={r.id}>
+        {showBefore && <DropIndicator />}
+        <NoteCard
+          row={r}
+          active={r.id === activeNoteId}
+          dragging={dragId === r.id}
+          isDropTarget={dragId !== null && dragId !== r.id}
+          onChange={(p) => onNoteChange(r.id, p)}
+          onDelete={() => onNoteDelete(r.id)}
+          onInsertAfter={() => onNoteInsertAfter(r.id)}
+          onFocus={() => onNoteFocus(r)}
+          onGripDragStart={() => setDragId(r.id)}
+          onDragEnd={() => {
+            setDragId(null);
+            setDragOver(null);
+          }}
+          onCardDragOver={(position) => {
+            setDragOver((cur) =>
+              cur && cur.targetId === r.id && cur.position === position
+                ? cur
+                : { targetId: r.id, position },
+            );
+          }}
+          onCardDragLeave={() => {
+            // Don't clear on leave — the next onDragOver from the
+            // adjacent card or the same card's other half will
+            // immediately overwrite this. Clearing here causes flicker.
+          }}
+          onCardDrop={(position) => {
+            if (dragId && dragId !== r.id) {
+              onNoteReorder(dragId, r.id, position);
+            }
+            setDragId(null);
+            setDragOver(null);
+          }}
+        />
+        {showAfter && <DropIndicator />}
+      </Fragment>
+    );
+  }
 }
 
 function DropIndicator() {
@@ -216,7 +367,51 @@ function DropIndicator() {
   );
 }
 
-function SectionHead({ title, count, onAdd, sticky }: { title: string; count: number; onAdd: () => void; sticky?: boolean }) {
+function VerseGroupHead({ verse, active }: { verse: number; active: boolean }) {
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      alignItems="center"
+      sx={{
+        mt: 1,
+        mb: 0.25,
+        py: 0.25,
+        px: 0.5,
+        borderBottom: "1px dashed",
+        borderColor: active ? "primary.main" : "divider",
+      }}
+    >
+      <Typography
+        variant="caption"
+        sx={{
+          fontFamily: "monospace",
+          fontWeight: 700,
+          color: active ? "primary.main" : "text.secondary",
+          letterSpacing: 0.5,
+        }}
+      >
+        {verse === 0 ? "intro" : `v${verse}`}
+      </Typography>
+    </Stack>
+  );
+}
+
+function SectionHead({
+  title,
+  count,
+  pinned,
+  onTogglePin,
+  onAdd,
+  sticky,
+}: {
+  title: string;
+  count: number;
+  pinned: boolean;
+  onTogglePin: () => void;
+  onAdd: () => void;
+  sticky?: boolean;
+}) {
   return (
     <Stack
       direction="row"
@@ -245,6 +440,13 @@ function SectionHead({ title, count, onAdd, sticky }: { title: string; count: nu
         variant="outlined"
         sx={{ height: 18, fontFamily: "monospace", fontSize: 10 }}
       />
+      <Tooltip
+        title={pinned ? `unpin — show ${title.toLowerCase()} for the active verse only` : `pin — show ${title.toLowerCase()} for every verse in this chapter`}
+      >
+        <IconButton size="small" onClick={onTogglePin} sx={{ p: 0.25, color: pinned ? "primary.main" : "text.disabled" }}>
+          {pinned ? <PushPinIcon fontSize="inherit" sx={{ fontSize: 16 }} /> : <PushPinOutlinedIcon fontSize="inherit" sx={{ fontSize: 16 }} />}
+        </IconButton>
+      </Tooltip>
       <Box sx={{ flex: 1 }} />
       <Button
         size="small"
