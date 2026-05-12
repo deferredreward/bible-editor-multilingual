@@ -6,6 +6,12 @@ import type { TnRow, TqRow, TwlRow } from "../sync/api";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn } from "./ResourceColumn";
+import { AlignmentDialog } from "./AlignmentDialog";
+
+interface AlignerTarget {
+  verse: number;
+  bibleVersion: string;
+}
 
 const SCRIPTURE_MODE_KEY = "be:scriptureMode";
 const ENABLED_VERSIONS_KEY = "be:enabledVersions";
@@ -44,6 +50,7 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
   const [enabledVersions, setEnabledVersions] = useState<string[]>(() =>
     loadFromStorage<string[]>(ENABLED_VERSIONS_KEY, ["ULT", "UST"]),
   );
+  const [alignerTarget, setAlignerTarget] = useState<AlignerTarget | null>(null);
 
   const tileSet = useMemo(() => {
     if (!data) return [] as Array<{ verse: number; has: boolean }>;
@@ -157,9 +164,7 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
               { content: newContent, plain_text: plain },
             );
           }}
-          onOpenAligner={(_v, _bv) => {
-            /* aligner deferred — see docs/plan.md "Phase 3" */
-          }}
+          onOpenAligner={(v, bv) => setAlignerTarget({ verse: v, bibleVersion: bv })}
         />
         <ResourceColumn
           activeVerse={activeVerse}
@@ -194,6 +199,32 @@ export function Shell({ book, chapter, initialVerse = 1 }: Props) {
           }}
         />
       </Box>
+      {alignerTarget && (
+        <AlignmentDialog
+          open
+          book={book}
+          chapter={chapter}
+          verseNum={alignerTarget.verse}
+          bibleVersion={alignerTarget.bibleVersion}
+          verse={data.verses[alignerTarget.bibleVersion]?.[alignerTarget.verse] ?? null}
+          contextOther={
+            data.verses[alignerTarget.bibleVersion === "ULT" ? "UST" : "ULT"]?.[
+              alignerTarget.verse
+            ] ?? null
+          }
+          onClose={() => setAlignerTarget(null)}
+          onSave={(content, plain, expectedVersion) => {
+            void outbox.enqueueVerse(
+              book,
+              chapter,
+              alignerTarget.verse,
+              alignerTarget.bibleVersion,
+              expectedVersion,
+              { content, plain_text: plain },
+            );
+          }}
+        />
+      )}
     </Box>
   );
 }
