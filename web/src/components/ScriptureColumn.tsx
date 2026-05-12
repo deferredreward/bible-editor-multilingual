@@ -401,10 +401,13 @@ function StackedBody({
             key={v}
             onClick={() => onSelectVerse(v)}
             sx={{
-              display: "flex",
-              gap: 1,
-              p: 1,
-              my: 0.5,
+              display: "grid",
+              gridTemplateColumns: "auto auto 1fr",
+              columnGap: 0.75,
+              rowGap: 0.25,
+              px: 1,
+              py: 0.75,
+              my: 0.25,
               borderRadius: 1,
               cursor: "pointer",
               color: "text.secondary",
@@ -417,48 +420,53 @@ function StackedBody({
               component="span"
               variant="caption"
               sx={{
+                gridColumn: 1,
+                gridRow: 1,
                 fontFamily: "monospace",
                 color: "text.disabled",
-                minWidth: 36,
-                flexShrink: 0,
                 pt: 0.25,
+                whiteSpace: "nowrap",
               }}
             >
               {v === 0 ? "intro" : `${chapter}:${v}`}
             </Typography>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <InactiveLine label="ULT" text={ultV?.plain_text ?? ""} />
-              {ustV && <InactiveLine label="UST" text={ustV.plain_text ?? ""} sx={{ mt: 0.25 }} />}
-            </Box>
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{
+                gridColumn: 2,
+                gridRow: 1,
+                fontFamily: "monospace",
+                color: "text.disabled",
+                fontWeight: 600,
+                pt: 0.25,
+              }}
+            >
+              L
+            </Typography>
+            <Box sx={{ gridColumn: 3, gridRow: 1, minWidth: 0 }}>{ultV?.plain_text ?? ""}</Box>
+            {ustV && (
+              <>
+                <Typography
+                  component="span"
+                  variant="caption"
+                  sx={{
+                    gridColumn: 2,
+                    gridRow: 2,
+                    fontFamily: "monospace",
+                    color: "text.disabled",
+                    fontWeight: 600,
+                    pt: 0.25,
+                  }}
+                >
+                  S
+                </Typography>
+                <Box sx={{ gridColumn: 3, gridRow: 2, minWidth: 0 }}>{ustV.plain_text ?? ""}</Box>
+              </>
+            )}
           </Box>
         );
       })}
-    </Box>
-  );
-}
-
-// Inactive verse line: version label in a fixed-width gutter so the text
-// wraps consistently across ULT and UST. Matches the gutter used by
-// ActiveLine, just narrower and read-only.
-function InactiveLine({ label, text, sx }: { label: string; text: string; sx?: object }) {
-  return (
-    <Box sx={{ display: "flex", gap: 0.75, ...sx }}>
-      <Typography
-        component="span"
-        variant="caption"
-        sx={{
-          fontFamily: "monospace",
-          textTransform: "uppercase",
-          minWidth: 28,
-          flexShrink: 0,
-          pt: 0.25,
-        }}
-      >
-        {label}
-      </Typography>
-      <Box component="span" sx={{ flex: 1 }}>
-        {text}
-      </Box>
     </Box>
   );
 }
