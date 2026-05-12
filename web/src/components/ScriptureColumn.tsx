@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button } from "@mui/material";
 import LinkIcon from "@mui/icons-material/Link";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
+import ViewStreamIcon from "@mui/icons-material/ViewStream";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
 import SearchIcon from "@mui/icons-material/Search";
 import UndoIcon from "@mui/icons-material/Undo";
@@ -94,15 +95,6 @@ export function ScriptureColumn({
   // BookView's scroll effect keys off this so external content changes
   // don't yank the user to the next match.
   const [findScrollTarget, setFindScrollTarget] = useState<FindMatch | null>(null);
-  // Remember the most recent non-book mode so toggling book off returns to
-  // wherever the user was (stacked vs columns). Initialized to the current
-  // mode if it isn't book, else stacked as a safe default.
-  const [lastNonBookMode, setLastNonBookMode] = useState<ScriptureMode>(
-    mode === "book" ? "stacked" : mode,
-  );
-  useEffect(() => {
-    if (mode !== "book") setLastNonBookMode(mode);
-  }, [mode]);
 
   // Ctrl/Cmd+F opens the find overlay (book mode only). Esc inside the
   // overlay closes it via the overlay's own handler.
@@ -169,21 +161,34 @@ export function ScriptureColumn({
         <Typography variant="subtitle2" sx={{ mr: 1 }}>
           Scripture
         </Typography>
-        <Button
-          size="small"
-          variant={mode === "columns" ? "contained" : "outlined"}
-          startIcon={<ViewColumnIcon fontSize="small" />}
-          onClick={() => onModeChange(mode === "columns" ? "stacked" : "columns")}
-          sx={{ textTransform: "none" }}
-        >
-          {mode === "columns" ? `${enabledVersions.length} col${enabledVersions.length === 1 ? "" : "s"}` : "columns"}
-        </Button>
-        <Tooltip title={mode === "book" ? `back to ${lastNonBookMode}` : "scroll the whole book across all enabled versions (lazy loads as you scroll)"}>
+        <Tooltip title="verse-by-verse stacked card (default)">
+          <Button
+            size="small"
+            variant={mode === "stacked" ? "contained" : "outlined"}
+            startIcon={<ViewStreamIcon fontSize="small" />}
+            onClick={() => onModeChange("stacked")}
+            sx={{ textTransform: "none" }}
+          >
+            rows
+          </Button>
+        </Tooltip>
+        <Tooltip title="parallel-column doc view of the current chapter">
+          <Button
+            size="small"
+            variant={mode === "columns" ? "contained" : "outlined"}
+            startIcon={<ViewColumnIcon fontSize="small" />}
+            onClick={() => onModeChange("columns")}
+            sx={{ textTransform: "none" }}
+          >
+            {mode === "columns" ? `${enabledVersions.length} col${enabledVersions.length === 1 ? "" : "s"}` : "columns"}
+          </Button>
+        </Tooltip>
+        <Tooltip title="whole-book scroll across all enabled versions (lazy loads as you scroll)">
           <Button
             size="small"
             variant={mode === "book" ? "contained" : "outlined"}
             startIcon={<MenuBookIcon fontSize="small" />}
-            onClick={() => onModeChange(mode === "book" ? lastNonBookMode : "book")}
+            onClick={() => onModeChange("book")}
             sx={{ textTransform: "none" }}
           >
             book
