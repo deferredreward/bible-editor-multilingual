@@ -1,14 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button } from "@mui/material";
 import LinkIcon from "@mui/icons-material/Link";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
+import SearchIcon from "@mui/icons-material/Search";
 import UndoIcon from "@mui/icons-material/Undo";
 import type { VerseDto } from "../sync/api";
 import { DocColumn } from "./DocColumn";
 import { BookView } from "./BookView";
+import { FindReplaceOverlay, type FindMatch } from "./FindReplaceOverlay";
 import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
+
+export interface FindQuery {
+  find: string;
+  regex: boolean;
+  caseSensitive: boolean;
+}
 
 export type ScriptureMode = "stacked" | "columns" | "book";
 
@@ -74,6 +82,26 @@ export function ScriptureColumn({
   // Bumped on "go to active" clicks so columns/book-mode views can re-scroll
   // to their active span even when activeVerse hasn't changed.
   const [scrollNonce, setScrollNonce] = useState(0);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState<FindQuery | null>(null);
+  const [findActiveMatch, setFindActiveMatch] = useState<FindMatch | null>(null);
+
+  // Ctrl/Cmd+F opens the find overlay (book mode only). Esc inside the
+  // overlay closes it via the overlay's own handler.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && mode === "book") {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mode]);
+
+  // Stable callback identities so the overlay's effect deps don't churn.
+  const onFindQueryChange = useCallback((q: FindQuery | null) => setFindQuery(q), []);
+  const onFindActiveMatchChange = useCallback((m: FindMatch | null) => setFindActiveMatch(m), []);
 
   useEffect(() => {
     if (mode === "stacked") {
@@ -139,6 +167,19 @@ export function ScriptureColumn({
             book
           </Button>
         </Tooltip>
+        {mode === "book" && (
+          <Tooltip title="find / replace across loaded chapters (Ctrl+F)">
+            <Button
+              size="small"
+              variant={findOpen ? "contained" : "outlined"}
+              startIcon={<SearchIcon fontSize="small" />}
+              onClick={() => setFindOpen((o) => !o)}
+              sx={{ textTransform: "none" }}
+            >
+              find
+            </Button>
+          </Tooltip>
+        )}
         {(mode === "columns" || mode === "book") && (
           <ToggleButtonGroup
             size="small"
@@ -186,21 +227,36 @@ export function ScriptureColumn({
           onOpenAligner={onOpenAligner}
         />
       ) : mode === "book" && bookChapterList && bookChapters && onLoadBookChapter && onSelectBookVerse && onEditBookVerse && onOpenBookAligner ? (
-        <BookView
-          book={book}
-          chapterList={bookChapterList}
-          chapters={bookChapters}
-          enabledVersions={enabledVersions}
-          activeChapter={chapter}
-          activeVerse={activeVerse}
-          activeNoteQuote={activeNoteQuote}
-          activeNoteOccurrence={activeNoteOccurrence}
-          scrollNonce={scrollNonce}
-          onLoadChapter={onLoadBookChapter}
-          onSelectVerse={onSelectBookVerse}
-          onEditVerse={onEditBookVerse}
-          onOpenAligner={onOpenBookAligner}
-        />
+        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {findOpen && (
+            <FindReplaceOverlay
+              open
+              onClose={() => setFindOpen(false)}
+              chapters={bookChapters}
+              enabledVersions={enabledVersions}
+              onReplaceVerse={onEditBookVerse}
+              onActiveMatchChange={onFindActiveMatchChange}
+              onQueryChange={onFindQueryChange}
+            />
+          )}
+          <BookView
+            book={book}
+            chapterList={bookChapterList}
+            chapters={bookChapters}
+            enabledVersions={enabledVersions}
+            activeChapter={chapter}
+            activeVerse={activeVerse}
+            activeNoteQuote={activeNoteQuote}
+            activeNoteOccurrence={activeNoteOccurrence}
+            scrollNonce={scrollNonce}
+            findQuery={findQuery}
+            findActiveMatch={findActiveMatch}
+            onLoadChapter={onLoadBookChapter}
+            onSelectVerse={onSelectBookVerse}
+            onEditVerse={onEditBookVerse}
+            onOpenAligner={onOpenBookAligner}
+          />
+        </Box>
       ) : (
         <Box sx={{ flex: 1, display: "flex", gap: 1, p: 1, overflow: "hidden" }}>
           {enabledVersions.map((v) => (

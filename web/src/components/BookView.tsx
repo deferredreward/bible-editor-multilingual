@@ -15,6 +15,8 @@ import LinkIcon from "@mui/icons-material/Link";
 import type { VerseDto } from "../sync/api";
 import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
+import type { FindMatch } from "./FindReplaceOverlay";
+import type { FindQuery } from "./ScriptureColumn";
 
 const READ_ONLY = new Set(["UHB", "UGNT"]);
 
@@ -28,6 +30,8 @@ interface Props {
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
   scrollNonce?: number;
+  findQuery: FindQuery | null;
+  findActiveMatch: FindMatch | null;
   onLoadChapter: (ch: number) => void;
   onSelectVerse: (chapter: number, verse: number) => void;
   onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
@@ -44,6 +48,8 @@ export function BookView({
   activeNoteQuote,
   activeNoteOccurrence,
   scrollNonce,
+  findQuery,
+  findActiveMatch,
   onLoadChapter,
   onSelectVerse,
   onEditVerse,
@@ -55,6 +61,27 @@ export function BookView({
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeChapter, activeVerse, scrollNonce]);
+
+  // Scroll to find's active match without changing the actual active verse —
+  // navigation between matches shouldn't blow away the user's editing focus.
+  useEffect(() => {
+    if (!findActiveMatch || !containerRef.current) return;
+    const sel = `[data-find-cell="${findActiveMatch.chapter}-${findActiveMatch.verse}-${findActiveMatch.bibleVersion}"]`;
+    const el = containerRef.current.querySelector<HTMLElement>(sel);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [findActiveMatch]);
+
+  const compiledFindRe = useMemo(() => {
+    if (!findQuery) return null;
+    try {
+      const pattern = findQuery.regex
+        ? findQuery.find
+        : findQuery.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(pattern, findQuery.caseSensitive ? "g" : "gi");
+    } catch {
+      return null;
+    }
+  }, [findQuery]);
 
   const cols = enabledVersions.length;
   const gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
@@ -91,7 +118,26 @@ export function BookView({
           {chapterList.length} ch · loaded {countLoaded(chapters)}
         </Typography>
       </Stack>
-      <Box ref={containerRef} sx={{ flex: 1, overflowY: "auto" }}>
+      <Box
+        ref={containerRef}
+        sx={{
+          flex: 1,
+          overflowY: "auto",
+          "& mark.be-hl": {
+            backgroundColor: "#fff48a",
+            padding: "0 2px",
+            borderRadius: 0.5,
+            color: "inherit",
+          },
+          "& mark.be-find": {
+            backgroundColor: "#ffd966",
+            outline: "1px solid #d97706",
+            padding: "0 1px",
+            borderRadius: 0.5,
+            color: "inherit",
+          },
+        }}
+      >
         <Box sx={{ display: "grid", gridTemplateColumns, gap: 1, px: 1.5, py: 1 }}>
           {chapterList.map((ch) => (
             <ChapterBlock
@@ -106,6 +152,7 @@ export function BookView({
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
               activeRowRef={activeRowRef}
+              findRe={compiledFindRe}
               onLoadChapter={onLoadChapter}
               onSelectVerse={onSelectVerse}
               onEditVerse={onEditVerse}
@@ -135,6 +182,7 @@ function ChapterBlock({
   activeNoteQuote,
   activeNoteOccurrence,
   activeRowRef,
+  findRe,
   onLoadChapter,
   onSelectVerse,
   onEditVerse,
@@ -150,6 +198,7 @@ function ChapterBlock({
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
   activeRowRef: React.MutableRefObject<HTMLDivElement | null>;
+  findRe: RegExp | null;
   onLoadChapter: (ch: number) => void;
   onSelectVerse: (chapter: number, verse: number) => void;
   onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
@@ -275,6 +324,7 @@ function ChapterBlock({
             activeNoteQuote={isActive ? activeNoteQuote : null}
             activeNoteOccurrence={isActive ? activeNoteOccurrence : null}
             rowRef={isActive ? activeRowRef : null}
+            findRe={findRe}
             onSelectVerse={() => onSelectVerse(chapter, v)}
             onEditVerse={(bv, plain, base) => onEditVerse(chapter, v, bv, plain, base)}
             onOpenAligner={(bv) => onOpenAligner(chapter, v, bv)}
@@ -295,6 +345,7 @@ function VerseRow({
   activeNoteQuote,
   activeNoteOccurrence,
   rowRef,
+  findRe,
   onSelectVerse,
   onEditVerse,
   onOpenAligner,
@@ -308,6 +359,7 @@ function VerseRow({
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
   rowRef: React.MutableRefObject<HTMLDivElement | null> | null;
+  findRe: RegExp | null;
   onSelectVerse: () => void;
   onEditVerse: (bv: string, plain: string, base: VerseDto) => void;
   onOpenAligner: (bv: string) => void;
@@ -322,6 +374,7 @@ function VerseRow({
           <Box
             key={bv}
             ref={colIdx === 0 ? rowRef : null}
+            data-find-cell={`${chapter}-${verseNum}-${bv}`}
             onClick={onSelectVerse}
             sx={{
               p: 0.5,
@@ -339,6 +392,7 @@ function VerseRow({
               isActive={isActive}
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
+              findRe={findRe}
               onAlign={() => onOpenAligner(bv)}
               onEdit={(plain) => dto && onEditVerse(bv, plain, dto)}
             />
@@ -357,6 +411,7 @@ function VerseCell({
   isActive,
   activeNoteQuote,
   activeNoteOccurrence,
+  findRe,
   onAlign,
   onEdit,
 }: {
@@ -367,6 +422,7 @@ function VerseCell({
   isActive: boolean;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  findRe: RegExp | null;
   onAlign: () => void;
   onEdit: (plain: string) => void;
 }) {
@@ -377,17 +433,28 @@ function VerseCell({
   const lastTextRef = useRef(dto?.plain_text ?? "");
   const lastSetRef = useRef<string | null>(null);
 
+  // Find marks override note highlights while the overlay is open — fewer
+  // visual layers, easier to scan results. Note highlights resume when the
+  // overlay closes.
+  const findHTML = useMemo(() => {
+    if (!findRe || !dto?.plain_text) return null;
+    const html = renderFindMatchesHTML(dto.plain_text, findRe);
+    return html.includes("be-find") ? html : null;
+  }, [findRe, dto?.plain_text]);
+
   const highlights = useMemo<Set<HighlightKey> | null>(() => {
+    if (findHTML) return null;
     if (!isActive || !activeNoteQuote || !dto?.content) return null;
     return highlightsFor(bibleVersion, dto.content, activeNoteQuote, activeNoteOccurrence);
-  }, [isActive, activeNoteQuote, activeNoteOccurrence, bibleVersion, dto?.content]);
+  }, [findHTML, isActive, activeNoteQuote, activeNoteOccurrence, bibleVersion, dto?.content]);
 
   const html = useMemo(() => {
+    if (findHTML) return findHTML;
     if (!highlights || highlights.size === 0) return null;
     const verseObjects = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
     if (!Array.isArray(verseObjects)) return null;
     return renderHighlightedHTML(verseObjects, highlights);
-  }, [dto?.content, highlights]);
+  }, [findHTML, dto?.content, highlights]);
 
   useEffect(() => {
     if (!elRef.current) return;
@@ -475,4 +542,23 @@ function VerseCell({
       />
     </Box>
   );
+}
+
+function renderFindMatchesHTML(plainText: string, re: RegExp): string {
+  let html = "";
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  const local = new RegExp(re.source, re.flags);
+  while ((m = local.exec(plainText)) !== null) {
+    html += escapeHtml(plainText.slice(lastIdx, m.index));
+    html += `<mark class="be-find">${escapeHtml(m[0])}</mark>`;
+    lastIdx = m.index + m[0].length;
+    if (m[0].length === 0) local.lastIndex++;
+  }
+  html += escapeHtml(plainText.slice(lastIdx));
+  return html;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
 }
