@@ -49,6 +49,17 @@ interface SessionSnapshot {
   support_reference: string | null;
 }
 
+// True when every pending field equals the snapshot value — i.e. the user
+// edited and then reverted (or hit Undo) so there's no net change to
+// persist. We use this on flush + on unmount to suppress no-op version
+// bumps that would otherwise show up as "v3 → v4" on the row chip.
+function pendingMatchesSnapshot(p: Partial<TnRow>, s: SessionSnapshot): boolean {
+  if ("quote" in p && p.quote !== s.quote) return false;
+  if ("note" in p && p.note !== s.note) return false;
+  if ("support_reference" in p && p.support_reference !== s.support_reference) return false;
+  return true;
+}
+
 export function NoteCard({
   row,
   active,
@@ -75,7 +86,6 @@ export function NoteCard({
   // here and flush once at session end (or on manual save).
   const sessionSnapshotRef = useRef<SessionSnapshot | null>(null);
   const pendingRef = useRef<Partial<TnRow>>({});
-  const [dirty, setDirty] = useState(false);
   const cancelUnmountFlushRef = useRef(false);
 
   const paperRef = useRef<HTMLDivElement | null>(null);
@@ -131,30 +141,32 @@ export function NoteCard({
   // transitioning to inactive first (e.g. user navigates to another verse
   // while this note is still active and gets filtered out of the list).
   // Intentionally cancelled when this card itself is being deleted.
+  // Compares pending against the entry snapshot so a "typed then undone"
+  // session unmounts without an extra version bump.
   useEffect(() => {
     return () => {
       if (cancelUnmountFlushRef.current) return;
       const p = pendingRef.current;
-      if (Object.keys(p).length > 0) {
-        onSaveRef.current(p);
-      }
+      const s = sessionSnapshotRef.current;
+      if (Object.keys(p).length === 0) return;
+      if (s && pendingMatchesSnapshot(p, s)) return;
+      onSaveRef.current(p);
     };
   }, []);
 
   const flushPending = () => {
     const p = pendingRef.current;
-    if (Object.keys(p).length === 0) {
-      setDirty(false);
-      return;
-    }
+    if (Object.keys(p).length === 0) return;
+    const s = sessionSnapshotRef.current;
     pendingRef.current = {};
-    setDirty(false);
+    // If every pending field equals its snapshot value, the user typed
+    // and then reverted (or hit undo) — no net change to persist.
+    if (s && pendingMatchesSnapshot(p, s)) return;
     onSave(p);
   };
 
   const stashEdit = (patch: Partial<TnRow>) => {
     pendingRef.current = { ...pendingRef.current, ...patch };
-    setDirty(true);
     // Optimistic local apply so the parent's data.tn reflects the live
     // value — keeps verse highlighting / aligner quote in step.
     onChange(patch);
@@ -172,7 +184,6 @@ export function NoteCard({
       support_reference: s.support_reference,
     };
     pendingRef.current = revert;
-    setDirty(true);
     onChange(revert);
   };
 
@@ -180,17 +191,20 @@ export function NoteCard({
     cancelUnmountFlushRef.current = true;
     pendingRef.current = {};
     sessionSnapshotRef.current = null;
-    setDirty(false);
     onDelete();
   };
 
+  // Net change vs the session snapshot. Drives the save / undo buttons
+  // and the version-dirty asterisk — after Undo the local state matches
+  // the snapshot again so the save button goes quiet, and accidental
+  // empty-then-revert sessions don't appear dirty in the UI either.
   const snapshot = sessionSnapshotRef.current;
-  const differsFromSnapshot =
+  const hasNetChanges =
     snapshot !== null &&
     (quote !== snapshot.quote ||
       note !== snapshot.note ||
       supportRef !== snapshot.support_reference);
-  const canUndo = active && (dirty || differsFromSnapshot);
+  const canUndo = active && hasNetChanges;
   const showSessionButtons = active;
 
   return (
@@ -285,18 +299,18 @@ export function NoteCard({
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Tooltip
-          title={`v${row.version}${dirty ? " · unsaved edits" : ""} — saved ${row.version - 1} time${row.version - 1 === 1 ? "" : "s"}; last update ${new Date(row.updated_at * 1000).toLocaleString()}`}
+          title={`v${row.version}${hasNetChanges ? " · unsaved edits" : ""} — saved ${row.version - 1} time${row.version - 1 === 1 ? "" : "s"}; last update ${new Date(row.updated_at * 1000).toLocaleString()}`}
         >
           <Typography
             variant="caption"
             sx={{
-              color: dirty ? "warning.main" : "text.disabled",
+              color: hasNetChanges ? "warning.main" : "text.disabled",
               fontFamily: "monospace",
               cursor: "help",
-              fontWeight: dirty ? 600 : 400,
+              fontWeight: hasNetChanges ? 600 : 400,
             }}
           >
-            v{row.version}{dirty ? "*" : ""}
+            v{row.version}{hasNetChanges ? "*" : ""}
           </Typography>
         </Tooltip>
         {showSessionButtons && (
@@ -313,15 +327,15 @@ export function NoteCard({
                 </IconButton>
               </span>
             </Tooltip>
-            <Tooltip title={dirty ? "save pending edits now (auto-saves when you leave this note)" : "no pending edits"}>
+            <Tooltip title={hasNetChanges ? "save pending edits now (auto-saves when you leave this note)" : "no pending edits"}>
               <span>
                 <IconButton
                   size="small"
                   onClick={flushPending}
-                  disabled={!dirty}
-                  sx={{ p: 0.25, color: dirty ? "primary.main" : "action.disabled" }}
+                  disabled={!hasNetChanges}
+                  sx={{ p: 0.25, color: hasNetChanges ? "primary.main" : "action.disabled" }}
                 >
-                  {dirty ? <SaveIcon fontSize="inherit" /> : <SaveOutlinedIcon fontSize="inherit" />}
+                  {hasNetChanges ? <SaveIcon fontSize="inherit" /> : <SaveOutlinedIcon fontSize="inherit" />}
                 </IconButton>
               </span>
             </Tooltip>
