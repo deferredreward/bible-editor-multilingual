@@ -425,7 +425,7 @@ function StackedBody({
                 gridRow: 1,
                 display: "flex",
                 flexDirection: "column",
-                alignItems: "flex-start",
+                alignItems: "flex-end",
                 lineHeight: 1.1,
               }}
             >
@@ -457,6 +457,7 @@ function StackedBody({
                     color: "text.disabled",
                     fontWeight: 600,
                     fontSize: 10,
+                    textAlign: "right",
                   }}
                 >
                   UST
