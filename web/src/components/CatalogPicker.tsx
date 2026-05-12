@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Autocomplete, Chip, TextField, Popper, type PopperProps } from "@mui/material";
 
 interface Props {
@@ -33,6 +33,13 @@ export function CatalogPicker({
 }: Props) {
   const [open, setOpen] = useState(false);
   const shown = display ? display(value) : (value ?? "—");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Pressing × inside MUI's Autocomplete fires onChange(clear) AND can
+  // synchronously trigger onClose(blur) as the button activation
+  // briefly moves focus. We mute the next onClose for ~150 ms after a
+  // clear so the dropdown stays mounted and the input keeps focus,
+  // ready for the user to type a replacement.
+  const justClearedRef = useRef(false);
 
   if (!open) {
     return (
@@ -70,14 +77,23 @@ export function CatalogPicker({
       onChange={(_e, next, reason) => {
         const val = typeof next === "string" ? next : null;
         onChange(val);
-        // Clicking the × clears the value but should leave the input
-        // open so the user can immediately type a replacement; only
-        // close on an actual selection.
-        if (val !== null && reason !== "clear") setOpen(false);
+        if (reason === "clear") {
+          // Stay open, eat the next blur-driven close, and grab focus
+          // back so the user can type a replacement immediately.
+          justClearedRef.current = true;
+          setTimeout(() => {
+            justClearedRef.current = false;
+          }, 150);
+          // The clear button takes focus for a tick on click; bounce it
+          // back to the input. requestAnimationFrame queues us after
+          // MUI's internal focus handling completes.
+          requestAnimationFrame(() => inputRef.current?.focus());
+          return;
+        }
+        if (val !== null) setOpen(false);
       }}
       onClose={(_e, reason) => {
-        // MUI's "blur" and "escape" close us; "clear" doesn't (it just
-        // fires onChange) but guard anyway. Selecting an option closes.
+        if (justClearedRef.current) return;
         if (reason === "blur" || reason === "escape" || reason === "selectOption") {
           setOpen(false);
         }
@@ -86,6 +102,7 @@ export function CatalogPicker({
       renderInput={(params) => (
         <TextField
           {...params}
+          inputRef={inputRef}
           autoFocus
           placeholder={placeholder ?? "type to filter…"}
           variant="outlined"
