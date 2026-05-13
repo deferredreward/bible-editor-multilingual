@@ -335,6 +335,13 @@ export interface PipelineStartRequest {
   endChapter?: number;
   sessionKey: string;
   options?: PipelineRequestOptions;
+  /**
+   * Optional second pipeline to fire on the parent's done-transition. Used
+   * to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
+   * only) since the upstream contract can't carry asymmetric align flags
+   * in one call. Same scope and pipelineType — only the options differ.
+   */
+  followUpOptions?: PipelineRequestOptions;
 }
 
 export interface PipelineStartResponse {

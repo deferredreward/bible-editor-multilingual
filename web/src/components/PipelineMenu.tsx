@@ -59,10 +59,10 @@ const OPTIONS: PipelineOption[] = [
 ];
 
 // Internal 4-checkbox state for the generate dialog. Maps to the wire shape
-// (contract §3) at submit time via buildGenerateOptions. We keep four
-// checkboxes for clarity but the underlying pipeline doesn't support
-// asymmetric alignment — when both content types are on, the alignment pair
-// is linked.
+// (contract §3) at submit time via buildGenerateOptions. The contract's align
+// flags are mutually exclusive within one call, so asymmetric combos
+// (e.g. ULT-aligned + UST-not-aligned) are split into a parent call plus
+// a server-side follow-up — see PipelineStartRequest.followUpOptions.
 interface GenUiState {
   ult: boolean;
   ust: boolean;
@@ -102,27 +102,41 @@ function saveGenOpts(opts: GenUiState) {
   }
 }
 
-// Translate the UI state to the on-the-wire options shape per the contract
-// table. When both content types are selected, alignment is both-or-neither
-// (asymmetric isn't supported in a single call); the UI links the two
-// alignment checkboxes so this branch always sees a consistent value.
-function buildGenerateOptions(g: GenUiState): PipelineRequestOptions | undefined {
-  const bothContent = g.ult && g.ust;
-  if (bothContent) {
-    if (!g.ultAlignment) return { textOnly: true }; // generate both, push unaligned
-    return undefined; // generate both, align (the default)
+// Translate the UI state to the on-the-wire shape per the contract table.
+// Returns a primary `options` plus an optional `followUpOptions` — the
+// latter is only set when the user requested asymmetric alignment across
+// ULT and UST (which the upstream can't express in a single call).
+//
+// Order for asymmetric: ULT first, then UST. Translators read ULT-first in
+// the editor and the chapter is locked during the entire two-call sequence,
+// so the visible order matches the reading order.
+interface GenerateWireShape {
+  options?: PipelineRequestOptions;
+  followUpOptions?: PipelineRequestOptions;
+}
+
+function singleContentOptions(
+  side: "ult" | "ust",
+  aligned: boolean,
+): PipelineRequestOptions {
+  return aligned ? { contentTypes: [side] } : { contentTypes: [side], textOnly: true };
+}
+
+function buildGenerateWire(g: GenUiState): GenerateWireShape {
+  if (g.ult && g.ust) {
+    if (g.ultAlignment === g.ustAlignment) {
+      // Symmetric — fits one call.
+      return g.ultAlignment ? {} : { options: { textOnly: true } };
+    }
+    // Asymmetric — split into parent + follow-up. ULT first.
+    return {
+      options: singleContentOptions("ult", g.ultAlignment),
+      followUpOptions: singleContentOptions("ust", g.ustAlignment),
+    };
   }
-  if (g.ult) {
-    return g.ultAlignment
-      ? { contentTypes: ["ult"] }
-      : { contentTypes: ["ult"], textOnly: true };
-  }
-  if (g.ust) {
-    return g.ustAlignment
-      ? { contentTypes: ["ust"] }
-      : { contentTypes: ["ust"], textOnly: true };
-  }
-  return undefined;
+  if (g.ult) return { options: singleContentOptions("ult", g.ultAlignment) };
+  if (g.ust) return { options: singleContentOptions("ust", g.ustAlignment) };
+  return {};
 }
 
 export function PipelineMenu({ book, chapter, onMessage }: Props) {
@@ -159,9 +173,9 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
     if (confirm.type === "generate" && genNothingSelected) return;
     setSubmitting(true);
     try {
-      let options: PipelineRequestOptions | undefined;
+      let wire: GenerateWireShape = {};
       if (confirm.type === "generate") {
-        options = buildGenerateOptions(genOpts);
+        wire = buildGenerateWire(genOpts);
         saveGenOpts(genOpts);
       }
       const res = await pipelineStore.start({
@@ -170,10 +184,12 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
         startChapter: chapter,
         endChapter: chapter,
         sessionKey: getSessionKey(),
-        ...(options ? { options } : {}),
+        ...(wire.options ? { options: wire.options } : {}),
+        ...(wire.followUpOptions ? { followUpOptions: wire.followUpOptions } : {}),
       });
       const verb = res.status === "already_running" ? "Already running:" : "Started:";
-      onMessage?.(`${verb} ${confirm.label} for ${book} ${chapter}`);
+      const suffix = wire.followUpOptions ? " (2 runs)" : "";
+      onMessage?.(`${verb} ${confirm.label} for ${book} ${chapter}${suffix}`);
       setConfirm(null);
     } catch (e) {
       if (e instanceof ApiError) {
@@ -256,17 +272,7 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
                   control={
                     <Checkbox
                       checked={genOpts.ultAlignment}
-                      // When both content types are selected, the pipeline
-                      // aligns both-or-neither — keep the two alignment
-                      // checkboxes in lockstep so the user can't pick an
-                      // unsupported asymmetric combination.
-                      onChange={(_, v) =>
-                        setGenOpts((o) =>
-                          o.ult && o.ust
-                            ? { ...o, ultAlignment: v, ustAlignment: v }
-                            : { ...o, ultAlignment: v },
-                        )
-                      }
+                      onChange={(_, v) => setGenOpts((o) => ({ ...o, ultAlignment: v }))}
                       disabled={submitting || !genOpts.ult}
                     />
                   }
@@ -287,13 +293,7 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
                   control={
                     <Checkbox
                       checked={genOpts.ustAlignment}
-                      onChange={(_, v) =>
-                        setGenOpts((o) =>
-                          o.ult && o.ust
-                            ? { ...o, ultAlignment: v, ustAlignment: v }
-                            : { ...o, ustAlignment: v },
-                        )
-                      }
+                      onChange={(_, v) => setGenOpts((o) => ({ ...o, ustAlignment: v }))}
                       disabled={submitting || !genOpts.ust}
                     />
                   }
@@ -301,9 +301,9 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
                   sx={{ ml: 3 }}
                 />
               </FormGroup>
-              {genOpts.ult && genOpts.ust ? (
+              {genOpts.ult && genOpts.ust && genOpts.ultAlignment !== genOpts.ustAlignment ? (
                 <DialogContentText sx={{ mt: 1, fontSize: "0.75rem", fontStyle: "italic" }}>
-                  Alignment runs for both or neither when generating both ULT and UST.
+                  Asymmetric alignment: runs as two pipelines back-to-back (ULT first).
                 </DialogContentText>
               ) : null}
               {genNothingSelected ? (

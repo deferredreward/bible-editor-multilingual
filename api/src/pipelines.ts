@@ -61,6 +61,12 @@ const StartBody = z.object({
   endChapter: z.number().int().positive().optional(),
   sessionKey: z.string().min(1).max(120).regex(/^[A-Za-z0-9_\-/]+$/),
   options: PipelineOptions.optional(),
+  // Optional second pipeline to fire on the parent's done-transition. Used
+  // to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
+  // only) since the upstream contract can't carry asymmetric flags in one
+  // call. Same scope/pipelineType — only the options differ. See
+  // docs/ai-pipeline-handoff.md.
+  followUpOptions: PipelineOptions.optional(),
 });
 
 interface StartResponse {
@@ -189,13 +195,17 @@ pipelines.post("/start", requireAuth, async (c) => {
   // INSERT OR REPLACE: a same-key re-POST (already_running) refreshes our
   // row's updated_at without colliding. The jobId is durably stable per
   // (sessionKey, pipelineType, scope) on the upstream side.
+  const followUpJson = parsed.data.followUpOptions
+    ? JSON.stringify(parsed.data.followUpOptions)
+    : null;
   await c.env.DB.prepare(
     `INSERT INTO pipeline_jobs (
        job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-       session_key, state, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', unixepoch(), unixepoch())
+       session_key, state, follow_up_options, created_at, updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, unixepoch(), unixepoch())
      ON CONFLICT(job_id) DO UPDATE SET
        state = excluded.state,
+       follow_up_options = COALESCE(excluded.follow_up_options, pipeline_jobs.follow_up_options),
        updated_at = unixepoch()`,
   )
     .bind(
@@ -206,6 +216,7 @@ pipelines.post("/start", requireAuth, async (c) => {
       startChapter,
       endChapter,
       parsed.data.sessionKey,
+      followUpJson,
     )
     .run();
 
@@ -230,6 +241,7 @@ pipelines.get("/:jobId", requireAuth, async (c) => {
   // importer on a state='done' transition.
   const owned = await c.env.DB.prepare(
     `SELECT user_id, pipeline_type, book, start_chapter, end_chapter,
+            session_key, follow_up_options, follow_up_job_id,
             (output_json IS NULL) AS no_output_yet
        FROM pipeline_jobs WHERE job_id = ?1`,
   )
@@ -240,6 +252,9 @@ pipelines.get("/:jobId", requireAuth, async (c) => {
       book: string;
       start_chapter: number;
       end_chapter: number;
+      session_key: string;
+      follow_up_options: string | null;
+      follow_up_job_id: string | null;
       no_output_yet: number;
     }>();
   if (!owned) return c.json({ error: "not_found" }, 404);
@@ -325,11 +340,127 @@ pipelines.get("/:jobId", requireAuth, async (c) => {
     )
     .run();
 
+  // Follow-up: parent reached done AND has a queued follow-up AND hasn't
+  // fired one yet. Fires inline so the next poll won't see a stale "queued"
+  // state. Failures are caught — next poll will retry. Skipped entirely on
+  // failed/paused so we don't fan out from a broken run.
+  if (
+    data.state === "done" &&
+    owned.follow_up_options &&
+    !owned.follow_up_job_id
+  ) {
+    try {
+      const username = await resolveUsername(c, userId);
+      if (username) {
+        await fireFollowUp(c.env, {
+          parentJobId: jobId,
+          parentSessionKey: owned.session_key,
+          pipelineType: owned.pipeline_type as PipelineType,
+          book: owned.book,
+          startChapter: owned.start_chapter,
+          endChapter: owned.end_chapter,
+          followUpOptionsJson: owned.follow_up_options,
+          userId,
+          username,
+        });
+      }
+    } catch (err) {
+      console.error(`[pipelineFollowUp] job=${jobId} failed:`, err);
+      // Leave follow_up_job_id NULL so the next poll retries.
+    }
+  }
+
   return new Response(text, {
     status: upstream.status,
     headers: { "Content-Type": "application/json" },
   });
 });
+
+interface FollowUpInput {
+  parentJobId: string;
+  parentSessionKey: string;
+  pipelineType: PipelineType;
+  book: string;
+  startChapter: number;
+  endChapter: number;
+  followUpOptionsJson: string;
+  userId: number;
+  username: string;
+}
+
+// Fires the parent's queued follow-up as a fresh upstream call + new
+// pipeline_jobs row. Uses a derived sessionKey so upstream's
+// (sessionKey, pipelineType, scope) dedup doesn't collide with the parent.
+// Atomic against concurrent polls via the WHERE follow_up_job_id IS NULL
+// guard on the parent UPDATE.
+async function fireFollowUp(env: Env, input: FollowUpInput): Promise<void> {
+  const followUpOptions = JSON.parse(input.followUpOptionsJson);
+  // Derive a sessionKey that fits the same character class as the parent's
+  // (POST validator: ^[A-Za-z0-9_\-/]+$). The "/followup" suffix avoids
+  // colliding with the parent on the upstream dedup key.
+  const childSessionKey = `${input.parentSessionKey}/followup`;
+  const upstreamBody = {
+    pipelineType: input.pipelineType,
+    book: input.book,
+    startChapter: input.startChapter,
+    endChapter: input.endChapter,
+    username: input.username,
+    sessionKey: childSessionKey,
+    options: followUpOptions,
+  };
+
+  const upstream = await fetch(`${upstreamBase(env)}/api/pipeline/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.BT_API_TOKEN}`,
+    },
+    body: JSON.stringify(upstreamBody),
+  });
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`upstream ${upstream.status}: ${text.slice(0, 200)}`);
+  }
+  let parsed: StartResponse | null = null;
+  try {
+    parsed = JSON.parse(text) as StartResponse;
+  } catch {
+    throw new Error(`upstream returned non-JSON: ${text.slice(0, 200)}`);
+  }
+  if (!parsed || typeof parsed.jobId !== "string") {
+    throw new Error(`upstream missing jobId: ${text.slice(0, 200)}`);
+  }
+
+  // Claim + insert as one batch so a crash between them can't orphan the
+  // upstream-running follow-up. Upstream is idempotent on (sessionKey,
+  // pipelineType, scope), so a retry returns the same jobId; ON CONFLICT
+  // DO NOTHING then collapses the second attempt into a no-op.
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE pipeline_jobs SET follow_up_job_id = ?1
+          WHERE job_id = ?2 AND follow_up_job_id IS NULL`,
+      )
+      .bind(parsed.jobId, input.parentJobId),
+    env.DB
+      .prepare(
+        `INSERT INTO pipeline_jobs (
+           job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
+           session_key, state, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', unixepoch(), unixepoch())
+         ON CONFLICT(job_id) DO NOTHING`,
+      )
+      .bind(
+        parsed.jobId,
+        input.userId,
+        input.pipelineType,
+        input.book,
+        input.startChapter,
+        input.endChapter,
+        childSessionKey,
+      ),
+  ]);
+}
 
 // GET /api/pipelines  — list current user's jobs from D1 (no upstream call).
 // Reconciliation surface for the browser when a tab opens/reloads.
