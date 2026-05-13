@@ -21,6 +21,12 @@ export interface TnRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * AI provenance: 'ai_pipeline' when the last edit came from the auto-apply
+   * step (chip should show), otherwise null. Cleared by any later human
+   * edit/keep. Computed at read time from edit_log, not stored on the row.
+   */
+  latest_source?: string | null;
 }
 
 export interface TqRow {
@@ -39,6 +45,8 @@ export interface TqRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /** See TnRow.latest_source. */
+  latest_source?: string | null;
 }
 
 export interface TwlRow {
