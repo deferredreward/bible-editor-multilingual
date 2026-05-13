@@ -5,7 +5,7 @@ import { rows } from "./rows";
 import { verses } from "./verses";
 import { catalogs } from "./catalogs";
 import { lexicon } from "./lexicon";
-import { attachAuth, mintDevToken } from "./auth";
+import { attachAuth, mintDevToken, startDcsAuth, callbackDcsAuth, authMe } from "./auth";
 
 export interface Env {
   DB: D1Database;
@@ -69,6 +69,10 @@ app.get("/api/books", async (c) => {
   ).all<{ book: string; imported_at: number }>();
   return c.json({ books: rs.results });
 });
+
+app.get("/api/auth/dcs/start", startDcsAuth);
+app.get("/api/auth/dcs/callback", callbackDcsAuth);
+app.get("/api/auth/me", authMe);
 
 // Dev-only: mint a JWT against a known/created users.id. Gated by
 // DEV_AUTH_ENABLED so it can't be left on in prod.

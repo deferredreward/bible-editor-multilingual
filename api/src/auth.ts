@@ -8,12 +8,11 @@
 // reads need locking down (e.g. private repos), apply requireAuth to those
 // routes too.
 //
-// Until the DCS OAuth flow is wired, a dev-only mint endpoint can issue
-// tokens against a known users.id when DEV_AUTH_ENABLED=true. Production
-// builds set that to false and rely on the real /api/auth/dcs flow (to be
-// implemented). The middleware itself is identical in both modes.
+// Dev-only mint endpoint: POST /api/auth/dev (gated by DEV_AUTH_ENABLED=true).
+// DCS OAuth: GET /api/auth/dcs/start → GET /api/auth/dcs/callback.
 
 import type { Context, MiddlewareHandler } from "hono";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
 
@@ -76,10 +75,158 @@ export function currentUserId(c: Context): number | null {
   return typeof v === "number" ? v : null;
 }
 
-// Dev-only token mint. Looks up (or inserts) a user row by dcs_username and
-// returns a signed JWT. Production paths should use /api/auth/dcs once
-// implemented; this endpoint exists so local development isn't blocked on
-// having a DCS OAuth app configured.
+// ── DCS OAuth ────────────────────────────────────────────────────────────────
+
+const STATE_COOKIE = "dcs_auth_state";
+
+function callbackUrl(requestUrl: string): string {
+  const u = new URL(requestUrl);
+  return `${u.origin}/api/auth/dcs/callback`;
+}
+
+function generateState(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function signStateCookie(state: string, key: Uint8Array): Promise<string> {
+  return new SignJWT({ state })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("10m")
+    .sign(key);
+}
+
+async function verifyStateCookie(token: string, key: Uint8Array): Promise<string | null> {
+  try {
+    const { payload } = await jwtVerify(token, key);
+    return typeof payload.state === "string" ? payload.state : null;
+  } catch {
+    return null;
+  }
+}
+
+async function mintToken(
+  c: AppContext,
+  userId: number,
+  username: string,
+): Promise<string> {
+  const key = signingKey(c.env)!;
+  const ttl = parseInt(c.env.JWT_TTL_SECONDS, 10);
+  const ttlSeconds = Number.isFinite(ttl) && ttl > 0 ? ttl : 1209600;
+  return new SignJWT({ username })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(String(userId))
+    .setIssuer(c.env.JWT_ISSUER)
+    .setIssuedAt()
+    .setExpirationTime(`${ttlSeconds}s`)
+    .sign(key);
+}
+
+// GET /api/auth/dcs/start — redirects to DCS authorization page.
+export async function startDcsAuth(c: AppContext): Promise<Response> {
+  if (!c.env.DCS_CLIENT_ID) return c.json({ error: "dcs_not_configured" }, 503);
+  const key = signingKey(c.env);
+  if (!key) return c.json({ error: "jwt_signing_key_not_configured" }, 500);
+
+  const state = generateState();
+  const stateCookie = await signStateCookie(state, key);
+  const isLocalhost = c.req.url.startsWith("http://localhost") || c.req.url.startsWith("http://127.0.0.1");
+  setCookie(c, STATE_COOKIE, stateCookie, {
+    httpOnly: true,
+    sameSite: "Lax",
+    path: "/api/auth/dcs",
+    maxAge: 600,
+    secure: !isLocalhost,
+  });
+
+  const authUrl = new URL(c.env.DCS_OAUTH_AUTHORIZE_URL);
+  authUrl.searchParams.set("client_id", c.env.DCS_CLIENT_ID);
+  authUrl.searchParams.set("redirect_uri", callbackUrl(c.req.url));
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("state", state);
+  return c.redirect(authUrl.toString(), 302);
+}
+
+// GET /api/auth/dcs/callback — exchanges code, upserts user, mints JWT.
+export async function callbackDcsAuth(c: AppContext): Promise<Response> {
+  const key = signingKey(c.env);
+  if (!key) return c.json({ error: "jwt_signing_key_not_configured" }, 500);
+
+  const stateCookie = getCookie(c, STATE_COOKIE);
+  deleteCookie(c, STATE_COOKIE, { path: "/api/auth/dcs" });
+  if (!stateCookie) return c.json({ error: "missing_state_cookie" }, 400);
+
+  const expectedState = await verifyStateCookie(stateCookie, key);
+  const receivedState = c.req.query("state");
+  if (!expectedState || expectedState !== receivedState) {
+    return c.json({ error: "state_mismatch" }, 400);
+  }
+
+  const code = c.req.query("code");
+  if (!code) return c.json({ error: "missing_code" }, 400);
+
+  // Exchange authorization code for DCS access token.
+  const tokenRes = await fetch(c.env.DCS_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({
+      client_id: c.env.DCS_CLIENT_ID,
+      client_secret: c.env.DCS_CLIENT_SECRET,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: callbackUrl(c.req.url),
+    }),
+  });
+  if (!tokenRes.ok) return c.json({ error: "token_exchange_failed" }, 502);
+  const tokenData = (await tokenRes.json()) as { access_token?: string };
+  const accessToken = tokenData.access_token;
+  if (!accessToken) return c.json({ error: "no_access_token" }, 502);
+
+  // Fetch the DCS user profile.
+  const userRes = await fetch(`${c.env.DCS_BASE_URL}/api/v1/user`, {
+    headers: { Authorization: `token ${accessToken}` },
+  });
+  if (!userRes.ok) return c.json({ error: "user_fetch_failed" }, 502);
+  const dcsUser = (await userRes.json()) as { id: number; login: string; full_name?: string };
+
+  // Upsert users row keyed by dcs_user_id.
+  await c.env.DB.prepare(
+    `INSERT INTO users (dcs_user_id, dcs_username, dcs_full_name)
+     VALUES (?1, ?2, ?3)
+     ON CONFLICT(dcs_user_id) DO UPDATE SET dcs_username = ?2, dcs_full_name = ?3`,
+  )
+    .bind(dcsUser.id, dcsUser.login, dcsUser.full_name ?? dcsUser.login)
+    .run();
+
+  const userRow = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE dcs_user_id = ?1`,
+  )
+    .bind(dcsUser.id)
+    .first<{ id: number }>();
+  if (!userRow) return c.json({ error: "user_create_failed" }, 500);
+
+  const token = await mintToken(c, userRow.id, dcsUser.login);
+
+  // Redirect the SPA back to the root with the token in the query string.
+  // App.tsx reads _auth on load, persists it to localStorage, and cleans the URL.
+  const origin = new URL(c.req.url).origin;
+  return c.redirect(`${origin}/?_auth=${encodeURIComponent(token)}`, 302);
+}
+
+// GET /api/auth/me — returns identity from the bearer token.
+export async function authMe(c: AppContext): Promise<Response> {
+  const userId = (c as AppContext).get("userId");
+  const username = (c as AppContext).get("username");
+  if (!userId) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ userId, username: username ?? null });
+}
+
+// ── Dev-only token mint ───────────────────────────────────────────────────────
+
+// Looks up (or inserts) a user row by dcs_username and returns a signed JWT.
+// Production paths use /api/auth/dcs; this exists so local dev isn't blocked
+// on having a DCS OAuth app registered.
 export async function mintDevToken(c: AppContext, username: string): Promise<Response> {
   const key = signingKey(c.env);
   if (!key) {
@@ -111,12 +258,6 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
   }
   const ttl = parseInt(c.env.JWT_TTL_SECONDS, 10);
   const ttlSeconds = Number.isFinite(ttl) && ttl > 0 ? ttl : 1209600;
-  const token = await new SignJWT({ username })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(String(userId))
-    .setIssuer(c.env.JWT_ISSUER)
-    .setIssuedAt()
-    .setExpirationTime(`${ttlSeconds}s`)
-    .sign(key);
+  const token = await mintToken(c, userId, username);
   return c.json({ token, userId, username, expiresIn: ttlSeconds });
 }
