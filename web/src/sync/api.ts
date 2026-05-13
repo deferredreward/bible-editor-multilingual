@@ -21,6 +21,12 @@ export interface TnRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * AI provenance: 'ai_pipeline' when the last edit came from the auto-apply
+   * step (chip should show), otherwise null. Cleared by any later human
+   * edit/keep. Computed at read time from edit_log, not stored on the row.
+   */
+  latest_source?: string | null;
 }
 
 export interface TqRow {
@@ -39,6 +45,8 @@ export interface TqRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /** See TnRow.latest_source. */
+  latest_source?: string | null;
 }
 
 export interface TwlRow {
@@ -335,6 +343,13 @@ export interface PipelineStartRequest {
   endChapter?: number;
   sessionKey: string;
   options?: PipelineRequestOptions;
+  /**
+   * Optional second pipeline to fire on the parent's done-transition. Used
+   * to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
+   * only) since the upstream contract can't carry asymmetric align flags
+   * in one call. Same scope and pipelineType — only the options differ.
+   */
+  followUpOptions?: PipelineRequestOptions;
 }
 
 export interface PipelineStartResponse {

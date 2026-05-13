@@ -48,9 +48,13 @@ name = "bible-editor-export"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
-# Nightly export to DCS at 06:00 UTC.
+# Two crons:
+#   • 06:00 UTC daily — full DCS export via the Workflow.
+#   • Every 5 min   — poll non-terminal AI-pipeline jobs so the auto-apply
+#     step fires even when no translator has a tab open. Branches on
+#     ScheduledController.cron in src/index.ts.
 [triggers]
-crons = ["0 6 * * *"]
+crons = ["0 6 * * *", "*/5 * * * *"]
 
 # Public-safe defaults; secrets go in `wrangler secret put` (DCS_CLIENT_ID, DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN, BT_API_TOKEN).
 # ALLOWED_ORIGINS is comma-separated. Empty falls back to the dev allowlist

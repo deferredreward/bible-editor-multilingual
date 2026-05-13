@@ -7,7 +7,7 @@ import { catalogs } from "./catalogs";
 import { lexicon } from "./lexicon";
 import { exports as exportsRoutes } from "./exports";
 import { tnQuick } from "./tnQuick";
-import { pipelines } from "./pipelines";
+import { pipelines, pollAllNonTerminal } from "./pipelines";
 import { pendingImports } from "./pendingImports";
 import { attachAuth, mintDevToken, startDcsAuth, callbackDcsAuth, authMe } from "./auth";
 
@@ -139,11 +139,20 @@ app.notFound((c) => {
 
 export default {
   fetch: app.fetch,
-  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
-    // Nightly DCS export at 06:00 UTC (configured in wrangler.toml). The
-    // Workflow runs each (book × resource) as an independently retryable
-    // step, so a flaky DCS commit won't take the whole run down.
-    await env.EXPORT_WORKFLOW.create();
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
+    // Two crons share this handler — wrangler.toml has the full list. The
+    // 06:00 one kicks the nightly DCS-export Workflow; the 5-min one polls
+    // every non-terminal pipeline_job so the auto-apply step lands even
+    // when no translator has a tab open. Branching on controller.cron
+    // keeps the work cheaply separated.
+    if (controller.cron === "0 6 * * *") {
+      await env.EXPORT_WORKFLOW.create();
+      return;
+    }
+    if (controller.cron === "*/5 * * * *") {
+      await pollAllNonTerminal(env);
+      return;
+    }
   },
 } satisfies ExportedHandler<Env>;
 

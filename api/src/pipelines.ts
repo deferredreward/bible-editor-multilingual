@@ -61,6 +61,12 @@ const StartBody = z.object({
   endChapter: z.number().int().positive().optional(),
   sessionKey: z.string().min(1).max(120).regex(/^[A-Za-z0-9_\-/]+$/),
   options: PipelineOptions.optional(),
+  // Optional second pipeline to fire on the parent's done-transition. Used
+  // to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
+  // only) since the upstream contract can't carry asymmetric flags in one
+  // call. Same scope/pipelineType — only the options differ. See
+  // docs/ai-pipeline-handoff.md.
+  followUpOptions: PipelineOptions.optional(),
 });
 
 interface StartResponse {
@@ -101,18 +107,169 @@ function upstreamBase(env: Env): string {
   return env.PIPELINE_API_BASE || DEFAULT_BASE;
 }
 
+async function resolveUsernameFromDb(env: Env, userId: number): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT dcs_username FROM users WHERE id = ?1`,
+  )
+    .bind(userId)
+    .first<{ dcs_username: string }>();
+  return row?.dcs_username ?? null;
+}
+
 async function resolveUsername(c: {
   env: Env;
   get: (k: "username") => string | undefined;
 }, userId: number): Promise<string | null> {
   const fromJwt = c.get("username");
   if (fromJwt) return fromJwt;
-  const row = await c.env.DB.prepare(
-    `SELECT dcs_username FROM users WHERE id = ?1`,
+  return resolveUsernameFromDb(c.env, userId);
+}
+
+interface PolledJob {
+  job_id: string;
+  user_id: number;
+  pipeline_type: string;
+  book: string;
+  start_chapter: number;
+  end_chapter: number;
+  session_key: string;
+  follow_up_options: string | null;
+  follow_up_job_id: string | null;
+  no_output_yet: number;
+}
+
+// Shared "fetch upstream, run import, update DB, fire follow-up" body used
+// by both the GET handler and the scheduled cron poller. Returns the raw
+// upstream response so callers that need to pass it through can do so;
+// scheduled callers discard.
+async function pollPipelineJob(
+  env: Env,
+  job: PolledJob,
+): Promise<
+  | { kind: "unreachable" }
+  | { kind: "non_ok"; text: string; status: number }
+  | { kind: "malformed"; text: string }
+  | { kind: "ok"; text: string; status: number; state: string }
+> {
+  let upstream: Response;
+  try {
+    upstream = await fetch(
+      `${upstreamBase(env)}/api/pipeline/${encodeURIComponent(job.job_id)}`,
+      { headers: { Authorization: `Bearer ${env.BT_API_TOKEN}` } },
+    );
+  } catch {
+    return { kind: "unreachable" };
+  }
+
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    return { kind: "non_ok", text, status: upstream.status };
+  }
+
+  let data: StatusResponse | null = null;
+  try {
+    data = JSON.parse(text) as StatusResponse;
+  } catch {
+    return { kind: "malformed", text };
+  }
+
+  const shouldImport =
+    job.no_output_yet === 1 &&
+    data.state === "done" &&
+    Array.isArray(data.output) &&
+    data.output.length > 0;
+  let importFailed = false;
+  if (shouldImport && data.output) {
+    try {
+      await importJobOutput(
+        env,
+        {
+          jobId: job.job_id,
+          pipelineType: job.pipeline_type,
+          book: job.book,
+          startChapter: job.start_chapter,
+          endChapter: job.end_chapter,
+        },
+        data.output,
+      );
+    } catch (err) {
+      importFailed = true;
+      console.error(`[pipelineImport] job=${job.job_id} failed:`, err);
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE pipeline_jobs SET
+       state = ?2,
+       current_skill = ?3,
+       current_status = ?4,
+       error_kind = ?5,
+       error_message = ?6,
+       output_json = ?7,
+       raw_status_json = ?8,
+       updated_at = unixepoch(),
+       last_polled_at = unixepoch()
+     WHERE job_id = ?1`,
   )
-    .bind(userId)
-    .first<{ dcs_username: string }>();
-  return row?.dcs_username ?? null;
+    .bind(
+      job.job_id,
+      data.state ?? "running",
+      data.current?.skill ?? null,
+      data.current?.status ?? null,
+      data.current?.errorKind ?? null,
+      data.current?.error ?? null,
+      data.output && !importFailed ? JSON.stringify(data.output) : null,
+      text,
+    )
+    .run();
+
+  if (data.state === "done" && job.follow_up_options && !job.follow_up_job_id) {
+    try {
+      const username = await resolveUsernameFromDb(env, job.user_id);
+      if (username) {
+        await fireFollowUp(env, {
+          parentJobId: job.job_id,
+          parentSessionKey: job.session_key,
+          pipelineType: job.pipeline_type as PipelineType,
+          book: job.book,
+          startChapter: job.start_chapter,
+          endChapter: job.end_chapter,
+          followUpOptionsJson: job.follow_up_options,
+          userId: job.user_id,
+          username,
+        });
+      }
+    } catch (err) {
+      console.error(`[pipelineFollowUp] job=${job.job_id} failed:`, err);
+    }
+  }
+
+  return { kind: "ok", text, status: upstream.status, state: data.state ?? "running" };
+}
+
+// Polls every non-terminal pipeline_job. Designed for the scheduled
+// handler — runs in parallel with per-job error isolation so one stuck
+// upstream call doesn't drag the batch down.
+export async function pollAllNonTerminal(env: Env): Promise<void> {
+  if (!env.BT_API_TOKEN) return;
+  const rs = await env.DB.prepare(
+    `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
+            session_key, follow_up_options, follow_up_job_id,
+            (output_json IS NULL) AS no_output_yet
+       FROM pipeline_jobs
+      WHERE state IN ('running', 'paused_for_outage', 'paused_for_usage_limit')
+      ORDER BY updated_at ASC
+      LIMIT 50`,
+  ).all<PolledJob>();
+  const jobs = rs.results ?? [];
+  if (jobs.length === 0) return;
+  await Promise.allSettled(
+    jobs.map((j) =>
+      pollPipelineJob(env, j).catch((err) => {
+        console.error(`[scheduled.pipelinePoll] job=${j.job_id}:`, err);
+      }),
+    ),
+  );
 }
 
 // POST /api/pipelines/start
@@ -189,13 +346,17 @@ pipelines.post("/start", requireAuth, async (c) => {
   // INSERT OR REPLACE: a same-key re-POST (already_running) refreshes our
   // row's updated_at without colliding. The jobId is durably stable per
   // (sessionKey, pipelineType, scope) on the upstream side.
+  const followUpJson = parsed.data.followUpOptions
+    ? JSON.stringify(parsed.data.followUpOptions)
+    : null;
   await c.env.DB.prepare(
     `INSERT INTO pipeline_jobs (
        job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-       session_key, state, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', unixepoch(), unixepoch())
+       session_key, state, follow_up_options, created_at, updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, unixepoch(), unixepoch())
      ON CONFLICT(job_id) DO UPDATE SET
        state = excluded.state,
+       follow_up_options = COALESCE(excluded.follow_up_options, pipeline_jobs.follow_up_options),
        updated_at = unixepoch()`,
   )
     .bind(
@@ -206,6 +367,7 @@ pipelines.post("/start", requireAuth, async (c) => {
       startChapter,
       endChapter,
       parsed.data.sessionKey,
+      followUpJson,
     )
     .run();
 
@@ -226,110 +388,113 @@ pipelines.get("/:jobId", requireAuth, async (c) => {
   if (!jobId) return c.json({ error: "missing_job_id" }, 400);
 
   // Ownership check before any upstream call — prevents jobId enumeration.
-  // Also pulls the scope + output-status flag we need to gate the inbound
-  // importer on a state='done' transition.
+  // pollPipelineJob() handles fetch/import/update/follow-up; we just gate
+  // it on the requester owning the job.
   const owned = await c.env.DB.prepare(
-    `SELECT user_id, pipeline_type, book, start_chapter, end_chapter,
+    `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
+            session_key, follow_up_options, follow_up_job_id,
             (output_json IS NULL) AS no_output_yet
        FROM pipeline_jobs WHERE job_id = ?1`,
   )
     .bind(jobId)
-    .first<{
-      user_id: number;
-      pipeline_type: string;
-      book: string;
-      start_chapter: number;
-      end_chapter: number;
-      no_output_yet: number;
-    }>();
+    .first<PolledJob>();
   if (!owned) return c.json({ error: "not_found" }, 404);
   if (owned.user_id !== userId) return c.json({ error: "forbidden" }, 403);
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(
-      `${upstreamBase(c.env)}/api/pipeline/${encodeURIComponent(jobId)}`,
-      { headers: { Authorization: `Bearer ${c.env.BT_API_TOKEN}` } },
-    );
-  } catch {
-    return c.json({ error: "upstream_unreachable" }, 502);
-  }
-
-  const text = await upstream.text();
-  if (!upstream.ok) {
-    return new Response(text, {
-      status: upstream.status,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  let data: StatusResponse | null = null;
-  try {
-    data = JSON.parse(text) as StatusResponse;
-  } catch {
-    return c.json({ error: "upstream_malformed" }, 502);
-  }
-
-  // First-time done transition with output present → stage proposals into
-  // pending_imports. If this throws (Door43 unreachable, parser bug), we
-  // leave output_json NULL so the next poll retries the import.
-  const shouldImport =
-    owned.no_output_yet === 1 &&
-    data.state === "done" &&
-    Array.isArray(data.output) &&
-    data.output.length > 0;
-  let importFailed = false;
-  if (shouldImport && data.output) {
-    try {
-      await importJobOutput(
-        c.env,
-        {
-          jobId,
-          pipelineType: owned.pipeline_type,
-          book: owned.book,
-          startChapter: owned.start_chapter,
-          endChapter: owned.end_chapter,
-        },
-        data.output,
-      );
-    } catch (err) {
-      importFailed = true;
-      console.error(`[pipelineImport] job=${jobId} failed:`, err);
-    }
-  }
-
-  await c.env.DB.prepare(
-    `UPDATE pipeline_jobs SET
-       state = ?2,
-       current_skill = ?3,
-       current_status = ?4,
-       error_kind = ?5,
-       error_message = ?6,
-       output_json = ?7,
-       raw_status_json = ?8,
-       updated_at = unixepoch(),
-       last_polled_at = unixepoch()
-     WHERE job_id = ?1`,
-  )
-    .bind(
-      jobId,
-      data.state ?? "running",
-      data.current?.skill ?? null,
-      data.current?.status ?? null,
-      data.current?.errorKind ?? null,
-      data.current?.error ?? null,
-      // Only persist output_json once the importer has staged the rows.
-      // Leaving it NULL on import failure makes the next poll retry.
-      data.output && !importFailed ? JSON.stringify(data.output) : null,
-      text,
-    )
-    .run();
-
-  return new Response(text, {
-    status: upstream.status,
+  const result = await pollPipelineJob(c.env, owned);
+  if (result.kind === "unreachable") return c.json({ error: "upstream_unreachable" }, 502);
+  if (result.kind === "malformed") return c.json({ error: "upstream_malformed" }, 502);
+  return new Response(result.text, {
+    status: result.status,
     headers: { "Content-Type": "application/json" },
   });
 });
+
+interface FollowUpInput {
+  parentJobId: string;
+  parentSessionKey: string;
+  pipelineType: PipelineType;
+  book: string;
+  startChapter: number;
+  endChapter: number;
+  followUpOptionsJson: string;
+  userId: number;
+  username: string;
+}
+
+// Fires the parent's queued follow-up as a fresh upstream call + new
+// pipeline_jobs row. Uses a derived sessionKey so upstream's
+// (sessionKey, pipelineType, scope) dedup doesn't collide with the parent.
+// Atomic against concurrent polls via the WHERE follow_up_job_id IS NULL
+// guard on the parent UPDATE.
+async function fireFollowUp(env: Env, input: FollowUpInput): Promise<void> {
+  const followUpOptions = JSON.parse(input.followUpOptionsJson);
+  // Derive a sessionKey that fits the same character class as the parent's
+  // (POST validator: ^[A-Za-z0-9_\-/]+$). The "/followup" suffix avoids
+  // colliding with the parent on the upstream dedup key.
+  const childSessionKey = `${input.parentSessionKey}/followup`;
+  const upstreamBody = {
+    pipelineType: input.pipelineType,
+    book: input.book,
+    startChapter: input.startChapter,
+    endChapter: input.endChapter,
+    username: input.username,
+    sessionKey: childSessionKey,
+    options: followUpOptions,
+  };
+
+  const upstream = await fetch(`${upstreamBase(env)}/api/pipeline/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.BT_API_TOKEN}`,
+    },
+    body: JSON.stringify(upstreamBody),
+  });
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`upstream ${upstream.status}: ${text.slice(0, 200)}`);
+  }
+  let parsed: StartResponse | null = null;
+  try {
+    parsed = JSON.parse(text) as StartResponse;
+  } catch {
+    throw new Error(`upstream returned non-JSON: ${text.slice(0, 200)}`);
+  }
+  if (!parsed || typeof parsed.jobId !== "string") {
+    throw new Error(`upstream missing jobId: ${text.slice(0, 200)}`);
+  }
+
+  // Claim + insert as one batch so a crash between them can't orphan the
+  // upstream-running follow-up. Upstream is idempotent on (sessionKey,
+  // pipelineType, scope), so a retry returns the same jobId; ON CONFLICT
+  // DO NOTHING then collapses the second attempt into a no-op.
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE pipeline_jobs SET follow_up_job_id = ?1
+          WHERE job_id = ?2 AND follow_up_job_id IS NULL`,
+      )
+      .bind(parsed.jobId, input.parentJobId),
+    env.DB
+      .prepare(
+        `INSERT INTO pipeline_jobs (
+           job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
+           session_key, state, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', unixepoch(), unixepoch())
+         ON CONFLICT(job_id) DO NOTHING`,
+      )
+      .bind(
+        parsed.jobId,
+        input.userId,
+        input.pipelineType,
+        input.book,
+        input.startChapter,
+        input.endChapter,
+        childSessionKey,
+      ),
+  ]);
+}
 
 // GET /api/pipelines  — list current user's jobs from D1 (no upstream call).
 // Reconciliation surface for the browser when a tab opens/reloads.

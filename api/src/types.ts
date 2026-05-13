@@ -19,6 +19,13 @@ export interface TnRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * Source label from the row's most recent edit_log entry. 'ai_pipeline'
+   * when the last write came from the AI auto-apply step (which means the
+   * chip should show); NULL after any subsequent human edit/keep wipes it.
+   * Computed at read time — there's no column on tn_rows.
+   */
+  latest_source?: string | null;
 }
 
 export interface TqRow {
@@ -37,6 +44,8 @@ export interface TqRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /** See TnRow.latest_source. */
+  latest_source?: string | null;
 }
 
 export interface TwlRow {

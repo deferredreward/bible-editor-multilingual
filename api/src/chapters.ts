@@ -15,6 +15,11 @@ chapters.get("/:book/:chapter", async (c) => {
   }
   const db = c.env.DB;
 
+  // `latest_source` is derived from edit_log per row — the source column on
+  // the *most recent* entry for (kind, row_key). It's 'ai_pipeline' iff the
+  // last write was AI-driven; any later human edit / keep overwrites with
+  // NULL via a fresh edit_log row, so the chip disappears automatically.
+  // The (kind, row_key) index makes the correlated subquery cheap.
   const [verses, tn, tq, twl, statuses] = await Promise.all([
     db
       .prepare(
@@ -24,13 +29,27 @@ chapters.get("/:book/:chapter", async (c) => {
       .all<VerseRow>(),
     db
       .prepare(
-        "SELECT * FROM tn_rows WHERE book = ?1 AND chapter = ?2 AND deleted_at IS NULL ORDER BY verse, sort_order ASC NULLS LAST, id",
+        `SELECT t.*, (
+           SELECT source FROM edit_log
+            WHERE kind = 'tn' AND row_key = t.id
+            ORDER BY id DESC LIMIT 1
+         ) AS latest_source
+            FROM tn_rows t
+           WHERE t.book = ?1 AND t.chapter = ?2 AND t.deleted_at IS NULL
+           ORDER BY verse, sort_order ASC NULLS LAST, id`,
       )
       .bind(book, chapter)
       .all<TnRow>(),
     db
       .prepare(
-        "SELECT * FROM tq_rows WHERE book = ?1 AND chapter = ?2 AND deleted_at IS NULL ORDER BY verse, id",
+        `SELECT t.*, (
+           SELECT source FROM edit_log
+            WHERE kind = 'tq' AND row_key = t.id
+            ORDER BY id DESC LIMIT 1
+         ) AS latest_source
+            FROM tq_rows t
+           WHERE t.book = ?1 AND t.chapter = ?2 AND t.deleted_at IS NULL
+           ORDER BY verse, id`,
       )
       .bind(book, chapter)
       .all<TqRow>(),
