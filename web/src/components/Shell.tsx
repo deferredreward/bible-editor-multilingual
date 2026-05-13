@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Box, Typography, CircularProgress, Alert } from "@mui/material";
 import { useChapter } from "../hooks/useChapter";
 import type { UseBookReturn } from "../hooks/useBook";
@@ -13,11 +13,14 @@ import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn } from "./ResourceColumn";
-import { AlignmentDialog } from "./AlignmentDialog";
 import { TopBar } from "./TopBar";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { AiCompletionToasts } from "./AiCompletionToasts";
 import { collectStrongs } from "./HebrewLine";
+
+const AlignmentDialog = lazy(() =>
+  import("./AlignmentDialog").then((m) => ({ default: m.AlignmentDialog })),
+);
 
 interface AlignerTarget {
   chapter: number;
@@ -201,9 +204,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
     kind: "tn" | "tq" | "twl",
     row: T,
     patch: Partial<T>,
+    opts?: { restoredFromVersion?: number },
   ) => {
-    applyLocalRowPatch(kind, row.id, patch as Partial<TnRow & TqRow & TwlRow>);
-    void outbox.enqueueRow(kind, row.id, row.version, patch as Record<string, unknown>);
+    // Optimistic local apply mirrors what the server will do: any non-revert
+    // patch clears the restored_from_version marker so the chip immediately
+    // drops the v{N} override instead of waiting for the round-trip.
+    const localPatch = {
+      ...patch,
+      restored_from_version:
+        opts?.restoredFromVersion !== undefined ? opts.restoredFromVersion : null,
+    } as Partial<TnRow & TqRow & TwlRow>;
+    applyLocalRowPatch(kind, row.id, localPatch);
+    void outbox.enqueueRow(kind, row.id, row.version, patch as Record<string, unknown>, opts);
   };
 
   // Plain-text edit pipeline shared by the doc / book / aligner-strip
@@ -360,9 +372,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
           onNoteChange={(id, patch) => {
             applyLocalRowPatch("tn", id, patch);
           }}
-          onNoteSave={(id, patch) => {
+          onNoteSave={(id, patch, opts) => {
             const row = data.tn.find((r) => r.id === id);
-            if (row) enqueueRow("tn", row, patch);
+            if (row) enqueueRow("tn", row, patch, opts);
           }}
           onNoteFocus={(row) => {
             setActiveNoteId(row.id);
@@ -510,72 +522,76 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook }:
           }}
         />
       </Box>
-      {alignerTarget && (() => {
-        // Aligner data comes from the same chapter's payload — either the
-        // active chapter via useChapter (chapter mode) or the loaded book
-        // cache (book mode). We prefer useChapter when the target chapter
-        // matches, since that data is always fresher.
-        const sameChapter = alignerTarget.chapter === chapter;
-        const bookData =
-          !sameChapter && bookHook
-            ? (() => {
-                const cs = bookHook.chapters.get(alignerTarget.chapter);
-                return cs?.kind === "ready" ? cs.data : null;
-              })()
-            : null;
-        const sourceData = sameChapter ? data : bookData;
-        if (!sourceData) {
-          // Target chapter isn't loaded — drop silently; the user can click ⌭
-          // again once the chapter pulls in. In practice BookView only renders
-          // ⌭ for loaded chapters so this branch is defensive.
-          return null;
-        }
-        const sourceLabel = sourceData.verses["UHB"] ? "UHB" : "UGNT";
-        const sourceVerse =
-          sourceData.verses[sourceLabel]?.[alignerTarget.verse] ?? null;
-        const twlForVerse = sourceData.twl.filter((r) => r.verse === alignerTarget.verse);
-        return (
-          <AlignmentDialog
-            open
-            book={book}
-            chapter={alignerTarget.chapter}
-            verseNum={alignerTarget.verse}
-            bibleVersion={alignerTarget.bibleVersion}
-            verse={sourceData.verses[alignerTarget.bibleVersion]?.[alignerTarget.verse] ?? null}
-            contextOther={
-              sourceData.verses[alignerTarget.bibleVersion === "ULT" ? "UST" : "ULT"]?.[
-                alignerTarget.verse
-              ] ?? null
+      {alignerTarget && (
+        <Suspense fallback={null}>
+          {(() => {
+            // Aligner data comes from the same chapter's payload — either the
+            // active chapter via useChapter (chapter mode) or the loaded book
+            // cache (book mode). We prefer useChapter when the target chapter
+            // matches, since that data is always fresher.
+            const sameChapter = alignerTarget.chapter === chapter;
+            const bookData =
+              !sameChapter && bookHook
+                ? (() => {
+                    const cs = bookHook.chapters.get(alignerTarget.chapter);
+                    return cs?.kind === "ready" ? cs.data : null;
+                  })()
+                : null;
+            const sourceData = sameChapter ? data : bookData;
+            if (!sourceData) {
+              // Target chapter isn't loaded — drop silently; the user can click ⌭
+              // again once the chapter pulls in. In practice BookView only renders
+              // ⌭ for loaded chapters so this branch is defensive.
+              return null;
             }
-            sourceVerse={sourceVerse}
-            sourceLabel={sourceLabel}
-            twlForVerse={twlForVerse}
-            onClose={() => setAlignerTarget(null)}
-            onSave={(content, plain, expectedVersion) => {
-              void outbox.enqueueVerse(
-                book,
-                alignerTarget.chapter,
-                alignerTarget.verse,
-                alignerTarget.bibleVersion,
-                expectedVersion,
-                { content, plain_text: plain },
-              );
-            }}
-            onSwitchVersion={(bv) => {
-              setAlignerTarget((cur) => (cur ? { ...cur, bibleVersion: bv } : cur));
-            }}
-            onEditVerseText={(bv, plain, base) => {
-              // Strip edits go through the shared persistVerseEdit pipe
-              // (smartEditVerse) so unchanged milestones in the verse
-              // survive a one-word change. The dialog's useEffect picks
-              // up the new content via the verse prop and re-derives the
-              // alignment state — only the touched milestones land in
-              // the unaligned bag.
-              persistVerseEdit(alignerTarget.chapter, alignerTarget.verse, bv, plain, base);
-            }}
-          />
-        );
-      })()}
+            const sourceLabel = sourceData.verses["UHB"] ? "UHB" : "UGNT";
+            const sourceVerse =
+              sourceData.verses[sourceLabel]?.[alignerTarget.verse] ?? null;
+            const twlForVerse = sourceData.twl.filter((r) => r.verse === alignerTarget.verse);
+            return (
+              <AlignmentDialog
+                open
+                book={book}
+                chapter={alignerTarget.chapter}
+                verseNum={alignerTarget.verse}
+                bibleVersion={alignerTarget.bibleVersion}
+                verse={sourceData.verses[alignerTarget.bibleVersion]?.[alignerTarget.verse] ?? null}
+                contextOther={
+                  sourceData.verses[alignerTarget.bibleVersion === "ULT" ? "UST" : "ULT"]?.[
+                    alignerTarget.verse
+                  ] ?? null
+                }
+                sourceVerse={sourceVerse}
+                sourceLabel={sourceLabel}
+                twlForVerse={twlForVerse}
+                onClose={() => setAlignerTarget(null)}
+                onSave={(content, plain, expectedVersion) => {
+                  void outbox.enqueueVerse(
+                    book,
+                    alignerTarget.chapter,
+                    alignerTarget.verse,
+                    alignerTarget.bibleVersion,
+                    expectedVersion,
+                    { content, plain_text: plain },
+                  );
+                }}
+                onSwitchVersion={(bv) => {
+                  setAlignerTarget((cur) => (cur ? { ...cur, bibleVersion: bv } : cur));
+                }}
+                onEditVerseText={(bv, plain, base) => {
+                  // Strip edits go through the shared persistVerseEdit pipe
+                  // (smartEditVerse) so unchanged milestones in the verse
+                  // survive a one-word change. The dialog's useEffect picks
+                  // up the new content via the verse prop and re-derives the
+                  // alignment state — only the touched milestones land in
+                  // the unaligned bag.
+                  persistVerseEdit(alignerTarget.chapter, alignerTarget.verse, bv, plain, base);
+                }}
+              />
+            );
+          })()}
+        </Suspense>
+      )}
       <AiCompletionToasts
         notifications={aiDrafts.notifications}
         onDismiss={aiDrafts.dismiss}
