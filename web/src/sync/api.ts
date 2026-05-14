@@ -421,6 +421,13 @@ export interface PipelineJobRow {
   error_kind: PipelineErrorKind | null;
   error_message: string | null;
   output_json: string | null;
+  /**
+   * Set on a parent row once its asymmetric-alignment follow-up has been
+   * spawned. Lets the UI render a "follow-up: jobX" line on the parent and
+   * the reciprocal "after: jobY" line on the child (whose row matches this
+   * column elsewhere in the list).
+   */
+  follow_up_job_id: string | null;
   created_at: number;
   updated_at: number;
   last_polled_at: number | null;

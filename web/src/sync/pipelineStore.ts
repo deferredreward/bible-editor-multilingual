@@ -276,6 +276,7 @@ export const pipelineStore = {
       error_kind: null,
       error_message: null,
       output_json: null,
+      follow_up_job_id: null,
       created_at: now,
       updated_at: now,
       last_polled_at: null,

@@ -535,7 +535,8 @@ pipelines.get("/", requireAuth, async (c) => {
   const rs = await c.env.DB.prepare(
     `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
             session_key, state, current_skill, current_status, error_kind,
-            error_message, output_json, created_at, updated_at, last_polled_at
+            error_message, output_json, follow_up_job_id, created_at, updated_at,
+            last_polled_at
        FROM pipeline_jobs
       WHERE user_id = ?1 AND state IN (${placeholders})
       ORDER BY updated_at DESC
@@ -556,6 +557,7 @@ pipelines.get("/", requireAuth, async (c) => {
       error_kind: string | null;
       error_message: string | null;
       output_json: string | null;
+      follow_up_job_id: string | null;
       created_at: number;
       updated_at: number;
       last_polled_at: number | null;
