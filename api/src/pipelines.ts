@@ -247,11 +247,28 @@ async function pollPipelineJob(
   return { kind: "ok", text, status: upstream.status, state: data.state ?? "running" };
 }
 
+// Two days. A non-terminal job that hasn't moved in this long is almost
+// certainly orphaned (bot crashed mid-run, infra wedge, etc) — auto-fail it
+// so the cron stops re-polling indefinitely. Translator can still re-trigger
+// from the UI; the failed row will be replaced on the next start.
+const STUCK_JOB_THRESHOLD_SECONDS = 86400 * 2;
+
 // Polls every non-terminal pipeline_job. Designed for the scheduled
 // handler — runs in parallel with per-job error isolation so one stuck
 // upstream call doesn't drag the batch down.
 export async function pollAllNonTerminal(env: Env): Promise<void> {
   if (!env.BT_API_TOKEN) return;
+  await env.DB.prepare(
+    `UPDATE pipeline_jobs
+        SET state = 'failed',
+            error_kind = 'interrupted',
+            error_message = 'auto-failed: no progress for 48h',
+            updated_at = unixepoch()
+      WHERE state IN ('running', 'paused_for_outage', 'paused_for_usage_limit')
+        AND updated_at < unixepoch() - ?1`,
+  )
+    .bind(STUCK_JOB_THRESHOLD_SECONDS)
+    .run();
   const rs = await env.DB.prepare(
     `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
             session_key, follow_up_options, follow_up_job_id,
