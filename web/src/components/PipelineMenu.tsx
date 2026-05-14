@@ -187,9 +187,12 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
         ...(wire.options ? { options: wire.options } : {}),
         ...(wire.followUpOptions ? { followUpOptions: wire.followUpOptions } : {}),
       });
-      const verb = res.status === "already_running" ? "Already running:" : "Started:";
-      const suffix = wire.followUpOptions ? " (2 runs)" : "";
-      onMessage?.(`${verb} ${confirm.label} for ${book} ${chapter}${suffix}`);
+      if (res.status !== "already_running") {
+        const suffix = wire.followUpOptions ? " (2 runs)" : "";
+        onMessage?.(`Started: ${confirm.label} for ${book} ${chapter}${suffix}`);
+      }
+      // already_running: pipelineStore emits a focus event that opens the
+      // status panel on the existing run — no toast needed.
       setConfirm(null);
     } catch (e) {
       if (e instanceof ApiError) {
