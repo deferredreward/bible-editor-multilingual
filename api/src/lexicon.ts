@@ -57,11 +57,19 @@ lexicon.get("/", async (c) => {
   const uniqueKeys = [...keyToRaws.keys()];
   if (uniqueKeys.length === 0) return c.json({ entries: [] });
 
-  const placeholders = uniqueKeys.map((_v, i) => `?${i + 1}`).join(",");
-  const rs = await c.env.DB.prepare(
-    `SELECT * FROM lexicon_entries WHERE strong IN (${placeholders})`,
-  )
-    .bind(...uniqueKeys)
-    .all<LexiconEntry>();
-  return c.json({ entries: rs.results });
+  // D1 caps prepared statements at 100 bind variables; a chapter can easily
+  // exceed that, so chunk the IN-list and concat the results.
+  const CHUNK = 100;
+  const entries: LexiconEntry[] = [];
+  for (let i = 0; i < uniqueKeys.length; i += CHUNK) {
+    const chunk = uniqueKeys.slice(i, i + CHUNK);
+    const placeholders = chunk.map((_v, j) => `?${j + 1}`).join(",");
+    const rs = await c.env.DB.prepare(
+      `SELECT * FROM lexicon_entries WHERE strong IN (${placeholders})`,
+    )
+      .bind(...chunk)
+      .all<LexiconEntry>();
+    if (rs.results) entries.push(...rs.results);
+  }
+  return c.json({ entries });
 });
