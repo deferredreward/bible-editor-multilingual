@@ -98,17 +98,17 @@ function tsvToDisplay(s: string | null): string {
 }
 
 // Detect the primary script of a string for directing RTL/LTR rendering and
-// showing the translate icon. Hebrew Unicode block covers U+0590–U+05FF;
-// Greek block covers U+0370–U+03FF and extended U+1F00–U+1FFF.
-const RTL_CHAR = /[֐-׿Ͱ-Ͽἀ-῿]/;
-const LATIN_CHAR = /[a-zA-Z]/;
+// showing the translate icon. Only Hebrew (U+0590–U+05FF) is RTL; Greek is
+// LTR and is grouped with Latin for detection purposes.
+const RTL_CHAR = /[֐-׿]/;
+const LTR_CHAR = /[a-zA-ZͰ-Ͽἀ-῿]/;
 
 type QuoteScript = "empty" | "rtl" | "ltr";
 
 function detectQuoteScript(text: string): QuoteScript {
   if (!text.trim()) return "empty";
   if (RTL_CHAR.test(text)) return "rtl";
-  if (LATIN_CHAR.test(text)) return "ltr";
+  if (LTR_CHAR.test(text)) return "ltr";
   return "empty";
 }
 
