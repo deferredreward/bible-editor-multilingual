@@ -910,6 +910,8 @@ function GhostedChip({ text, occurrence, occurrences }: { text: string; occurren
         borderLeftColor: "grey.300",
         userSelect: "none",
         opacity: 0.55,
+        borderRadius: 0.5,
+        "& .MuiChip-label": { overflow: "visible" },
       }}
     />
   );
@@ -952,6 +954,8 @@ function SelectableChip({
         borderLeft: "3px solid",
         borderLeftColor: "primary.main",
         userSelect: "none",
+        borderRadius: 0.5,
+        "& .MuiChip-label": { overflow: "visible" },
       }}
     />
   );
@@ -985,6 +989,8 @@ function SimpleDraggableChip({
         borderLeft: "3px solid",
         borderLeftColor: "primary.main",
         bgcolor: "background.paper",
+        borderRadius: 0.5,
+        "& .MuiChip-label": { overflow: "visible" },
       }}
     />
   );
