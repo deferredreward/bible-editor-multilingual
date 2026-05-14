@@ -135,6 +135,34 @@ export function isChapterLockedBody(body: unknown): body is ChapterLockedBody {
   return b.error === "chapter_locked" && typeof b.jobId === "string";
 }
 
+// 409 body returned by /api/pipelines/start when the upstream rejects the
+// request because another sessionKey already has this (pipelineType, scope)
+// running. The Worker enriches the bare upstream body with `existing` —
+// pulled from D1 so translator B can see who's running it without an
+// ownership-bumping endpoint.
+export interface PipelineConflictExisting {
+  job_id: string;
+  pipeline_type: PipelineType;
+  book: string;
+  start_chapter: number;
+  end_chapter: number;
+  state: PipelineState;
+  current_skill: string | null;
+  current_status: string | null;
+  created_at: number;
+  updated_at: number;
+  started_by_username: string | null;
+}
+export interface PipelineConflictBody {
+  error: "conflict";
+  jobId: string;
+  /**
+   * Present when the conflicting job was started via this editor (it lives
+   * in our D1). Absent for jobs started outside the editor (e.g. Zulip).
+   */
+  existing?: PipelineConflictExisting;
+}
+
 // Bearer token storage. The token is opaque to the client — it carries the
 // user id in its `sub` claim and the worker verifies HS256 against the
 // shared JWT_SIGNING_KEY. localStorage is good-enough for a 7-month tactical
@@ -336,6 +364,11 @@ export interface PipelineRequestOptions {
   pauseBeforeATs?: boolean;
 }
 
+export interface PipelineChainStep {
+  pipelineType: PipelineType;
+  options?: PipelineRequestOptions;
+}
+
 export interface PipelineStartRequest {
   pipelineType: PipelineType;
   book: string;
@@ -348,8 +381,16 @@ export interface PipelineStartRequest {
    * to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
    * only) since the upstream contract can't carry asymmetric align flags
    * in one call. Same scope and pipelineType — only the options differ.
+   * Mutually exclusive with followUpChain.
    */
   followUpOptions?: PipelineRequestOptions;
+  /**
+   * Cross-type follow-up chain. First entry fires on the parent's done-
+   * transition; the rest is stored on the child and fires in turn. Used by
+   * the chapter macro to chain generate -> notes -> tqs without leaving the
+   * chapter unlocked between steps. Mutually exclusive with followUpOptions.
+   */
+  followUpChain?: PipelineChainStep[];
 }
 
 export interface PipelineStartResponse {
@@ -421,6 +462,13 @@ export interface PipelineJobRow {
   error_kind: PipelineErrorKind | null;
   error_message: string | null;
   output_json: string | null;
+  /**
+   * Set on a parent row once its asymmetric-alignment follow-up has been
+   * spawned. Lets the UI render a "follow-up: jobX" line on the parent and
+   * the reciprocal "after: jobY" line on the child (whose row matches this
+   * column elsewhere in the list).
+   */
+  follow_up_job_id: string | null;
   created_at: number;
   updated_at: number;
   last_polled_at: number | null;

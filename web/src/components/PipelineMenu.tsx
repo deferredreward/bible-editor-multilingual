@@ -21,7 +21,13 @@ import {
 } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { ApiError } from "../sync/api";
-import type { PipelineRequestOptions, PipelineType } from "../sync/api";
+import type {
+  PipelineChainStep,
+  PipelineConflictBody,
+  PipelineConflictExisting,
+  PipelineRequestOptions,
+  PipelineType,
+} from "../sync/api";
 import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipelineStore";
 
 interface Props {
@@ -31,30 +37,49 @@ interface Props {
 }
 
 interface PipelineOption {
+  key: string;
   type: PipelineType;
   label: string;
   description: string;
   approxDuration: string;
+  /**
+   * When set, fires this pipeline plus a chain of cross-type follow-ups
+   * after each step completes. The chapter lock holds across the full run.
+   * Currently only used by the "Generate everything" macro.
+   */
+  followUpChain?: PipelineChainStep[];
 }
 
 const OPTIONS: PipelineOption[] = [
   {
+    key: "generate",
     type: "generate",
     label: "Generate ULT + UST",
     description: "Aligned literal + simplified text and a draft issues list for the chapter.",
     approxDuration: "~60–100 min",
   },
   {
+    key: "notes",
     type: "notes",
     label: "Write translation notes",
     description: "Translation notes (tn) for every verse in the chapter.",
     approxDuration: "~30–60 min",
   },
   {
+    key: "tqs",
     type: "tqs",
     label: "Write translation questions",
     description: "Translation questions (tq) aligned to the current ULT/UST.",
     approxDuration: "~30–60 min",
+  },
+  {
+    key: "generate_macro",
+    type: "generate",
+    label: "Generate everything",
+    description:
+      "Run generate, then notes, then questions back-to-back. The chapter stays locked the whole time.",
+    approxDuration: "~2–3 hours",
+    followUpChain: [{ pipelineType: "notes" }, { pipelineType: "tqs" }],
   },
 ];
 
@@ -139,12 +164,26 @@ function buildGenerateWire(g: GenUiState): GenerateWireShape {
   return {};
 }
 
+const TYPE_LABEL: Record<PipelineType, string> = {
+  generate: "Generate ULT + UST",
+  notes: "Translation notes",
+  tqs: "Translation questions",
+};
+
+function relativeMinutes(seconds: number): string {
+  const diff = Math.floor(Date.now() / 1000) - seconds;
+  if (diff < 60) return `${diff}s`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} min`;
+  return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)} min`;
+}
+
 export function PipelineMenu({ book, chapter, onMessage }: Props) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [confirm, setConfirm] = useState<PipelineOption | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [activeJobs, setActiveJobs] = useState<PipelineJob[]>([]);
   const [genOpts, setGenOpts] = useState<GenUiState>(() => loadGenOpts());
+  const [conflict, setConflict] = useState<PipelineConflictExisting | null>(null);
 
   useEffect(() => pipelineStore.subscribe(setActiveJobs), []);
 
@@ -170,11 +209,12 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
 
   const start = async () => {
     if (!confirm) return;
-    if (confirm.type === "generate" && genNothingSelected) return;
+    const isMacro = Boolean(confirm.followUpChain);
+    if (confirm.type === "generate" && !isMacro && genNothingSelected) return;
     setSubmitting(true);
     try {
       let wire: GenerateWireShape = {};
-      if (confirm.type === "generate") {
+      if (confirm.type === "generate" && !isMacro) {
         wire = buildGenerateWire(genOpts);
         saveGenOpts(genOpts);
       }
@@ -186,17 +226,33 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
         sessionKey: getSessionKey(),
         ...(wire.options ? { options: wire.options } : {}),
         ...(wire.followUpOptions ? { followUpOptions: wire.followUpOptions } : {}),
+        ...(confirm.followUpChain ? { followUpChain: confirm.followUpChain } : {}),
       });
-      const verb = res.status === "already_running" ? "Already running:" : "Started:";
-      const suffix = wire.followUpOptions ? " (2 runs)" : "";
-      onMessage?.(`${verb} ${confirm.label} for ${book} ${chapter}${suffix}`);
+      if (res.status !== "already_running") {
+        const suffix = isMacro
+          ? ` (${1 + (confirm.followUpChain?.length ?? 0)} runs)`
+          : wire.followUpOptions
+            ? " (2 runs)"
+            : "";
+        onMessage?.(`Started: ${confirm.label} for ${book} ${chapter}${suffix}`);
+      }
+      // already_running: pipelineStore emits a focus event that opens the
+      // status panel on the existing run — no toast needed.
       setConfirm(null);
     } catch (e) {
       if (e instanceof ApiError) {
-        const body = e.body as { error?: string; jobId?: string } | undefined;
+        const body = e.body as PipelineConflictBody | { error?: string; jobId?: string } | undefined;
         if (e.status === 409 && body?.error === "conflict") {
-          onMessage?.(`Another translator already started this pipeline (job ${body.jobId}).`);
-          setConfirm(null);
+          const enriched = (body as PipelineConflictBody).existing;
+          if (enriched) {
+            setConflict(enriched);
+            setConfirm(null);
+          } else {
+            // Conflict with a job started outside the editor (e.g. Zulip).
+            // We have no metadata to show — fall back to the bare toast.
+            onMessage?.(`Another translator already started this pipeline (job ${body.jobId ?? "unknown"}).`);
+            setConfirm(null);
+          }
         } else if (e.status === 401) {
           onMessage?.("Sign in to start a pipeline.");
         } else {
@@ -225,7 +281,7 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
           const running = runningType(opt.type);
           return (
             <MenuItem
-              key={opt.type}
+              key={opt.key}
               disabled={Boolean(running)}
               onClick={() => {
                 close();
@@ -252,7 +308,7 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
               ? `Run ${confirm.label} for ${book} ${chapter}? ${confirm.approxDuration} — you can keep working in other chapters while it runs.`
               : ""}
           </DialogContentText>
-          {confirm?.type === "generate" ? (
+          {confirm?.type === "generate" && !confirm.followUpChain ? (
             <Box sx={{ mt: 2 }}>
               <DialogContentText sx={{ mb: 1, fontSize: "0.875rem" }}>
                 What to generate:
@@ -322,12 +378,50 @@ export function PipelineMenu({ book, chapter, onMessage }: Props) {
             onClick={start}
             variant="contained"
             disabled={
-              submitting || (confirm?.type === "generate" && genNothingSelected)
+              submitting ||
+              (confirm?.type === "generate" &&
+                !confirm.followUpChain &&
+                genNothingSelected)
             }
             startIcon={submitting ? <CircularProgress size={14} /> : undefined}
           >
             Start
           </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={Boolean(conflict)} onClose={() => setConflict(null)}>
+        <DialogTitle>Already running</DialogTitle>
+        <DialogContent>
+          {conflict && (
+            <>
+              <DialogContentText>
+                {conflict.started_by_username
+                  ? `${conflict.started_by_username} started `
+                  : "Someone already started "}
+                <strong>{TYPE_LABEL[conflict.pipeline_type]}</strong> for{" "}
+                <strong>
+                  {conflict.book} {conflict.start_chapter}
+                  {conflict.end_chapter !== conflict.start_chapter
+                    ? `–${conflict.end_chapter}`
+                    : ""}
+                </strong>{" "}
+                {relativeMinutes(conflict.created_at)} ago.
+              </DialogContentText>
+              <DialogContentText sx={{ mt: 1, fontSize: "0.875rem" }}>
+                State: <strong>{conflict.state}</strong>
+                {conflict.current_skill ? ` · ${conflict.current_skill}` : ""}
+                {` · updated ${relativeMinutes(conflict.updated_at)} ago`}
+              </DialogContentText>
+              <DialogContentText sx={{ mt: 1, fontSize: "0.8125rem", fontStyle: "italic" }}>
+                This chapter is locked while the pipeline runs. You can keep
+                editing other chapters; the AI output will overwrite this one
+                when it completes.
+              </DialogContentText>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConflict(null)}>Close</Button>
         </DialogActions>
       </Dialog>
     </>

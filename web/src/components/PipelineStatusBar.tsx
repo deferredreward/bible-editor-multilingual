@@ -2,7 +2,7 @@
 // SyncStatusBar so they don't overlap. Click expands to list each job with
 // its state, current skill, and (for resumable failures) a Retry button.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Chip,
@@ -129,6 +129,12 @@ function StageBar({
   );
 }
 
+// Upstream jobIds are UUIDs (~36 chars); a short tail is plenty to
+// distinguish two sibling jobs without bloating the panel.
+function shortJobId(jobId: string): string {
+  return jobId.length > 8 ? `…${jobId.slice(-6)}` : jobId;
+}
+
 function relativeTime(seconds: number): string {
   const diff = Math.floor(Date.now() / 1000) - seconds;
   if (diff < 60) return `${diff}s ago`;
@@ -174,8 +180,20 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  // When pipelineStore.requestFocus(jobId) fires (e.g. on already_running),
+  // we stash the request and let the next render — once hasAnything flips
+  // true and the chip mounts — anchor the popover to the chip.
+  const [pendingFocus, setPendingFocus] = useState<string | null>(null);
+  const chipRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => pipelineStore.subscribe(setJobs), []);
+  useEffect(
+    () =>
+      pipelineStore.onFocusRequest((jobId) => {
+        setPendingFocus(jobId);
+      }),
+    [],
+  );
 
   const { active, doneRecent, failed } = useMemo(() => {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -192,6 +210,27 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
   }, [jobs]);
 
   const hasAnything = active.length + doneRecent.length + failed.length > 0;
+
+  // Map child job_id -> parent job_id. Used to render the reciprocal "after
+  // <parent>" line under follow-up rows; the data is in place because the
+  // parent row already carries follow_up_job_id pointing at the child.
+  const parentByChildId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const j of jobs) {
+      if (j.follow_up_job_id) m.set(j.follow_up_job_id, j.job_id);
+    }
+    return m;
+  }, [jobs]);
+
+  // Resolve a pending focus request once the chip mounts. We can't anchor
+  // earlier — Popover needs a real DOM node — and a pending focus from
+  // PipelineMenu.start() races with React committing the new jobs state.
+  useEffect(() => {
+    if (!pendingFocus) return;
+    if (!chipRef.current) return;
+    if (!anchorEl) setAnchorEl(chipRef.current);
+    setPendingFocus(null);
+  }, [pendingFocus, hasAnything, anchorEl]);
 
   const retry = async (job: PipelineJobRow) => {
     setRetrying(job.job_id);
@@ -220,6 +259,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
   return (
     <>
       <Box
+        ref={chipRef}
         sx={{
           position: "fixed",
           right: 160,
@@ -274,7 +314,10 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                 No pipelines running.
               </Typography>
             )}
-            {jobs.map((job, i) => (
+            {jobs.map((job, i) => {
+              const parentId = parentByChildId.get(job.job_id);
+              const childId = job.follow_up_job_id;
+              return (
               <Box key={job.job_id}>
                 {i > 0 && <Divider sx={{ my: 1 }} />}
                 <Stack direction="row" spacing={1} alignItems="flex-start">
@@ -293,6 +336,16 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                         : ""}
                       {` · updated ${relativeTime(job.updated_at)}`}
                     </Typography>
+                    {parentId && (
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
+                        Step 2 of 2 · after {shortJobId(parentId)}
+                      </Typography>
+                    )}
+                    {childId && (
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
+                        Step 1 of 2 · follow-up {shortJobId(childId)}
+                      </Typography>
+                    )}
                     {job.error_message && (
                       <Typography variant="caption" color="error" display="block">
                         {job.error_message}
@@ -324,7 +377,8 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                   </Typography>
                 )}
               </Box>
-            ))}
+              );
+            })}
           </Stack>
           <Button
             size="small"

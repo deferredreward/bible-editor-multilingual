@@ -47,10 +47,15 @@ export type PipelineJob = PipelineJobRow;
 
 type JobsListener = (jobs: PipelineJob[]) => void;
 type CompletionListener = (job: PipelineJob, prev: PipelineState | null) => void;
+// "Open the status panel and focus this job." Fired when start() comes back
+// as already_running — i.e. the user retried the same scope they're already
+// watching, and a toast is less useful than just surfacing the running job.
+type FocusListener = (jobId: string) => void;
 
 const jobs = new Map<string, PipelineJob>();
 const subscribers = new Set<JobsListener>();
 const completionListeners = new Set<CompletionListener>();
+const focusListeners = new Set<FocusListener>();
 
 let initStarted = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -68,6 +73,10 @@ function notify() {
 
 function emitCompletion(job: PipelineJob, prev: PipelineState | null) {
   for (const l of completionListeners) l(job, prev);
+}
+
+function emitFocusRequest(jobId: string) {
+  for (const l of focusListeners) l(jobId);
 }
 
 // Read userId out of the JWT payload — same trick App.tsx uses elsewhere.
@@ -214,6 +223,17 @@ export const pipelineStore = {
     };
   },
 
+  onFocusRequest(fn: FocusListener): () => void {
+    focusListeners.add(fn);
+    return () => {
+      focusListeners.delete(fn);
+    };
+  },
+
+  requestFocus(jobId: string) {
+    emitFocusRequest(jobId);
+  },
+
   get(jobId: string): PipelineJob | undefined {
     return jobs.get(jobId);
   },
@@ -256,6 +276,7 @@ export const pipelineStore = {
       error_kind: null,
       error_message: null,
       output_json: null,
+      follow_up_job_id: null,
       created_at: now,
       updated_at: now,
       last_polled_at: null,
@@ -266,6 +287,12 @@ export const pipelineStore = {
     // Eagerly fetch the canonical status so the UI doesn't sit on the
     // seed shape for 2 minutes.
     void pollOne(res.jobId);
+    if (res.status === "already_running") {
+      // Same sessionKey hit the same scope a second time — the user is
+      // looking for the existing run, not starting a new one. Surface the
+      // status panel instead of a toast.
+      emitFocusRequest(res.jobId);
+    }
     return res;
   },
 
