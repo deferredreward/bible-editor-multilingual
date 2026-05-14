@@ -636,11 +636,18 @@ function UnalignedBag({
       <Stack spacing={0.5}>
         {streamWords.map(({ idx, word, aligned }) =>
           aligned ? (
-            <GhostedChip key={`${word.id}-${idx}`} text={word.text} />
+            <GhostedChip
+              key={`${word.id}-${idx}`}
+              text={word.text}
+              occurrence={word.occurrence}
+              occurrences={word.occurrences}
+            />
           ) : (
             <SelectableChip
               key={`${word.id}-${idx}`}
               text={word.text}
+              occurrence={word.occurrence}
+              occurrences={word.occurrences}
               selected={selectedIds.has(word.id)}
               onClick={(shift) => onChipClick(word.id, shift)}
               idsForDrag={() => idsForDrag(word.id)}
@@ -728,7 +735,13 @@ function AlignmentGrid({
               </Typography>
             ) : (
               g.targets.map((t) => (
-                <SimpleDraggableChip key={t.id} wordId={t.id} text={t.text} />
+                <SimpleDraggableChip
+                  key={t.id}
+                  wordId={t.id}
+                  text={t.text}
+                  occurrence={t.occurrence}
+                  occurrences={t.occurrences}
+                />
               ))
             )}
           </Stack>
@@ -819,10 +832,12 @@ function SourceChip({
             e.dataTransfer.effectAllowed = "move";
           }}
           sx={{
+            position: "relative",
             bgcolor: "grey.900",
             color: "grey.50",
-            px: 1.25,
-            py: 0.5,
+            px: 2,
+            py: 0.75,
+            minWidth: 70,
             fontFamily: '"Times New Roman", "SBL Hebrew", "Cardo", serif',
             fontSize: 26,
             lineHeight: 1.3,
@@ -833,6 +848,24 @@ function SourceChip({
             "&:active": { cursor: "grabbing" },
           }}
         >
+          {sourceShowsOccurrence(source) && (
+            <Box
+              sx={{
+                position: "absolute",
+                top: 2,
+                right: 6,
+                fontFamily: "monospace",
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: 1,
+                color: "primary.light",
+                direction: "ltr",
+                pointerEvents: "none",
+              }}
+            >
+              {source.occurrence}
+            </Box>
+          )}
           {source.content}
         </Paper>
         {canExtract && hover && (
@@ -862,10 +895,10 @@ function SourceChip({
   );
 }
 
-function GhostedChip({ text }: { text: string }) {
+function GhostedChip({ text, occurrence, occurrences }: { text: string; occurrence: string; occurrences: string }) {
   return (
     <Chip
-      label={text}
+      label={targetLabel(text, occurrence, occurrences, "text.disabled")}
       size="small"
       variant="outlined"
       sx={{
@@ -884,18 +917,22 @@ function GhostedChip({ text }: { text: string }) {
 
 function SelectableChip({
   text,
+  occurrence,
+  occurrences,
   selected,
   onClick,
   idsForDrag,
 }: {
   text: string;
+  occurrence: string;
+  occurrences: string;
   selected: boolean;
   onClick: (shift: boolean) => void;
   idsForDrag: () => string[];
 }) {
   return (
     <Chip
-      label={text}
+      label={targetLabel(text, occurrence, occurrences, selected ? "primary.contrastText" : "primary.dark")}
       size="small"
       variant={selected ? "filled" : "outlined"}
       color={selected ? "primary" : "default"}
@@ -920,10 +957,20 @@ function SelectableChip({
   );
 }
 
-function SimpleDraggableChip({ wordId, text }: { wordId: string; text: string }) {
+function SimpleDraggableChip({
+  wordId,
+  text,
+  occurrence,
+  occurrences,
+}: {
+  wordId: string;
+  text: string;
+  occurrence: string;
+  occurrences: string;
+}) {
   return (
     <Chip
-      label={text}
+      label={targetLabel(text, occurrence, occurrences, "primary.dark")}
       size="small"
       variant="outlined"
       draggable
@@ -940,6 +987,47 @@ function SimpleDraggableChip({ wordId, text }: { wordId: string; text: string })
         bgcolor: "background.paper",
       }}
     />
+  );
+}
+
+// Show the occurrence indicator when this Hebrew/Greek token appears
+// more than once in the source verse, so the editor can tell which "כִּי"
+// they're looking at.
+function sourceShowsOccurrence(s: SourceWord): boolean {
+  const n = parseInt(s.occurrences, 10);
+  return Number.isFinite(n) && n > 1;
+}
+
+// Render a target chip's label with a small superscript occurrence number
+// when the GL word repeats in the verse (e.g. "and²"). Plain string when
+// the word is unique. `tone` controls the indicator color so it stays
+// legible across the chip's variants (filled selected vs outlined etc.).
+function targetLabel(
+  text: string,
+  occurrence: string,
+  occurrences: string,
+  tone: string,
+): React.ReactNode {
+  const n = parseInt(occurrences, 10);
+  if (!Number.isFinite(n) || n <= 1) return text;
+  return (
+    <Box component="span" sx={{ display: "inline-flex", alignItems: "flex-start" }}>
+      <span>{text}</span>
+      <Box
+        component="span"
+        sx={{
+          ml: "3px",
+          mt: "-2px",
+          fontFamily: "monospace",
+          fontSize: 9,
+          fontWeight: 700,
+          lineHeight: 1,
+          color: tone,
+        }}
+      >
+        {occurrence}
+      </Box>
+    </Box>
   );
 }
 
