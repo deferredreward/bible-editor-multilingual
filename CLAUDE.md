@@ -97,6 +97,17 @@ One Playwright worker, no test-level parallelism — every test shares the seede
 
 The `webServer` polls `/api/health` through Vite's proxy so it waits for **both** Vite and Wrangler to be up before tests start.
 
+### Browser-driven verification
+
+When wrapping up changes that touch frontend behavior — UI, auth flow, save path, history, anything that's only really verified by clicking through the app — drive Chrome yourself via the **Claude-in-Chrome MCP**. Don't hand the smoke test back to the user. `typecheck` and `npm run build` catch types and bundling; they don't catch "the button does nothing." The old handoff doc claim that "vite needs the user" is wrong — `npm run dev` runs cleanly with `Bash run_in_background`.
+
+Run order:
+1. `Bash run_in_background: npm run dev` from the **main checkout** (not the worktree — vite is watching main's files; either edit main's working tree directly, or pull the branch into main first).
+2. `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5173/` to confirm both servers are up.
+3. `mcp__Claude_in_Chrome__list_connected_browsers` → `select_browser` → `tabs_context_mcp({createIfEmpty: true})` → `navigate` to `http://localhost:5173`.
+4. Use `browser_batch` for sequences (click → type → click → screenshot). Reach for `read_console_messages` and `read_network_requests` (URL-filter to `/api/`) on failures. `javascript_tool` is the escape hatch for poking at `localStorage` / `indexedDB` outbox state directly.
+5. Stale localStorage state from earlier sessions is a recurring trap — when in doubt, `localStorage.removeItem('bible-editor.auth.token'); location.reload();` to force a fresh sign-in.
+
 ### Deploy
 
 Single command from repo root: `npm run deploy` builds `web/dist` then runs `wrangler deploy --env production` from `api/`. The Worker serves both `/api/*` and the SPA. See [`docs/deploy.md`](docs/deploy.md) for first-time provisioning (D1 create, R2 bucket, secrets `JWT_SIGNING_KEY` / `DCS_CLIENT_ID` / `DCS_CLIENT_SECRET` / `DCS_SERVICE_TOKEN` / `BT_API_TOKEN`).
