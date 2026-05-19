@@ -1,0 +1,203 @@
+// Convert a user's click-to-select Hebrew/Greek word set into the TN
+// quote format used by row.quote + row.occurrence. Tokens get sorted into
+// document order, runs of consecutive document positions become a single
+// space-joined sub-quote, and disjoint runs are joined with " & " — the
+// same gap marker findSourceHighlights / findTargetHighlights consume.
+//
+// Occurrence is best-effort: we walk the verse looking for the same
+// gap-separated pattern and report 1-based index of the FIRST run start
+// that matches the user's selection range. For unambiguous selections
+// (the picked tokens are the only instance in the verse), the result is
+// always 1, matching how new TNs are typically written.
+
+import type { HighlightKey } from "./highlight";
+import { nfc } from "./hebrew.ts";
+
+// Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
+// All callers (picker + buildQuoteFromSelection + collectTargetTokens)
+// MUST go through this — UHB \w text is stored in legacy combining-mark
+// order while UST/ULT zaln x-content is NFC, so a raw `${text}|${occ}`
+// comparison loses the join. nfc() normalizes both sides to the same
+// canonical form. Same rule findSourceHighlights / findTargetHighlights
+// have used since the start.
+export function tokenKey(text: string, occurrence: number): HighlightKey {
+  return `${nfc(text)}|${occurrence}`;
+}
+
+interface UhbWord {
+  text: string;       // raw text, preserved for quote string rendering
+  key: HighlightKey;  // nfc-normalized lookup key
+  occurrence: number;
+  // 0-based document position among all \w tokens in this verse. Stable
+  // across re-render because the verseObjects tree is immutable while
+  // the user is selecting.
+  position: number;
+}
+
+function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
+  const out: UhbWord[] = [];
+  function walk(nodes: unknown[]) {
+    for (const node of nodes ?? []) {
+      const o = node as Record<string, unknown> | null;
+      if (!o) continue;
+      if (o["type"] === "word" && o["tag"] === "w") {
+        const text = String(o["text"] ?? "");
+        const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
+        out.push({ text, key: tokenKey(text, occurrence), occurrence, position: out.length });
+      } else if (o["type"] === "milestone") {
+        const children = (o["children"] as unknown[] | undefined) ?? [];
+        walk(children);
+      }
+    }
+  }
+  walk(verseObjects);
+  return out;
+}
+
+export interface BuiltQuote {
+  quote: string;
+  occurrence: number;
+}
+
+export function buildQuoteFromSelection(
+  verseObjects: unknown[] | undefined | null,
+  selectedKeys: Set<HighlightKey>,
+): BuiltQuote | null {
+  if (!Array.isArray(verseObjects) || selectedKeys.size === 0) return null;
+  const all = collectUhbWords(verseObjects);
+  const selected = all.filter((w) => selectedKeys.has(w.key));
+  if (selected.length === 0) return null;
+
+  // selected is already in document order — collectUhbWords walks in order
+  // and selected preserves that. Group runs of consecutive positions.
+  const groups: UhbWord[][] = [];
+  let current: UhbWord[] = [selected[0]];
+  for (let i = 1; i < selected.length; i++) {
+    if (selected[i].position === selected[i - 1].position + 1) {
+      current.push(selected[i]);
+    } else {
+      groups.push(current);
+      current = [selected[i]];
+    }
+  }
+  if (current.length > 0) groups.push(current);
+
+  const quote = groups.map((g) => g.map((w) => w.text).join(" ")).join(" & ");
+
+  // Occurrence — count how many positions in `all` start a matching
+  // pattern. A pattern matches when scanning forward from `start`: for
+  // each group, find a sub-position whose text equals the group's
+  // sequence; subsequent groups can start anywhere after the previous
+  // group ends (the `&` gap). 1-based; the first match is the selection.
+  const matches: number[] = [];
+  for (let start = 0; start < all.length; start++) {
+    if (matchGroupsAt(start, groups, all)) matches.push(start);
+  }
+  // Which match starts at our first selected position?
+  const firstSelectedPos = selected[0].position;
+  const occurrence = Math.max(1, matches.indexOf(firstSelectedPos) + 1);
+  return { quote, occurrence };
+}
+
+// One source ancestor: the content + occurrence from a \zaln-s milestone.
+// The picker turns a click on a target word into a set of these so the
+// existing UHB-keyed selection (used by buildQuoteFromSelection) can be
+// fed without translating between formats. The `key` field is the
+// nfc-normalized selection key — always compare keys, never raw content,
+// since UHB \w text and zaln x-content can drift in combining-mark order.
+export interface SourceAncestor {
+  content: string;     // raw, for display in tooltips
+  occurrence: number;
+  key: HighlightKey;   // nfc-normalized, for selection set lookups
+}
+
+// Per-token shape returned by collectTargetTokens. Outer-to-inner ancestor
+// chain — same direction findSourceForTargetText emits, so the picker can
+// preserve the convention.
+export interface TargetToken {
+  text: string;
+  occurrence: number;
+  position: number;
+  sources: SourceAncestor[];
+}
+
+// Walk a ULT/UST verseObjects tree. For each \w token, capture its
+// enclosing \zaln-s ancestor chain (outer first) as SourceAncestor[].
+// Mirrors findSourceForTargetText's stack-based walk but emits per-token
+// records instead of merging into one string. Used by the picker so a
+// click on "first" inside zaln(בַחֹדֶשׁ) > zaln(הָרִאשׁוֹן) > w(first)
+// can toggle both Hebrew words at their correct occurrence indices.
+export function collectTargetTokens(
+  verseObjects: unknown[] | undefined | null,
+): TargetToken[] {
+  if (!Array.isArray(verseObjects)) return [];
+  const out: TargetToken[] = [];
+  function walk(nodes: unknown[], stack: SourceAncestor[]) {
+    for (const node of nodes ?? []) {
+      const o = node as Record<string, unknown> | null;
+      if (!o) continue;
+      if (o["type"] === "milestone" && o["tag"] === "zaln") {
+        const content = String(o["content"] ?? "");
+        const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
+        const children = (o["children"] as unknown[] | undefined) ?? [];
+        // Skip ancestors with no content — defensive: a malformed milestone
+        // without x-content would otherwise insert empty selection keys.
+        const nextStack = content
+          ? [...stack, { content, occurrence, key: tokenKey(content, occurrence) }]
+          : stack;
+        walk(children, nextStack);
+      } else if (o["type"] === "word" && o["tag"] === "w") {
+        const text = String(o["text"] ?? "");
+        const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
+        out.push({
+          text,
+          occurrence,
+          position: out.length,
+          sources: stack.slice(),
+        });
+      }
+    }
+  }
+  walk(verseObjects, []);
+  return out;
+}
+
+function matchGroupsAt(
+  start: number,
+  groups: UhbWord[][],
+  all: UhbWord[],
+): boolean {
+  // Compare via nfc-normalized keys (sans the occurrence suffix) so the
+  // matcher tolerates legacy-vs-NFC drift between identical-looking
+  // Hebrew strings — same reason `tokenKey` exists.
+  const norm = (w: UhbWord) => w.key.split("|")[0];
+  let pos = start;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+    if (gi === 0) {
+      if (pos + group.length > all.length) return false;
+      for (let wi = 0; wi < group.length; wi++) {
+        if (norm(all[pos + wi]) !== norm(group[wi])) return false;
+      }
+      pos = pos + group.length;
+    } else {
+      let found = -1;
+      for (let s = pos; s + group.length <= all.length; s++) {
+        let ok = true;
+        for (let wi = 0; wi < group.length; wi++) {
+          if (norm(all[s + wi]) !== norm(group[wi])) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          found = s;
+          break;
+        }
+      }
+      if (found < 0) return false;
+      pos = found + group.length;
+    }
+  }
+  return true;
+}

@@ -63,12 +63,12 @@ interface Props {
   isNoteAiPending?: (rowId: string) => boolean;
   noteAiRecentlyCompletedAt?: (rowId: string) => number | null;
   onNoteVisibilityChange?: (rowId: string, isVisible: boolean) => void;
-  onWordChange: (id: string, patch: Partial<TwlRow>) => void;
+  onWordSave: (id: string, patch: Partial<TwlRow>) => void;
   onWordDelete: (id: string) => void;
   onWordCreate: () => void;
   onWordFocus: (row: TwlRow) => void;
   onWordReorder: (draggedId: string, refId: string, position: WordDropPosition) => void;
-  onQuestionChange: (id: string, patch: Partial<TqRow>) => void;
+  onQuestionSave: (id: string, patch: Partial<TqRow>) => void;
   onQuestionDelete: (id: string) => void;
   onQuestionCreate: () => void;
   // Chapter is locked for editing because an AI pipeline is mid-flight.
@@ -85,6 +85,11 @@ interface Props {
   onNoteTranslateQuote?: (row: TnRow, english: string) => string | null;
   // Same translate flow but for the TWL quote (orig_words) column.
   onWordTranslateQuote?: (row: TwlRow, english: string) => string | null;
+  // Quote-builder session. Shell owns the selection state + the picker
+  // popup; the note cards just surface a button that opens it.
+  quoteBuildActiveNoteId?: string | null;
+  quoteBuildSelectionCount?: number;
+  onStartQuoteBuild?: (noteId: string) => void;
   // Tab + alignment-panel wiring. When mode === "alignment", the Resources
   // column body swaps to the AlignmentPanel; the Notes/Words/Questions tabs
   // stay in the strip but their click acts as a scroll-to in resources mode.
@@ -162,12 +167,12 @@ export function ResourceColumn({
   isNoteAiPending,
   noteAiRecentlyCompletedAt,
   onNoteVisibilityChange,
-  onWordChange,
+  onWordSave,
   onWordDelete,
   onWordCreate,
   onWordFocus,
   onWordReorder,
-  onQuestionChange,
+  onQuestionSave,
   onQuestionDelete,
   onQuestionCreate,
   locked = false,
@@ -175,6 +180,9 @@ export function ResourceColumn({
   onSetNoteHint,
   onNoteTranslateQuote,
   onWordTranslateQuote,
+  quoteBuildActiveNoteId,
+  quoteBuildSelectionCount = 0,
+  onStartQuoteBuild,
   panelMode = "resources",
   onSetPanelMode,
   alignmentProps,
@@ -426,7 +434,7 @@ export function ResourceColumn({
                 <WordsTable
                   rows={rows}
                   activeId={activeWordId}
-                  onChange={onWordChange}
+                  onSave={onWordSave}
                   onDelete={onWordDelete}
                   onFocus={onWordFocus}
                   onReorder={onWordReorder}
@@ -440,7 +448,7 @@ export function ResourceColumn({
           <WordsTable
             rows={twlForVerse}
             activeId={activeWordId}
-            onChange={onWordChange}
+            onSave={onWordSave}
             onDelete={onWordDelete}
             onFocus={onWordFocus}
             onReorder={onWordReorder}
@@ -468,12 +476,12 @@ export function ResourceColumn({
             tqGroups.map(([verse, rows]) => (
               <Fragment key={`tq-${verse}`}>
                 <VerseGroupHead verse={verse} active={verse === activeVerse} />
-                <QuestionsTable rows={rows} onChange={onQuestionChange} onDelete={onQuestionDelete} locked={locked} />
+                <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
               </Fragment>
             ))
           )
         ) : (
-          <QuestionsTable rows={tqForVerse} onChange={onQuestionChange} onDelete={onQuestionDelete} locked={locked} />
+          <QuestionsTable rows={tqForVerse} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
         )}
       </Box>
       )}
@@ -534,6 +542,11 @@ export function ResourceColumn({
           onTranslateQuote={
             onNoteTranslateQuote ? (english) => onNoteTranslateQuote(r, english) : undefined
           }
+          quoteBuildMode={quoteBuildActiveNoteId === r.id}
+          quoteBuildSelectionCount={
+            quoteBuildActiveNoteId === r.id ? quoteBuildSelectionCount : 0
+          }
+          onStartQuoteBuild={onStartQuoteBuild ? () => onStartQuoteBuild(r.id) : undefined}
         />
         {showAfter && <DropIndicator />}
       </Fragment>

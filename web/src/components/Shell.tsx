@@ -22,11 +22,13 @@ import { useAiDrafts } from "../hooks/useAiDrafts";
 import { outbox } from "../sync/outbox";
 import { api } from "../sync/api";
 import type { TnRow, TqRow, TwlRow, VerseDto } from "../sync/api";
+import { drafts, verseKey } from "../sync/drafts";
 import { smartEditVerse } from "../lib/replace";
 import { verseHasUnalignedWork } from "../lib/alignment";
 import { concatSourceRange, formatVerseLabel } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
-import { findSourceForTargetText } from "../lib/highlight";
+import { findSourceForTargetText, type HighlightKey } from "../lib/highlight";
+import { buildQuoteFromSelection } from "../lib/quoteBuilder";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode } from "./ResourceColumn";
@@ -39,6 +41,8 @@ import { SyncStatusBar } from "./SyncStatusBar";
 import { pipelineStore, type PipelineJob } from "../sync/pipelineStore";
 import { onOutboxResult } from "../sync/outbox";
 import { AiCompletionToasts } from "./AiCompletionToasts";
+import { UnsavedToasts } from "./UnsavedToasts";
+import { QuoteBuilderPopper } from "./QuoteBuilderPopper";
 import { collectStrongs } from "./HebrewLine";
 
 interface AlignerTarget {
@@ -408,6 +412,94 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     return { activeQuote: null, activeOccurrence: null };
   }, [activeNoteId, activeWordId, data]);
 
+  // Quote-builder session: when active, clicking Hebrew words in the UHB
+  // row of the active verse toggles them into selectedKeys; "Use selection"
+  // on the note card converts the set into row.quote + row.occurrence.
+  // Tied to a specific note id so switching notes cancels the session.
+  const [quoteBuildNoteId, setQuoteBuildNoteId] = useState<string | null>(null);
+  const [quoteBuildSelectedKeys, setQuoteBuildSelectedKeys] = useState<Set<HighlightKey>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    if (quoteBuildNoteId && activeNoteId !== quoteBuildNoteId) {
+      setQuoteBuildNoteId(null);
+      setQuoteBuildSelectedKeys(new Set());
+    }
+  }, [activeNoteId, quoteBuildNoteId]);
+  const toggleQuoteBuildWord = useCallback(
+    (key: HighlightKey) => {
+      setQuoteBuildSelectedKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    },
+    [],
+  );
+  const startQuoteBuild = useCallback((noteId: string) => {
+    setQuoteBuildNoteId(noteId);
+    setQuoteBuildSelectedKeys(new Set());
+  }, []);
+  const cancelQuoteBuild = useCallback(() => {
+    setQuoteBuildNoteId(null);
+    setQuoteBuildSelectedKeys(new Set());
+  }, []);
+
+  // Anchor element for the picker popup. Resolves via the data-note-id
+  // attribute set on each NoteCard's Paper — the picker mounts at Shell
+  // level so it isn't clipped by the resource column overflow.
+  const [quoteBuildAnchor, setQuoteBuildAnchor] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!quoteBuildNoteId) {
+      setQuoteBuildAnchor(null);
+      return;
+    }
+    setQuoteBuildAnchor(
+      document.querySelector<HTMLElement>(`[data-note-id="${quoteBuildNoteId}"]`),
+    );
+  }, [quoteBuildNoteId]);
+
+  // Verse objects bundled for the picker — UHB always; ULT/UST may be
+  // absent for OT-only or NT-only deployments, so default to null and
+  // let the picker show an empty-state hint.
+  const quoteBuildContext = useMemo(() => {
+    if (!quoteBuildNoteId || !data) return null;
+    const row = data.tn.find((r) => r.id === quoteBuildNoteId);
+    if (!row) return null;
+    const grab = (bv: string): unknown[] | null => {
+      const dto = data.verses[bv]?.[row.verse];
+      const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+      return Array.isArray(vo) ? vo : null;
+    };
+    return {
+      noteId: quoteBuildNoteId,
+      verse: row.verse,
+      uhb: grab("UHB") ?? grab("UGNT"),
+      ult: grab("ULT"),
+      ust: grab("UST"),
+    };
+  }, [quoteBuildNoteId, data]);
+
+  // Materialize the in-flight quote-build selection into a row patch and
+  // fire the existing note save pipe. Pulls UHB verseObjects for the
+  // current verse — the buildQuoteFromSelection helper does the grouping
+  // and " & " join + occurrence calculation.
+  const commitQuoteBuild = useCallback(() => {
+    if (!quoteBuildNoteId || !data) return;
+    const row = data.tn.find((r) => r.id === quoteBuildNoteId);
+    if (!row) return;
+    const uhb = data.verses["UHB"]?.[row.verse] ?? data.verses["UGNT"]?.[row.verse];
+    const verseObjects =
+      (uhb?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+    if (!Array.isArray(verseObjects)) return;
+    const built = buildQuoteFromSelection(verseObjects, quoteBuildSelectedKeys);
+    if (!built) return;
+    enqueueRow("tn", row, { quote: built.quote, occurrence: built.occurrence });
+    setQuoteBuildNoteId(null);
+    setQuoteBuildSelectedKeys(new Set());
+  }, [quoteBuildNoteId, quoteBuildSelectedKeys, data]);
+
   // Routes any verse / version / aligner-target change through the dirty
   // gate when the alignment panel has unsaved drags. Plain wrapper around
   // setState if the gate is clear; otherwise queues for the popup.
@@ -591,11 +683,29 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     void outbox.enqueueRow(kind, row.id, row.version, patch as Record<string, unknown>, { ...opts, book: row.book });
   };
 
-  // Plain-text edit pipeline shared by the doc / book / aligner-strip
-  // entry points. Routes through smartEditVerse so unchanged regions of
-  // the verse keep their `\zaln-s` milestones and only the affected
-  // milestones get split / re-tokenized.
-  const persistVerseEdit = (
+  // Draft-write path. Every keystroke in a verse-text cell calls this; it
+  // stashes the plain text in IndexedDB so unsaved typing survives tab
+  // close / chapter navigation. No PATCH fires here — only on saveVerseDraft.
+  const stashVerseDraft = (
+    chapterNum: number,
+    verseNum: number,
+    bibleVersion: string,
+    plain: string,
+    base: VerseDto,
+  ) => {
+    void drafts.set(
+      verseKey(book, chapterNum, verseNum, bibleVersion),
+      { plainText: plain },
+      base.version,
+      { kind: "verse", book, chapter: chapterNum, verse: verseNum, bibleVersion },
+    );
+  };
+
+  // User clicked Save on a verse cell. Runs smartEditVerse so unchanged
+  // regions keep their `\zaln-s` milestones, applies the new content
+  // locally so highlights re-render, then enqueues. Outbox-result listener
+  // (installed in main.ts) clears the draft on 200.
+  const saveVerseDraft = (
     chapterNum: number,
     verseNum: number,
     bibleVersion: string,
@@ -758,7 +868,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             });
           }}
           onEditBookVerse={(ch, verseNum, bibleVersion, plain, base) => {
-            persistVerseEdit(ch, verseNum, bibleVersion, plain, base);
+            stashVerseDraft(ch, verseNum, bibleVersion, plain, base);
+          }}
+          onSaveBookVerse={(ch, verseNum, bibleVersion, plain, base) => {
+            saveVerseDraft(ch, verseNum, bibleVersion, plain, base);
           }}
           onOpenBookAligner={(ch, v, bv) => openAligner(ch, v, bv)}
           onReplaceVerse={(ch, verseNum, bibleVersion, newContent, newPlainText, base) => {
@@ -796,7 +909,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             saveToStorage(ENABLED_VERSIONS_KEY, versions);
           }}
           onEditVerse={(verseNum, bibleVersion, plain, base) => {
-            persistVerseEdit(chapter, verseNum, bibleVersion, plain, base);
+            stashVerseDraft(chapter, verseNum, bibleVersion, plain, base);
+          }}
+          onSaveVerse={(verseNum, bibleVersion, plain, base) => {
+            saveVerseDraft(chapter, verseNum, bibleVersion, plain, base);
           }}
           onOpenAligner={(v, bv) => openAligner(chapter, v, bv)}
           scrollNonce={scrollNonce}
@@ -994,7 +1110,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             if (activeNoteId === id) setActiveNoteId(null);
             void outbox.enqueueDeleteRow("tn", id, row.version, row.book);
           }}
-          onWordChange={(id, patch) => {
+          onWordSave={(id, patch) => {
             const row = data.twl.find((r) => r.id === id);
             if (row) enqueueRow("twl", row, patch);
           }}
@@ -1005,7 +1121,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             if (activeWordId === id) setActiveWordId(null);
             void outbox.enqueueDeleteRow("twl", id, row.version, row.book);
           }}
-          onQuestionChange={(id, patch) => {
+          onQuestionSave={(id, patch) => {
             const row = data.tq.find((r) => r.id === id);
             if (row) enqueueRow("tq", row, patch);
           }}
@@ -1018,6 +1134,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           locked={Boolean(chapterLock)}
           onSetNotePreserve={handleSetNotePreserve}
           onSetNoteHint={handleSetNoteHint}
+          quoteBuildActiveNoteId={quoteBuildNoteId}
+          quoteBuildSelectionCount={quoteBuildSelectedKeys.size}
+          onStartQuoteBuild={startQuoteBuild}
           panelMode={panelMode}
           onSetPanelMode={handleSetPanelMode}
           alignmentProps={alignmentTabProps}
@@ -1053,10 +1172,58 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           requestScrollToActive();
         }}
       />
+      <UnsavedToasts
+        book={book}
+        onSaveVerseDraft={(b, ch, v, bv) => {
+          if (b !== book) return;
+          // Look up the latest plain from the draft (avoids racing with
+          // a still-pending typing flurry) and the base from whichever
+          // cache holds the chapter — current chapter via data.verses,
+          // book mode via bookHook.chapters.
+          void drafts.get(verseKey(b, ch, v, bv)).then((rec) => {
+            const payload = rec?.payload as { plainText?: string } | undefined;
+            const plain = payload?.plainText;
+            if (typeof plain !== "string") return;
+            const base =
+              ch === chapter
+                ? data?.verses[bv]?.[v]
+                : bookHook?.chapters.get(ch)?.kind === "ready"
+                  ? (bookHook.chapters.get(ch) as { kind: "ready"; data: { verses: Record<string, Record<number, VerseDto>> } }).data.verses[bv]?.[v]
+                  : undefined;
+            if (!base) return;
+            saveVerseDraft(ch, v, bv, plain, base);
+          });
+        }}
+        onJumpTo={(b, ch, v) => {
+          if (b !== book) return;
+          if (ch !== chapter) onNavigate?.(b, ch, v);
+          else {
+            setActiveVerse(v);
+            requestScrollToActive();
+          }
+        }}
+      />
       <PipelineStatusBar
         toast={pipelineToast}
         onToastClear={() => setPipelineToast(null)}
       />
+      {quoteBuildContext && (
+        <QuoteBuilderPopper
+          open={!!quoteBuildAnchor}
+          anchorEl={quoteBuildAnchor}
+          book={book}
+          chapter={chapter}
+          verse={quoteBuildContext.verse}
+          uhbVerseObjects={quoteBuildContext.uhb}
+          ultVerseObjects={quoteBuildContext.ult}
+          ustVerseObjects={quoteBuildContext.ust}
+          lexiconMap={lexiconMap}
+          selectedKeys={quoteBuildSelectedKeys}
+          onToggleKey={toggleQuoteBuildWord}
+          onCancel={cancelQuoteBuild}
+          onCommit={commitQuoteBuild}
+        />
+      )}
     </Box>
   );
 }

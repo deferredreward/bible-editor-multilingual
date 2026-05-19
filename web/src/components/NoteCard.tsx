@@ -32,6 +32,7 @@ import { useCatalogs } from "../hooks/useCatalogs";
 import { CatalogPicker } from "./CatalogPicker";
 import { shortSupport } from "../lib/supportReference";
 import { TCM, buildSH } from "../lib/noteTemplates";
+import { drafts, rowKey, draftDirtyBorderSx } from "../sync/drafts";
 
 const NoteHistoryDialog = lazy(() =>
   import("./NoteHistoryDialog").then((m) => ({ default: m.NoteHistoryDialog })),
@@ -92,6 +93,14 @@ interface Props {
   // alignment. Returns the derived Hebrew/Greek string, or null if no
   // alignment match was found.
   onTranslateQuote?: (english: string) => string | null;
+  // Quote-builder workflow: the "build from source" button opens a picker
+  // popup mounted at Shell level. While the picker is open for this note,
+  // quoteBuildMode is true and the button label reflects the selection
+  // count. Shell owns the selection state + cancel/commit handlers — the
+  // card just opens the picker.
+  quoteBuildMode?: boolean;
+  quoteBuildSelectionCount?: number;
+  onStartQuoteBuild?: () => void;
 }
 
 // Notes coming from TSV imports use literal "\n" (two characters) as the
@@ -123,17 +132,6 @@ interface SessionSnapshot {
   support_reference: string | null;
 }
 
-// True when every pending field equals the snapshot value — i.e. the user
-// edited and then reverted (or hit Undo) so there's no net change to
-// persist. We use this on flush + on unmount to suppress no-op version
-// bumps that would otherwise show up as "v3 → v4" on the row chip.
-function pendingMatchesSnapshot(p: Partial<TnRow>, s: SessionSnapshot): boolean {
-  if ("quote" in p && p.quote !== s.quote) return false;
-  if ("note" in p && p.note !== s.note) return false;
-  if ("support_reference" in p && p.support_reference !== s.support_reference) return false;
-  return true;
-}
-
 export function NoteCard({
   row,
   active,
@@ -157,6 +155,9 @@ export function NoteCard({
   onSetPreserve,
   onSetHint,
   onTranslateQuote,
+  quoteBuildMode = false,
+  quoteBuildSelectionCount = 0,
+  onStartQuoteBuild,
 }: Props) {
   // Two explicit bits drive lock-time behavior now:
   //   - preserve=1: translator marked this row "survive AI runs"
@@ -182,24 +183,14 @@ export function NoteCard({
   // Backed by state (drives re-renders so the chip clears its dirty
   // asterisk) with a mirrored ref for the unmount cleanup, which runs
   // after the component is gone and can't read state from closure.
-  const [sessionSnapshot, setSessionSnapshotState] = useState<SessionSnapshot | null>(null);
   const sessionSnapshotRef = useRef<SessionSnapshot | null>(null);
   const setSessionSnapshot = (next: SessionSnapshot | null) => {
     sessionSnapshotRef.current = next;
-    setSessionSnapshotState(next);
   };
   const pendingRef = useRef<Partial<TnRow>>({});
-  const cancelUnmountFlushRef = useRef(false);
 
   const paperRef = useRef<HTMLDivElement | null>(null);
   const catalogs = useCatalogs();
-
-  // Keep latest onSave reachable from the unmount cleanup without re-running
-  // the effect each time the parent re-renders.
-  const onSaveRef = useRef(onSave);
-  useEffect(() => {
-    onSaveRef.current = onSave;
-  }, [onSave]);
 
   const positionFromEvent = (e: React.DragEvent): DropPosition => {
     const rect = paperRef.current?.getBoundingClientRect();
@@ -224,51 +215,69 @@ export function NoteCard({
     setSupportRef(row.support_reference);
   }, [row.id, row.version, row.support_reference]);
 
+  // Restore unsaved typing on first mount. If a draft exists for this row,
+  // overwrite local state from its patch — otherwise the user's typing
+  // would be lost the first time they navigate away from this note.
+  // Guarded by a ref so subsequent re-renders don't keep clobbering the
+  // live state with a now-stale snapshot.
+  const hydratedFromDraftRef = useRef(false);
+  useEffect(() => {
+    if (hydratedFromDraftRef.current) return;
+    void drafts.get(rowKey("tn", row.id)).then((rec) => {
+      if (hydratedFromDraftRef.current) return;
+      const patch = (rec?.payload as { patch?: Partial<TnRow> } | undefined)?.patch;
+      hydratedFromDraftRef.current = true;
+      if (!patch) return;
+      if (typeof patch.quote === "string") setQuote(tsvToDisplay(patch.quote));
+      if (typeof patch.note === "string") setNote(tsvToDisplay(patch.note));
+      if ("support_reference" in patch) {
+        setSupportRef((patch.support_reference as string | null) ?? null);
+      }
+    });
+  }, [row.id]);
+
   // Session entry/exit. Snapshot is taken on active=false→true with the
-  // values currently in local state (which match the row when nothing is
-  // pending). On active=true→false the accumulated patch is flushed and
-  // the snapshot is cleared.
+  // values currently in local state (which may differ from the row if a
+  // draft was hydrated). On deactivate we just clear the snapshot — no
+  // PATCH fires until the user clicks Save. Edits survive in the drafts
+  // store across mount/unmount, so leaving an active card doesn't lose
+  // typing.
   useEffect(() => {
     if (active) {
       if (sessionSnapshotRef.current === null) {
         setSessionSnapshot({ quote, note, support_reference: supportRef });
       }
     } else if (sessionSnapshotRef.current !== null) {
-      flushPending();
       setSessionSnapshot(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  // Flush on unmount too — handles cases where the card unmounts without
-  // transitioning to inactive first (e.g. user navigates to another verse
-  // while this note is still active and gets filtered out of the list).
-  // Intentionally cancelled when this card itself is being deleted.
-  // Compares pending against the entry snapshot so a "typed then undone"
-  // session unmounts without an extra version bump.
-  useEffect(() => {
-    return () => {
-      if (cancelUnmountFlushRef.current) return;
-      const p = pendingRef.current;
-      const s = sessionSnapshotRef.current;
-      if (Object.keys(p).length === 0) return;
-      if (s && pendingMatchesSnapshot(p, s)) return;
-      onSaveRef.current(p);
-    };
-  }, []);
-
+  // Save the diff between local state and the saved row. We don't rely on
+  // pendingRef anymore — a deactivate→reactivate cycle, or a draft
+  // restored from IndexedDB on mount, can leave the local state differing
+  // from row without any in-session stashEdit() history. Recomputing from
+  // local-vs-row props makes the save button work in those cases too.
+  // The picker / NoteCard JSX still call stashEdit() for the
+  // applyLocalRowPatch side-effect (parents need the live preview), but
+  // we no longer use pendingRef as the source of truth for what to PATCH.
   const flushPending = () => {
-    const p = pendingRef.current;
-    if (Object.keys(p).length === 0) return;
-    const s = sessionSnapshotRef.current;
+    const patch: Partial<TnRow> = {};
+    const rowQuote = row.quote ?? "";
+    const rowNote = row.note ?? "";
+    // We send raw TSV (with literal \n escapes) so the server / DCS
+    // round-trip stays stable. tsvToDisplay flips them to real newlines
+    // for the UI; reverse here.
+    const localQuote = quote.replace(/\n/g, "\\n");
+    const localNote = note.replace(/\n/g, "\\n");
+    if (localQuote !== rowQuote) patch.quote = localQuote;
+    if (localNote !== rowNote) patch.note = localNote;
+    if (supportRef !== row.support_reference) patch.support_reference = supportRef;
     pendingRef.current = {};
-    // If every pending field equals its snapshot value, the user typed
-    // and then reverted (or hit undo) — no net change to persist.
-    if (s && pendingMatchesSnapshot(p, s)) return;
-    onSave(p);
+    if (Object.keys(patch).length === 0) return;
+    onSave(patch);
     // Rebase the snapshot so the chip stops showing "*" after a manual
-    // save mid-session — and so a subsequent Undo reverts to the saved
-    // state rather than pre-edit.
+    // save and a follow-up Undo reverts to the just-saved state.
     if (sessionSnapshotRef.current !== null) {
       setSessionSnapshot({ quote, note, support_reference: supportRef });
     }
@@ -284,25 +293,44 @@ export function NoteCard({
     onChange(patch);
   };
 
+  // Revert to the LAST SAVED row state — drops every unsaved keystroke
+  // since the row landed on the server. We compare against row props
+  // (not the in-session snapshot) so the button stays useful after a
+  // deactivate→reactivate cycle, which would otherwise rebase the
+  // snapshot onto the still-dirty current state and disable undo. Also
+  // clears the draft store so the orange border / unsaved-toasts forget
+  // about this row.
   const handleUndo = () => {
-    const s = sessionSnapshotRef.current;
-    if (!s) return;
-    setQuote(s.quote);
-    setNote(s.note);
-    setSupportRef(s.support_reference);
-    const revert: Partial<TnRow> = {
-      quote: s.quote,
-      note: s.note,
-      support_reference: s.support_reference,
-    };
-    pendingRef.current = revert;
-    onChange(revert);
+    const rowQuote = tsvToDisplay(row.quote);
+    const rowNote = tsvToDisplay(row.note);
+    setQuote(rowQuote);
+    setNote(rowNote);
+    setSupportRef(row.support_reference);
+    pendingRef.current = {};
+    // Re-baseline the session snapshot to the saved state so a follow-up
+    // edit produces a fresh hasNetChanges signal rather than thinking
+    // the user is undoing the previous undo.
+    if (sessionSnapshotRef.current !== null) {
+      setSessionSnapshot({
+        quote: rowQuote,
+        note: rowNote,
+        support_reference: row.support_reference,
+      });
+    }
+    void drafts.clear(draftKey);
+    onChange({
+      quote: row.quote,
+      note: row.note,
+      support_reference: row.support_reference,
+    });
   };
 
   const handleDelete = () => {
-    cancelUnmountFlushRef.current = true;
     pendingRef.current = {};
     setSessionSnapshot(null);
+    // Drop any draft so the delete doesn't get followed by a phantom save
+    // from a still-dirty buffer.
+    void drafts.clear(rowKey("tn", row.id));
     onDelete();
   };
 
@@ -424,17 +452,48 @@ export function NoteCard({
     onStartAi();
   };
 
-  // Net change vs the session snapshot. Drives the save / undo buttons
-  // and the version-dirty asterisk — after Undo or a manual save the
-  // local state matches the snapshot again so the asterisk goes quiet,
-  // and accidental empty-then-revert sessions don't appear dirty either.
-  const hasNetChanges =
-    sessionSnapshot !== null &&
-    (quote !== sessionSnapshot.quote ||
-      note !== sessionSnapshot.note ||
-      supportRef !== sessionSnapshot.support_reference);
-  const canUndo = active && hasNetChanges;
   const showSessionButtons = active;
+
+  // Sync the draft store against the diff vs server row. This is what feeds
+  // the offscreen-unsaved popup and survives chapter navigation. Separate
+  // from hasNetChanges because we want drafts to track divergence from the
+  // *saved* state, not from the session entry point.
+  const rowDiff: Partial<TnRow> = {};
+  const rowQuoteDisplay = tsvToDisplay(row.quote);
+  const rowNoteDisplay = tsvToDisplay(row.note);
+  if (quote !== rowQuoteDisplay) rowDiff.quote = quote;
+  if (note !== rowNoteDisplay) rowDiff.note = note;
+  if (supportRef !== row.support_reference) rowDiff.support_reference = supportRef;
+  const hasRowDiff = Object.keys(rowDiff).length > 0;
+  const draftKey = rowKey("tn", row.id);
+  useEffect(() => {
+    if (readOnly) return;
+    if (hasRowDiff) {
+      void drafts.set(draftKey, { patch: rowDiff }, row.version, {
+        kind: "row",
+        rowKind: "tn",
+        id: row.id,
+        book: row.book,
+        chapter: row.chapter,
+        verse: row.verse,
+      });
+    } else {
+      void drafts.clear(draftKey);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    draftKey,
+    hasRowDiff,
+    quote,
+    note,
+    supportRef,
+    row.version,
+    row.id,
+    row.book,
+    row.chapter,
+    row.verse,
+    readOnly,
+  ]);
 
   return (
     <Paper
@@ -467,6 +526,7 @@ export function NoteCard({
         overflow: "hidden",
         opacity: dragging ? 0.4 : 1,
         transition: "opacity 120ms ease",
+        ...draftDirtyBorderSx(),
         // Glow pulse on AI completion. The flag is set by useAiDrafts
         // for ~4 s, so the animation finishes naturally and the rule
         // becomes a no-op once the flag clears.
@@ -536,12 +596,12 @@ export function NoteCard({
         <Tooltip
           title={
             row.restored_from_version != null
-              ? `v${row.restored_from_version} (restored)${hasNetChanges ? " · unsaved edits" : ""} — currently at row v${row.version}; last update ${new Date(row.updated_at * 1000).toLocaleString()}. Click to view history.`
-              : `v${row.version}${hasNetChanges ? " · unsaved edits" : ""} — saved ${row.version - 1} time${row.version - 1 === 1 ? "" : "s"}; last update ${new Date(row.updated_at * 1000).toLocaleString()}. Click to view history.`
+              ? `v${row.restored_from_version} (restored)${hasRowDiff ? " · unsaved edits" : ""} — currently at row v${row.version}; last update ${new Date(row.updated_at * 1000).toLocaleString()}. Click to view history.`
+              : `v${row.version}${hasRowDiff ? " · unsaved edits" : ""} — saved ${row.version - 1} time${row.version - 1 === 1 ? "" : "s"}; last update ${new Date(row.updated_at * 1000).toLocaleString()}. Click to view history.`
           }
         >
           <Chip
-            label={`v${row.restored_from_version ?? row.version}${hasNetChanges ? "*" : ""}`}
+            label={`v${row.restored_from_version ?? row.version}${hasRowDiff ? "*" : ""}`}
             size="small"
             variant="outlined"
             clickable
@@ -553,28 +613,28 @@ export function NoteCard({
               fontFamily: "monospace",
               fontSize: 11,
               height: 22,
-              color: hasNetChanges ? "warning.main" : "text.secondary",
-              borderColor: hasNetChanges ? "warning.main" : "divider",
-              fontWeight: hasNetChanges ? 600 : 400,
+              color: hasRowDiff ? "warning.main" : "text.secondary",
+              borderColor: hasRowDiff ? "warning.main" : "divider",
+              fontWeight: hasRowDiff ? 600 : 400,
             }}
           />
         </Tooltip>
-        {showSessionButtons && canUndo && (
-          <Tooltip title="discard every edit since this note became active">
+        {showSessionButtons && hasRowDiff && (
+          <Tooltip title="discard unsaved edits — revert to the last saved version of this note">
             <IconButton size="small" onClick={handleUndo} sx={{ p: 0.25, color: "warning.main" }}>
               <UndoIcon fontSize="inherit" />
             </IconButton>
           </Tooltip>
         )}
-        <Tooltip title={hasNetChanges ? "save pending edits now (auto-saves when you leave this note)" : "no pending edits"}>
+        <Tooltip title={hasRowDiff ? "save pending edits to the server" : "no pending edits"}>
           <span>
             <IconButton
               size="small"
               onClick={flushPending}
-              disabled={!hasNetChanges}
-              sx={{ p: 0.25, color: hasNetChanges ? "primary.main" : "action.disabled" }}
+              disabled={!hasRowDiff}
+              sx={{ p: 0.25, color: hasRowDiff ? "primary.main" : "action.disabled" }}
             >
-              {hasNetChanges ? <SaveIcon fontSize="inherit" /> : <SaveOutlinedIcon fontSize="inherit" />}
+              {hasRowDiff ? <SaveIcon fontSize="inherit" /> : <SaveOutlinedIcon fontSize="inherit" />}
             </IconButton>
           </span>
         </Tooltip>
@@ -596,21 +656,43 @@ export function NoteCard({
 
       {/* ── Quote ── */}
       <Box sx={{ px: 1.5, pt: 0.75, pb: 0.5 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            mb: 0.5,
-            fontFamily: "monospace",
-            color: "text.secondary",
-            textTransform: "uppercase",
-            fontSize: 10.5,
-            fontWeight: 600,
-            letterSpacing: "0.12em",
-          }}
-        >
-          Quote
-        </Typography>
+        <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              fontFamily: "monospace",
+              color: "text.secondary",
+              textTransform: "uppercase",
+              fontSize: 10.5,
+              fontWeight: 600,
+              letterSpacing: "0.12em",
+            }}
+          >
+            Quote
+          </Typography>
+          <Box sx={{ flex: 1 }} />
+          {active && !readOnly && onStartQuoteBuild && (
+            <Tooltip title="open the picker to pick Hebrew/Greek words — or click ULT/UST words and the picker resolves their alignment">
+              <Button
+                size="small"
+                variant={quoteBuildMode ? "outlined" : "text"}
+                color={quoteBuildMode ? "primary" : "inherit"}
+                onClick={onStartQuoteBuild}
+                sx={{
+                  fontSize: 11,
+                  minWidth: 0,
+                  py: 0.25,
+                  px: 0.75,
+                  color: quoteBuildMode ? "primary.main" : "text.secondary",
+                }}
+              >
+                {quoteBuildMode
+                  ? `picker open · ${quoteBuildSelectionCount} selected`
+                  : "build from source"}
+              </Button>
+            </Tooltip>
+          )}
+        </Stack>
         <TextField
           value={quote}
           onChange={(e) => {
@@ -624,6 +706,7 @@ export function NoteCard({
           onFocus={onFocus}
           InputProps={{
             readOnly,
+            ...(hasRowDiff && quote !== rowQuoteDisplay ? { "data-dirty": "true" } : {}),
             ...(showTranslateIcon && {
               endAdornment: (
                 <InputAdornment position="end" sx={{ alignSelf: "flex-start" }}>
@@ -714,7 +797,10 @@ export function NoteCard({
           size="small"
           spellCheck
           onFocus={onFocus}
-          InputProps={{ readOnly }}
+          InputProps={{
+            readOnly,
+            ...(hasRowDiff && note !== rowNoteDisplay ? { "data-dirty": "true" } : {}),
+          }}
           inputProps={{
             style: {
               fontSize: 13,

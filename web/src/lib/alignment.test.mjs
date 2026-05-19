@@ -17,6 +17,8 @@ import {
   verseHasUnalignedWork,
 } from "./alignment.ts";
 import { extractPlainText } from "./usfm.ts";
+import { findTargetHighlights, findSourceHighlights } from "./highlight.ts";
+import { buildQuoteFromSelection, collectTargetTokens } from "./quoteBuilder.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
@@ -350,6 +352,362 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
     assert(tags.includes("qs"), `\\qs wrapper survives edit to adjacent aligned word (tags=${tags.join(",")})`);
     assert(tags.filter((t) => t === "zaln").length >= 1, `at least one \\zaln milestone survives`);
   }
+}
+
+// ─── Case 10: Highlight precision — quote shouldn't bleed across milestones ──
+//
+// ZEC 1:1 UST has two separate zaln milestones whose direct \w children
+// each include a "the" token:
+//
+//   zaln(content="בֶּרֶכְיָה") { \w the (occ=1)  \w son  \w of  \w Berechiah }
+//   zaln(content="עִדּוֹ")    { \w and  \w the (occ=2)  \w grandson  ... }
+//
+// A TN whose quote is "בֶּרֶכְיָה" (occurrence 1) must highlight ONLY the
+// first "the" and friends — the second "the" belongs to a different
+// Hebrew word's alignment and should stay untouched. The user-reported
+// over-highlighting bug looks like this: a 2-Hebrew-word quote lights up
+// extra "the"s elsewhere in the verse. ZEC 1:1 is the closest analogue
+// in our fixtures.
+{
+  console.log("\n[Case 10] Highlight precision in ZEC 1:1");
+  const sample = resolve(repoRoot, "docs/samples/en_ust_38-ZEC.usfm");
+  const ust = readFileSync(sample, "utf-8");
+  const json = usfm.toJSON(ust);
+  const verseObjects = json.chapters["1"]["1"].verseObjects;
+
+  // Single-word quote: "בֶּ֣רֶכְיָ֔ה" — the milestone tagged that way owns
+  // \w the (occurrence 1). The other "the" belongs to עִדּוֹ.
+  const hl = findTargetHighlights(verseObjects, "בֶּ֣רֶכְיָ֔ה", 1);
+  assert(hl.has("the|1"), "ZEC 1:1: בֶּרֶכְיָה quote highlights the (occ=1)");
+  assert(hl.has("son|1"), "ZEC 1:1: בֶּרֶכְיָה quote highlights son");
+  assert(hl.has("Berechiah|1"), "ZEC 1:1: בֶּרֶכְיָה quote highlights Berechiah");
+  assert(
+    !hl.has("the|2"),
+    `ZEC 1:1: בֶּרֶכְיָה quote must NOT highlight the (occ=2). Got: ${[...hl].join(",")}`,
+  );
+  assert(
+    !hl.has("the|3"),
+    `ZEC 1:1: בֶּרֶכְיָה quote must NOT highlight the (occ=3). Got: ${[...hl].join(",")}`,
+  );
+  assert(
+    !hl.has("grandson|1"),
+    `ZEC 1:1: בֶּרֶכְיָה quote must NOT highlight grandson (Iddo's milestone)`,
+  );
+
+  // Multi-word quote: "בַּ⁠חֹ֨דֶשׁ֙ הַ⁠שְּׁמִינִ֔י" (In the eighth month) —
+  // a real TN quote from en_tn_tn_ZEC.tsv 1:1 bra8. Should only highlight
+  // words from those two milestones, not bleed into nearby ones.
+  const hl2 = findTargetHighlights(
+    verseObjects,
+    "בַּ⁠חֹ֨דֶשׁ֙ הַ⁠שְּׁמִינִ֔י",
+    1,
+  );
+  // Sanity: at least one ULT/UST gateway word must light up — empty would
+  // mean the matcher couldn't anchor at all.
+  assert(hl2.size > 0, `ZEC 1:1: multi-word quote produces non-empty highlights (got ${[...hl2].join(",")})`);
+  // Specific over-match guard: "Berechiah" lives in a totally different
+  // milestone and must not light up.
+  assert(
+    !hl2.has("Berechiah|1"),
+    `ZEC 1:1: month/year quote must NOT highlight Berechiah. Got: ${[...hl2].join(",")}`,
+  );
+  assert(
+    !hl2.has("Iddo|1"),
+    `ZEC 1:1: month/year quote must NOT highlight Iddo. Got: ${[...hl2].join(",")}`,
+  );
+}
+
+// ─── Case 11: NUM 20:1 — nested milestones + repeated Hebrew compound ─────
+//
+// The exact structure the user hit on production: the compound
+// "בַּ⁠חֹ֣דֶשׁ הָֽ⁠רִאשׁ֔וֹן" appears TWICE in the verse (x-occurrences=2),
+// with NESTED milestones (the outer בַּ⁠חֹ֣דֶשׁ wraps the inner הָֽ⁠רִאשׁ֔וֹן,
+// and only the inner one carries the \w children).
+//
+//   {first occurrence}                 {second occurrence}
+//   zaln(בַ⁠חֹדֶשׁ, occ=1) {            zaln(בַ⁠חֹדֶשׁ, occ=2) {
+//     zaln(הָ⁠רִאשׁוֹן, occ=1) {            zaln(הָ⁠רִאשׁוֹן, occ=2) {
+//       \w In  \w the  \w first  \w month     \w of  \w the  \w next  \w year
+//     }                                    }
+//   }                                    }
+//
+// With TN quote `בַ⁠חֹדֶשׁ הָ⁠רִאשׁוֹן` occurrence=1 the highlight set MUST
+// be exactly {In, the(occ=1), first, month} — never bleeding into the
+// second occurrence's "of, the(occ=2), next, year".
+{
+  console.log("\n[Case 11] NUM 20:1 nested-milestone disambiguation");
+  const verseObjects = [
+    {
+      tag: "zaln",
+      type: "milestone",
+      occurrence: 1,
+      occurrences: 2,
+      content: "בַּ⁠חֹ֣דֶשׁ",
+      children: [
+        {
+          tag: "zaln",
+          type: "milestone",
+          occurrence: 1,
+          occurrences: 2,
+          content: "הָֽ⁠רִאשׁ֔וֹן",
+          children: [
+            { type: "word", tag: "w", text: "In", occurrence: 1, occurrences: 1 },
+            { type: "word", tag: "w", text: "the", occurrence: 1, occurrences: 5 },
+            { type: "word", tag: "w", text: "first", occurrence: 1, occurrences: 1 },
+            { type: "word", tag: "w", text: "month", occurrence: 1, occurrences: 1 },
+          ],
+        },
+      ],
+    },
+    {
+      tag: "zaln",
+      type: "milestone",
+      occurrence: 2,
+      occurrences: 2,
+      content: "בַּ⁠חֹ֣דֶשׁ",
+      children: [
+        {
+          tag: "zaln",
+          type: "milestone",
+          occurrence: 2,
+          occurrences: 2,
+          content: "הָֽ⁠רִאשׁ֔וֹן",
+          children: [
+            { type: "word", tag: "w", text: "of", occurrence: 1, occurrences: 2 },
+            { type: "word", tag: "w", text: "the", occurrence: 2, occurrences: 5 },
+            { type: "word", tag: "w", text: "next", occurrence: 1, occurrences: 1 },
+            { type: "word", tag: "w", text: "year", occurrence: 1, occurrences: 1 },
+          ],
+        },
+      ],
+    },
+    // a downstream milestone whose direct children also include "the" — a red
+    // herring to make sure we never bleed past the matched range.
+    {
+      tag: "zaln",
+      type: "milestone",
+      occurrence: 1,
+      occurrences: 1,
+      content: "הָ֨⁠עֵדָ֤ה",
+      children: [
+        { type: "word", tag: "w", text: "the", occurrence: 4, occurrences: 5 },
+        { type: "word", tag: "w", text: "whole", occurrence: 1, occurrences: 1 },
+        { type: "word", tag: "w", text: "community", occurrence: 1, occurrences: 1 },
+      ],
+    },
+  ];
+
+  const hl = findTargetHighlights(verseObjects, "בַּ⁠חֹ֣דֶשׁ הָֽ⁠רִאשׁ֔וֹן", 1);
+  assert(hl.has("In|1"), "NUM 20:1 occ=1 highlights In");
+  assert(hl.has("the|1"), "NUM 20:1 occ=1 highlights the(1)");
+  assert(hl.has("first|1"), "NUM 20:1 occ=1 highlights first");
+  assert(hl.has("month|1"), "NUM 20:1 occ=1 highlights month");
+  assert(
+    !hl.has("the|2"),
+    `NUM 20:1 occ=1 must NOT highlight the(2) from occ=2 scope. Got: ${[...hl].join(",")}`,
+  );
+  assert(
+    !hl.has("the|4"),
+    `NUM 20:1 occ=1 must NOT highlight the(4) from הָ⁠עֵדָה's scope. Got: ${[...hl].join(",")}`,
+  );
+  assert(
+    !hl.has("of|1"),
+    `NUM 20:1 occ=1 must NOT highlight "of" from occ=2 scope. Got: ${[...hl].join(",")}`,
+  );
+
+  // Symmetric check: occurrence=2 lights up the second range exclusively.
+  const hl2 = findTargetHighlights(verseObjects, "בַּ⁠חֹ֣דֶשׁ הָֽ⁠רִאשׁ֔וֹן", 2);
+  assert(hl2.has("of|1"), "NUM 20:1 occ=2 highlights of");
+  assert(hl2.has("the|2"), "NUM 20:1 occ=2 highlights the(2)");
+  assert(
+    !hl2.has("the|1"),
+    `NUM 20:1 occ=2 must NOT highlight the(1) from occ=1 scope. Got: ${[...hl2].join(",")}`,
+  );
+}
+
+// ─── Case 12: Hebrew-click → quote builder ────────────────────────────────
+//
+// Selecting contiguous Hebrew words produces a single space-joined quote;
+// disjoint selections insert " & " between groups. Occurrence is computed
+// by counting how many positions in the verse start a matching pattern up
+// to and including the selected one.
+{
+  console.log("\n[Case 12] Quote builder from Hebrew selection");
+  // Fake verseObjects: a flat list of \w tokens with predictable text.
+  const verseObjects = [
+    { type: "word", tag: "w", text: "וַ⁠יָּבֹ֣אוּ", occurrence: 1, occurrences: 1 },
+    { type: "word", tag: "w", text: "בְנֵֽי", occurrence: 1, occurrences: 1 },
+    { type: "word", tag: "w", text: "יִ֠שְׂרָאֵל", occurrence: 1, occurrences: 1 },
+    { type: "word", tag: "w", text: "בַּ⁠חֹ֣דֶשׁ", occurrence: 1, occurrences: 2 },
+    { type: "word", tag: "w", text: "הָֽ⁠רִאשׁ֔וֹן", occurrence: 1, occurrences: 2 },
+    { type: "word", tag: "w", text: "בַּ⁠חֹ֣דֶשׁ", occurrence: 2, occurrences: 2 },
+    { type: "word", tag: "w", text: "הָֽ⁠רִאשׁ֔וֹן", occurrence: 2, occurrences: 2 },
+  ];
+
+  // Two adjacent words → single quote, occurrence 1.
+  const sel1 = new Set(["בַּ⁠חֹ֣דֶשׁ|1", "הָֽ⁠רִאשׁ֔וֹן|1"]);
+  const b1 = buildQuoteFromSelection(verseObjects, sel1);
+  assert(b1 !== null, "builder returns non-null for valid selection");
+  assert(
+    b1?.quote === "בַּ⁠חֹ֣דֶשׁ הָֽ⁠רִאשׁ֔וֹן",
+    `single-group quote (got: ${b1?.quote})`,
+  );
+  assert(b1?.occurrence === 1, `occurrence=1 for first instance (got: ${b1?.occurrence})`);
+
+  // The same pair, but the SECOND occurrence → occurrence 2.
+  const sel2 = new Set(["בַּ⁠חֹ֣דֶשׁ|2", "הָֽ⁠רִאשׁ֔וֹן|2"]);
+  const b2 = buildQuoteFromSelection(verseObjects, sel2);
+  assert(b2?.quote === "בַּ⁠חֹ֣דֶשׁ הָֽ⁠רִאשׁ֔וֹן", `same quote shape for second occurrence`);
+  assert(b2?.occurrence === 2, `occurrence=2 for second instance (got: ${b2?.occurrence})`);
+
+  // Disjoint selection → ' & ' separator. Picking word 1 and word 4
+  // produces a two-group quote.
+  const sel3 = new Set(["וַ⁠יָּבֹ֣אוּ|1", "בַּ⁠חֹ֣דֶשׁ|1"]);
+  const b3 = buildQuoteFromSelection(verseObjects, sel3);
+  assert(
+    b3?.quote === "וַ⁠יָּבֹ֣אוּ & בַּ⁠חֹ֣דֶשׁ",
+    `disjoint groups joined by ' & ' (got: ${b3?.quote})`,
+  );
+
+  // Empty selection → null.
+  const b4 = buildQuoteFromSelection(verseObjects, new Set());
+  assert(b4 === null, "empty selection returns null");
+}
+
+// ─── Case 13: collectTargetTokens — ancestor chain per \w ────────────────
+//
+// The picker resolves an English click to its \zaln-s ancestor chain so
+// non-Hebrew speakers can build a quote without typing Hebrew. Outer-to-
+// inner order, with each ancestor's exact occurrence index from its
+// milestone — that's what the picker needs to turn into ${content}|${occ}
+// keys for the existing UHB-keyed selection set.
+{
+  console.log("\n[Case 13] collectTargetTokens ancestor resolution");
+  const ust = [
+    {
+      tag: "zaln",
+      type: "milestone",
+      occurrence: 1,
+      occurrences: 2,
+      content: "בַּ⁠חֹ֣דֶשׁ",
+      children: [
+        {
+          tag: "zaln",
+          type: "milestone",
+          occurrence: 1,
+          occurrences: 2,
+          content: "הָֽ⁠רִאשׁ֔וֹן",
+          children: [
+            { type: "word", tag: "w", text: "In", occurrence: 1, occurrences: 1 },
+            { type: "word", tag: "w", text: "the", occurrence: 1, occurrences: 3 },
+            { type: "word", tag: "w", text: "first", occurrence: 1, occurrences: 1 },
+          ],
+        },
+      ],
+    },
+    // Sibling that doesn't share the ancestor chain — the "the" inside
+    // here is a different instance, used to confirm the walker keeps
+    // ancestor stacks disjoint between siblings.
+    {
+      tag: "zaln",
+      type: "milestone",
+      occurrence: 1,
+      occurrences: 1,
+      content: "הָ֨⁠עֵדָ֤ה",
+      children: [
+        { type: "word", tag: "w", text: "the", occurrence: 2, occurrences: 3 },
+        { type: "word", tag: "w", text: "whole", occurrence: 1, occurrences: 1 },
+      ],
+    },
+  ];
+
+  const tokens = collectTargetTokens(ust);
+  assert(tokens.length === 5, `5 \\w tokens emitted (got ${tokens.length})`);
+
+  const first = tokens.find((t) => t.text === "first");
+  assert(first !== undefined, "first \\w token resolved");
+  assert(
+    first?.sources.length === 2,
+    `first has two ancestors (got ${first?.sources.length})`,
+  );
+  assert(
+    first?.sources[0].content === "בַּ⁠חֹ֣דֶשׁ" && first?.sources[0].occurrence === 1,
+    `outer ancestor is בַּחֹדֶשׁ occ=1 (got ${JSON.stringify(first?.sources[0])})`,
+  );
+  assert(
+    first?.sources[1].content === "הָֽ⁠רִאשׁ֔וֹן" && first?.sources[1].occurrence === 1,
+    `inner ancestor is הָרִאשׁוֹן occ=1 (got ${JSON.stringify(first?.sources[1])})`,
+  );
+
+  // The "the" inside בַחֹדֶשׁ has ancestors [בַחֹדֶשׁ, הָרִאשׁוֹן].
+  // The "the" inside הָעֵדָה has ancestor [הָעֵדָה] only — different chain.
+  const the1 = tokens.find((t) => t.text === "the" && t.occurrence === 1);
+  const the2 = tokens.find((t) => t.text === "the" && t.occurrence === 2);
+  assert(
+    the1?.sources.length === 2,
+    `the(1) has two ancestors (the בַחֹדֶשׁ chain)`,
+  );
+  assert(
+    the2?.sources.length === 1 && the2?.sources[0].content === "הָ֨⁠עֵדָ֤ה",
+    `the(2) has one ancestor (הָעֵדָה only). Got: ${JSON.stringify(the2?.sources)}`,
+  );
+}
+
+// ─── Case 14: end-to-end picker round-trip (no UI) ────────────────────────
+//
+// Simulate the picker's click handler: user clicks "first" in UST, which
+// adds its ancestor chain to the selection set; then buildQuoteFromSelection
+// against the UHB verseObjects produces the right quote+occurrence.
+{
+  console.log("\n[Case 14] Picker click → quote round-trip");
+
+  // UHB version of the same fragment — used for quote rendering.
+  const uhb = [
+    { type: "word", tag: "w", text: "בַּ⁠חֹ֣דֶשׁ", occurrence: 1, occurrences: 1 },
+    { type: "word", tag: "w", text: "הָֽ⁠רִאשׁ֔וֹן", occurrence: 1, occurrences: 1 },
+  ];
+  // UST with nested zaln (same as Case 13 first milestone).
+  const ust = [
+    {
+      tag: "zaln",
+      type: "milestone",
+      occurrence: 1,
+      occurrences: 1,
+      content: "בַּ⁠חֹ֣דֶשׁ",
+      children: [
+        {
+          tag: "zaln",
+          type: "milestone",
+          occurrence: 1,
+          occurrences: 1,
+          content: "הָֽ⁠רִאשׁ֔וֹן",
+          children: [
+            { type: "word", tag: "w", text: "In", occurrence: 1, occurrences: 1 },
+            { type: "word", tag: "w", text: "the", occurrence: 1, occurrences: 1 },
+            { type: "word", tag: "w", text: "first", occurrence: 1, occurrences: 1 },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const tokens = collectTargetTokens(ust);
+  const firstTok = tokens.find((t) => t.text === "first");
+  assert(firstTok !== undefined, "found 'first' target token");
+
+  // Picker click handler: dump every ancestor into the selection set.
+  const selection = new Set();
+  for (const a of firstTok?.sources ?? []) {
+    selection.add(`${a.content}|${a.occurrence}`);
+  }
+
+  const built = buildQuoteFromSelection(uhb, selection);
+  assert(built !== null, "buildQuoteFromSelection returns a quote");
+  assert(
+    built?.quote === "בַּ⁠חֹ֣דֶשׁ הָֽ⁠רִאשׁ֔וֹן",
+    `quote round-trips through UHB (got: ${built?.quote})`,
+  );
+  assert(built?.occurrence === 1, `occurrence=1 (got: ${built?.occurrence})`);
 }
 
 if (failed > 0) {
