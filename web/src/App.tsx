@@ -77,6 +77,12 @@ function useAuthGate(): AuthState {
         }
         if (me.role === "admin" || me.role === "editor") {
           setState({ kind: "ready" });
+        } else if (import.meta.env.DEV) {
+          // Dev convenience: a stale token from before the role claim was
+          // added has role=null. Drop it and let the loading branch silently
+          // re-mint via /api/auth/dev with a fresh role claim.
+          setAuthToken(null);
+          setState({ kind: "loading" });
         } else {
           setState({ kind: "denied", username: me.username });
         }

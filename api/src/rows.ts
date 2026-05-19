@@ -243,6 +243,12 @@ rows.get("/:kind/:id/history", requireEditor, async (c) => {
   // book column (kind = 'tn'/'tq'/'twl' from before the migration) fall back
   // to (kind, row_key) only — the `el.book IS NULL` branch — so pre-migration
   // audit trails still display, just without cross-book disambiguation.
+  //
+  // preserve/hint/keep toggles are audited as new_version = prev_version
+  // (the row's version column doesn't actually change). The history dialog
+  // is a version picker, not an audit log — surfacing those entries as
+  // duplicate-version rows confuses the user and triggers React key
+  // collisions. Filter to actions that genuinely advance the version.
   const rs = await c.env.DB.prepare(
     `SELECT el.new_version AS version,
             el.action,
@@ -257,6 +263,7 @@ rows.get("/:kind/:id/history", requireEditor, async (c) => {
       WHERE el.kind = ?1 AND el.row_key = ?2
         AND (el.book = ?3 OR el.book IS NULL)
         AND el.new_version IS NOT NULL
+        AND el.action IN ('create', 'update', 'delete', 'restore')
       ORDER BY el.new_version ASC`,
   )
     .bind(kind, id, book)
