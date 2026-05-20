@@ -13,7 +13,7 @@ CREATE TABLE user_roles (
   added_by INTEGER REFERENCES users(id)
 );
 
--- Seed: 1 admin + 11 editors. Add new editors via SQL — no redeploy needed.
+-- Seed: 1 admin + 10 editors. Add new editors via SQL — no redeploy needed.
 INSERT OR IGNORE INTO user_roles (dcs_username, role) VALUES
   ('deferredreward',    'admin'),
   ('christopherrsmith', 'editor'),
@@ -24,6 +24,5 @@ INSERT OR IGNORE INTO user_roles (dcs_username, role) VALUES
   ('bcameron93',        'editor'),
   ('Carolyn1970',       'editor'),
   ('stephenwunrow',     'editor'),
-  ('benjamin-test',     'editor'),
-  ('bethoakes',         'editor'),
+('bethoakes',         'editor'),
   ('jessicaparks',      'editor');
