@@ -1,10 +1,10 @@
-# Alignment Suggestions — reference & improvement plan
+# Alignment Suggestions — reference & measured improvement log
 
 > Handoff for a fresh agent. Read `CLAUDE.md`, `docs/plan.md`, `docs/handoff.md`
-> first, then this. The feature shipped in PR #98 (merged). A follow-up
-> repeat-distribution fix is **uncommitted in this worktree** (see "Current
-> state"). Goal of this doc: improve suggestion quality **without abandoning the
-> architecture**.
+> first, then this. The non-AI alignment-suggestion feature shipped in PR #98.
+> This doc is now a **measured** log: an evaluation harness defines "better" with
+> a number, and every scoring idea below was accepted or rejected on that
+> evidence — don't re-attempt the rejected ones blindly.
 
 ## What this feature is
 
@@ -18,186 +18,179 @@ on whatever resources happened to be loaded.
 ## Architecture — KEEP THIS (it's the whole point)
 
 - **No aligner engine at request time.** The API is a Cloudflare Worker (Hono +
-  D1 + R2): no filesystem, ~128 MB, bundle limits. wordMAP-style runtime
-  inference does not belong here.
-- **The model is a precomputed D1 table** (`align_freq`), built **offline** from
-  the **gold `\zaln-s` alignments in the published (canonical) ULT/UST**. It is
-  "wordMAP alignment memory" reduced to per-token frequencies (single words +
-  the contiguous phrase each milestone covers, e.g. `H776 → "the earth"`).
+  D1 + R2): no filesystem, ~128 MB. wordMAP-style runtime inference does not
+  belong here. (gatewayEdit trains wordMAP live in-browser per book via a Web
+  Worker + IndexedDB — exactly the cost we removed. We borrow wordMAP's *math*,
+  not its integration. See `../tcc-ge-dcs` `WordAlignerDialog.jsx`.)
+- **Precomputed D1 tables, built offline** from the **gold `\zaln-s` alignments
+  in the published (canonical) ULT/UST**: `align_freq` (strong → surface
+  counts, single words + phrases) and `align_freq_morph` (strong × morph-class →
+  surface counts, words only).
 - **Refresh cadence = on publish.** Bump the tag in `api/data/canonical.json`,
-  re-run the trainer, re-upload. Never trains on user/in-progress/non-canonical
-  data.
-- **Runtime = one indexed D1 lookup + scoring** in the Worker, with a **lexicon
-  gloss/definition fallback** for Strong's the corpus never aligned.
+  re-run the trainer, re-upload. Never trains on user/in-progress data.
+- **Division of labor** (fits the stateless endpoint, keeps the client cheap):
+  - **Offline**: all corpus-derived counts (`align_freq`, `align_freq_morph`).
+  - **Endpoint** (`/api/align/suggest`): one+ indexed D1 lookup + morph
+    interpolation → per-candidate `confidence`; lexicon gloss fallback.
+  - **Client** (`computeGhosts`): the verse-specific blend (position, occurrence,
+    length) over the candidates, then match against the word bank. One fetch per
+    verse; edits re-rank locally with no network (good on low-spec/weak links).
 - **Anti-goals:** don't move inference to the client; don't train per-keystroke;
-  don't train on loaded/non-canonical resources; don't commit `scripts/out/*.sql`
-  (gitignored, ~20 MB — it travels via the upload script, not git).
+  don't train on loaded/non-canonical data; don't commit `scripts/out/*` (gitignored).
+
+## Current state (what shipped, measured on held-out JOS/NAM/ACT, ult)
+
+The held-out eval (`scripts/eval-aligner.mjs`) trains on every aligned book
+*except* the held-out set, simulates "alignment cleared" per verse, and scores
+top-1 against gold. Headline metric: **precision@1** (of groups given a
+suggestion, fraction exactly matching gold); guardrail: **fw-fp** (content
+groups whose top suggestion is a glue word — lower is better).
+
+| stage | what | precision@1 | fw-fp | status |
+|---|---|---|---|---|
+| baseline | freq-share only (PR #98) | 57.5 | 9.3 | — |
+| **Phase 1** | weighted-average blend: freq + alignment-position + occurrence | **60.1** | **6.7** | **shipped** |
+| Phase 2 | memory-only uniqueness/IDF term | 59.5–59.8 | 6.3–6.4 | **rejected** (precision↔fw-fp trade, no net win) |
+| Phase 3 | corpus co-occurrence fallback track | 58.6 | 8.1 | **rejected** (+2.3 coverage but ~98% wrong, flat net-correct) |
+| **Phase 4** | morphology-conditioned freq (x-morph) | **61.7** | **6.1** | **shipped (code); needs prod D1 reload** |
+
+Recall@5 is ~81% — the model usually *knows* the gold word; the wins come from
+**ranking** it to the top, not from new candidates (corpus co-occurrence proved
+gold-unattested cases are genuine ignorance, not mis-ranking).
+
+**Deploy status:** Phase 1 is fully shipped. Phase 4 (morph) is committed and
+locally validated (typecheck, eval, data pipeline, live endpoint smoke) but
+**production still needs**: apply migration `0025` remote, re-run the trainer,
+and load both `align_freq` + `align_freq_morph` remote (see "Deploy" below).
+The endpoint degrades safely to strong-only if `align_freq_morph` is absent.
+
+## How scoring works (grounded in real wordMAP)
+
+wordMAP's confidence is a weighted **average** of ~10 algorithms / ~16 score
+keys (`node_modules/wordmap/dist/Engine.js` `calculateWeightedConfidence`), **not
+a product** — so a weak signal is diluted, never zeroing a strong candidate. We
+reproduce the subset that needs only the current verse:
+
+- **memory frequency share** — the endpoint's per-candidate confidence,
+  morph-interpolated (Phase 4): `λ·P(surface|strong,morph) + (1-λ)·P(surface|strong)`,
+  `λ = n_sm/(n_sm + 5)`.
+- **alignment position** — `1 - |srcRel - tgtRel|` (wordMAP `AlignmentPosition`).
+- **occurrence balance** — `min/max` of in-verse source/target counts
+  (`AlignmentOccurrences`). Doubles as a mild anti-glue signal.
+
+Blended as a weighted average in `web/src/lib/alignmentSuggest.ts` (`BLEND_WEIGHTS`,
+shared with the eval so there is no scorer drift). Phrases stay strong-only.
 
 ## Data flow
 
 ```
 api/data/canonical.json (pinned ULT/UST @ tag/v88)
-        │  scripts/train-aligner.mjs  (fetch USFM, walk gold \zaln-s)
+        │  scripts/train-aligner.mjs  (walk gold \zaln-s, with morph class)
         ▼
-scripts/out/align-freq.sql   (gitignored; single-word + phrase rows)
-        │  scripts/apply-align-freq.mjs  (chunked + retried d1 execute)
+scripts/out/align-freq.sql  +  scripts/out/align-freq-morph.sql   (gitignored)
+        │  scripts/apply-align-freq.mjs (chunked d1 execute; --file for either)
         ▼
-D1 table  align_freq(bible, strong, surface, count)   [migration 0024]
-        │  GET /api/align/suggest?bible=&strongs=   (api/src/align.ts)
+D1: align_freq(bible,strong,surface,count)        [0024]
+    align_freq_morph(bible,strong,morph_class,surface,count)   [0025]
+        │  GET /api/align/suggest?bible=&keys=H776~Ncmsc;...   (api/src/align.ts)
         ▼
-{ suggestions: { rawStrong: { words:[{surface,confidence,count,source}],
-                              phrases:[{phrase,tokens,confidence,count}] } } }
-        │  web/src/hooks/useAlignmentSuggestions.ts  (1 fetch/verse, cached)
+{ suggestions: { "H776~Ncmsc": { words:[{surface,confidence,count,source}],
+                                 phrases:[{phrase,tokens,confidence,count}] } } }
+        │  web/src/hooks/useAlignmentSuggestions.ts  (1 fetch/verse, cached by key-set)
         ▼
-AlignmentPanel computeGhosts → ghost chips (click to accept)
+AlignmentPanel: computeGhosts (blend + match) → ghost chips (click to accept)
 ```
+
+The request key is a per-source-word `"<rawStrong>~<morphClass>"` composite;
+keys are **`;`-separated** (Greek morph classes contain commas). `morphClass` is
+mirrored in `scripts/lib/align-corpus.mjs` and `web/src/lib/alignmentSuggest.ts`
+— **keep the two in sync** (like `normStrong` already is).
 
 ## Key files
 
 | File | Role |
 |---|---|
-| `api/migrations/0024_align_freq.sql` | `align_freq(bible, strong, surface, count)`, PK `(bible,strong,surface)` |
-| `api/data/canonical.json` | pinned sources: ULT/UST @ `tag/v88` (edit ref to re-pin on release) |
-| `scripts/train-aligner.mjs` | offline trainer; walks `\zaln-s`; emits single-word + multi-word phrase rows |
-| `scripts/apply-align-freq.mjs` | chunked + retried upload to D1 (`--remote` for prod) |
-| `api/src/align.ts` | `GET /api/align/suggest`; splits words/phrases; lexicon fallback (+NT Strong's-Plus→classic) |
-| `api/src/index.ts` | mounts `app.route("/api/align", align)` |
-| `web/src/hooks/useAlignmentSuggestions.ts` | fetch + module cache keyed by `bible::sortedStrongs` |
-| `web/src/components/AlignmentPanel.tsx` | `computeGhosts`, `findContiguousUnaligned`, `GhostChip`, `ghostPipColor`, accept wiring |
-| root `package.json` | scripts: `train:align`, `db:align:local`, `db:align:remote` |
+| `scripts/eval-aligner.mjs` | **held-out eval** (`npm run eval:align`); precision@1 / recall@k / phrase-hit / fw-fp. Imports the *real* `computeGhosts`. |
+| `scripts/eval-morph.mjs` | morph-class prototype (coarse vs full vs K) — kept as the morph regression eval |
+| `scripts/eval-phase3.mjs` | corpus co-occurrence prototype — kept as evidence Phase 3 was rejected |
+| `scripts/lib/align-corpus.mjs` | shared gold-walk parsing (`walkAlign`, `morphClass`, …); trainer + evals import it |
+| `scripts/train-aligner.mjs` | offline trainer; emits `align-freq.sql` + `align-freq-morph.sql` |
+| `scripts/apply-align-freq.mjs` | chunked + retried upload (`--file`, `--remote`) |
+| `api/migrations/0024_align_freq.sql`, `0025_align_freq_morph.sql` | the two tables |
+| `api/src/align.ts` | `/api/align/suggest`; composite keys, morph interpolation, lexicon fallback |
+| `web/src/lib/alignmentSuggest.ts` | `computeGhosts`, blend, `morphClass`/`suggestKey`, `ghostPipColor` (shared w/ eval) |
+| `web/src/hooks/useAlignmentSuggestions.ts` | 1 fetch/verse, cached by `(bible, sorted key-set)` |
+| `web/src/components/AlignmentPanel.tsx` | builds composite keys, renders `GhostChip`, accept wiring |
+| root `package.json` | `train:align`, `eval:align`, `db:align[-morph]:local/:remote` |
 
-## Current state
+## Build / run / measure
 
-- **Merged (PR #98):** trainer, manifest, migration, endpoint, hook, ghost UI,
-  bulk-accept, lexicon fallback, phrase-level memory.
-- **UNCOMMITTED in this worktree** (`web/src/components/AlignmentPanel.tsx`): the
-  **repeat-distribution fix** — `computeGhosts` now processes groups in source
-  order and claims its best *still-unclaimed* phrase/word immediately, and
-  `findContiguousUnaligned` takes a `claimed` set. This makes 2nd+ instances of a
-  repeated word get their own ghost (e.g. both מִזֶּה, both כָּמוֹהָ on ZEC 5:3).
-  **First task for the new agent: commit this** (typecheck passes) or re-derive
-  it if lost. Then reload main's D1 isn't needed (client-only change; just deploy
-  the SPA when shipping).
-- **Local D1** (both this worktree and the `main` checkout) is loaded with the
-  full v88 set: **592,945 rows** (372,735 single-word + 220,210 phrase).
-- v88 release = **24 OT + 27 NT aligned books**. `ZEC` is **NOT** in v88 (404 at
-  the tag) — so ZEC suggestions are pure generalization from the 24 OT books +
-  lexicon, which is a good honest test. ZEC *is* in the seeded local D1 for
-  rendering.
-
-## How to build / run / verify
-
-**Train + load (from repo root):**
 ```sh
-npm run train:align -- --all-ot --nt   # full released Bible (default w/o args = curated set)
-npm run db:align:local                 # chunked load into local dev D1
-npm run db:align:remote                # production (needs Cloudflare creds)
+npm run train:align -- --all-ot --nt   # full released Bible (emits both SQL files)
+npm run eval:align                      # held-out JOS/NAM/ACT; add books/--bible/--k to vary
+npm run db:align:local && npm run db:align-morph:local   # load both into local D1
+npm --workspace api run db:migrate:local                 # apply migrations incl. 0025
 ```
-Migration: `npm --workspace api run db:migrate:local` (or `:remote`).
 
-**Production deploy (3 steps, user runs — needs creds):**
-1. `npm --workspace api run db:migrate:remote`
-2. `npm run deploy` (Worker carries new endpoint + `{words,phrases}` shape; SPA carries ghosts)
-3. `npm run db:align:remote`
+**Production deploy (user runs — needs Cloudflare creds):**
+1. `npm --workspace api run db:migrate:remote` (applies `0025`).
+2. `npm run deploy` (Worker carries the composite-key endpoint; SPA carries the blend).
+3. `npm run train:align -- --all-ot --nt` then `npm run db:align:remote` **and**
+   `npm run db:align-morph:remote`.
 
-**Local dev + browser verify:** see `CLAUDE.md` "Browser-driven verification"
-and the worktree setup (junction node_modules, copy `api/.dev.vars`, copy
-`api/.wrangler/state`, stub `web/dist`). Run `npm run dev`; read the actual vite
-port from output (5173 is often taken → probes to 5174+); wrangler is on 8787.
-Endpoint smoke test bypasses vite: `curl "http://127.0.0.1:8787/api/align/suggest?bible=ult&strongs=H776"`.
+**Verify any scoring change:** `npm run eval:align` must hold/improve precision@1
+without raising fw-fp. Then browser-smoke ZEC 5:3 (see `CLAUDE.md`): "the earth"
+stays a phrase; repeats distribute (position-driven); `נִקָּה` still blank.
 
-**Canonical test verse: ZEC 5:3.** Open it → Alignment tab → Clear. Expect:
-`הָאָרֶץ → "the earth"` (phrase, not "the"); repeated מִזֶּה/כָּמוֹהָ each ghost;
-`נִקָּה → blank` (expected — see ceiling below).
+## Rejected approaches (measured — don't re-attempt blindly)
+
+- **Phase 2 — memory-only uniqueness/IDF.** Down-weighting globally-common target
+  surfaces is a pure precision↔fw-fp trade (no weight gives a net precision win):
+  it demotes glue words but also moderately-common *correct* glosses (e.g. "land"
+  for H776). The real wordMAP `Uniqueness` is a source/target frequency *balance*
+  needing corpus stats, and its anti-glue work is actually done by the frequency
+  ratios — a target-only IDF is the wrong shape. Phase 1's occurrence term
+  already captured the glue-suppression benefit. (`scripts/eval-morph.mjs` history.)
+- **Phase 3 — corpus co-occurrence fallback** (`scripts/eval-phase3.mjs`). A
+  gold-priority corpus track lifts coverage +2.3pt but those predictions are
+  ~98% wrong (net-correct flat) — gold-unattested strongs are genuine ignorance,
+  not something co-occurrence over other books can guess. Uniqueness does **not**
+  flip positive when combined with it (tested 2×2). Not worth a multi-million-row
+  D1 table. Catching a *currently-edited* book's novel renderings still needs
+  runtime co-occurrence over that book — the client cost we removed.
+
+## Further ideas (unmeasured)
+
+Source-context conditioning `P(surface|strong, neighbor-strong)`; global
+assignment (optimal bipartite match vs greedy claim); learned blend weights; a
+real stemmer. All server-side/precompute and eval-measurable first.
 
 ## Hard-won gotchas (will bite a new agent)
 
-- **Trainer key-separator gremlin.** `train-aligner.mjs` joins `(bible,strong,
-  surface)` with `SEP = "\t"` and builds phrase surfaces with
-  `String.fromCharCode(32)`. Do **not** "fix" these to literal spaces: a literal
-  space inside a string literal written via the Write tool has landed on disk as
-  a **NUL byte** before, and phrase surfaces contain spaces (so a space separator
-  also collides). In TS, detect a phrase by `/\s/.test(surface)` and split with
-  `/\s+/` — never type a lone `" "` as a separator/delimiter.
+- **Trainer key-separator gremlin.** `align-corpus.mjs` joins keys with `SEP =
+  "\t"` and builds phrase surfaces with `String.fromCharCode(32)`. Do **not**
+  type a lone `" "` as a separator — a literal space written via the editor has
+  landed on disk as a NUL byte, and phrase surfaces contain spaces. Detect a
+  phrase with `/\s/.test(surface)`.
+- **Composite keys use `;` not `,`.** Greek morph classes contain commas
+  (`N,,,,NMP,`), so the `keys` param separates composites with `;` and splits
+  each on the first `~`. `morphClass` is mirrored client+trainer — keep in sync.
 - **wrangler 4.x has no `d1 import`.** Remote `d1 execute --file` on a multi-MB
-  file times out (`D1_RESET_DO`). That's why `apply-align-freq.mjs` chunks
-  (~200 statements/chunk) and retries. Retries also clear local lock contention
-  with a running `wrangler dev`.
-- **Target another checkout's local D1 without `cd`:** `wrangler ... --cwd
-  "<path>/api"`, or run the apply script rooted there.
-- **NT Strong's-Plus:** Greek `align_freq` keys are Strong's-Plus (G23160 = θεός),
-  but `lexicon_entries` is classic (G2316). `lexiconKeysFor()` in `align.ts` maps
-  G##### → G#### for the fallback. Keep this.
-- **Auth is cookie-based;** dev auto-mints in `import.meta.env.DEV`. A "session
-  expired" banner on a fresh dev origin → reload usually re-mints; if not, clear
-  cookies + reload.
+  file times out; `apply-align-freq.mjs` chunks (~200 stmts) and retries.
+- **wrangler dev local persistence + file-watch are flaky on this worktree**
+  (junctioned `node_modules`, Windows): `wrangler d1 execute --local` and
+  `wrangler dev` can resolve *different* local D1 dirs, and `dev` sometimes
+  serves a **stale bundle** (didn't pick up an edit). If a code/endpoint change
+  isn't reflected, restart `wrangler dev` (a fresh start re-bundles); if data is
+  missing, confirm which `.wrangler/state` `dev` is actually reading.
+- **NT Strong's-Plus:** Greek `align_freq` keys are Strong's-Plus (G23160), but
+  `lexicon_entries` is classic (G2316). `lexiconKeysFor()` maps G##### → G####.
 - **Endpoint is ungated** (like `/api/lexicon`) — GET, no CSRF.
 - **Pips:** green ≥0.60, amber ≥0.35, gray <0.35 (`ghostPipColor`).
-- **Shared dev:** multiple worktrees may run; never kill another worktree's
-  server. Override ports or ask.
+- **Shared dev:** multiple worktrees may run servers; never kill another's. Pick
+  a free port (this project's dev is Windows-side, not WSL).
 
-## Gaps vs real wordMAP (read its source at `node_modules/wordmap`)
-
-wordMAP scores source↔target n-grams (≤3×3) with **11 metrics** blended into a
-weighted confidence, over **two indices**: gold AlignmentMemory **and** a
-**CorpusIndex** (co-occurrence over *unaligned* verse pairs, incl. the open
-book). Our model is gold-memory-only, ranked by frequency share. Gaps, ranked:
-
-| # | Gap | ZEC 5:3 symptom | Closeable in-architecture? |
-|---|---|---|---|
-| **C** | No **uniqueness/IDF** — common words dominate | כָל² → "and"; function-word noise | **Yes (small)** |
-| **B** | No **positional** scoring (we greedy by source order) | repeat disambiguation imperfect | **Yes (small–med)** |
-| **D** | **Single-signal confidence** (freq share) vs 11-metric blend | shallow pips/ranking | **Yes (small)** |
-| **A** | No **corpus co-occurrence** (can't predict gold-unattested pairs) | נִקָּה → blank ("cleared" never gold-aligned in v88) | **Partial** |
-| **E** | Phrases are target-side under one source token; no statistical source-n-gram alignment / phrase-plausibility | won't predict novel groupings | Hard |
-| **F/G** | Crude target stemmer; no char/ngram-length signals | minor | Yes (small) |
-
-**Inherent trade-off (do NOT chase by breaking the architecture):** predicting a
-*currently-edited* book's novel renderings (the rest of gap A) needs runtime
-co-occurrence over that book's text — exactly the client-side cost we removed.
-The `נִקָּה → "cleared"` miss is this: "cleared" is ZEC's rendering, ZEC isn't in
-v88, so no canonical signal exists. Document it as expected; don't try to force
-it with the corpus-only model.
-
-## Prioritized improvement work
-
-Do these in order; each is backend/precompute-only and keeps the architecture.
-
-1. **Uniqueness / IDF weighting (gap C, D) — highest value, smallest.**
-   - Precompute each surface's global frequency across all strongs (e.g. a
-     `surface_df` count, or compute on the fly from `align_freq`). A surface that
-     co-occurs with many different strongs ("the", "and", "of") is low-information.
-   - In `align.ts`, rank candidates by `freqShare × idf(surface)` instead of raw
-     `freqShare`. Expect the כָל²→"and" leak and "the/of" noise to drop out.
-   - Verify on ZEC 5:3: כָל² should stop suggesting "and"; content words rise.
-
-2. **Positional prior (gap B, D).**
-   - Extend the trainer to also record, per `(strong, surface/phrase)`, the mean
-     normalized in-verse position (0–1) of the alignment. Store alongside count.
-   - The client already knows each source token's position (stream order). In
-     `computeGhosts`, when two instances of a strong compete, prefer the candidate
-     whose stored position is closest to the source token's position. This is the
-     principled version of the current source-order greedy.
-
-3. **Blend into a real confidence (gap D).** Combine freq-share, IDF, and
-   positional fit into the `confidence` the endpoint returns; feed `ghostPipColor`.
-
-4. **Precomputed corpus co-occurrence (gap A, partial).** New offline pass:
-   source-lemma ↔ target-surface co-occurrence over **all** released verse pairs
-   (not just gold-aligned), into a new D1 table (e.g. `align_cooc`). Endpoint adds
-   a low-weight candidate source for strongs/words absent from gold memory. Catches
-   "attested-in-corpus-but-not-gold-aligned" renderings. Will NOT catch unreleased
-   books' novel renderings (see inherent trade-off).
-
-5. **Minor (gap F/G):** swap the crude stemmer for a small proper stemmer; add a
-   character-length sanity check (don't suggest a 2-letter word for a long lemma).
-
-## Verification checklist for any change
-- `npm run typecheck` clean (api + web).
-- Re-train only if the trainer/schema changed; otherwise client/endpoint changes
-  need no re-train.
-- Browser: ZEC 5:3 — "the earth" still a phrase; repeats still distribute; no new
-  function-word noise; `נִקָּה` still (expectedly) blank.
-- A released book (e.g. RUT, JON) for in-corpus precision.
-- Endpoint p50 stays a single indexed D1 lookup (don't add per-request scans that
-  don't use the PK).
+## Canonical test verse: ZEC 5:3
+Open → Alignment → Clear. Expect `הָאָרֶץ → "the earth"` (phrase); repeated
+מִזֶּה/כָּמוֹהָ each ghost; `נִקָּה → blank` (ZEC isn't in v88, so no canonical
+signal — expected, see the corpus-limit note in Rejected approaches).
