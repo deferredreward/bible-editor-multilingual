@@ -168,7 +168,8 @@ function evalBook(json) {
       const streamWords = bank.map((w) => ({ id: w.id, text: w.surface, aligned: false }));
       const suggestions = {};
       for (const seg of segments) for (const strong of seg.stack) {
-        if (!suggestions[strong]) suggestions[strong] = rankSuggestions(strong);
+        const k = strong + "~"; // shared computeGhosts looks up by suggestKey (no morph here)
+        if (!suggestions[k]) suggestions[k] = rankSuggestions(strong);
       }
       const groups = segments.map((seg, i) => ({ id: String(i), source: seg.stack.map((strong) => ({ strong })), targets: [] }));
       const ghosts = computeGhosts(groups, streamWords, suggestions);

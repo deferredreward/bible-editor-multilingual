@@ -103,29 +103,47 @@ function lexiconCandidates(gloss: string | null, definition: string | null): Can
 const MAX_CANDIDATES = 8;
 const MAX_PHRASES = 6;
 const HAS_SPACE = /\s/; // phrase surfaces contain a space; single words don't
+// Morph interpolation smoothing: conf = λ·P(s|strong,morph) + (1-λ)·P(s|strong),
+// λ = n_sm/(n_sm+MORPH_K). Tuned on the held-out eval (insensitive over 2..5).
+const MORPH_K = 5;
 // D1 caps prepared statements at 100 bind variables. The memory query also
 // binds `bible` at ?1, so keep strong chunks under that.
 const STRONG_CHUNK = 90;
 
+// One requested suggestion target. The client sends `keys` = ";"-separated
+// "rawStrong~morphClass" composites (morph class can contain commas for Greek,
+// so ";" separates and the FIRST "~" splits). `strongs` (comma list) is still
+// accepted as morph-less keys. Response is keyed back by the exact composite.
+interface SuggestReq {
+  key: string; // echoed back to the client
+  mc: string; // morph class ("" = none)
+  normKeys: string[]; // normalized Strong's lookup keys
+}
+
 align.get("/suggest", async (c) => {
   const bible = (c.req.query("bible") ?? "ult").toLowerCase();
-  const raw = c.req.query("strongs") ?? "";
-  const requested = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  if (requested.length === 0) return c.json({ bible, suggestions: {} });
+  const keysParam = c.req.query("keys");
+  const requestedRaw =
+    keysParam !== undefined
+      ? keysParam.split(";").map((s) => s.trim()).filter(Boolean)
+      : (c.req.query("strongs") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (requestedRaw.length === 0) return c.json({ bible, suggestions: {} });
 
-  // normalized key -> the raw strong(s) the client asked with, so we can key
-  // the response back by exactly what the caller sent.
-  const keyToRaws = new Map<string, string[]>();
-  for (const r of requested) {
-    for (const k of strongLookupKeys(r)) {
-      if (!keyToRaws.has(k)) keyToRaws.set(k, []);
-      keyToRaws.get(k)!.push(r);
-    }
+  const reqs: SuggestReq[] = [];
+  const allKeys = new Set<string>();
+  for (const key of requestedRaw) {
+    const t = key.indexOf("~");
+    const rawStrong = t >= 0 ? key.slice(0, t) : key;
+    const mc = t >= 0 ? key.slice(t + 1) : "";
+    const normKeys = strongLookupKeys(rawStrong);
+    if (normKeys.length === 0) continue;
+    reqs.push({ key, mc, normKeys });
+    for (const k of normKeys) allKeys.add(k);
   }
-  const keys = [...keyToRaws.keys()];
+  const keys = [...allKeys];
   if (keys.length === 0) return c.json({ bible, suggestions: {} });
 
-  // 1) Alignment memory: per strong, its aligned target surfaces + counts.
+  // 1) Strong-only alignment memory: per strong, its target surfaces + counts.
   const memByKey = new Map<string, { surface: string; count: number }[]>();
   for (let i = 0; i < keys.length; i += STRONG_CHUNK) {
     const chunk = keys.slice(i, i + STRONG_CHUNK);
@@ -142,9 +160,34 @@ align.get("/suggest", async (c) => {
     }
   }
 
-  // 2) Lexicon fallback for strongs the corpus never aligned. Map each missing
-  // key to its lexicon form(s) first (Greek Strong's-Plus -> classic), keeping
-  // a back-reference so results re-key to what the caller asked with.
+  // 1b) Morph-conditioned memory (words only): strong -> morph_class ->
+  // { total, per-surface }. Wrapped in try/catch so the endpoint degrades
+  // cleanly to the strong-only blend if 0025 hasn't been applied yet.
+  const morphByKey = new Map<string, Map<string, { total: number; bySurface: Map<string, number> }>>();
+  try {
+    for (let i = 0; i < keys.length; i += STRONG_CHUNK) {
+      const chunk = keys.slice(i, i + STRONG_CHUNK);
+      const placeholders = chunk.map((_v, j) => `?${j + 2}`).join(",");
+      const rs = await c.env.DB.prepare(
+        `SELECT strong, morph_class, surface, count FROM align_freq_morph WHERE bible = ?1 AND strong IN (${placeholders})`,
+      )
+        .bind(bible, ...chunk)
+        .all<{ strong: string; morph_class: string; surface: string; count: number }>();
+      for (const row of rs.results ?? []) {
+        let byMc = morphByKey.get(row.strong);
+        if (!byMc) { byMc = new Map(); morphByKey.set(row.strong, byMc); }
+        let cell = byMc.get(row.morph_class);
+        if (!cell) { cell = { total: 0, bySurface: new Map() }; byMc.set(row.morph_class, cell); }
+        cell.total += row.count;
+        cell.bySurface.set(row.surface, (cell.bySurface.get(row.surface) ?? 0) + row.count);
+      }
+    }
+  } catch {
+    // align_freq_morph not present — fall back to strong-only ranking.
+  }
+
+  // 2) Lexicon fallback for strongs the corpus never aligned (Greek
+  // Strong's-Plus -> classic), keyed to the original normalized key.
   const missing = keys.filter((k) => !memByKey.has(k));
   const lexKeyToOrig = new Map<string, string>();
   for (const k of missing) {
@@ -171,23 +214,31 @@ align.get("/suggest", async (c) => {
     }
   }
 
-  // 3) Rank per key. Memory splits into single words and multi-word phrases,
-  // each scored as a share within its own kind; otherwise lexicon words.
-  const perKey = new Map<string, Suggestion>();
-  for (const k of keys) {
-    const mem = memByKey.get(k);
-    if (mem && mem.length > 0) {
+  // 3) Build a Suggestion per requested composite. Words are morph-interpolated
+  // (conf = λ·P(s|strong,morph) + (1-λ)·P(s|strong)); phrases stay strong-only.
+  // First normalized key with memory wins, else lexicon.
+  const suggestions: Record<string, Suggestion> = {};
+  for (const req of reqs) {
+    if (suggestions[req.key]) continue;
+    const normKey = req.normKeys.find((k) => memByKey.has(k));
+    if (normKey) {
+      const mem = memByKey.get(normKey)!;
       const wordRows = mem.filter((m) => !HAS_SPACE.test(m.surface));
       const phraseRows = mem.filter((m) => HAS_SPACE.test(m.surface));
       const wordTotal = wordRows.reduce((a, b) => a + b.count, 0) || 1;
       const phraseTotal = phraseRows.reduce((a, b) => a + b.count, 0) || 1;
+      const cell = morphByKey.get(normKey)?.get(req.mc);
+      const nSM = cell?.total ?? 0;
+      const lambda = nSM > 0 ? nSM / (nSM + MORPH_K) : 0;
       const words = wordRows
-        .map((m): Candidate => ({
-          surface: m.surface,
-          count: m.count,
-          confidence: m.count / wordTotal,
-          source: "memory",
-        }))
+        .map((m): Candidate => {
+          const pStrong = m.count / wordTotal;
+          const confidence =
+            lambda > 0
+              ? lambda * ((cell!.bySurface.get(m.surface) ?? 0) / nSM) + (1 - lambda) * pStrong
+              : pStrong;
+          return { surface: m.surface, count: m.count, confidence, source: "memory" };
+        })
         .sort((a, b) => b.confidence - a.confidence)
         .slice(0, MAX_CANDIDATES);
       const phrases = phraseRows
@@ -199,18 +250,10 @@ align.get("/suggest", async (c) => {
         }))
         .sort((a, b) => b.count - a.count)
         .slice(0, MAX_PHRASES);
-      perKey.set(k, { words, phrases });
-    } else if (lexByKey.has(k)) {
-      perKey.set(k, { words: lexByKey.get(k)!.slice(0, MAX_CANDIDATES), phrases: [] });
-    }
-  }
-
-  const suggestions: Record<string, Suggestion> = {};
-  for (const [k, raws] of keyToRaws) {
-    const sugg = perKey.get(k);
-    if (!sugg || (sugg.words.length === 0 && sugg.phrases.length === 0)) continue;
-    for (const rw of raws) {
-      if (!suggestions[rw]) suggestions[rw] = sugg;
+      if (words.length > 0 || phrases.length > 0) suggestions[req.key] = { words, phrases };
+    } else {
+      const lexKey = req.normKeys.find((k) => lexByKey.has(k));
+      if (lexKey) suggestions[req.key] = { words: lexByKey.get(lexKey)!.slice(0, MAX_CANDIDATES), phrases: [] };
     }
   }
   return c.json({ bible, suggestions });

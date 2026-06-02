@@ -23,6 +23,8 @@
     "eval:align": "node --experimental-strip-types --no-warnings scripts/eval-aligner.mjs",
     "db:align:local": "node scripts/apply-align-freq.mjs",
     "db:align:remote": "node scripts/apply-align-freq.mjs --remote",
+    "db:align-morph:local": "node scripts/apply-align-freq.mjs --file scripts/out/align-freq-morph.sql",
+    "db:align-morph:remote": "node scripts/apply-align-freq.mjs --remote --file scripts/out/align-freq-morph.sql",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },

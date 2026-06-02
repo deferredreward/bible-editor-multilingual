@@ -48,6 +48,23 @@ export interface Ghost {
 
 export type StreamWord = { id: string; text: string; aligned: boolean };
 
+// Coarse morph class for the (strong, morph) suggestion key. MIRROR of
+// scripts/lib/align-corpus.mjs `morphClass` — the trainer builds align_freq_morph
+// with the same function, so keep the two in sync. Full head-morpheme feature
+// string after the language prefix and any clitic ":" (e.g. "He,Ncmsc" ->
+// "Ncmsc").
+export function morphClass(morph: string | undefined): string {
+  if (!morph) return "";
+  const parts = String(morph).split(",");
+  const body = parts.length > 1 ? parts.slice(1).join(",") : parts[0];
+  return body.split(":").pop() || body;
+}
+
+// The per-source-word suggestion key the endpoint expects: "<rawStrong>~<morph>".
+export function suggestKey(strong: string, morph: string | undefined): string {
+  return `${strong}~${morphClass(morph)}`;
+}
+
 export function ghostPipColor(c: number): string {
   if (c >= 0.6) return "#4caf50"; // confident
   if (c >= 0.35) return "#E59D33"; // plausible (brand Kindle)
@@ -168,7 +185,7 @@ export function computeGhosts(
     let best: { score: number; run: StreamWord[] } | null = null;
     for (const s of g.source) {
       const srcOcc = srcOccByStrong.get(s.strong) ?? 1;
-      for (const p of suggestions[s.strong]?.phrases ?? []) {
+      for (const p of suggestions[suggestKey(s.strong, s.morph)]?.phrases ?? []) {
         const len = p.tokens.length;
         for (let i = 0; i + len <= numStream; i++) {
           let ok = true;
@@ -206,7 +223,7 @@ export function computeGhosts(
     let best: { score: number; word: StreamWord; source: "memory" | "lexicon" } | null = null;
     for (const s of g.source) {
       const srcOcc = srcOccByStrong.get(s.strong) ?? 1;
-      for (const cand of suggestions[s.strong]?.words ?? []) {
+      for (const cand of suggestions[suggestKey(s.strong, s.morph)]?.words ?? []) {
         const occ = tgtOcc(cand.surface);
         for (let wi = 0; wi < numStream; wi++) {
           const w = streamWords[wi];

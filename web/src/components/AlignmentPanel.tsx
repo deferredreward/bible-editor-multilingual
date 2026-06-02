@@ -40,6 +40,7 @@ import { useAlignmentSuggestions } from "../hooks/useAlignmentSuggestions";
 import {
   computeGhosts,
   ghostPipColor,
+  suggestKey,
   type Ghost,
   type StreamWord,
 } from "../lib/alignmentSuggest";
@@ -433,11 +434,15 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     }, [state, sourceIndexMap]);
 
     const allStrongs = useMemo(() => {
-      const set = new Set<string>();
+      const strongs = new Set<string>();
+      const keys = new Set<string>(); // "<strong>~<morphClass>" suggestion keys
+      const add = (strong: string, morph: string | undefined) => {
+        if (!strong) return;
+        strongs.add(strong);
+        keys.add(suggestKey(strong, morph));
+      };
       if (state) {
-        for (const g of state.groups) {
-          for (const s of g.source) if (s.strong) set.add(s.strong);
-        }
+        for (const g of state.groups) for (const s of g.source) add(s.strong, s.morph);
       }
       const sourceObjects = (sourceVerse?.content as { verseObjects?: unknown[] } | null)
         ?.verseObjects;
@@ -447,8 +452,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
             const o = n as Record<string, unknown> | null;
             if (!o) continue;
             if (o["type"] === "word" && o["tag"] === "w") {
-              const s = String(o["strong"] ?? "");
-              if (s) set.add(s);
+              add(String(o["strong"] ?? ""), o["morph"] as string | undefined);
             } else if (o["type"] === "milestone") {
               walk((o["children"] as unknown[] | undefined) ?? []);
             }
@@ -456,15 +460,15 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
         };
         walk(sourceObjects);
       }
-      return [...set];
+      return { strongs: [...strongs], keys: [...keys] };
     }, [state, sourceVerse]);
-    const lexiconMap = useLexicon(allStrongs);
+    const lexiconMap = useLexicon(allStrongs.strongs);
 
     // Non-AI alignment suggestions over the canonical corpus (see hook). The
     // source-strong set is stable across alignment edits within a verse, so
     // this fetches once per verse; ghostByGroup is recomputed locally as words
     // get aligned. Ghosts only appear on still-empty groups.
-    const suggestions = useAlignmentSuggestions(bibleVersion, allStrongs);
+    const suggestions = useAlignmentSuggestions(bibleVersion, allStrongs.keys);
     // Document-order word tokens with their aligned state — phrase ghosts need
     // adjacency, so this is the basis for the contiguous-run match.
     const streamWords = useMemo<StreamWord[]>(

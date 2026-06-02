@@ -75,12 +75,33 @@ export function bump(counts, bible, strong, surface) {
   counts.set(k, (counts.get(k) || 0) + 1);
 }
 
-// Walk verseObjects, carrying the stack of active source Strong's from
-// enclosing `\zaln-s` milestones. Each milestone contributes its full
-// contiguous English phrase (multi-word, so "the earth" stays one unit); each
-// `\w` word also counts toward every active Strong's (per-word memory + the
-// lexicon-fallback basis). Mirrors the milestone/word shape in web alignment.ts.
-export function walkAlign(nodes, active, bible, counts, stats) {
+// Increment the (bible, strong, morph_class, surface) count in `morphCounts`.
+export function bumpMorph(morphCounts, bible, strong, mc, surface) {
+  const k = bible + SEP + strong + SEP + mc + SEP + surface;
+  morphCounts.set(k, (morphCounts.get(k) || 0) + 1);
+}
+
+// Coarse morph class for the (strong, morph_class) memory: the full
+// head-morpheme feature string after the language prefix and any clitic ":"
+// (e.g. "He,Ncmsc" -> "Ncmsc", "He,C:Vqw3ms" -> "Vqw3ms", "Gr,N,,,,NMP," ->
+// "N,,,,NMP,"). The held-out eval found this "full" class beats a coarser
+// POS+state one. MIRRORED in web/src/lib/alignmentSuggest.ts (morphClass) — the
+// client computes the same key — so keep the two definitions in sync.
+export function morphClass(morph) {
+  if (!morph) return "";
+  const parts = String(morph).split(",");
+  const body = parts.length > 1 ? parts.slice(1).join(",") : parts[0];
+  return body.split(":").pop() || body;
+}
+
+// Walk verseObjects, carrying the stack of active source Strong's (with their
+// morph class) from enclosing `\zaln-s` milestones. Each milestone contributes
+// its full contiguous English phrase (multi-word, so "the earth" stays one
+// unit); each `\w` word also counts toward every active Strong's (per-word
+// memory + the lexicon-fallback basis). When `morphCounts` is provided, the
+// per-word counts are ALSO accumulated per (strong, morph_class) — words only,
+// phrases stay strong-only. Mirrors the milestone/word shape in web alignment.ts.
+export function walkAlign(nodes, active, bible, counts, stats, morphCounts) {
   for (const n of nodes || []) {
     if (!n || typeof n !== "object") continue;
     if (n.type === "milestone" && n.tag === "zaln") {
@@ -92,17 +113,19 @@ export function walkAlign(nodes, active, bible, counts, stats) {
           stats.pairs++;
         }
       }
-      walkAlign(n.children || [], s ? [...active, s] : active, bible, counts, stats);
+      const next = s ? [...active, { s, mc: morphClass(n.morph) }] : active;
+      walkAlign(n.children || [], next, bible, counts, stats, morphCounts);
     } else if (n.type === "word" && n.tag === "w") {
       const surf = normSurface(n.text);
       if (surf) {
-        for (const s of active) {
-          bump(counts, bible, s, surf);
+        for (const a of active) {
+          bump(counts, bible, a.s, surf);
           stats.pairs++;
+          if (morphCounts) bumpMorph(morphCounts, bible, a.s, a.mc, surf);
         }
       }
     } else if (Array.isArray(n.children)) {
-      walkAlign(n.children, active, bible, counts, stats);
+      walkAlign(n.children, active, bible, counts, stats, morphCounts);
     }
   }
 }
