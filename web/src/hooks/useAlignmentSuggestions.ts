@@ -7,25 +7,11 @@
 // edits never need a round-trip.
 
 import { useEffect, useState } from "react";
+import type { AlignCandidate, AlignPhrase, AlignSuggestion } from "../lib/alignmentSuggest";
 
-export interface AlignCandidate {
-  surface: string; // lowercased target surface, e.g. "beginning"
-  confidence: number; // 0..1
-  source: "memory" | "lexicon";
-  count?: number; // corpus frequency (memory only)
-}
-
-export interface AlignPhrase {
-  phrase: string; // e.g. "the earth"
-  tokens: string[]; // ["the","earth"]
-  confidence: number; // 0..1
-  count: number;
-}
-
-export interface AlignSuggestion {
-  words: AlignCandidate[];
-  phrases: AlignPhrase[];
-}
+// Re-exported for existing importers; the canonical definitions live with the
+// scoring logic in ../lib/alignmentSuggest (shared with the eval harness).
+export type { AlignCandidate, AlignPhrase, AlignSuggestion };
 
 type SuggestionMap = Record<string, AlignSuggestion>; // keyed by the raw strong sent
 

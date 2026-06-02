@@ -36,7 +36,13 @@ import {
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
-import { useAlignmentSuggestions, type AlignSuggestion } from "../hooks/useAlignmentSuggestions";
+import { useAlignmentSuggestions } from "../hooks/useAlignmentSuggestions";
+import {
+  computeGhosts,
+  ghostPipColor,
+  type Ghost,
+  type StreamWord,
+} from "../lib/alignmentSuggest";
 import { nfc } from "../lib/hebrew";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 
@@ -1700,134 +1706,11 @@ function ToolbarToggle({
 }
 
 // ─── Ghost (suggested alignment) chips ─────────────────────────────────
-// A non-AI suggestion: the backend ranks likely target words per source
-// Strong's (wordMAP alignment memory over canonical ULT/UST, lexicon gloss
-// fallback); here we match those candidates against the verse's still-unaligned
-// word bank and surface the best one as a faded, dashed, click-to-accept chip
-// inside an empty group. Ignoring a ghost costs nothing — there's no reject.
-export interface Ghost {
-  groupId: string;
-  wordIds: string[]; // one word, or several for a phrase ("the earth")
-  text: string; // display label — the matched words, original case
-  confidence: number;
-  source: "memory" | "lexicon";
-}
-
-// Light stemmer so "besprinkled" ↔ "sprinkle"-ish and plural/tense variants
-// still match. The memory path mostly matches exactly (same translation), so
-// this only rescues inflection and the lexicon-gloss fallback.
-function stemWord(w: string): string {
-  let s = w.toLowerCase().normalize("NFC").replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "");
-  s = s.replace(/'s$/, "");
-  for (const suf of ["ing", "edly", "ed", "es", "ly", "s"]) {
-    if (s.length > suf.length + 2 && s.endsWith(suf)) return s.slice(0, -suf.length);
-  }
-  return s;
-}
-function surfaceMatch(candidate: string, word: string): boolean {
-  const a = candidate.toLowerCase().normalize("NFC");
-  const b = word.toLowerCase().normalize("NFC");
-  if (a === b) return true;
-  const sa = stemWord(a);
-  return sa.length >= 3 && sa === stemWord(b);
-}
-
-function ghostPipColor(c: number): string {
-  if (c >= 0.6) return "#4caf50"; // confident
-  if (c >= 0.35) return "#E59D33"; // plausible (brand Kindle)
-  return "#9e9e9e"; // weak
-}
-
-type StreamWord = { id: string; text: string; aligned: boolean };
-
-// Find the first run of CONSECUTIVE unaligned, still-UNCLAIMED word tokens
-// matching `tokens` in order — so "the earth" only matches adjacent words, and
-// a 2nd source instance can't reuse words a 1st instance already took.
-function findContiguousUnaligned(
-  streamWords: StreamWord[],
-  tokens: string[],
-  claimed: Set<string>,
-): StreamWord[] | null {
-  if (tokens.length === 0) return null;
-  for (let i = 0; i + tokens.length <= streamWords.length; i++) {
-    let ok = true;
-    for (let j = 0; j < tokens.length; j++) {
-      const w = streamWords[i + j];
-      if (w.aligned || claimed.has(w.id) || !surfaceMatch(tokens[j], w.text)) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) return streamWords.slice(i, i + tokens.length);
-  }
-  return null;
-}
-
-// Build ghosts for empty groups, processed in source order so repeated words
-// distribute across their occurrences instead of all landing on the first.
-// Each group greedily claims its best STILL-UNCLAIMED option — phrases first
-// (so "the earth" stays whole), then a single word — and marks those words
-// claimed immediately, so the next group (incl. a repeat of the same Strong's,
-// e.g. a 2nd כל) skips them and falls through to the next phrase/word/instance.
-function computeGhosts(
-  groups: AlignmentGroup[],
-  streamWords: StreamWord[],
-  suggestions: Record<string, AlignSuggestion>,
-): Map<string, Ghost> {
-  const result = new Map<string, Ghost>();
-  const claimed = new Set<string>();
-  if (streamWords.length === 0) return result;
-  const emptyGroups = groups.filter((g) => g.targets.length === 0);
-
-  // Pass 1 — phrases. Each group takes its best phrase whose tokens form a
-  // contiguous run of still-unclaimed words, claiming immediately.
-  for (const g of emptyGroups) {
-    const phrases = g.source
-      .flatMap((s) => suggestions[s.strong]?.phrases ?? [])
-      .sort((a, b) => b.count - a.count);
-    for (const p of phrases) {
-      const run = findContiguousUnaligned(streamWords, p.tokens, claimed);
-      if (run) {
-        run.forEach((w) => claimed.add(w.id));
-        result.set(g.id, {
-          groupId: g.id,
-          wordIds: run.map((w) => w.id),
-          text: run.map((w) => w.text).join(" "),
-          confidence: p.confidence,
-          source: "memory",
-        });
-        break;
-      }
-    }
-  }
-
-  // Pass 2 — single-word fallback for still-empty groups: the first matching
-  // unclaimed word in document order.
-  for (const g of emptyGroups) {
-    if (result.has(g.id)) continue;
-    const words = g.source
-      .flatMap((s) => suggestions[s.strong]?.words ?? [])
-      .sort((a, b) => b.confidence - a.confidence);
-    for (const cand of words) {
-      const w = streamWords.find(
-        (sw) => !sw.aligned && !claimed.has(sw.id) && surfaceMatch(cand.surface, sw.text),
-      );
-      if (w) {
-        claimed.add(w.id);
-        result.set(g.id, {
-          groupId: g.id,
-          wordIds: [w.id],
-          text: w.text,
-          confidence: cand.confidence,
-          source: cand.source,
-        });
-        break;
-      }
-    }
-  }
-  return result;
-}
-
+// Scoring + matching (computeGhosts, the weighted-average blend, surfaceMatch,
+// ghostPipColor, the Ghost/StreamWord types) live in ../lib/alignmentSuggest so
+// the offline eval harness scores exactly what ships. Below is only the chip's
+// presentation: a faded, dashed, click-to-accept chip inside an empty group;
+// ignoring a ghost costs nothing — there's no reject.
 function GhostChip({ ghost, onAccept }: { ghost: Ghost; onAccept: () => void }) {
   const pct = Math.round(ghost.confidence * 100);
   const srcLabel = ghost.source === "memory" ? "wordMAP" : "lexicon";
