@@ -33,10 +33,10 @@ test("alice's PATCH appears in bob's open view", async ({ browser }) => {
 
   const aliceCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
   const aliceAuth = await mintToken(aliceCtx, "alice");
-  const aliceApi = authedRequest(aliceCtx, aliceAuth.token);
+  const aliceApi = authedRequest(aliceCtx, aliceAuth.token, aliceAuth.csrf);
   const newText = `LIVE PUSH ${Date.now()}`;
   const res = await aliceApi.patch(
-    `/api/rows/tn/${target.id}`,
+    `/api/rows/tn/${target.id}?book=ZEC`,
     { note: newText },
     target.version,
   );
@@ -69,6 +69,7 @@ test("alice's POST appears in bob's open view", async ({ browser }) => {
   const res = await aliceCtx.post(`/api/rows/tn`, {
     headers: {
       Authorization: `Bearer ${aliceAuth.token}`,
+      "x-csrf-token": aliceAuth.csrf,
       "Content-Type": "application/json",
     },
     data: {
@@ -98,6 +99,7 @@ test("alice's DELETE removes the row from bob's open view", async ({ browser }) 
   const createRes = await setupCtx.post(`/api/rows/tn`, {
     headers: {
       Authorization: `Bearer ${setupAuth.token}`,
+      "x-csrf-token": setupAuth.csrf,
       "Content-Type": "application/json",
     },
     data: {
@@ -120,9 +122,10 @@ test("alice's DELETE removes the row from bob's open view", async ({ browser }) 
 
   const aliceCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
   const aliceAuth = await mintToken(aliceCtx, "alice");
-  const delRes = await aliceCtx.delete(`/api/rows/tn/${created.id}`, {
+  const delRes = await aliceCtx.delete(`/api/rows/tn/${created.id}?book=ZEC`, {
     headers: {
       Authorization: `Bearer ${aliceAuth.token}`,
+      "x-csrf-token": aliceAuth.csrf,
       "If-Match": String(created.version),
     },
   });

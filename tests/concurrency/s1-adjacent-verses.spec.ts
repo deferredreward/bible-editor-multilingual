@@ -1,5 +1,5 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
-import { fetchChapter, flushByNavigatingAway, gotoVerse, mintToken, newUserContext, noteTextarea, waitForServerNote } from "./helpers";
+import { fetchChapter, saveNote, gotoVerse, mintToken, newUserContext, noteTextarea, waitForServerNote } from "./helpers";
 
 // S1 — Two users edit notes on adjacent verses of the same chapter at the
 // same time. No clobbering: both edits land on the server intact.
@@ -43,13 +43,12 @@ test("two users editing adjacent verses both land — no clobber", async ({ brow
   const bobText = `BOB edit ${Date.now()}`;
   await Promise.all([aliceNote.fill(aliceText), bobNote.fill(bobText)]);
 
-  // Flush: NoteCard's save fires on unmount. Navigating both users away
-  // unmounts their active note cards, queues the PATCH into the outbox,
-  // and the drain worker sends it. The two flushes happen in parallel so
-  // the network writes can race.
+  // Save: notes persist in the draft cache until the user clicks Save (no
+  // autosave). Each user saves their own card; the two PATCHes hit the outbox
+  // and drain in parallel so the network writes can race.
   await Promise.all([
-    flushByNavigatingAway(alice),
-    flushByNavigatingAway(bob),
+    saveNote(alice, aliceTarget!.id),
+    saveNote(bob, bobTarget!.id),
   ]);
 
   // Server is the source of truth. Read until both edits are visible there,

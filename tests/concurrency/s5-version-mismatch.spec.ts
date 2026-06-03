@@ -1,5 +1,5 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
-import { authedRequest, fetchChapter, mintToken } from "./helpers";
+import { authedRequest, csrfToken, fetchChapter, mintToken } from "./helpers";
 
 // S5 — Pure-API version_mismatch contract.
 // The cheapest way to prove optimistic concurrency is wired correctly: two
@@ -21,13 +21,17 @@ test("two PATCHes with the same If-Match: one wins, the other 409s", async () =>
   const target = chapter.tn[0];
   const startingVersion = target.version;
 
-  const aliceApi = authedRequest(ctx, alice.token);
-  const bobApi = authedRequest(ctx, bob.token);
+  // Both users share `ctx`, so its be_csrf cookie holds the last mint's value;
+  // send that on both (it matches the cookie). The version contract under test
+  // doesn't depend on which user wins.
+  const csrf = await csrfToken(ctx);
+  const aliceApi = authedRequest(ctx, alice.token, csrf);
+  const bobApi = authedRequest(ctx, bob.token, csrf);
 
   // Two concurrent PATCHes, both claiming the same expected version.
   const [aRes, bRes] = await Promise.all([
-    aliceApi.patch(`/api/rows/tn/${target.id}`, { note: "alice wrote this" }, startingVersion),
-    bobApi.patch(`/api/rows/tn/${target.id}`, { note: "bob wrote this" }, startingVersion),
+    aliceApi.patch(`/api/rows/tn/${target.id}?book=ZEC`, { note: "alice wrote this" }, startingVersion),
+    bobApi.patch(`/api/rows/tn/${target.id}?book=ZEC`, { note: "bob wrote this" }, startingVersion),
   ]);
 
   const statuses = [aRes.status(), bRes.status()].sort();
@@ -74,11 +78,11 @@ test("loser can retry with fresh If-Match and succeed", async () => {
   const target = chapter.tn[1] ?? chapter.tn[0];
   const startingVersion = target.version;
 
-  const api = authedRequest(ctx, alice.token);
+  const api = authedRequest(ctx, alice.token, alice.csrf);
 
   // First PATCH wins.
   const first = await api.patch(
-    `/api/rows/tn/${target.id}`,
+    `/api/rows/tn/${target.id}?book=ZEC`,
     { note: "first edit" },
     startingVersion,
   );
@@ -86,7 +90,7 @@ test("loser can retry with fresh If-Match and succeed", async () => {
 
   // Second PATCH with the stale version fails.
   const stale = await api.patch(
-    `/api/rows/tn/${target.id}`,
+    `/api/rows/tn/${target.id}?book=ZEC`,
     { note: "stale edit" },
     startingVersion,
   );
@@ -96,7 +100,7 @@ test("loser can retry with fresh If-Match and succeed", async () => {
 
   // Third PATCH with the fresh version succeeds.
   const retry = await api.patch(
-    `/api/rows/tn/${target.id}`,
+    `/api/rows/tn/${target.id}?book=ZEC`,
     { note: "retried edit" },
     currentVersion,
   );

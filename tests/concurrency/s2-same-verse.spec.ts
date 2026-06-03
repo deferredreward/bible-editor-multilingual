@@ -1,5 +1,5 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
-import { fetchChapter, flushByNavigatingAway, gotoVerse, mintToken, newUserContext, noteTextarea, waitForServerNote } from "./helpers";
+import { fetchChapter, saveNote, gotoVerse, mintToken, newUserContext, noteTextarea, waitForServerNote } from "./helpers";
 
 // S2 — Two users edit DIFFERENT notes on the SAME verse simultaneously.
 // Same shape as S1 but tightens the assertion to catch verse-level (rather
@@ -35,11 +35,12 @@ test("two users editing different notes on the same verse both land", async ({ b
   const bobText = `BOB v1 ${Date.now()}`;
   await Promise.all([aliceNote.fill(aliceText), bobNote.fill(bobText)]);
 
-  // Flush both edits by navigating each user away — the active note card
-  // unmounts and runs its unmount-flush effect, queuing the PATCH.
+  // Save both edits — notes persist in the draft cache until Save is clicked
+  // (no autosave). Each user saves their own card; the PATCHes race through
+  // the outbox.
   await Promise.all([
-    flushByNavigatingAway(alice),
-    flushByNavigatingAway(bob),
+    saveNote(alice, aliceTarget.id),
+    saveNote(bob, bobTarget.id),
   ]);
 
   const serverCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
