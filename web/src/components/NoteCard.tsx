@@ -101,6 +101,13 @@ interface Props {
   quoteBuildMode?: boolean;
   quoteBuildSelectionCount?: number;
   onStartQuoteBuild?: () => void;
+  // Bumps to a fresh value each time Shell commits a quote-build for THIS
+  // note. The picker only opens while the card is active, so the row→quote
+  // sync effect is blocked by the open session guard; this signal is the
+  // escape hatch (mirrors aiRecentlyCompletedAt) that lands the committed
+  // quote in the box. Shell applies the quote to row optimistically before
+  // bumping this, so the effect just reads the now-current row.quote.
+  quoteBuildAppliedAt?: number | null;
 }
 
 // Notes coming from TSV imports use literal "\n" (two characters) as the
@@ -158,6 +165,7 @@ export function NoteCard({
   quoteBuildMode = false,
   quoteBuildSelectionCount = 0,
   onStartQuoteBuild,
+  quoteBuildAppliedAt = null,
 }: Props) {
   // Two explicit bits drive lock-time behavior now:
   //   - preserve=1: translator marked this row "survive AI runs"
@@ -454,6 +462,24 @@ export function NoteCard({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiRecentlyCompletedAt]);
+
+  // Quote-builder commit. The picker only opens while this card is active,
+  // so the row→quote sync effect above is blocked by the open session
+  // guard and the built quote (already applied to row.quote by Shell) would
+  // never reach the box. When Shell signals a fresh commit for this note,
+  // force the box to the new quote and rebaseline the session snapshot so
+  // Undo treats the committed quote as the baseline — same shape as the AI
+  // escape hatch above. Only the quote changes; note/supportRef are left as-is.
+  useEffect(() => {
+    if (quoteBuildAppliedAt == null) return;
+    const newQuote = tsvToDisplay(row.quote);
+    setQuote(newQuote);
+    pendingRef.current = {};
+    if (sessionSnapshotRef.current !== null) {
+      setSessionSnapshot({ quote: newQuote, note, support_reference: supportRef });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteBuildAppliedAt]);
 
   // Visibility reporting. Default root means "browser viewport" — close
   // enough for the resource column's scroll model and avoids threading
