@@ -441,6 +441,14 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const [quoteBuildSelectedKeys, setQuoteBuildSelectedKeys] = useState<Set<HighlightKey>>(
     () => new Set(),
   );
+  // Commit signal handed to the note card. The card is still active when the
+  // picker commits, so its row→quote sync effect is gated by the open session
+  // guard; bumping this nonce after the optimistic row patch tells that card
+  // to pull the built quote into its local state. nonce increments per commit
+  // so re-building the same note twice still fires the effect.
+  const [quoteBuildAppliedTo, setQuoteBuildAppliedTo] = useState<
+    { noteId: string; nonce: number } | null
+  >(null);
   useEffect(() => {
     if (quoteBuildNoteId && activeNoteId !== quoteBuildNoteId) {
       setQuoteBuildNoteId(null);
@@ -516,7 +524,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     if (!Array.isArray(verseObjects)) return;
     const built = buildQuoteFromSelection(verseObjects, quoteBuildSelectedKeys);
     if (!built) return;
+    // Optimistic row patch first so row.quote is current, then signal the
+    // card (which stays active) to pull it into the box past its session guard.
     enqueueRow("tn", row, { quote: built.quote, occurrence: built.occurrence });
+    setQuoteBuildAppliedTo((prev) => ({ noteId: row.id, nonce: (prev?.nonce ?? 0) + 1 }));
     setQuoteBuildNoteId(null);
     setQuoteBuildSelectedKeys(new Set());
   }, [quoteBuildNoteId, quoteBuildSelectedKeys, data]);
@@ -1238,6 +1249,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onSetNoteHint={handleSetNoteHint}
           quoteBuildActiveNoteId={quoteBuildNoteId}
           quoteBuildSelectionCount={quoteBuildSelectedKeys.size}
+          quoteBuildAppliedTo={quoteBuildAppliedTo}
           onStartQuoteBuild={startQuoteBuild}
           panelMode={panelMode}
           onSetPanelMode={handleSetPanelMode}

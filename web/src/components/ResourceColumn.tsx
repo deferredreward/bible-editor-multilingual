@@ -90,6 +90,9 @@ interface Props {
   quoteBuildActiveNoteId?: string | null;
   quoteBuildSelectionCount?: number;
   onStartQuoteBuild?: (noteId: string) => void;
+  // Per-note commit signal — its nonce bumps when a quote-build commits for
+  // that note, telling the matching card to land the built quote in the box.
+  quoteBuildAppliedTo?: { noteId: string; nonce: number } | null;
   // Tab + alignment-panel wiring. When mode === "alignment", the Resources
   // column body swaps to the AlignmentPanel; the Notes/Words/Questions tabs
   // stay in the strip but their click acts as a scroll-to in resources mode.
@@ -183,6 +186,7 @@ export function ResourceColumn({
   quoteBuildActiveNoteId,
   quoteBuildSelectionCount = 0,
   onStartQuoteBuild,
+  quoteBuildAppliedTo,
   panelMode = "resources",
   onSetPanelMode,
   alignmentProps,
@@ -545,6 +549,9 @@ export function ResourceColumn({
           quoteBuildMode={quoteBuildActiveNoteId === r.id}
           quoteBuildSelectionCount={
             quoteBuildActiveNoteId === r.id ? quoteBuildSelectionCount : 0
+          }
+          quoteBuildAppliedAt={
+            quoteBuildAppliedTo?.noteId === r.id ? quoteBuildAppliedTo.nonce : null
           }
           onStartQuoteBuild={onStartQuoteBuild ? () => onStartQuoteBuild(r.id) : undefined}
         />
