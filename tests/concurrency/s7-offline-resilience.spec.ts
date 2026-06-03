@@ -1,26 +1,13 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
-import type { Page } from "@playwright/test";
 import {
   fetchChapter,
-  flushByNavigatingAway,
+  saveNote,
   gotoVerse,
   mintToken,
   newUserContext,
   noteTextarea,
   waitForServerNote,
 } from "./helpers";
-
-// The standard `flushByNavigatingAway` helper waits for the destination
-// chapter's note cards to appear, which can't happen while offline. This
-// variant triggers the same unmount flush (the Shell remounts on chapter
-// change) but doesn't wait for the destination to load.
-async function flushOffline(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    location.hash = "#/ZEC/1";
-  });
-  // Give the unmount effect a tick to run and enqueue the op in the outbox.
-  await page.waitForTimeout(250);
-}
 
 // S7 — Offline resilience. Exercises the Level 1 stability features end-to-
 // end: the outbox keeps edits durable while the connection is dropped, the
@@ -46,7 +33,10 @@ test("edits queued while offline survive and flush on reconnect", async ({ brows
 
   const offlineText = `OFFLINE alice ${Date.now()}`;
   await noteTextarea(page, target!.id).fill(offlineText);
-  await flushOffline(page);
+  // Click Save while offline — the PATCH can't reach the server, so it stays a
+  // pending op in the outbox (asserted below). No autosave: Save is explicit.
+  await saveNote(page, target!.id);
+  await page.waitForTimeout(300);
 
   // The op should be durably queued in the outbox by now. Reading IndexedDB
   // directly avoids coupling the assertion to the SyncStatusBar's render
@@ -128,7 +118,7 @@ test("server flakiness triggers retry; eventual success drains the outbox", asyn
   await gotoVerse(page, "ZEC", 7, target!.verse);
   const flakyText = `FLAKY bob ${Date.now()}`;
   await noteTextarea(page, target!.id).fill(flakyText);
-  await flushByNavigatingAway(page);
+  await saveNote(page, target!.id);
 
   const sideCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
   const sideAuth = await mintToken(sideCtx, "verifier-flaky");

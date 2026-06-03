@@ -7,6 +7,9 @@ export interface DevAuth {
   token: string;
   userId: number;
   username: string;
+  // be_csrf cookie value captured at mint — writes must mirror it into the
+  // X-CSRF-Token header (double-submit; see api/src/auth.ts requireCsrf).
+  csrf: string;
 }
 
 /**
@@ -23,7 +26,16 @@ export async function mintToken(
       `/api/auth/dev for "${username}" returned ${res.status()}: ${await res.text()}`,
     );
   }
-  return (await res.json()) as DevAuth;
+  // The mint sets auth (be_access) + CSRF (be_csrf) cookies; the JSON body
+  // carries userId/username/role but no bearer token (auth rides the cookie).
+  const body = (await res.json()) as Partial<DevAuth>;
+  return { ...(body as DevAuth), token: body.token ?? "", csrf: await csrfToken(request) };
+}
+
+/** Read the be_csrf cookie this context received at sign-in (for write headers). */
+export async function csrfToken(request: APIRequestContext): Promise<string> {
+  const { cookies } = await request.storageState();
+  return cookies.find((c) => c.name === "be_csrf")?.value ?? "";
 }
 
 /**
@@ -51,8 +63,9 @@ export async function newUserContext(
   return { context, auth };
 }
 
-/** Pure-API authed request — adds Bearer header on every call. */
-export function authedRequest(request: APIRequestContext, token: string) {
+// Pure-API authed request. Auth rides the context's be_access cookie; writes
+// also need the double-submit CSRF header (csrf = the be_csrf cookie value).
+export function authedRequest(request: APIRequestContext, token: string, csrf: string) {
   return {
     get: (path: string) =>
       request.get(path, { headers: { Authorization: `Bearer ${token}` } }),
@@ -60,6 +73,7 @@ export function authedRequest(request: APIRequestContext, token: string) {
       request.patch(path, {
         headers: {
           Authorization: `Bearer ${token}`,
+          "x-csrf-token": csrf,
           "If-Match": String(expectedVersion),
           "Content-Type": "application/json",
         },
@@ -121,15 +135,17 @@ export async function gotoVerse(
 }
 
 /**
- * Flush a NoteCard's pending edit. The save logic fires on
- * unmount or on active=false→true transition; the simplest reliable way to
- * trigger that from a test is to navigate to a different chapter, which
- * unmounts every note card and runs each card's unmount-flush effect.
+ * Trigger a NoteCard's manual save. Notes persist in the local draft cache
+ * until the user clicks Save — the editor has no autosave — so `fill()` then
+ * `saveNote()` enqueues the PATCH into the outbox. The Save icon (SaveIcon vs
+ * the outlined idle icon) renders only while the card has unsaved edits, so
+ * the locator implicitly waits for the dirty state before clicking.
  */
-export async function flushByNavigatingAway(page: Page): Promise<void> {
-  // ZEC 1 is guaranteed to exist in the seed; any other chapter would do.
-  await page.goto(`/#/ZEC/1`);
-  await page.locator("[data-note-id]").first().waitFor({ timeout: 10_000 });
+export async function saveNote(page: Page, rowId: string): Promise<void> {
+  await page
+    .locator(`[data-note-id="${rowId}"]`)
+    .locator('button:has([data-testid="SaveIcon"])')
+    .click();
 }
 
 /**
