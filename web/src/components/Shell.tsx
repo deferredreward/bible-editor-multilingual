@@ -1164,6 +1164,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
               getIsVisible: (id) => visibleRowIdsRef.current.has(id),
               onSuccess: (r, res) => {
                 const patch = { quote: res.quote, note: res.note };
+                // Re-running the suggestion on an already-drafted note can
+                // return a quote+note identical to what's stored; skip the
+                // save so we don't bump the row version with a no-op (mirror
+                // of the commitQuoteBuild guard). res.quote may be
+                // source-derived Hebrew in a different combining-mark order
+                // than the stored value, so NFC-normalize the quote compare;
+                // the note is plain TSV text stored verbatim, so compare raw.
+                const changed =
+                  nfc(res.quote) !== nfc(r.quote ?? "") || res.note !== (r.note ?? "");
+                if (!changed) return;
                 applyLocalRowPatch("tn", r.id, patch);
                 void outbox.enqueueRow("tn", r.id, r.version, patch, { book: r.book });
               },
