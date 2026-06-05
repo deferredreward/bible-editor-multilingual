@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Merge alignment cards — grab-handle ideas</title>
+<style>
+  /* ── unfoldingWord brand palette ──────────────────────────────────── */
+  :root {
+    --inspire: #31ADE3;   /* primary blue — accents, merge highlight   */
+    --ocean:   #014263;   /* deep blue — headers                       */
+    --tech:    #231F20;   /* near-black — body text                    */
+    --cultivate:#70C9CC;  /* light teal — compound spine               */
+    --kindle:  #E59D33;
+    --line:    #e0e0e0;
+    --paper:   #ffffff;
+    --bg:      #f4f6f8;
+    /* semantic tokens that flip in dark mode */
+    --grip:    #cfcfcf;   /* bottom-grip / rail dots */
+    --accent:  var(--ocean);
+    --chipsup: var(--ocean);
+    --hint-bg: #eef7fc;
+    --note-text:#555;
+    --code-bg: #eef1f3;
+  }
+  body.dark {
+    --tech:    #e8eaed;
+    --paper:   #1e1e1e;
+    --bg:      #121212;
+    --line:    #3a3a3a;
+    --grip:    #5c5c5c;
+    --accent:  #5cc4ec;
+    --chipsup: #7fd0f0;
+    --hint-bg: #0e2733;
+    --note-text:#aeb3b7;
+    --code-bg: #2a2f33;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Roboto","Helvetica", system-ui, sans-serif;
+    color: var(--tech); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header.app { background: var(--ocean); color: #fff; padding: 18px 24px 16px; }
+  header.app h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+  header.app p  { margin: 0; font-size: 13px; opacity: .85; max-width: 78ch; line-height: 1.5; }
+
+  .modes {
+    display: flex; gap: 8px; padding: 14px 24px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+    align-items: center; flex-wrap: wrap;
+  }
+  .modes .label { font: 600 10px/1 monospace; letter-spacing: .16em; text-transform: uppercase; color: #888; margin-right: 4px; }
+  .mode-btn {
+    border: 1px solid var(--line); background: var(--paper); color: var(--tech);
+    border-radius: 8px; padding: 7px 13px; font-size: 13px; cursor: pointer; transition: all .12s;
+  }
+  .mode-btn:hover { border-color: var(--inspire); }
+  .mode-btn.active { background: var(--inspire); border-color: var(--inspire); color: #fff; font-weight: 600; }
+  .spacer { flex: 1; }
+  .reset-btn { border: none; background: none; color: var(--accent); font-size: 13px; cursor: pointer; text-decoration: underline; }
+
+  .mode-hint { padding: 10px 24px; font-size: 13px; color: var(--note-text); background: var(--hint-bg); border-bottom: 1px solid var(--line); line-height: 1.5; }
+  .mode-hint b { color: var(--accent); }
+  kbd { font: 600 11px/1 monospace; background:#fff; border:1px solid #ccc; border-bottom-width:2px; border-radius:4px; padding:2px 5px; }
+
+  .strip-label { padding: 14px 24px 0; font: 600 10px/1 monospace; letter-spacing: .16em; text-transform: uppercase; color: #888; }
+  .grid {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    padding: 12px 24px 64px;
+    direction: rtl;            /* cards order along Hebrew reading flow */
+    align-content: flex-start;
+  }
+
+  .card {
+    position: relative; direction: ltr;
+    background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 12px 12px 14px;
+    min-width: 200px; max-width: 280px;
+    display: flex; flex-direction: column;
+    transition: box-shadow .14s, border-color .14s, transform .14s, opacity .14s;
+  }
+
+  /* clear (×) — stays top-LEFT, the empty zone of the right-aligned Hebrew row,
+     well clear of the occurrence superscripts that cluster top-RIGHT. */
+  .card .close {
+    position: absolute; top: 5px; left: 5px; z-index: 3;
+    width: 20px; height: 20px; line-height: 18px; text-align: center;
+    border: none; background: none; color: #bbb; cursor: pointer; border-radius: 4px; font-size: 15px;
+  }
+  .card .close:hover { color: #d32f2f; background: #fbeaea; }
+
+  .hebrew {
+    direction: rtl; text-align: right;
+    font-family: "Frank Ruhl Libre","Times New Roman","SBL Hebrew", serif;
+    font-size: 24px; line-height: 1.5;
+    padding-left: 22px;     /* room for × */
+    margin-bottom: 8px; color: var(--tech);
+    display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-start;
+  }
+  .heb-w { position: relative; padding: 0 4px; white-space: nowrap; }
+  .heb-w sup { position:absolute; top:-2px; right:0; font:700 9px/1 monospace; color: var(--inspire); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+    padding: 4px 9px; font-size: 13px; height: 26px; line-height: 17px; white-space: nowrap;
+  }
+  .chip sup { font: 700 9px/1 monospace; color: var(--chipsup); margin-left:1px; vertical-align: super; }
+
+  /* ── GRAB AFFORDANCES (mode-scoped, never top-right) ───────────────── */
+
+  /* A) Left grab rail — vertical grip dots down the left edge. Doubles as
+        the compound spine. Grab anywhere on it to drag the whole card. */
+  .rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 16px;
+    border-radius: 12px 0 0 12px; cursor: grab; display: none; z-index: 2;
+    color: var(--grip);
+    background: radial-gradient(circle, currentColor 1.3px, transparent 1.7px) center top / 6px 8px repeat-y;
+  }
+  .rail:hover { color: var(--inspire); background-color: #eef7fc; }
+  .rail:active { cursor: grabbing; }
+  body[data-mode="rail"] .rail { display: block; }
+  body[data-mode="rail"] .card { padding-left: 24px; }                 /* clear the rail */
+  body[data-mode="rail"] .card.compound .rail { color: var(--cultivate); } /* teal = compound */
+
+  /* B) Bottom grip — a small horizontal grip pill centered under the chips. */
+  .gripb {
+    position: absolute; left: 50%; transform: translateX(-50%); bottom: 4px;
+    width: 44px; height: 11px; border-radius: 6px; cursor: grab; display: none; z-index: 2;
+    color: var(--grip);
+    background: radial-gradient(circle, currentColor 1.3px, transparent 1.7px) center / 8px 6px repeat-x;
+  }
+  .gripb:hover { color: var(--inspire); }
+  .gripb:active { cursor: grabbing; }
+  body[data-mode="bottom"] .gripb { display: block; }
+  body[data-mode="bottom"] .card { padding-bottom: 20px; }
+
+  /* compound spine for the non-rail modes (rail draws its own) */
+  .card.compound { border-left: 4px solid var(--cultivate); }
+  body[data-mode="rail"] .card.compound { border-left: 1px solid var(--line); }
+
+  /* alt mode: whole card body is the handle (grab while holding Alt) */
+  body[data-mode="alt"] .card { cursor: grab; }
+  body[data-mode="alt"] .card:active { cursor: grabbing; }
+
+  /* ── drag feedback ─────────────────────────────────────────────────── */
+  .card.dragging { opacity: .4; }
+  .card.merge-target {
+    border-color: var(--inspire); border-style: dashed;
+    box-shadow: 0 0 0 3px rgba(49,173,227,.18); transform: translateY(-2px);
+  }
+  .card.merge-target::after {
+    content: "⤵  Merge into this group";
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(49,173,227,.10); color: var(--accent); font-weight: 600; font-size: 13px;
+    border-radius: 12px; pointer-events: none; z-index: 4;
+  }
+  @keyframes mergePulse { 0% { box-shadow: 0 0 0 0 rgba(49,173,227,.55);} 100% { box-shadow: 0 0 0 16px rgba(49,173,227,0);} }
+  .card.merged-flash { animation: mergePulse .6s ease-out; border-color: var(--inspire); }
+
+  /* undo snackbar */
+  .snackbar {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(220%);
+    background: #231F20; color: #fff; padding: 11px 18px; border-radius: 10px;
+    display: flex; gap: 16px; align-items: center; font-size: 14px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.28); transition: transform .22s cubic-bezier(.2,.8,.2,1); z-index: 60;
+  }
+  .snackbar.show { transform: translateX(-50%) translateY(0); }
+  .snackbar button { border:none; background:none; color: var(--inspire); font-weight:700; cursor:pointer; font-size:14px; }
+
+  .note { padding: 4px 24px 48px; max-width: 82ch; color: var(--note-text); font-size: 13px; line-height: 1.6; }
+  .note h3 { color: var(--accent); font-size: 14px; margin: 18px 0 6px; }
+  .note code { background: var(--code-bg); padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body data-mode="bottom">
+
+<header class="app">
+  <h1>Merge alignment cards — grab-handle ideas</h1>
+  <p>Same merge in all three (two cards → one compound group; Hebrew chains join,
+     all chips ride along, result re-sorts into verse order). Only the way you
+     <i>grab a whole card</i> changes — and crucially, <b>none of these sit top-right</b>,
+     where the Hebrew occurrence superscripts live. Drag a handle onto another card to merge.</p>
+</header>
+
+<div class="modes">
+  <span class="label">Grab handle</span>
+  <button class="mode-btn" data-set="rail">Left rail ⋮</button>
+  <button class="mode-btn active" data-set="bottom">Bottom grip ⠿</button>
+  <button class="mode-btn" data-set="alt">Hold-Alt + drag</button>
+  <span class="spacer"></span>
+  <button class="reset-btn" id="darktoggle">☾ dark</button>
+  <button class="reset-btn" id="reset">↺ reset cards</button>
+</div>
+
+<div class="mode-hint" id="hint"></div>
+
+<div class="strip-label">Groups · <span id="count">4</span> &nbsp;·&nbsp; ZEC 5:3 — editing UST</div>
+<div class="grid" id="grid"></div>
+
+<div class="snackbar" id="snackbar">
+  <span id="snacktext">Merged 2 groups</span>
+  <button id="undo">Undo</button>
+</div>
+
+<div class="note">
+  <h3>Why these, and not the corner grip</h3>
+  The first sketch's grip + the select-ring both landed in the <b>top-right corner — directly under
+  the Hebrew occurrence superscript</b> (כָל² on the middle card). That corner is spoken for. Your
+  existing × already dodges this by living top-left, in the empty zone of the right-aligned Hebrew row.
+  So a whole-card handle has to avoid top-right too. All three below do.
+  <h3>Left rail ⋮ (recommended visible handle)</h3>
+  A vertical grip down the <b>left edge</b> — the one card region that's neither draggable content nor
+  the × corner. Bonus: it <b>replaces the compound spine you already draw on the left</b>, so it carries
+  double duty (teal dots = compound, grab to merge). Always visible, so it's discoverable; collision-free.
+  <h3>Bottom grip ⠿</h3>
+  A small grip pill centered <b>below the chips</b>. Also collision-free and unambiguous, but it's
+  further from the eye and the card's height shifts it around as chips wrap.
+  <h3>Hold-Alt + drag</h3>
+  No chrome at all — the whole card body drags while <kbd>Alt</kbd> is held (without Alt you'd drag a
+  chip). Cleanest visually, zero collision, but invisible/undiscoverable on its own and dead on touch.
+  <h3>Is a single-word card any different? (no)</h3>
+  To the user: <b>no — a card is a card.</b> Drag any card's grip onto another and it merges the same way,
+  whether it holds one Hebrew word or five. The grip sits on every card, so there's no exception to learn.
+  <br><br>
+  Under the hood it's even nicer: a <b>single-word-card merge is literally your existing "drag the Hebrew
+  word" op</b> (<code>moveSource</code>). When a group has only one source word, moving it out collapses the
+  group and its English follows to the destination — exactly a full card merge. The whole-card grip is just
+  that same move generalized to <i>all</i> the card's Hebrew words at once.
+  <br><br>
+  They only diverge on multi-word cards: dragging a single <b>Hebrew word</b> peels off just that word (the
+  English stays put unless it was the last), while dragging the <b>whole card</b> by its grip always takes
+  everything — all Hebrew + all chips. The single-word card (see <b>אָלָה → curse</b>, far right) is simply
+  the case where those two gestures coincide.
+  <h3>Where this leaves us</h3>
+  Bottom grip it is. <code>mergeGroups(state, survivor, eaten)</code> ≈ <code>moveSource</code> looped over
+  the eaten card's source words (English re-points automatically on the final collapse). Keep the one-tap
+  Undo (= <code>clearGroup</code> split) so the gesture stays low-stakes.
+</div>
+
+<script>
+// ── Verse model (ZEC 5:3, UST-ish). `o` = verse order, so a merged card
+//    re-sorts Hebrew + chips into reading order regardless of drag direction.
+const SEED = [
+  // single-word card — one Hebrew, one English. Not compound (no left spine),
+  // grey grip. Dragging it == your existing "drag the Hebrew word" op.
+  { id:"c0", compound:false,
+    hebrew:[{t:"אָלָה",o:0}],
+    chips:[{t:"curse",o:0}] },
+  { id:"c2", compound:true,
+    hebrew:[{t:"כִּי",o:1},{t:"הַגֹּנֵב",o:2},{t:"מִזֶּה",o:3}],
+    chips:[{t:"On",x:1,o:1},{t:"one",o:2},{t:"side",x:1,o:3},{t:"the",x:3,o:4},
+           {t:"scroll",x:2,o:5},{t:"says",x:1,o:6},{t:"that",x:2,o:7},{t:"Yahweh",x:2,o:8}] },
+  { id:"c1", compound:true,
+    hebrew:[{t:"כָל",x:2,o:4},{t:"נִקָּה",o:5},{t:"כָמֹוהָ",o:6}],
+    chips:[{t:"will",x:1,o:9},{t:"remove",x:1,o:10},{t:"everyone",x:1,o:11},
+           {t:"who",x:1,o:12},{t:"steals",o:13}] },
+  { id:"c4", compound:true,
+    hebrew:[{t:"וְכָל",o:7},{t:"הַנִּשְׁבָּע",o:8},{t:"מִזֶּה",o:9}],
+    chips:[{t:"On",x:2,o:14},{t:"the",x:4,o:15},{t:"other",o:16},{t:"side",x:2,o:17},
+           {t:"it",o:18},{t:"says",x:2,o:19},{t:"that",x:3,o:20},{t:"he",x:2,o:21}] },
+  { id:"c3", compound:true,
+    hebrew:[{t:"נִקָּה",x:2,o:10},{t:"כָמֹוהָ",x:2,o:11}],
+    chips:[{t:"will",x:2,o:22},{t:"remove",x:2,o:23},{t:"everyone",x:2,o:24},{t:"who",x:2,o:25},
+           {t:"lies",o:26},{t:"when",o:27},{t:"making",o:28},{t:"a",o:29},
+           {t:"solemn",o:30},{t:"promise",o:31}] },
+];
+const clone = o => JSON.parse(JSON.stringify(o));
+let cards = clone(SEED);
+let lastState = null;
+let _dragId = null;
+
+const grid = document.getElementById("grid");
+const body = document.body;
+
+const HINTS = {
+  rail:   `<b>Left rail.</b> Grab the <b>⋮ grip on a card's left edge</b> and drop it onto another card. The rail also shows teal when the group is compound. Collision-free with the top-right superscripts.`,
+  bottom: `<b>Bottom grip.</b> Grab the <b>⠿ pill under a card's chips</b> and drop onto another card.`,
+  alt:    `<b>Hold-Alt + drag.</b> Hold <kbd>Alt</kbd> and drag <i>anywhere</i> on a card onto another. Without Alt the body would drag a chip. (Try without Alt — nothing lifts.)`,
+};
+
+function render() {
+  document.getElementById("count").textContent = cards.length;
+  document.getElementById("hint").innerHTML = HINTS[body.dataset.mode];
+  grid.innerHTML = "";
+  for (const card of cards) {
+    const el = document.createElement("div");
+    el.className = "card" + (card.compound && card.hebrew.length > 1 ? " compound" : "");
+    el.dataset.id = card.id;
+    el.innerHTML = `
+      <div class="rail" draggable="true" title="drag to merge"></div>
+      <div class="gripb" draggable="true" title="drag to merge"></div>
+      <button class="close" title="clear group">×</button>
+      <div class="hebrew">${card.hebrew.map(h =>
+        `<span class="heb-w">${h.t}${h.x?`<sup>${h.x}</sup>`:""}</span>`).join("")}</div>
+      <div class="chips">${card.chips.map(c =>
+        `<span class="chip">${c.t}${c.x?`<sup>${c.x}</sup>`:""}</span>`).join("")}</div>`;
+    wireCard(el, card);
+    grid.appendChild(el);
+  }
+}
+
+// Order-independent merge: survivor swallows eaten, both lists re-sort by `o`.
+function mergeCards(survivorId, eatenId) {
+  if (survivorId === eatenId) return;
+  const survivor = cards.find(c => c.id === survivorId);
+  const eaten    = cards.find(c => c.id === eatenId);
+  if (!survivor || !eaten) return;
+  lastState = clone(cards);
+  survivor.hebrew = [...survivor.hebrew, ...eaten.hebrew].sort((a,b)=>a.o-b.o);
+  survivor.chips  = [...survivor.chips,  ...eaten.chips ].sort((a,b)=>a.o-b.o);
+  survivor.compound = true;
+  cards = cards.filter(c => c.id !== eatenId).sort((a,b)=>(a.hebrew[0]?.o??0)-(b.hebrew[0]?.o??0));
+  render();
+  const flash = grid.querySelector(`[data-id="${survivorId}"]`);
+  if (flash) { flash.classList.add("merged-flash"); setTimeout(()=>flash.classList.remove("merged-flash"),600); }
+  showSnackbar();
+}
+
+function startCardDrag(el, card, e) {
+  e.dataTransfer.setData("text/card-id", card.id);
+  e.dataTransfer.effectAllowed = "move";
+  _dragId = card.id;
+  el.classList.add("dragging");
+}
+
+function wireCard(el, card) {
+  el.querySelector(".close").onclick = (e) => {
+    e.stopPropagation();
+    lastState = clone(cards);
+    cards = cards.filter(c => c.id !== card.id);
+    render();
+  };
+
+  // grab handles — rail + bottom grip
+  el.querySelectorAll(".rail, .gripb").forEach(h => {
+    h.addEventListener("dragstart", (e) => startCardDrag(el, card, e));
+    h.addEventListener("dragend",   () => endDrag(el));
+  });
+
+  // alt mode — whole body drags only while Alt held
+  el.setAttribute("draggable", body.dataset.mode === "alt" ? "true" : "false");
+  el.addEventListener("dragstart", (e) => {
+    if (body.dataset.mode !== "alt") return;
+    if (!e.altKey) { e.preventDefault(); return; }
+    startCardDrag(el, card, e);
+  });
+  el.addEventListener("dragend", () => endDrag(el));
+
+  // drop target (all modes land here)
+  el.addEventListener("dragover", (e) => {
+    if (_dragId && _dragId !== card.id) { e.preventDefault(); el.classList.add("merge-target"); }
+  });
+  el.addEventListener("dragleave", (e) => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove("merge-target");
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    el.classList.remove("merge-target");
+    const fromId = e.dataTransfer.getData("text/card-id") || _dragId;
+    if (fromId) mergeCards(card.id, fromId);
+  });
+}
+
+function endDrag(el) {
+  el.classList.remove("dragging");
+  _dragId = null;
+  grid.querySelectorAll(".merge-target").forEach(c => c.classList.remove("merge-target"));
+}
+
+// ── undo snackbar ─────────────────────────────────────────────────────
+const snackbar = document.getElementById("snackbar");
+let snackTimer = null;
+function showSnackbar() {
+  snackbar.classList.add("show");
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(()=>snackbar.classList.remove("show"), 5000);
+}
+document.getElementById("undo").onclick = () => {
+  if (lastState) { cards = lastState; lastState = null; render(); }
+  snackbar.classList.remove("show");
+};
+
+// ── mode switch + reset ───────────────────────────────────────────────
+document.querySelectorAll(".mode-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".mode-btn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    body.dataset.mode = btn.dataset.set;
+    render();
+  };
+});
+document.getElementById("reset").onclick = () => {
+  cards = clone(SEED); lastState = null; render(); snackbar.classList.remove("show");
+};
+document.getElementById("darktoggle").onclick = (e) => {
+  const on = document.body.classList.toggle("dark");
+  e.target.textContent = on ? "☀ light" : "☾ dark";
+};
+
+render();
+</script>
+</body>
+</html>
