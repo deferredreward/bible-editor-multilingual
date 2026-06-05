@@ -1244,10 +1244,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onNoteReorder={(draggedId, refId, position) => {
             const dragged = data.tn.find((r) => r.id === draggedId);
             if (!dragged) return;
-            const list = sortedForVerse(data.tn, dragged.verse);
-            const sort_order = pickSortOrder(list, refId, position, draggedId);
-            applyLocalRowPatch("tn", draggedId, { sort_order });
-            void outbox.enqueueRow("tn", draggedId, dragged.version, { sort_order }, { book: dragged.book });
+            const sorted = sortedForVerse(data.tn, dragged.verse);
+            const changes = reorderSequential(sorted, draggedId, refId, position);
+            for (const { row, sort_order } of changes) {
+              enqueueRow("tn", row, { sort_order });
+            }
           }}
           onWordCreate={async () => {
             const list = sortedForVerse(data.twl, activeVerse);
@@ -1268,10 +1269,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onWordReorder={(draggedId, refId, position) => {
             const dragged = data.twl.find((r) => r.id === draggedId);
             if (!dragged) return;
-            const list = sortedForVerse(data.twl, dragged.verse);
-            const sort_order = pickSortOrder(list, refId, position, draggedId);
-            applyLocalRowPatch("twl", draggedId, { sort_order });
-            void outbox.enqueueRow("twl", draggedId, dragged.version, { sort_order }, { book: dragged.book });
+            const sorted = sortedForVerse(data.twl, dragged.verse);
+            const changes = reorderSequential(sorted, draggedId, refId, position);
+            for (const { row, sort_order } of changes) {
+              enqueueRow("twl", row, { sort_order });
+            }
           }}
           onQuestionCreate={async () => {
             const created = (await api.createRow<TqRow>("tq", {
@@ -1464,4 +1466,40 @@ function pickSortOrder<T extends Sortable>(
   const next = list[idx + 1];
   const nextSort = next?.sort_order ?? targetSort + 200;
   return (targetSort + nextSort) / 2;
+}
+
+// Reorder by full sequential renumbering (step 100) rather than a single
+// midpoint. Moving `draggedId` to the slot at (refId, position) and assigning
+// every row a fresh 100,200,300,… value. Returns only the rows whose value
+// changed, each paired with its new sort_order.
+//
+// Why renumber instead of pickSortOrder: imported rows all have sort_order =
+// null, and the sort collapses every null to one key (ordered by id). A lone
+// midpoint value can't be slotted *between* two nulls — it sorts before or
+// after the entire null group — so a moved row jumps to an end instead of
+// advancing one slot. Renumbering gives the whole verse real, ordered values
+// in one pass; subsequent moves only touch the rows that actually shifted.
+function reorderSequential<T extends Sortable>(
+  sorted: T[],
+  draggedId: string,
+  refId: string | null,
+  position: "before" | "after",
+): Array<{ row: T; sort_order: number }> {
+  const dragged = sorted.find((r) => r.id === draggedId);
+  if (!dragged) return [];
+  const without = sorted.filter((r) => r.id !== draggedId);
+  let insertIdx: number;
+  if (refId == null) {
+    insertIdx = position === "before" ? 0 : without.length;
+  } else {
+    const refIdx = without.findIndex((r) => r.id === refId);
+    insertIdx = refIdx < 0 ? without.length : position === "before" ? refIdx : refIdx + 1;
+  }
+  const next = [...without.slice(0, insertIdx), dragged, ...without.slice(insertIdx)];
+  const changes: Array<{ row: T; sort_order: number }> = [];
+  next.forEach((row, i) => {
+    const sort_order = (i + 1) * 100;
+    if (row.sort_order !== sort_order) changes.push({ row, sort_order });
+  });
+  return changes;
 }

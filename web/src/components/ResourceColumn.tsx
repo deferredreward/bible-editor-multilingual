@@ -497,9 +497,12 @@ export function ResourceColumn({
       dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "before";
     const showAfter =
       dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "after";
-    const idx = peers.indexOf(r);
-    const prevNote = idx > 0 ? peers[idx - 1] : null;
-    const nextNote = idx < peers.length - 1 ? peers[idx + 1] : null;
+    // Only navigate within the same verse — displayVerseRange can span multiple
+    // verses, but onNoteReorder in Shell operates per-verse via sortedForVerse.
+    const samePeers = peers.filter((p) => p.verse === r.verse);
+    const idx = samePeers.indexOf(r);
+    const prevNote = idx > 0 ? samePeers[idx - 1] : null;
+    const nextNote = idx < samePeers.length - 1 ? samePeers[idx + 1] : null;
     return (
       <Fragment key={r.id}>
         {showBefore && <DropIndicator />}
