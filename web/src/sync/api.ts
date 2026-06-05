@@ -582,10 +582,16 @@ export interface TnQuickResponse {
 export type PipelineType = "generate" | "notes" | "tqs";
 
 export type PipelineState =
+  // queued: accepted by us, not yet sent to the bot (cancellable).
+  // dispatching: claimed the single bot slot; upstream POST in flight.
+  // cancelled: a queued job the user withdrew (terminal).
+  | "queued"
+  | "dispatching"
   | "running"
   | "paused_for_outage"
   | "paused_for_usage_limit"
   | "failed"
+  | "cancelled"
   | "done";
 
 export type PipelineErrorKind =
@@ -656,7 +662,9 @@ export interface PipelineStartRequest {
 export interface PipelineStartResponse {
   jobId: string;
   scope: { book: string; startChapter: number; endChapter: number };
-  status: "running" | "already_running";
+  status: "running" | "queued" | "already_running";
+  /** 1-based position in the global queue when status === "queued". */
+  queuePosition?: number;
 }
 
 export interface PipelineOutput {
@@ -687,6 +695,13 @@ export interface PipelineStatusResponse {
   createdAt: string;
   interrupted?: boolean;
   output?: PipelineOutput[];
+  /**
+   * Present on queued/dispatching jobs (which aren't on the bot yet): the
+   * Worker synthesizes the status from D1 and includes the live queue
+   * position so the chip can show "#N in line" and refresh it each poll.
+   */
+  queuePosition?: number;
+  queueAhead?: number;
 }
 
 // AI pipeline proposal staged in pending_imports. The server parses payload
@@ -710,6 +725,12 @@ export interface PendingImport {
 // this is the persisted D1 row, not the live upstream response shape.
 export interface PipelineJobRow {
   job_id: string;
+  /**
+   * The bot's opaque jobId, assigned on dispatch. NULL while queued/dispatching.
+   * job_id (our local UUID) is the stable identity the client keys on — it
+   * never changes as a job moves queued → running → done.
+   */
+  upstream_job_id: string | null;
   user_id: number;
   pipeline_type: PipelineType;
   book: string;
@@ -717,6 +738,12 @@ export interface PipelineJobRow {
   end_chapter: number;
   session_key: string;
   state: PipelineState;
+  /** Follow-up / macro-chain children get priority=1 so they jump the queue. */
+  priority: number;
+  /** 1-based global queue position; set by the list/status endpoints for queued jobs. */
+  queue_position?: number | null;
+  /** How many jobs run before this one (active + higher-ranked queued). */
+  queue_ahead?: number | null;
   current_skill: string | null;
   current_status: string | null;
   error_kind: PipelineErrorKind | null;
@@ -738,6 +765,14 @@ export interface PipelineJobRow {
    * user hasn't yet been told about — those drive the toast.
    */
   notified_user_at: number | null;
+}
+
+// Global queue context returned alongside GET /api/pipelines so the chip can
+// render "what's running ahead of you". activeJob reuses the conflict-dialog
+// shape (it's the single job currently on the bot, or null when idle).
+export interface PipelineQueueSummary {
+  activeJob: PipelineConflictExisting | null;
+  queuedCount: number;
 }
 
 export const api = {
@@ -898,11 +933,19 @@ export const api = {
     states?: PipelineState[],
     signal?: AbortSignal,
   ) =>
-    request<{ jobs: PipelineJobRow[] }>(
+    request<{ jobs: PipelineJobRow[]; queue?: PipelineQueueSummary }>(
       states && states.length > 0
         ? `/api/pipelines?state=${encodeURIComponent(states.join(","))}`
         : `/api/pipelines`,
       { signal },
+    ),
+
+  // Withdraw a job that hasn't reached the front of the line. Server returns
+  // 409 {error:"cannot_cancel", state} if it's already dispatching/running.
+  pipelineCancel: (jobId: string, signal?: AbortSignal) =>
+    request<{ ok: boolean; jobId: string; state: "cancelled" }>(
+      `/api/pipelines/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST", signal },
     ),
 
   // Acknowledge a "completed-while-away" toast so the server clears its

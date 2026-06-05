@@ -31,6 +31,7 @@ import type {
   PipelineConflictBody,
   PipelineConflictExisting,
   PipelineRequestOptions,
+  PipelineStartResponse,
   PipelineType,
 } from "../sync/api";
 import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipelineStore";
@@ -198,6 +199,9 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   const genNothingSelected = !genOpts.ult && !genOpts.ust;
   const refParsed = useMemo(() => parseChapterRange(refInput, book), [refInput, book]);
 
+  // "In progress" for the chapter = queued/dispatching/running/paused. A
+  // failed or cancelled job covering the chapter must NOT disable the menu —
+  // the translator re-triggers from here.
   const runningType = (type: PipelineType): PipelineJob | undefined =>
     activeJobs.find(
       (j) =>
@@ -205,7 +209,9 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         j.book === book &&
         j.start_chapter <= chapter &&
         j.end_chapter >= chapter &&
-        j.state !== "done",
+        j.state !== "done" &&
+        j.state !== "failed" &&
+        j.state !== "cancelled",
     );
 
   const close = () => setAnchorEl(null);
@@ -226,6 +232,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         saveGenOpts(genOpts);
       }
       let startedCount = 0;
+      let lastRes: PipelineStartResponse | undefined;
       for (const ch of chapters) {
         const res = await pipelineStore.start({
           pipelineType: confirm.type,
@@ -237,6 +244,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
           ...(wire.followUpOptions ? { followUpOptions: wire.followUpOptions } : {}),
           ...(confirm.followUpChain ? { followUpChain: confirm.followUpChain } : {}),
         });
+        lastRes = res;
         if (res.status !== "already_running") startedCount++;
       }
       const rangeLabel =
@@ -244,15 +252,24 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
           ? `${rangeBook} ${startChapter}`
           : `${rangeBook} ${startChapter}-${endChapter}`;
       if (startedCount > 0) {
-        const suffix =
-          chapters.length > 1
-            ? ` (${startedCount} runs)`
-            : isMacro
-              ? ` (${1 + (confirm.followUpChain?.length ?? 0)} runs)`
-              : wire.followUpOptions
-                ? " (2 runs)"
-                : "";
-        onMessage?.(`Started: ${confirm.label} for ${rangeLabel}${suffix}`);
+        // Single-chapter run that didn't win the bot slot — it's waiting in
+        // line. Surface the position instead of "Started".
+        if (chapters.length === 1 && lastRes?.status === "queued") {
+          const posText = lastRes.queuePosition
+            ? ` — #${lastRes.queuePosition} in line`
+            : " — waiting in line";
+          onMessage?.(`Queued: ${confirm.label} for ${rangeLabel}${posText}`);
+        } else {
+          const suffix =
+            chapters.length > 1
+              ? ` (${startedCount} runs)`
+              : isMacro
+                ? ` (${1 + (confirm.followUpChain?.length ?? 0)} runs)`
+                : wire.followUpOptions
+                  ? " (2 runs)"
+                  : "";
+          onMessage?.(`Started: ${confirm.label} for ${rangeLabel}${suffix}`);
+        }
       }
       // already_running: pipelineStore emits a focus event that opens the
       // status panel on the existing run — no toast needed.

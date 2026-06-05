@@ -235,7 +235,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         j.end_chapter >= chapter &&
         (j.state === "running" ||
           j.state === "paused_for_outage" ||
-          j.state === "paused_for_usage_limit"),
+          j.state === "paused_for_usage_limit" ||
+          j.state === "dispatching"),
     );
     if (!found) return null;
     return {

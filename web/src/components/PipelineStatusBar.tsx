@@ -23,6 +23,8 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
+import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
+import BlockIcon from "@mui/icons-material/Block";
 import { ApiError } from "../sync/api";
 import type { PipelineErrorKind, PipelineJobRow, PipelineState } from "../sync/api";
 import { getSessionKey, pipelineStore } from "../sync/pipelineStore";
@@ -148,6 +150,10 @@ function relativeTime(seconds: number): string {
 
 function stateLabel(state: PipelineState): string {
   switch (state) {
+    case "queued":
+      return "queued";
+    case "dispatching":
+      return "starting…";
     case "running":
       return "running";
     case "paused_for_outage":
@@ -156,15 +162,19 @@ function stateLabel(state: PipelineState): string {
       return "paused (daily budget)";
     case "failed":
       return "failed";
+    case "cancelled":
+      return "cancelled";
     case "done":
       return "done";
   }
 }
 
 function StateIcon({ state }: { state: PipelineState }) {
-  if (state === "running") return <CircularProgress size={14} />;
+  if (state === "queued") return <HourglassEmptyIcon fontSize="small" color="disabled" />;
+  if (state === "dispatching" || state === "running") return <CircularProgress size={14} />;
   if (state === "done") return <CheckCircleOutlineIcon fontSize="small" color="success" />;
   if (state === "failed") return <ErrorOutlineIcon fontSize="small" color="error" />;
+  if (state === "cancelled") return <BlockIcon fontSize="small" color="disabled" />;
   return <PauseCircleOutlineIcon fontSize="small" color="warning" />;
 }
 
@@ -183,6 +193,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // When pipelineStore.requestFocus(jobId) fires (e.g. on already_running),
   // we stash the request and let the next render — once hasAnything flips
@@ -199,21 +210,30 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
     [],
   );
 
-  const { active, doneRecent, failed } = useMemo(() => {
+  const { active, queued, doneRecent, failed } = useMemo(() => {
     const nowSec = Math.floor(Date.now() / 1000);
     return {
+      // 'dispatching' counts as active — it's claimed the bot slot and locks
+      // the chapter, same as running.
       active: jobs.filter(
         (j) =>
           j.state === "running" ||
+          j.state === "dispatching" ||
           j.state === "paused_for_outage" ||
           j.state === "paused_for_usage_limit",
       ),
+      queued: jobs.filter((j) => j.state === "queued"),
       doneRecent: jobs.filter((j) => j.state === "done" && nowSec - j.updated_at < 24 * 3600),
       failed: jobs.filter((j) => j.state === "failed"),
     };
   }, [jobs]);
 
-  const hasAnything = active.length + doneRecent.length + failed.length > 0;
+  const hasAnything = active.length + queued.length + doneRecent.length + failed.length > 0;
+
+  // Global queue context (the single running job, possibly another user's),
+  // refreshed by the store on load/visibility. Drives the "running ahead" note
+  // shown when the user has something waiting in line.
+  const queueSummary = pipelineStore.getQueueSummary();
 
   // Map child job_id -> parent job_id. Used to render the reciprocal "after
   // <parent>" line under follow-up rows; the data is in place because the
@@ -258,6 +278,18 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
     }
   };
 
+  const cancel = async (job: PipelineJobRow) => {
+    setCancelling(job.job_id);
+    try {
+      await pipelineStore.cancel(job.job_id);
+    } catch {
+      // The store re-polls on a 409 (already started) so the row reflects its
+      // real state; other failures are transient — leave the row as-is.
+    } finally {
+      setCancelling(null);
+    }
+  };
+
   if (!hasAnything && !toast) return null;
 
   return (
@@ -287,19 +319,31 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
               icon={<AutoAwesomeIcon />}
               label={
                 active.length > 0
-                  ? `${active.length} pipeline${active.length === 1 ? "" : "s"} running`
-                  : failed.length > 0
-                    ? `${failed.length} failed`
-                    : "AI ready to review"
+                  ? `${active.length} pipeline${active.length === 1 ? "" : "s"} running${
+                      queued.length > 0 ? ` · ${queued.length} queued` : ""
+                    }`
+                  : queued.length > 0
+                    ? `${queued.length} queued`
+                    : failed.length > 0
+                      ? `${failed.length} failed`
+                      : "AI ready to review"
               }
               size="small"
               variant="outlined"
-              color={active.length > 0 ? "primary" : failed.length > 0 ? "error" : "success"}
+              color={
+                active.length > 0
+                  ? "primary"
+                  : queued.length > 0
+                    ? "default"
+                    : failed.length > 0
+                      ? "error"
+                      : "success"
+              }
               onClick={(e) => setAnchorEl(e.currentTarget)}
-              // Only the "done-only" variant is dismissable. Running and
-              // failed states need user attention, so no delete icon there.
+              // Only the "done-only" variant is dismissable. Running, queued,
+              // and failed states need user attention, so no delete icon there.
               onDelete={
-                active.length === 0 && failed.length === 0 && doneRecent.length > 0
+                active.length === 0 && queued.length === 0 && failed.length === 0 && doneRecent.length > 0
                   ? () => {
                       pipelineStore.dismissDone();
                       setAnchorEl(null);
@@ -322,6 +366,20 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
           <Typography variant="caption" color="text.secondary">
             AI pipelines
           </Typography>
+          {queued.length > 0 && queueSummary?.activeJob && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              display="block"
+              sx={{ mt: 0.5, fontStyle: "italic" }}
+            >
+              Only one runs at a time. Running now:{" "}
+              {queueSummary.activeJob.started_by_username ?? "someone"} ·{" "}
+              {TYPE_LABEL[queueSummary.activeJob.pipeline_type]}{" "}
+              {queueSummary.activeJob.book} {queueSummary.activeJob.start_chapter}
+              {` (${relativeTime(queueSummary.activeJob.updated_at)})`}
+            </Typography>
+          )}
           <Stack spacing={1} sx={{ mt: 1 }}>
             {jobs.length === 0 && (
               <Typography variant="body2" color="text.secondary">
@@ -345,6 +403,9 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                     </Typography>
                     <Typography variant="caption" color="text.secondary" display="block">
                       {stateLabel(job.state)}
+                      {job.state === "queued" && job.queue_position
+                        ? ` · #${job.queue_position} in line`
+                        : ""}
                       {job.current_skill && !STAGES[job.pipeline_type]?.includes(job.current_skill)
                         ? ` · ${job.current_skill}`
                         : ""}
@@ -379,12 +440,29 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                       </span>
                     </Tooltip>
                   )}
+                  {job.state === "queued" && (
+                    <Tooltip title="Remove from the queue (only possible before it starts)">
+                      <span>
+                        <Button
+                          size="small"
+                          color="inherit"
+                          onClick={() => void cancel(job)}
+                          disabled={cancelling === job.job_id}
+                          startIcon={cancelling === job.job_id ? <CircularProgress size={12} /> : undefined}
+                        >
+                          Cancel
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  )}
                 </Stack>
-                <StageBar
-                  pipelineType={job.pipeline_type}
-                  currentSkill={job.current_skill}
-                  state={job.state}
-                />
+                {job.state !== "queued" && job.state !== "dispatching" && job.state !== "cancelled" && (
+                  <StageBar
+                    pipelineType={job.pipeline_type}
+                    currentSkill={job.current_skill}
+                    state={job.state}
+                  />
+                )}
                 {job.state === "done" && (
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 3, mt: 0.5 }} display="block">
                     AI output applied to {job.book} {job.start_chapter}.
