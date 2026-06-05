@@ -20,6 +20,7 @@ import {
   ApiError,
   type PipelineErrorKind,
   type PipelineJobRow,
+  type PipelineQueueSummary,
   type PipelineState,
   type PipelineStartRequest,
   type PipelineStartResponse,
@@ -29,12 +30,18 @@ import {
 
 const POLL_INTERVAL_MS = 120_000; // contract §5
 
+// queued/dispatching are polled too — GET /api/pipelines/:id returns their
+// live queue position, so the chip's "#N in line" refreshes each tick.
 const POLLING_STATES: ReadonlySet<PipelineState> = new Set([
+  "queued",
+  "dispatching",
   "running",
   "paused_for_outage",
   "paused_for_usage_limit",
 ]);
 const NON_TERMINAL_STATES: ReadonlySet<PipelineState> = new Set([
+  "queued",
+  "dispatching",
   "running",
   "paused_for_outage",
   "paused_for_usage_limit",
@@ -57,6 +64,10 @@ const jobs = new Map<string, PipelineJob>();
 const subscribers = new Set<JobsListener>();
 const completionListeners = new Set<CompletionListener>();
 const focusListeners = new Set<FocusListener>();
+
+// Last-known global queue context (the single running job + total queued),
+// refreshed on each loadFromServer. Drives the "running ahead of you" header.
+let queueSummary: PipelineQueueSummary | null = null;
 
 // Job IDs the user has explicitly dismissed from the status chip. Persists
 // across reloads so loadFromServer doesn't resurrect them. Done jobs stay
@@ -145,7 +156,11 @@ function rowFromStatus(prev: PipelineJob, status: PipelineStatusResponse): Pipel
   const createdTs = Date.parse(status.createdAt);
   return {
     ...prev,
-    job_id: status.jobId ?? prev.job_id,
+    // Keep prev.job_id — it's OUR stable local id. status.jobId may be the
+    // bot's upstream id (on a polled running job) and must not clobber it.
+    job_id: prev.job_id,
+    queue_position: status.queuePosition ?? null,
+    queue_ahead: status.queueAhead ?? null,
     pipeline_type: status.pipelineType ?? prev.pipeline_type,
     book: status.scope?.book ?? prev.book,
     start_chapter: status.scope?.startChapter ?? prev.start_chapter,
@@ -166,11 +181,9 @@ function mergeAndNotify(jobId: string, next: PipelineJob) {
   const prev = jobs.get(jobId);
   jobs.set(jobId, next);
   let firedCompletion = false;
-  if (prev && prev.state !== next.state && !NON_TERMINAL_STATES.has(next.state)) {
-    // transitioned to a terminal state (done)
-    emitCompletion(next, prev.state);
-    firedCompletion = true;
-  } else if (prev && prev.state !== next.state && next.state === "failed") {
+  // Toast on transitions to done/failed only. 'cancelled' is terminal too but
+  // user-initiated, so it gets no completion toast.
+  if (prev && prev.state !== next.state && (next.state === "done" || next.state === "failed")) {
     emitCompletion(next, prev.state);
     firedCompletion = true;
   }
@@ -230,6 +243,7 @@ const STALE_NOTIFICATION_CUTOFF_SECONDS = 24 * 60 * 60;
 async function loadFromServer() {
   try {
     const res = await api.pipelineList();
+    queueSummary = res.queue ?? null;
     // Collect terminal jobs we haven't toasted yet *before* mutating the
     // jobs map. Anything in the response with state=done/failed and
     // notified_user_at=null is a "while you were away" completion.
@@ -346,17 +360,22 @@ export const pipelineStore = {
   async start(req: PipelineStartRequest): Promise<PipelineStartResponse> {
     const res = await api.pipelineStart(req);
     // Seed an optimistic row so the UI renders immediately. The next poll
-    // will replace it with the canonical upstream shape.
+    // will replace it with the canonical shape. The job may have won the bot
+    // slot ("running") or be waiting in line ("queued").
     const now = Math.floor(Date.now() / 1000);
     const seeded: PipelineJob = {
       job_id: res.jobId,
+      upstream_job_id: null,
       user_id: userIdFromToken() ?? 0,
       pipeline_type: req.pipelineType,
       book: res.scope.book,
       start_chapter: res.scope.startChapter,
       end_chapter: res.scope.endChapter,
       session_key: req.sessionKey,
-      state: "running",
+      state: res.status === "queued" ? "queued" : "running",
+      priority: 0,
+      queue_position: res.queuePosition ?? null,
+      queue_ahead: null,
       current_skill: null,
       current_status: null,
       error_kind: null,
@@ -381,6 +400,29 @@ export const pipelineStore = {
       emitFocusRequest(res.jobId);
     }
     return res;
+  },
+
+  // Withdraw a queued job. Optimistically drop it from the chip; if the server
+  // says it already reached the front (409 cannot_cancel), re-poll so the row
+  // reflects its real running state instead of vanishing.
+  async cancel(jobId: string): Promise<{ ok: boolean; state?: PipelineState }> {
+    try {
+      await api.pipelineCancel(jobId);
+      jobs.delete(jobId);
+      notify();
+      return { ok: true, state: "cancelled" };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        const body = e.body as { state?: PipelineState } | undefined;
+        await pollOne(jobId);
+        return { ok: false, state: body?.state };
+      }
+      throw e;
+    }
+  },
+
+  getQueueSummary(): PipelineQueueSummary | null {
+    return queueSummary;
   },
 
   async refresh(jobId: string) {

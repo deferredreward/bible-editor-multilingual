@@ -13,10 +13,15 @@ export interface ActiveLock {
   startedAt: number; // unix seconds
 }
 
+// States that lock the chapter: a run that's actively on the bot (or being
+// dispatched to it) will overwrite this chapter when it lands. A 'queued' job
+// has NOT started — it doesn't lock, so translators can keep editing a chapter
+// whose run is still waiting in line.
 const NON_TERMINAL = [
   "running",
   "paused_for_outage",
   "paused_for_usage_limit",
+  "dispatching",
 ] as const;
 
 // Returns the first non-terminal job covering this (book, chapter), or null
@@ -27,16 +32,17 @@ export async function activePipelineForChapter(
   book: string,
   chapter: number,
 ): Promise<ActiveLock | null> {
+  const statePlaceholders = NON_TERMINAL.map((_, i) => `?${i + 3}`).join(", ");
   const row = await env.DB.prepare(
     `SELECT job_id, pipeline_type, user_id, created_at
        FROM pipeline_jobs
       WHERE book = ?1
         AND start_chapter <= ?2 AND end_chapter >= ?2
-        AND state IN (?3, ?4, ?5)
+        AND state IN (${statePlaceholders})
       ORDER BY created_at ASC
       LIMIT 1`,
   )
-    .bind(book.toUpperCase(), chapter, NON_TERMINAL[0], NON_TERMINAL[1], NON_TERMINAL[2])
+    .bind(book.toUpperCase(), chapter, ...NON_TERMINAL)
     .first<{
       job_id: string;
       pipeline_type: string;

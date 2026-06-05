@@ -1,11 +1,19 @@
-// Thin proxy + tracker for the bp-assistant pipeline endpoints (see
-// docs/ai-pipeline-integration.md and the partner contract). Phase 1 keeps
-// state in D1 so polling survives a tab reload; we don't parse output yet.
+// Thin proxy + queue + tracker for the bp-assistant pipeline endpoints (see
+// docs/ai-pipeline-integration.md and the partner contract). State lives in
+// D1 so polling survives a tab reload.
+//
+// Concurrency: the fly.io bot (uw-bt-bot) can only run ONE pipeline at a time.
+// We enforce that globally here — POST /start enqueues a 'queued' row and a
+// single dispatcher (dispatchNext) sends one job to the bot at a time, claiming
+// the slot with an atomic D1 UPDATE...WHERE NOT EXISTS(active). Follow-up /
+// macro-chain steps enqueue with priority=1 so they jump the line and a macro
+// completes as one unit. Translators see their queue position and can cancel a
+// job that hasn't reached the front yet. See migration 0026_pipeline_queue.sql.
 //
 // Auth: every route requires a JWT (requireEditor). The shared BT_API_TOKEN
 // (same secret used by /api/tn-quick) authorizes us upstream. The translator's
-// DCS username is injected from the JWT — never from the request body — so a
-// caller can't attribute runs to other users.
+// DCS username is injected from the JWT / DB — never from the request body — so
+// a caller can't attribute runs to other users.
 
 import { Hono } from "hono";
 import { z } from "zod";
@@ -23,7 +31,23 @@ const DEFAULT_BASE = "https://uw-bt-bot.fly.dev";
 const PIPELINE_TYPES = ["generate", "notes", "tqs"] as const;
 type PipelineType = (typeof PIPELINE_TYPES)[number];
 
+// States that occupy the single bot slot. While any job is in one of these,
+// dispatchNext refuses to send another job upstream. 'dispatching' is the
+// transient "claimed the slot, upstream POST in flight" state.
+const ACTIVE_STATES = [
+  "running",
+  "paused_for_outage",
+  "paused_for_usage_limit",
+  "dispatching",
+] as const;
+
+// States the list endpoint surfaces by default (non-terminal work plus the
+// retry-able 'failed'). 'queued'/'dispatching' join the originals so the chip
+// shows pending work; 'cancelled'/'done' are terminal and only surface via
+// the unnotified-terminal path.
 const NON_TERMINAL_STATES = new Set([
+  "queued",
+  "dispatching",
   "running",
   "paused_for_outage",
   "paused_for_usage_limit",
@@ -58,7 +82,7 @@ const PipelineOptions = z
 // macro: generate -> notes -> tqs). Same scope as the parent; only the
 // pipelineType + options differ. The chain is a linked list — each row
 // stores its remainder, and on each done-transition the next step is
-// fired with its own remainder.
+// enqueued with its own remainder.
 const ChainStep = z
   .object({
     pipelineType: z.enum(PIPELINE_TYPES),
@@ -94,7 +118,8 @@ const StartBody = z
 interface StartResponse {
   jobId: string;
   scope: { book: string; startChapter: number; endChapter: number };
-  status: "running" | "already_running";
+  status: "running" | "queued" | "already_running";
+  queuePosition?: number;
 }
 
 interface StatusResponse {
@@ -149,6 +174,7 @@ async function resolveUsername(c: {
 
 interface PolledJob {
   job_id: string;
+  upstream_job_id: string | null;
   user_id: number;
   pipeline_type: string;
   book: string;
@@ -166,6 +192,192 @@ interface ChainStepValue {
   options?: unknown;
 }
 
+// Public summary of a single job — same shape the menu's 409 conflict dialog
+// already renders, reused for "what's running ahead of you" in the queue UI.
+interface PublicJobSummary {
+  job_id: string;
+  pipeline_type: string;
+  book: string;
+  start_chapter: number;
+  end_chapter: number;
+  state: string;
+  current_skill: string | null;
+  current_status: string | null;
+  created_at: number;
+  updated_at: number;
+  started_by_username: string | null;
+}
+
+// ── Queue helpers ──────────────────────────────────────────────────────────
+
+const ACTIVE_PLACEHOLDERS = ACTIVE_STATES.map((_, i) => `?${i + 1}`).join(",");
+
+// Snapshot of the global queue: the single active job (if any), the ordered
+// list of queued job_ids, and a per-job position map. Position is 1-based and
+// counts the active job — so the first queued job behind a running one is #2.
+async function queueSnapshot(env: Env): Promise<{
+  activeJob: PublicJobSummary | null;
+  activeCount: number;
+  queuedCount: number;
+  positions: Map<string, { position: number; ahead: number }>;
+}> {
+  const activeRs = await env.DB.prepare(
+    `SELECT j.job_id, j.pipeline_type, j.book, j.start_chapter, j.end_chapter,
+            j.state, j.current_skill, j.current_status, j.created_at, j.updated_at,
+            u.dcs_username AS started_by_username
+       FROM pipeline_jobs j
+       LEFT JOIN users u ON u.id = j.user_id
+      WHERE j.state IN (${ACTIVE_PLACEHOLDERS})
+      ORDER BY j.created_at ASC`,
+  )
+    .bind(...ACTIVE_STATES)
+    .all<PublicJobSummary>();
+  const active = activeRs.results ?? [];
+  const activeCount = active.length;
+
+  const queuedRs = await env.DB.prepare(
+    `SELECT job_id FROM pipeline_jobs
+      WHERE state = 'queued'
+      ORDER BY priority DESC, created_at ASC`,
+  ).all<{ job_id: string }>();
+  const queued = queuedRs.results ?? [];
+
+  const positions = new Map<string, { position: number; ahead: number }>();
+  queued.forEach((row, i) => {
+    positions.set(row.job_id, { position: activeCount + i + 1, ahead: activeCount + i });
+  });
+
+  return {
+    activeJob: active[0] ?? null,
+    activeCount,
+    queuedCount: queued.length,
+    positions,
+  };
+}
+
+// Atomically claim the single bot slot for the highest-priority oldest queued
+// job, then send it upstream. Safe under concurrent invocation: the claim is
+// one UPDATE...WHERE NOT EXISTS(active) statement, which D1 serializes — only
+// one caller can flip a row to 'dispatching' while no other job is active.
+// No-op when the queue is empty or the slot is busy. On upstream failure the
+// job is marked 'failed' (freeing the slot) rather than retried, so we never
+// auto-launch a second concurrent run.
+export async function dispatchNext(env: Env): Promise<void> {
+  if (!env.BT_API_TOKEN) return;
+
+  // Claim: promote the head queued row to 'dispatching' iff nothing is active.
+  const claim = await env.DB.prepare(
+    `UPDATE pipeline_jobs
+        SET state = 'dispatching', updated_at = unixepoch()
+      WHERE job_id = (
+              SELECT job_id FROM pipeline_jobs
+               WHERE state = 'queued'
+               ORDER BY priority DESC, created_at ASC
+               LIMIT 1
+            )
+        AND NOT EXISTS (
+              SELECT 1 FROM pipeline_jobs WHERE state IN (${ACTIVE_PLACEHOLDERS})
+            )`,
+  )
+    .bind(...ACTIVE_STATES)
+    .run();
+  if ((claim.meta?.changes ?? 0) === 0) return; // nothing to dispatch / slot busy
+
+  // By invariant there is now exactly one 'dispatching' row — the one we just
+  // claimed (the NOT EXISTS guard above prevents a second).
+  const job = await env.DB.prepare(
+    `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
+            session_key, options_json
+       FROM pipeline_jobs WHERE state = 'dispatching' LIMIT 1`,
+  ).first<{
+    job_id: string;
+    user_id: number;
+    pipeline_type: string;
+    book: string;
+    start_chapter: number;
+    end_chapter: number;
+    session_key: string;
+    options_json: string | null;
+  }>();
+  if (!job) return;
+
+  const fail = async (kind: string, message: string) => {
+    await env.DB.prepare(
+      `UPDATE pipeline_jobs
+          SET state = 'failed', error_kind = ?2, error_message = ?3,
+              updated_at = unixepoch()
+        WHERE job_id = ?1`,
+    )
+      .bind(job.job_id, kind, message.slice(0, 500))
+      .run();
+  };
+
+  const username = await resolveUsernameFromDb(env, job.user_id);
+  if (!username) {
+    await fail("sdk_error", "username_missing");
+    return;
+  }
+
+  let options: unknown;
+  if (job.options_json) {
+    try {
+      options = JSON.parse(job.options_json);
+    } catch {
+      /* corrupt snapshot — dispatch without options rather than wedge */
+    }
+  }
+
+  const upstreamBody = {
+    pipelineType: job.pipeline_type,
+    book: job.book,
+    startChapter: job.start_chapter,
+    endChapter: job.end_chapter,
+    username,
+    sessionKey: job.session_key,
+    ...(options ? { options } : {}),
+  };
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${upstreamBase(env)}/api/pipeline/start`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.BT_API_TOKEN}`,
+      },
+      body: JSON.stringify(upstreamBody),
+    });
+  } catch {
+    await fail("transient_outage", "upstream_unreachable");
+    return;
+  }
+
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    await fail("sdk_error", `upstream ${upstream.status}: ${text.slice(0, 200)}`);
+    return;
+  }
+  let parsed: { jobId?: string } | null = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    /* fall through to malformed handling */
+  }
+  if (!parsed || typeof parsed.jobId !== "string") {
+    await fail("missing_output", `upstream missing jobId: ${text.slice(0, 200)}`);
+    return;
+  }
+
+  // Slot is ours and upstream accepted — record the bot's id and go running.
+  await env.DB.prepare(
+    `UPDATE pipeline_jobs
+        SET state = 'running', upstream_job_id = ?2, updated_at = unixepoch()
+      WHERE job_id = ?1`,
+  )
+    .bind(job.job_id, parsed.jobId)
+    .run();
+}
+
 // Shared "fetch upstream, run import, update DB, fire follow-up" body used
 // by both the GET handler and the scheduled cron poller. Returns the raw
 // upstream response so callers that need to pass it through can do so;
@@ -179,10 +391,15 @@ async function pollPipelineJob(
   | { kind: "malformed"; text: string }
   | { kind: "ok"; text: string; status: number; state: string }
 > {
+  // A job without an upstream id hasn't reached the bot yet (queued or being
+  // dispatched). Nothing to poll — callers handle these via queueSnapshot.
+  if (!job.upstream_job_id) {
+    return { kind: "ok", text: "{}", status: 200, state: "queued" };
+  }
   let upstream: Response;
   try {
     upstream = await fetch(
-      `${upstreamBase(env)}/api/pipeline/${encodeURIComponent(job.job_id)}`,
+      `${upstreamBase(env)}/api/pipeline/${encodeURIComponent(job.upstream_job_id)}`,
       { headers: { Authorization: `Bearer ${env.BT_API_TOKEN}` } },
     );
   } catch {
@@ -270,7 +487,7 @@ async function pollPipelineJob(
     try {
       const username = await resolveUsernameFromDb(env, job.user_id);
       if (username && job.follow_up_chain) {
-        await fireFollowUpFromChain(env, {
+        await enqueueFollowUpFromChain(env, {
           parentJobId: job.job_id,
           parentSessionKey: job.session_key,
           book: job.book,
@@ -278,10 +495,9 @@ async function pollPipelineJob(
           endChapter: job.end_chapter,
           chainJson: job.follow_up_chain,
           userId: job.user_id,
-          username,
         });
       } else if (username && job.follow_up_options) {
-        await fireFollowUp(env, {
+        await enqueueFollowUp(env, {
           parentJobId: job.job_id,
           parentSessionKey: job.session_key,
           pipelineType: job.pipeline_type as PipelineType,
@@ -290,11 +506,21 @@ async function pollPipelineJob(
           endChapter: job.end_chapter,
           followUpOptionsJson: job.follow_up_options,
           userId: job.user_id,
-          username,
         });
       }
     } catch (err) {
       console.error(`[pipelineFollowUp] job=${job.job_id} failed:`, err);
+    }
+  }
+
+  // On any terminal transition the bot slot is now free — pull the next job
+  // (the priority=1 follow-up just enqueued, if any, wins). importFailed holds
+  // the job at 'running' deliberately, so it won't free the slot here.
+  if (effectiveState === "done" || effectiveState === "failed") {
+    try {
+      await dispatchNext(env);
+    } catch (err) {
+      console.error(`[dispatchNext] after job=${job.job_id}:`, err);
     }
   }
 
@@ -330,6 +556,12 @@ const STUCK_JOB_THRESHOLD_SECONDS = 86400 * 2;
 // at the */5 cron cadence ≈ 8 hours; well past any legitimate slow run.
 const MAX_POLL_ATTEMPTS = 100;
 
+// A 'dispatching' row is mid-flight on the upstream POST, which returns in
+// seconds. Anything stuck this long is a Worker that died between claiming the
+// slot and recording the result — fail it (don't auto-re-dispatch) so we never
+// risk launching a second concurrent run, and free the slot for the queue.
+const STUCK_DISPATCH_THRESHOLD_SECONDS = 120;
+
 // Polls every non-terminal pipeline_job. Designed for the scheduled
 // handler — runs in parallel with per-job error isolation so one stuck
 // upstream call doesn't drag the batch down.
@@ -360,34 +592,57 @@ export async function pollAllNonTerminal(env: Env): Promise<void> {
   )
     .bind(MAX_POLL_ATTEMPTS)
     .run();
+  // Recover wedged dispatches so a dead-mid-POST Worker can't hold the slot
+  // forever.
+  await env.DB.prepare(
+    `UPDATE pipeline_jobs
+        SET state = 'failed',
+            error_kind = 'interrupted',
+            error_message = 'auto-failed: dispatch did not complete',
+            updated_at = unixepoch()
+      WHERE state = 'dispatching'
+        AND updated_at < unixepoch() - ?1`,
+  )
+    .bind(STUCK_DISPATCH_THRESHOLD_SECONDS)
+    .run();
   const rs = await env.DB.prepare(
-    `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-            session_key, follow_up_options, follow_up_chain, follow_up_job_id,
-            (output_json IS NULL) AS no_output_yet
+    `SELECT job_id, upstream_job_id, user_id, pipeline_type, book, start_chapter,
+            end_chapter, session_key, follow_up_options, follow_up_chain,
+            follow_up_job_id, (output_json IS NULL) AS no_output_yet
        FROM pipeline_jobs
       WHERE state IN ('running', 'paused_for_outage', 'paused_for_usage_limit')
       ORDER BY updated_at ASC
       LIMIT 50`,
   ).all<PolledJob>();
   const jobs = rs.results ?? [];
-  if (jobs.length === 0) return;
-  // Bump attempt_count for everything we're about to poll, in one batch. We
-  // do this BEFORE the upstream calls so a Worker crash doesn't undo the
-  // increment — the cap is the whole point of this column.
-  await env.DB.prepare(
-    `UPDATE pipeline_jobs
-        SET attempt_count = attempt_count + 1
-      WHERE job_id IN (${jobs.map((_, i) => `?${i + 1}`).join(",")})`,
-  )
-    .bind(...jobs.map((j) => j.job_id))
-    .run();
-  await Promise.allSettled(
-    jobs.map((j) =>
-      pollPipelineJob(env, j).catch((err) => {
-        console.error(`[scheduled.pipelinePoll] job=${j.job_id}:`, err);
-      }),
-    ),
-  );
+  if (jobs.length > 0) {
+    // Bump attempt_count for everything we're about to poll, in one batch. We
+    // do this BEFORE the upstream calls so a Worker crash doesn't undo the
+    // increment — the cap is the whole point of this column.
+    await env.DB.prepare(
+      `UPDATE pipeline_jobs
+          SET attempt_count = attempt_count + 1
+        WHERE job_id IN (${jobs.map((_, i) => `?${i + 1}`).join(",")})`,
+    )
+      .bind(...jobs.map((j) => j.job_id))
+      .run();
+    await Promise.allSettled(
+      jobs.map((j) =>
+        pollPipelineJob(env, j).catch((err) => {
+          console.error(`[scheduled.pipelinePoll] job=${j.job_id}:`, err);
+        }),
+      ),
+    );
+  }
+
+  // Safety net: if the slot is free and something is queued, dispatch it. This
+  // covers a terminal transition whose inline dispatchNext was missed (e.g. a
+  // Worker crash) and the first job after the bot was idle.
+  try {
+    await dispatchNext(env);
+  } catch (err) {
+    console.error("[scheduled.dispatchNext]:", err);
+  }
 }
 
 // POST /api/pipelines/start
@@ -415,6 +670,56 @@ pipelines.post("/start", requireEditor, async (c) => {
   const startChapter = parsed.data.startChapter;
   const endChapter = parsed.data.endChapter ?? startChapter;
   const book = parsed.data.book.toUpperCase();
+
+  // De-dup against our own queue/active set before enqueueing (replaces
+  // relying on the bot's same-scope 409, which can't see our queue). Same
+  // user + same scope/type → focus the existing job. Different user → the
+  // enriched 409 the menu renders as an "Already running / queued" dialog.
+  const dup = await c.env.DB.prepare(
+    `SELECT j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
+            j.end_chapter, j.state, j.current_skill, j.current_status,
+            j.created_at, j.updated_at, u.dcs_username AS started_by_username
+       FROM pipeline_jobs j
+       LEFT JOIN users u ON u.id = j.user_id
+      WHERE j.book = ?1 AND j.start_chapter = ?2 AND j.end_chapter = ?3
+        AND j.pipeline_type = ?4
+        AND j.state IN ('queued', 'dispatching', 'running',
+                        'paused_for_outage', 'paused_for_usage_limit')
+      ORDER BY j.created_at ASC
+      LIMIT 1`,
+  )
+    .bind(book, startChapter, endChapter, parsed.data.pipelineType)
+    .first<PublicJobSummary & { user_id: number }>();
+  if (dup) {
+    if (dup.user_id === userId) {
+      const resp: StartResponse = {
+        jobId: dup.job_id,
+        scope: { book, startChapter, endChapter },
+        status: "already_running",
+      };
+      return c.json(resp);
+    }
+    return c.json(
+      {
+        error: "conflict",
+        jobId: dup.job_id,
+        existing: {
+          job_id: dup.job_id,
+          pipeline_type: dup.pipeline_type,
+          book: dup.book,
+          start_chapter: dup.start_chapter,
+          end_chapter: dup.end_chapter,
+          state: dup.state,
+          current_skill: dup.current_skill,
+          current_status: dup.current_status,
+          created_at: dup.created_at,
+          updated_at: dup.updated_at,
+          started_by_username: dup.started_by_username,
+        },
+      },
+      409,
+    );
+  }
 
   // For notes pipelines, gather any hint=1 stubs the editor has queued in
   // the chapter range and fold them into options.hints. The proxy is the
@@ -454,77 +759,9 @@ pipelines.post("/start", requireEditor, async (c) => {
     }
   }
 
-  const upstreamBody = {
-    pipelineType: parsed.data.pipelineType,
-    book,
-    startChapter,
-    endChapter,
-    username,
-    sessionKey: parsed.data.sessionKey,
-    ...(mergedOptions ? { options: mergedOptions } : {}),
-  };
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${upstreamBase(c.env)}/api/pipeline/start`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${c.env.BT_API_TOKEN}`,
-      },
-      body: JSON.stringify(upstreamBody),
-    });
-  } catch {
-    return c.json({ error: "upstream_unreachable" }, 502);
-  }
-
-  const text = await upstream.text();
-  let parsedUpstream: unknown = null;
-  try {
-    parsedUpstream = JSON.parse(text);
-  } catch {
-    /* keep as null; non-JSON upstream is a bug we want to surface */
-  }
-
-  // Pass non-2xx through verbatim (matches the contract's error shapes).
-  if (!upstream.ok) {
-    // 409 conflict means another sessionKey already has this (pipelineType,
-    // scope) running upstream. The conflicting jobId is usually in our D1
-    // already because every editor-triggered start inserts a row. Enrich the
-    // response so translator B can see who's running it and how long ago
-    // without a second round-trip or an ownership-bumping endpoint.
-    if (upstream.status === 409 && parsedUpstream) {
-      const conflict = parsedUpstream as { error?: string; jobId?: string };
-      if (conflict.error === "conflict" && typeof conflict.jobId === "string") {
-        const existing = await c.env.DB.prepare(
-          `SELECT j.job_id, j.pipeline_type, j.book, j.start_chapter, j.end_chapter,
-                  j.state, j.current_skill, j.current_status, j.created_at,
-                  j.updated_at, u.dcs_username AS started_by_username
-             FROM pipeline_jobs j
-             LEFT JOIN users u ON u.id = j.user_id
-            WHERE j.job_id = ?1`,
-        )
-          .bind(conflict.jobId)
-          .first();
-        if (existing) {
-          return c.json({ ...conflict, existing }, 409);
-        }
-      }
-    }
-    return new Response(text, {
-      status: upstream.status,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const data = parsedUpstream as StartResponse | null;
-  if (!data || typeof data.jobId !== "string") {
-    return c.json({ error: "upstream_malformed" }, 502);
-  }
-
-  // INSERT OR REPLACE: a same-key re-POST (already_running) refreshes our
-  // row's updated_at without colliding. The jobId is durably stable per
-  // (sessionKey, pipelineType, scope) on the upstream side.
+  // Enqueue. The job goes to the bot only when dispatchNext claims the slot.
+  const jobId = crypto.randomUUID();
+  const optionsJson = mergedOptions ? JSON.stringify(mergedOptions) : null;
   const followUpJson = parsed.data.followUpOptions
     ? JSON.stringify(parsed.data.followUpOptions)
     : null;
@@ -534,31 +771,63 @@ pipelines.post("/start", requireEditor, async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO pipeline_jobs (
        job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-       session_key, state, follow_up_options, follow_up_chain, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, ?9, unixepoch(), unixepoch())
-     ON CONFLICT(job_id) DO UPDATE SET
-       state = excluded.state,
-       follow_up_options = COALESCE(excluded.follow_up_options, pipeline_jobs.follow_up_options),
-       follow_up_chain = COALESCE(excluded.follow_up_chain, pipeline_jobs.follow_up_chain),
-       updated_at = unixepoch()`,
+       session_key, state, priority, options_json, follow_up_options,
+       follow_up_chain, created_at, updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 0, ?8, ?9, ?10,
+               unixepoch(), unixepoch())`,
   )
     .bind(
-      data.jobId,
+      jobId,
       userId,
       parsed.data.pipelineType,
       book,
       startChapter,
       endChapter,
       parsed.data.sessionKey,
+      optionsJson,
       followUpJson,
       followUpChainJson,
     )
     .run();
 
-  return new Response(text, {
-    status: upstream.status,
-    headers: { "Content-Type": "application/json" },
-  });
+  // Try to dispatch immediately — the common case (empty queue) goes straight
+  // to running. dispatchNext claims the head of the queue, which may be a
+  // higher-priority job than this one, so re-read this job's resulting state.
+  try {
+    await dispatchNext(c.env);
+  } catch (err) {
+    console.error("[start.dispatchNext]:", err);
+  }
+
+  const after = await c.env.DB.prepare(
+    `SELECT state, error_message FROM pipeline_jobs WHERE job_id = ?1`,
+  )
+    .bind(jobId)
+    .first<{ state: string; error_message: string | null }>();
+  const state = after?.state ?? "queued";
+
+  if (state === "running" || state === "dispatching") {
+    const resp: StartResponse = {
+      jobId,
+      scope: { book, startChapter, endChapter },
+      status: "running",
+    };
+    return c.json(resp);
+  }
+  if (state === "failed") {
+    // This job won the slot but the upstream POST failed during its own
+    // dispatch. Surface it so the menu toasts instead of pretending success.
+    return c.json({ error: "upstream_error", message: after?.error_message ?? "dispatch failed" }, 502);
+  }
+  // Still queued — something else holds the slot or is ahead by priority.
+  const snap = await queueSnapshot(c.env);
+  const resp: StartResponse = {
+    jobId,
+    scope: { book, startChapter, endChapter },
+    status: "queued",
+    queuePosition: snap.positions.get(jobId)?.position,
+  };
+  return c.json(resp);
 });
 
 // GET /api/pipelines/:jobId
@@ -575,15 +844,43 @@ pipelines.get("/:jobId", requireEditor, async (c) => {
   // pollPipelineJob() handles fetch/import/update/follow-up; we just gate
   // it on the requester owning the job.
   const owned = await c.env.DB.prepare(
-    `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-            session_key, follow_up_options, follow_up_chain, follow_up_job_id,
-            (output_json IS NULL) AS no_output_yet
+    `SELECT job_id, upstream_job_id, user_id, pipeline_type, book, start_chapter,
+            end_chapter, session_key, follow_up_options, follow_up_chain,
+            follow_up_job_id, state, current_skill, current_status, created_at,
+            updated_at, (output_json IS NULL) AS no_output_yet
        FROM pipeline_jobs WHERE job_id = ?1`,
   )
     .bind(jobId)
-    .first<PolledJob>();
+    .first<PolledJob & {
+      state: string;
+      current_skill: string | null;
+      current_status: string | null;
+      created_at: number;
+      updated_at: number;
+    }>();
   if (!owned) return c.json({ error: "not_found" }, 404);
   if (owned.user_id !== userId) return c.json({ error: "forbidden" }, 403);
+
+  // Queued / dispatching jobs aren't on the bot yet — synthesize a status
+  // payload from D1 plus the live queue position, no upstream round-trip.
+  if (!owned.upstream_job_id) {
+    const snap = await queueSnapshot(c.env);
+    const pos = snap.positions.get(owned.job_id);
+    return c.json({
+      jobId: owned.job_id,
+      pipelineType: owned.pipeline_type,
+      scope: {
+        book: owned.book,
+        startChapter: owned.start_chapter,
+        endChapter: owned.end_chapter,
+      },
+      state: owned.state,
+      updatedAt: new Date(owned.updated_at * 1000).toISOString(),
+      createdAt: new Date(owned.created_at * 1000).toISOString(),
+      queuePosition: pos?.position,
+      queueAhead: pos?.ahead,
+    });
+  }
 
   const result = await pollPipelineJob(c.env, owned);
   if (result.kind === "unreachable") return c.json({ error: "upstream_unreachable" }, 502);
@@ -603,79 +900,51 @@ interface FollowUpInput {
   endChapter: number;
   followUpOptionsJson: string;
   userId: number;
-  username: string;
 }
 
-// Fires the parent's queued follow-up as a fresh upstream call + new
-// pipeline_jobs row. Uses a derived sessionKey so upstream's
-// (sessionKey, pipelineType, scope) dedup doesn't collide with the parent.
-// Atomic against concurrent polls via the WHERE follow_up_job_id IS NULL
-// guard on the parent UPDATE.
-async function fireFollowUp(env: Env, input: FollowUpInput): Promise<void> {
-  const followUpOptions = JSON.parse(input.followUpOptionsJson);
+// Enqueues the parent's queued same-type follow-up as a fresh priority=1
+// pipeline_jobs row (asymmetric ULT/UST alignment). It does NOT call the bot —
+// dispatchNext sends it upstream when the slot frees, which (priority=1) is
+// ahead of other users' queued jobs so the pair stays together. The child's
+// job_id is derived deterministically from the parent so two concurrent polls
+// collapse via ON CONFLICT DO NOTHING; the parent claim guard makes the whole
+// thing idempotent.
+async function enqueueFollowUp(env: Env, input: FollowUpInput): Promise<void> {
+  const followUpOptions = input.followUpOptionsJson; // already JSON text
   // Derive a sessionKey that fits the same character class as the parent's
   // (POST validator: ^[A-Za-z0-9_\-/]+$). The "/followup" suffix avoids
   // colliding with the parent on the upstream dedup key.
   const childSessionKey = `${input.parentSessionKey}/followup`;
-  const upstreamBody = {
-    pipelineType: input.pipelineType,
-    book: input.book,
-    startChapter: input.startChapter,
-    endChapter: input.endChapter,
-    username: input.username,
-    sessionKey: childSessionKey,
-    options: followUpOptions,
-  };
+  const childJobId = `${input.parentJobId}:followup`;
 
-  const upstream = await fetch(`${upstreamBase(env)}/api/pipeline/start`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.BT_API_TOKEN}`,
-    },
-    body: JSON.stringify(upstreamBody),
-  });
-  const text = await upstream.text();
-  if (!upstream.ok) {
-    throw new Error(`upstream ${upstream.status}: ${text.slice(0, 200)}`);
-  }
-  let parsed: StartResponse | null = null;
-  try {
-    parsed = JSON.parse(text) as StartResponse;
-  } catch {
-    throw new Error(`upstream returned non-JSON: ${text.slice(0, 200)}`);
-  }
-  if (!parsed || typeof parsed.jobId !== "string") {
-    throw new Error(`upstream missing jobId: ${text.slice(0, 200)}`);
-  }
-
-  // Claim + insert as one batch so a crash between them can't orphan the
-  // upstream-running follow-up. Upstream is idempotent on (sessionKey,
-  // pipelineType, scope), so a retry returns the same jobId; ON CONFLICT
-  // DO NOTHING then collapses the second attempt into a no-op.
+  // Claim + insert as one atomic batch so a crash between them can't orphan
+  // the child or lose the follow-up. The parent guard (follow_up_job_id IS
+  // NULL) means only the first poll wins; the deterministic childJobId means a
+  // racing second poll's INSERT collapses via ON CONFLICT DO NOTHING.
   await env.DB.batch([
     env.DB
       .prepare(
         `UPDATE pipeline_jobs SET follow_up_job_id = ?1
           WHERE job_id = ?2 AND follow_up_job_id IS NULL`,
       )
-      .bind(parsed.jobId, input.parentJobId),
+      .bind(childJobId, input.parentJobId),
     env.DB
       .prepare(
         `INSERT INTO pipeline_jobs (
            job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-           session_key, state, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', unixepoch(), unixepoch())
+           session_key, state, priority, options_json, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 1, ?8, unixepoch(), unixepoch())
          ON CONFLICT(job_id) DO NOTHING`,
       )
       .bind(
-        parsed.jobId,
+        childJobId,
         input.userId,
         input.pipelineType,
         input.book,
         input.startChapter,
         input.endChapter,
         childSessionKey,
+        followUpOptions,
       ),
   ]);
 }
@@ -688,17 +957,14 @@ interface FollowUpChainInput {
   endChapter: number;
   chainJson: string;
   userId: number;
-  username: string;
 }
 
-// Fires the next step of a cross-type chain (e.g. generate -> notes -> tqs)
+// Enqueues the next step of a cross-type chain (e.g. generate -> notes -> tqs)
 // on a parent done-transition. Pops the first chain element, uses it as the
 // child's pipelineType + options, and stores the remainder on the child row
-// so the same logic fires the next step when this child completes.
-//
-// Idempotent against concurrent polls via the WHERE follow_up_job_id IS NULL
-// guard on the parent UPDATE. Same atomicity story as fireFollowUp.
-async function fireFollowUpFromChain(env: Env, input: FollowUpChainInput): Promise<void> {
+// so the same logic fires the next step when this child completes. Same
+// priority=1 + atomic-batch + deterministic-id idempotency as enqueueFollowUp.
+async function enqueueFollowUpFromChain(env: Env, input: FollowUpChainInput): Promise<void> {
   let chain: ChainStepValue[];
   try {
     chain = JSON.parse(input.chainJson) as ChainStepValue[];
@@ -718,39 +984,9 @@ async function fireFollowUpFromChain(env: Env, input: FollowUpChainInput): Promi
   // if two adjacent links happen to share a pipelineType.
   const depth = countChainSuffixes(input.parentSessionKey);
   const childSessionKey = `${input.parentSessionKey}/chain${depth + 1}`;
+  const childJobId = `${input.parentJobId}:chain${depth + 1}`;
   const childChainJson = rest.length > 0 ? JSON.stringify(rest) : null;
-
-  const upstreamBody = {
-    pipelineType: next.pipelineType,
-    book: input.book,
-    startChapter: input.startChapter,
-    endChapter: input.endChapter,
-    username: input.username,
-    sessionKey: childSessionKey,
-    ...(next.options ? { options: next.options } : {}),
-  };
-
-  const upstream = await fetch(`${upstreamBase(env)}/api/pipeline/start`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.BT_API_TOKEN}`,
-    },
-    body: JSON.stringify(upstreamBody),
-  });
-  const text = await upstream.text();
-  if (!upstream.ok) {
-    throw new Error(`upstream ${upstream.status}: ${text.slice(0, 200)}`);
-  }
-  let parsed: StartResponse | null = null;
-  try {
-    parsed = JSON.parse(text) as StartResponse;
-  } catch {
-    throw new Error(`upstream returned non-JSON: ${text.slice(0, 200)}`);
-  }
-  if (!parsed || typeof parsed.jobId !== "string") {
-    throw new Error(`upstream missing jobId: ${text.slice(0, 200)}`);
-  }
+  const childOptionsJson = next.options ? JSON.stringify(next.options) : null;
 
   await env.DB.batch([
     env.DB
@@ -758,23 +994,25 @@ async function fireFollowUpFromChain(env: Env, input: FollowUpChainInput): Promi
         `UPDATE pipeline_jobs SET follow_up_job_id = ?1
           WHERE job_id = ?2 AND follow_up_job_id IS NULL`,
       )
-      .bind(parsed.jobId, input.parentJobId),
+      .bind(childJobId, input.parentJobId),
     env.DB
       .prepare(
         `INSERT INTO pipeline_jobs (
            job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-           session_key, state, follow_up_chain, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, unixepoch(), unixepoch())
+           session_key, state, priority, options_json, follow_up_chain,
+           created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 1, ?8, ?9, unixepoch(), unixepoch())
          ON CONFLICT(job_id) DO NOTHING`,
       )
       .bind(
-        parsed.jobId,
+        childJobId,
         input.userId,
         next.pipelineType,
         input.book,
         input.startChapter,
         input.endChapter,
         childSessionKey,
+        childOptionsJson,
         childChainJson,
       ),
   ]);
@@ -789,14 +1027,16 @@ function countChainSuffixes(sessionKey: string): number {
 // Reconciliation surface for the browser when a tab opens/reloads.
 //
 // Default behavior (no ?state= filter) returns:
-//   - non-terminal jobs (running, paused_*, failed — the failure case is
-//     listed here even though it's terminal because the user might still
-//     retry it), AND
+//   - non-terminal jobs (queued, dispatching, running, paused_*, failed — the
+//     failure case is listed even though terminal because the user might retry
+//     it), AND
 //   - terminal jobs that haven't been "notified" yet, so the browser can
 //     fire a "while you were away" toast on first load after the server's
 //     cron finished a job in the user's absence.
 //
-// An explicit ?state= filter overrides this and returns exactly that set.
+// Queued rows are annotated with their global queue position, and the response
+// carries a `queue` summary (what's running, total queued) so the UI can show
+// "what's ahead of you". An explicit ?state= filter overrides the default set.
 pipelines.get("/", requireEditor, async (c) => {
   const userId = currentUserId(c);
   if (!userId) return c.json({ error: "unauthorized" }, 401);
@@ -810,9 +1050,10 @@ pipelines.get("/", requireEditor, async (c) => {
     : null;
 
   let rs;
-  const columns = `job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-            session_key, state, current_skill, current_status, error_kind,
-            error_message, output_json, follow_up_job_id, created_at, updated_at,
+  const columns = `job_id, upstream_job_id, user_id, pipeline_type, book,
+            start_chapter, end_chapter, session_key, state, priority,
+            current_skill, current_status, error_kind, error_message,
+            output_json, follow_up_job_id, created_at, updated_at,
             last_polled_at, notified_user_at`;
 
   if (stateList === null) {
@@ -832,7 +1073,7 @@ pipelines.get("/", requireEditor, async (c) => {
       .bind(userId, ...nonTerminal)
       .all<PipelineRowSelect>();
   } else if (stateList.length === 0) {
-    return c.json({ jobs: [] });
+    return c.json({ jobs: [], queue: { activeJob: null, queuedCount: 0 } });
   } else {
     const placeholders = stateList.map((_, i) => `?${i + 2}`).join(",");
     rs = await c.env.DB.prepare(
@@ -846,11 +1087,24 @@ pipelines.get("/", requireEditor, async (c) => {
       .all<PipelineRowSelect>();
   }
 
-  return c.json({ jobs: rs.results });
+  const snap = await queueSnapshot(c.env);
+  const jobs = (rs.results ?? []).map((row) => {
+    if (row.state === "queued") {
+      const pos = snap.positions.get(row.job_id);
+      return { ...row, queue_position: pos?.position ?? null, queue_ahead: pos?.ahead ?? null };
+    }
+    return row;
+  });
+
+  return c.json({
+    jobs,
+    queue: { activeJob: snap.activeJob, queuedCount: snap.queuedCount },
+  });
 });
 
 interface PipelineRowSelect {
   job_id: string;
+  upstream_job_id: string | null;
   user_id: number;
   pipeline_type: PipelineType;
   book: string;
@@ -858,6 +1112,7 @@ interface PipelineRowSelect {
   end_chapter: number;
   session_key: string;
   state: string;
+  priority: number;
   current_skill: string | null;
   current_status: string | null;
   error_kind: string | null;
@@ -869,6 +1124,49 @@ interface PipelineRowSelect {
   last_polled_at: number | null;
   notified_user_at: number | null;
 }
+
+// POST /api/pipelines/:jobId/cancel  — withdraw a job that hasn't reached the
+// front of the line yet. Only 'queued' jobs are cancellable (they never
+// touched the bot); a job that's already 'dispatching'/'running' or terminal
+// returns 409. Sets notified_user_at so the cancelled row doesn't resurface as
+// a "while you were away" item on the next reload.
+pipelines.post("/:jobId/cancel", requireEditor, async (c) => {
+  const userId = currentUserId(c);
+  if (!userId) return c.json({ error: "unauthorized" }, 401);
+  const jobId = c.req.param("jobId");
+  if (!jobId) return c.json({ error: "missing_job_id" }, 400);
+
+  const owned = await c.env.DB.prepare(
+    `SELECT user_id, state FROM pipeline_jobs WHERE job_id = ?1`,
+  )
+    .bind(jobId)
+    .first<{ user_id: number; state: string }>();
+  if (!owned) return c.json({ error: "not_found" }, 404);
+  if (owned.user_id !== userId) return c.json({ error: "forbidden" }, 403);
+  if (owned.state !== "queued") {
+    return c.json({ error: "cannot_cancel", state: owned.state }, 409);
+  }
+
+  // Guard on state='queued' again in the UPDATE so a concurrent dispatch that
+  // just claimed this row (queued -> dispatching) can't be cancelled out from
+  // under the bot.
+  const res = await c.env.DB.prepare(
+    `UPDATE pipeline_jobs
+        SET state = 'cancelled', notified_user_at = unixepoch(), updated_at = unixepoch()
+      WHERE job_id = ?1 AND state = 'queued'`,
+  )
+    .bind(jobId)
+    .run();
+  if ((res.meta?.changes ?? 0) === 0) {
+    const now = await c.env.DB.prepare(
+      `SELECT state FROM pipeline_jobs WHERE job_id = ?1`,
+    )
+      .bind(jobId)
+      .first<{ state: string }>();
+    return c.json({ error: "cannot_cancel", state: now?.state ?? "unknown" }, 409);
+  }
+  return c.json({ ok: true, jobId, state: "cancelled" });
+});
 
 // POST /api/pipelines/:jobId/notified  — mark a terminal job as having
 // surfaced a toast in the user's UI, so the next page load doesn't re-toast
