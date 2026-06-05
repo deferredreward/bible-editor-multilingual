@@ -220,6 +220,23 @@ export default {
     // when no translator has a tab open. Branching on controller.cron
     // keeps the work cheaply separated.
     if (controller.cron === EXPORT_CRON) {
+      // Finalize trashed notes before exporting. Trash (trashed_at) is a
+      // visible, restorable safety net; the nightly tick promotes it to a
+      // permanent deleted_at tombstone — which is hidden from reads, excluded
+      // from the export below, and skipped by the daily reimport so it can't
+      // resurrect. Keep the original deletion time (deleted_at = trashed_at).
+      // Audit first (reads pre-update state), then promote.
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, source)
+           SELECT 'tn', id, book, NULL, version, version, 'delete', 'nightly_finalize'
+             FROM tn_rows WHERE trashed_at IS NOT NULL AND deleted_at IS NULL`,
+        ),
+        env.DB.prepare(
+          `UPDATE tn_rows SET deleted_at = trashed_at, trashed_at = NULL
+            WHERE trashed_at IS NOT NULL AND deleted_at IS NULL`,
+        ),
+      ]);
       // Scheduled run opts into validate-and-merge — the whole point of the
       // 06:00 UTC tick is to land the snapshot on DCS and let the validator
       // merge it. Manual /api/exports/run leaves validateAndMerge unset so

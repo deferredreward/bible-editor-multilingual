@@ -623,6 +623,45 @@ function coerceBitValue(raw: 0 | 1 | boolean): 0 | 1 {
   return raw === true || raw === 1 ? 1 : 0;
 }
 
+// Flip the visible "trash" state on a tn row. Like setTnBit (preserve/hint),
+// this does NOT bump `version` — it's a reversible state flip, not a content
+// edit — so in-flight If-Match preconditions on the same row stay valid and no
+// 409 friction is introduced. `trashed_at` is distinct from `deleted_at`: a
+// trashed row stays visible (grayed, sorted last) and restorable until the
+// nightly job promotes it to a deleted_at tombstone. updated_by is left alone
+// (standing authorship is whoever wrote the note content). The audit action is
+// 'trash'/'untrash' — deliberately NOT in the history version filter, so these
+// flips don't surface as duplicate-version rows in the history dialog.
+async function setTnTrashed(
+  env: Env,
+  id: string,
+  book: string,
+  userId: number | null,
+  trashed: boolean,
+): Promise<TnRow | null> {
+  const now = Math.floor(Date.now() / 1000);
+  const action = trashed ? "trash" : "untrash";
+  const [updateRes] = await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE tn_rows
+           SET trashed_at = ?1, updated_at = ?2
+         WHERE id = ?3 AND deleted_at IS NULL${bookClause(4)}`,
+      )
+      .bind(trashed ? now : null, now, id, book),
+    env.DB
+      .prepare(
+        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action)
+         SELECT 'tn', ?1, book, ?2, version, version, ?3
+           FROM tn_rows
+          WHERE id = ?1 AND deleted_at IS NULL${bookClause(4)}`,
+      )
+      .bind(id, userId ?? null, action, book),
+  ]);
+  if (!updateRes.meta.changes) return null;
+  return env.DB.prepare(`SELECT * FROM tn_rows WHERE id = ?1${bookClause(2)}`).bind(id, book).first<TnRow>();
+}
+
 // POST /api/rows/tn/:id/preserve — toggle the "survive future AI pipeline
 // sweeps" bit. Body: { value: 0 | 1 | boolean }. Lock-exempt. Idempotent.
 rows.post("/tn/:id/preserve", requireEditor, async (c) => {
@@ -684,6 +723,38 @@ rows.post("/tn/:id/keep", requireEditor, async (c) => {
   if (!book) return c.json({ error: "book_required" }, 400);
   const userId = currentUserId(c);
   const updated = await setTnBit(c.env, id, book, userId, "preserve", 1);
+  if (!updated) return c.json({ error: "not_found" }, 404);
+  c.executionCtx.waitUntil(
+    broadcastChapter(c.env, updated.book, updated.chapter, { type: "row.upserted", kind: "tn", row: updated }),
+  );
+  return c.json(updated);
+});
+
+// POST /api/rows/tn/:id/trash — the note delete button. Moves the note to the
+// visible "trash" state: the card grays out, drops to the bottom of the verse,
+// and gains a Restore button. Reversible via /restore; finalized to a
+// permanent deleted_at tombstone by the nightly 06:00 UTC job. Lock-exempt and
+// non-version-bumping, like /preserve. No If-Match — idempotent state flip.
+rows.post("/tn/:id/trash", requireEditor, async (c) => {
+  const id = c.req.param("id");
+  const book = c.req.query("book");
+  if (!book) return c.json({ error: "book_required" }, 400);
+  const userId = currentUserId(c);
+  const updated = await setTnTrashed(c.env, id, book, userId, true);
+  if (!updated) return c.json({ error: "not_found" }, 404);
+  c.executionCtx.waitUntil(
+    broadcastChapter(c.env, updated.book, updated.chapter, { type: "row.upserted", kind: "tn", row: updated }),
+  );
+  return c.json(updated);
+});
+
+// POST /api/rows/tn/:id/restore — bring a trashed note back to the live set.
+rows.post("/tn/:id/restore", requireEditor, async (c) => {
+  const id = c.req.param("id");
+  const book = c.req.query("book");
+  if (!book) return c.json({ error: "book_required" }, 400);
+  const userId = currentUserId(c);
+  const updated = await setTnTrashed(c.env, id, book, userId, false);
   if (!updated) return c.json({ error: "not_found" }, 404);
   c.executionCtx.waitUntil(
     broadcastChapter(c.env, updated.book, updated.chapter, { type: "row.upserted", kind: "tn", row: updated }),

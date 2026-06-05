@@ -21,6 +21,13 @@ export interface TnRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * Visible, restorable soft-delete. Set via /trash (the delete button),
+   * cleared via /restore. A trashed note stays in the chapter read (grayed,
+   * sorted last) until the nightly 06:00 UTC job promotes it to a permanent
+   * deleted_at tombstone. NULL means "not trashed".
+   */
+  trashed_at: number | null;
   /** Explicit "survive future AI pipeline sweeps" bit. Set via /preserve. */
   preserve: 0 | 1;
   /** Editor-authored stub queued for the next chapter-wide AI pipeline run. */
@@ -890,6 +897,20 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value }),
+    }),
+
+  // Move a note to the visible "trash" state (the delete button). Returns the
+  // updated row with trashed_at set. Reversible via restoreNote; finalized to a
+  // deleted_at tombstone by the nightly job. Lock-exempt, no If-Match.
+  trashNote: (id: string, book: string) =>
+    request<TnRow>(`/api/rows/tn/${encodeURIComponent(id)}/trash?book=${encodeURIComponent(book)}`, {
+      method: "POST",
+    }),
+
+  // Bring a trashed note back to the live set (trashed_at cleared).
+  restoreNote: (id: string, book: string) =>
+    request<TnRow>(`/api/rows/tn/${encodeURIComponent(id)}/restore?book=${encodeURIComponent(book)}`, {
+      method: "POST",
     }),
 
   patchVerse: <T = unknown>(

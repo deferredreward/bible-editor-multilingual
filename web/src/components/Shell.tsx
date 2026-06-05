@@ -118,15 +118,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       } else if (row.version > existing.version) {
         applyLocalRowReplacement(kind, row);
       } else if (
-        // Preserve/hint toggles on TN rows don't bump version (they're
-        // intent signals, not content — see api/src/rows.ts setTnBit).
-        // The version > existing.version guard above would drop these
-        // broadcasts, leaving other tabs stale until refetch. Same-
-        // version replace when the intent bits differ.
+        // Preserve/hint/trash toggles on TN rows don't bump version (they're
+        // state flips, not content — see api/src/rows.ts setTnBit /
+        // setTnTrashed). The version > existing.version guard above would drop
+        // these broadcasts, leaving other tabs stale until refetch. Same-
+        // version replace when an intent bit or the trash state differs.
         kind === "tn" &&
         row.version === existing.version &&
         ((row as TnRow).preserve !== (existing as TnRow).preserve ||
-          (row as TnRow).hint !== (existing as TnRow).hint)
+          (row as TnRow).hint !== (existing as TnRow).hint ||
+          (row as TnRow).trashed_at !== (existing as TnRow).trashed_at)
       ) {
         applyLocalRowReplacement(kind, row);
       }
@@ -278,6 +279,43 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       }
     },
     [applyLocalRowPatch, pushPipelineToast],
+  );
+
+  // The note delete button. Trash is a reversible, visible soft-delete (the
+  // card grays out, drops to the bottom of the verse, gains a Restore button)
+  // — the safety net that stands in for a confirmation dialog. Optimistic flip
+  // so the card grays instantly; reconcile from the server row; revert on
+  // error. Clearing the active note (functional update, no dep on activeNoteId)
+  // drops the active highlight off the now-trashed card.
+  const handleTrashNote = useCallback(
+    async (id: string) => {
+      applyLocalRowPatch("tn", id, { trashed_at: Math.floor(Date.now() / 1000) });
+      setActiveNoteId((cur) => (cur === id ? null : cur));
+      try {
+        const updated = await api.trashNote(id, book);
+        applyLocalRowReplacement("tn", updated);
+      } catch (e) {
+        applyLocalRowPatch("tn", id, { trashed_at: null });
+        const msg = e instanceof Error ? e.message : "unknown error";
+        pushPipelineToast(`Couldn't delete note: ${msg}`, "error");
+      }
+    },
+    [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast],
+  );
+
+  const handleRestoreNote = useCallback(
+    async (id: string) => {
+      applyLocalRowPatch("tn", id, { trashed_at: null });
+      try {
+        const updated = await api.restoreNote(id, book);
+        applyLocalRowReplacement("tn", updated);
+      } catch (e) {
+        applyLocalRowPatch("tn", id, { trashed_at: Math.floor(Date.now() / 1000) });
+        const msg = e instanceof Error ? e.message : "unknown error";
+        pushPipelineToast(`Couldn't restore note: ${msg}`, "error");
+      }
+    },
+    [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast],
   );
 
   // Async AI-draft lifecycle. State outlives any single NoteCard so the
@@ -1287,13 +1325,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             }));
             applyLocalRowInsert("tq", created);
           }}
-          onNoteDelete={(id) => {
-            const row = data.tn.find((r) => r.id === id);
-            if (!row) return;
-            applyLocalRowDelete("tn", id);
-            if (activeNoteId === id) setActiveNoteId(null);
-            void outbox.enqueueDeleteRow("tn", id, row.version, row.book);
-          }}
+          onNoteDelete={handleTrashNote}
+          onNoteRestore={handleRestoreNote}
           onWordSave={(id, patch) => {
             const row = data.twl.find((r) => r.id === id);
             if (row) enqueueRow("twl", row, patch);

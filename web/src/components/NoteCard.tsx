@@ -20,6 +20,7 @@ import {
 import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
 import LightbulbOutlinedIcon from "@mui/icons-material/LightbulbOutlined";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import RestoreFromTrashIcon from "@mui/icons-material/RestoreFromTrash";
 import AddIcon from "@mui/icons-material/Add";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
@@ -58,6 +59,7 @@ interface Props {
   // column for chip-label purposes.
   onSave: (patch: Partial<TnRow>, opts?: { restoredFromVersion?: number }) => void;
   onDelete: () => void;
+  onRestore: () => void;
   onInsertAfter: () => void;
   onFocus?: () => void;
   onGripDragStart: () => void;
@@ -151,6 +153,7 @@ function NoteCardInner({
   onChange,
   onSave,
   onDelete,
+  onRestore,
   onInsertAfter,
   onFocus,
   onGripDragStart,
@@ -181,7 +184,12 @@ function NoteCardInner({
   // preserve bit on the server (see rows.ts /keep alias).
   const isPreserved = row.preserve === 1;
   const isHint = row.hint === 1;
-  const readOnly = locked && !isPreserved && !isHint;
+  // Trashed: pending deletion until tonight's finalize. The card grays out,
+  // drops to the bottom of the verse, and goes inert except for Restore.
+  // Folding it into readOnly makes every body input non-interactive and hides
+  // the add/delete buttons for free (they already gate on !readOnly).
+  const trashed = row.trashed_at != null;
+  const readOnly = trashed || (locked && !isPreserved && !isHint);
   const [quote, setQuote] = useState(tsvToDisplay(row.quote));
   const [note, setNote] = useState(tsvToDisplay(row.note));
   const [supportRef, setSupportRef] = useState<string | null>(row.support_reference);
@@ -617,11 +625,19 @@ function NoteCardInner({
       sx={{
         my: 1,
         border: active ? "1.5px solid" : "1px solid",
-        borderColor: active ? "primary.main" : "divider",
-        bgcolor: active ? "primary.50" : "background.paper",
+        // Trashed cards get a dashed, muted, grayed-out treatment to signal
+        // "pending deletion — restorable until tonight".
+        borderStyle: trashed ? "dashed" : undefined,
+        borderColor: trashed ? "text.disabled" : active ? "primary.main" : "divider",
+        bgcolor: trashed ? "grey.100" : active ? "primary.50" : "background.paper",
         overflow: "hidden",
-        opacity: dragging ? 0.4 : 1,
-        transition: "opacity 120ms ease",
+        // Opacity applied without a CSS transition on purpose: trash/restore
+        // re-render twice in quick succession (optimistic patch, then the
+        // server-confirmed replacement), and a transition spanning those two
+        // class swaps gets left in an idle state that pins the card at the
+        // start opacity — a restored card would stay visibly dimmed until the
+        // next reload. Instant opacity sidesteps that entirely.
+        opacity: trashed ? 0.6 : dragging ? 0.4 : 1,
         ...draftDirtyBorderSx(),
         // Glow pulse on AI completion. The flag is set by useAiDrafts
         // for ~4 s, so the animation finishes naturally and the rule
@@ -648,10 +664,11 @@ function NoteCardInner({
           flexWrap: "wrap",
         }}
       >
-        <Tooltip title="drag to reorder">
+        <Tooltip title={trashed ? "restore to reorder" : "drag to reorder"}>
           <Box
-            draggable
+            draggable={!trashed}
             onDragStart={(e) => {
+              if (trashed) return;
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("text/plain", row.id);
               if (paperRef.current) {
@@ -661,11 +678,11 @@ function NoteCardInner({
             }}
             onDragEnd={onDragEnd}
             sx={{
-              cursor: "grab",
+              cursor: trashed ? "default" : "grab",
               color: "text.disabled",
               display: "inline-flex",
               alignItems: "center",
-              "&:active": { cursor: "grabbing" },
+              "&:active": { cursor: trashed ? "default" : "grabbing" },
             }}
           >
             <DragIndicatorIcon fontSize="small" />
@@ -798,6 +815,22 @@ function NoteCardInner({
             <Tooltip title="delete this note">
               <IconButton size="small" onClick={handleDelete} color="error" sx={{ p: 0.25 }}>
                 <DeleteOutlineIcon fontSize="inherit" />
+              </IconButton>
+            </Tooltip>
+          </>
+        )}
+        {trashed && (
+          <>
+            <Chip
+              label="deleted"
+              size="small"
+              color="default"
+              variant="outlined"
+              sx={{ height: 22, fontSize: 11, color: "text.secondary", borderColor: "divider" }}
+            />
+            <Tooltip title="restore this note (otherwise removed tonight)">
+              <IconButton size="small" onClick={onRestore} color="primary" sx={{ p: 0.25 }}>
+                <RestoreFromTrashIcon fontSize="inherit" />
               </IconButton>
             </Tooltip>
           </>
