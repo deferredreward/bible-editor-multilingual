@@ -777,6 +777,46 @@ export function moveSource(
   return finalize({ ...state, sourceGroups, stream });
 }
 
+// Merge an entire alignment group (`eatenId`) into `survivorId`: the eaten
+// group's source words are appended to the survivor's source chain (making it
+// compound), and every target word aligned to the eaten group re-points to the
+// survivor. The eaten group is then dropped. This is `moveSource`'s collapse
+// branch generalised to all of a group's source words at once — a single-word
+// group merged this way behaves exactly like dragging its lone Hebrew word via
+// `moveSource` (the group collapses and its English follows).
+//
+// Reversible via `clearGroup`, which splits the compound back into singletons.
+//
+// Order: the merged source chain is `[...survivor.source, ...eaten.source]`.
+// Targets re-derive in stream (document) order, so they need no sorting. For
+// the merged Hebrew to read in verse order, callers should pass the
+// earlier-positioned card as `survivorId` (the dialog already sorts cards by
+// source position, so it knows which is earlier).
+//
+// No-op when the ids are equal, either group is missing, or the eaten group
+// has no source words.
+export function mergeGroups(
+  state: AlignmentState,
+  survivorId: string,
+  eatenId: string,
+): AlignmentState {
+  if (survivorId === eatenId) return state;
+  const survivor = state.sourceGroups.find((g) => g.id === survivorId);
+  const eaten = state.sourceGroups.find((g) => g.id === eatenId);
+  if (!survivor || !eaten || eaten.source.length === 0) return state;
+  const sourceGroups = state.sourceGroups
+    .filter((g) => g.id !== eatenId)
+    .map((g) =>
+      g.id === survivorId ? { ...g, source: [...g.source, ...eaten.source] } : g,
+    );
+  const stream = state.stream.map((item) =>
+    item.kind === "word" && item.alignedTo === eatenId
+      ? { ...item, alignedTo: survivorId }
+      : item,
+  );
+  return finalize({ ...state, sourceGroups, stream });
+}
+
 // Apply moveTarget for multiple word ids. Used when the user shift-selects
 // chips and drags the bundle onto one destination.
 export function moveTargets(

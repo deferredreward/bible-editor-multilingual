@@ -15,6 +15,8 @@ import {
   serializeAlignment,
   alignmentPlainText,
   verseHasUnalignedWork,
+  mergeGroups,
+  clearGroup,
 } from "./alignment.ts";
 import { extractPlainText } from "./usfm.ts";
 import { findTargetHighlights, findSourceHighlights } from "./highlight.ts";
@@ -1256,6 +1258,82 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
     dismissedGhostKey(group, "love") !== dismissedGhostKey(group, "kindness"),
     `different target text → different key`,
   );
+}
+
+// ─── Case 19: mergeGroups — fold one whole alignment card into another ───
+// Drag a whole card onto another to combine the groups: the eaten group's
+// source words append to the survivor's chain and all its English re-points to
+// the survivor. A single-word group merged this way behaves exactly like
+// dragging its lone Hebrew word via moveSource (it collapses, English follows).
+// Reversible via clearGroup (splits the compound back into singletons).
+{
+  console.log("\n[Case 19] mergeGroups — fold one alignment card into another");
+  const byStrong = (st, strong) => st.groups.find((g) => g.source.some((s) => s.strong === strong));
+  const srcStrongs = (g) => g.source.map((s) => s.strong);
+  const targetTexts = (g) => g.targets.map((t) => t.text);
+
+  // (a) compound + compound → one 4-word compound, targets in stream order.
+  {
+    const target = String.raw`\id TST
+\c 1
+\v 1 \zaln-s |x-strong="H1" x-content="א"\*\zaln-s |x-strong="H2" x-content="ב"\*\w one|x-occurrence="1" x-occurrences="1"\w* \w two|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\zaln-e\* \zaln-s |x-strong="H3" x-content="ג"\*\zaln-s |x-strong="H4" x-content="ד"\*\w three|x-occurrence="1" x-occurrences="1"\w* \w four|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\zaln-e\*`;
+    const state = parseAlignment(parseSingleVerse(target).verseObjects, null);
+    assert(state.groups.length === 2, `starts with 2 compound groups (got ${state.groups.length})`);
+    const A = byStrong(state, "H1");
+    const B = byStrong(state, "H3");
+    const merged = mergeGroups(state, A.id, B.id);
+    assert(merged.groups.length === 1, `compound+compound merge → 1 group (got ${merged.groups.length})`);
+    const m = merged.groups[0];
+    assert(
+      JSON.stringify(srcStrongs(m)) === JSON.stringify(["H1", "H2", "H3", "H4"]),
+      `merged source = survivor chain then eaten chain (got ${JSON.stringify(srcStrongs(m))})`,
+    );
+    assert(
+      JSON.stringify(targetTexts(m)) === JSON.stringify(["one", "two", "three", "four"]),
+      `targets re-derive in stream order (got ${JSON.stringify(targetTexts(m))})`,
+    );
+    // serialize → reparse stays a single 4-source group (valid USFM, no loss).
+    const reparsed = parseAlignment(serializeAlignment(merged), null);
+    assert(reparsed.groups.length === 1, `serialize→reparse keeps 1 group (got ${reparsed.groups.length})`);
+    assert(reparsed.groups[0].source.length === 4, `reparsed group has 4 source words (got ${reparsed.groups[0].source.length})`);
+  }
+
+  // (b) single-word group folded into a compound — the moveSource-equivalent
+  // case. solo's lone Hebrew word joins the chain and "solo" re-points.
+  {
+    const target = String.raw`\id TST
+\c 1
+\v 2 \zaln-s |x-strong="H5" x-content="ה"\*\w solo|x-occurrence="1" x-occurrences="1"\w*\zaln-e\* \zaln-s |x-strong="H6" x-content="ו"\*\zaln-s |x-strong="H7" x-content="ז"\*\w pair|x-occurrence="1" x-occurrences="1"\w* \w mate|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\zaln-e\*`;
+    const st = parseAlignment(parseSingleVerse(target).verseObjects, null);
+    const solo = byStrong(st, "H5");
+    const pair = byStrong(st, "H6");
+    assert(solo.source.length === 1, `solo is a single-word group (got ${solo.source.length})`);
+    const m = mergeGroups(st, pair.id, solo.id);
+    assert(m.groups.length === 1, `single+compound merge → 1 group (got ${m.groups.length})`);
+    const g = m.groups[0];
+    assert(
+      JSON.stringify(srcStrongs(g)) === JSON.stringify(["H6", "H7", "H5"]),
+      `survivor(compound) chain then eaten(single) (got ${JSON.stringify(srcStrongs(g))})`,
+    );
+    assert(
+      JSON.stringify(targetTexts(g)) === JSON.stringify(["solo", "pair", "mate"]),
+      `solo's English follows the merge, in stream order (got ${JSON.stringify(targetTexts(g))})`,
+    );
+    const soloWord = m.stream.find((it) => it.kind === "word" && it.word.text === "solo");
+    assert(soloWord && soloWord.alignedTo === pair.id, `"solo" stream word re-points to the survivor group id`);
+
+    // (c) no-op guards: equal ids, missing eaten, missing survivor.
+    assert(mergeGroups(st, solo.id, solo.id) === st, `self-merge is a no-op (same ref)`);
+    assert(mergeGroups(st, solo.id, "nope") === st, `missing eaten id is a no-op`);
+    assert(mergeGroups(st, "nope", pair.id) === st, `missing survivor id is a no-op`);
+
+    // (d) reversible: clearGroup splits the merged compound back to singletons
+    // and frees its English — the Undo affordance, so a merge isn't a trap.
+    const split = clearGroup(m, pair.id);
+    assert(split.groups.length === 3, `clearGroup splits merged compound into 3 singletons (got ${split.groups.length})`);
+    assert(split.groups.every((gr) => gr.source.length === 1), `each split group is a singleton`);
+    assert(split.unaligned.length === 3, `all 3 English words return to the bank (got ${split.unaligned.length})`);
+  }
 }
 
 if (failed > 0) {
