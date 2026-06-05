@@ -185,9 +185,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   private async buildResource(book: string, resource: Resource): Promise<{ content: string; rowCount: number }> {
     const db = this.env.DB;
     if (resource === "tn") {
+      // trashed_at IS NULL excludes notes pending deletion. The nightly cron
+      // promotes trash -> deleted_at before this Workflow's steps read, but
+      // this guard also covers anything trashed mid-run (after finalize, before
+      // this book's export step).
       const rs = await db
         .prepare(
-          `SELECT * FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL
+          `SELECT * FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
            ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
         )
         .bind(book)

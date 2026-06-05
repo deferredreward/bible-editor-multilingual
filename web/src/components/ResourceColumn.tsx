@@ -49,6 +49,7 @@ interface Props {
     opts?: { restoredFromVersion?: number },
   ) => void;
   onNoteDelete: (id: string) => void;
+  onNoteRestore: (id: string) => void;
   onNoteInsertAfter: (refId: string) => void;
   onNoteReorder: (draggedId: string, refId: string, position: DropPosition) => void;
   onNoteFocus: (row: TnRow) => void;
@@ -132,11 +133,19 @@ function savePinned(p: Pinned) {
   }
 }
 
-function sortBySortOrder<T extends { sort_order: number | null; id: string }>(rows: T[]): T[] {
+function sortBySortOrder<
+  T extends { sort_order: number | null; id: string; trashed_at?: number | null },
+>(rows: T[]): T[] {
+  // Trashed notes always sort to the bottom of the verse, preserving their
+  // relative order. Purely presentational — sort_order is untouched, so a
+  // Restore drops the note straight back to its original position. Rows
+  // without a trashed_at field (twl) are treated as not trashed.
   return [...rows].sort(
     (a, b) =>
+      (a.trashed_at != null ? 1 : 0) - (b.trashed_at != null ? 1 : 0) ||
       (a.sort_order ?? Number.MAX_SAFE_INTEGER) -
-        (b.sort_order ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id),
+        (b.sort_order ?? Number.MAX_SAFE_INTEGER) ||
+      a.id.localeCompare(b.id),
   );
 }
 
@@ -162,6 +171,7 @@ export function ResourceColumn({
   onNoteChange,
   onNoteSave,
   onNoteDelete,
+  onNoteRestore,
   onNoteInsertAfter,
   onNoteReorder,
   onNoteFocus,
@@ -514,6 +524,7 @@ export function ResourceColumn({
           onChange={(p) => onNoteChange(r.id, p)}
           onSave={(p, opts) => onNoteSave(r.id, p, opts)}
           onDelete={() => onNoteDelete(r.id)}
+          onRestore={() => onNoteRestore(r.id)}
           onInsertAfter={() => onNoteInsertAfter(r.id)}
           onFocus={() => onNoteFocus(r)}
           onGripDragStart={() => setDragId(r.id)}

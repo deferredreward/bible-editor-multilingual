@@ -7,9 +7,11 @@
 // Don't-clobber rule (canonical): a row is "safe to overwrite" iff it has
 // never been touched by a human. The signal is the same predicate the AI
 // pipeline sweep uses in pipelineImport.ts deleteUnkeptTns:
-//   tn:  updated_by IS NULL AND deleted_at IS NULL AND preserve = 0 AND hint = 0
+//   tn:  updated_by IS NULL AND deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0
 //   tq:  updated_by IS NULL AND deleted_at IS NULL
 //   twl: updated_by IS NULL AND deleted_at IS NULL
+// (trashed_at: a note pending deletion is never overwritten/resurrected by a
+// reimport — it's promoted to a deleted_at tombstone by the nightly job.)
 // For verses (which don't have preserve/hint) we use updated_by IS NULL.
 // Edited rows are SKIPPED, not merged or warned about.
 //
@@ -285,7 +287,7 @@ async function reimportTsvForChapter(
 
   const pristinePredicate =
     kind === "tn"
-      ? `updated_by IS NULL AND deleted_at IS NULL AND preserve = 0 AND hint = 0`
+      ? `updated_by IS NULL AND deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
       : `updated_by IS NULL AND deleted_at IS NULL`;
 
   for (const row of incoming) {

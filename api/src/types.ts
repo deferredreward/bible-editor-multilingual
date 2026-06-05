@@ -19,6 +19,13 @@ export interface TnRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * Visible, restorable soft-delete. Set via /trash (the delete button),
+   * cleared via /restore. Distinct from deleted_at: a trashed note stays in
+   * the chapter read (grayed, sorted last) until the 06:00 UTC nightly job
+   * promotes it to a permanent deleted_at tombstone. NULL means "not trashed".
+   */
+  trashed_at: number | null;
   /** Explicit "survive future AI pipeline sweeps" bit. Set via /preserve. */
   preserve: 0 | 1;
   /**
