@@ -5,6 +5,12 @@ import type { ChapterPayload, TnRow, TqRow, TwlRow, VerseRow, VerseDto, VerseSta
 import { currentUserId, requireEditor } from "./auth";
 import { broadcastChapter } from "./wsEvents";
 import { recomputeTargetOccurrences } from "./importParsers";
+import {
+  CorruptContentJsonError,
+  corruptContentJsonBody,
+  logCorruptContentJson,
+  parseVerseContentJson,
+} from "./contentJson.ts";
 
 export const chapters = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -81,11 +87,16 @@ chapters.get("/:book/:chapter", async (c) => {
   for (const v of verses.results) {
     if (!verseMap[v.bible_version]) verseMap[v.bible_version] = {};
     const { content_json, ...rest } = v;
+    void content_json;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(content_json);
-    } catch {
-      parsed = null;
+      parsed = parseVerseContentJson(v);
+    } catch (err) {
+      if (err instanceof CorruptContentJsonError) {
+        logCorruptContentJson(err);
+        return c.json(corruptContentJsonBody(err), 500);
+      }
+      throw err;
     }
     // Defensively renumber `\w` occurrence/occurrences from document position
     // so the client never sees malformed/colliding occurrence data (which

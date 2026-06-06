@@ -4,71 +4,39 @@ These are items from the original plan / red-team review that intentionally
 weren't shipped in the current pass. Each carries enough context to pick up
 cold. The fixes that *did* land are summarized at the bottom.
 
-## Auth — finish the DCS path
+## Auth cleanup
 
-**Status:** A dev-only mint endpoint (`POST /api/auth/dev`, gated by
-`DEV_AUTH_ENABLED`) and an `attachAuth` / `requireAuth` middleware exist.
-`docs/plan.md §Auth` calls for full DCS OAuth.
-
-**What's missing:**
-- `GET /api/auth/dcs/start` — redirect to `DCS_OAUTH_AUTHORIZE_URL` with the
-  configured `DCS_CLIENT_ID`, a PKCE challenge, and a state cookie.
-- `GET /api/auth/dcs/callback` — exchange the code at
-  `DCS_OAUTH_TOKEN_URL` (using `DCS_CLIENT_SECRET`), fetch the user from
-  `${DCS_BASE_URL}/api/v1/user`, upsert the `users` row keyed by
-  `dcs_user_id`, then mint the same JWT shape that `mintDevToken` returns.
-- `GET /api/auth/me` — return `{ userId, username, fullName }` from the
-  bearer claim so the SPA can show "signed in as …".
-- Silent refresh — at 14-day TTL it doesn't matter for a 7-month tool, but
-  shorter TTL + a `/api/auth/refresh` endpoint is the standard upgrade.
-- Replace the dev sign-in in `web/src/App.tsx` with a redirect to
-  `/api/auth/dcs/start` when no token exists. Keep `devSignIn` behind
-  `import.meta.env.DEV` only.
-
-**Bounded by:** needs a registered DCS OAuth app (client id + secret).
-
-## Nightly DCS export
-
-**Status:** Cron is scheduled (`wrangler.toml: crons = ["0 6 * * *"]`) but
-`scheduled(...)` in `api/src/index.ts:99` is empty.
+**Status:** DCS OAuth, `/api/auth/me`, `/api/auth/refresh`, `/api/auth/logout`,
+dev sign-in, HttpOnly Access/Refresh cookies, and CSRF-protected writes have
+shipped.
 
 **What's missing:**
-- A worker module that walks `book_imports`, builds per-resource TSV
-  (`tn_<book>.tsv`, `tq_<book>.tsv`, `twl_<book>.tsv`) and USFM
-  (`<book>.usfm`) from the current D1 state.
-- Commit those files to the corresponding DCS repo branches using
-  `DCS_SERVICE_TOKEN`. The DCS API surface: `PUT /api/v1/repos/:owner/:repo/contents/:path`.
-- Record the resulting `commit_sha` in `export_snapshots`. The table exists
-  ([api/migrations/0001_init.sql:123-132](../api/migrations/0001_init.sql)).
-- A `/api/exports` GET that lists recent snapshots so the SPA can show
-  "last DCS export: 7 hours ago".
+- Drop the temporary `Authorization: Bearer` fallback once no browser clients
+  can still hold old localStorage tokens.
+- Consider a small admin/session view if production needs manual revocation
+  beyond the existing session-row checks.
 
-**Until this ships:** D1 is the only copy of edits. Add a manual export
-button if delivery slips much past the tool's 7-month horizon.
+## Nightly DCS export hardening
+
+**Status:** The 06:00 UTC cron starts the export Workflow, renders TSV/USFM
+from D1, stages snapshots to R2, commits to DCS when `DCS_SERVICE_TOKEN` is set,
+and records `export_snapshots`.
+
+**What's missing:**
+- Production alerting for failed workflow instances.
+- A friendlier admin/status surface beyond the current export endpoints and
+  Cloudflare Workflow view.
 
 ## Presence — ChapterRoom Durable Object
 
-**Status:** The DO class is exported and bound (`wrangler.toml:22-29`) but
-no route forwards to it. The class itself ([api/src/chapterRoom.ts](../api/src/chapterRoom.ts))
-echoes incoming WS messages with no auth and no message validation.
+**Status:** ChapterRoom is routed and the frontend subscribes for row/verse
+change broadcasts; the concurrency suite covers PATCH, POST, and DELETE push.
+The remaining deferred piece is true peer presence/cursors.
 
 **What's missing:**
-- A `GET /api/presence/:book/:chapter` route that:
-  - Verifies the bearer token via `requireAuth`.
-  - Upgrades to WebSocket only on `Upgrade: websocket`.
-  - Forwards to `env.CHAPTER_ROOM.get(env.CHAPTER_ROOM.idFromName(\`${book}:${chapter}\`))`.
-- DO-side auth: validate a short-lived ticket in the connect URL (the
-  worker mints one against the JWT) so an open WS doesn't outlive a logout.
-- Message schema (JSON envelope: `{type: "cursor"|"saved"|..., …}`),
-  per-client rate limit, max message size, and broadcast-to-others (DO
-  currently echoes back to the sender).
-- SPA client: open the WS when Shell mounts a chapter, send "cursor at
-  tn:xm1w" / "saved" events, render a coloured dot beside any peer's
-  active resource. See `docs/plan.md §ChapterRoom` for the intended UX.
-
-**Until this ships:** The yellow-dot rail indicator in
-[lib/alignment.ts:233-241](../web/src/lib/alignment.ts) is the only
-freshness signal. Peers can't see each other's cursors.
+- Cursor/presence message schema: `{type: "cursor"|"saved"|..., ...}`.
+- UI affordance for peer active-resource dots.
+- Optional short-lived WS tickets if the bearer-subprotocol fallback is removed.
 
 ## Service worker + outbox-on-close warning
 
@@ -113,17 +81,14 @@ propagate.
 
 ## Import / export hardening
 
-**Status:** `scripts/import-book.mjs` (referenced by review 2) doesn't
-exist in the current tree. The flow is implied but not implemented.
+**Status:** Book import, reimport, nightly export, and AI-output import all
+exist. Corrupt stored `content_json` now fails read/export paths loudly instead
+of being returned as `null` or skipped.
 
 **What's missing:**
-- A real importer that ingests USFM (ULT/UST/UHB/UGNT) plus TSV (tn / tq /
-  twl) for a book. Should be idempotent: re-importing the same source
-  shouldn't bump `version` on rows whose content is unchanged.
-- A matching exporter (separate from the nightly cron — useful for ad-hoc
-  diffs).
 - Round-trip tests against a known-good fixture (e.g. `ZEC` or `OBA`)
   covering split alignments, punctuation, and nested milestones.
+- Alerting/health checks for corrupted rows discovered in production.
 
 ## Per-row keystroke write-ahead
 
@@ -150,10 +115,10 @@ session) but stronger crash safety.
 | Hebrew separator regex | [lib/replace.ts:54](../web/src/lib/replace.ts) | `\s+` doesn't cover maqaf (`־`), paseq (`׀`), sof pasuq (`׃`). Likely irrelevant since find/replace is GL-only, but flagged. |
 | `localizedRewriteVerse` NFC mismatch | [lib/replace.ts:381-396](../web/src/lib/replace.ts) | Case-sensitive plain↔raw mapping desyncs on differing NFC forms. Narrow edge. |
 | Mixed MUI versions | [web/package.json:14-19](../web/package.json) | `@mui/styles@^6.5.0` is a deprecated v5-era package; safe today because nothing imports it. |
-| Spike `AlignerSmoke.tsx` lives in `src/` | [App.tsx:1-2](../web/src/App.tsx) | "intentionally NOT imported" is human-enforced. Move to `spikes/` or gate behind `import.meta.env.DEV`. |
+| Deprecated `@mui/styles` still installed | [web/package.json](../web/package.json) | Safe today because nothing imports it; remove when theme cleanup happens. |
 | `AGENTS.md` vs `CLAUDE.md` duplication | repo root | Both files have identical 176-byte content. Pick one and symlink. |
 | `tn_rows.sort_order` migration overwrites on rerun | [migrations/0003_tn_sort_order.sql](../api/migrations/0003_tn_sort_order.sql) | Add `WHERE sort_order IS NULL`. Same for `0004_twl_sort_order.sql`. Cheap. |
-| JSON parse failures silently → `null` | [api/src/chapters.ts:55-60](../api/src/chapters.ts), [api/src/verses.ts:29-32](../api/src/verses.ts) | A corrupt `content_json` renders as empty verse with no log. Add `console.error` at minimum; consider a server-side counter. |
+| Corrupt `content_json` alerting | [api/src/contentJson.ts](../api/src/contentJson.ts) | Reads/export now fail loudly; add production alerting or a health-check query if corruption is ever observed. |
 
 ## Surface `\ts\*` chunk markers from imported USFM
 

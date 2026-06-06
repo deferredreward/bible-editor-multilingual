@@ -6,6 +6,12 @@ import { currentUserId, requireEditor } from "./auth";
 import { activePipelineForChapter, lockedResponseBody } from "./chapterLock";
 import { broadcastChapter } from "./wsEvents";
 import { recomputeTargetOccurrences } from "./importParsers";
+import {
+  CorruptContentJsonError,
+  corruptContentJsonBody,
+  logCorruptContentJson,
+  parseVerseContentJson,
+} from "./contentJson.ts";
 
 // Verse content can carry malformed/missing `\w` occurrence data — colliding
 // `(text, occurrence)` pairs from a bad import or AI alignment (ULT/UST), or no
@@ -66,9 +72,13 @@ verses.get("/:book/:chapter/:verse/:bibleVersion", async (c) => {
   if (!row) return c.json({ error: "not_found" }, 404);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(row.content_json);
-  } catch {
-    parsed = null;
+    parsed = parseVerseContentJson(row);
+  } catch (err) {
+    if (err instanceof CorruptContentJsonError) {
+      logCorruptContentJson(err);
+      return c.json(corruptContentJsonBody(err), 500);
+    }
+    throw err;
   }
   // All versions on read: source UHB/UGNT needs it too (no x-occurrence in the
   // imported source — see normalizeOccurrences). Display-only; storage/export
@@ -173,11 +183,15 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
       .bind(book, chapter, verse, bibleVersion)
       .first<VerseRow>();
     if (!fresh) return c.json({ error: "not_found" }, 404);
-    let freshParsed: unknown = null;
+    let freshParsed: unknown;
     try {
-      freshParsed = JSON.parse(fresh.content_json);
-    } catch {
-      /* ignore */
+      freshParsed = parseVerseContentJson(fresh);
+    } catch (err) {
+      if (err instanceof CorruptContentJsonError) {
+        logCorruptContentJson(err);
+        return c.json(corruptContentJsonBody(err), 500);
+      }
+      throw err;
     }
     return c.json(
       { error: "version_mismatch", current: { ...fresh, content: freshParsed } },
@@ -192,9 +206,13 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
     .first<VerseRow>();
   let updatedParsed: unknown = null;
   try {
-    if (updated) updatedParsed = JSON.parse(updated.content_json);
-  } catch {
-    /* ignore */
+    if (updated) updatedParsed = parseVerseContentJson(updated);
+  } catch (err) {
+    if (err instanceof CorruptContentJsonError) {
+      logCorruptContentJson(err);
+      return c.json(corruptContentJsonBody(err), 500);
+    }
+    throw err;
   }
   if (updated) {
     const verseDto = { ...updated, content: updatedParsed };

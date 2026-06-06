@@ -1,8 +1,9 @@
 # Concurrency Testing Plan (Playwright)
 
 Status: **shipped (v1).** Harness lives at the repo root in `tests/concurrency/`.
-Run with `npm run test:e2e`. Current suite covers S1, S2, S5 (×2). 4 tests,
-~21s end-to-end. Notes on what's wired vs. deferred are inline below.
+Run with `npm run test:e2e`. Current suite covers S1, S2, S5 (×2),
+S6 realtime push (×3), S7 offline/retry resilience (×2), and S8 trash/restore:
+10 tests total. Notes on what's wired vs. deferred are inline below.
 
 ## What we're proving
 
@@ -38,11 +39,10 @@ Claude-in-Chrome stays useful for *exploratory* visual testing later. Not this.
 ┌─────────────────────────────────────────────────────────────────┐
 │  Playwright test runner (Node)                                  │
 │                                                                 │
-│   browser ──┬── context A ── page A ── "Alice"  (localStorage:  │
-│             │                            token_A)               │
-│             ├── context B ── page B ── "Bob"    (token_B)       │
-│             ├── context C ── page C ── "Carol"  (token_C)       │
-│             └── context D ── page D ── "Dave"   (token_D)       │
+│   browser ──┬── context A ── page A ── "Alice"  (cookie session)│
+│             ├── context B ── page B ── "Bob"    (cookie session)│
+│             ├── context C ── page C ── "Carol"  (cookie session)│
+│             └── context D ── page D ── "Dave"   (cookie session)│
 │                                                                 │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
@@ -119,9 +119,9 @@ just to this folder without affecting the workspaces.
 
 ## Auth: skip OAuth entirely
 
-The frontend stores its JWT at `localStorage["bible-editor.auth.token"]`
-(see `web/src/sync/api.ts:171`). The API exposes `POST /api/auth/dev` with
-`{username}` body and returns `{token, ...}` (`api/src/auth.ts:230`). This is
+Browser auth is cookie-based. The API exposes `POST /api/auth/dev` with
+`{username}` body; it sets the same `be_access`, `be_refresh`, and `be_csrf`
+cookies as DCS OAuth and returns the `/api/auth/me` response shape. This is
 the lever for multi-user testing.
 
 Per-context login helper:
@@ -131,16 +131,13 @@ async function loginAs(context: BrowserContext, username: string) {
   const res = await context.request.post("/api/auth/dev", {
     data: { username },
   });
-  const { token } = await res.json();
-  await context.addInitScript((t) => {
-    localStorage.setItem("bible-editor.auth.token", t);
-  }, token);
+  if (!res.ok()) throw new Error(`dev auth failed: ${res.status()}`);
 }
 ```
 
-Call before each context's first `page.goto()`. `addInitScript` runs before any
-page script, so the app sees the token on first render and skips the
-sign-in screen.
+Call before each context's first `page.goto()`. The context request shares
+cookies with pages in that context, so the app sees the cookie session on first
+render and skips the sign-in screen.
 
 ## Test fixture: Zechariah, seeded once
 
@@ -254,23 +251,24 @@ Pure-API, no browser. Two tests:
 
 These are the contract every UI test implicitly depends on.
 
-### S6 — Broadcast: B sees A's edit — **DEFERRED (not testable yet)**
+### S6 — Broadcast: B sees A's edit — **SHIPPED (×3)**
 
-Original plan was to test the `ChapterRoom` Durable Object broadcast path
-([api/src/chapterRoom.ts:22](api/src/chapterRoom.ts:22)). The Durable Object
-exists with WebSocket plumbing, but **no route in `api/src/index.ts` connects
-clients to it**, and **no frontend code subscribes**. The feature isn't wired
-end-to-end yet.
+[tests/concurrency/s6-realtime-push.spec.ts](tests/concurrency/s6-realtime-push.spec.ts).
+Alice mutates an open chapter while Bob is already viewing it. Covers PATCH,
+POST, and DELETE propagation through the ChapterRoom WebSocket path.
 
-Cross-tab consistency today happens via manual refetch / nav, not push. When
-the broadcast path lands, this test becomes worth writing.
+### S7 — Offline and retry resilience — **SHIPPED (×2)**
 
-### S7 (stretch) — Four users, mixed adjacent edits
+[tests/concurrency/s7-offline-resilience.spec.ts](tests/concurrency/s7-offline-resilience.spec.ts).
+One test queues edits while the browser context is offline and asserts they
+flush on reconnect. The second injects transient server failure and asserts
+retry drains the outbox without duplicate writes.
 
-The chaos test. All four users edit different rows on overlapping verses
-in a single `Promise.all`. Run with `--repeat-each=10` to surface flakes.
-**Assert:** every user's text is on the server. Pure stress; counts as a smoke
-test for the whole suite.
+### S8 — Trash/restore visibility — **SHIPPED**
+
+[tests/concurrency/s8-trash-restore.spec.ts](tests/concurrency/s8-trash-restore.spec.ts).
+Alice trashes a TN row; Bob sees it remain visible and restorable. Restore
+returns it to the live set before nightly finalization.
 
 ## Forcing the race deterministically
 
@@ -319,8 +317,9 @@ For each scenario, write the server check first. UI checks come second.
 - **Vite + Wrangler startup is ~10s.** `webServer.reuseExistingServer: true`
   so consecutive runs reuse a running dev server. The webServer URL polls
   `/api/health` *through the Vite proxy*, ensuring both servers are up.
-- **JWT TTL.** Default is 14 days. If tests start failing with 401 mid-run, the
-  signing key probably changed.
+- **Cookie session TTL.** Local dev sessions use the same Access/Refresh cookie
+  path as production. If tests start failing with 401 mid-run, the signing key
+  or local session table probably changed.
 
 ## CI (not yet wired)
 
@@ -343,14 +342,10 @@ useful artifact when a concurrency test flakes. Always upload it.
 
 The remaining scenarios from the original plan, in priority order:
 
-1. **S4 — Outbox/offline.** Use `context.setOffline(true)`, type, go online,
-   poll. Catches the IndexedDB-survival path.
-2. **S3 — Same-note conflict UI.** Two users on the same note. Use `page.route`
+1. **S3 — Same-note conflict UI.** Two users on the same note. Use `page.route`
    to delay one PATCH for determinism. Assert: server has one text, loser's
    UI surfaces a conflict and preserves their attempted text locally.
-3. **S6 — Broadcast.** Requires the API to expose a WebSocket route + the
-   frontend to subscribe. **Not testable until that ships.**
-4. **S7 — Four-user chaos.** Once S1–S5 are stable, repeat-each×10 for flake
+2. **Four-user chaos.** Once the shipped suite is stable, repeat-each×10 for flake
    surfacing.
 
 ## What this does NOT do

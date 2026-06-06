@@ -60,7 +60,7 @@ gold-unattested cases are genuine ignorance, not mis-ranking).
 
 **Deploy status:** Phase 1 is fully shipped. Phase 4 (morph) is committed and
 locally validated (typecheck, eval, data pipeline, live endpoint smoke) but
-**production still needs**: apply migration `0025` remote, re-run the trainer,
+**production still needs**: apply migration `0025_align_freq_morph.sql` remote, re-run the trainer,
 and load both `align_freq` + `align_freq_morph` remote (see "Deploy" below).
 The endpoint degrades safely to strong-only if `align_freq_morph` is absent.
 
@@ -129,11 +129,11 @@ mirrored in `scripts/lib/align-corpus.mjs` and `web/src/lib/alignmentSuggest.ts`
 npm run train:align -- --all-ot --nt   # full released Bible (emits both SQL files)
 npm run eval:align                      # held-out JOS/NAM/ACT; add books/--bible/--k to vary
 npm run db:align:local && npm run db:align-morph:local   # load both into local D1
-npm --workspace api run db:migrate:local                 # apply migrations incl. 0025
+npm --workspace api run db:migrate:local                 # apply migrations incl. 0025_align_freq_morph.sql
 ```
 
 **Production deploy (user runs — needs Cloudflare creds):**
-1. `npm --workspace api run db:migrate:remote` (applies `0025`).
+1. `npm --workspace api run db:migrate:remote` (applies `0025_align_freq_morph.sql`; do not refer to duplicate-prefix migrations by number alone).
 2. `npm run deploy` (Worker carries the composite-key endpoint; SPA carries the blend).
 3. `npm run train:align -- --all-ot --nt` then `npm run db:align:remote` **and**
    `npm run db:align-morph:remote`.

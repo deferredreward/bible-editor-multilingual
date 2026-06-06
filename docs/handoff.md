@@ -21,7 +21,7 @@ Grouped by feature area. "build" = typechecked + bundled clean. **Visual smoke t
 
 | Area | Status |
 |---|---|
-| **Scaffold + spikes (Phase 0)** | Workspace (`api/` + `web/`), `usfm-js` round-trip spike, `enhanced-word-aligner-rcl` standalone-embed spike parked (`web/src/spikes/AlignerSmoke.tsx`). |
+| **Scaffold + import foundation (Phase 0)** | Workspace (`api/` + `web/`), `usfm-js` round-trip spike, initial book/lexicon import scripts. The old `enhanced-word-aligner-rcl` spike was removed after the production custom aligner shipped. |
 | **D1 schema + import (Phase 1)** | Migrations 0001-0005 (verses, rows, statuses, sort_order on tn/twl, lexicon). ZEC fully imported. UHAL + UGL lexicon imported (~24 k Strong's). |
 | **API (Phase 1+)** | Hono on Wrangler v4. Chapters / rows / verses with `If-Match`, lexicon lookup, durable-object stub for presence. |
 | **Outbox + Shell (Phase 1)** | IndexedDB outbox with drain + retry + conflict; useChapter / useBook / useLexicon hooks; 3-column Shell with TopBar nav. |
@@ -138,11 +138,11 @@ Workspace scripts:
 
 1. **Wrangler must be v4.** v3 has a hash-table bug that hangs on bulk SQL import.
 2. **`wrangler d1 execute --local` is correct in v4** (`--remote` for prod).
-3. **The aligner package is NOT in the live bundle.** `web/src/spikes/AlignerSmoke.tsx` is reference; production is `web/src/components/AlignmentDialog.tsx`.
+3. **The aligner package is gone.** Production is `web/src/components/AlignmentDialog.tsx`, a custom aligner over the stored verse-object tree.
 4. **`core-js` is dependency-tree polluted.** Don't try to alias around it.
 5. **`contentEditable + dangerouslySetInnerHTML` pattern.** `ActiveLine`, `VerseSpan` (DocColumn), `VerseCell` (BookView), and `EditableStripCell` (aligner) all write DOM via `useEffect` + ref (not React children) so the cursor doesn't jump. `lastSetRef = null` means "first render — always paint" (otherwise plain-text mode never paints, columns appear empty — the bug fix in commit `a260921`).
 6. **TSV `\n` literals.** Notes from DCS TSVs contain literal `\n` (two chars). `NoteCard.tsvToDisplay` shows real newlines; saves go back verbatim.
-7. **DCS OAuth is stubbed.** All writes are unauthenticated; the JWT plumbing lives in `wrangler.toml` env vars only.
+7. **Auth is cookie-based.** DCS OAuth and dev sign-in mint HttpOnly Access/Refresh cookies plus a non-HttpOnly CSRF cookie. Browser writes use cookies + `X-CSRF-Token`; `Authorization: Bearer` remains only as a temporary fallback for non-browser/cutover callers.
 8. **Verse-done is global, not per-user.** Migrate to per-user when auth lands.
 9. **Permission classifier denies long-running dev servers.** Wrangler dev as a background task is fine; vite needs the user.
 10. **Commits use HEREDOC** + `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`. User isn't on this commit's git config; pass `-c user.email=ju-cldai724@abidinginhesed.com -c user.name=Benjamin` per commit. **The user has explicitly asked to stop making bookmark commits this session — just commit after each completed todo.**
@@ -161,8 +161,8 @@ Workspace scripts:
 
 ## What's deliberately deferred (don't touch unless asked)
 
-- **DCS OAuth + JWT** (blocked on creds at `git.door43.org/user/settings/applications`).
-- **Nightly export cron** (blocked on service-account token; cron trigger already set for 06:00 UTC in `wrangler.toml`).
+- **Bearer fallback removal** once all clients are known to be on cookie sessions.
+- **Production export monitoring** for the 06:00 UTC Workflow.
 - **Per-user verse-status** (extension of current global flag once auth lands).
 - **Full edit-history UI** (Phase 4; `edit_log` already captures every patch).
 - **AI generation of notes** — placeholder sparkles button in `NoteCard.tsx`. Disabled; wire it up when a service is picked.
@@ -246,7 +246,7 @@ If they ask about general work, the open queue is light:
 - **Compound source "split out" gesture** in the aligner (see Deferred).
 - **Edit-history drawer** per row, backed by `edit_log` (already populated). See plan Phase 4.
 - **Per-user verse-done flag** — depends on OAuth landing.
-- **DCS OAuth + nightly export cron** — both blocked on credentials.
+- **Production hardening** — remove the bearer fallback when safe, add export failure alerting, and document any Cloudflare dashboard rate limits once configured.
 
 ## When in doubt
 

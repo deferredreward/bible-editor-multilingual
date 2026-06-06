@@ -1,5 +1,3 @@
-// NB: src/spikes/AlignerSmoke.tsx is intentionally NOT imported.
-// Aligner integration is deferred to Phase 3 — see docs/plan.md.
 import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
@@ -15,6 +13,7 @@ import {
   type MeResponse,
   type Role,
 } from "./sync/api";
+import { setPipelineUser } from "./sync/pipelineStore";
 
 interface Location {
   book: string;
@@ -213,6 +212,10 @@ export function App() {
   // hook), which violates Rules of Hooks. The hook itself no-ops while
   // auth is not "ready".
   const { alerts, dismiss } = useAlerts(auth.kind === "ready");
+
+  useEffect(() => {
+    setPipelineUser(auth.kind === "ready" ? auth.me?.userId ?? null : null);
+  }, [auth]);
 
   if (auth.kind === "loading") {
     return (

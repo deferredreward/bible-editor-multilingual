@@ -4,6 +4,7 @@
 
 import usfm from "usfm-js";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
+import { parseVerseContentJson } from "./contentJson.ts";
 
 export type Resource = "tn" | "tq" | "twl" | "ult" | "ust";
 
@@ -135,16 +136,11 @@ function recomputeTargetOccurrences(verseObjects: unknown[]): void {
 }
 
 export function buildUsfm(input: UsfmInputs): string {
-  // Group verses by chapter, parsing the stored JSON. Unreadable verses are
-  // skipped rather than failing the whole book — better to ship 99% than 0%.
+  // Group verses by chapter, parsing the stored JSON. Corrupt content fails
+  // the export; a partial book is worse than no nightly snapshot.
   const chapters: Record<string, Record<string, unknown>> = {};
   for (const v of input.verses) {
-    let parsed: unknown = null;
-    try {
-      parsed = JSON.parse(v.content_json);
-    } catch {
-      continue;
-    }
+    const parsed = parseVerseContentJson(v);
     // Emit valid occurrence numbering even when the stored row is stale.
     // Malformed target `\w` occurrence/occurrences (every "1", colliding
     // (text,occurrence) pairs) would otherwise ship invalid USFM to DCS for
@@ -260,7 +256,7 @@ export async function commitToDcs(
 
   // Lookup existing SHA for this path on this branch.
   let existingSha: string | null = null;
-  let existingContent: string | null = null;
+  let existingBase64: string | null = null;
   const getRes = await fetch(`${base}?ref=${encodeURIComponent(config.branch)}`, {
     method: "GET",
     headers,
@@ -269,11 +265,7 @@ export async function commitToDcs(
     const data = (await getRes.json()) as { sha?: string; content?: string; encoding?: string };
     existingSha = data.sha ?? null;
     if (data.encoding === "base64" && typeof data.content === "string") {
-      try {
-        existingContent = atob(data.content.replace(/\s+/g, ""));
-      } catch {
-        existingContent = null;
-      }
+      existingBase64 = data.content.replace(/\s+/g, "");
     }
   } else if (getRes.status !== 404) {
     throw new Error(`dcs_lookup_failed: ${getRes.status} ${await getRes.text()}`);
@@ -281,14 +273,15 @@ export async function commitToDcs(
 
   // No-op when the file already matches. Saves a commit per nightly run for
   // resources nobody touched.
-  if (existingContent !== null && existingContent === content) {
+  const contentBase64 = utf8ToBase64(content);
+  if (existingBase64 !== null && existingBase64 === contentBase64) {
     return { contentSha: existingSha ?? "", commitSha: "", changed: false };
   }
 
   const body: Record<string, unknown> = {
     message,
     branch: config.branch,
-    content: utf8ToBase64(content),
+    content: contentBase64,
   };
   if (existingSha) body.sha = existingSha;
 

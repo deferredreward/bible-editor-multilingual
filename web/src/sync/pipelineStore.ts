@@ -27,6 +27,8 @@ import {
   type PipelineStatusResponse,
   type PipelineType,
 } from "./api";
+import { currentPipelineUserId } from "./pipelineSession";
+export { getSessionKey, setPipelineUser } from "./pipelineSession";
 
 const POLL_INTERVAL_MS = 120_000; // contract §5
 
@@ -48,7 +50,6 @@ const NON_TERMINAL_STATES: ReadonlySet<PipelineState> = new Set([
   "failed",
 ]);
 
-const SESSION_KEY_LS = "bible-editor.pipeline.sessionKey";
 const DISMISSED_LS = "bible-editor.pipeline.dismissed";
 
 export type PipelineJob = PipelineJobRow;
@@ -112,41 +113,6 @@ function emitCompletion(job: PipelineJob, prev: PipelineState | null) {
 
 function emitFocusRequest(jobId: string) {
   for (const l of focusListeners) l(jobId);
-}
-
-// Read userId out of the JWT payload — same trick App.tsx uses elsewhere.
-// We avoid /api/auth/me here so first-use isn't blocked on a round-trip.
-function userIdFromToken(): number | null {
-  try {
-    const token = typeof localStorage !== "undefined"
-      ? localStorage.getItem("bible-editor.auth.token")
-      : null;
-    if (!token) return null;
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-    const payload = JSON.parse(atob(parts[1]));
-    const sub = parseInt(String(payload.sub), 10);
-    return Number.isFinite(sub) ? sub : null;
-  } catch {
-    return null;
-  }
-}
-
-export function getSessionKey(): string {
-  try {
-    const existing = localStorage.getItem(SESSION_KEY_LS);
-    if (existing) return existing;
-  } catch {
-    /* private mode / no storage */
-  }
-  const userPart = userIdFromToken() ?? "anon";
-  const fresh = `bible-editor/${userPart}/${crypto.randomUUID()}`;
-  try {
-    localStorage.setItem(SESSION_KEY_LS, fresh);
-  } catch {
-    /* ignore */
-  }
-  return fresh;
 }
 
 // Normalize the camelCase StatusResponse into the snake_case row shape so
@@ -366,7 +332,7 @@ export const pipelineStore = {
     const seeded: PipelineJob = {
       job_id: res.jobId,
       upstream_job_id: null,
-      user_id: userIdFromToken() ?? 0,
+      user_id: currentPipelineUserId() ?? 0,
       pipeline_type: req.pipelineType,
       book: res.scope.book,
       start_chapter: res.scope.startChapter,

@@ -5,7 +5,8 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildUsfm } from "./export.ts";
+import { buildUsfm, commitToDcs } from "./export.ts";
+import { CorruptContentJsonError } from "./contentJson.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -30,6 +31,13 @@ function mkVerse(chapter, verse, verseEnd, text) {
     updated_by: null,
     updated_at: 0,
   };
+}
+
+function utf8Base64(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
 }
 
 // --- Multi-verse block emits `\v 6-9` ---
@@ -127,6 +135,76 @@ function mkVerse(chapter, verse, verseEnd, text) {
   // UHB is the source text — its \w occurrence is emitted exactly as stored.
   const uhb = buildUsfm({ book: "NUM", bibleVersion: "UHB", headers: null, verses: [verseRow("UHB", corrupt)] });
   assert(uhb.includes('x-occurrence="2" x-occurrences="1"'), `UHB export leaves source occurrence verbatim`);
+}
+
+// --- DCS no-op comparison handles UTF-8 content ---
+{
+  const originalFetch = globalThis.fetch;
+  const config = {
+    baseUrl: "https://dcs.example",
+    token: "secret",
+    owner: "owner",
+    repo: "repo",
+    branch: "ZEC-be",
+  };
+  const existing = "Reference\tQuote\tNote\n1:1\tשָׁלוֹם\tשלום עולם\n";
+  try {
+    const calls = [];
+    globalThis.fetch = async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      const method = init.method ?? "GET";
+      if (method === "GET") {
+        return new Response(JSON.stringify({
+          sha: "existing-sha",
+          encoding: "base64",
+          content: utf8Base64(existing),
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        content: { sha: "new-sha" },
+        commit: { sha: "commit-sha" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+
+    const noop = await commitToDcs(config, "tn_ZEC.tsv", existing, "nightly");
+    assert(noop.changed === false, `UTF-8 DCS match is a no-op`);
+    assert(calls.length === 1, `UTF-8 no-op does not send a write request`);
+
+    calls.length = 0;
+    const changedContent = existing.replace("שלום עולם", "שלום חדש");
+    const changed = await commitToDcs(config, "tn_ZEC.tsv", changedContent, "nightly");
+    assert(changed.changed === true, `UTF-8 DCS mismatch sends a commit`);
+    assert(calls.length === 2, `UTF-8 mismatch performs lookup plus write`);
+    assert(calls[1].init.method === "PUT", `UTF-8 mismatch updates existing file`);
+    const body = JSON.parse(String(calls[1].init.body));
+    assert(body.content === utf8Base64(changedContent), `UTF-8 commit body is base64 encoded`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// --- corrupt content_json fails export instead of emitting a partial book ---
+{
+  const bad = {
+    book: "ZEC",
+    chapter: 1,
+    verse: 1,
+    verse_end: null,
+    bible_version: "ULT",
+    content_json: "{not valid json",
+    plain_text: null,
+    version: 4,
+    updated_by: null,
+    updated_at: 0,
+  };
+  try {
+    buildUsfm({ book: "ZEC", bibleVersion: "ULT", headers: null, verses: [bad] });
+    assert(false, `corrupt content_json throws`);
+  } catch (err) {
+    assert(err instanceof CorruptContentJsonError, `corrupt content_json throws typed error`);
+    assert(err.context.book === "ZEC", `corrupt content_json error includes book`);
+    assert(err.context.version === 4, `corrupt content_json error includes row version`);
+  }
 }
 
 console.log("\nAll export smoke checks passed.");

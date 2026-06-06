@@ -2,7 +2,11 @@
 
 **Audience:** A Claude session working inside [`unfoldingWord/bp-assistant`](https://github.com/unfoldingWord/bp-assistant) or [`unfoldingWord/bp-assistant-skills`](https://github.com/unfoldingWord/bp-assistant-skills), reading cold. By the end of this doc you should be able to propose a concrete API contract back to the `bible-editor` side.
 
-**Status:** Brainstorm / hand-off doc. No code commitments yet on either side.
+**Status:** Historical contract/explainer. The recommended trigger + poll +
+Door43 pull shape has since been implemented on the `bible-editor` side with
+D1-backed queueing, status polling, and auto-apply of completed pipeline output.
+Use this doc for background and partner-contract context, not as a current
+"no code exists" statement.
 
 ---
 
@@ -53,19 +57,28 @@ Edits never block on the network:
 3. Background drain posts to the Worker FIFO with exponential backoff; survives crashes.
 4. Worker writes to D1, appends to `edit_log`.
 
-Reads are on demand: navigate to a chapter → `GET /api/chapters/:book/:chapter` → render. **No subscriptions, no webhooks inbound, no polling for external changes.**
+Reads are on demand: navigate to a chapter → `GET /api/chapters/:book/:chapter` → render. In-app row/verse changes also broadcast over the ChapterRoom WebSocket. There is still no general-purpose subscription to arbitrary external DCS changes.
 
 ### Auth
 
-DCS OAuth → JWT (HS256, 14-day TTL) → `localStorage`. Writes require valid JWT; reads are unauthenticated (the dataset is destined for public DCS export anyway). See [api/src/auth.ts](../api/src/auth.ts).
+DCS OAuth or local dev sign-in starts a cookie session: HttpOnly Access/Refresh
+cookies plus a non-HttpOnly CSRF cookie. Writes require a valid session and a
+matching `X-CSRF-Token`; browser code never stores the JWT in localStorage. See
+[api/src/auth.ts](../api/src/auth.ts).
 
 ### Export
 
-Cloudflare Workflow at 06:00 UTC: for each `(book × resource)`, render TSV or USFM from D1, stage to R2, and (if `DCS_SERVICE_TOKEN` is set) commit to `unfoldingWord/<resource>_<lang>` on a `live-snapshot` branch. See [api/src/exportWorkflow.ts](../api/src/exportWorkflow.ts). This is **one-way**: D1 → DCS. Nothing flows the other direction today.
+Cloudflare Workflow at 06:00 UTC: for each `(book × resource)`, render TSV or
+USFM from D1, stage to R2, and (if `DCS_SERVICE_TOKEN` is set) commit to the
+configured DCS owner on a generated per-book contributor branch. See
+[api/src/exportWorkflow.ts](../api/src/exportWorkflow.ts).
 
 ### Key consequence for integration
 
-> `bible-editor` has **no inbound-from-DCS path** during a session. If your pipeline output lands in DCS at 14:00 and a translator is editing at 14:01, they won't see it until someone manually re-imports — or until we build the inbound path.
+> `bible-editor` now has an inbound path for editor-triggered AI pipeline
+> output: on a `done` poll, the Worker fetches the Door43 raw URLs, stages the
+> parsed rows, and auto-applies them to D1 under the chapter-lock model. General
+> external DCS edits still require explicit reimport tooling.
 
 ---
 
@@ -227,7 +240,7 @@ What this implies, concretely:
 - A serializer mapping the existing checkpoint records into the response shape.
 - Bearer-token auth via the existing `BT_API_TOKEN` (with per-user attribution carried through the request).
 
-**`bible-editor` adds (separate plan once the contract is agreed):**
+**`bible-editor` adds (historical checklist; these items have largely shipped):**
 - A trigger UI in the chapter view (probably mirroring the tn-quick sparkles pattern but at chapter scope).
 - A Worker proxy endpoint that wraps `bp-assistant`'s `/api/pipeline/start` (same shape as the existing `tnQuick.ts` proxy — keeps `BT_API_TOKEN` server-side).
 - A status table in D1 (`pipeline_jobs`) so multi-tab + reload-survival works.

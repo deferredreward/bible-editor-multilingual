@@ -14,9 +14,9 @@ See [`docs/plan.md`](docs/plan.md) for the full design. See [`docs/design/`](doc
 ## Stack
 
 - **Backend**: Cloudflare Workers + Hono router + D1 (SQLite) + R2 + Durable Objects.
-- **Frontend**: Vite + React + Material UI v5 (same component family as the legacy tools).
-- **Bible data**: `usfm-js` for USFM ↔ JSON round-trip; `enhanced-word-aligner-rcl` for the alignment UI.
-- **Auth**: DCS OAuth → our own JWT (long-lived, decoupled from DCS token TTL).
+- **Frontend**: Vite + React + Material UI v6 (same component family as the legacy tools).
+- **Bible data**: `usfm-js` for USFM ↔ JSON round-trip; custom alignment tooling over the stored verse-object tree.
+- **Auth**: DCS OAuth → HttpOnly cookie session with CSRF-protected writes.
 
 ## Dev loop
 

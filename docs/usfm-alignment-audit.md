@@ -655,10 +655,10 @@ PERF ↔ verseObjects adapter. Concretely:
 So even if we adopt Proskomma server-side and store PERF (or USFM)
 in D1, **the alignment dialog itself is still our own ~1100 LOC of
 React in `web/src/components/AlignmentDialog.tsx` plus the ~650 LOC
-in `web/src/lib/alignment.ts`** — unless we glue in word-aligner-rcl,
-which has its own bundler / core-js v2-vs-v3 problems
-(`web/src/spikes/AlignerSmoke.tsx`) and operates on `verseObjects`
-rather than PERF. Either way, we own the alignment UI.
+in `web/src/lib/alignment.ts`**. A prior word-aligner-rcl spike found
+bundler / core-js v2-vs-v3 problems and the spike was later removed; that
+package also operated on `verseObjects` rather than PERF. Either way, we own
+the alignment UI.
 
 ### 9.4 Three migration shapes
 

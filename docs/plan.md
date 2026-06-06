@@ -1,5 +1,13 @@
 # Tactical Replacement for gatewayEdit + tcCreate (7 months, then archived)
 
+> **Historical baseline.** This was the original project plan. The shipped
+> implementation now differs in several important places: auth uses HttpOnly
+> cookie sessions with CSRF; the alignment dialog is custom, not
+> `enhanced-word-aligner-rcl`; DCS export uses per-book contributor branches,
+> not one `live-snapshot` branch; AI pipeline import/auto-apply and WebSocket
+> broadcast have since shipped. Treat this file as intent/background, not the
+> current implementation inventory.
+
 ## Context
 
 The current gatewayEdit + tcCreate stack costs significant editor time to slow saves, failed saves, and unexpected logouts that take unsaved work with them. The root cause is that DCS (Gitea) is the live concurrency point: every edit is a whole-file TSV rewrite + Git commit, the load-time file SHA goes stale silently, a 401 immediately wipes the auth IndexedDB store (taking any unsaved edits with it), and there is no client-side outbox to survive network/auth blips.
@@ -114,7 +122,7 @@ CREATE TABLE edit_log (                 -- append-only audit; cheap insurance
 CREATE INDEX edit_log_row ON edit_log(kind, row_key);
 ```
 
-Verse content is stored as the `usfm-js` per-verse JSON object (the same shape `enhanced-word-aligner-rcl` already produces) so alignment markers survive losslessly. **No need to reinvent the alignment format.**
+Verse content is stored as the `usfm-js` per-verse JSON object so alignment markers survive losslessly. **No need to reinvent the alignment format.**
 
 ## Save protocol (the key reliability change)
 
@@ -198,7 +206,7 @@ The user's design bundle ships four "screens" that are actually **four modes of 
 
 - Triggered by any ⌭ icon (verse-version specific).
 - Layout: dialog with header (`⌭ Aligning OBA 1:1 · ULT` + `esc · close`), verse strip (current verse's ULT + UST rendered as paragraphs so meaning stays in view), body (left rail = unaligned GL words bag, right = grid of `alignBox` cards each with the Hebrew/Greek word as title and dropped GL words as chips), footer (Suggestions: ⟳ refresh / ✓ accept / ✕ reject, then cancel / reset / save).
-- Implementation: **wrap `enhanced-word-aligner-rcl`** for the actual drag-and-drop and alignment data structure. The verse strip + dialog chrome is our own. `Esc` returns to the exact prior scroll position.
+- Implementation as shipped: custom HTML5 drag-and-drop alignment UI over the stored verse-object tree. The verse strip + dialog chrome is our own. `Esc` returns to the exact prior scroll position.
 
 **Styling**
 
@@ -222,7 +230,7 @@ Runs at 06:00 UTC. For each book that has changes since the last export:
 1. Read all rows (tn, tq, twl) for the book from D1.
 2. Render to TSV in the canonical column order (matching what we sampled in `data samples/`).
 3. Read all verses for the book; reconstruct the USFM string via `usfm-js`'s `toUSFM(bookObject, {forcedNewLines: true})`.
-4. Commit each file to a single DCS fork branch (e.g., `live-snapshot`) on the relevant repo, via Gitea API, using a service-account token.
+4. Commit each file to a per-book export branch on the relevant repo, via Gitea API, using a service-account token.
 5. Record the snapshot manifest (book → commit SHA) in D1 for traceability.
 
 If the cron fails, retry next night. **Edits remain in D1 regardless.**
@@ -232,7 +240,7 @@ If the cron fails, retry next night. **Edits remain in D1 regardless.**
 | Item | Verdict | Notes |
 |------|---------|-------|
 | `usfm-js` | **Borrow** | Canonical USFM ↔ JSON tree, lossless for `\zaln-*`. Used by tcCore and gatewayEdit. |
-| `enhanced-word-aligner-rcl` (v1.4.4) | **Borrow** | Already used in gatewayEdit. Reuse the React component for alignment UI. |
+| `enhanced-word-aligner-rcl` | **Dropped after spike** | The package did not fit the Vite build/runtime cleanly; production uses a custom aligner. |
 | `scripture-tsv` (TSV parse/render) | **Borrow** (export only) | Use only inside the nightly export worker, not in the hot path. |
 | `gitea-react-toolkit` | **Break** | Replace with our own thin JWT + fetch client. The toolkit's auth/save model is the root cause of current pain. |
 | `dcs-branch-merger` | **Break** | Not needed — there is no live branch merging because DCS is read-only during the project. |
@@ -245,7 +253,7 @@ If the cron fails, retry next night. **Edits remain in D1 regardless.**
 
 | Assumption | If wrong, what breaks | How to validate (cheap) |
 |---|---|---|
-| `enhanced-word-aligner-rcl` works outside gatewayEdit's context providers | Alignment editor blocks; would have to inline gatewayEdit code | **SPIKE RUN 2026-05-11 — partial fail.** Package installs and exports the components, but its dep tree mixes core-js v2 and v3 import paths. Webpack tolerates this; Rollup/Vite does not. See `web/src/spikes/AlignerSmoke.tsx` for details. Three forward paths for Phase 3, ranked by effort: (1) **write our own aligner UI** in ~300 LOC of react-dnd against the same `{verseAlignments, targetWords}` data model — cheapest, no bundler fights; (2) build the aligner as a webpack UMD bundle and load it via `<script>` at runtime — works but adds a parallel build pipeline; (3) reconfigure Vite/Rollup with surgical aliases and CommonJS handling — fragile. Recommend (1) unless the suggester/training features are essential. |
+| `enhanced-word-aligner-rcl` works outside gatewayEdit's context providers | Alignment editor blocks; would have to inline gatewayEdit code | **SPIKE RUN 2026-05-11 — partial fail.** The package's dependency tree mixed incompatible core-js paths under Vite/Rollup. The package and spike were later removed; production uses a custom aligner. |
 | `usfm-js` round-trips all 66 books losslessly | Word alignments could drift on save | Import sample USFMs, export, diff. Run across the full unfoldingWord ULT/UST set. **Day 1 spike.** |
 | DCS Gitea allows long-lived service tokens for export | Nightly export needs interactive auth | Confirm with DCS ops; fall back to a personal access token from a dedicated service account. |
 | D1 throughput is fine for our editor count | Saves queue up during peak | Whole team is <10 people; typical concurrency on one chapter is <3. D1 publishes ~1k writes/sec — we expect single-digit writes/sec at peak. Disconfirmer is essentially impossible at this scale. |
@@ -264,7 +272,7 @@ The web frontend runs under `vite dev` on a separate port and is proxied to the 
 - Lay out the workspace: `api/` (Cloudflare Workers + Wrangler) and `web/` (Vite + React). Commit an initial scaffold + README + this plan as `docs/plan.md`.
 - Confirm `wrangler dev` runs the empty Worker + Vite proxy works end-to-end on Windows before touching the real features.
 - `usfm-js` round-trip test across full ULT/UST corpus.
-- `enhanced-word-aligner-rcl` standalone embed.
+- Custom alignment dialog over `verseObjects`.
 - Confirm DCS service-account token strategy.
 
 **Phase 1 — Shell + tn/tq/twl editing (3 weeks)**
@@ -284,7 +292,7 @@ The web frontend runs under `vite dev` on a separate port and is proxied to the 
 - Verify USFM round-trip preserves alignment markers via the nightly export.
 
 **Phase 3 — Alignment editor (2 weeks)**
-- Build Screen D: alignment modal wrapping `enhanced-word-aligner-rcl`, with our verse strip chrome on top.
+- Build Screen D: custom alignment modal with our verse strip chrome on top.
 - Wire ⌭ icons throughout Screens A/B/C to open the modal for that specific verse-version.
 - Verify alignments save and round-trip via export.
 
@@ -316,7 +324,7 @@ The web frontend runs under `vite dev` on a separate port and is proxied to the 
 - `web/src/components/NoteCard.tsx` — note card with ID chip, support typeahead, editable quote + body.
 - `web/src/components/WordsTable.tsx` — deduplicated Words+TWL table.
 - `web/src/components/QuestionsTable.tsx`.
-- `web/src/components/AlignmentDialog.tsx` — Screen D modal wrapping `enhanced-word-aligner-rcl` with the verse strip.
+- `web/src/components/AlignmentDialog.tsx` — Screen D custom alignment modal with the verse strip.
 - `web/src/components/SupportChipTypeahead.tsx` and `TwChipTypeahead.tsx`.
 - `web/src/theme.ts` — MUI theme (default light theme + a few overrides for active-verse halo and the timeline rail tiles).
 - `docs/plan.md` — this plan, committed to the repo for traceability.
@@ -353,4 +361,4 @@ Tooling-level checks:
 
 - Cell-level CRDT / real-time co-typing in the same field. Out of scope for 7 months; row-level concurrency handles the multi-editor requirement at ~5% of the complexity.
 - A long-term migration path away from this tool. By design, the data lives in D1 + nightly DCS snapshots; the final snapshot at month 7 is the handoff artifact.
-- Replacement of `enhanced-word-aligner-rcl` or `usfm-js`. We borrow, we don't bend or break those.
+- Replacement of `usfm-js`. We borrow the verse-object format and keep round-trip behavior central.
