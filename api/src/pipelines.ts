@@ -882,6 +882,26 @@ pipelines.get("/:jobId", requireEditor, async (c) => {
     });
   }
 
+  // A locally-terminal job is authoritative: once it's cancelled (by the user)
+  // or done, don't re-poll upstream. A stale upstream 'running' would otherwise
+  // clobber the terminal state back to 'running' on every poll — an open tab
+  // polling this job_id by id resurrects a just-cancelled job each tick. Return
+  // the stored state so the client sees terminal and stops polling.
+  if (owned.state === "cancelled" || owned.state === "done") {
+    return c.json({
+      jobId: owned.job_id,
+      pipelineType: owned.pipeline_type,
+      scope: {
+        book: owned.book,
+        startChapter: owned.start_chapter,
+        endChapter: owned.end_chapter,
+      },
+      state: owned.state,
+      updatedAt: new Date(owned.updated_at * 1000).toISOString(),
+      createdAt: new Date(owned.created_at * 1000).toISOString(),
+    });
+  }
+
   const result = await pollPipelineJob(c.env, owned);
   if (result.kind === "unreachable") return c.json({ error: "upstream_unreachable" }, 502);
   if (result.kind === "malformed") return c.json({ error: "upstream_malformed" }, 502);

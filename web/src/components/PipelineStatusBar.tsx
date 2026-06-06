@@ -10,7 +10,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Chip,
-  IconButton,
   Stack,
   Tooltip,
   Popover,
@@ -22,22 +21,13 @@ import {
   Alert,
 } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
 import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 import BlockIcon from "@mui/icons-material/Block";
-import { ApiError } from "../sync/api";
-import type { PipelineErrorKind, PipelineJobRow, PipelineState } from "../sync/api";
-import { getSessionKey, pipelineStore } from "../sync/pipelineStore";
-
-const RESUMABLE_ERROR_KINDS = new Set<PipelineErrorKind>([
-  "transient_outage",
-  "usage_limit",
-  "interrupted",
-  "sdk_error",
-]);
+import type { PipelineJobRow, PipelineState } from "../sync/api";
+import { pipelineStore } from "../sync/pipelineStore";
 
 const TYPE_LABEL: Record<PipelineJobRow["pipeline_type"], string> = {
   generate: "Generate ULT + UST",
@@ -195,7 +185,6 @@ interface Props {
 export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const [retrying, setRetrying] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // When pipelineStore.requestFocus(jobId) fires (e.g. on already_running),
@@ -258,28 +247,6 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
     if (!anchorEl) setAnchorEl(chipRef.current);
     setPendingFocus(null);
   }, [pendingFocus, hasAnything, anchorEl]);
-
-  const retry = async (job: PipelineJobRow) => {
-    setRetrying(job.job_id);
-    try {
-      await pipelineStore.start({
-        pipelineType: job.pipeline_type,
-        book: job.book,
-        startChapter: job.start_chapter,
-        endChapter: job.end_chapter,
-        sessionKey: job.session_key || getSessionKey(),
-      });
-    } catch (e) {
-      if (e instanceof ApiError) {
-        const body = e.body as { error?: string } | undefined;
-        // The store seeds the row again; surfacing the error to the user
-        // here is optional. Leave a console crumb.
-        console.warn("pipeline retry failed", body?.error ?? e.message);
-      }
-    } finally {
-      setRetrying(null);
-    }
-  };
 
   const cancel = async (job: PipelineJobRow) => {
     setCancelling(job.job_id);
@@ -422,19 +389,6 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                       </Typography>
                     )}
                   </Box>
-                  {job.state === "failed" && job.error_kind && RESUMABLE_ERROR_KINDS.has(job.error_kind) && (
-                    <Tooltip title="re-POST the start request; the server resumes from its checkpoint">
-                      <span>
-                        <IconButton
-                          size="small"
-                          onClick={() => void retry(job)}
-                          disabled={retrying === job.job_id}
-                        >
-                          {retrying === job.job_id ? <CircularProgress size={14} /> : <RefreshIcon fontSize="small" />}
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  )}
                   {job.state === "queued" && (
                     <Tooltip title="Remove from the queue (only possible before it starts)">
                       <span>
