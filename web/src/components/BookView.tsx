@@ -109,6 +109,10 @@ export function BookView({
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRowRef = useRef<HTMLDivElement | null>(null);
+  // Set on any deliberate scroll-to-active request (navigation or the
+  // toolbar button). Held until the active chapter is loaded and centered —
+  // see the scroll effect below.
+  const [scrollPending, setScrollPending] = useState(false);
 
   // Per-bibleVersion dirty count for the header save buttons. Each value is
   // the list of drafts for that column (across all chapters in book mode).
@@ -144,17 +148,48 @@ export function BookView({
     onSaveColumn(bv, payload);
   };
 
+  // Scroll the active verse into view — on navigation (activeChapter /
+  // activeVerse) and on the toolbar "go to active" click (scrollNonce).
+  // Book mode lazy-loads chapters, so the active chapter's row may not be
+  // mounted yet; a bare scrollIntoView would no-op against a null ref. Mark
+  // the request pending and let the effect below load + center it.
   useEffect(() => {
-    activeRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setScrollPending(true);
   }, [activeChapter, activeVerse, scrollNonce]);
+
+  // Resolve a pending scroll-to-active. Eagerly load the active chapter plus
+  // the two rows above it so the rows above the target render at full height.
+  // Crucially, wait until nothing is still loading before scrolling: a chapter
+  // that grows mid-scroll would shove the target down and we'd land short
+  // (the "go to active does nothing / lands at the wrong chapter" bug). Once
+  // in-flight loads settle, heights are stable and a single scroll lands true.
+  useEffect(() => {
+    if (!scrollPending) return;
+    for (const c of [activeChapter - 2, activeChapter - 1, activeChapter, activeChapter + 1]) {
+      if (!chapterList.includes(c)) continue;
+      const s = chapters.get(c);
+      if (!s || s.kind === "unloaded") onLoadChapter(c);
+    }
+    const active = chapters.get(activeChapter);
+    if (!active || active.kind === "unloaded" || active.kind === "loading") return;
+    const anyLoading = [...chapters.values()].some((s) => s.kind === "loading");
+    if (anyLoading) return; // re-runs when `chapters` next updates
+    // Instant, not smooth: smooth scrollIntoView is silently dropped in this
+    // lazy-loaded scroll container (the original "go to active" no-op). Since
+    // we only scroll once heights have settled, the jump lands true.
+    activeRowRef.current?.scrollIntoView({ behavior: "auto", block: "center" });
+    setScrollPending(false);
+  }, [scrollPending, chapters, activeChapter, activeVerse, chapterList, onLoadChapter]);
 
   // Scroll to find's active match without changing the actual active verse —
   // navigation between matches shouldn't blow away the user's editing focus.
+  // Instant (not smooth) for the same reason as the scroll-to-active effect:
+  // smooth scrollIntoView is silently dropped in this lazy-loaded container.
   useEffect(() => {
     if (!findActiveMatch || !containerRef.current) return;
     const sel = `[data-find-cell="${findActiveMatch.chapter}-${findActiveMatch.verse}-${findActiveMatch.bibleVersion}"]`;
     const el = containerRef.current.querySelector<HTMLElement>(sel);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.scrollIntoView({ behavior: "auto", block: "center" });
   }, [findActiveMatch]);
 
   const search = useMemo<SearchState | null>(() => {
@@ -244,6 +279,15 @@ export function BookView({
           overflowY: "auto",
           ...markHighlightSx(theme.palette.mode),
           ...draftDirtyBorderSx(),
+          // Each verse is its own grid cell led by an inline reference label.
+          // When a verse's content opens with a paragraph / poetry block (its
+          // own \p or one drifted from the previous verse), that block breaks
+          // to the next line, so some verses' text starts beside the label and
+          // others below it. Flatten a verse's FIRST block to inline so every
+          // verse's text begins on the reference's line; internal breaks
+          // (segments 2+) still lay out as blocks.
+          "& .be-verse-span > div.be-para:first-of-type, & .be-verse-span > div.be-line:first-of-type, & .be-verse-span > div.be-q:first-of-type, & .be-verse-span > div.be-blank:first-of-type":
+            { display: "inline", marginTop: 0, paddingLeft: 0 },
         })}
       >
         <Box sx={{ display: "grid", gridTemplateColumns, gap: 1, px: 1.5, py: 1 }}>
