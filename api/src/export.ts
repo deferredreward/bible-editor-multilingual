@@ -378,3 +378,78 @@ export async function deleteDcsBranch(
   if (res.status === 404) return false;
   throw new Error(`dcs_branch_delete_failed: ${res.status} ${await res.text()}`);
 }
+
+// Ensure an OPEN pull request exists from `branch` into `base` (default
+// "master"). The DCS-side validate-and-merge workflow operates on `-be-` *PRs*
+// (it merges the mergeable ones nightly), not on bare branches — so the export
+// opens a PR for each branch it pushes, otherwise the branch sits there unmerged
+// until someone makes one by hand.
+//
+// Idempotent: returns the existing open PR if there is one, creates it
+// otherwise. HTTP 422 from the create is treated as a benign no-op — it means
+// either "no commits between" (the branch matches master, nothing to merge) or
+// a PR was opened by a racing run between our list and create.
+export interface DcsPrConfig {
+  baseUrl: string;
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;   // head
+  base?: string;    // default "master"
+}
+
+export interface DcsPrResult {
+  number: number | null;
+  created: boolean;
+  reason: "head_equals_base" | "existing" | "created" | "raced" | "no_diff";
+}
+
+export async function ensureDcsPr(
+  config: DcsPrConfig,
+  title: string,
+  body: string,
+): Promise<DcsPrResult> {
+  const base = config.base ?? "master";
+  if (config.branch === base) return { number: null, created: false, reason: "head_equals_base" };
+
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const apiBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+
+  // Gitea's pulls list doesn't filter by head ref reliably across versions, so
+  // page the open PRs and match client-side. Realistically a handful per repo.
+  const findOpenPr = async (): Promise<number | null> => {
+    const res = await fetch(`${apiBase}/pulls?state=open&limit=50`, { method: "GET", headers });
+    if (!res.ok) throw new Error(`dcs_pulls_list_failed: ${res.status} ${await res.text()}`);
+    const pulls = (await res.json()) as Array<{
+      number: number;
+      head?: { ref?: string };
+      base?: { ref?: string };
+    }>;
+    const hit = pulls.find((p) => p.head?.ref === config.branch && p.base?.ref === base);
+    return hit ? hit.number : null;
+  };
+
+  const existing = await findOpenPr();
+  if (existing != null) return { number: existing, created: false, reason: "existing" };
+
+  const createRes = await fetch(`${apiBase}/pulls`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ head: config.branch, base, title, body }),
+  });
+  if (createRes.ok) {
+    const created = (await createRes.json()) as { number?: number };
+    return { number: created.number ?? null, created: true, reason: "created" };
+  }
+  if (createRes.status === 422) {
+    const raced = await findOpenPr();
+    return raced != null
+      ? { number: raced, created: false, reason: "raced" }
+      : { number: null, created: false, reason: "no_diff" };
+  }
+  throw new Error(`dcs_pull_create_failed: ${createRes.status} ${await createRes.text()}`);
+}

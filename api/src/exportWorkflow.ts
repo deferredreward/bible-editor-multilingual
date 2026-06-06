@@ -25,6 +25,7 @@ import {
   buildUsfm,
   commitToDcs,
   deleteDcsBranch,
+  ensureDcsPr,
   RESOURCE_TARGETS,
   type Resource,
 } from "./export";
@@ -64,6 +65,11 @@ export interface StepResult {
   dcsCommitSha: string | null;
   dcsChanged: boolean;
   dcsSkippedReason: string | null;
+  // The open PR ensured for this branch (so the DCS validate-and-merge workflow
+  // can act on it). null when nothing was pushed, the run was dry, or PR
+  // creation failed (see prReason).
+  prNumber: number | null;
+  prReason: string | null;
 }
 
 const isResource = (s: string): s is Resource => (ALL_RESOURCES as string[]).includes(s);
@@ -185,6 +191,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         dcsCommitSha: null,
         dcsChanged: false,
         dcsSkippedReason: "no_rows",
+        prNumber: null,
+        prReason: null,
       };
     }
 
@@ -204,6 +212,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let dcsCommitSha: string | null = null;
     let dcsChanged = false;
     let dcsSkippedReason: string | null = null;
+    let prNumber: number | null = null;
+    let prReason: string | null = null;
 
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
@@ -229,6 +239,29 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // changed, plus the legacy live-snapshot branch. Best-effort — a prune
       // failure must never fail or retry the export step.
       await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
+
+      // Ensure the branch has an open PR into master so the DCS validate-and-
+      // merge workflow can act on it (it merges -be- PRs, not bare branches).
+      // Best-effort: the commit already succeeded and the snapshot is recorded,
+      // so a PR failure must not fail the export — the PR can be opened later.
+      try {
+        const pr = await ensureDcsPr(
+          { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo: target.repo, branch },
+          `bible-editor: ${book} ${resource} → master`,
+          `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}.`,
+        );
+        prNumber = pr.number;
+        prReason = pr.reason;
+      } catch (e) {
+        prReason = "error";
+        console.error("export ensure-PR failed", {
+          book,
+          resource,
+          repo: target.repo,
+          branch,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
 
     await this.recordSnapshot(book, resource, branch, dcsCommitSha, built.rowCount, dcsSkippedReason);
@@ -243,6 +276,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       dcsCommitSha,
       dcsChanged,
       dcsSkippedReason,
+      prNumber,
+      prReason,
     };
   }
 
