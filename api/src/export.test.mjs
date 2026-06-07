@@ -5,7 +5,7 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildUsfm, commitToDcs } from "./export.ts";
+import { buildUsfm, commitToDcs, ensureDcsPr } from "./export.ts";
 import { CorruptContentJsonError } from "./contentJson.ts";
 
 function assert(cond, msg) {
@@ -152,7 +152,19 @@ function utf8Base64(s) {
     const calls = [];
     globalThis.fetch = async (url, init = {}) => {
       calls.push({ url: String(url), init });
+      const u = String(url);
       const method = init.method ?? "GET";
+      // resetExportBranchToMaster (runs first inside commitToDcs): look up the
+      // master ref, then force-update the branch ref onto it.
+      if (u.includes("/git/refs/heads/master") && method === "GET") {
+        return new Response(JSON.stringify({ ref: "refs/heads/master", object: { sha: "master-sha" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (u.includes("/git/refs/heads/") && method === "PATCH") {
+        return new Response(JSON.stringify({ ref: "refs/heads/ZEC-be", object: { sha: "master-sha" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      // contents API: GET the existing file, PUT/POST to write it.
       if (method === "GET") {
         return new Response(JSON.stringify({
           sha: "existing-sha",
@@ -165,18 +177,22 @@ function utf8Base64(s) {
         commit: { sha: "commit-sha" },
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     };
+    // Count only the contents-API calls so the branch-reset preamble doesn't
+    // skew the lookup-vs-write assertions.
+    const contentCalls = () => calls.filter((c) => c.url.includes("/contents/"));
 
     const noop = await commitToDcs(config, "tn_ZEC.tsv", existing, "nightly");
     assert(noop.changed === false, `UTF-8 DCS match is a no-op`);
-    assert(calls.length === 1, `UTF-8 no-op does not send a write request`);
+    assert(contentCalls().length === 1, `UTF-8 no-op does not send a write request`);
 
     calls.length = 0;
     const changedContent = existing.replace("שלום עולם", "שלום חדש");
     const changed = await commitToDcs(config, "tn_ZEC.tsv", changedContent, "nightly");
     assert(changed.changed === true, `UTF-8 DCS mismatch sends a commit`);
-    assert(calls.length === 2, `UTF-8 mismatch performs lookup plus write`);
-    assert(calls[1].init.method === "PUT", `UTF-8 mismatch updates existing file`);
-    const body = JSON.parse(String(calls[1].init.body));
+    assert(contentCalls().length === 2, `UTF-8 mismatch performs lookup plus write`);
+    const writeCall = contentCalls().find((c) => (c.init.method ?? "GET") !== "GET");
+    assert(writeCall && writeCall.init.method === "PUT", `UTF-8 mismatch updates existing file`);
+    const body = JSON.parse(String(writeCall.init.body));
     assert(body.content === utf8Base64(changedContent), `UTF-8 commit body is base64 encoded`);
   } finally {
     globalThis.fetch = originalFetch;
@@ -204,6 +220,55 @@ function utf8Base64(s) {
     assert(err instanceof CorruptContentJsonError, `corrupt content_json throws typed error`);
     assert(err.context.book === "ZEC", `corrupt content_json error includes book`);
     assert(err.context.version === 4, `corrupt content_json error includes row version`);
+  }
+}
+
+// --- ensureDcsPr: reuse an open PR, create when absent, treat 422 as benign ---
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "ZEC-be-x" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  try {
+    // An open PR already exists for this head→base → reuse it, never POST.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (u.includes("/pulls?") && m === "GET")
+        return okJson([{ number: 42, head: { ref: "ZEC-be-x" }, base: { ref: "master" } }]);
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const r1 = await ensureDcsPr(cfg, "t", "b");
+    assert(r1.number === 42 && !r1.created && r1.reason === "existing", `ensureDcsPr reuses an open PR`);
+
+    // No open PR → create one.
+    let posted = false;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (u.includes("/pulls?") && m === "GET") return okJson([]);
+      if (u.endsWith("/pulls") && m === "POST") { posted = true; return okJson({ number: 99 }, 201); }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const r2 = await ensureDcsPr(cfg, "t", "b");
+    assert(posted && r2.number === 99 && r2.created && r2.reason === "created", `ensureDcsPr creates a PR when none open`);
+
+    // Create returns 422 (no commits between) and no racing PR → benign no_diff.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (u.includes("/pulls?") && m === "GET") return okJson([]);
+      if (u.endsWith("/pulls") && m === "POST") return okJson({ message: "no commits between" }, 422);
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const r3 = await ensureDcsPr(cfg, "t", "b");
+    assert(!r3.created && r3.reason === "no_diff", `ensureDcsPr treats 422 as a benign no-op`);
+
+    // Head == base is a guarded no-op (no network at all).
+    const r4 = await ensureDcsPr({ ...cfg, branch: "master" }, "t", "b");
+    assert(!r4.created && r4.reason === "head_equals_base", `ensureDcsPr skips when head == base`);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 }
 
