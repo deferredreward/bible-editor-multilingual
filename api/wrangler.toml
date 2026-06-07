@@ -52,7 +52,11 @@ class_name = "ExportWorkflow"
 # branch) but deliberately not registered here yet. Uncomment "0 8 * * *"
 # below once the export → DCS git-action merge loop is verified end-to-end.
 # crons = ["0 6 * * *", "*/5 * * * *", "0 8 * * *"]
-crons = ["0 6 * * *", "*/5 * * * *"]
+# Export cron retimed to 05:30 UTC (was "0 6 * * *") so the -be- branches land
+# ~30 min before Rich's 06:00 UTC DCS-side validate-and-merge job (sequence:
+# export -> per-push validation -> 06:00 merge). The */5 pipeline-poll cron is
+# unrelated (AI auto-apply).
+crons = ["30 5 * * *", "*/5 * * * *"]
 
 # Public-safe defaults; secrets go in `wrangler secret put` (DCS_CLIENT_ID,
 # DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN, BT_API_TOKEN).
@@ -117,7 +121,8 @@ class_name = "ExportWorkflow"
 
 [env.production.triggers]
 # See [triggers] above re: dormant "0 8 * * *" nightly DCS re-import.
-crons = ["0 6 * * *", "*/5 * * * *"]
+# Export cron at 05:30 UTC, ~30 min before Rich's 06:00 merge (see [triggers]).
+crons = ["30 5 * * *", "*/5 * * * *"]
 
 [env.production.vars]
 DCS_BASE_URL = "https://git.door43.org"
