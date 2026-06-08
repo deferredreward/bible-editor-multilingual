@@ -19,6 +19,8 @@
 // Pure insertions (oldLen === 0) and pure deletions (newSubstring === "")
 // flow through the localized rewrite path too.
 
+import { normalizeEditable } from "./usfm.ts";
+
 export interface SmartReplaceResult {
   content: unknown;
   plainText: string;
@@ -609,6 +611,17 @@ export function smartEditVerse(
   oldPlain: string,
   newPlain: string,
 ): SmartReplaceResult {
+  // The diff is character-exact (diffSingleChange), but `oldPlain` is the
+  // whitespace-collapsed extractEditableText baseline while `newPlain` is
+  // the raw textContent / innerText captured from the contenteditable. A
+  // single divergent tail char (trailing space, innerText block-newline,
+  // toolbar `&nbsp;`, `&#8203;` placeholder) collapses the common suffix to
+  // zero, so the change range balloons to the verse end and the localized
+  // rewrite drops every \zaln-s after the edit. Normalize both sides
+  // identically so the diff sees only the genuine edit. `oldPlain` already
+  // arrives normalized, so this is a no-op on it.
+  oldPlain = normalizeEditable(oldPlain);
+  newPlain = normalizeEditable(newPlain);
   if (oldPlain === newPlain) {
     return { content, plainText: oldPlain, preservedAlignment: true };
   }
