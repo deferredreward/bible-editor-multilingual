@@ -143,6 +143,19 @@ export function extractTrailingMarkers(verseObjects: unknown[] | undefined | nul
   return out;
 }
 
+// Collapse editor whitespace so the diff baseline (extractEditableText)
+// and the captured contenteditable text (textContent / innerText) are
+// byte-comparable. Strips zero-width spaces (U+200B — empty-block caret
+// placeholders the editor emits as `&#8203;`) and collapses ASCII
+// whitespace AND non-breaking spaces (U+00A0 — injected as `&nbsp;` after
+// toolbar-inserted marker chips, and by `innerText` block boundaries) to
+// single spaces, then trims. extractEditableText and smartEditVerse share
+// this so a stray trailing/embedded space can't desync the edit diff and
+// nuke alignment from the edit point to the verse end.
+export function normalizeEditable(s: string): string {
+  return s.replace(/​/g, "").replace(/[ \t\n\r\f\v ]+/g, " ").trim();
+}
+
 // Like extractPlainText but emits a literal USFM marker token (e.g.
 // "\p ", "\q1 ", "\b ") inline for each in-flow marker node. Used as
 // the BASELINE for diffing edits in the active-verse contenteditable
@@ -181,5 +194,5 @@ export function extractEditableText(verseObjects: unknown): string {
   } else if (Array.isArray(verseObjects)) {
     walk(verseObjects);
   }
-  return parts.join("").replace(/[ \t\n\r\f\v]+/g, " ").trim();
+  return normalizeEditable(parts.join(""));
 }

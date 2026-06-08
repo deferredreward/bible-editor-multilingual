@@ -1374,6 +1374,98 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
   assert(!hl.has(`${gapWord}|1`), `ZEC 5:4: must NOT highlight the gap word between groups`);
 }
 
+// ─── Case 21: editor whitespace divergence must not nuke alignment ────────
+// saveVerseDraft diffs the whitespace-collapsed extractEditableText baseline
+// against the RAW textContent/innerText captured from the contenteditable. A
+// single divergent tail char (trailing space, innerText block-newline, toolbar
+// `&nbsp;` U+00A0, `&#8203;` U+200B placeholder) used to collapse
+// diffSingleChange's common suffix to zero, so the change range ballooned to
+// the verse end and localizedRewriteVerse dropped every \zaln-s after the edit
+// — the "alignment from there to the end goes away" bug. smartEditVerse now
+// normalizes both inputs so the diff sees only the genuine edit.
+{
+  console.log("\n[Case 21] editor whitespace divergence preserves alignment");
+  const { smartEditVerse } = await import("./replace.ts");
+  const { extractEditableText, normalizeEditable } = await import("./usfm.ts");
+
+  const target = String.raw`\v 1 \zaln-s |x-strong="H1"\*\w he|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+\zaln-s |x-strong="H2"\*\w is|x-occurrence="1" x-occurrences="3"\w*\zaln-e\*
+\zaln-s |x-strong="H3"\*\w good|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*,
+\zaln-s |x-strong="H4"\*\w she|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+\zaln-s |x-strong="H2"\*\w is|x-occurrence="2" x-occurrences="3"\w*\zaln-e\*
+\zaln-s |x-strong="H5"\*\w kind|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*.`;
+  const json = usfm.toJSON(`\\id TST\n\\c 1\n${target}\n`);
+  const content = { verseObjects: json.chapters["1"]["1"].verseObjects };
+  const baseline = extractEditableText(content.verseObjects);
+
+  const collect = (result) => {
+    const aligned = [];
+    const bare = [];
+    const walk = (xs, insideZaln) => {
+      for (const n of xs ?? []) {
+        if (n?.tag === "zaln") { walk(n.children, true); continue; }
+        if (n?.type === "word" && n?.tag === "w") (insideZaln ? aligned : bare).push(n.text);
+        if (Array.isArray(n?.children)) walk(n.children, insideZaln);
+      }
+    };
+    walk(result.content.verseObjects, false);
+    return { aligned, bare };
+  };
+
+  // The single genuine edit in every variant: good -> great.
+  const expectOnlyGreatUnaligned = (label, captured) => {
+    const result = smartEditVerse(content, baseline, captured);
+    const { aligned, bare } = collect(result);
+    assert(
+      bare.join(",") === "great",
+      `${label}: only the edited word unaligns (got bare [${bare.join(",")}])`,
+    );
+    assert(
+      aligned.join(",") === "he,is,she,is,kind",
+      `${label}: every other word stays aligned (got [${aligned.join(",")}])`,
+    );
+    assert(result.preservedAlignment === true, `${label}: preservedAlignment stays true`);
+  };
+
+  // (a) Trailing space — the proven repro. textContent commonly ends with one.
+  expectOnlyGreatUnaligned("trailing space", baseline.replace("good", "great") + " ");
+
+  // (b) innerText block-newline — DocColumn/BookView read innerText, which
+  // inserts \n between block-level <div>s. An embedded \n must collapse away.
+  expectOnlyGreatUnaligned("embedded newline", baseline.replace("good", "great").replace(" ", "\n"));
+
+  // (c) Toolbar `&nbsp;` (U+00A0) injected after a chip / between words.
+  expectOnlyGreatUnaligned("nbsp U+00A0", baseline.replace("good", "great") + " ");
+
+  // (d) `&#8203;` (U+200B) empty-block placeholder — stripped, never saved.
+  {
+    const result = smartEditVerse(content, baseline, baseline.replace("good", "great") + "​");
+    const { aligned, bare } = collect(result);
+    assert(bare.join(",") === "great", `ZWSP: only the edited word unaligns (got [${bare.join(",")}])`);
+    assert(aligned.join(",") === "he,is,she,is,kind", `ZWSP: every other word stays aligned (got [${aligned.join(",")}])`);
+    let zwsp = 0;
+    const scan = (xs) => {
+      for (const n of xs ?? []) {
+        if (typeof n?.text === "string" && n.text.includes("​")) zwsp++;
+        if (Array.isArray(n?.children)) scan(n.children);
+      }
+    };
+    scan(result.content.verseObjects);
+    assert(zwsp === 0, `ZWSP: no U+200B leaks into saved verseObjects (got ${zwsp})`);
+    assert(!result.plainText.includes("​"), `ZWSP: no U+200B in plainText`);
+  }
+
+  // (e) Normalizer contract: it collapses every editor-artifact class
+  // (ASCII whitespace, U+00A0 nbsp, U+200B zwsp) to the same canonical form
+  // extractEditableText produces, and is idempotent on an already-clean
+  // baseline — so the diff's two sides can never drift apart.
+  assert(normalizeEditable(baseline) === baseline, `idempotent on the extractEditableText baseline`);
+  assert(
+    normalizeEditable("\\p  A  ​ B \n") === "\\p A B",
+    `collapses double space / nbsp / zwsp / trailing newline to canonical form (got ${JSON.stringify(normalizeEditable("\\p  A  ​ B \n"))})`,
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
