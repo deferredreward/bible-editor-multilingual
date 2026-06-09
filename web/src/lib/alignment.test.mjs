@@ -1466,6 +1466,72 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
   );
 }
 
+// ─── Case 22: ZEC 6:2 — split source token (occurrence>occurrences) highlight ──
+// Prod ULT renders one Hebrew token whose English gloss is NON-CONTIGUOUS as
+// TWO `\zaln-s` runs with the same x-content, the second stamped
+// occurrence="2" while occurrences stays "1" (impossible — "the 2nd of 1").
+// For בַּ⁠מֶּרְכָּבָה → "In the" … (interrupted by "first") … "chariot", the split
+// parked "chariot" in the second run, so the translate-ordinal note (d8lb,
+// quote `בַּ⁠מֶּרְכָּבָה הָ⁠רִאשֹׁנָה & וּ⁠בַ⁠מֶּרְכָּבָה הַ⁠שֵּׁנִית`) lit up "In the
+// first" and "and in the second" but NEVER "chariot". collectMilestoneRuns now
+// folds the continuation back into the first run so both "chariot"s highlight.
+{
+  console.log("\n[Case 22] ZEC 6:2 split-source-token highlight (occurrence>occurrences)");
+  // Define each Hebrew content ONCE so the milestone content and the quote
+  // share byte-identical strings (no hand-typed cantillation drift).
+  const baChariot = "בַּ⁠מֶּרְכָּבָ֥ה"; //   "in the chariot"
+  const haFirst = "הָ⁠רִֽאשֹׁנָ֖ה"; //       "the first"
+  const susimA = "סוּסִ֣ים"; //              "horses" (clause 1 cantillation)
+  const adummim = "אֲדֻמִּ֑ים"; //           "red"
+  const ubaChariot = "וּ⁠בַ⁠מֶּרְכָּבָ֥ה"; // "and in the chariot"
+  const haSecond = "הַ⁠שֵּׁנִ֖ית"; //        "the second"
+  const susimB = "סוּסִ֥ים"; //              "horses" (clause 2 cantillation)
+  const shechorim = "שְׁחֹרִֽים"; //          "black"
+
+  const ms = (content, occurrence, occurrences, words) => ({
+    type: "milestone", tag: "zaln", content,
+    occurrence: String(occurrence), occurrences: String(occurrences),
+    children: words.map(([text, o, os]) => ({
+      type: "word", tag: "w", text, occurrence: String(o), occurrences: String(os),
+    })),
+  });
+
+  // Verbatim shape of prod ULT ZEC 6:2: split continuations marked ← below.
+  const verseObjects = [
+    ms(baChariot, 1, 1, [["In", 1, 1], ["the", 1, 2]]),
+    ms(haFirst, 1, 1, [["first", 1, 1]]),
+    ms(baChariot, 2, 1, [["chariot", 1, 2]]), //                 ← split continuation
+    ms(susimA, 1, 1, [["were", 1, 2]]),
+    ms(adummim, 1, 1, [["red", 1, 1]]),
+    ms(susimA, 2, 1, [["horses", 1, 2]]), //                     ← split continuation
+    ms(ubaChariot, 1, 1, [["and", 1, 1], ["in", 1, 1], ["the", 2, 2]]),
+    ms(haSecond, 1, 1, [["second", 1, 1]]),
+    ms(ubaChariot, 2, 1, [["chariot", 2, 2]]), //                ← split continuation
+    ms(susimB, 1, 1, [["were", 2, 2]]),
+    ms(shechorim, 1, 1, [["black", 1, 1]]),
+    ms(susimB, 2, 1, [["horses", 2, 2]]), //                     ← split continuation
+  ];
+
+  const quote = `${baChariot} ${haFirst} & ${ubaChariot} ${haSecond}`;
+  const hl = findTargetHighlights(verseObjects, quote, 1);
+
+  // The regression: both "chariot"s — parked in the split-continuation runs —
+  // now light up.
+  assert(hl.has("chariot|1"), `ZEC 6:2: highlights first chariot (the bug). Got: ${[...hl].join(",")}`);
+  assert(hl.has("chariot|2"), `ZEC 6:2: highlights second chariot. Got: ${[...hl].join(",")}`);
+  // …alongside the rest of the two quoted phrases.
+  for (const key of ["In|1", "the|1", "first|1", "and|1", "in|1", "the|2", "second|1"]) {
+    assert(hl.has(key), `ZEC 6:2: highlights ${key}. Got: ${[...hl].join(",")}`);
+  }
+  // No bleed into the unquoted horses / colors (σוּסִים / red / black runs).
+  assert(!hl.has("red|1"), `ZEC 6:2: must NOT highlight "red". Got: ${[...hl].join(",")}`);
+  assert(!hl.has("black|1"), `ZEC 6:2: must NOT highlight "black". Got: ${[...hl].join(",")}`);
+  assert(
+    !hl.has("horses|1") && !hl.has("horses|2"),
+    `ZEC 6:2: must NOT highlight "horses". Got: ${[...hl].join(",")}`,
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
