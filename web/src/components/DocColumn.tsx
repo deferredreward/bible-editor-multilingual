@@ -388,7 +388,7 @@ function VerseSpan({
   const elRef = useRef<HTMLSpanElement | null>(null);
   const lastTextRef = useRef(text);
   // Resync tracker for the editable span. lastSetRef.current is the most
-  // recent string we wrote to .innerText / .innerHTML; the reset effect
+  // recent string we wrote to .textContent / .innerHTML; the reset effect
   // skips when its target matches, preserving the caret during typing.
   // Hoisted so the draft-hydration path can mark it in lockstep.
   const lastSetRef = useRef<string | null>(null);
@@ -406,19 +406,25 @@ function VerseSpan({
     return drafts.subscribe((all) => {
       const rec = all.find((d) => d.key === draftKey);
       setHasDraft(!!rec);
+      // Hydrate from a PRE-EXISTING draft exactly once, on the first
+      // (mount-snapshot) callback — never from a draft the user is creating
+      // by typing right now. Writing to the live element mid-input resets the
+      // caret, and in Firefox `textContent` set here would clobber the verse
+      // the user is editing. Restore-on-mount (reload / chapter nav) is the
+      // only legitimate reason to push draft text into the DOM.
+      if (hydratedFromDraftRef.current) return;
+      hydratedFromDraftRef.current = true;
       if (
-        !hydratedFromDraftRef.current &&
         rec &&
         typeof (rec.payload as { plainText?: unknown }).plainText === "string" &&
         elRef.current
       ) {
         const plain = (rec.payload as { plainText: string }).plainText;
-        if (elRef.current.innerText !== plain) {
-          elRef.current.innerText = plain;
+        if (elRef.current.textContent !== plain) {
+          elRef.current.textContent = plain;
           lastSetRef.current = plain;
           lastTextRef.current = plain;
         }
-        hydratedFromDraftRef.current = true;
       }
     });
   }, [draftKey, readOnly]);
@@ -485,7 +491,7 @@ function VerseSpan({
   useEffect(() => {
     if (!elRef.current) return;
     if (hasDraft) return;
-    const dom = elRef.current.innerText;
+    const dom = elRef.current.textContent;
     if (html !== null) {
       if (html !== lastSetRef.current) {
         elRef.current.innerHTML = html;
@@ -496,7 +502,7 @@ function VerseSpan({
     }
     // Plain-text mode.
     if (lastSetRef.current === null || dom === lastTextRef.current) {
-      elRef.current.innerText = text;
+      elRef.current.textContent = text;
       lastSetRef.current = text;
     }
     lastTextRef.current = text;
@@ -550,13 +556,13 @@ function VerseSpan({
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
-              // Drop the draft and force the DOM back to server text. The
-              // hydration guard resets too so the next mount goes through
-              // the normal text-prop path.
+              // Drop the draft and force the DOM back to server text. Leave
+              // the hydration guard set — hydration is a mount-only concern
+              // (a fresh mount gets a fresh ref); re-arming it here would let
+              // the next keystroke's draft stomp the live DOM again.
               void drafts.clear(draftKey);
-              hydratedFromDraftRef.current = false;
               if (elRef.current) {
-                elRef.current.innerText = text;
+                elRef.current.textContent = text;
                 lastSetRef.current = text;
                 lastTextRef.current = text;
               }
@@ -598,7 +604,11 @@ function VerseSpan({
         dir={rtl ? "rtl" : "ltr"}
         onInput={(e) => {
           if (readOnly) return;
-          const value = (e.currentTarget as HTMLSpanElement).innerText;
+          // textContent, not innerText: in Firefox `innerText` read inside the
+          // input handler returns a stale/truncated value (layout not flushed),
+          // which then corrupts the stored draft and the verse. textContent is
+          // synchronous and reliable in both browsers (matches the rows editor).
+          const value = (e.currentTarget as HTMLSpanElement).textContent ?? "";
           onEdit(value);
           lastTextRef.current = value;
           lastSetRef.current = value;
