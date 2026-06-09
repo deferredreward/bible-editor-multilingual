@@ -20,7 +20,7 @@ import {
 } from "./alignment.ts";
 import { extractPlainText } from "./usfm.ts";
 import { findTargetHighlights, findSourceHighlights } from "./highlight.ts";
-import { buildQuoteFromSelection, collectTargetTokens } from "./quoteBuilder.ts";
+import { buildQuoteFromSelection, collectTargetTokens, tokenKey } from "./quoteBuilder.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
@@ -1530,6 +1530,74 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
     !hl.has("horses|1") && !hl.has("horses|2"),
     `ZEC 6:2: must NOT highlight "horses". Got: ${[...hl].join(",")}`,
   );
+}
+
+// ─── Case 23: ZEC 6:2 — quote-builder picker selects split-token target words ─
+// Companion to Case 22 (which fixed the scripture-column highlight). The
+// "Build quote" popper lights up an ULT/UST chip when every source ancestor in
+// its chain is in the selection set (chainSelected). collectTargetTokens stamps
+// each ancestor's selection key from the milestone occurrence — so the split
+// continuation בַּ⁠מֶּרְכָּבָה occurrence="2"/occurrences="1" gave "chariot" the
+// key …|2, a phantom the single UHB token (…|1) can never match. So clicking
+// the Hebrew (or "In"/"the") selected "In the" but left "chariot" dark, and
+// clicking "chariot" toggled a key that built nothing. Clamping occurrence into
+// [1, occurrences] folds "chariot" onto …|1 with its siblings.
+{
+  console.log("\n[Case 23] ZEC 6:2 picker selects split-token target words");
+  const baChariot = "בַּ⁠מֶּרְכָּבָ֥ה"; //   "in the chariot"
+  const haFirst = "הָ⁠רִֽאשֹׁנָ֖ה"; //       "the first"
+  const ubaChariot = "וּ⁠בַ⁠מֶּרְכָּבָ֥ה"; // "and in the chariot"
+  const haSecond = "הַ⁠שֵּׁנִ֖ית"; //        "the second"
+
+  const ms = (content, occurrence, occurrences, words) => ({
+    type: "milestone", tag: "zaln", content,
+    occurrence: String(occurrence), occurrences: String(occurrences),
+    children: words.map(([text, o, os]) => ({
+      type: "word", tag: "w", text, occurrence: String(o), occurrences: String(os),
+    })),
+  });
+
+  const ult = [
+    ms(baChariot, 1, 1, [["In", 1, 1], ["the", 1, 2]]),
+    ms(haFirst, 1, 1, [["first", 1, 1]]),
+    ms(baChariot, 2, 1, [["chariot", 1, 2]]), //   ← split continuation
+    ms(ubaChariot, 1, 1, [["and", 1, 1], ["in", 1, 1], ["the", 2, 2]]),
+    ms(haSecond, 1, 1, [["second", 1, 1]]),
+    ms(ubaChariot, 2, 1, [["chariot", 2, 2]]), //  ← split continuation
+  ];
+
+  const toks = collectTargetTokens(ult);
+  const srcKey = (text, occ = 1) => {
+    const t = toks.find((x) => x.text === text && x.occurrence === occ);
+    assert(t !== undefined, `found target token "${text}" occ=${occ}`);
+    return t.sources.map((s) => s.key);
+  };
+  // chainSelected mirror (the helper is private to QuoteBuilderPopper).
+  const lit = (text, occ, sel) => srcKey(text, occ).every((k) => sel.has(k));
+
+  // "chariot" (1st) and "In"/"the" now resolve to the SAME source key.
+  const baKey = tokenKey(baChariot, 1); // the single UHB token's selection key
+  assert(srcKey("In").join() === baKey, `"In" keys to בַּ⁠מֶּרְכָּבָה|1 (got ${srcKey("In").join()})`);
+  assert(
+    srcKey("chariot", 1).join() === baKey,
+    `the bug: 1st "chariot" keys to בַּ⁠מֶּרְכָּבָה|1 (got ${srcKey("chariot", 1).join()})`,
+  );
+
+  // Selecting the first Hebrew token lights up In + the + chariot together,
+  // and never the second clause.
+  const sel1 = new Set([baKey]);
+  assert(lit("In", 1, sel1), `selecting בַּ⁠מֶּרְכָּבָה lights "In"`);
+  assert(lit("the", 1, sel1), `selecting בַּ⁠מֶּרְכָּבָה lights "the"(1)`);
+  assert(lit("chariot", 1, sel1), `selecting בַּ⁠מֶּרְכָּבָה lights "chariot"(1) — the fix`);
+  assert(!lit("chariot", 2, sel1), `must NOT light the 2nd "chariot" (belongs to וּ⁠בַ⁠מֶּרְכָּבָה)`);
+  assert(!lit("second", 1, sel1), `must NOT light "second"`);
+
+  // The second clause is symmetric: its four words share וּ⁠בַ⁠מֶּרְכָּבָה|1.
+  const ubaKey = tokenKey(ubaChariot, 1);
+  const sel2 = new Set([ubaKey]);
+  assert(lit("and", 1, sel2), `selecting וּ⁠בַ⁠מֶּרְכָּבָה lights "and"`);
+  assert(lit("chariot", 2, sel2), `selecting וּ⁠בַ⁠מֶּרְכָּבָה lights "chariot"(2)`);
+  assert(!lit("chariot", 1, sel2), `must NOT light the 1st "chariot"`);
 }
 
 if (failed > 0) {
