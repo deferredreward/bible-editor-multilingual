@@ -110,6 +110,18 @@ function nodeIsWord(n: unknown): n is Record<string, unknown> {
 // become their own runs in document order). Each run's `targets` is only
 // its DIRECT `\w` children — that way compound (nested) alignments stay
 // disjoint and the matcher can highlight each level on its own.
+//
+// Split-gloss healing: an AI/tC aligner sometimes renders a single source
+// token whose target words are NON-CONTIGUOUS as two separate `\zaln-s` runs
+// with the same content — and stamps the second occurrence="2" while
+// occurrences stays "1", which is impossible ("the 2nd of 1"). Real case:
+// ZEC 6:2 בַּ⁠מֶּרְכָּבָה → "In the" … (interrupted by "first") … "chariot".
+// Such a continuation run (occurrence > occurrences) folds its targets back
+// into the nearest preceding run with the same content, so the matcher sees
+// ONE logical token carrying ALL its target words ("chariot" included). It's
+// a no-op for well-formed data (occurrence ≤ occurrences), so genuinely
+// repeated words keep their own runs and positions and never false-merge.
+// Mirrors effectiveOccurrence / sameSourceChain in lib/alignment.ts.
 function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
   const out: Run[] = [];
   function walk(nodes: unknown[]) {
@@ -117,6 +129,7 @@ function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
       if (!nodeIsMilestone(node)) continue;
       const source = String(node["content"] ?? "");
       const occurrence = parseInt(String(node["occurrence"] ?? "1"), 10) || 1;
+      const occurrences = parseInt(String(node["occurrences"] ?? "1"), 10) || 1;
       const targets: WordToken[] = [];
       const children = (node["children"] as unknown[] | undefined) ?? [];
       for (const c of children) {
@@ -128,7 +141,20 @@ function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
           });
         }
       }
-      out.push({ source, occurrence, targets });
+      // Malformed split continuation: merge into the nearest preceding run
+      // with the same source content rather than starting a new run.
+      let merged = false;
+      if (occurrence > occurrences && source) {
+        const want = nfc(source);
+        for (let i = out.length - 1; i >= 0; i--) {
+          if (nfc(out[i].source) === want) {
+            out[i].targets.push(...targets);
+            merged = true;
+            break;
+          }
+        }
+      }
+      if (!merged) out.push({ source, occurrence, targets });
       // Recurse into nested milestones as their own runs.
       for (const c of children) {
         if (nodeIsMilestone(c)) walk([c]);
