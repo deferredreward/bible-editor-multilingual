@@ -166,7 +166,19 @@ export function collectTargetTokens(
       if (!o) continue;
       if (o["type"] === "milestone" && o["tag"] === "zaln") {
         const content = String(o["content"] ?? "");
-        const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
+        // Clamp occurrence into [1, occurrences]. A split-gloss continuation —
+        // one source token whose target words are NON-CONTIGUOUS — is stamped
+        // occurrence="2" while occurrences stays "1", which is impossible ("the
+        // 2nd of 1"). Real case: ZEC 6:2 בַּ⁠מֶּרְכָּבָה → "In the" … (interrupted
+        // by "first") … "chariot", where "chariot" sits under the occurrence="2"
+        // milestone. Left raw, its source key (…|2) names a phantom the single
+        // UHB token (…|1) can never match, so the picker neither selects nor
+        // highlights "chariot" with its "In the" siblings. No-op on well-formed
+        // data. Mirrors effectiveOccurrence in alignment.ts and the split-run
+        // merge in highlight.ts.
+        const rawOcc = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
+        const total = parseInt(String(o["occurrences"] ?? "1"), 10) || 1;
+        const occurrence = Math.min(Math.max(rawOcc, 1), Math.max(total, 1));
         const children = (o["children"] as unknown[] | undefined) ?? [];
         // Skip ancestors with no content — defensive: a malformed milestone
         // without x-content would otherwise insert empty selection keys.
