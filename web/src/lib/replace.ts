@@ -477,8 +477,14 @@ export function smartReplaceVerse(
   //     replace `good,`) would be silently dropped — the words map 1:1 but the
   //     comma has nowhere to land. Compare the word-stripped skeletons; if they
   //     differ, fall through to the localized rewrite, which re-tokenizes the
-  //     region and emits the new punctuation.
-  const skeleton = (s: string): string => s.replace(WORD_RUN_RE, "");
+  //     region and emits the new punctuation. Collapse whitespace runs first:
+  //     `rawMatchText` is sliced from raw leaf text and can carry a `\n` (or a
+  //     double space) where the normalized `replaceText` has a single space
+  //     (line-broken \w tokens, word-addition `{...}` markers). Without the
+  //     collapse a pure 1:1 word replacement spanning such a break fails the
+  //     skeleton check and drops to the localized rewrite, which unaligns even
+  //     the UNCHANGED words inside the match.
+  const skeleton = (s: string): string => s.replace(WORD_RUN_RE, "").replace(/\s+/g, " ");
   const sameSkeleton = skeleton(rawMatchText) === skeleton(replaceText);
   const canPreserve =
     startsAtBoundary &&
@@ -606,31 +612,48 @@ function snapDiffToWordBoundaries(
   diff: { start: number; oldLen: number; newSubstring: string },
 ): { start: number; oldLen: number; newSubstring: string } {
   const isCore = (c: string | undefined): boolean => c !== undefined && WORD_CORE_RE.test(c);
-  // Intra-word connectors bind two core runs into one WORD_RUN_RE token but
-  // aren't "core" themselves: the apostrophe in can't / Isaiah's, the hyphen
-  // in hello-world, and the grouping comma in 300,000. An inserted connector
-  // abutting a core char must still snap the edit onto the surrounding word so
-  // the MATCH lands on whole-word boundaries (not a mid-word fragment that the
-  // localized rewrite would have to split). The replacement text is free to be
-  // anything — a prose "a, b" comma snaps the match to "ab", then falls through
-  // to the localized rewrite, which re-tokenizes it to "a" + "," + "b".
-  const isEdge = (c: string | undefined): boolean =>
-    isCore(c) || c === "-" || c === "'" || c === "’" || c === ",";
+  // Intra-word connectors (apostrophe in can't / Isaiah's, hyphen in
+  // hello-world, grouping comma in 300,000) bind two core runs into one
+  // WORD_RUN_RE token — but ONLY when a core char sits on BOTH sides of the
+  // connector. A connector with a core char on just ONE side is ordinary
+  // boundary punctuation, not part of a token: a comma or possessive
+  // apostrophe typed AFTER a word and before a space (`good,` / `Moses'`), or
+  // a trailing grouping comma (`1,000,`). Snapping the match onto the
+  // neighbouring word in those cases is wrong — it routes the unchanged word
+  // through the localized rewrite, which unaligns it (and for `1,000,` snaps
+  // mid-number and splits the token). So a run only "binds" toward a neighbour
+  // when its boundary char is core, or is a connector whose OTHER side is core.
+  const isConnector = (c: string | undefined): boolean =>
+    c === "-" || c === "'" || c === "’" || c === ",";
   const sub = diff.newSubstring;
   if (sub.length === 0) return diff; // pure deletion — nothing to merge.
-  let start = diff.start;
-  let end = diff.start + diff.oldLen;
-  // Right edge: inserted run ends in a word char / connector that runs straight
-  // into the word char after the change → absorb the trailing word.
-  if (isEdge(sub[sub.length - 1]) && isCore(oldText[end])) {
+  const start0 = diff.start;
+  const end0 = diff.start + diff.oldLen;
+  let start = start0;
+  let end = end0;
+  // A boundary char binds outward if it's core, or a connector whose far side
+  // (the next char further INTO the run, or — for a 1-char run — the char on
+  // the far side of the change) is also core. Compute both before mutating
+  // start/end so the right-edge snap can't disturb the left-edge's lookups.
+  const first = sub[0];
+  const last = sub[sub.length - 1];
+  const bindsLeft =
+    isCore(first) ||
+    (isConnector(first) && isCore(sub.length > 1 ? sub[1] : oldText[end0]));
+  const bindsRight =
+    isCore(last) ||
+    (isConnector(last) && isCore(sub.length > 1 ? sub[sub.length - 2] : oldText[start0 - 1]));
+  // Right edge: inserted run ends in a word char / binding connector that runs
+  // straight into the word char after the change → absorb the trailing word.
+  if (bindsRight && isCore(oldText[end])) {
     while (end < oldText.length && isCore(oldText[end])) end++;
   }
-  // Left edge: inserted run starts with a word char / connector that runs
-  // straight out of the word char before the change → absorb the leading word.
-  if (isEdge(sub[0]) && isCore(oldText[start - 1])) {
+  // Left edge: inserted run starts with a word char / binding connector that
+  // runs straight out of the word char before the change → absorb the leading word.
+  if (bindsLeft && isCore(oldText[start - 1])) {
     while (start > 0 && isCore(oldText[start - 1])) start--;
   }
-  if (start === diff.start && end === diff.start + diff.oldLen) return diff;
+  if (start === start0 && end === end0) return diff;
   // The expansion only ever covers characters shared by oldText / newText (the
   // diff's common prefix on the left, common suffix on the right), so the
   // matching newText window is the same span shifted by the length delta.
