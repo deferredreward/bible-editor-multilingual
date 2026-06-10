@@ -681,19 +681,25 @@ function VerseCell({
     return drafts.subscribe((all) => {
       const rec = all.find((d) => d.key === draftKey);
       setHasDraft(!!rec);
+      // Hydrate from a PRE-EXISTING draft exactly once, on the first
+      // (mount-snapshot) callback — never from a draft the user is creating
+      // by typing right now. Writing to the live element mid-input resets the
+      // caret, and in Firefox `textContent` set here would clobber the verse
+      // the user is editing. Restore-on-mount (reload / chapter nav) is the
+      // only legitimate reason to push draft text into the DOM.
+      if (hydratedFromDraftRef.current) return;
+      hydratedFromDraftRef.current = true;
       if (
-        !hydratedFromDraftRef.current &&
         rec &&
         typeof (rec.payload as { plainText?: unknown }).plainText === "string" &&
         elRef.current
       ) {
         const plain = (rec.payload as { plainText: string }).plainText;
-        if (elRef.current.innerText !== plain) {
-          elRef.current.innerText = plain;
+        if (elRef.current.textContent !== plain) {
+          elRef.current.textContent = plain;
           lastSetRef.current = plain;
           lastTextRef.current = plain;
         }
-        hydratedFromDraftRef.current = true;
       }
     });
   }, [draftKey, readOnly]);
@@ -768,7 +774,7 @@ function VerseCell({
     // the source of truth between mount/save.
     if (hasDraft) return;
     const text = dto?.plain_text ?? "";
-    const dom = elRef.current.innerText;
+    const dom = elRef.current.textContent;
     if (html !== null) {
       if (html !== lastSetRef.current) {
         elRef.current.innerHTML = html;
@@ -778,7 +784,7 @@ function VerseCell({
       return;
     }
     if (lastSetRef.current === null || dom === lastTextRef.current) {
-      elRef.current.innerText = text;
+      elRef.current.textContent = text;
       lastSetRef.current = text;
     }
     lastTextRef.current = text;
@@ -844,11 +850,13 @@ function VerseCell({
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
+              // Leave the hydration guard set — hydration is a mount-only
+              // concern (a fresh mount gets a fresh ref); re-arming it here
+              // would let the next keystroke's draft stomp the live DOM again.
               void drafts.clear(draftKey);
-              hydratedFromDraftRef.current = false;
               const text = dto?.plain_text ?? "";
               if (elRef.current) {
-                elRef.current.innerText = text;
+                elRef.current.textContent = text;
                 lastSetRef.current = text;
                 lastTextRef.current = text;
               }
@@ -889,7 +897,11 @@ function VerseCell({
         dir={rtl ? "rtl" : "ltr"}
         onInput={(e) => {
           if (readOnly) return;
-          const value = (e.currentTarget as HTMLSpanElement).innerText;
+          // textContent, not innerText: in Firefox `innerText` read inside the
+          // input handler returns a stale/truncated value (layout not flushed),
+          // which then corrupts the stored draft and the verse. textContent is
+          // synchronous and reliable in both browsers (matches the rows editor).
+          const value = (e.currentTarget as HTMLSpanElement).textContent ?? "";
           onEdit(value);
           lastTextRef.current = value;
           lastSetRef.current = value;
