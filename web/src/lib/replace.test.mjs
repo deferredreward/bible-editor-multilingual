@@ -408,6 +408,84 @@ function milestoneCount(content) {
   assert(words.find((x) => x.text === "this")?.strongs.length === 0, "edited 'this' is unaligned");
 }
 
+// ─── Case 21: reconcile keeps trailing punctuation glued to its word ──────
+// Regression for the ZEC 6:12 ULT prod corruption. When a word edit shifts the
+// word count before a marker, reconcileMarkers re-lays ALL markers. It must
+// drop each marker at the START of the next poetic line — AFTER the trailing
+// punctuation that belongs to the preceding word — not wedge it before that
+// 0-word punctuation text node (which rendered as `saying \q1 :`, `sprout \q1 ,`,
+// `Yahweh \q1 .`). A trailing marker (introducing the next verse) stays at the
+// very end, after the final period.
+{
+  console.log("\n[Case 21] Reconcile lands \\q markers after trailing punctuation, not before it");
+  const q = (tag) => ({ type: "quote", tag });
+  const verse = {
+    verseObjects: [
+      zaln("H1", [w("saying", "2", "2")]), t(":\n"), q("q1"),
+      zaln("H2", [w("Behold")]), t(", "),
+      zaln("H3", [w("sprout")]), t(",\n"), q("q1"),
+      zaln("H4", [w("and", "2", "2")]), t(" "), zaln("H5", [w("Yahweh", "2", "2")]), t(".\n"),
+      q("q1"), // trailing marker that introduces the next verse
+    ],
+  };
+  const old = extractEditableText(verse); // "saying: \q1 Behold, sprout,\q1 and Yahweh.\q1"
+  // Insert a word in the first poetic line — shifts the word count before every
+  // marker, so markerSignature changes and reconcileMarkers runs.
+  const r = smartEditVerse(verse, old, old.replace("\\q1 Behold", "\\q1 now Behold"));
+  const vos = r.content.verseObjects;
+  // For every \q1, the immediately preceding sibling must be the punctuation
+  // text node — i.e. the marker did NOT jump ahead of it.
+  const findText = (i) => {
+    for (let j = i - 1; j >= 0; j--) {
+      if (vos[j].type === "text") return vos[j].text;
+      if (vos[j].type === "quote") continue;
+      return null; // a milestone/word sits between — punctuation was displaced
+    }
+    return null;
+  };
+  let markerIdx = 0;
+  vos.forEach((n, i) => {
+    if (n.type !== "quote") return;
+    markerIdx++;
+    const prevText = findText(i);
+    assert(
+      prevText !== null && /[:,.]/.test(prevText),
+      `\\q1 #${markerIdx} follows its trailing punctuation (prev text ${JSON.stringify(prevText)})`,
+    );
+  });
+  // Alignment for every milestone survives the reconcile.
+  const words = alignedWords(r.content);
+  assert(words.find((x) => x.text === "Yahweh")?.strongs.includes("H5"), "'Yahweh' keeps alignment");
+  assert(words.find((x) => x.text === "Behold")?.strongs.includes("H2"), "'Behold' keeps alignment");
+}
+
+// ─── Case 22: reconcile keeps a LEADING marker before opening punctuation ──
+// Counterpart to Case 21 and the ZEC 13:7 ULT false-positive: an em-dash that
+// OPENS the next poetic line (`companion” \q1 —the declaration`) must stay
+// AFTER the marker. The closing quote that trails the previous word stays
+// before it; the opening dash that leads the new line stays after it.
+{
+  console.log("\n[Case 22] Reconcile keeps opening punctuation (em-dash) after the marker");
+  const q = (tag) => ({ type: "quote", tag });
+  const verse = {
+    verseObjects: [
+      zaln("H1", [w("companion")]), t("”"), t("\n"), q("q1"),
+      t("—"), zaln("H2", [w("the")]), t(" "), zaln("H3", [w("declaration")]),
+    ],
+  };
+  const old = extractEditableText(verse); // "companion”\q1 —the declaration"
+  // Insert a word before the marker to force a reconcile.
+  const r = smartEditVerse(verse, old, old.replace("companion", "companion now"));
+  const vos = r.content.verseObjects;
+  const qIdx = vos.findIndex((n) => n.type === "quote");
+  const dashIdx = vos.findIndex((n) => n.type === "text" && n.text.startsWith("—"));
+  const theIdx = vos.findIndex((n) => n.type === "milestone" && n.children?.some((c) => c.text === "the"));
+  assert(qIdx >= 0 && dashIdx > qIdx && dashIdx < theIdx, `em-dash stays AFTER the \\q1 and before "the" (q ${qIdx}, dash ${dashIdx}, the ${theIdx})`);
+  // The closing quote stayed BEFORE the marker (glued to "companion").
+  const quoteBeforeMarker = vos.slice(0, qIdx).some((n) => n.type === "text" && n.text.includes("”"));
+  assert(quoteBeforeMarker, "closing quote stays before the marker");
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

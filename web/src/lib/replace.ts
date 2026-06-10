@@ -722,18 +722,67 @@ function reconcileMarkers(content: unknown, newPlain: string): SmartReplaceResul
     if (m[0].length === 0) re.lastIndex++;
   }
 
-  // Walk the content nodes, inserting each marker before the node at which the
-  // running word count first reaches its anchor.
+  // Walk the content nodes, inserting each marker at the position where the
+  // running word count reaches its anchor. The subtlety is WHERE within the
+  // punctuation around that boundary the marker lands: a `\q`/`\p` is a line
+  // break, so CLOSING punctuation that trails the anchor word (`,`, `.`, `:`,
+  // `”`) belongs to the previous line and must stay BEFORE the marker, while
+  // OPENING punctuation that leads the next word (`“`, `‘`, `—the`) belongs to
+  // the new line and must stay AFTER it. Flushing greedily before every node
+  // wedged the marker ahead of trailing punctuation (the ZEC 6:12 ULT
+  // corruption: `saying \q1 :`, `sprout \q1 ,`, `Yahweh \q1 .`); skipping ALL
+  // 0-word nodes would instead push it past a leading em-dash (ZEC 13:7's
+  // `companion” \q1 —the declaration`). So: skip the run of whitespace + closing
+  // punctuation that follows the anchor word, then drop the marker at the first
+  // opening-punctuation / word character. CLOSING is everything that hugs a
+  // word's right edge; the dash is deliberately excluded — it leads as often as
+  // it trails, and the cases that put one next to a marker have it leading.
+  const CLOSING = /[\s,.;:!?)\]}”’…]/;
+  const isBareText = (n: unknown): n is { type: "text"; text: string } => {
+    const o = n as Record<string, unknown> | null;
+    return !!o && o["type"] === "text" && typeof o["text"] === "string";
+  };
   const out: unknown[] = [];
   let wordCount = 0;
   let mi = 0;
-  for (const node of contentNodes) {
-    while (mi < markers.length && markers[mi].wordsBefore <= wordCount) {
-      out.push(markers[mi].node);
-      mi++;
+  const flushable = (): boolean =>
+    mi < markers.length && markers[mi].wordsBefore <= wordCount;
+  let ni = 0;
+  while (ni < contentNodes.length) {
+    const node = contentNodes[ni];
+    const nodeWords = countWords(rawTextOfNode(node));
+    if (nodeWords > 0 || !isBareText(node)) {
+      // Word-bearing node (or a wordless milestone) — a marker anchored here
+      // breaks the line right before it.
+      while (flushable()) out.push(markers[mi++].node);
+      out.push(node);
+      wordCount += nodeWords;
+      ni++;
+      continue;
     }
-    out.push(node);
-    wordCount += countWords(rawTextOfNode(node));
+    // A run of consecutive 0-word text nodes sits between two words. If no
+    // marker anchors in this gap, pass the nodes through untouched. Otherwise
+    // split the combined run at the trailing-punctuation / leading-content
+    // boundary and drop the pending marker(s) there.
+    let combined = "";
+    let nj = ni;
+    for (; nj < contentNodes.length; nj++) {
+      const cn = contentNodes[nj];
+      if (!isBareText(cn) || countWords(cn.text) !== 0) break;
+      combined += cn.text;
+    }
+    if (!flushable()) {
+      for (let k = ni; k < nj; k++) out.push(contentNodes[k]);
+    } else {
+      let split = 0;
+      while (split < combined.length && CLOSING.test(combined[split])) split++;
+      const before = combined.slice(0, split);
+      const after = combined.slice(split);
+      if (before) out.push({ type: "text", text: before });
+      while (flushable()) out.push(markers[mi++].node);
+      if (after) out.push({ type: "text", text: after });
+    }
+    ni = nj;
   }
   while (mi < markers.length) {
     out.push(markers[mi].node);
