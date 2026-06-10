@@ -82,15 +82,21 @@ function isWordLeaf(node: Record<string, unknown>): boolean {
   return node["type"] === "word" && node["tag"] === "w";
 }
 
-// A word run — Unicode letters/marks/numbers (plus ZWJ / word-joiner for
-// scripts that need them) with intra-word `-` / `'` / `’` allowed
-// between letter runs (so "don't", "don’t", "hello-world" stay one
-// `\w` token but flanking quotes / dashes ride as text). \p{N} is
-// required because the UST writes literal counts (`\w 30\w*`) for
-// measurements — "30" must become a draggable alignment chip.
-// Mirrors `string-punctuation-tokenizer`’s greedy pattern, the package
-// translationCore / gatewayEdit use for the same job.
-const WORD_RUN_RE = /[\p{L}\p{M}\p{N}‍⁠]+(?:[-'’][\p{L}\p{M}\p{N}‍⁠]+)*/gu;
+// Word characters: Unicode letters/marks/numbers plus the zero-width joiner
+// (U+200D) and word-joiner (U+2060) that ride inside some Hebrew/Greek tokens.
+// Defined once so WORD_RUN_RE and WORD_CORE_RE can't drift apart.
+const WORD_CHAR = "[\\p{L}\\p{M}\\p{N}\\u200d\\u2060]";
+// A word run plus its intra-word connectors. \p{N} is required because the UST
+// writes literal counts (`\w 30\w*`) for measurements — "30" must be a
+// draggable chip. Connectors bind two runs into ONE token: hyphen, straight /
+// curly apostrophe (don't, hello-world, Isaiah's), and — ONLY between digits —
+// the grouping comma, so "300,000" aligns as one chip instead of splitting like
+// the legacy tools (string-punctuation-tokenizer / tCreate) did. A comma not
+// flanked by digits ("a, b") stays a separator.
+const WORD_RUN_RE = new RegExp(
+  `${WORD_CHAR}+(?:[-'\u2019]${WORD_CHAR}+|(?<=\\p{N}),\\p{N}+)*`,
+  "gu",
+);
 
 // Re-tokenize a plain string into a flat verseObjects-style array. Each
 // word run becomes a `\w` node so the aligner has draggable targets;
@@ -465,12 +471,22 @@ export function smartReplaceVerse(
   const wordsMatchLeaves =
     wordLeaves.length === matchWords.length &&
     wordLeaves.every((l, i) => String(l.node["text"]) === matchWords[i]);
+  // (f) the NON-word characters (punctuation / inter-word spacing) match too.
+  //     The preserve path only rewrites \w leaves and keeps the surrounding
+  //     text leaves verbatim, so a punctuation-only difference (find `good`,
+  //     replace `good,`) would be silently dropped — the words map 1:1 but the
+  //     comma has nowhere to land. Compare the word-stripped skeletons; if they
+  //     differ, fall through to the localized rewrite, which re-tokenizes the
+  //     region and emits the new punctuation.
+  const skeleton = (s: string): string => s.replace(WORD_RUN_RE, "");
+  const sameSkeleton = skeleton(rawMatchText) === skeleton(replaceText);
   const canPreserve =
     startsAtBoundary &&
     endsAtBoundary &&
     matchWords.length > 0 &&
     matchWords.length === replaceWords.length &&
-    wordsMatchLeaves;
+    wordsMatchLeaves &&
+    sameSkeleton;
 
   if (canPreserve) {
     // 1:1 word mapping. Whitespace text leaves between words stay as-is.
@@ -570,7 +586,7 @@ function diffSingleChange(
 // Letters / marks / numbers that count as the "core" of a word — the same character
 // class WORD_RUN_RE builds words from (its intra-word connectors -'’ only
 // bind between letters, so they don't matter for a boundary-adjacency test).
-const WORD_CORE_RE = /[\p{L}\p{M}\p{N}‍⁠]/u;
+const WORD_CORE_RE = new RegExp(WORD_CHAR, "u");
 
 // A minimal diff can report a word edit as a pure insertion: typing "Th"
 // immediately before the word "is" diffs as `insert "Th" at offset N`, not
@@ -590,18 +606,28 @@ function snapDiffToWordBoundaries(
   diff: { start: number; oldLen: number; newSubstring: string },
 ): { start: number; oldLen: number; newSubstring: string } {
   const isCore = (c: string | undefined): boolean => c !== undefined && WORD_CORE_RE.test(c);
+  // Intra-word connectors bind two core runs into one WORD_RUN_RE token but
+  // aren't "core" themselves: the apostrophe in can't / Isaiah's, the hyphen
+  // in hello-world, and the grouping comma in 300,000. An inserted connector
+  // abutting a core char must still snap the edit onto the surrounding word so
+  // the MATCH lands on whole-word boundaries (not a mid-word fragment that the
+  // localized rewrite would have to split). The replacement text is free to be
+  // anything — a prose "a, b" comma snaps the match to "ab", then falls through
+  // to the localized rewrite, which re-tokenizes it to "a" + "," + "b".
+  const isEdge = (c: string | undefined): boolean =>
+    isCore(c) || c === "-" || c === "'" || c === "’" || c === ",";
   const sub = diff.newSubstring;
   if (sub.length === 0) return diff; // pure deletion — nothing to merge.
   let start = diff.start;
   let end = diff.start + diff.oldLen;
-  // Right edge: inserted run ends in a word char that runs straight into the
-  // word char after the change → absorb the trailing word.
-  if (isCore(sub[sub.length - 1]) && isCore(oldText[end])) {
+  // Right edge: inserted run ends in a word char / connector that runs straight
+  // into the word char after the change → absorb the trailing word.
+  if (isEdge(sub[sub.length - 1]) && isCore(oldText[end])) {
     while (end < oldText.length && isCore(oldText[end])) end++;
   }
-  // Left edge: inserted run starts with a word char that runs straight out of
-  // the word char before the change → absorb the leading word.
-  if (isCore(sub[0]) && isCore(oldText[start - 1])) {
+  // Left edge: inserted run starts with a word char / connector that runs
+  // straight out of the word char before the change → absorb the leading word.
+  if (isEdge(sub[0]) && isCore(oldText[start - 1])) {
     while (start > 0 && isCore(oldText[start - 1])) start--;
   }
   if (start === diff.start && end === diff.start + diff.oldLen) return diff;
@@ -890,9 +916,17 @@ function localizedRewriteVerse(
         out.push({ ...o, children: after });
       }
     } else if (o["type"] === "word" && o["tag"] === "w") {
-      // Bare \w at top level overlapping the change — re-tokenized
-      // inside the change region.
+      // Bare \w at top level overlapping the change. Keep the word's text
+      // OUTSIDE the change range — dropping the whole leaf would delete
+      // characters the user didn't touch (inserting "'" into "cant" must not
+      // lose "can"/"t"; inserting a space into "ab" must keep "a"/"b"). Re-
+      // tokenize each surviving fragment around the emitted change.
+      const wtext = String(o["text"] ?? "");
+      const beforeFrag = wtext.slice(0, Math.max(0, rawStart - nodeStart));
+      const afterFrag = wtext.slice(Math.max(0, rawEnd - nodeStart));
+      for (const tok of tokenizePlainText(beforeFrag)) out.push(tok);
       emitChange();
+      for (const tok of tokenizePlainText(afterFrag)) out.push(tok);
     } else if (typeof o["text"] === "string" && (o["text"] as string).length > 0) {
       // Single-text marker (`\q1 hello`, bare `\qs Selah\qs*` without
       // alignment children). If the change fully covers the marker's

@@ -176,6 +176,50 @@ const makeNested = () => ({
   assert(r2 && r2.plainText === "the child man", `replacement applies (got ${r2 && JSON.stringify(r2.plainText)})`);
 }
 
+// ─── Case 9: apostrophe typed into a bare top-level word keeps the word ──
+{
+  console.log("\n[Case 9] Inserting an apostrophe mid-word doesn't delete the word");
+  // Bare \w "cant", type "'" between can|t. Previously dropped the straddling
+  // leaf and saved just "'". Snap routes it to the in-place word replace.
+  const r = smartEditVerse({ verseObjects: [w("cant")] }, "cant", "can't");
+  assert(r.plainText === "can't", `plainText is "can't" (got ${JSON.stringify(r.plainText)})`);
+  const words = alignedWords(r.content).map((x) => x.text);
+  assert(words.length === 1 && words[0] === "can't", `"can't" is ONE \\w token (got ${JSON.stringify(words)})`);
+}
+
+// ─── Case 10: punctuation-append in a 1:1 word replace keeps the punctuation ─
+{
+  console.log("\n[Case 10] Find/replace that only adds punctuation isn't dropped");
+  // find "good" → replace "good," — words map 1:1 but the comma must survive.
+  const verse = { verseObjects: [w("good"), t(" "), w("word")] };
+  const r = smartReplaceVerse(verse, "good word", /good/g, 0, 4, "good,");
+  assert(r.plainText === "good, word", `comma survives (got ${JSON.stringify(r.plainText)})`);
+}
+
+// ─── Case 11: digit-grouping comma is intra-word (300,000 is ONE token) ──
+{
+  console.log("\n[Case 11] Grouping comma keeps a large number one token; prose comma splits");
+  const numToks = tokenizePlainText("300,000").filter((n) => n.type === "word").map((n) => n.text);
+  assert(numToks.length === 1 && numToks[0] === "300,000", `"300,000" tokenizes as one word (got ${JSON.stringify(numToks)})`);
+  const multi = tokenizePlainText("300,000 men, 5,000 left").filter((n) => n.type === "word").map((n) => n.text);
+  assert(JSON.stringify(multi) === JSON.stringify(["300,000", "men", "5,000", "left"]), `mixed numbers + prose comma (got ${JSON.stringify(multi)})`);
+  const prose = tokenizePlainText("apples, oranges").filter((n) => n.type === "word").map((n) => n.text);
+  assert(JSON.stringify(prose) === JSON.stringify(["apples", "oranges"]), `prose comma still splits (got ${JSON.stringify(prose)})`);
+  // Typing the comma into an existing number snaps to one \w.
+  const r = smartEditVerse({ verseObjects: [w("300000")] }, "300000", "300,000");
+  const rWords = alignedWords(r.content).map((x) => x.text);
+  assert(r.plainText === "300,000" && rWords.length === 1 && rWords[0] === "300,000", `typed grouping comma stays one chip (got ${JSON.stringify(rWords)})`);
+}
+
+// ─── Case 12: a space typed into a bare word splits it without losing text ──
+{
+  console.log("\n[Case 12] Inserting a space into a bare word splits it, no text loss");
+  const r = smartEditVerse({ verseObjects: [w("ab")] }, "ab", "a b");
+  assert(r.plainText === "a b", `plainText is "a b" (got ${JSON.stringify(r.plainText)})`);
+  const words = alignedWords(r.content).map((x) => x.text);
+  assert(JSON.stringify(words) === JSON.stringify(["a", "b"]), `splits into "a" + "b" (got ${JSON.stringify(words)})`);
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

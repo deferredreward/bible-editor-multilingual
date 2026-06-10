@@ -9,13 +9,16 @@ import {
   waitForServerNote,
 } from "./helpers";
 
+// Honor BE_BASE_URL so the suite runs on a relocated port (mirrors s8).
+const BASE = process.env.BE_BASE_URL ?? "http://localhost:5173";
+
 // S7 — Offline resilience. Exercises the Level 1 stability features end-to-
 // end: the outbox keeps edits durable while the connection is dropped, the
 // SyncStatusBar reflects the offline state, and a reconnect drains queued
 // ops without user action.
 
 test("edits queued while offline survive and flush on reconnect", async ({ browser }) => {
-  const probe = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const probe = await apiRequest.newContext({ baseURL: BASE });
   const probeAuth = await mintToken(probe, "probe");
   const chapter = await fetchChapter(probe, probeAuth.token, "ZEC", 6);
   const target = chapter.tn.find((r) => r.verse === 1);
@@ -62,7 +65,7 @@ test("edits queued while offline survive and flush on reconnect", async ({ brows
 
   // While offline the server must NOT see the edit. Verify via a separate
   // request context that bypasses the offline browser network.
-  const sideCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const sideCtx = await apiRequest.newContext({ baseURL: BASE });
   const sideAuth = await mintToken(sideCtx, "verifier");
   const beforeOnline = await fetchChapter(sideCtx, sideAuth.token, "ZEC", 6);
   const beforeRow = beforeOnline.tn.find((r) => r.id === target!.id);
@@ -88,7 +91,7 @@ test("edits queued while offline survive and flush on reconnect", async ({ brows
 });
 
 test("server flakiness triggers retry; eventual success drains the outbox", async ({ browser }) => {
-  const probe = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const probe = await apiRequest.newContext({ baseURL: BASE });
   const probeAuth = await mintToken(probe, "probe");
   const chapter = await fetchChapter(probe, probeAuth.token, "ZEC", 7);
   const target = chapter.tn.find((r) => r.verse === 1);
@@ -120,7 +123,7 @@ test("server flakiness triggers retry; eventual success drains the outbox", asyn
   await noteTextarea(page, target!.id).fill(flakyText);
   await saveNote(page, target!.id);
 
-  const sideCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const sideCtx = await apiRequest.newContext({ baseURL: BASE });
   const sideAuth = await mintToken(sideCtx, "verifier-flaky");
   const final = await waitForServerNote(
     sideCtx,
