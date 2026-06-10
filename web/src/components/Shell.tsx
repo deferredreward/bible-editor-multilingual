@@ -1085,6 +1085,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     base: VerseDto,
   ) => {
     const oldEditable = extractEditableText(base.content);
+    // No-op guard: a focus/blur (or any save) with no actual text change must
+    // not enqueue a PATCH — it would bump the verse version server-side for
+    // nothing, adding noisy history and leaving a stale expected_version that a
+    // later alignment save on the same row can 409 against.
+    if (oldEditable === plain) return;
     const result = smartEditVerse(base.content, oldEditable, plain);
     const newPlainText = extractPlainText(result.content);
     const newDto = {

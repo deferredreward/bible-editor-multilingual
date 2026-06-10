@@ -120,6 +120,7 @@ export function SideBySideAligner({
       twlForVerse={slot.twlForVerse}
       onSave={slot.onSave}
       onCancel={onClose}
+      hideCancel
       onDirtyChange={slot.onDirtyChange}
       hover={hover}
       onHoverChange={setHover}

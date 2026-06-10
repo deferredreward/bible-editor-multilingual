@@ -135,6 +135,11 @@ interface Props {
   onToggleHoverLink?: () => void;
   renderUhbStrip?: boolean;
   onOpenDual?: () => void;
+  // Hide the panel's own Cancel button. In side-by-side mode the panel's
+  // lifecycle is owned by the parent (one shared close + dirty gate); the
+  // per-panel Cancel would call handleReset() before that gate runs, wiping
+  // this side's edits so a later "Save" can't recover them.
+  hideCancel?: boolean;
   // When false, Hebrew source words don't show their lexical tooltip on hover.
   showSourceInfo?: boolean;
   // Offset of this panel's first source token within the side-by-side
@@ -162,6 +167,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       onToggleHoverLink,
       renderUhbStrip = true,
       onOpenDual,
+      hideCancel = false,
       showSourceInfo = true,
       posOffset = 0,
     },
@@ -717,6 +723,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
                 handleReset();
                 onCancel();
               }}
+              hideCancel={hideCancel}
               onSave={handleSave}
               bibleVersion={bibleVersion}
               onOpenDual={onOpenDual}
@@ -1022,6 +1029,7 @@ function ActionBar({
   onClear,
   onReset,
   onCancel,
+  hideCancel,
   onSave,
   bibleVersion,
   onOpenDual,
@@ -1032,6 +1040,7 @@ function ActionBar({
   onClear: () => void;
   onReset: () => void;
   onCancel: () => void;
+  hideCancel?: boolean;
   onSave: () => void;
   bibleVersion: string;
   onOpenDual?: () => void;
@@ -1117,19 +1126,21 @@ function ActionBar({
       >
         Reset
       </Button>
-      <Button
-        size="small"
-        onClick={onCancel}
-        sx={{
-          color: "text.primary",
-          textTransform: "uppercase",
-          fontSize: 11,
-          letterSpacing: "0.06em",
-          fontWeight: 600,
-        }}
-      >
-        Cancel
-      </Button>
+      {!hideCancel && (
+        <Button
+          size="small"
+          onClick={onCancel}
+          sx={{
+            color: "text.primary",
+            textTransform: "uppercase",
+            fontSize: 11,
+            letterSpacing: "0.06em",
+            fontWeight: 600,
+          }}
+        >
+          Cancel
+        </Button>
+      )}
       <Button
         size="small"
         variant="contained"
