@@ -40,6 +40,7 @@ import {
   type VerseExtract,
 } from "./importParsers";
 import { activePipelineForChapter } from "./chapterLock";
+import { placeSortOrder } from "./sortOrder";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -337,13 +338,11 @@ async function applyTsvRows(
         // sort_order would dump the row at the end of its verse regardless
         // of file position.
         const so = await midpointSortOrder(env, book, kind, incoming, i);
-        if (so != null) {
-          await env.DB.prepare(
-            `UPDATE ${kind}_rows SET sort_order = ?1 WHERE id = ?2 AND book = ?3`,
-          )
-            .bind(so, row.id, book)
-            .run();
-        }
+        await env.DB.prepare(
+          `UPDATE ${kind}_rows SET sort_order = ?1 WHERE id = ?2 AND book = ?3`,
+        )
+          .bind(so, row.id, book)
+          .run();
         await logEdit(env, kind, row.id, book, userId, null, 1, "create", row);
         continue;
       }
@@ -377,18 +376,22 @@ async function applyTsvRows(
 
 // sort_order for a DCS-new row, derived from its file position. Only the
 // row's own (chapter, verse) group matters (chapter/verse dominate the export
-// sort), so look at the file-adjacent same-verse neighbors' stored
-// sort_orders: between two placed neighbors → their midpoint; new head of the
-// group → just before the following neighbor; appended at the end of the
-// group → NULL (NULLS LAST is already the right position). When a neighbor
-// lacks a sort_order, fall back to NULL as before.
+// sort), so anchor on the file-adjacent same-verse neighbours' stored
+// sort_orders. Rows are inserted AND placed in file order, so a preceding new
+// row already has its sort_order by the time we reach the next one — that's
+// what keeps a RUN of consecutive DCS-new rows in file order (each chains off
+// the one before it). The earlier version only looked at the immediate
+// neighbours and returned NULL whenever EITHER was itself a same-pass new row
+// (the common case: a verse whose notes were rewritten upstream), so adjacent
+// new rows all landed NULL and NULLS-LAST then ordered them by id — scrambling
+// the export diff, the exact churn this is meant to prevent.
 async function midpointSortOrder(
   env: Env,
   book: string,
   kind: TsvKind,
   incoming: ParsedTsvRow[],
   idx: number,
-): Promise<number | null> {
+): Promise<number> {
   const me = incoming[idx];
   const sameGroup = (r: ParsedTsvRow | undefined): r is ParsedTsvRow =>
     r != null && r.chapter === me.chapter && r.verse === me.verse;
@@ -400,13 +403,28 @@ async function midpointSortOrder(
       .first<{ sort_order: number | null }>();
     return r?.sort_order ?? null;
   };
-  const prev = incoming[idx - 1];
-  const next = incoming[idx + 1];
-  const after = sameGroup(next) ? await sortOrderOf(next.id) : null;
-  if (after == null) return null;
-  if (!sameGroup(prev)) return after - 1;
-  const before = await sortOrderOf(prev.id);
-  return before == null ? null : (before + after) / 2;
+  // Nearest preceding same-verse neighbour that already has a sort_order
+  // (a pre-existing row, or an earlier new row we just placed this pass).
+  let before: number | null = null;
+  for (let j = idx - 1; sameGroup(incoming[j]); j--) {
+    const so = await sortOrderOf(incoming[j].id);
+    if (so != null) {
+      before = so;
+      break;
+    }
+  }
+  // Nearest following same-verse neighbour that has a sort_order. Following
+  // NEW rows aren't inserted yet (their lookup returns null) and are skipped,
+  // so this anchors on the next already-existing row.
+  let after: number | null = null;
+  for (let j = idx + 1; sameGroup(incoming[j]); j++) {
+    const so = await sortOrderOf(incoming[j].id);
+    if (so != null) {
+      after = so;
+      break;
+    }
+  }
+  return placeSortOrder(before, after);
 }
 
 // Returns true if the row was inserted (was new), false if it already existed
