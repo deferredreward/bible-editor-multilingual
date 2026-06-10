@@ -254,8 +254,10 @@ export function DocColumn({
             ? highlightsFor(bibleVersion, dto.content, activeNoteQuote, activeNoteOccurrence, activeSourceContent)
             : null;
           // Lift any \s1/\s2/\s3 section headers in this verse's content
-          // up into block-level bands above the inline verse span. The
-          // remaining body still has them filtered by the renderer.
+          // into block-level bands rendered AFTER the inline verse span
+          // (see below) — they sit in the verse's trailing objects and
+          // introduce the next verse. The remaining body still has them
+          // filtered by the renderer.
           const verseObjects = (dto.content as { verseObjects?: unknown[] } | null)?.verseObjects;
           const sections: SectionHeader[] = Array.isArray(verseObjects)
             ? splitSectionHeaders(verseObjects).sections
@@ -273,20 +275,6 @@ export function DocColumn({
             : [];
           return (
             <Fragment key={dto.verse}>
-              {sections.map((s, i) => (
-                <SectionHeaderBand
-                  key={`sec-${dto.verse}-${i}`}
-                  tag={s.tag}
-                  text={s.text}
-                  editable={!readOnly && !!onEditSection}
-                  onChange={
-                    onEditSection
-                      ? (next) =>
-                          onEditSection(dto.verse, { index: i, tag: next.tag, text: next.text }, dto)
-                      : undefined
-                  }
-                />
-              ))}
               <VerseSpan
                 book={book}
                 chapter={chapter}
@@ -309,6 +297,24 @@ export function DocColumn({
                 onAlign={() => onOpenAligner(dto.verse)}
                 onEdit={(plain) => onEditVerse(dto.verse, plain, dto)}
               />
+              {/* `\s*` headings live in this verse's trailing verseObjects
+                  but introduce the NEXT verse — render the band AFTER the
+                  verse span so it sits at the verse end (like a trailing
+                  `\p`/`\q`), not glued above the verse it's attached to. */}
+              {sections.map((s, i) => (
+                <SectionHeaderBand
+                  key={`sec-${dto.verse}-${i}`}
+                  tag={s.tag}
+                  text={s.text}
+                  editable={!readOnly && !!onEditSection}
+                  onChange={
+                    onEditSection
+                      ? (next) =>
+                          onEditSection(dto.verse, { index: i, tag: next.tag, text: next.text }, dto)
+                      : undefined
+                  }
+                />
+              ))}
             </Fragment>
           );
         })}

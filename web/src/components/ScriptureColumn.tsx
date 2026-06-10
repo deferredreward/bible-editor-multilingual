@@ -909,7 +909,6 @@ const InactiveVerseRow = memo(
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
-              <NonActiveSections verse={ultV} column="ULT" />
               <StackedRowBody
                 dto={ultV}
                 prevDto={findPrevRowInColumn(ult, ultV.verse)}
@@ -923,6 +922,7 @@ const InactiveVerseRow = memo(
                     : null
                 }
               />
+              <NonActiveSections verse={ultV} column="ULT" />
             </Box>
           </>
         )}
@@ -952,7 +952,6 @@ const InactiveVerseRow = memo(
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
-              <NonActiveSections verse={ustV} column="UST" />
               <StackedRowBody
                 dto={ustV}
                 prevDto={findPrevRowInColumn(ust, ustV.verse)}
@@ -966,6 +965,7 @@ const InactiveVerseRow = memo(
                     : null
                 }
               />
+              <NonActiveSections verse={ustV} column="UST" />
             </Box>
           </>
         )}
@@ -1273,26 +1273,6 @@ function ActiveLine({
           </Tooltip>
         )}
       </Stack>
-      {sections.length > 0 && (
-        <Stack spacing={0.25} sx={{ mb: 0.5 }}>
-          {sections.map((s, i) => (
-            <SectionHeaderBand
-              key={`${s.tag}-${i}`}
-              tag={s.tag}
-              text={s.text}
-              editable={!!editable && !readOnly}
-              onChange={(next) => {
-                // Splice the updated/removed section back into verseObjects
-                // and let Shell handle the smart save via onEditContent.
-                // Wire-up handled in the parent Shell; this component just
-                // surfaces edits. For v1 we mutate textContent inline via
-                // a side channel — see Shell's onEditSection handler.
-                onEditSection?.({ index: i, tag: next.tag, text: next.text });
-              }}
-            />
-          ))}
-        </Stack>
-      )}
       {editable && !readOnly && !rtl && (
         <ParagraphToolbar elRef={elRef} onEditPlain={onEditPlain} />
       )}
@@ -1407,6 +1387,26 @@ function ActiveLine({
           })}
         />
       )}
+      {sections.length > 0 && (
+        <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+          {sections.map((s, i) => (
+            <SectionHeaderBand
+              key={`${s.tag}-${i}`}
+              tag={s.tag}
+              text={s.text}
+              editable={!!editable && !readOnly}
+              onChange={(next) => {
+                // Splice the updated/removed section back into verseObjects
+                // and let Shell handle the smart save via onEditContent.
+                // Wire-up handled in the parent Shell; this component just
+                // surfaces edits. For v1 we mutate textContent inline via
+                // a side channel — see Shell's onEditSection handler.
+                onEditSection?.({ index: i, tag: next.tag, text: next.text });
+              }}
+            />
+          ))}
+        </Stack>
+      )}
     </Box>
   );
 }
@@ -1513,7 +1513,11 @@ function ParagraphToolbar({
 // Read-only section header bands for non-active stacked rows. The active
 // card renders them editable through ActiveLine; here we surface them so
 // the heading is visible at all times — click the row to activate it and
-// edit via the active card.
+// edit via the active card. Rendered AFTER the verse body (the caller
+// places <NonActiveSections> below <StackedRowBody>): a `\s*` heading is
+// stored in this verse's trailing verseObjects but introduces the NEXT
+// verse, so it belongs at the verse's end — same place as a trailing
+// `\p`/`\q` marker, not floating above the verse it's attached to.
 function NonActiveSections({ verse, column }: { verse: VerseDto; column: string }) {
   const verseObjects = (verse.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   const sections: SectionHeader[] = Array.isArray(verseObjects)

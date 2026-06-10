@@ -866,20 +866,6 @@ const VerseCell = memo(function VerseCell({
 
   return (
     <Box sx={{ lineHeight: 1.6 }}>
-      {sections.map((s, i) => (
-        <SectionHeaderBand
-          key={`bv-sec-${i}`}
-          tag={s.tag}
-          text={s.text}
-          editable={!readOnly && !!onEditSection}
-          onChange={
-            onEditSection
-              ? (next) =>
-                  onEditSection(chapter, verseNum, bibleVersion, { index: i, tag: next.tag, text: next.text }, dto)
-              : undefined
-          }
-        />
-      ))}
       <Typography
         component="span"
         variant="caption"
@@ -986,6 +972,24 @@ const VerseCell = memo(function VerseCell({
         className="be-verse-span"
       />
       )}
+      {/* `\s*` headings live in this verse's trailing verseObjects but
+          introduce the NEXT verse — render the band AFTER the verse body
+          so it sits at the verse end (like a trailing `\p`/`\q`), not
+          glued above the verse it's attached to. */}
+      {sections.map((s, i) => (
+        <SectionHeaderBand
+          key={`bv-sec-${i}`}
+          tag={s.tag}
+          text={s.text}
+          editable={!readOnly && !!onEditSection}
+          onChange={
+            onEditSection
+              ? (next) =>
+                  onEditSection(chapter, verseNum, bibleVersion, { index: i, tag: next.tag, text: next.text }, dto)
+              : undefined
+          }
+        />
+      ))}
     </Box>
   );
 });
