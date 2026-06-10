@@ -26,8 +26,8 @@ run_worker_first = ["/api/*"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "bible_editor"
-database_id = "7e566abf-454d-43d6-b24e-11df74f1c0ed"
+database_name = "bible_editor_dev"
+database_id = "ceb458bf-4608-4696-a087-9026618a6cef"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
