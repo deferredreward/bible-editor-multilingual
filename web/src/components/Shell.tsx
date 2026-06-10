@@ -26,7 +26,7 @@ import { drafts, verseKey } from "../sync/drafts";
 import { smartEditVerse } from "../lib/replace";
 import { extractEditableText, extractPlainText, SECTION_HEADER_TAGS } from "../lib/usfm";
 import { verseHasUnalignedWork } from "../lib/alignment";
-import { concatSourceRange, formatVerseLabel } from "../lib/verseRange";
+import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { findSourceForTargetText, type HighlightKey } from "../lib/highlight";
 import { buildQuoteFromSelection } from "../lib/quoteBuilder";
@@ -54,20 +54,41 @@ interface AlignerTarget {
   bibleVersion: string;
 }
 
-// Per-version slice of the alignment props: target verse, the shared source
-// (concatenated across a multi-verse range), and the TWL rows for that span.
-// Used by both the single-panel aligner and the side-by-side popup.
+// Per-version slice of the alignment props: target verse, the source for the
+// verses that target covers (concatenated across a multi-verse range), and the
+// TWL rows for that span. Used by both the single-panel aligner and the
+// side-by-side popup. Resolves through buildVerseIndex so a verse INSIDE a
+// range row (e.g. v7 of a UST 6-9 block) finds its covering row — the wire
+// map is keyed by verse_start only.
 function buildAlignerSlice(sourceData: ChapterPayload, verse: number, bibleVersion: string) {
   const sourceLabel = sourceData.verses["UHB"] ? "UHB" : "UGNT";
-  const targetVerse = sourceData.verses[bibleVersion]?.[verse] ?? null;
-  const rangeEnd = targetVerse?.verse_end ?? verse;
+  const targetVerse = buildVerseIndex(sourceData.verses[bibleVersion])[verse] ?? null;
+  const rangeEnd = targetVerse?.verse_end ?? targetVerse?.verse ?? verse;
   const rangeStart = targetVerse?.verse ?? verse;
   const sourceVerse =
     rangeEnd > rangeStart
       ? concatSourceRange(sourceData.verses[sourceLabel] ?? {}, rangeStart, rangeEnd)
-      : sourceData.verses[sourceLabel]?.[verse] ?? null;
+      : sourceData.verses[sourceLabel]?.[rangeStart] ?? null;
   const twlForVerse = sourceData.twl.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd);
   return { sourceLabel, targetVerse, sourceVerse, twlForVerse, rangeStart, rangeEnd };
+}
+
+// Word-token count of one source verse row — text/punctuation nodes excluded,
+// matching the position enumeration in UhbStrip/buildSourceIndexMap. Used to
+// compute each dual panel's posOffset within the union span.
+function countSourceWords(row: VerseDto | undefined): number {
+  const verseObjects = (row?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+  let n = 0;
+  const walk = (nodes: unknown[]) => {
+    for (const x of nodes ?? []) {
+      const o = x as Record<string, unknown> | null;
+      if (!o) continue;
+      if (o["type"] === "word" && o["tag"] === "w") n++;
+      else if (o["type"] === "milestone") walk((o["children"] as unknown[] | undefined) ?? []);
+    }
+  };
+  walk(verseObjects ?? []);
+  return n;
 }
 
 const SCRIPTURE_MODE_KEY = "be:scriptureMode";
@@ -746,16 +767,19 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     (choice: "save" | "discard") => {
       const action = pendingDualAction;
       setPendingDualAction(null);
+      // Only touch the dirty panel(s): save() serializes + enqueues a PATCH
+      // unconditionally, so calling it on the clean side would bump that
+      // version row for nothing (and could 409 against a concurrent editor).
       if (choice === "save") {
-        dualLeftRef.current?.save();
-        dualRightRef.current?.save();
+        if (dualLeftDirty) dualLeftRef.current?.save();
+        if (dualRightDirty) dualRightRef.current?.save();
       } else {
-        dualLeftRef.current?.discard();
-        dualRightRef.current?.discard();
+        if (dualLeftDirty) dualLeftRef.current?.discard();
+        if (dualRightDirty) dualRightRef.current?.discard();
       }
       action?.run();
     },
-    [pendingDualAction],
+    [pendingDualAction, dualLeftDirty, dualRightDirty],
   );
 
   const handleSetPanelMode = useCallback(
@@ -815,10 +839,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       sourceLabel,
       twlForVerse,
       onSave: (content, plain, expectedVersion) => {
+        // Key the PATCH by the resolved row's verse_start — alignerTarget.verse
+        // may sit INSIDE a range row (v7 of a UST 6-9 block) now that the
+        // slice resolves through buildVerseIndex.
         void outbox.enqueueVerse(
           book,
           alignerTarget.chapter,
-          alignerTarget.verse,
+          targetVerse?.verse ?? alignerTarget.verse,
           alignerTarget.bibleVersion,
           expectedVersion,
           { content, plain_text: plain },
@@ -852,25 +879,38 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     const ust = buildAlignerSlice(sourceData, dualTarget.verse, "UST");
     if (!ult.targetVerse && !ust.targetVerse) return undefined;
     const sourceLabel = ult.sourceLabel; // identical across versions
-    // Shared source over the union span so a multi-verse UST and a per-verse
-    // ULT both see the Hebrew they reference.
+    // The shared strip shows the UNION span so a multi-verse UST and a
+    // per-verse ULT both see the Hebrew they reference. Each PANEL keeps its
+    // own slice's source (only the verses its target covers) — aligning to it
+    // is what gets serialized into zaln milestones, and the union would let a
+    // single-verse panel reference Hebrew outside its verse. posOffset bridges
+    // panel positions into the union for the lifted hover.
     const rangeStart = Math.min(ult.rangeStart, ust.rangeStart);
     const rangeEnd = Math.max(ult.rangeEnd, ust.rangeEnd);
+    const byStart = sourceData.verses[sourceLabel] ?? {};
     const sourceVerse =
       rangeEnd > rangeStart
-        ? concatSourceRange(sourceData.verses[sourceLabel] ?? {}, rangeStart, rangeEnd)
-        : sourceData.verses[sourceLabel]?.[dualTarget.verse] ?? null;
+        ? concatSourceRange(byStart, rangeStart, rangeEnd)
+        : byStart[rangeStart] ?? null;
+    const offsetFor = (ownStart: number) => {
+      let off = 0;
+      for (let v = rangeStart; v < ownStart; v++) off += countSourceWords(byStart[v]);
+      return off;
+    };
     const twlForVerse = sourceData.twl.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd);
     const labelVerse = ult.targetVerse ?? ust.targetVerse;
     const vref = `${book} ${dualTarget.chapter}:${
       labelVerse ? formatVerseLabel(labelVerse) : dualTarget.verse
     }`;
-    const enqueue = (bibleVersion: string) =>
+    // PATCH key is the resolved row's verse_start — dualTarget.verse may sit
+    // inside a range row now that slices resolve through buildVerseIndex.
+    const enqueue = (bibleVersion: string, row: VerseDto | null) =>
       (content: unknown, plain: string, expectedVersion: number) => {
+        if (!row) return;
         void outbox.enqueueVerse(
           book,
           dualTarget.chapter,
-          dualTarget.verse,
+          row.verse,
           bibleVersion,
           expectedVersion,
           { content, plain_text: plain },
@@ -879,14 +919,20 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     const left: PanelSlot = {
       bibleVersion: "ULT",
       verse: ult.targetVerse,
-      onSave: enqueue("ULT"),
+      sourceVerse: ult.sourceVerse,
+      twlForVerse: ult.twlForVerse,
+      posOffset: offsetFor(ult.rangeStart),
+      onSave: enqueue("ULT", ult.targetVerse),
       onDirtyChange: setDualLeftDirty,
       panelRef: dualLeftRef,
     };
     const right: PanelSlot = {
       bibleVersion: "UST",
       verse: ust.targetVerse,
-      onSave: enqueue("UST"),
+      sourceVerse: ust.sourceVerse,
+      twlForVerse: ust.twlForVerse,
+      posOffset: offsetFor(ust.rangeStart),
+      onSave: enqueue("UST", ust.targetVerse),
       onDirtyChange: setDualRightDirty,
       panelRef: dualRightRef,
     };
@@ -1555,10 +1601,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onPrevVerse={dualNav.prev != null ? () => dualNavTo(dualNav.prev!) : undefined}
           onNextVerse={dualNav.next != null ? () => dualNavTo(dualNav.next!) : undefined}
           onEditReading={(bv, plain, base) =>
-            stashVerseDraft(dualAlignerProps.chapter, dualAlignerProps.verseNum, bv, plain, base)
+            // base.verse, not verseNum — each side's row may start at a
+            // different verse (ULT v7 singleton vs UST 6-9 range row).
+            stashVerseDraft(dualAlignerProps.chapter, base.verse, bv, plain, base)
           }
           onSaveReading={(bv, plain, base) =>
-            saveVerseDraft(dualAlignerProps.chapter, dualAlignerProps.verseNum, bv, plain, base)
+            saveVerseDraft(dualAlignerProps.chapter, base.verse, bv, plain, base)
           }
         />
       )}

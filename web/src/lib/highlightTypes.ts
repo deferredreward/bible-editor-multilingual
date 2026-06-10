@@ -3,9 +3,20 @@
 // the side-by-side aligner (SideBySideAligner). Extracted so those modules can
 // reference the types without importing the large AlignmentPanel component.
 
+// Hebrew hover is identified by source-token POSITION, not `strong|occurrence`:
+// occurrence counts the exact surface text (cantillation included), so two
+// same-Strong words with different pointing both carry occurrence "1" — 236
+// such collisions across ZEC's UHB alone made strong-keyed hover light the
+// wrong word. Position is unique by construction and survives multi-verse
+// spans. Positions are UNION-relative in the side-by-side aligner (each panel
+// translates via its `posOffset`); standalone panels have offset 0.
+//
+// English hover carries `positions`: the union positions of the hovered
+// word's group's source words, so the shared strip and the opposite panel can
+// light their counterparts without sharing group ids (ids are per-panel).
 export type HoverHighlight =
-  | { kind: "english"; key: string; groupId: string | null }
-  | { kind: "hebrew"; key: string; groupId: string | null }
+  | { kind: "english"; key: string; groupId: string | null; positions: number[] }
+  | { kind: "hebrew"; pos: number; groupId: string | null }
   | null;
 
 export type HighlightTone = "exact" | "linked" | null;
@@ -21,10 +32,10 @@ export interface HighlightCtx {
   matchHues: Map<string, number>;
   themeMode: "light" | "dark";
   onEnglishEnter: (wordId: string, text: string, occurrence: string, groupIdOverride?: string) => void;
-  // Hebrew is keyed by Strong number (invariant) + occurrence — content
-  // text can differ between the alignment milestone and the UHB \w token
-  // due to cantillation / NFC variation.
-  onHebrewEnter: (strong: string, occurrence: string, groupIdOverride?: string) => void;
+  // Hebrew tokens identify by union-relative source position (see
+  // HoverHighlight). The strip passes its walk index; alignment cards pass
+  // the position resolved from the group's source word.
+  onHebrewEnter: (pos: number, groupIdOverride?: string) => void;
   onLeave: () => void;
   englishHighlight: (
     wordId: string,
@@ -33,8 +44,7 @@ export interface HighlightCtx {
     groupIdOverride?: string,
   ) => HighlightTone;
   hebrewHighlight: (
-    strong: string,
-    occurrence: string,
+    pos: number,
     groupIdOverride?: string,
   ) => HighlightTone;
 }

@@ -28,10 +28,18 @@ function writeHoverLink(v: boolean) {
 }
 
 // One side of the popup: its target verse + the wiring to save it. Mirrors the
-// per-version slice of Shell's alignmentTabProps, but two of them.
+// per-version slice of Shell's alignmentTabProps, but two of them. Each slot
+// carries its OWN source slice (the verses its target actually covers) — NOT
+// the union span — so a single-verse panel never grows placeholder cards for
+// Hebrew it can't legitimately align to (saving those would emit zaln
+// milestones referencing words outside the verse). The union span exists only
+// in the shared strip; `posOffset` translates this panel's positions into it.
 export interface PanelSlot {
   bibleVersion: string;
   verse: VerseDto | null;
+  sourceVerse: VerseDto | null;
+  twlForVerse: TwlRow[];
+  posOffset: number;
   onSave: (newContent: unknown, plainText: string, expectedVersion: number) => void;
   onDirtyChange: (dirty: boolean) => void;
   panelRef: Ref<AlignmentPanelHandle>;
@@ -86,6 +94,11 @@ export function SideBySideAligner({
   // Hebrew lexicon tooltip on hover — default on; turn off to see only what's
   // aligned (the highlight bridge) without the popup covering the panels.
   const [lexInfo, setLexInfo] = useState(true);
+  // Hover positions are verse-specific — a stale ring would attach to whatever
+  // token happens to hold the same position after a verse nav.
+  useEffect(() => {
+    setHover(null);
+  }, [verseNum, chapter]);
   const toggleHoverLink = () =>
     setHoverLink((cur) => {
       const next = !cur;
@@ -102,9 +115,9 @@ export function SideBySideAligner({
       verseNum={verseNum}
       bibleVersion={slot.bibleVersion}
       verse={slot.verse}
-      sourceVerse={sourceVerse}
+      sourceVerse={slot.sourceVerse}
       sourceLabel={sourceLabel}
-      twlForVerse={twlForVerse}
+      twlForVerse={slot.twlForVerse}
       onSave={slot.onSave}
       onCancel={onClose}
       onDirtyChange={slot.onDirtyChange}
@@ -114,6 +127,7 @@ export function SideBySideAligner({
       onToggleHoverLink={toggleHoverLink}
       renderUhbStrip={false}
       showSourceInfo={lexInfo}
+      posOffset={slot.posOffset}
     />
   );
 
@@ -294,9 +308,11 @@ function SharedUhbStrip({
 }) {
   const themeMode = useTheme().palette.mode;
   const [hidden, setHidden] = useState(false);
-  // The shared strip shows only the exact-match tone (it has no single
-  // grouping of its own — each panel owns its grouping). Hovering a strip
-  // token seeds the lifted hover, which the panels resolve to their own groups.
+  // The strip renders the UNION span, so its walk positions ARE the
+  // union-relative hover identity. It has no grouping of its own — hovering a
+  // token seeds the lifted hover, which each panel resolves to its own groups.
+  // It lights: exact (its own token hovered anywhere) and linked (a panel's
+  // English hovered → that group's Hebrew positions ring here too).
   const hctx: HighlightCtx = useMemo(
     () => ({
       colorize: false,
@@ -305,15 +321,16 @@ function SharedUhbStrip({
       matchHues: new Map<string, number>(),
       themeMode,
       onEnglishEnter: () => {},
-      onHebrewEnter: (strong: string, occurrence: string) => {
+      onHebrewEnter: (pos: number) => {
         if (!hoverLink) return;
-        onHover({ kind: "hebrew", key: `${strong}|${occurrence}`, groupId: null });
+        onHover({ kind: "hebrew", pos, groupId: null });
       },
       onLeave: () => onHover(null),
       englishHighlight: () => null,
-      hebrewHighlight: (strong: string, occurrence: string) => {
+      hebrewHighlight: (pos: number) => {
         if (!hoverLink || !hover) return null;
-        if (hover.kind === "hebrew" && hover.key === `${strong}|${occurrence}`) return "exact";
+        if (hover.kind === "hebrew" && hover.pos === pos) return "exact";
+        if (hover.kind === "english" && hover.positions.includes(pos)) return "linked";
         return null;
       },
     }),
@@ -355,6 +372,12 @@ function ReadingLine({
   useEffect(() => {
     const el = elRef.current;
     if (!el) return;
+    // Never resync under the user's caret: onInput updates lastTextRef, so the
+    // tracker can't distinguish "user typed" from "still showing what we set" —
+    // a refetch echo (e.g. the other panel's save landing) would overwrite
+    // mid-edit text and drop the caret to the start. Focus is the mid-edit
+    // signal (DocColumn's VerseSpan uses its draft for the same purpose).
+    if (document.activeElement === el) return;
     const dom = el.textContent ?? "";
     if (lastSetRef.current === null || dom === lastTextRef.current) {
       // Skip the DOM write when the content already matches — after an edit that

@@ -116,6 +116,12 @@ function SourceVerseTokens({
 }) {
   if (!Array.isArray(verseObjects)) return <>{fallbackText}</>;
   const out: ReactNode[] = [];
+  // Word-token walk index — the hover identity (see highlightTypes.ts). Must
+  // count exactly the nodes buildSourceIndexMap counts (word tags, descending
+  // through milestones) so strip positions line up with the panel's resolved
+  // group positions. In the side-by-side shared strip this verse is the union
+  // span, so the index is union-relative natively.
+  let wordPos = 0;
   const walk = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
       const o = n as Record<string, unknown> | null;
@@ -139,14 +145,14 @@ function SourceVerseTokens({
           <SourceVerseToken
             key={`w${out.length}`}
             text={text}
-            strong={strong}
-            occurrence={occurrence}
+            pos={wordPos}
             source={src}
             lex={lexiconMap.get(strong) ?? null}
             twHint={twHintFor(twlForVerse, verseNum, text)}
             hctx={hctx}
           />,
         );
+        wordPos++;
       } else if (o["type"] === "milestone") {
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
@@ -158,22 +164,20 @@ function SourceVerseTokens({
 
 function SourceVerseToken({
   text,
-  strong,
-  occurrence,
+  pos,
   source,
   lex,
   twHint,
   hctx,
 }: {
   text: string;
-  strong: string;
-  occurrence: string;
+  pos: number;
   source: SourceWord;
   lex: LexiconEntry | null;
   twHint: string | null;
   hctx: HighlightCtx;
 }) {
-  const tone = hctx.hebrewHighlight(strong, occurrence);
+  const tone = hctx.hebrewHighlight(pos);
   const showInfo = hctx.showSourceInfo;
   return (
     <Tooltip
@@ -185,7 +189,7 @@ function SourceVerseToken({
     >
       <Box
         component="span"
-        onMouseEnter={() => hctx.onHebrewEnter(strong, occurrence)}
+        onMouseEnter={() => hctx.onHebrewEnter(pos)}
         onMouseLeave={hctx.onLeave}
         sx={{
           cursor: "help",
