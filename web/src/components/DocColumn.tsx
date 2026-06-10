@@ -547,6 +547,12 @@ function VerseSpan({
         borderRadius: 4,
         padding: isActive ? "1px 2px" : 0,
         backgroundColor: isActive ? "rgba(49,173,227,0.14)" : "transparent",
+        // RTL only: isolate each verse as its own bidi unit. In the continuous
+        // columns flow the bare LTR verse marker ("6:3") otherwise reorders
+        // against the neighboring verses' Hebrew runs and lands between the
+        // start of this verse and the tail of the previous one. Isolating the
+        // verse mirrors how book mode (per-verse blocks) already renders right.
+        unicodeBidi: rtl ? "isolate" : undefined,
       }}
     >
       <span
