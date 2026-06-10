@@ -935,6 +935,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
       signal,
+      // AI note drafting (bot → Anthropic + Hebrew validation) routinely
+      // exceeds the 30s default, which surfaced as a "request timeout" toast.
+      // The call is lifecycle-keyed (aborts on Shell unmount) and runs in the
+      // background, so a generous ceiling is safe.
+      timeoutMs: 120_000,
     }),
 
   pipelineStart: (body: PipelineStartRequest, signal?: AbortSignal) =>
