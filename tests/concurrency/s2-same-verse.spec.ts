@@ -1,12 +1,16 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
 import { fetchChapter, saveNote, gotoVerse, mintToken, newUserContext, noteTextarea, waitForServerNote } from "./helpers";
 
+// Honor BE_BASE_URL so the suite runs on a relocated port (mirrors s8).
+const BASE = process.env.BE_BASE_URL ?? "http://localhost:5173";
+
+
 // S2 — Two users edit DIFFERENT notes on the SAME verse simultaneously.
 // Same shape as S1 but tightens the assertion to catch verse-level (rather
 // than row-level) lock leaks. The seed has multiple notes on ZEC 6:1 so we
 // can pick two distinct rows on the same verse.
 test("two users editing different notes on the same verse both land", async ({ browser }) => {
-  const probe = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const probe = await apiRequest.newContext({ baseURL: BASE });
   const probeAuth = await mintToken(probe, "probe");
   const chapter = await fetchChapter(probe, probeAuth.token, "ZEC", 6);
 
@@ -43,7 +47,7 @@ test("two users editing different notes on the same verse both land", async ({ b
     saveNote(bob, bobTarget.id),
   ]);
 
-  const serverCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const serverCtx = await apiRequest.newContext({ baseURL: BASE });
   const serverAuth = await mintToken(serverCtx, "verifier");
   const [aliceFinal, bobFinal] = await Promise.all([
     waitForServerNote(serverCtx, serverAuth.token, "ZEC", 6, aliceTarget.id, (n) => n === aliceText),
