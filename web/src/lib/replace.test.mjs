@@ -333,6 +333,81 @@ function milestoneCount(content) {
   assert(words.find((x) => x.text === "they")?.strongs.length === 0, "edited 'they' is unaligned");
 }
 
+// ─── Case 17: trailing comma typed after an aligned word keeps alignment ──
+// Regression: snapDiffToWordBoundaries treated a trailing connector as an
+// edge unconditionally, so typing "," after "good" snapped the match onto
+// "good" → localized rewrite re-emitted "good" UNALIGNED. The comma binds
+// nothing on its far side (a space follows), so it must stay a boundary
+// insertion that leaves both surrounding words aligned.
+{
+  console.log("\n[Case 17] Typing a comma after a word doesn't unalign the word");
+  const verse = {
+    verseObjects: [zaln("H1", [w("good")]), t(" "), zaln("H2", [w("word")])],
+  };
+  const r = smartEditVerse(verse, "good word", "good, word");
+  assert(r.plainText === "good, word", `plainText is "good, word" (got ${JSON.stringify(r.plainText)})`);
+  const words = alignedWords(r.content);
+  assert(words.find((x) => x.text === "good")?.strongs.includes("H1"), "'good' keeps alignment");
+  assert(words.find((x) => x.text === "word")?.strongs.includes("H2"), "'word' keeps alignment");
+}
+
+// ─── Case 18: possessive apostrophe after a name keeps alignment ──────────
+// "Moses'" tokenizes as "Moses" + "'" (the apostrophe is followed by a space,
+// not a letter, so it does NOT bind into the word). Typing it must not snap
+// onto / unalign "Moses".
+{
+  console.log("\n[Case 18] Typing a possessive apostrophe after a name keeps alignment");
+  const verse = {
+    verseObjects: [zaln("H1", [w("Moses")]), t(" "), zaln("H2", [w("said")])],
+  };
+  const r = smartEditVerse(verse, "Moses said", "Moses' said");
+  assert(r.plainText === "Moses' said", `plainText is "Moses' said" (got ${JSON.stringify(r.plainText)})`);
+  const words = alignedWords(r.content);
+  assert(words.find((x) => x.text === "Moses")?.strongs.includes("H1"), "'Moses' keeps alignment");
+}
+
+// ─── Case 19: trailing comma after a number doesn't split the number ──────
+// The worst case: a trailing list comma after "1,000" snapped mid-number
+// (absorbing only the "000" run up to the grouping comma), splitting the
+// token AND unaligning it. It must stay "1,000" + a boundary "," .
+{
+  console.log("\n[Case 19] Typing a list comma after a grouped number keeps it one aligned token");
+  const verse = {
+    verseObjects: [zaln("H1", [w("1,000")]), t(" "), zaln("H2", [w("men")])],
+  };
+  const r = smartEditVerse(verse, "1,000 men", "1,000, men");
+  assert(r.plainText === "1,000, men", `plainText is "1,000, men" (got ${JSON.stringify(r.plainText)})`);
+  const words = alignedWords(r.content);
+  const num = words.filter((x) => x.text === "1,000");
+  assert(num.length === 1, `"1,000" stays ONE \\w token (got ${JSON.stringify(words.map((x) => x.text))})`);
+  assert(num[0]?.strongs.includes("H1"), "'1,000' keeps alignment");
+  assert(words.find((x) => x.text === "men")?.strongs.includes("H2"), "'men' keeps alignment");
+}
+
+// ─── Case 20: 1:1 word replace across a line-broken (\n) raw stays aligned ─
+// Regression: the skeleton check compared whitespace byte-exactly, so a raw
+// "on\nthat" vs replacement "on this" (one normalized space) failed the
+// check → localized rewrite unaligned even the UNCHANGED "on". Collapsing
+// whitespace in the skeleton keeps the preserve path; only the changed word
+// unaligns.
+{
+  console.log("\n[Case 20] 1:1 replace spanning a \\n keeps unchanged words aligned");
+  const verse = {
+    verseObjects: [
+      zaln("H1", [w("on"), t("\n"), w("that")]),
+      t(" "),
+      zaln("H2", [w("day")]),
+    ],
+  };
+  const r = smartReplaceVerse(verse, "on that day", /on that/g, 0, 7, "on this");
+  assert(r.plainText === "on this day", `plainText is "on this day" (got ${JSON.stringify(r.plainText)})`);
+  assert(r.preservedAlignment === true, "stays on the alignment-preserving path");
+  const words = alignedWords(r.content);
+  assert(words.find((x) => x.text === "on")?.strongs.includes("H1"), "unchanged 'on' keeps alignment");
+  assert(words.find((x) => x.text === "day")?.strongs.includes("H2"), "'day' keeps alignment");
+  assert(words.find((x) => x.text === "this")?.strongs.length === 0, "edited 'this' is unaligned");
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
