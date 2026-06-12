@@ -828,6 +828,14 @@ function NoteCardInner({
           {row.ref_raw}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {/* Right-side action controls grouped into one non-shrinking, non-wrapping
+            row. The header itself still wraps (flexWrap on the Stack), but it can
+            now only break between the metadata on the left and this whole group —
+            never mid-group. That stops the lone + / Save / trash icons from
+            flip-flopping across the wrap boundary one at a time when a note goes
+            dirty (editing injects the Undo button here, eating the row's slack):
+            the group either fits on line 1 or drops to line 2 as a stable unit. */}
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
         <Tooltip
           title={
             row.restored_from_version != null
@@ -940,6 +948,7 @@ function NoteCardInner({
             </Tooltip>
           </>
         )}
+        </Stack>
       </Stack>
 
       {/* ── Quote ── */}

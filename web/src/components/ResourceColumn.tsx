@@ -544,7 +544,11 @@ export function ResourceColumn({
       <Box
         ref={scrollBodyRef}
         onDragOver={handleDragAutoScroll}
-        sx={{ flex: 1, overflowY: "auto", px: 2, py: 1 }}
+        // scrollbarGutter:stable reserves the scrollbar's width whether or not
+        // it's showing, so the cards' content width never changes as the
+        // scrollbar appears/disappears. Without it, a card header sitting right
+        // at its flex-wrap boundary can flip-flop a line as the gutter toggles.
+        sx={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable", px: 2, py: 1 }}
       >
         {resourceTab === "notes" && (
           <>
