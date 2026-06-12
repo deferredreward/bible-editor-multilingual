@@ -15,7 +15,7 @@ import LinkIcon from "@mui/icons-material/Link";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import UndoIcon from "@mui/icons-material/Undo";
-import type { VerseDto } from "../sync/api";
+import type { TwlRow, VerseDto } from "../sync/api";
 import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
@@ -546,6 +546,7 @@ const ChapterBlock = memo(function ChapterBlock({
             search={search}
             findActiveMatch={findActiveMatch}
             lexiconMap={lexiconMap}
+            twl={data.twl}
             onSelectVerse={onSelectVerse}
             onEditVerse={onEditVerse}
             onOpenAligner={onOpenAligner}
@@ -575,6 +576,7 @@ const VerseRow = memo(function VerseRow({
   search,
   findActiveMatch,
   lexiconMap,
+  twl,
   onSelectVerse,
   onEditVerse,
   onOpenAligner,
@@ -595,6 +597,7 @@ const VerseRow = memo(function VerseRow({
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   lexiconMap: Map<string, LexiconEntry | null>;
+  twl: TwlRow[];
   onSelectVerse: (chapter: number, verse: number) => void;
   onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
   onOpenAligner: (chapter: number, verse: number, bibleVersion: string) => void;
@@ -654,6 +657,7 @@ const VerseRow = memo(function VerseRow({
               search={search}
               findActiveMatch={findActiveMatch}
               lexiconMap={lexiconMap}
+              twl={twl}
               onOpenAligner={onOpenAligner}
               onEditVerse={onEditVerse}
               onEditSection={onEditSection}
@@ -681,6 +685,7 @@ const VerseCell = memo(function VerseCell({
   search,
   findActiveMatch,
   lexiconMap,
+  twl,
   onOpenAligner,
   onEditVerse,
   onEditSection,
@@ -703,6 +708,7 @@ const VerseCell = memo(function VerseCell({
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   lexiconMap: Map<string, LexiconEntry | null>;
+  twl: TwlRow[];
   onOpenAligner: (chapter: number, verse: number, bibleVersion: string) => void;
   onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
   onEditSection?: (
@@ -966,6 +972,8 @@ const VerseCell = memo(function VerseCell({
           <HebrewLine
             verseObjects={(dto.content as { verseObjects?: unknown[] } | null)?.verseObjects}
             lexiconMap={lexiconMap}
+            twl={twl}
+            verseNum={verseNum}
             highlights={highlights ?? undefined}
             prevHighlights={prevHighlights ?? undefined}
             nextHighlights={nextHighlights ?? undefined}
