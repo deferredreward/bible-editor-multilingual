@@ -124,6 +124,12 @@ export function SideBySideAligner({
 
   const renderPanel = (slot: PanelSlot, setLocalDirty: (dirty: boolean) => void) => (
     <AlignmentPanel
+      // Remount on verse change so the panel's internal state is seeded fresh
+      // (useState(computedInitial)) instead of carrying the previous verse's
+      // alignment across a dualNavTo until the passive reset effect runs — the
+      // same stale-state race the single-panel aligner had. bibleVersion is
+      // fixed per side (ULT left / UST right), so verseNum alone keys it.
+      key={`${slot.bibleVersion}:${verseNum}`}
       ref={slot.panelRef}
       book={book}
       chapter={chapter}
