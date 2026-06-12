@@ -457,6 +457,16 @@ export function ResourceColumn({
       {panelMode === "alignment" ? (
         alignmentProps ? (
           <AlignmentPanel
+            // Remount on any target change (version OR verse). Without a key,
+            // React reuses the instance and the panel's `state` only resets via
+            // a passive useEffect that runs AFTER paint — leaving a window where
+            // `state` still holds the PREVIOUS version's alignment while `verse`
+            // / `onSave` are already bound to the new target. A save landing in
+            // that window writes the old content to the new row (e.g. UST
+            // alignment saved onto the ULT verse). Keying forces a fresh mount
+            // whose useState(computedInitial) seeds the correct state
+            // synchronously, closing the race.
+            key={`${alignmentProps.bibleVersion}:${alignmentProps.chapter}:${alignmentProps.verseNum}`}
             ref={alignmentProps.panelRef}
             book={alignmentProps.book}
             chapter={alignmentProps.chapter}
