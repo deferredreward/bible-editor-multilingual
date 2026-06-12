@@ -1514,6 +1514,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           searchNotes={getSearchNotes}
           onScrollToNoteMatch={focusNoteMatch}
           lexiconMap={lexiconMap}
+          twl={data.twl}
           locked={Boolean(chapterLock)}
         />
         </Box>

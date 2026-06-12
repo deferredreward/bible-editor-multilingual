@@ -8,8 +8,10 @@ import { Tooltip, Box } from "@mui/material";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import type { SourceWord } from "../lib/alignment";
 import type { HighlightKey } from "../lib/highlight";
+import type { TwlRow } from "../sync/api";
 import { roleLineShadow, wordHighlightStyles } from "../lib/highlightStyles";
 import { SourceTooltipBody } from "./SourceTooltipBody";
+import { buildTwHintMap, twHintFromMap } from "./UhbStrip";
 
 interface Props {
   verseObjects: unknown[] | undefined | null;
@@ -31,12 +33,22 @@ interface Props {
   // Used when the parent supplies a flat fallback string (e.g. when the
   // verseObjects tree is missing or invalid).
   fallbackText?: string;
+  // The chapter's TWL rows + this verse's number. When both are present each
+  // \w token's tooltip gains the "tW" hint (translationWords link) — the same
+  // hint the aligner's UHB strip / cards show. Optional so non-source columns
+  // (ULT/UST) and callers without TWL data render exactly as before.
+  twl?: TwlRow[];
+  verseNum?: number;
 }
 
-export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlights, nextHighlights, findHighlights, activeFindKey, fallbackText }: Props) {
+export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlights, nextHighlights, findHighlights, activeFindKey, fallbackText, twl, verseNum }: Props) {
   if (!Array.isArray(verseObjects)) {
     return <>{fallbackText ?? ""}</>;
   }
+  // Precompute the per-verse orig-word → tw hint lookup once (see buildTwHintMap)
+  // so the token walk is an O(1) Map.get per \w instead of re-splitting every
+  // TWL row's orig_words per token.
+  const twHints = twl && verseNum != null ? buildTwHintMap(twl, verseNum) : null;
   const items: React.ReactNode[] = [];
   const walk = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
@@ -95,7 +107,7 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
         items.push(
           <Tooltip
             key={`w${items.length}`}
-            title={<SourceTooltipBody source={src} lex={lexiconMap.get(strong) ?? null} />}
+            title={<SourceTooltipBody source={src} lex={lexiconMap.get(strong) ?? null} twHint={twHints ? twHintFromMap(twHints, text) : null} />}
             slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
           >
             {wordSpan}

@@ -4,7 +4,7 @@ import LinkIcon from "@mui/icons-material/Link";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import UndoIcon from "@mui/icons-material/Undo";
-import type { VerseDto } from "../sync/api";
+import type { TwlRow, VerseDto } from "../sync/api";
 import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
 import { extractTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
@@ -55,6 +55,9 @@ interface Props {
   // Present only when this column is UHB — caller pre-loads the lexicon
   // and we render each \w with a hover tooltip.
   lexiconMap?: Map<string, LexiconEntry | null>;
+  // This chapter's TWL rows (UHB column only) so the \w hover tooltips can
+  // show the tW link, matching the aligner.
+  twl?: TwlRow[];
   // Compiled find state from the overlay: English regex + classified source-
   // language query. Paints <mark.be-find> on plain_text for English mode,
   // and on token offsets / HebrewLine highlights for source-language mode.
@@ -102,6 +105,7 @@ export function DocColumn({
   activeSourceContent,
   scrollNonce,
   lexiconMap,
+  twl,
   search,
   findActiveMatch,
   onSelectVerse,
@@ -310,6 +314,7 @@ export function DocColumn({
                 readOnly={!!readOnly}
                 rtl={!!rtl}
                 lexiconMap={lexiconMap}
+                twl={twl}
                 search={search ?? null}
                 findActiveMatch={findActiveMatch ?? null}
                 spanRef={isActive ? activeRef : null}
@@ -386,6 +391,7 @@ function VerseSpan({
   readOnly,
   rtl,
   lexiconMap,
+  twl,
   search,
   findActiveMatch,
   spanRef,
@@ -418,6 +424,7 @@ function VerseSpan({
   readOnly: boolean;
   rtl: boolean;
   lexiconMap?: Map<string, LexiconEntry | null>;
+  twl?: TwlRow[];
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   spanRef: React.MutableRefObject<HTMLSpanElement | null> | null;
@@ -665,6 +672,8 @@ function VerseSpan({
           <HebrewLine
             verseObjects={(content as { verseObjects?: unknown[] } | null)?.verseObjects}
             lexiconMap={lexiconMap}
+            twl={twl}
+            verseNum={verseNum}
             highlights={highlights ?? undefined}
             prevHighlights={prevHighlights ?? undefined}
             nextHighlights={nextHighlights ?? undefined}

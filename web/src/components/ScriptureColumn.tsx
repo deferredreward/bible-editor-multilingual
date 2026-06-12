@@ -8,7 +8,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import UndoIcon from "@mui/icons-material/Undo";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
-import type { ChapterPayload, TnRow, VerseDto } from "../sync/api";
+import type { ChapterPayload, TnRow, TwlRow, VerseDto } from "../sync/api";
 import { drafts, verseKey } from "../sync/drafts";
 import { DocColumn } from "./DocColumn";
 import type { FindMatch } from "./FindReplaceOverlay";
@@ -90,6 +90,10 @@ interface Props {
   // Pre-loaded UHB strong → entry map (Shell collects from useChapter +
   // useBook) so per-word hover tooltips don't shimmer.
   lexiconMap: Map<string, LexiconEntry | null>;
+  // This chapter's TWL rows — fed to the UHB \w hover tooltips so they show
+  // the same "tW" link the aligner does. Book mode sources its own per-chapter
+  // TWL from bookChapters instead.
+  twl: TwlRow[];
   onSelectVerse: (v: number) => void;
   onOpenAligner: (verse: number, bibleVersion: string) => void;
   onModeChange: (mode: ScriptureMode) => void;
@@ -172,6 +176,7 @@ function ScriptureColumnInner({
   searchNotes,
   onScrollToNoteMatch,
   lexiconMap,
+  twl,
   onSelectVerse,
   onOpenAligner,
   onModeChange,
@@ -467,6 +472,7 @@ function ScriptureColumnInner({
             activeNoteOccurrence={activeNoteOccurrence}
             reorderHighlight={reorderHighlight ?? null}
             lexiconMap={lexiconMap}
+            twl={twl}
             search={search}
             findActiveMatch={findScrollTarget}
             onSelectVerse={onSelectVerse}
@@ -525,6 +531,7 @@ function ScriptureColumnInner({
                 activeSourceContent={activeSourceContent}
                 scrollNonce={scrollNonce}
                 lexiconMap={v === "UHB" ? lexiconMap : undefined}
+                twl={v === "UHB" ? twl : undefined}
                 search={search}
                 findActiveMatch={findScrollTarget}
                 onSelectVerse={onSelectVerse}
@@ -574,6 +581,10 @@ function areScriptureColumnPropsEqual(a: Props, b: Props): boolean {
     a.bookChapters === b.bookChapters &&
     a.scrollNonce === b.scrollNonce &&
     a.lexiconMap === b.lexiconMap &&
+    // twl feeds the UHB hover tooltips' tW hint; a new ref means a TWL edit,
+    // so re-render to keep the hint current (the row subtrees stay memoized,
+    // so only the active UHB line actually re-renders).
+    a.twl === b.twl &&
     a.locked === b.locked
   );
 }
@@ -607,6 +618,7 @@ function StackedBody({
   activeNoteOccurrence,
   reorderHighlight,
   lexiconMap,
+  twl,
   search,
   findActiveMatch,
   onSelectVerse,
@@ -627,6 +639,7 @@ function StackedBody({
   activeNoteOccurrence: number | null;
   reorderHighlight: ReorderHighlight | null;
   lexiconMap: Map<string, LexiconEntry | null>;
+  twl: TwlRow[];
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   onSelectVerse: (v: number) => void;
@@ -796,6 +809,7 @@ function StackedBody({
                   rtl={isHebrew}
                   readOnly
                   lexiconMap={lexiconMap}
+                  twl={twl}
                 />
               )}
             </Paper>
@@ -1035,6 +1049,7 @@ function ActiveLine({
   onSave,
   onEditSection,
   lexiconMap,
+  twl,
 }: {
   // book + bibleVersion identify the verse for draft keying and find-cell
   // targeting. bibleVersion is the bare code ("ULT") not the rendered label
@@ -1076,6 +1091,7 @@ function ActiveLine({
   // verseObjects tree directly and re-saves.
   onEditSection?: (change: { index: number; tag: string | null; text: string }) => void;
   lexiconMap?: Map<string, LexiconEntry | null>;
+  twl?: TwlRow[];
 }) {
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
   const draftKey = useMemo(
@@ -1371,6 +1387,8 @@ function ActiveLine({
           <HebrewLine
             verseObjects={(content as { verseObjects?: unknown[] } | null)?.verseObjects}
             lexiconMap={lexiconMap}
+            twl={twl}
+            verseNum={verseNum}
             highlights={highlights}
             prevHighlights={prevHighlights}
             nextHighlights={nextHighlights}
