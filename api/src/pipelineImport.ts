@@ -288,6 +288,14 @@ interface PendingImportRow {
 
 const AI_SOURCE = "ai_pipeline";
 
+// Canonical bible-editor row id: 4 chars, [a-z] then [a-z0-9]{3} — the format in
+// docs/bp-assistant-tn-hints-contract.md. bp-assistant normally emits this for
+// every TN row (hinted or not), and it's what gets pushed to master; preserving
+// it keeps D1 and master ids in lockstep. Only a malformed id (the occasional
+// incomplete emit) should be replaced with a freshly minted one.
+const ROW_ID_RE = /^[a-z][a-z0-9]{3}$/;
+const isValidRowId = (s: string): boolean => ROW_ID_RE.test(s);
+
 async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult> {
   // Look up the pipeline-starter's user id — every audit and updated_by
   // write is attributed to them, matching the contract that says the run
@@ -524,13 +532,20 @@ async function applyTnInsert(
     "updated_by",
   ];
 
-  // ID collision retry — same shape as rows.ts POST. The AI's proposed `id`
-  // (when present in the TSV) is ignored; bp-assistant produces fresh ids
-  // for TNs that don't have a stable lineage on the editor side.
+  // PRESERVE bp-assistant's proposed id. It's the SAME id that lands on master,
+  // so keeping it lets the nightly reimport recognize this row instead of
+  // re-adding a divergent-id copy of the same note — the TN duplication bug
+  // (each AI-generated note ending up doubled). Only mint a fresh id when the
+  // proposed one is malformed (bp-assistant occasionally emits an id that fails
+  // the 4-char [a-z][a-z0-9]{3} format — usually a first char that isn't [a-z])
+  // or when it actually PK-collides; attempt 0 uses the proposed id, later
+  // attempts mint. TQ already preserves its proposed id (insertTqAtId).
+  const proposedId =
+    typeof payload.id === "string" && isValidRowId(payload.id) ? payload.id : null;
   let id = "";
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 8; attempt++) {
-    id = newRowId();
+    id = attempt === 0 && proposedId ? proposedId : newRowId();
     const values: unknown[] = [
       id,
       payload.book ?? null,
