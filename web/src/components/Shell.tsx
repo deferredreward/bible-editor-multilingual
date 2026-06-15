@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Typography,
@@ -21,25 +21,25 @@ import { useLexicon } from "../hooks/useLexicon";
 import { useAiDrafts } from "../hooks/useAiDrafts";
 import { outbox } from "../sync/outbox";
 import { api } from "../sync/api";
-import type { TnRow, TqRow, TwlRow, VerseDto } from "../sync/api";
+import type { ChapterPayload, TnRow, TqRow, TwlRow, VerseDto } from "../sync/api";
 import { drafts, verseKey } from "../sync/drafts";
 import { smartEditVerse } from "../lib/replace";
-import { extractEditableText, extractPlainText, SECTION_HEADER_TAGS } from "../lib/usfm";
+import { extractEditableText, extractPlainText, normalizeEditable, SECTION_HEADER_TAGS } from "../lib/usfm";
 import { verseHasUnalignedWork } from "../lib/alignment";
-import { concatSourceRange, formatVerseLabel } from "../lib/verseRange";
+import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
-import { findSourceForTargetText, type HighlightKey } from "../lib/highlight";
+import { findSourceForTargetText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { buildQuoteFromSelection } from "../lib/quoteBuilder";
 import { nfc } from "../lib/hebrew";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
-import { ResourceColumn, type AlignmentTabProps, type PanelMode } from "./ResourceColumn";
+import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview } from "./ResourceColumn";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
+import { SideBySideAligner, type PanelSlot } from "./SideBySideAligner";
 import { TopBar } from "./TopBar";
 import { LogosSyncToggle } from "./LogosSyncToggle";
 import { PipelineMenu } from "./PipelineMenu";
 import { PipelineStatusBar } from "./PipelineStatusBar";
-import { SyncStatusBar } from "./SyncStatusBar";
 import { pipelineStore, type PipelineJob } from "../sync/pipelineStore";
 import { onOutboxResult } from "../sync/outbox";
 import { AiCompletionToasts } from "./AiCompletionToasts";
@@ -51,6 +51,52 @@ interface AlignerTarget {
   chapter: number;
   verse: number;
   bibleVersion: string;
+}
+
+// Per-version slice of the alignment props: target verse, the source for the
+// verses that target covers (concatenated across a multi-verse range), and the
+// TWL rows for that span. Used by both the single-panel aligner and the
+// side-by-side popup. Resolves through buildVerseIndex so a verse INSIDE a
+// range row (e.g. v7 of a UST 6-9 block) finds its covering row — the wire
+// map is keyed by verse_start only.
+function buildAlignerSlice(sourceData: ChapterPayload, verse: number, bibleVersion: string) {
+  const sourceLabel = sourceData.verses["UHB"] ? "UHB" : "UGNT";
+  const targetVerse = buildVerseIndex(sourceData.verses[bibleVersion])[verse] ?? null;
+  const rangeEnd = targetVerse?.verse_end ?? targetVerse?.verse ?? verse;
+  const rangeStart = targetVerse?.verse ?? verse;
+  const sourceVerse =
+    rangeEnd > rangeStart
+      ? concatSourceRange(sourceData.verses[sourceLabel] ?? {}, rangeStart, rangeEnd)
+      : sourceData.verses[sourceLabel]?.[rangeStart] ?? null;
+  const twlForVerse = sourceData.twl.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd);
+  return { sourceLabel, targetVerse, sourceVerse, twlForVerse, rangeStart, rangeEnd };
+}
+
+// Word-token count of one source verse row — text/punctuation nodes excluded,
+// matching the position enumeration in UhbStrip/buildSourceIndexMap. Used to
+// compute each dual panel's posOffset within the union span.
+function countSourceWords(row: VerseDto | undefined): number {
+  const verseObjects = (row?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+  let n = 0;
+  const walk = (nodes: unknown[]) => {
+    for (const x of nodes ?? []) {
+      const o = x as Record<string, unknown> | null;
+      if (!o) continue;
+      if (o["type"] === "word" && o["tag"] === "w") n++;
+      // \d (Psalm superscription) is `type:"section"` but its content IS
+      // alignable Hebrew verse body — descend it like a milestone, mirroring
+      // collectMilestoneRuns in highlight.ts. Half of a cross-PR \d fix; the
+      // other source-word walkers (highlight/quoteBuilder/alignment/
+      // AlignmentPanel/UhbStrip) gain the same descent so posOffsets stay aligned.
+      else if (
+        o["type"] === "milestone" ||
+        (o["type"] === "section" && o["tag"] === "d")
+      )
+        walk((o["children"] as unknown[] | undefined) ?? []);
+    }
+  };
+  walk(verseObjects ?? []);
+  return n;
 }
 
 const SCRIPTURE_MODE_KEY = "be:scriptureMode";
@@ -74,6 +120,15 @@ function saveToStorage<T>(key: string, value: T) {
     /* ignore */
   }
 }
+
+// Cross-chapter TN-find jump carry. A find-overlay match in another chapter
+// (book mode) navigates via the hash, which can't encode a note id, and Shell
+// is keyed on book/chapter/verse so it fully remounts on arrival. Stash the
+// target here just before navigating; the freshly-mounted Shell consumes it
+// once its chapter payload (with that note row) has loaded, then activates +
+// scrolls to the note. Module-level so it survives the remount; cleared on
+// consume so a later same-location mount doesn't re-grab a stale note.
+let pendingNoteJump: { book: string; chapter: number; noteId: string } | null = null;
 
 interface Props {
   book: string;
@@ -171,6 +226,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // unsaved drags stash their apply() here; the dialog decides which branch
   // to invoke.
   const [pendingNav, setPendingNav] = useState<{ run: () => void } | null>(null);
+  // Side-by-side aligner popup: which verse it targets (ULT + UST at once),
+  // per-panel handles for the save/discard gate, and per-panel dirty flags.
+  const [dualTarget, setDualTarget] = useState<{ chapter: number; verse: number } | null>(null);
+  const dualLeftRef = useRef<AlignmentPanelHandle | null>(null);
+  const dualRightRef = useRef<AlignmentPanelHandle | null>(null);
+  const [dualLeftDirty, setDualLeftDirty] = useState(false);
+  const [dualRightDirty, setDualRightDirty] = useState(false);
+  // Queued action (close / verse-nav) awaiting the user's save-or-discard
+  // choice when a dual panel has unsaved drags.
+  const [pendingDualAction, setPendingDualAction] = useState<{ run: () => void } | null>(null);
   // Shared by the scripture + resource columns so a single "go to active"
   // click re-centers both. Bumped via requestScrollToActive (and elsewhere
   // when the active selection changes through other paths).
@@ -394,6 +459,20 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     [versesForTiles],
   );
 
+  // Range-aware lookup: ChapterPayload.verses is keyed by verse_start, so a
+  // row anchored mid-bridge (e.g. verse 9 of a `\v 8-9` row) misses a direct
+  // verses[bv][row.verse] read. Built once per verses change and shared by
+  // the quote-builder / note-anchoring lookups below.
+  const verseIndexByVersion = useMemo(() => {
+    const out: Record<string, Record<number, VerseDto>> = {};
+    if (versesForTiles) {
+      for (const bv of Object.keys(versesForTiles)) {
+        out[bv] = buildVerseIndex(versesForTiles[bv]);
+      }
+    }
+    return out;
+  }, [versesForTiles]);
+
   // The widest range row across all versions that covers activeVerse. Used to
   // scope TN/TQ/TWL filtering in ResourceColumn — if UST 6-9 covers the active
   // verse, the user sees notes for verses 6-9, not just the navigated one.
@@ -519,6 +598,57 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     return { activeQuote: null, activeOccurrence: null };
   }, [activeNoteId, activeWordId, data]);
 
+  // Reorder "stoplight": while a note is dragged (or for ~3s after an arrow
+  // move) ResourceColumn reports the moved note's candidate neighbours; we
+  // resolve their quotes and hand them to the scripture column so the active
+  // verse lights prev (green underline) / next (red overline) alongside the
+  // moved note's existing yellow fill.
+  const [reorderPreview, setReorderPreview] = useState<ReorderPreview | null>(null);
+  const reorderPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reorderStickyRef = useRef(false);
+  const handleReorderPreview = useCallback((preview: ReorderPreview | null, sticky?: boolean) => {
+    // A live (non-sticky) clear — drag end or hover-leave — must not wipe a
+    // sticky arrow-move preview that's still counting down.
+    if (preview === null && !sticky && reorderStickyRef.current) return;
+    if (reorderPreviewTimer.current) {
+      clearTimeout(reorderPreviewTimer.current);
+      reorderPreviewTimer.current = null;
+    }
+    reorderStickyRef.current = !!(preview && sticky);
+    setReorderPreview(preview);
+    // Live previews (drag held / grip-or-arrow hover) pass sticky=false and are
+    // cleared on release/leave; arrow moves are momentary, so they linger 5s.
+    if (preview && sticky) {
+      reorderPreviewTimer.current = setTimeout(() => {
+        setReorderPreview(null);
+        reorderStickyRef.current = false;
+        reorderPreviewTimer.current = null;
+      }, 5000);
+    }
+  }, []);
+  useEffect(
+    () => () => {
+      if (reorderPreviewTimer.current) clearTimeout(reorderPreviewTimer.current);
+    },
+    [],
+  );
+  const reorderHighlight = useMemo<ReorderHighlight | null>(() => {
+    if (!data || !reorderPreview) return null;
+    const find = (id: string | null) => (id ? data.tn.find((r) => r.id === id) ?? null : null);
+    const moved = find(reorderPreview.movedId);
+    const prev = find(reorderPreview.prevId);
+    const next = find(reorderPreview.nextId);
+    if (!moved && !prev && !next) return null;
+    return {
+      movedQuote: moved?.quote ?? null,
+      movedOccurrence: moved?.occurrence ?? null,
+      prevQuote: prev?.quote ?? null,
+      prevOccurrence: prev?.occurrence ?? null,
+      nextQuote: next?.quote ?? null,
+      nextOccurrence: next?.occurrence ?? null,
+    };
+  }, [data, reorderPreview]);
+
   // Quote-builder session: when active, clicking Hebrew words in the UHB
   // row of the active verse toggles them into selectedKeys; "Use selection"
   // on the note card converts the set into row.quote + row.occurrence.
@@ -583,7 +713,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     const row = data.tn.find((r) => r.id === quoteBuildNoteId);
     if (!row) return null;
     const grab = (bv: string): unknown[] | null => {
-      const dto = data.verses[bv]?.[row.verse];
+      const dto = verseIndexByVersion[bv]?.[row.verse];
       const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
       return Array.isArray(vo) ? vo : null;
     };
@@ -594,7 +724,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       ult: grab("ULT"),
       ust: grab("UST"),
     };
-  }, [quoteBuildNoteId, data]);
+  }, [quoteBuildNoteId, data, verseIndexByVersion]);
 
   // Materialize the in-flight quote-build selection into a row patch and
   // fire the existing note save pipe. Pulls UHB verseObjects for the
@@ -604,7 +734,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     if (!quoteBuildNoteId || !data) return;
     const row = data.tn.find((r) => r.id === quoteBuildNoteId);
     if (!row) return;
-    const uhb = data.verses["UHB"]?.[row.verse] ?? data.verses["UGNT"]?.[row.verse];
+    const uhb = verseIndexByVersion["UHB"]?.[row.verse] ?? verseIndexByVersion["UGNT"]?.[row.verse];
     const verseObjects =
       (uhb?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
     if (!Array.isArray(verseObjects)) return;
@@ -631,21 +761,33 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     setQuoteBuildAppliedTo((prev) => ({ noteId: row.id, nonce: (prev?.nonce ?? 0) + 1 }));
     setQuoteBuildNoteId(null);
     setQuoteBuildSelectedKeys(new Set());
-  }, [quoteBuildNoteId, quoteBuildSelectedKeys, data]);
+  }, [quoteBuildNoteId, quoteBuildSelectedKeys, data, verseIndexByVersion]);
 
   // Routes any verse / version / aligner-target change through the dirty
   // gate when the alignment panel has unsaved drags. Plain wrapper around
   // setState if the gate is clear; otherwise queues for the popup.
-  const runWithDirtyGate = useCallback(
-    (apply: () => void) => {
-      if (panelMode === "alignment" && alignmentDirty) {
-        setPendingNav({ run: apply });
-      } else {
-        apply();
-      }
-    },
-    [panelMode, alignmentDirty],
-  );
+  //
+  // The gate reads panelMode / alignmentDirty through refs, NOT the state
+  // values, so its identity is stable. Memoized children (ScriptureColumn,
+  // InactiveVerseRow) deliberately skip comparing callback props, so a
+  // callback that closed over the state would go stale inside them and let
+  // navigation bypass the gate — silently dropping unsaved alignment drags.
+  // Layout effect (not passive) so the refs are current before any
+  // subsequent click can read them. Browser back/forward remounts the Shell
+  // entirely, so that navigation path stays ungated here.
+  const panelModeRef = useRef(panelMode);
+  const alignmentDirtyRef = useRef(alignmentDirty);
+  useLayoutEffect(() => {
+    panelModeRef.current = panelMode;
+    alignmentDirtyRef.current = alignmentDirty;
+  }, [panelMode, alignmentDirty]);
+  const runWithDirtyGate = useCallback((apply: () => void) => {
+    if (panelModeRef.current === "alignment" && alignmentDirtyRef.current) {
+      setPendingNav({ run: apply });
+    } else {
+      apply();
+    }
+  }, []);
 
   const requestSelectVerse = useCallback(
     (v: number) => {
@@ -657,6 +799,62 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     },
     [runWithDirtyGate],
   );
+
+  // Notes the find overlay's TN scope searches. Single chapter in stacked /
+  // columns mode; every loaded chapter in book mode. Reads dataRef so the
+  // getter sees live notes (post-keystroke) without forcing the memoized
+  // ScriptureColumn to re-render on every edit. Identity only churns on
+  // mode / book-cache changes, both of which ScriptureColumn already re-renders
+  // for, so the overlay always receives a current getter.
+  const getSearchNotes = useCallback((): TnRow[] => {
+    if (mode === "book" && bookHook) {
+      const out: TnRow[] = [];
+      for (const cs of bookHook.chapters.values()) {
+        if (cs.kind === "ready") out.push(...cs.data.tn);
+      }
+      return out;
+    }
+    return dataRef.current?.tn ?? [];
+  }, [mode, bookHook]);
+
+  // Navigate to + activate a TN match from the find overlay. Cross-chapter
+  // (book mode) routes through the URL so the chapter payload reloads; the
+  // common same-chapter case just focuses the verse + note, and the bumped
+  // scrollNonce makes the resource column scroll it into view.
+  const focusNoteMatch = useCallback(
+    (ch: number, v: number, noteId: string) => {
+      runWithDirtyGate(() => {
+        if (ch !== chapter) {
+          // The hash carries only book/chapter/verse; stash the note id so the
+          // remounted Shell can activate + scroll to it once its payload loads.
+          pendingNoteJump = { book, chapter: ch, noteId };
+          onNavigate?.(book, ch, v);
+          return;
+        }
+        setActiveVerse(v);
+        setActiveWordId(null);
+        setActiveNoteId(noteId);
+        setScrollNonce((n) => n + 1);
+      });
+    },
+    [runWithDirtyGate, chapter, book, onNavigate],
+  );
+
+  // Consume a cross-chapter TN-find jump stashed before navigation. Waits for
+  // this chapter's payload (and the target note row) to load, then activates +
+  // scrolls to the note. Cleared on consume; ignored if the stash targets a
+  // different book/chapter (e.g. the user navigated elsewhere in the meantime).
+  useEffect(() => {
+    const jump = pendingNoteJump;
+    if (!jump) return;
+    if (jump.book !== book || jump.chapter !== chapter) return;
+    if (!data) return;
+    if (!data.tn.some((r) => r.id === jump.noteId)) return;
+    pendingNoteJump = null;
+    setActiveWordId(null);
+    setActiveNoteId(jump.noteId);
+    setScrollNonce((n) => n + 1);
+  }, [data, book, chapter]);
 
   // Keep the alignment target's verse in step with the active verse while
   // we're in alignment mode. Bible version is sticky — only LinkIcon clicks
@@ -680,6 +878,58 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       });
     },
     [runWithDirtyGate],
+  );
+
+  // Open the side-by-side ULT/UST aligner on a verse. Layered over the UI as a
+  // Dialog (orthogonal to panelMode), so it gates only on the single panel's
+  // unsaved drags before opening.
+  const openDualAligner = useCallback(
+    (chapterNum: number, v: number) => {
+      runWithDirtyGate(() => {
+        setActiveVerse(v);
+        setDualTarget({ chapter: chapterNum, verse: v });
+      });
+    },
+    [runWithDirtyGate],
+  );
+  // Any action that leaves or re-targets the dual aligner gates on unsaved
+  // drags in either panel (save/discard prompt) — shared by close + verse nav.
+  const requestDualAction = useCallback(
+    (run: () => void) => {
+      if (dualLeftDirty || dualRightDirty) setPendingDualAction({ run });
+      else run();
+    },
+    [dualLeftDirty, dualRightDirty],
+  );
+  const requestCloseDual = useCallback(
+    () => requestDualAction(() => setDualTarget(null)),
+    [requestDualAction],
+  );
+  const dualNavTo = useCallback(
+    (v: number) =>
+      requestDualAction(() => {
+        setActiveVerse(v);
+        setDualTarget((t) => (t ? { ...t, verse: v } : t));
+      }),
+    [requestDualAction],
+  );
+  const resolveDualAction = useCallback(
+    (choice: "save" | "discard") => {
+      const action = pendingDualAction;
+      setPendingDualAction(null);
+      // Only touch the dirty panel(s): save() serializes + enqueues a PATCH
+      // unconditionally, so calling it on the clean side would bump that
+      // version row for nothing (and could 409 against a concurrent editor).
+      if (choice === "save") {
+        if (dualLeftDirty) dualLeftRef.current?.save();
+        if (dualRightDirty) dualRightRef.current?.save();
+      } else {
+        if (dualLeftDirty) dualLeftRef.current?.discard();
+        if (dualRightDirty) dualRightRef.current?.discard();
+      }
+      action?.run();
+    },
+    [pendingDualAction, dualLeftDirty, dualRightDirty],
   );
 
   const handleSetPanelMode = useCallback(
@@ -721,20 +971,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         : null;
     const sourceData = sameChapter ? data : bookData;
     if (!sourceData) return undefined;
-    const sourceLabel = sourceData.verses["UHB"] ? "UHB" : "UGNT";
-    const targetVerse = sourceData.verses[alignerTarget.bibleVersion]?.[alignerTarget.verse] ?? null;
-    // Multi-verse target (e.g. UST 6-9): expand the source side by
-    // concatenating per-verse UHB/UGNT rows across the same span. The
-    // aligner sees a flat token stream and the TWL list widens to include
-    // every verse the range covers.
-    const rangeEnd = targetVerse?.verse_end ?? alignerTarget.verse;
-    const rangeStart = targetVerse?.verse ?? alignerTarget.verse;
-    const sourceVerse =
-      rangeEnd > rangeStart
-        ? concatSourceRange(sourceData.verses[sourceLabel] ?? {}, rangeStart, rangeEnd)
-        : sourceData.verses[sourceLabel]?.[alignerTarget.verse] ?? null;
-    const twlForVerse = sourceData.twl.filter(
-      (r) => r.verse >= rangeStart && r.verse <= rangeEnd,
+    // Multi-verse target (e.g. UST 6-9): buildAlignerSlice expands the source
+    // side by concatenating per-verse UHB/UGNT rows across the span and widens
+    // the TWL list to every verse the range covers.
+    const { sourceLabel, targetVerse, sourceVerse, twlForVerse } = buildAlignerSlice(
+      sourceData,
+      alignerTarget.verse,
+      alignerTarget.bibleVersion,
     );
     return {
       book,
@@ -746,10 +989,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       sourceLabel,
       twlForVerse,
       onSave: (content, plain, expectedVersion) => {
+        // Key the PATCH by the resolved row's verse_start — alignerTarget.verse
+        // may sit INSIDE a range row (v7 of a UST 6-9 block) now that the
+        // slice resolves through buildVerseIndex.
         void outbox.enqueueVerse(
           book,
           alignerTarget.chapter,
-          alignerTarget.verse,
+          targetVerse?.verse ?? alignerTarget.verse,
           alignerTarget.bibleVersion,
           expectedVersion,
           { content, plain_text: plain },
@@ -760,8 +1006,110 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       },
       onDirtyChange: setAlignmentDirty,
       panelRef: alignmentPanelRef,
+      onOpenDual: () => openDualAligner(alignerTarget.chapter, alignerTarget.verse),
     };
-  }, [alignerTarget, data, chapter, bookHook, book]);
+  }, [alignerTarget, data, chapter, bookHook, book, openDualAligner]);
+
+  // Props for the side-by-side popup: ULT + UST slices against one shared
+  // source. Undefined (popup closed) unless a dualTarget is set and at least
+  // one of the two versions exists for the verse.
+  const dualAlignerProps = useMemo(() => {
+    if (!dualTarget || !data) return undefined;
+    const sameChapter = dualTarget.chapter === chapter;
+    const bookData =
+      !sameChapter && bookHook
+        ? (() => {
+            const cs = bookHook.chapters.get(dualTarget.chapter);
+            return cs?.kind === "ready" ? cs.data : null;
+          })()
+        : null;
+    const sourceData = sameChapter ? data : bookData;
+    if (!sourceData) return undefined;
+    const ult = buildAlignerSlice(sourceData, dualTarget.verse, "ULT");
+    const ust = buildAlignerSlice(sourceData, dualTarget.verse, "UST");
+    if (!ult.targetVerse && !ust.targetVerse) return undefined;
+    const sourceLabel = ult.sourceLabel; // identical across versions
+    // The shared strip shows the UNION span so a multi-verse UST and a
+    // per-verse ULT both see the Hebrew they reference. Each PANEL keeps its
+    // own slice's source (only the verses its target covers) — aligning to it
+    // is what gets serialized into zaln milestones, and the union would let a
+    // single-verse panel reference Hebrew outside its verse. posOffset bridges
+    // panel positions into the union for the lifted hover.
+    const rangeStart = Math.min(ult.rangeStart, ust.rangeStart);
+    const rangeEnd = Math.max(ult.rangeEnd, ust.rangeEnd);
+    const byStart = sourceData.verses[sourceLabel] ?? {};
+    const sourceVerse =
+      rangeEnd > rangeStart
+        ? concatSourceRange(byStart, rangeStart, rangeEnd)
+        : byStart[rangeStart] ?? null;
+    const offsetFor = (ownStart: number) => {
+      let off = 0;
+      for (let v = rangeStart; v < ownStart; v++) off += countSourceWords(byStart[v]);
+      return off;
+    };
+    const twlForVerse = sourceData.twl.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd);
+    const labelVerse = ult.targetVerse ?? ust.targetVerse;
+    const vref = `${book} ${dualTarget.chapter}:${
+      labelVerse ? formatVerseLabel(labelVerse) : dualTarget.verse
+    }`;
+    // PATCH key is the resolved row's verse_start — dualTarget.verse may sit
+    // inside a range row now that slices resolve through buildVerseIndex.
+    const enqueue = (bibleVersion: string, row: VerseDto | null) =>
+      (content: unknown, plain: string, expectedVersion: number) => {
+        if (!row) return;
+        void outbox.enqueueVerse(
+          book,
+          dualTarget.chapter,
+          row.verse,
+          bibleVersion,
+          expectedVersion,
+          { content, plain_text: plain },
+        );
+      };
+    const left: PanelSlot = {
+      bibleVersion: "ULT",
+      verse: ult.targetVerse,
+      sourceVerse: ult.sourceVerse,
+      twlForVerse: ult.twlForVerse,
+      posOffset: offsetFor(ult.rangeStart),
+      onSave: enqueue("ULT", ult.targetVerse),
+      onDirtyChange: setDualLeftDirty,
+      panelRef: dualLeftRef,
+    };
+    const right: PanelSlot = {
+      bibleVersion: "UST",
+      verse: ust.targetVerse,
+      sourceVerse: ust.sourceVerse,
+      twlForVerse: ust.twlForVerse,
+      posOffset: offsetFor(ust.rangeStart),
+      onSave: enqueue("UST", ust.targetVerse),
+      onDirtyChange: setDualRightDirty,
+      panelRef: dualRightRef,
+    };
+    return {
+      book,
+      chapter: dualTarget.chapter,
+      verseNum: dualTarget.verse,
+      vref,
+      sourceLabel,
+      sourceVerse,
+      twlForVerse,
+      left,
+      right,
+    };
+  }, [dualTarget, data, chapter, bookHook, book]);
+
+  // Prev/next verse for the dual aligner's titlebar arrows, within the current
+  // chapter's verse list (excluding the intro tile). Null at the ends.
+  const dualNav = useMemo(() => {
+    if (!dualAlignerProps || dualAlignerProps.chapter !== chapter) {
+      return { prev: null as number | null, next: null as number | null };
+    }
+    const nums = verseNumbers.filter((v) => v > 0);
+    const idx = nums.indexOf(dualAlignerProps.verseNum);
+    if (idx === -1) return { prev: null, next: null };
+    return { prev: nums[idx - 1] ?? null, next: nums[idx + 1] ?? null };
+  }, [dualAlignerProps, chapter, verseNumbers]);
 
   const alignmentBadge = alignerTarget
     ? `${alignerTarget.chapter}:${
@@ -773,15 +1121,25 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       }`
     : undefined;
 
-  // Initial load (or retry from scratch) — no data to show yet. We still
-  // render the SyncStatusBar so an offline user sees their connection state
-  // and any queued edits even when the chapter itself can't load.
+  // Initial load (or retry from scratch) — no data to show yet. Render the
+  // TopBar anyway (it fetches its own book list, and includes SyncStatusBar)
+  // so a bad deep link / 404 chapter still leaves the user a way to navigate
+  // out and an offline user sees their connection state. Navigation here is
+  // deliberately ungated — the alignment panel and the dirty-confirm dialog
+  // only mount in the data branch, so runWithDirtyGate would soft-lock.
   if (!data) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-        <Box sx={{ display: "flex", justifyContent: "flex-end", p: 1 }}>
-          <SyncStatusBar />
-        </Box>
+        <TopBar
+          book={book}
+          chapter={chapter}
+          onNavigate={(b, c, v) => {
+            setActiveVerse(v ?? 1);
+            setActiveNoteId(null);
+            setActiveWordId(null);
+            onNavigate?.(b, c, v);
+          }}
+        />
         <Box sx={{ p: 4, display: "flex", alignItems: "center", gap: 2 }}>
           {status === "error" ? (
             <Alert severity="error">failed to load {book} {chapter}: {error}</Alert>
@@ -852,6 +1210,23 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     base: VerseDto,
   ) => {
     const oldEditable = extractEditableText(base.content);
+    // No-op guard: a focus/blur (or any save) with no actual text change must
+    // not enqueue a PATCH — it would bump the verse version server-side for
+    // nothing, adding noisy history and leaving a stale expected_version that a
+    // later alignment save on the same row can 409 against.
+    //
+    // `oldEditable` is already normalizeEditable-collapsed, but `plain` is raw
+    // DOM textContent (may carry trailing \n / ZWSP / nbsp the editor emits),
+    // so normalize both sides — otherwise type-a-char-then-revert never matches
+    // and a version-bumping no-op PATCH fires. On a real no-op we must also
+    // CLEAR the stranded keystroke draft: drafts are written on every keystroke
+    // and only cleared by the outbox-200 listener, so returning without clearing
+    // leaves an orphaned draft (dirty border + SyncStatusBar entry + "unsaved
+    // edits" toast whose Save button re-hits this guard and never resolves).
+    if (oldEditable === normalizeEditable(plain)) {
+      void drafts.clear(verseKey(book, chapterNum, verseNum, bibleVersion));
+      return;
+    }
     const result = smartEditVerse(base.content, oldEditable, plain);
     const newPlainText = extractPlainText(result.content);
     const newDto = {
@@ -945,10 +1320,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         book={book}
         chapter={chapter}
         onNavigate={(b, c, v) => {
-          setActiveVerse(v ?? 1);
-          setActiveNoteId(null);
-          setActiveWordId(null);
-          onNavigate?.(b, c, v);
+          runWithDirtyGate(() => {
+            setActiveVerse(v ?? 1);
+            setActiveNoteId(null);
+            setActiveWordId(null);
+            onNavigate?.(b, c, v);
+          });
         }}
         pipelineMenu={
           <PipelineMenu
@@ -1056,6 +1433,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           activeVerse={activeVerse}
           activeNoteQuote={activeQuote}
           activeNoteOccurrence={activeOccurrence}
+          reorderHighlight={reorderHighlight}
           mode={mode}
           enabledVersions={displayedVersions}
           availableVersions={availableVersions}
@@ -1133,7 +1511,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onOpenAligner={(v, bv) => openAligner(chapter, v, bv)}
           scrollNonce={scrollNonce}
           onRequestScrollToActive={requestScrollToActive}
+          searchNotes={getSearchNotes}
+          onScrollToNoteMatch={focusNoteMatch}
           lexiconMap={lexiconMap}
+          twl={data.twl}
           locked={Boolean(chapterLock)}
         />
         </Box>
@@ -1229,7 +1610,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onNoteVisibilityChange={handleNoteVisibilityChange}
           onNoteTranslateQuote={(row, english) => {
             const vo = (
-              data.verses.ULT?.[row.verse]?.content as
+              verseIndexByVersion["ULT"]?.[row.verse]?.content as
                 | { verseObjects?: unknown[] }
                 | null
                 | undefined
@@ -1239,7 +1620,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           }}
           onWordTranslateQuote={(row, english) => {
             const vo = (
-              data.verses.ULT?.[row.verse]?.content as
+              verseIndexByVersion["ULT"]?.[row.verse]?.content as
                 | { verseObjects?: unknown[] }
                 | null
                 | undefined
@@ -1287,14 +1668,20 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             setActiveWordId(null);
           }}
           onNoteReorder={(draggedId, refId, position) => {
-            const dragged = data.tn.find((r) => r.id === draggedId);
+            // Read the live (ref) row list, not the render-scoped `data`
+            // closure: a rapid burst of arrow clicks fires several handlers
+            // before React re-renders, and a stale closure would renumber from
+            // an outdated order and enqueue ops carrying a stale version.
+            const tn = dataRef.current?.tn ?? [];
+            const dragged = tn.find((r) => r.id === draggedId);
             if (!dragged) return;
-            const sorted = sortedForVerse(data.tn, dragged.verse);
+            const sorted = sortedForVerse(tn, dragged.verse);
             const changes = reorderSequential(sorted, draggedId, refId, position);
             for (const { row, sort_order } of changes) {
               enqueueRow("tn", row, { sort_order });
             }
           }}
+          onReorderPreview={handleReorderPreview}
           onWordCreate={async () => {
             const list = sortedForVerse(data.twl, activeVerse);
             const sort_order = pickSortOrder(list, null, "after");
@@ -1312,9 +1699,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             setActiveNoteId(null);
           }}
           onWordReorder={(draggedId, refId, position) => {
-            const dragged = data.twl.find((r) => r.id === draggedId);
+            // See onNoteReorder: live ref list, not the stale render closure.
+            const twl = dataRef.current?.twl ?? [];
+            const dragged = twl.find((r) => r.id === draggedId);
             if (!dragged) return;
-            const sorted = sortedForVerse(data.twl, dragged.verse);
+            const sorted = sortedForVerse(twl, dragged.verse);
             const changes = reorderSequential(sorted, draggedId, refId, position);
             for (const { row, sort_order } of changes) {
               enqueueRow("twl", row, { sort_order });
@@ -1386,14 +1775,60 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           </Button>
         </DialogActions>
       </Dialog>
+      {dualAlignerProps && (
+        <SideBySideAligner
+          open
+          onClose={requestCloseDual}
+          book={dualAlignerProps.book}
+          chapter={dualAlignerProps.chapter}
+          verseNum={dualAlignerProps.verseNum}
+          vref={dualAlignerProps.vref}
+          sourceLabel={dualAlignerProps.sourceLabel}
+          sourceVerse={dualAlignerProps.sourceVerse}
+          twlForVerse={dualAlignerProps.twlForVerse}
+          lexiconMap={lexiconMap}
+          left={dualAlignerProps.left}
+          right={dualAlignerProps.right}
+          onPrevVerse={dualNav.prev != null ? () => dualNavTo(dualNav.prev!) : undefined}
+          onNextVerse={dualNav.next != null ? () => dualNavTo(dualNav.next!) : undefined}
+          onEditReading={(bv, plain, base) =>
+            // base.verse, not verseNum — each side's row may start at a
+            // different verse (ULT v7 singleton vs UST 6-9 range row).
+            stashVerseDraft(dualAlignerProps.chapter, base.verse, bv, plain, base)
+          }
+          onSaveReading={(bv, plain, base) =>
+            saveVerseDraft(dualAlignerProps.chapter, base.verse, bv, plain, base)
+          }
+        />
+      )}
+      <Dialog open={!!pendingDualAction} onClose={() => setPendingDualAction(null)}>
+        <DialogTitle>Unsaved alignment changes</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            You have unsaved changes in the side-by-side aligner. Save them, discard them, or cancel
+            to keep editing.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingDualAction(null)}>Cancel</Button>
+          <Button color="error" onClick={() => resolveDualAction("discard")}>
+            Discard
+          </Button>
+          <Button variant="contained" onClick={() => resolveDualAction("save")}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
       <AiCompletionToasts
         notifications={aiDrafts.notifications}
         onDismiss={aiDrafts.dismiss}
         onView={(rowId, verse) => {
-          setActiveVerse(verse);
-          setActiveNoteId(rowId);
-          setActiveWordId(null);
-          requestScrollToActive();
+          runWithDirtyGate(() => {
+            setActiveVerse(verse);
+            setActiveNoteId(rowId);
+            setActiveWordId(null);
+            requestScrollToActive();
+          });
         }}
       />
       <UnsavedToasts
@@ -1420,11 +1855,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         }}
         onJumpTo={(b, ch, v) => {
           if (b !== book) return;
-          if (ch !== chapter) onNavigate?.(b, ch, v);
-          else {
-            setActiveVerse(v);
-            requestScrollToActive();
-          }
+          runWithDirtyGate(() => {
+            if (ch !== chapter) onNavigate?.(b, ch, v);
+            else {
+              setActiveVerse(v);
+              requestScrollToActive();
+            }
+          });
         }}
       />
       {quoteBuildContext && (

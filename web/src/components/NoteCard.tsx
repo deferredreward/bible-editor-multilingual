@@ -16,6 +16,9 @@ import {
   DialogContentText,
   DialogActions,
   Button,
+  Menu,
+  MenuItem,
+  ListItemText,
 } from "@mui/material";
 import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
 import LightbulbOutlinedIcon from "@mui/icons-material/LightbulbOutlined";
@@ -30,8 +33,11 @@ import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import TranslateIcon from "@mui/icons-material/Translate";
 import UndoIcon from "@mui/icons-material/Undo";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import type { TnRow } from "../sync/api";
 import { useCatalogs } from "../hooks/useCatalogs";
+import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { CatalogPicker } from "./CatalogPicker";
 import { shortSupport } from "../lib/supportReference";
 import { TCM, buildSH } from "../lib/noteTemplates";
@@ -69,6 +75,10 @@ interface Props {
   onCardDrop: (position: DropPosition) => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  // Hovering the reorder controls (grip / up / down) previews this note's
+  // current slot in the scripture stoplight without moving it: fires true on
+  // enter, false on leave.
+  onReorderHover?: (entering: boolean) => void;
   // Async AI-draft lifecycle. State lives in Shell so the call can
   // survive the card un-focusing / scrolling off-screen. NoteCard is
   // purely presentational w.r.t. AI: shows spinner while pending,
@@ -163,6 +173,7 @@ function NoteCardInner({
   onCardDrop,
   onMoveUp,
   onMoveDown,
+  onReorderHover,
   isAiPending = false,
   aiRecentlyCompletedAt = null,
   onStartAi,
@@ -195,6 +206,10 @@ function NoteCardInner({
   const [supportRef, setSupportRef] = useState<string | null>(row.support_reference);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [aiConfirmOpen, setAiConfirmOpen] = useState(false);
+  // Template dropdown anchor (only used when a support ref has >1 variant) and
+  // the body staged for the "replace existing note?" confirm dialog.
+  const [templateMenuAnchor, setTemplateMenuAnchor] = useState<HTMLElement | null>(null);
+  const [templateConfirmBody, setTemplateConfirmBody] = useState<string | null>(null);
 
   // Baseline of the last server-confirmed content. stashEdit() optimistically
   // re-spreads row.{quote,note,support_reference} on every keystroke (so a
@@ -271,6 +286,7 @@ function NoteCardInner({
 
   const paperRef = useRef<HTMLDivElement | null>(null);
   const catalogs = useCatalogs();
+  const noteTemplates = useNoteTemplates();
 
   const positionFromEvent = (e: React.DragEvent): DropPosition => {
     const rect = paperRef.current?.getBoundingClientRect();
@@ -300,21 +316,58 @@ function NoteCardInner({
   // would be lost the first time they navigate away from this note.
   // Guarded by a ref so subsequent re-renders don't keep clobbering the
   // live state with a now-stale snapshot.
+  // Flips true once the on-mount draft lookup resolves (draft or not). The
+  // draft-write effect gates its *clear* branch on this so a freshly-remounted
+  // card — whose state hasn't rehydrated yet — can't wipe the very draft we're
+  // about to read.
+  const [hydrated, setHydrated] = useState(false);
   const hydratedFromDraftRef = useRef(false);
   useEffect(() => {
     if (hydratedFromDraftRef.current) return;
-    void drafts.get(rowKey("tn", row.id)).then((rec) => {
+    void drafts.get(rowKey("tn", row.book, row.id)).then((rec) => {
       if (hydratedFromDraftRef.current) return;
-      const patch = (rec?.payload as { patch?: Partial<TnRow> } | undefined)?.patch;
       hydratedFromDraftRef.current = true;
+      const payload = rec?.payload as
+        | {
+            patch?: Partial<TnRow>;
+            baseline?: { quote: string | null; note: string | null; support_reference: string | null };
+          }
+        | undefined;
+      const patch = payload?.patch;
+      setHydrated(true);
       if (!patch) return;
+      // Restore the server baseline this draft was diffed against. Optimistic
+      // applyLocalRowPatch() edits land in the cached row at an unchanged
+      // version, so a no-refetch remount (e.g. pin toggle reshaping the column)
+      // would otherwise initialise savedRef from that polluted row and compute
+      // hasRowDiff=false — the card looks saved, the Save button disables, and
+      // the draft-write effect clears the draft, stranding the edit in volatile
+      // state. Pinning savedRef to the persisted baseline keeps the dirty chip /
+      // Save button honest.
+      const baseline = payload?.baseline;
+      if (baseline) {
+        savedRef.current = {
+          quote: baseline.quote,
+          note: baseline.note,
+          support_reference: baseline.support_reference,
+          version: rec?.expectedVersion ?? savedRef.current.version,
+        };
+      }
       if (typeof patch.quote === "string") setQuote(tsvToDisplay(patch.quote));
       if (typeof patch.note === "string") setNote(tsvToDisplay(patch.note));
       if ("support_reference" in patch) {
         setSupportRef((patch.support_reference as string | null) ?? null);
       }
+    }).catch(() => {
+      // An IndexedDB read failure must still flip `hydrated` true — otherwise
+      // the draft-write effect's clear branch never fires and a reverted draft
+      // keeps nagging. We just skip restoring any persisted draft (the card
+      // falls back to the server row, and live editing still works).
+      if (hydratedFromDraftRef.current) return;
+      hydratedFromDraftRef.current = true;
+      setHydrated(true);
     });
-  }, [row.id]);
+  }, [row.id, row.book]);
 
   // Session entry/exit. Snapshot is taken on active=false→true with the
   // values currently in local state (which may differ from the row if a
@@ -415,7 +468,7 @@ function NoteCardInner({
     setSessionSnapshot(null);
     // Drop any draft so the delete doesn't get followed by a phantom save
     // from a still-dirty buffer.
-    void drafts.clear(rowKey("tn", row.id));
+    void drafts.clear(rowKey("tn", row.book, row.id));
     onDelete();
   };
 
@@ -556,7 +609,26 @@ function NoteCardInner({
     onStartAi();
   };
 
-  const showSessionButtons = active;
+  // Curated templates for the selected support reference (keyed on the short
+  // form, e.g. "figs-metaphor"). Empty when no support ref is picked or the
+  // ref has no templates in the sheet.
+  const templatesForRef = supportRef ? noteTemplates[shortSupport(supportRef)] ?? [] : [];
+
+  // Fill the note from a template, going through stashEdit so the parent's
+  // row.note reflects it (matches the TCM/SH chips). requestTemplate gates on
+  // existing text: a non-empty note opens a confirm dialog first.
+  const applyTemplate = (body: string) => {
+    setNote(body);
+    stashEdit({ note: body });
+  };
+  const requestTemplate = (body: string) => {
+    if (note.trim().length > 0) setTemplateConfirmBody(body);
+    else applyTemplate(body);
+  };
+  const handleTemplateClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (templatesForRef.length === 1) requestTemplate(templatesForRef[0].body);
+    else if (templatesForRef.length > 1) setTemplateMenuAnchor(e.currentTarget);
+  };
 
   // Sync the draft store against the diff vs server row. This is what feeds
   // the offscreen-unsaved popup and survives chapter navigation. Separate
@@ -569,25 +641,45 @@ function NoteCardInner({
   if (note !== rowNoteDisplay) rowDiff.note = note;
   if (supportRef !== savedRef.current.support_reference) rowDiff.support_reference = supportRef;
   const hasRowDiff = Object.keys(rowDiff).length > 0;
-  const draftKey = rowKey("tn", row.id);
+  const draftKey = rowKey("tn", row.book, row.id);
   useEffect(() => {
     if (readOnly) return;
     if (hasRowDiff) {
-      void drafts.set(draftKey, { patch: rowDiff }, row.version, {
-        kind: "row",
-        rowKind: "tn",
-        id: row.id,
-        book: row.book,
-        chapter: row.chapter,
-        verse: row.verse,
-      });
-    } else {
+      void drafts.set(
+        draftKey,
+        {
+          patch: rowDiff,
+          // Persist the server baseline (savedRef stays version-pinned, immune
+          // to the optimistic same-version row mutations) so a remount restores
+          // an honest baseline instead of inheriting a polluted row. See the
+          // hydration effect above.
+          baseline: {
+            quote: savedRef.current.quote,
+            note: savedRef.current.note,
+            support_reference: savedRef.current.support_reference,
+          },
+        },
+        row.version,
+        {
+          kind: "row",
+          rowKind: "tn",
+          id: row.id,
+          book: row.book,
+          chapter: row.chapter,
+          verse: row.verse,
+        },
+      );
+    } else if (hydrated) {
+      // Only clear after the on-mount draft lookup has run — before that,
+      // hasRowDiff is measured against an unhydrated baseline and would
+      // spuriously wipe a draft we haven't had the chance to restore.
       void drafts.clear(draftKey);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     draftKey,
     hasRowDiff,
+    hydrated,
     quote,
     note,
     supportRef,
@@ -664,6 +756,11 @@ function NoteCardInner({
           flexWrap: "wrap",
         }}
       >
+        <Box
+          onMouseEnter={!trashed && onReorderHover ? () => onReorderHover(true) : undefined}
+          onMouseLeave={!trashed && onReorderHover ? () => onReorderHover(false) : undefined}
+          sx={{ display: "inline-flex", alignItems: "center" }}
+        >
         <Tooltip title={trashed ? "restore to reorder" : "drag to reorder"}>
           <Box
             draggable={!trashed}
@@ -712,6 +809,7 @@ function NoteCardInner({
             </IconButton>
           </span>
         </Tooltip>
+        </Box>
         <Box sx={readOnly ? { pointerEvents: "none", opacity: 0.6 } : undefined}>
           <CatalogPicker
             value={supportRef}
@@ -730,6 +828,14 @@ function NoteCardInner({
           {row.ref_raw}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {/* Right-side action controls grouped into one non-shrinking, non-wrapping
+            row. The header itself still wraps (flexWrap on the Stack), but it can
+            now only break between the metadata on the left and this whole group —
+            never mid-group. That stops the lone + / Save / trash icons from
+            flip-flopping across the wrap boundary one at a time when a note goes
+            dirty (editing injects the Undo button here, eating the row's slack):
+            the group either fits on line 1 or drops to line 2 as a stable unit. */}
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
         <Tooltip
           title={
             row.restored_from_version != null
@@ -756,7 +862,14 @@ function NoteCardInner({
             }}
           />
         </Tooltip>
-        {showSessionButtons && hasRowDiff && (
+        {/* Gated on hasRowDiff alone (not `active`): a dirty note must show
+            its Undo button whether or not the card is focused. Tying it to
+            `active` made the button appear only after the activating click,
+            and clicking Save on an inactive-but-dirty card (the catch-up
+            save) would activate the card mid-click, inject this Undo button
+            to Save's left, and shove Save out from under the cursor — so the
+            first click landed on nothing and a second was needed. */}
+        {hasRowDiff && (
           <Tooltip
             title={
               savePendingVersion !== null
@@ -835,6 +948,7 @@ function NoteCardInner({
             </Tooltip>
           </>
         )}
+        </Stack>
       </Stack>
 
       {/* ── Quote ── */}
@@ -937,6 +1051,35 @@ function NoteCardInner({
             Note
           </Typography>
           <Box sx={{ flex: 1 }} />
+          <Tooltip
+            title={
+              !supportRef
+                ? "pick a support reference first"
+                : templatesForRef.length === 0
+                  ? `no template for ${shortSupport(supportRef)}`
+                  : templatesForRef.length > 1
+                    ? "choose a template"
+                    : "fill from template"
+            }
+          >
+            <span>
+              <Button
+                size="small"
+                variant="text"
+                onClick={handleTemplateClick}
+                disabled={readOnly || !supportRef || templatesForRef.length === 0}
+                startIcon={<DescriptionOutlinedIcon sx={{ fontSize: "14px !important" }} />}
+                endIcon={
+                  templatesForRef.length > 1 ? (
+                    <ArrowDropDownIcon sx={{ fontSize: "16px !important", ml: -0.75 }} />
+                  ) : undefined
+                }
+                sx={{ fontSize: 12, fontWeight: 500, color: "text.secondary", minWidth: 0, py: 0.25, px: 0.75 }}
+              >
+                Template
+              </Button>
+            </span>
+          </Tooltip>
           <Tooltip
             title={
               isAiPending
@@ -1154,6 +1297,50 @@ function NoteCardInner({
             onClick={() => {
               setAiConfirmOpen(false);
               onStartAi?.();
+            }}
+            color="primary"
+            variant="contained"
+          >
+            Replace
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Menu
+        anchorEl={templateMenuAnchor}
+        open={Boolean(templateMenuAnchor)}
+        onClose={() => setTemplateMenuAnchor(null)}
+        slotProps={{ paper: { sx: { maxWidth: 380 } } }}
+      >
+        {templatesForRef.map((t, i) => (
+          <MenuItem
+            key={`${t.type}-${i}`}
+            onClick={() => {
+              setTemplateMenuAnchor(null);
+              requestTemplate(t.body);
+            }}
+            sx={{ whiteSpace: "normal", alignItems: "flex-start" }}
+          >
+            <ListItemText
+              primary={t.type || "default"}
+              secondary={t.body.length > 90 ? `${t.body.slice(0, 90)}…` : t.body}
+            />
+          </MenuItem>
+        ))}
+      </Menu>
+      <Dialog open={templateConfirmBody !== null} onClose={() => setTemplateConfirmBody(null)}>
+        <DialogTitle>Replace existing note?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This note already has text. Filling from the template will replace it. You can hit
+            Undo on the toolbar afterwards to restore the original.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTemplateConfirmBody(null)}>Cancel</Button>
+          <Button
+            onClick={() => {
+              if (templateConfirmBody !== null) applyTemplate(templateConfirmBody);
+              setTemplateConfirmBody(null);
             }}
             color="primary"
             variant="contained"

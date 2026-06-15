@@ -6,7 +6,7 @@
 // A proper diff/merge UI is docs/plan.md territory and out of scope here.
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Box, Button, Chip, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Divider, IconButton, ListItemText, Menu, MenuItem, Stack, Tooltip, Typography } from "@mui/material";
 import CloudDoneIcon from "@mui/icons-material/CloudDone";
 import CloudQueueIcon from "@mui/icons-material/CloudQueue";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
@@ -46,9 +46,13 @@ function formatDraftMeta(m: DraftMeta): string {
   return `${m.rowKind.toUpperCase()} ${m.book} ${m.chapter}:${m.verse}`;
 }
 
-const DRAFT_TOOLTIP_LIMIT = 10;
+interface Props {
+  // Optional so the bar still renders standalone (e.g. in a stripped TopBar).
+  // When present, the "N unsaved" chip becomes a menu that jumps to each draft.
+  onNavigate?: (book: string, chapter: number, verse?: number) => void;
+}
 
-export function SyncStatusBar() {
+export function SyncStatusBar({ onNavigate }: Props = {}) {
   const [ops, setOps] = useState<OutboxOp[]>([]);
   useEffect(() => outbox.subscribe(setOps), []);
 
@@ -86,6 +90,13 @@ export function SyncStatusBar() {
   const pending = ops.filter((o) => o.status === "pending" || o.status === "in_flight").length;
   const conflicts = ops.filter((o) => o.status === "conflict");
   const failed = ops.filter((o) => o.status === "failed");
+
+  // "Discard all" permanently deletes queued edits — gate it behind an
+  // explicit confirm so it can't be a one-misclick data loss.
+  const [confirmDiscardAll, setConfirmDiscardAll] = useState(false);
+
+  // Anchor for the "N unsaved" jump menu (only used when onNavigate is wired).
+  const [draftMenuEl, setDraftMenuEl] = useState<null | HTMLElement>(null);
 
   // Tick once a second when pending > 0 so the "stale progress" heuristic
   // can flip the pill to offline-style without waiting for the next outbox
@@ -201,44 +212,64 @@ export function SyncStatusBar() {
   const showFloating = conflicts.length > 0 || failed.length > 0;
 
   // The drafts chip rides alongside the outbox chip. It surfaces unsaved
-  // typing — distinct from "saving N" which is server in-flight.
-  const draftsTooltip = draftCount > 0 ? (
-    <Stack spacing={0.25}>
-      <Typography variant="caption" sx={{ fontWeight: 600 }}>
-        {draftCount} unsaved edit{draftCount === 1 ? "" : "s"}:
-      </Typography>
-      {draftList.slice(0, DRAFT_TOOLTIP_LIMIT).map((d) => (
-        <Typography
-          key={d.key}
-          variant="caption"
-          sx={{ fontFamily: "monospace", display: "block" }}
-        >
-          {formatDraftMeta(d.meta)}
-        </Typography>
-      ))}
-      {draftCount > DRAFT_TOOLTIP_LIMIT && (
-        <Typography variant="caption" color="text.secondary">
-          … and {draftCount - DRAFT_TOOLTIP_LIMIT} more
-        </Typography>
-      )}
-    </Stack>
-  ) : null;
+  // typing — distinct from "saving N" which is server in-flight. When
+  // onNavigate is wired it's clickable: opens a menu that jumps to each draft;
+  // otherwise it falls back to a passive tooltip listing them.
+  const draftDirtyColorSx = {
+    color: "#E59D33",
+    borderColor: "#E59D33",
+    "& .MuiChip-icon": { color: "#E59D33" },
+  } as const;
 
-  const draftsChip = draftCount > 0 ? (
-    <Tooltip title={draftsTooltip ?? ""}>
-      <Chip
-        icon={<EditNoteIcon />}
-        label={`${draftCount} unsaved`}
-        size="small"
-        variant="outlined"
-        sx={{
-          color: "#E59D33",
-          borderColor: "#E59D33",
-          "& .MuiChip-icon": { color: "#E59D33" },
-        }}
-      />
-    </Tooltip>
-  ) : null;
+  const navigateToDraft = (m: DraftMeta) => {
+    onNavigate?.(m.book, m.chapter, m.verse);
+    setDraftMenuEl(null);
+  };
+
+  let draftsChip: ReactNode = null;
+  if (draftCount > 0 && onNavigate) {
+    draftsChip = (
+      <Tooltip title="jump to an unsaved edit">
+        <Chip
+          icon={<EditNoteIcon />}
+          label={`${draftCount} unsaved`}
+          size="small"
+          variant="outlined"
+          clickable
+          onClick={(e) => setDraftMenuEl(e.currentTarget)}
+          sx={draftDirtyColorSx}
+        />
+      </Tooltip>
+    );
+  } else if (draftCount > 0) {
+    const draftsTooltip = (
+      <Stack spacing={0.25}>
+        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+          {draftCount} unsaved edit{draftCount === 1 ? "" : "s"}:
+        </Typography>
+        {draftList.map((d) => (
+          <Typography
+            key={d.key}
+            variant="caption"
+            sx={{ fontFamily: "monospace", display: "block" }}
+          >
+            {formatDraftMeta(d.meta)}
+          </Typography>
+        ))}
+      </Stack>
+    );
+    draftsChip = (
+      <Tooltip title={draftsTooltip}>
+        <Chip
+          icon={<EditNoteIcon />}
+          label={`${draftCount} unsaved`}
+          size="small"
+          variant="outlined"
+          sx={draftDirtyColorSx}
+        />
+      </Tooltip>
+    );
+  }
 
   return (
     <>
@@ -246,6 +277,32 @@ export function SyncStatusBar() {
         {draftsChip}
         {inline}
       </Stack>
+      {onNavigate && (
+        <Menu
+          anchorEl={draftMenuEl}
+          open={Boolean(draftMenuEl) && draftCount > 0}
+          onClose={() => setDraftMenuEl(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+        >
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ px: 2, py: 0.5, display: "block" }}
+          >
+            {draftCount} unsaved edit{draftCount === 1 ? "" : "s"} — click to jump
+          </Typography>
+          {draftList.map((d) => (
+            <MenuItem key={d.key} onClick={() => navigateToDraft(d.meta)} dense>
+              <ListItemText
+                primaryTypographyProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
+              >
+                {formatDraftMeta(d.meta)}
+              </ListItemText>
+            </MenuItem>
+          ))}
+        </Menu>
+      )}
       {showFloating && (
         <Box
           sx={{
@@ -289,9 +346,7 @@ export function SyncStatusBar() {
                       size="small"
                       variant="text"
                       color="error"
-                      onClick={async () => {
-                        for (const op of failed) await outbox.drop(op.id);
-                      }}
+                      onClick={() => setConfirmDiscardAll(true)}
                       sx={{ minWidth: 0, py: 0, fontSize: 11 }}
                     >
                       discard all
@@ -367,6 +422,35 @@ export function SyncStatusBar() {
           </Stack>
         </Box>
       )}
+      <Dialog
+        // Auto-closes if the failed list empties out from under it (retry /
+        // auto-revival) — nothing left to discard.
+        open={confirmDiscardAll && failed.length > 0}
+        onClose={() => setConfirmDiscardAll(false)}
+      >
+        <DialogTitle>
+          Discard {failed.length} failed edit{failed.length === 1 ? "" : "s"}?
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            These edits never reached the server. Discarding deletes them from
+            this device permanently — they cannot be recovered.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDiscardAll(false)}>cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={async () => {
+              for (const op of failed) await outbox.drop(op.id);
+              setConfirmDiscardAll(false);
+            }}
+          >
+            discard all
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }

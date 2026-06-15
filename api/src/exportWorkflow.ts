@@ -23,19 +23,27 @@ import {
   buildTqTsv,
   buildTwlTsv,
   buildUsfm,
+  closeDcsPr,
   commitToDcs,
   deleteDcsBranch,
   ensureDcsPr,
+  findDcsOpenPr,
+  updateDcsPrBranch,
   RESOURCE_TARGETS,
   type Resource,
 } from "./export";
+
+// Banner target for export PR failures — same maintainer the post-export
+// validator alerts (see postExport.ts ValidatorConfig.alertTargetUsername).
+const EXPORT_ALERT_USERNAME = "deferredreward";
 
 // Legacy export branch, superseded by per-(book,resource) contributor branches.
 // Pruned best-effort on each export so it doesn't linger; safe to delete since
 // the live-snapshot flow is no longer used (its post-export path is dormant).
 const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { runPostExport, VALIDATORS } from "./postExport";
-import { runChunkedReimport, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
+import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
+import { dcsResourceFile, fileCommitSha, type ReimportResource } from "./dcsSources";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 
 export interface ExportParams {
@@ -123,12 +131,21 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           // DCS commit SHA is unchanged. See bookReimport.ts:runChunkedReimport.
           await runChunkedReimport(this.env, step, book, instanceId, [...REIMPORT_RESOURCES], {});
         } catch (e) {
-          // Lock contention / transient DCS failure: render proceeds on whatever
-          // D1 holds (possibly slightly stale for this book); next run catches up.
-          console.error("export pre-reimport failed", {
-            book,
-            error: e instanceof Error ? e.message : String(e),
-          });
+          // Lock contention / transient DCS failure / Cloudflare subrequest cap:
+          // this book's D1 is now possibly stale relative to master. The
+          // freshness gate in exportOne (masterSha vs watermark) refuses to
+          // commit a stale render, so a failed sync no longer reverts master —
+          // it just skips this book's export until a later sync succeeds. Alert
+          // so the failure is visible rather than silently swallowed.
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error("export pre-reimport failed", { book, error: msg });
+          try {
+            await step.do(`reimport-fail-alert-${book}`, async () =>
+              this.recordSyncFailureAlert(book, msg),
+            );
+          } catch {
+            /* alert is best-effort; never let it abort the export run */
+          }
         }
       }
     }
@@ -245,57 +262,135 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let dcsSkippedReason: string | null = null;
     let prNumber: number | null = null;
     let prReason: string | null = null;
+    let prError: string | null = null;
+
+    // Freshness gate — the single guard against clobbering master. The export
+    // renders from D1; if master moved past what D1 last synced (the
+    // book_resource_syncs watermark), committing this render would REVERT
+    // master's out-of-band edits (the exact LAM 2:17 regression: a gatewayEdit
+    // alignment landed on master, the pre-export sync failed on the Cloudflare
+    // subrequest cap, and the export silently reverted it). So unless we can
+    // POSITIVELY confirm master == watermark, skip the commit and alert. Fail
+    // CLOSED on uncertainty (can't fetch master SHA) — a one-night skip beats a
+    // silent revert. A fresh book with no watermark has nothing to clobber.
+    // Only meaningful when we'd actually commit (dcsAllowed); a dry run renders
+    // to R2 only and can't clobber anything.
+    const fresh = dcsAllowed ? await this.checkMasterFreshness(book, resource) : { ok: true as const, detail: "dry", masterSha: null, watermark: null };
+    if (!fresh.ok) {
+      await this.recordStaleSkipAlert(book, resource, fresh.masterSha, fresh.watermark);
+      const reason = `stale_master:${fresh.detail}`;
+      await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+      return {
+        book,
+        resource,
+        rowCount: built.rowCount,
+        bytes: built.content.length,
+        r2Key,
+        branch: null,
+        dcsCommitSha: null,
+        dcsChanged: false,
+        dcsSkippedReason: reason,
+        prNumber: null,
+        prReason: null,
+      };
+    }
 
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
     } else {
       const owner = this.env.DCS_EXPORT_OWNER ?? "unfoldingWord";
-      const commit = await commitToDcs(
-        {
-          baseUrl: this.env.DCS_BASE_URL,
-          token: this.env.DCS_SERVICE_TOKEN!,
-          owner,
-          repo: target.repo,
-          branch,
-        },
-        filename,
-        built.content,
-        `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`,
-      );
+      const dcsCfg = {
+        baseUrl: this.env.DCS_BASE_URL,
+        token: this.env.DCS_SERVICE_TOKEN!,
+        owner,
+        repo: target.repo,
+        branch,
+      };
+      const message = `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`;
+      const commit = await commitToDcs(dcsCfg, filename, built.content, message);
+      if (!commit.branchTouched) {
+        // Rendered content matches master — nothing to merge. Close any open PR
+        // lingering from an earlier night (an edit since reverted in D1, or
+        // already merged to master) so empty (0-diff) PRs don't pile up and the
+        // validate-and-merge job's worklist stays equal to "books with unmerged
+        // edits". We can't delete the branch (the service token lacks
+        // branch-delete), but closing the PR is enough; the branch gets a fresh
+        // PR the next time this (book, resource) actually diverges from master.
+        const lingering = await findDcsOpenPr(dcsCfg);
+        if (lingering != null) {
+          try {
+            await closeDcsPr(dcsCfg, lingering);
+          } catch (e) {
+            console.error("export close-stale-PR failed", {
+              book, resource, repo: target.repo, pr: lingering,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+      }
       dcsCommitSha = commit.commitSha || null;
       dcsChanged = commit.changed;
 
-      // Prune branches this export superseded: any prior {book}-be-* branch for
-      // this (book, resource) whose name changed because the contributor set
-      // changed, plus the legacy live-snapshot branch. Best-effort — a prune
-      // failure must never fail or retry the export step.
-      await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
+      if (!commit.branchTouched) {
+        dcsSkippedReason = "unchanged";
+      } else {
+        // Prune branches this export superseded: any prior {book}-be-* branch for
+        // this (book, resource) whose name changed because the contributor set
+        // changed, plus the legacy live-snapshot branch. Best-effort — a prune
+        // failure must never fail or retry the export step.
+        await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
 
-      // Ensure the branch has an open PR into master so the DCS validate-and-
-      // merge workflow can act on it (it merges -be- PRs, not bare branches).
-      // Best-effort: the commit already succeeded and the snapshot is recorded,
-      // so a PR failure must not fail the export — the PR can be opened later.
-      try {
-        const pr = await ensureDcsPr(
-          { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo: target.repo, branch },
-          `bible-editor: ${book} ${resource} → master`,
-          `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}.`,
-        );
-        prNumber = pr.number;
-        prReason = pr.reason;
-      } catch (e) {
-        prReason = "error";
-        console.error("export ensure-PR failed", {
-          book,
-          resource,
-          repo: target.repo,
-          branch,
-          error: e instanceof Error ? e.message : String(e),
-        });
+        // Ensure the branch has an open PR into master so the DCS validate-and-
+        // merge workflow can act on it (it merges -be- PRs, not bare branches).
+        // Best-effort: the commit already succeeded and the snapshot is recorded,
+        // so a PR failure must not fail the export — the PR can be opened later.
+        try {
+          const pr = await ensureDcsPr(
+            dcsCfg,
+            `bible-editor: ${book} ${resource} → master`,
+            `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}.`,
+          );
+          prNumber = pr.number;
+          prReason = pr.reason;
+          if (pr.number != null) {
+            // Merge master into the PR head ("update branch"). door43's PATCH
+            // git/refs 409s on existing refs, so this is the only thing that
+            // actually re-bases a long-lived branch; without it the PR drifts
+            // to mergeable:False. Conflicts are expected sometimes — log, never
+            // fail the step.
+            try {
+              const upd = await updateDcsPrBranch(
+                { baseUrl: dcsCfg.baseUrl, token: dcsCfg.token, owner, repo: target.repo },
+                pr.number,
+              );
+              if (!upd.ok) {
+                console.log("export PR update-branch skipped", {
+                  book, resource, repo: target.repo, pr: pr.number, status: upd.status, detail: upd.detail,
+                });
+              }
+            } catch (e) {
+              console.error("export PR update-branch failed", {
+                book, resource, repo: target.repo, pr: pr.number,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+        } catch (e) {
+          prReason = "error";
+          prError = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+          console.error("export ensure-PR failed", {
+            book,
+            resource,
+            repo: target.repo,
+            branch,
+            error: prError,
+          });
+          await this.recordPrFailureAlert(book, resource, target.repo, branch, prError);
+        }
       }
     }
 
-    await this.recordSnapshot(book, resource, branch, dcsCommitSha, built.rowCount, dcsSkippedReason);
+    await this.recordSnapshot(book, resource, branch, dcsCommitSha, built.rowCount, dcsSkippedReason, prNumber, prError);
 
     return {
       book,
@@ -419,6 +514,22 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     repo: string,
     keepBranch: string,
   ): Promise<void> {
+    // Steady-state short-circuit: when the most recent snapshot already
+    // recorded this same branch, any superseded branches were already pruned
+    // (or 403ed — the service token lacks branch-delete) on a previous night.
+    // Skipping stops the per-step DELETE calls that fail forever.
+    try {
+      const last = await this.env.DB.prepare(
+        `SELECT branch FROM export_snapshots
+          WHERE book = ?1 AND resource = ?2 AND branch IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+      )
+        .bind(book, resource)
+        .first<{ branch: string }>();
+      if (last?.branch === keepBranch) return;
+    } catch (e) {
+      console.error("prune: last-snapshot query failed", { book, resource, error: e instanceof Error ? e.message : String(e) });
+    }
     let stale: string[] = [];
     try {
       const rs = await this.env.DB.prepare(
@@ -451,12 +562,122 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     commitSha: string | null,
     rowsExported: number,
     skippedReason: string | null,
+    prNumber: number | null = null,
+    prError: string | null = null,
   ): Promise<void> {
     await this.env.DB.prepare(
-      `INSERT INTO export_snapshots (book, resource, branch, commit_sha, rows_exported, error)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+      `INSERT INTO export_snapshots (book, resource, branch, commit_sha, rows_exported, error, pr_number, pr_error)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
     )
-      .bind(book, resource, branch, commitSha, rowsExported, skippedReason)
+      .bind(book, resource, branch, commitSha, rowsExported, skippedReason, prNumber, prError)
       .run();
+  }
+
+  // Is D1 for this (book, resource) current with master? Compares master's
+  // latest file-commit SHA to the book_resource_syncs watermark (what the last
+  // successful sync recorded). Returns ok only when we can POSITIVELY confirm
+  // freshness:
+  //   - no watermark        → fresh book, nothing on master to clobber → ok.
+  //   - masterSha == wm      → D1 is current → ok.
+  //   - masterSha != wm      → master moved past D1 → STALE → not ok.
+  //   - masterSha null (fetch failed) but watermark present → can't confirm →
+  //     not ok (fail closed; a skipped night beats a silent revert).
+  // Mirror of planAndStageBookResources's SHA gate, used here to gate the
+  // EXPORT rather than to skip the reimport.
+  private async checkMasterFreshness(
+    book: string,
+    resource: Resource,
+  ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
+    const file = dcsResourceFile(book, resource as ReimportResource);
+    // Unknown book/resource → no file to compare; don't block (shouldn't happen
+    // for the five real resources).
+    if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
+    const watermark = await storedResourceSha(this.env, book, resource);
+    if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
+    const masterSha = await fileCommitSha(this.env, file.repo, file.path);
+    if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
+    if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
+    return { ok: false, detail: "master_ahead", masterSha, watermark };
+  }
+
+  // Banner alert when the freshness gate skips an export to avoid clobbering
+  // master. Same replace-undismissed shape as recordPrFailureAlert.
+  private async recordStaleSkipAlert(
+    book: string,
+    resource: Resource,
+    masterSha: string | null,
+    watermark: string | null,
+  ): Promise<void> {
+    const source = `export_stale:${book}:${resource}`;
+    const message =
+      `Benjamin — nightly export skipped ${book} ${resource.toUpperCase()} to avoid reverting master ` +
+      `(D1 is behind: master ${(masterSha ?? "unknown").slice(0, 8)} vs synced ${(watermark ?? "none").slice(0, 8)}). ` +
+      `The pre-export sync didn't catch up; re-run the sync for ${book}, then re-export.`;
+    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/unfoldingWord`);
+  }
+
+  // Banner alert when the pre-export sync for a book failed outright (e.g. the
+  // Cloudflare subrequest cap). The export will skip any book left stale, so
+  // this is the heads-up that a manual re-sync is needed.
+  private async recordSyncFailureAlert(book: string, detail: string): Promise<void> {
+    const source = `export_sync_fail:${book}`;
+    const message =
+      `Benjamin — nightly pre-export sync failed for ${book}: ${detail.slice(0, 160)}. ` +
+      `Any book left behind master is skipped by the freshness gate (not reverted); re-sync ${book} and re-export.`;
+    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/unfoldingWord`);
+  }
+
+  // Replace-undismissed alert writer shared by the export-side alerts. Best
+  // effort: an alert-write failure must never fail or retry the export.
+  private async writeAlert(source: string, message: string, linkUrl: string): Promise<void> {
+    try {
+      await this.env.DB.prepare(
+        `DELETE FROM system_alerts WHERE username = ?1 AND source = ?2 AND dismissed_at IS NULL`,
+      )
+        .bind(EXPORT_ALERT_USERNAME, source)
+        .run();
+      await this.env.DB.prepare(
+        `INSERT INTO system_alerts (username, severity, source, message, link_url)
+         VALUES (?1, 'error', ?2, ?3, ?4)`,
+      )
+        .bind(EXPORT_ALERT_USERNAME, source, message, linkUrl)
+        .run();
+    } catch (e) {
+      console.error("export alert write failed", { source, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // Surface a PR-ensure failure as a banner alert (the SPA polls
+  // GET /api/alerts/me). Same shape as postExport.recordFailureAlert: replace
+  // any undismissed alert for the same source so consecutive failures don't
+  // pile up. Best-effort — an alert-write failure must not fail the step.
+  private async recordPrFailureAlert(
+    book: string,
+    resource: Resource,
+    repo: string,
+    branch: string,
+    detail: string,
+  ): Promise<void> {
+    const source = `export_pr:${repo}`;
+    const message = `Benjamin fix this — nightly export couldn't ensure a PR for ${book} ${resource} (\`${branch}\` on ${repo}): ${detail.slice(0, 160)}`;
+    const linkUrl = `${this.env.DCS_BASE_URL}/${this.env.DCS_EXPORT_OWNER ?? "unfoldingWord"}/${repo}/pulls`;
+    try {
+      await this.env.DB.prepare(
+        `DELETE FROM system_alerts
+          WHERE username = ?1 AND source = ?2 AND dismissed_at IS NULL`,
+      )
+        .bind(EXPORT_ALERT_USERNAME, source)
+        .run();
+      await this.env.DB.prepare(
+        `INSERT INTO system_alerts (username, severity, source, message, link_url)
+         VALUES (?1, 'error', ?2, ?3, ?4)`,
+      )
+        .bind(EXPORT_ALERT_USERNAME, source, message, linkUrl)
+        .run();
+    } catch (e) {
+      console.error("export PR alert write failed", {
+        book, resource, repo, error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 }

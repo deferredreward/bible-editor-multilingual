@@ -11,6 +11,14 @@
 // Reconnects with exponential backoff (1s, 2s, 4s, ..., cap 30s). On a
 // successful `open`, backoff resets to 1s so a brief blip during a deploy
 // doesn't leave the client paused for half a minute on the next failure.
+//
+// A close *before* `open` ever fired usually means the upgrade was rejected
+// — for an idle tab, an expired be_access cookie 401ing the handshake. The
+// WS upgrade can't ride api.ts's silent 401-refresh path, so the reconnect
+// loop calls refreshAuthOnce() itself before the next attempt (single-flight
+// in api.ts; the backoff spacing caps it at one refresh per cycle).
+
+import { refreshAuthOnce } from "./api";
 
 export interface WsHandlers {
   onEvent: (event: unknown) => void;
@@ -93,7 +101,9 @@ export function openChapterRoom(
       return;
     }
     socket = ws;
+    let opened = false;
     ws.addEventListener("open", () => {
+      opened = true;
       backoffMs = INITIAL_BACKOFF_MS;
       handlers.onOpen?.();
       // Start the heartbeat once we know the connection actually opened.
@@ -134,7 +144,30 @@ export function openChapterRoom(
     ws.addEventListener("close", () => {
       clearHeartbeat();
       if (socket === ws) socket = null;
-      if (!disposed) scheduleReconnect();
+      if (disposed) return;
+      if (!opened) {
+        // Handshake rejected (close before `open`) — refresh the session
+        // cookie once before retrying so an idle tab with an expired access
+        // token doesn't loop 401 handshakes at the backoff cap forever.
+        // Reconnect proceeds whether or not the refresh succeeded; if the
+        // session is truly dead the next rejected handshake lands back here
+        // (refreshAuthOnce never rejects).
+        //
+        // Skip the refresh while offline: it's guaranteed to fail, and every
+        // *successful* refresh fires onAuthRefreshed → reviveMaxAttemptsFailed,
+        // which resets the retry cap on parked ops. During a partial outage the
+        // pre-open close fires repeatedly; refreshing each cycle would revive
+        // max-attempts ops every reconnect and defeat the cap. The online/focus
+        // listeners and the outbox's own refresh path cover the reconnect once
+        // connectivity returns.
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          scheduleReconnect();
+          return;
+        }
+        void refreshAuthOnce().then(() => scheduleReconnect());
+        return;
+      }
+      scheduleReconnect();
     });
   };
 

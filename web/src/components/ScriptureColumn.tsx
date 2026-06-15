@@ -8,16 +8,16 @@ import SearchIcon from "@mui/icons-material/Search";
 import UndoIcon from "@mui/icons-material/Undo";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
-import type { ChapterPayload, VerseDto } from "../sync/api";
+import type { ChapterPayload, TnRow, TwlRow, VerseDto } from "../sync/api";
 import { drafts, verseKey } from "../sync/drafts";
 import { DocColumn } from "./DocColumn";
 import type { FindMatch } from "./FindReplaceOverlay";
 import { HebrewLine } from "./HebrewLine";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import type { ChapterState } from "../hooks/useBook";
-import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
+import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
-import { extractEditableText, extractTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
+import { extractEditableText, extractTrailingMarkers, stripTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
 import { SectionHeaderBand } from "./SectionHeaderBand";
 import { buildVerseIndex, formatVerseLabel, isFirstOfRange, isRangeRow } from "../lib/verseRange";
 import {
@@ -53,6 +53,11 @@ interface Props {
   activeVerse: number;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  // Transient reorder "stoplight": while a note is dragged (or for ~3s after an
+  // arrow move) the active verse also lights the moved note's candidate
+  // predecessor (green underline) and successor (red overline) on channels
+  // separate from the yellow active fill. Null during normal editing.
+  reorderHighlight?: ReorderHighlight | null;
   mode: ScriptureMode;
   enabledVersions: string[];
   availableVersions: string[];
@@ -76,9 +81,19 @@ interface Props {
   // note/word/verse-group into view alongside the scripture.
   scrollNonce: number;
   onRequestScrollToActive: () => void;
+  // Find-overlay TN search: a stable getter for the notes currently in scope
+  // (forwarded to the overlay), plus a callback to navigate to + activate a
+  // matched note. Stable identities so this component's memo still skips
+  // re-renders on every note keystroke.
+  searchNotes: () => TnRow[];
+  onScrollToNoteMatch: (chapter: number, verse: number, noteId: string) => void;
   // Pre-loaded UHB strong → entry map (Shell collects from useChapter +
   // useBook) so per-word hover tooltips don't shimmer.
   lexiconMap: Map<string, LexiconEntry | null>;
+  // This chapter's TWL rows — fed to the UHB \w hover tooltips so they show
+  // the same "tW" link the aligner does. Book mode sources its own per-chapter
+  // TWL from bookChapters instead.
+  twl: TwlRow[];
   onSelectVerse: (v: number) => void;
   onOpenAligner: (verse: number, bibleVersion: string) => void;
   onModeChange: (mode: ScriptureMode) => void;
@@ -144,6 +159,7 @@ function ScriptureColumnInner({
   activeVerse,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
   mode,
   enabledVersions,
   availableVersions,
@@ -157,7 +173,10 @@ function ScriptureColumnInner({
   onReplaceVerse,
   scrollNonce,
   onRequestScrollToActive,
+  searchNotes,
+  onScrollToNoteMatch,
   lexiconMap,
+  twl,
   onSelectVerse,
   onOpenAligner,
   onModeChange,
@@ -299,6 +318,16 @@ function ScriptureColumnInner({
     return out;
   }, [versesByVersion]);
 
+  // The active verse's source (UHB/UGNT) verse content, used to OL-anchor
+  // ULT/UST note highlights in DocColumn (columns) and BookView (book). The
+  // active verse always lives in the active chapter (the route is
+  // book/chapter/verse), so the current chapter's index covers it for every
+  // mode. StackedBody reads its own uhbV inline.
+  const activeSourceContent = useMemo(
+    () => (indexByVersion["UHB"] ?? indexByVersion["UGNT"])?.[activeVerse]?.content,
+    [indexByVersion, activeVerse],
+  );
+
   return (
     <Box
       sx={{
@@ -425,6 +454,8 @@ function ScriptureColumnInner({
               onReplaceVerse={onReplaceVerse}
               onScrollToMatch={onFindScrollToMatch}
               onQueryChange={onFindQueryChange}
+              searchNotes={searchNotes}
+              onScrollToNoteMatch={onScrollToNoteMatch}
             />
           </Suspense>
         )}
@@ -439,7 +470,9 @@ function ScriptureColumnInner({
             isHebrew={isHebrew}
             activeNoteQuote={activeNoteQuote}
             activeNoteOccurrence={activeNoteOccurrence}
+            reorderHighlight={reorderHighlight ?? null}
             lexiconMap={lexiconMap}
+            twl={twl}
             search={search}
             findActiveMatch={findScrollTarget}
             onSelectVerse={onSelectVerse}
@@ -460,6 +493,8 @@ function ScriptureColumnInner({
               activeVerse={activeVerse}
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
+              reorderHighlight={reorderHighlight ?? null}
+              activeSourceContent={activeSourceContent}
               scrollNonce={scrollNonce}
               findQuery={findQuery}
               findActiveMatch={findScrollTarget}
@@ -492,8 +527,11 @@ function ScriptureColumnInner({
                 rtl={v === "UHB"}
                 activeNoteQuote={activeNoteQuote}
                 activeNoteOccurrence={activeNoteOccurrence}
+                reorderHighlight={reorderHighlight ?? null}
+                activeSourceContent={activeSourceContent}
                 scrollNonce={scrollNonce}
                 lexiconMap={v === "UHB" ? lexiconMap : undefined}
+                twl={v === "UHB" ? twl : undefined}
                 search={search}
                 findActiveMatch={findScrollTarget}
                 onSelectVerse={onSelectVerse}
@@ -535,6 +573,7 @@ function areScriptureColumnPropsEqual(a: Props, b: Props): boolean {
     a.activeVerse === b.activeVerse &&
     a.activeNoteQuote === b.activeNoteQuote &&
     a.activeNoteOccurrence === b.activeNoteOccurrence &&
+    a.reorderHighlight === b.reorderHighlight &&
     a.mode === b.mode &&
     a.enabledVersions === b.enabledVersions &&
     a.availableVersions === b.availableVersions &&
@@ -542,6 +581,10 @@ function areScriptureColumnPropsEqual(a: Props, b: Props): boolean {
     a.bookChapters === b.bookChapters &&
     a.scrollNonce === b.scrollNonce &&
     a.lexiconMap === b.lexiconMap &&
+    // twl feeds the UHB hover tooltips' tW hint; a new ref means a TWL edit,
+    // so re-render to keep the hint current (the row subtrees stay memoized,
+    // so only the active UHB line actually re-renders).
+    a.twl === b.twl &&
     a.locked === b.locked
   );
 }
@@ -573,7 +616,9 @@ function StackedBody({
   isHebrew,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
   lexiconMap,
+  twl,
   search,
   findActiveMatch,
   onSelectVerse,
@@ -592,7 +637,9 @@ function StackedBody({
   isHebrew: boolean;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  reorderHighlight: ReorderHighlight | null;
   lexiconMap: Map<string, LexiconEntry | null>;
+  twl: TwlRow[];
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   onSelectVerse: (v: number) => void;
@@ -627,9 +674,25 @@ function StackedBody({
         const ustV = ust[v];
         const uhbV = uhb[v];
         if (isActive) {
-          const ultHL = highlightsFor("ULT", ultV?.content, activeNoteQuote, activeNoteOccurrence);
-          const ustHL = highlightsFor("UST", ustV?.content, activeNoteQuote, activeNoteOccurrence);
-          const uhbHL = highlightsFor(uhbLabel, uhbV?.content, activeNoteQuote, activeNoteOccurrence);
+          // OL-anchor the ULT/UST highlights on the active verse's source
+          // (UHB/UGNT) verse so reordered translations still light up.
+          // During a preview the yellow follows the MOVED note (so a hover over
+          // a non-selected note's grip still lights it); otherwise the active note.
+          const ro = reorderHighlight;
+          const aQuote = ro?.movedQuote ?? activeNoteQuote;
+          const aOcc = ro?.movedQuote ? ro.movedOccurrence : activeNoteOccurrence;
+          const ultHL = highlightsFor("ULT", ultV?.content, aQuote, aOcc, uhbV?.content);
+          const ustHL = highlightsFor("UST", ustV?.content, aQuote, aOcc, uhbV?.content);
+          const uhbHL = highlightsFor(uhbLabel, uhbV?.content, aQuote, aOcc);
+          // Reorder stoplight: the moved note's candidate neighbours, resolved
+          // per version (ULT/UST OL-anchored on UHB, like the active set).
+          // Undefined unless a drag / hover / recent arrow-move is in flight.
+          const ultPrevHL = ro?.prevQuote ? highlightsFor("ULT", ultV?.content, ro.prevQuote, ro.prevOccurrence, uhbV?.content) : undefined;
+          const ultNextHL = ro?.nextQuote ? highlightsFor("ULT", ultV?.content, ro.nextQuote, ro.nextOccurrence, uhbV?.content) : undefined;
+          const ustPrevHL = ro?.prevQuote ? highlightsFor("UST", ustV?.content, ro.prevQuote, ro.prevOccurrence, uhbV?.content) : undefined;
+          const ustNextHL = ro?.nextQuote ? highlightsFor("UST", ustV?.content, ro.nextQuote, ro.nextOccurrence, uhbV?.content) : undefined;
+          const uhbPrevHL = ro?.prevQuote ? highlightsFor(uhbLabel, uhbV?.content, ro.prevQuote, ro.prevOccurrence) : undefined;
+          const uhbNextHL = ro?.nextQuote ? highlightsFor(uhbLabel, uhbV?.content, ro.nextQuote, ro.nextOccurrence) : undefined;
           // For multi-verse blocks, PATCH and find/replace target the canonical
           // row at verse_start (e.g. 6 for a 6-9 range), not the active integer.
           const ultStart = ultV?.verse ?? v;
@@ -682,6 +745,8 @@ function StackedBody({
                 content={ultV?.content}
                 prevContent={ultPrev?.content}
                 highlights={ultHL}
+                prevHighlights={ultPrevHL}
+                nextHighlights={ultNextHL}
                 search={search}
                 findActiveMatch={findActiveMatch}
                 editable={!locked}
@@ -708,6 +773,8 @@ function StackedBody({
                 content={ustV?.content}
                 prevContent={ustPrev?.content}
                 highlights={ustHL}
+                prevHighlights={ustPrevHL}
+                nextHighlights={ustNextHL}
                 search={search}
                 findActiveMatch={findActiveMatch}
                 editable={!locked}
@@ -735,11 +802,14 @@ function StackedBody({
                   content={uhbV.content}
                   prevContent={uhbPrev?.content}
                   highlights={uhbHL}
+                  prevHighlights={uhbPrevHL}
+                  nextHighlights={uhbNextHL}
                   search={search}
                   findActiveMatch={findActiveMatch}
                   rtl={isHebrew}
                   readOnly
                   lexiconMap={lexiconMap}
+                  twl={twl}
                 />
               )}
             </Paper>
@@ -885,7 +955,6 @@ const InactiveVerseRow = memo(
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
-              <NonActiveSections verse={ultV} column="ULT" />
               <StackedRowBody
                 dto={ultV}
                 prevDto={findPrevRowInColumn(ult, ultV.verse)}
@@ -899,6 +968,7 @@ const InactiveVerseRow = memo(
                     : null
                 }
               />
+              <NonActiveSections verse={ultV} column="ULT" />
             </Box>
           </>
         )}
@@ -928,7 +998,6 @@ const InactiveVerseRow = memo(
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
-              <NonActiveSections verse={ustV} column="UST" />
               <StackedRowBody
                 dto={ustV}
                 prevDto={findPrevRowInColumn(ust, ustV.verse)}
@@ -942,6 +1011,7 @@ const InactiveVerseRow = memo(
                     : null
                 }
               />
+              <NonActiveSections verse={ustV} column="UST" />
             </Box>
           </>
         )}
@@ -967,6 +1037,8 @@ function ActiveLine({
   content,
   prevContent,
   highlights,
+  prevHighlights,
+  nextHighlights,
   search,
   findActiveMatch,
   rtl,
@@ -977,11 +1049,14 @@ function ActiveLine({
   onSave,
   onEditSection,
   lexiconMap,
+  twl,
 }: {
-  // book + bibleVersion identify the verse for draft keying.
-  // bibleVersion is the bare code ("ULT") not the rendered label ("ULT 6-9").
+  // book + bibleVersion identify the verse for draft keying and find-cell
+  // targeting. bibleVersion is the bare code ("ULT") not the rendered label
+  // ("ULT 6-9") — FindMatch.bibleVersion carries the bare code, so every
+  // find compare / selector must use it; `label` is display-only.
   book?: string;
-  bibleVersion?: string;
+  bibleVersion: string;
   label: string;
   chapter: number;
   verseNum: number;
@@ -994,6 +1069,10 @@ function ActiveLine({
   // introduce THIS verse. To edit them, navigate to the prior verse.
   prevContent?: unknown;
   highlights?: Set<HighlightKey>;
+  // Reorder stoplight neighbour sets (green underline / red overline). Only
+  // passed for the active verse while a drag / recent arrow-move is live.
+  prevHighlights?: Set<HighlightKey>;
+  nextHighlights?: Set<HighlightKey>;
   search?: SearchState | null;
   findActiveMatch?: FindMatch | null;
   rtl?: boolean;
@@ -1012,8 +1091,9 @@ function ActiveLine({
   // verseObjects tree directly and re-saves.
   onEditSection?: (change: { index: number; tag: string | null; text: string }) => void;
   lexiconMap?: Map<string, LexiconEntry | null>;
+  twl?: TwlRow[];
 }) {
-  const isSource = label === "UHB" || label === "UGNT";
+  const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
   const draftKey = useMemo(
     () =>
       book && bibleVersion ? verseKey(book, chapter, verseNum, bibleVersion) : null,
@@ -1023,9 +1103,9 @@ function ActiveLine({
     if (!findActiveMatch) return null;
     if (findActiveMatch.chapter !== chapter) return null;
     if (findActiveMatch.verse !== verseNum) return null;
-    if (findActiveMatch.bibleVersion !== label) return null;
+    if (findActiveMatch.bibleVersion !== bibleVersion) return null;
     return { start: findActiveMatch.startIndex, end: findActiveMatch.endIndex };
-  }, [findActiveMatch, chapter, verseNum, label]);
+  }, [findActiveMatch, chapter, verseNum, bibleVersion]);
   const elRef = useRef<HTMLDivElement | null>(null);
   // Tracks the last value we wrote into the contenteditable DOM. The DOM
   // reset effect (further down) skips when its target string matches this,
@@ -1130,26 +1210,26 @@ function ActiveLine({
     }));
   }, [prevContent]);
 
+  // Stoplight role sets → render channels. undefined when neither neighbour
+  // resolves, so the common non-reorder render takes the exact pre-feature path.
+  const roles = useMemo(() => {
+    if (!prevHighlights?.size && !nextHighlights?.size) return undefined;
+    return { prev: prevHighlights, next: nextHighlights };
+  }, [prevHighlights, nextHighlights]);
+
   const noteHTML = useMemo(() => {
     if (findHTML) return null;
     if (!Array.isArray(verseObjects)) return null;
     const hlSet = highlights ?? (new Set() as Set<HighlightKey>);
-    // When edit mode is on, render with visible chips so paragraph /
-    // poetry markers can be seen and adjusted in place. Otherwise emit
-    // the read-only display (no chips, just block layout).
+    // Edit mode surfaces paragraph / poetry markers as literal chips; read-only
+    // emits block layout. Both render even with an empty active set so the
+    // paragraph structure still shows; `roles` adds the prev/next channels when
+    // a reorder is live (the parent uses FindAwareText for pure inactive rows).
     if (editable && !readOnly) {
-      return renderEditableHTML(verseObjects, hlSet);
+      return renderEditableHTML(verseObjects, hlSet, roles);
     }
-    if (!highlights || highlights.size === 0) {
-      // Same code path used by columns/book views — also runs even without
-      // active highlights so paragraph markers render as visual breaks.
-      // For pure read-only inactive rows, the parent uses FindAwareText
-      // (plain text) instead of this `html`, so this branch only matters
-      // when the active line has no quote highlight.
-      return renderHighlightedHTML(verseObjects, new Set());
-    }
-    return renderHighlightedHTML(verseObjects, highlights);
-  }, [findHTML, verseObjects, highlights, editable, readOnly]);
+    return renderHighlightedHTML(verseObjects, hlSet, roles);
+  }, [findHTML, verseObjects, highlights, editable, readOnly, roles]);
   const html = findHTML ?? noteHTML;
 
   // Only resync the DOM when the highlight/content state actually changes —
@@ -1247,26 +1327,6 @@ function ActiveLine({
           </Tooltip>
         )}
       </Stack>
-      {sections.length > 0 && (
-        <Stack spacing={0.25} sx={{ mb: 0.5 }}>
-          {sections.map((s, i) => (
-            <SectionHeaderBand
-              key={`${s.tag}-${i}`}
-              tag={s.tag}
-              text={s.text}
-              editable={!!editable && !readOnly}
-              onChange={(next) => {
-                // Splice the updated/removed section back into verseObjects
-                // and let Shell handle the smart save via onEditContent.
-                // Wire-up handled in the parent Shell; this component just
-                // surfaces edits. For v1 we mutate textContent inline via
-                // a side channel — see Shell's onEditSection handler.
-                onEditSection?.({ index: i, tag: next.tag, text: next.text });
-              }}
-            />
-          ))}
-        </Stack>
-      )}
       {editable && !readOnly && !rtl && (
         <ParagraphToolbar elRef={elRef} onEditPlain={onEditPlain} />
       )}
@@ -1308,7 +1368,7 @@ function ActiveLine({
       )}
       {rtl && lexiconMap ? (
         <Box
-          data-find-cell={`${chapter}-${verseNum}-${label}`}
+          data-find-cell={`${chapter}-${verseNum}-${bibleVersion}`}
           sx={{
             flex: 1,
             bgcolor: "grey.100",
@@ -1327,7 +1387,11 @@ function ActiveLine({
           <HebrewLine
             verseObjects={(content as { verseObjects?: unknown[] } | null)?.verseObjects}
             lexiconMap={lexiconMap}
+            twl={twl}
+            verseNum={verseNum}
             highlights={highlights}
+            prevHighlights={prevHighlights}
+            nextHighlights={nextHighlights}
             findHighlights={findHighlights}
             activeFindKey={activeFindKey}
             fallbackText={text}
@@ -1336,7 +1400,7 @@ function ActiveLine({
       ) : (
         <Box
           ref={elRef}
-          data-find-cell={`${chapter}-${verseNum}-${label}`}
+          data-find-cell={`${chapter}-${verseNum}-${bibleVersion}`}
           data-dirty={hasDraft ? "true" : undefined}
           contentEditable={editable && !readOnly}
           suppressContentEditableWarning
@@ -1380,6 +1444,26 @@ function ActiveLine({
                 },
           })}
         />
+      )}
+      {sections.length > 0 && (
+        <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+          {sections.map((s, i) => (
+            <SectionHeaderBand
+              key={`${s.tag}-${i}`}
+              tag={s.tag}
+              text={s.text}
+              editable={!!editable && !readOnly}
+              onChange={(next) => {
+                // Splice the updated/removed section back into verseObjects
+                // and let Shell handle the smart save via onEditContent.
+                // Wire-up handled in the parent Shell; this component just
+                // surfaces edits. For v1 we mutate textContent inline via
+                // a side channel — see Shell's onEditSection handler.
+                onEditSection?.({ index: i, tag: next.tag, text: next.text });
+              }}
+            />
+          ))}
+        </Stack>
       )}
     </Box>
   );
@@ -1487,7 +1571,11 @@ function ParagraphToolbar({
 // Read-only section header bands for non-active stacked rows. The active
 // card renders them editable through ActiveLine; here we surface them so
 // the heading is visible at all times — click the row to activate it and
-// edit via the active card.
+// edit via the active card. Rendered AFTER the verse body (the caller
+// places <NonActiveSections> below <StackedRowBody>): a `\s*` heading is
+// stored in this verse's trailing verseObjects but introduces the NEXT
+// verse, so it belongs at the verse's end — same place as a trailing
+// `\p`/`\q` marker, not floating above the verse it's attached to.
 function NonActiveSections({ verse, column }: { verse: VerseDto; column: string }) {
   const verseObjects = (verse.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   const sections: SectionHeader[] = Array.isArray(verseObjects)
@@ -1524,7 +1612,10 @@ function StackedRowBody({
   );
   const html = useMemo(() => {
     if (!Array.isArray(verseObjects)) return null;
-    const composed = drift.length > 0 ? [...drift, ...verseObjects] : verseObjects;
+    // Strip THIS verse's own trailing markers — they drift to the next verse,
+    // so rendering them here too would double a text-bearing `\qa` acrostic.
+    const body = stripTrailingMarkers(verseObjects);
+    const composed = drift.length > 0 ? [...drift, ...body] : body;
     // Skip the marker renderer if there's no structure to show — the
     // FindAwareText fallback below paints find marks for plain prose.
     const hasStructure =

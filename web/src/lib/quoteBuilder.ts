@@ -11,22 +11,26 @@
 // always 1, matching how new TNs are typically written.
 
 import type { HighlightKey } from "./highlight";
-import { nfc } from "./hebrew.ts";
+import { matchNorm } from "./highlight.ts";
 
 // Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
 // All callers (picker + buildQuoteFromSelection + collectTargetTokens)
 // MUST go through this — UHB \w text is stored in legacy combining-mark
 // order while UST/ULT zaln x-content is NFC, so a raw `${text}|${occ}`
-// comparison loses the join. nfc() normalizes both sides to the same
-// canonical form. Same rule findSourceHighlights / findTargetHighlights
-// have used since the start.
+// comparison loses the join. Use matchNorm (NFC + word-joiner U+2060 /
+// U+200D stripping) — the SAME fold the highlighter joins by in
+// matchSourceTokens / matchGroupsAt. nfc() alone left the joiner in, so a
+// UHB token carrying a U+2060 (הָ⁠אֶבֶן) and an AI-generated x-content that
+// omitted it minted two different keys: clicking the English chip toggled a
+// phantom key the UHB row could never match, and the quote never built. One
+// fold must govern every quote/selection equality.
 export function tokenKey(text: string, occurrence: number): HighlightKey {
-  return `${nfc(text)}|${occurrence}`;
+  return `${matchNorm(text)}|${occurrence}`;
 }
 
 interface UhbWord {
   text: string;       // raw text, preserved for quote string rendering
-  key: HighlightKey;  // nfc-normalized lookup key
+  key: HighlightKey;  // matchNorm-normalized lookup key (see tokenKey)
   occurrence: number;
   // 0-based document position among all \w tokens in this verse. Stable
   // across re-render because the verseObjects tree is immutable while
@@ -55,7 +59,12 @@ function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
         // maqqef / inter-word space as a bare text sibling of the \w tokens.
         const prev = out[out.length - 1];
         if (prev) prev.trailing += String(o["text"] ?? "");
-      } else if (o["type"] === "milestone") {
+      } else if (
+        o["type"] === "milestone" ||
+        // \d (Psalm superscription) is `type:"section"` but its content IS
+        // alignable verse body — descend like the highlight matchers do.
+        (o["type"] === "section" && o["tag"] === "d")
+      ) {
         const children = (o["children"] as unknown[] | undefined) ?? [];
         walk(children);
       }
@@ -131,12 +140,13 @@ export function buildQuoteFromSelection(
 // The picker turns a click on a target word into a set of these so the
 // existing UHB-keyed selection (used by buildQuoteFromSelection) can be
 // fed without translating between formats. The `key` field is the
-// nfc-normalized selection key — always compare keys, never raw content,
-// since UHB \w text and zaln x-content can drift in combining-mark order.
+// matchNorm-normalized selection key — always compare keys, never raw
+// content, since UHB \w text and zaln x-content can drift in combining-mark
+// order AND in word-joiner presence.
 export interface SourceAncestor {
   content: string;     // raw, for display in tooltips
   occurrence: number;
-  key: HighlightKey;   // nfc-normalized, for selection set lookups
+  key: HighlightKey;   // matchNorm-normalized, for selection set lookups
 }
 
 // Per-token shape returned by collectTargetTokens. Outer-to-inner ancestor
@@ -186,6 +196,12 @@ export function collectTargetTokens(
           ? [...stack, { content, occurrence, key: tokenKey(content, occurrence) }]
           : stack;
         walk(children, nextStack);
+      } else if (o["type"] === "section" && o["tag"] === "d") {
+        // \d (Psalm superscription) is type:"section" but its content IS
+        // alignable verse body — descend, carrying the current ancestor
+        // stack unchanged (it contributes no source of its own). Mirrors
+        // collectMilestoneRuns / collectUhbWords.
+        walk((o["children"] as unknown[] | undefined) ?? [], stack);
       } else if (o["type"] === "word" && o["tag"] === "w") {
         const text = String(o["text"] ?? "");
         const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
@@ -207,10 +223,11 @@ function matchGroupsAt(
   groups: UhbWord[][],
   all: UhbWord[],
 ): boolean {
-  // Compare via nfc-normalized keys (sans the occurrence suffix) so the
-  // matcher tolerates legacy-vs-NFC drift between identical-looking
-  // Hebrew strings — same reason `tokenKey` exists.
-  const norm = (w: UhbWord) => w.key.split("|")[0];
+  // Compare via matchNorm (NFC + joiner stripping) so the occurrence this
+  // builder stamps counts the same matches the highlighter's
+  // matchSourceTokens will find — legacy-vs-NFC drift AND word-joiner
+  // presence both tolerated, keeping built quotes round-tripping.
+  const norm = (w: UhbWord) => matchNorm(w.text);
   let pos = start;
   for (let gi = 0; gi < groups.length; gi++) {
     const group = groups[gi];

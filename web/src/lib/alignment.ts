@@ -27,6 +27,7 @@
 
 import { nfc } from "./hebrew.ts";
 import { extractPlainText } from "./usfm.ts";
+import { tokenizePlainText } from "./replace.ts";
 
 export interface SourceWord {
   id: string;
@@ -127,6 +128,23 @@ function nodeIsWord(n: ParsedNode | undefined): boolean {
 function nodeIsText(n: ParsedNode | undefined): boolean {
   return !!n && n["type"] === "text" && typeof n["text"] === "string";
 }
+// Poetry / paragraph LINE markers whose same-line trailing text (which usfm-js
+// parks on the marker's own `text` field — `\q1 Some enemies watched` →
+// {tag:"q1",text:"Some…"}) is alignable verse body. Deliberately EXCLUDES
+// `\qa` (acrostic header label — not verse text, must not become a draggable
+// word) and `\qs` (character wrapper around its content, e.g. bare Selah — its
+// text is preserved verbatim, not tokenized).
+const LINE_TEXT_MARKER_TAGS = new Set<string>([
+  "q", "q1", "q2", "q3", "q4", "qm", "qm1", "qm2", "qm3",
+  "p", "m", "mi", "pi", "pi1", "pi2", "pi3", "pc", "nb", "b",
+]);
+function nodeIsLineTextMarker(n: ParsedNode | undefined): boolean {
+  if (!n) return false;
+  if (n["type"] !== "quote" && n["type"] !== "paragraph") return false;
+  const tag = n["tag"];
+  return typeof tag === "string" && LINE_TEXT_MARKER_TAGS.has(tag)
+    && typeof n["text"] === "string" && n["text"] !== "";
+}
 function isAlignmentWrapper(n: ParsedNode | undefined): boolean {
   if (!n || typeof n !== "object") return false;
   if (n["type"] !== "quote") return false;
@@ -135,6 +153,33 @@ function isAlignmentWrapper(n: ParsedNode | undefined): boolean {
   if (!ALIGNMENT_WRAPPER_TAGS.has(tag)) return false;
   const children = n["children"];
   return Array.isArray(children) && children.length > 0;
+}
+// \d (Psalm superscription) is `type:"section"` — not `type:"quote"`, so
+// isAlignmentWrapper can't cover it — but its content IS alignable verse
+// body (see highlight.ts's renderer special case). When it arrives with
+// children, descend like a \qs wrapper so the inner zaln / word nodes
+// enter the alignment stream; a childless \d (bare marker or text-only)
+// stays opaque and rides along verbatim.
+function isPsalmTitleWrapper(n: ParsedNode | undefined): boolean {
+  if (!n || typeof n !== "object") return false;
+  if (n["type"] !== "section" || n["tag"] !== "d") return false;
+  const children = n["children"];
+  return Array.isArray(children) && children.length > 0;
+}
+// An alignment wrapper (`\qs`) whose content usfm-js parked on its own `text`
+// field instead of as children — the same-line `\qs Selah\qs*` shape parses to
+// {tag:"qs", text:"Selah"} with NO children, whereas `\qs`\nSelah\n`\qs*`
+// parses to a text CHILD (handled by isAlignmentWrapper). Without this, the
+// same-line Selah is opaque and its word can't be aligned. (The newline shape
+// already tokenizes via isAlignmentWrapper → nodeIsText.)
+function isAlignmentWrapperWithText(n: ParsedNode | undefined): boolean {
+  if (!n || typeof n !== "object") return false;
+  if (n["type"] !== "quote") return false;
+  const tag = n["tag"];
+  if (typeof tag !== "string" || !ALIGNMENT_WRAPPER_TAGS.has(tag)) return false;
+  const children = n["children"];
+  const hasChildren = Array.isArray(children) && children.length > 0;
+  return !hasChildren && typeof n["text"] === "string" && n["text"] !== "";
 }
 
 // Shallow-clone a node's own properties, dropping `children` (the
@@ -251,26 +296,75 @@ function walk(
     } else if (nodeIsWord(node)) {
       stream.push({ kind: "word", word: targetOf(node), alignedTo: currentGroupId });
     } else if (nodeIsText(node)) {
-      stream.push({ kind: "text", text: String(node["text"] ?? "") });
-    } else if (isAlignmentWrapper(node)) {
-      // Descend through a `\qs` (or similar whitelisted) wrapper whose
-      // children include alignment-bearing content. The inner zaln /
-      // word / text nodes enter the stream like any other content; the
-      // wrapper itself is reconstructed at serialize time from these
-      // brackets.
+      // Tokenize bare text into draggable words. The AI returns unaligned
+      // ULT/UST as plain text (`\p \v 1 In the beginning...`) with no `\w`
+      // wrappers; without this, those words are invisible to the aligner and
+      // can never be aligned in-app (they also glue to a preceding marker on
+      // export, e.g. `\q1Some`). Word runs become unaligned stream words
+      // (alignedTo:null → the unaligned bag); punctuation / whitespace stays
+      // `text`. Normal aligned verses are unaffected: their text nodes hold
+      // only inter-word separators, which tokenize to zero word runs and
+      // round-trip back to the identical text node.
+      for (const tok of tokenizePlainText(String(node["text"] ?? "")) as ParsedNode[]) {
+        if (nodeIsWord(tok)) {
+          stream.push({ kind: "word", word: targetOf(tok), alignedTo: null });
+        } else {
+          stream.push({ kind: "text", text: String(tok["text"] ?? "") });
+        }
+      }
+    } else if (isAlignmentWrapper(node) || isPsalmTitleWrapper(node)) {
+      // Descend through a `\qs` (or similar whitelisted) wrapper — or a
+      // `\d` Psalm superscription carrying children — whose children
+      // include alignment-bearing content. The inner zaln / word / text
+      // nodes enter the stream like any other content; the wrapper itself
+      // is reconstructed at serialize time from these brackets.
       const tag = String(node["tag"] ?? "");
       stream.push({ kind: "openMarker", tag, node: cloneNodeShallow(node) });
       const children = (node["children"] as ParsedNode[] | undefined) ?? [];
       walk(children, sourceChain, stream, sourceGroups, currentGroupId);
       stream.push({ kind: "closeMarker", tag });
+    } else if (isAlignmentWrapperWithText(node)) {
+      // `\qs Selah\qs*` — Selah parked on the qs node's `text` (no children).
+      // Open the wrapper, tokenize its text into alignable words INSIDE it,
+      // then close — so Selah becomes a draggable unaligned word that
+      // round-trips as `\qs <words>\qs*` (and aligns like the production
+      // `\qs \zaln-s…\w Selah\w*\zaln-e\*\qs*` shape once a source is bound).
+      const tag = String(node["tag"] ?? "");
+      const { text, ...rest } = node;
+      stream.push({ kind: "openMarker", tag, node: cloneNodeShallow(rest) });
+      for (const tok of tokenizePlainText(String(text)) as ParsedNode[]) {
+        if (nodeIsWord(tok)) {
+          stream.push({ kind: "word", word: targetOf(tok), alignedTo: null });
+        } else {
+          stream.push({ kind: "text", text: String(tok["text"] ?? "") });
+        }
+      }
+      stream.push({ kind: "closeMarker", tag });
+    } else if (nodeIsLineTextMarker(node)) {
+      // Poetry/paragraph line marker carrying same-line verse text that
+      // usfm-js parked on its `text` field (`\q1 Some enemies watched`).
+      // Emit the marker text-less, then tokenize the parked text into
+      // alignable words — otherwise those words are invisible to the aligner
+      // (and glue back as `\q1Some` on export). Excludes \qa / \qs (see
+      // nodeIsLineTextMarker). The trailing newline rides along as text.
+      const { text, ...rest } = node;
+      stream.push({ kind: "marker", node: cloneNodeOpaque(rest) });
+      for (const tok of tokenizePlainText(String(text)) as ParsedNode[]) {
+        if (nodeIsWord(tok)) {
+          stream.push({ kind: "word", word: targetOf(tok), alignedTo: null });
+        } else {
+          stream.push({ kind: "text", text: String(tok["text"] ?? "") });
+        }
+      }
     } else {
       // Opaque inline node — footnotes (\f), blank lines (\b), chunk
       // milestones (\ts*), section headings (\ms), bare `\qs Selah\qs*`
-      // without inner alignment, paragraph markers (\p, \q1, \q2, \m).
-      // The whole node (attrs + children) rides along verbatim on the
-      // marker; serializer emits it as-is. extractPlainText still
-      // recursively concatenates `text` fields out of these children,
-      // matching importer behaviour for Selah / Psalm titles / etc.
+      // without inner alignment, acrostic headers (\qa ZAYIN), paragraph
+      // markers (\p, \q1, \q2, \m) with no parked text. The whole node
+      // (attrs + children) rides along verbatim on the marker; serializer
+      // emits it as-is. extractPlainText still recursively concatenates
+      // `text` fields out of these children, matching importer behaviour
+      // for Selah / Psalm titles / etc.
       stream.push({ kind: "marker", node: cloneNodeOpaque(node) });
     }
   }
@@ -301,6 +395,125 @@ function deriveViews(state: Omit<AlignmentState, "groups" | "unaligned">): {
 
 function finalize(state: Omit<AlignmentState, "groups" | "unaligned">): AlignmentState {
   return { ...state, ...deriveViews(state) };
+}
+
+// ─── display-group post-processing (shared with the panel) ──────────────────
+// Pure transforms the aligner applies to `state.groups` before rendering:
+// collapse a compound's redundant source words and fuse adjacent same-source
+// groups. Live here (not in the component) so they're free of JSX and unit-
+// testable.
+
+// Identity of a single source word for overlap/merge purposes: NFC content +
+// occurrence. Keying on content ALONE conflates genuinely-distinct repeats —
+// e.g. ZEC 6:13 has two עַל (occ 1 and 2); a standalone עַל(1) would otherwise
+// strip עַל(2) out of its compound and the second עַל silently vanishes from
+// the cards (its source word stays bound — hover still bridges it — but no
+// chip renders).
+export function sourceWordKey(s: SourceWord): string {
+  return `${nfc(s.content ?? "")}|${s.occurrence}`;
+}
+
+// Whole-chain key, used to fuse adjacent groups that wrap the same source.
+export function sourceKey(g: AlignmentGroup): string {
+  return g.source.map(sourceWordKey).join("~");
+}
+
+// Drop a compound's source word when an identical (content + occurrence)
+// standalone group already owns it, so the token isn't double-represented.
+// Occurrence-aware: a standalone occ-1 never strips a genuine occ-2 sibling.
+export function stripCompoundOverlaps(groups: AlignmentGroup[]): AlignmentGroup[] {
+  const standaloneKeys = new Set<string>();
+  for (const g of groups) {
+    if (g.source.length === 1) standaloneKeys.add(sourceWordKey(g.source[0]));
+  }
+  if (standaloneKeys.size === 0) return groups;
+  return groups.map((g) => {
+    if (g.source.length <= 1) return g;
+    const kept = g.source.filter((s) => !standaloneKeys.has(sourceWordKey(s)));
+    if (kept.length === g.source.length || kept.length === 0) return g;
+    return { ...g, source: kept };
+  });
+}
+
+// Stable React key for an alignment card. Group ids regenerate on every parse
+// (crypto.randomUUID), so keying on them would remount the whole grid on any
+// re-derive (e.g. a reading-text edit) — a jarring flash. Key instead on the
+// FULL source chain: each source word's POSITION in the source verse plus its
+// occurrence.
+//
+// Position ALONE is not unique. One source token split-aligned to two
+// non-contiguous target runs produces two distinct groups whose FIRST source
+// word resolves to the same position (JER 28:1 UST aligns the single אָמַר to
+// both "spoke to me" phrases as occ 1/2 and 2/2; likewise לְעֵינֵי →
+// "while"/"watched"). A `p{pos}`-only key collided across those siblings, and
+// duplicate React keys made the cards pile up on every hover-driven re-render.
+// Appending occurrence separates the split halves; keeping position separates
+// same-Strong words with different pointing (three אֶל forms in ZEC 1:3 are all
+// H0413|1). Unresolved positions (-1, malformed data) fall back to a
+// strong|content|occurrence content key. `sourcePos` maps source-word id →
+// position (the panel's posMaps.sourcePosById).
+export function cardKey(g: AlignmentGroup, sourcePos: Map<string, number>): string {
+  if (g.source.length === 0) return g.id;
+  return (
+    "src:" +
+    g.source
+      .map((s) => {
+        const p = sourcePos.get(s.id) ?? -1;
+        return p >= 0
+          ? `p${p}.${s.occurrence}`
+          : `${s.strong}|${nfc(s.content ?? "")}|${s.occurrence}`;
+      })
+      .join("~")
+  );
+}
+
+export function mergeAdjacentSameSource(groups: AlignmentGroup[]): AlignmentGroup[] {
+  const out: AlignmentGroup[] = [];
+  for (const g of groups) {
+    const last = out[out.length - 1];
+    if (last && sourceKey(last) === sourceKey(g)) {
+      out[out.length - 1] = { ...last, targets: [...last.targets, ...g.targets] };
+    } else {
+      out.push(g);
+    }
+  }
+  return out;
+}
+
+// Fuse display groups whose source words occupy the SAME source position(s).
+// An AI aligner sometimes stamps a source token that appears ONCE in the
+// UHB/UGNT with occurrences="2" — one per repeated target phrase — so JER 28:1
+// UST yields two חֲנַנְיָה groups (occ 1/2 and 2/2), two אָמַר אֵלַי groups,
+// and two לְעֵינֵי groups that each resolve to a SINGLE physical Hebrew token.
+// They render as a "doubled" Hebrew card even though the source word appears
+// once. occurrence is unreliable here, so identity is taken from POSITION: two
+// groups with the same resolved position sequence are the same physical
+// source and collapse into one card (targets concatenated). Genuine repeats
+// (distinct physical tokens) carry different positions and are left alone.
+//
+// `positionKey` returns a stable key from a group's resolved source positions,
+// or null when any position is unresolved (then the group never merges — we
+// can't prove it's a duplicate). Display-only: callers pass display groups, so
+// state.sourceGroups (and therefore serialize/export) is untouched.
+export function mergeSamePositionGroups(
+  groups: AlignmentGroup[],
+  positionKey: (g: AlignmentGroup) => string | null,
+): AlignmentGroup[] {
+  const out: AlignmentGroup[] = [];
+  const indexByKey = new Map<string, number>();
+  for (const g of groups) {
+    const k = positionKey(g);
+    if (k !== null) {
+      const existing = indexByKey.get(k);
+      if (existing !== undefined) {
+        out[existing] = { ...out[existing], targets: [...out[existing].targets, ...g.targets] };
+        continue;
+      }
+      indexByKey.set(k, out.length);
+    }
+    out.push(g);
+  }
+  return out;
 }
 
 export function parseAlignment(
@@ -359,7 +572,13 @@ function collectSourceWords(verseObjects: unknown[]): CollectedSourceWord[] {
           textKey,
           textOccurrence: tOcc,
         });
-      } else if (o["type"] === "milestone") {
+      } else if (
+        o["type"] === "milestone" ||
+        // \d (Psalm superscription) is type:"section" but its content IS
+        // alignable verse body — descend like a milestone so its \w tokens
+        // are covered. Mirrors collectMilestoneRuns in highlight.ts.
+        (o["type"] === "section" && o["tag"] === "d")
+      ) {
         walkSrc((o["children"] as unknown[] | undefined) ?? []);
       }
     }
@@ -411,6 +630,24 @@ function withSourceCoverage(
 ): Omit<AlignmentState, "groups" | "unaligned"> {
   const sourceWords = collectSourceWords(sourceVerseObjects);
   if (sourceWords.length === 0) return base;
+  // Normalize each compound's source order to canonical (UHB/UGNT text) order.
+  // The chain comes out of `walk` in milestone-NESTING order, which a few
+  // AI-generated alignments stamp reversed (e.g. ZEC 6:13 UST nests הֵיכַל
+  // before its אֵת direct-object marker). Sorting by source position fixes the
+  // RTL card render AND the serialized nesting, so a touched verse exports the
+  // corrected order. Well-formed data is already canonical, so this is a no-op
+  // there (stable sort) — no export churn for legitimate alignments.
+  const sortedGroups = base.sourceGroups.map((g) => {
+    if (g.source.length < 2) return g;
+    const withPos = g.source.map((s, i) => {
+      const p = findSourcePosition(sourceWords, s);
+      return { s, key: p >= 0 ? p : Number.MAX_SAFE_INTEGER, i };
+    });
+    withPos.sort((a, b) => a.key - b.key || a.i - b.i);
+    if (withPos.every((x, idx) => x.i === idx)) return g; // already canonical
+    return { ...g, source: withPos.map((x) => x.s) };
+  });
+  base = { ...base, sourceGroups: sortedGroups };
   const covered = new Set<number>();
   for (const g of base.sourceGroups) {
     for (const s of g.source) {
@@ -418,9 +655,12 @@ function withSourceCoverage(
       if (p >= 0) covered.add(p);
     }
   }
+  // Keyed by textKey (NFC) — textOccurrence was counted per textKey in
+  // collectSourceWords, so totals must use the same key or two raw-different
+  // / NFC-equal tokens get occurrence=2 with occurrences=1 (malformed).
   const textTotals = new Map<string, number>();
   for (const sw of sourceWords) {
-    textTotals.set(sw.text, (textTotals.get(sw.text) ?? 0) + 1);
+    textTotals.set(sw.textKey, (textTotals.get(sw.textKey) ?? 0) + 1);
   }
   const placeholders: AlignmentGroup[] = [];
   for (const sw of sourceWords) {
@@ -434,7 +674,7 @@ function withSourceCoverage(
           lemma: sw.lemma,
           morph: sw.morph,
           occurrence: String(sw.textOccurrence),
-          occurrences: String(textTotals.get(sw.text) ?? 1),
+          occurrences: String(textTotals.get(sw.textKey) ?? 1),
           content: sw.text,
         },
       ],

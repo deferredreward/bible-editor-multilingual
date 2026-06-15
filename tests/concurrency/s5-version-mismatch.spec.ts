@@ -1,6 +1,10 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
 import { authedRequest, csrfToken, fetchChapter, mintToken } from "./helpers";
 
+// Honor BE_BASE_URL so the suite runs on a relocated port (mirrors s8).
+const BASE = process.env.BE_BASE_URL ?? "http://localhost:5173";
+
+
 // S5 — Pure-API version_mismatch contract.
 // The cheapest way to prove optimistic concurrency is wired correctly: two
 // PATCHes with the same If-Match header against the same row. First wins,
@@ -8,7 +12,7 @@ import { authedRequest, csrfToken, fetchChapter, mintToken } from "./helpers";
 //
 // If this test fails, every UI concurrency test downstream is also broken.
 test("two PATCHes with the same If-Match: one wins, the other 409s", async () => {
-  const ctx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const ctx = await apiRequest.newContext({ baseURL: BASE });
 
   const alice = await mintToken(ctx, "alice");
   const bob = await mintToken(ctx, "bob");
@@ -70,7 +74,7 @@ test("two PATCHes with the same If-Match: one wins, the other 409s", async () =>
 // S5b — A retry with the *current* version succeeds. Proves the loser has a
 // safe recovery path (this is the contract the outbox relies on after 409).
 test("loser can retry with fresh If-Match and succeed", async () => {
-  const ctx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const ctx = await apiRequest.newContext({ baseURL: BASE });
 
   const alice = await mintToken(ctx, "alice");
   const chapter = await fetchChapter(ctx, alice.token, "ZEC", 6);

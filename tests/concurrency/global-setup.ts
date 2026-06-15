@@ -37,7 +37,10 @@ export default async function globalSetup() {
       "wrangler",
       "d1",
       "execute",
-      "bible_editor",
+      // The default (non-production) env's D1 is `bible_editor_dev` since the
+      // dev/prod database split — the local SQLite store wrangler dev uses.
+      // Seeding `bible_editor` (the prod name) would target the wrong/no DB.
+      "bible_editor_dev",
       "--local",
       `--file=${sqlPath}`,
     ],

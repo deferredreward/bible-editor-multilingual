@@ -1,6 +1,10 @@
 import { expect, test, request as apiRequest } from "@playwright/test";
 import { fetchChapter, saveNote, gotoVerse, mintToken, newUserContext, noteTextarea, waitForServerNote } from "./helpers";
 
+// Honor BE_BASE_URL so the suite runs on a relocated port (mirrors s8).
+const BASE = process.env.BE_BASE_URL ?? "http://localhost:5173";
+
+
 // S1 — Two users edit notes on adjacent verses of the same chapter at the
 // same time. No clobbering: both edits land on the server intact.
 //
@@ -10,7 +14,7 @@ import { fetchChapter, saveNote, gotoVerse, mintToken, newUserContext, noteTexta
 test("two users editing adjacent verses both land — no clobber", async ({ browser }) => {
   // Pick targets BEFORE opening browsers so we have stable row ids to assert on.
   // The seed (globalSetup) gives us a fresh ZEC; we read its current shape.
-  const probe = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const probe = await apiRequest.newContext({ baseURL: BASE });
   const probeAuth = await mintToken(probe, "probe");
   const chapter = await fetchChapter(probe, probeAuth.token, "ZEC", 6);
 
@@ -53,7 +57,7 @@ test("two users editing adjacent verses both land — no clobber", async ({ brow
 
   // Server is the source of truth. Read until both edits are visible there,
   // OR fail loudly with the last-seen state.
-  const serverCtx = await apiRequest.newContext({ baseURL: "http://localhost:5173" });
+  const serverCtx = await apiRequest.newContext({ baseURL: BASE });
   const serverAuth = await mintToken(serverCtx, "verifier");
   const [aliceFinal, bobFinal] = await Promise.all([
     waitForServerNote(serverCtx, serverAuth.token, "ZEC", 6, aliceTarget!.id, (n) => n === aliceText),

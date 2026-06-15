@@ -9,17 +9,17 @@
 // column alignment, which is what makes find/replace and side-by-side
 // comparison readable when the scroll spans an entire book.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, IconButton, Tooltip, CircularProgress } from "@mui/material";
 import LinkIcon from "@mui/icons-material/Link";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import UndoIcon from "@mui/icons-material/Undo";
-import type { VerseDto } from "../sync/api";
+import type { TwlRow, VerseDto } from "../sync/api";
 import type { ChapterState } from "../hooks/useBook";
-import { highlightsFor, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
+import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
-import { extractTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
+import { extractTrailingMarkers, stripTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
 import { SectionHeaderBand } from "./SectionHeaderBand";
 import { drafts, verseKey, draftDirtyBorderSx } from "../sync/drafts";
 import type { FindMatch } from "./FindReplaceOverlay";
@@ -46,6 +46,10 @@ interface SearchState {
 
 const READ_ONLY = new Set(["UHB", "UGNT"]);
 
+// Stable placeholder so `chapters.get(ch) ?? UNLOADED_STATE` doesn't hand
+// ChapterBlock a fresh object every render and defeat its memo.
+const UNLOADED_STATE: ChapterState = { kind: "unloaded" };
+
 interface Props {
   book: string;
   chapterList: number[];
@@ -55,6 +59,13 @@ interface Props {
   activeVerse: number;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  // Transient reorder stoplight for the active verse (drag held / ~3s after an
+  // arrow move): the moved note's candidate prev (green) + next (red).
+  reorderHighlight?: ReorderHighlight | null;
+  // Active verse's UHB/UGNT verse content — OL-anchors ULT/UST note highlights
+  // (resolve the OL quote against the source, then map via alignment) so a
+  // reordered English translation still highlights. Ignored for UHB/UGNT.
+  activeSourceContent?: unknown;
   scrollNonce?: number;
   findQuery: FindQuery | null;
   findActiveMatch: FindMatch | null;
@@ -95,6 +106,8 @@ export function BookView({
   activeVerse,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
+  activeSourceContent,
   scrollNonce,
   findQuery,
   findActiveMatch,
@@ -129,7 +142,10 @@ export function BookView({
         list.push({ chapter: d.meta.chapter, verse: d.meta.verse, plain });
         next.set(d.meta.bibleVersion, list);
       }
-      setDraftsByVersion(next);
+      // drafts.subscribe fires for every draft write anywhere (row drafts
+      // from note typing included) — bail out when the derived map is
+      // content-equal so those keystrokes don't re-render the whole book.
+      setDraftsByVersion((prev) => (draftMapsEqual(prev, next) ? prev : next));
     });
   }, [book]);
 
@@ -296,13 +312,15 @@ export function BookView({
               key={ch}
               book={book}
               chapter={ch}
-              state={chapters.get(ch) ?? { kind: "unloaded" }}
+              state={chapters.get(ch) ?? UNLOADED_STATE}
               enabledVersions={enabledVersions}
               cols={cols}
               activeChapter={activeChapter}
               activeVerse={activeVerse}
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
+              reorderHighlight={reorderHighlight ?? null}
+              activeSourceContent={activeSourceContent}
               activeRowRef={activeRowRef}
               search={search}
               findActiveMatch={findActiveMatch}
@@ -327,7 +345,32 @@ function countLoaded(chapters: Map<number, ChapterState>): number {
   return n;
 }
 
-function ChapterBlock({
+type VersionDrafts = Map<string, Array<{ chapter: number; verse: number; plain: string }>>;
+
+function draftMapsEqual(a: VersionDrafts, b: VersionDrafts): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, av] of a) {
+    const bl = b.get(k);
+    if (!bl || bl.length !== av.length) return false;
+    for (let i = 0; i < av.length; i++) {
+      if (
+        av[i].chapter !== bl[i].chapter ||
+        av[i].verse !== bl[i].verse ||
+        av[i].plain !== bl[i].plain
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Memoized (with VerseRow / VerseCell below) so the per-keystroke BookView
+// re-render — every draft write rebuilds draftsByVersion — skips the chapter
+// subtrees, whose props are all referentially stable during typing. Callback
+// props are passed through raw (no per-chapter/per-verse lambdas) so the
+// default shallow compare holds.
+const ChapterBlock = memo(function ChapterBlock({
   book,
   chapter,
   state,
@@ -337,6 +380,8 @@ function ChapterBlock({
   activeVerse,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
+  activeSourceContent,
   activeRowRef,
   search,
   findActiveMatch,
@@ -357,6 +402,8 @@ function ChapterBlock({
   activeVerse: number;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  reorderHighlight: ReorderHighlight | null;
+  activeSourceContent?: unknown;
   activeRowRef: React.MutableRefObject<HTMLDivElement | null>;
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
@@ -493,27 +540,28 @@ function ChapterBlock({
             isActive={isActive}
             activeNoteQuote={isActive ? activeNoteQuote : null}
             activeNoteOccurrence={isActive ? activeNoteOccurrence : null}
+            reorderHighlight={isActive ? reorderHighlight : null}
+            activeSourceContent={isActive ? activeSourceContent : undefined}
             rowRef={isActive ? activeRowRef : null}
             search={search}
             findActiveMatch={findActiveMatch}
             lexiconMap={lexiconMap}
-            onSelectVerse={() => onSelectVerse(chapter, v)}
-            onEditVerse={(bv, plain, base) => onEditVerse(chapter, v, bv, plain, base)}
-            onOpenAligner={(bv) => onOpenAligner(chapter, v, bv)}
-            onEditSection={
-              onEditSection
-                ? (bv, change, base) => onEditSection(chapter, v, bv, change, base)
-                : undefined
-            }
+            twl={data.twl}
+            onSelectVerse={onSelectVerse}
+            onEditVerse={onEditVerse}
+            onOpenAligner={onOpenAligner}
+            onEditSection={onEditSection}
             locked={locked}
           />
         );
       })}
     </Fragment>
   );
-}
+});
 
-function VerseRow({
+// Raw top-level handlers (chapter / verse / bibleVersion supplied at call
+// time from this row's own props) keep the memo's shallow compare honest.
+const VerseRow = memo(function VerseRow({
   book,
   chapter,
   verseNum,
@@ -522,10 +570,13 @@ function VerseRow({
   isActive,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
+  activeSourceContent,
   rowRef,
   search,
   findActiveMatch,
   lexiconMap,
+  twl,
   onSelectVerse,
   onEditVerse,
   onOpenAligner,
@@ -540,15 +591,20 @@ function VerseRow({
   isActive: boolean;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  reorderHighlight: ReorderHighlight | null;
+  activeSourceContent?: unknown;
   rowRef: React.MutableRefObject<HTMLDivElement | null> | null;
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   lexiconMap: Map<string, LexiconEntry | null>;
-  onSelectVerse: () => void;
-  onEditVerse: (bv: string, plain: string, base: VerseDto) => void;
-  onOpenAligner: (bv: string) => void;
+  twl: TwlRow[];
+  onSelectVerse: (chapter: number, verse: number) => void;
+  onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
+  onOpenAligner: (chapter: number, verse: number, bibleVersion: string) => void;
   onEditSection?: (
-    bv: string,
+    chapter: number,
+    verse: number,
+    bibleVersion: string,
     change: { index: number; tag: string | null; text: string },
     base: VerseDto,
   ) => void;
@@ -577,7 +633,7 @@ function VerseRow({
             key={bv}
             ref={colIdx === 0 ? rowRef : null}
             data-find-cell={`${chapter}-${verseNum}-${bv}`}
-            onClick={onSelectVerse}
+            onClick={() => onSelectVerse(chapter, verseNum)}
             sx={{
               p: 0.5,
               borderRadius: 0.5,
@@ -596,16 +652,15 @@ function VerseRow({
               isActive={isActive}
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
+              reorderHighlight={reorderHighlight}
+              activeSourceContent={activeSourceContent}
               search={search}
               findActiveMatch={findActiveMatch}
               lexiconMap={lexiconMap}
-              onAlign={() => onOpenAligner(bv)}
-              onEdit={(plain) => dto && onEditVerse(bv, plain, dto)}
-              onEditSection={
-                onEditSection && dto
-                  ? (change) => onEditSection(bv, change, dto)
-                  : undefined
-              }
+              twl={twl}
+              onOpenAligner={onOpenAligner}
+              onEditVerse={onEditVerse}
+              onEditSection={onEditSection}
               locked={locked}
             />
           </Box>
@@ -613,9 +668,9 @@ function VerseRow({
       })}
     </Fragment>
   );
-}
+});
 
-function VerseCell({
+const VerseCell = memo(function VerseCell({
   book,
   chapter,
   verseNum,
@@ -625,11 +680,14 @@ function VerseCell({
   isActive,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
+  activeSourceContent,
   search,
   findActiveMatch,
   lexiconMap,
-  onAlign,
-  onEdit,
+  twl,
+  onOpenAligner,
+  onEditVerse,
   onEditSection,
   locked,
 }: {
@@ -645,12 +703,21 @@ function VerseCell({
   isActive: boolean;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
+  reorderHighlight: ReorderHighlight | null;
+  activeSourceContent?: unknown;
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   lexiconMap: Map<string, LexiconEntry | null>;
-  onAlign: () => void;
-  onEdit: (plain: string) => void;
-  onEditSection?: (change: { index: number; tag: string | null; text: string }) => void;
+  twl: TwlRow[];
+  onOpenAligner: (chapter: number, verse: number, bibleVersion: string) => void;
+  onEditVerse: (chapter: number, verse: number, bibleVersion: string, plain: string, base: VerseDto) => void;
+  onEditSection?: (
+    chapter: number,
+    verse: number,
+    bibleVersion: string,
+    change: { index: number; tag: string | null; text: string },
+    base: VerseDto,
+  ) => void;
   locked: boolean;
 }) {
   const readOnly = READ_ONLY.has(bibleVersion) || locked;
@@ -681,19 +748,25 @@ function VerseCell({
     return drafts.subscribe((all) => {
       const rec = all.find((d) => d.key === draftKey);
       setHasDraft(!!rec);
+      // Hydrate from a PRE-EXISTING draft exactly once, on the first
+      // (mount-snapshot) callback — never from a draft the user is creating
+      // by typing right now. Writing to the live element mid-input resets the
+      // caret, and in Firefox `textContent` set here would clobber the verse
+      // the user is editing. Restore-on-mount (reload / chapter nav) is the
+      // only legitimate reason to push draft text into the DOM.
+      if (hydratedFromDraftRef.current) return;
+      hydratedFromDraftRef.current = true;
       if (
-        !hydratedFromDraftRef.current &&
         rec &&
         typeof (rec.payload as { plainText?: unknown }).plainText === "string" &&
         elRef.current
       ) {
         const plain = (rec.payload as { plainText: string }).plainText;
-        if (elRef.current.innerText !== plain) {
-          elRef.current.innerText = plain;
+        if (elRef.current.textContent !== plain) {
+          elRef.current.textContent = plain;
           lastSetRef.current = plain;
           lastTextRef.current = plain;
         }
-        hydratedFromDraftRef.current = true;
       }
     });
   }, [draftKey, readOnly]);
@@ -741,26 +814,63 @@ function VerseCell({
   }, [search, sourceHits, dto?.plain_text, isSource, activeRange]);
 
   const highlights = useMemo<Set<HighlightKey> | null>(() => {
-    if (findHTML) return null;
-    if (!isActive || !activeNoteQuote || !dto?.content) return null;
-    return highlightsFor(bibleVersion, dto.content, activeNoteQuote, activeNoteOccurrence);
-  }, [findHTML, isActive, activeNoteQuote, activeNoteOccurrence, bibleVersion, dto?.content]);
+    if (findHTML || !isActive || !dto?.content) return null;
+    // During a preview the yellow follows the moved/hovered note; else active.
+    const aQuote = reorderHighlight?.movedQuote ?? activeNoteQuote;
+    const aOcc = reorderHighlight?.movedQuote ? reorderHighlight.movedOccurrence : activeNoteOccurrence;
+    if (!aQuote) return null;
+    return highlightsFor(bibleVersion, dto.content, aQuote, aOcc, activeSourceContent);
+  }, [findHTML, isActive, activeNoteQuote, activeNoteOccurrence, reorderHighlight, bibleVersion, dto?.content, activeSourceContent]);
+
+  // Reorder stoplight neighbour sets (green underline / red overline), active
+  // verse only and only while a drag / recent arrow-move is live.
+  const prevHighlights = useMemo<Set<HighlightKey> | null>(() => {
+    if (findHTML || !isActive || !reorderHighlight?.prevQuote || !dto?.content) return null;
+    return highlightsFor(bibleVersion, dto.content, reorderHighlight.prevQuote, reorderHighlight.prevOccurrence, activeSourceContent);
+  }, [findHTML, isActive, reorderHighlight, bibleVersion, dto?.content, activeSourceContent]);
+  const nextHighlights = useMemo<Set<HighlightKey> | null>(() => {
+    if (findHTML || !isActive || !reorderHighlight?.nextQuote || !dto?.content) return null;
+    return highlightsFor(bibleVersion, dto.content, reorderHighlight.nextQuote, reorderHighlight.nextOccurrence, activeSourceContent);
+  }, [findHTML, isActive, reorderHighlight, bibleVersion, dto?.content, activeSourceContent]);
+  const roles = useMemo(() => {
+    if (!prevHighlights?.size && !nextHighlights?.size) return undefined;
+    return { prev: prevHighlights, next: nextHighlights };
+  }, [prevHighlights, nextHighlights]);
 
   const html = useMemo(() => {
     if (findHTML) return findHTML;
     const verseObjects = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
     if (!Array.isArray(verseObjects)) return null;
+    // Active editable verse: surface paragraph / poetry markers as literal
+    // "\p" / "\q1" chips so they can be seen and adjusted in place — same as
+    // the rows view active line. Render the verse's OWN objects (not the
+    // drifted-composed set) so the contentEditable's textContent matches
+    // extractEditableText and the smartEditVerse save diff lines up. Only the
+    // active verse gets chips; the rest of the book stays clean.
+    if (isActive && !readOnly) {
+      return renderEditableHTML(verseObjects, highlights ?? new Set(), roles);
+    }
     // Drift trailing `\q1`/`\p` etc. from the previous verse so the
     // visual break introduces this verse — usfm-js attaches markers
     // to the prior verse (per USFM convention `\q1 \v N+1`).
     const drifted = extractTrailingMarkers(
       (prevDto?.content as { verseObjects?: unknown[] } | null)?.verseObjects,
     );
-    const composed = drifted.length > 0 ? [...drifted, ...verseObjects] : verseObjects;
+    // Strip THIS verse's own trailing markers — they drift to the next verse,
+    // so rendering them here too would double a text-bearing `\qa` acrostic.
+    const body = stripTrailingMarkers(verseObjects);
+    const composed = drifted.length > 0 ? [...drifted, ...body] : body;
     // Render unconditionally so paragraph / poetry markers turn into
     // visual breaks / indents in book view even without active highlights.
-    return renderHighlightedHTML(composed, highlights ?? new Set());
-  }, [findHTML, dto?.content, highlights, prevDto?.content]);
+    return renderHighlightedHTML(composed, highlights ?? new Set(), roles);
+  }, [findHTML, dto?.content, highlights, prevDto?.content, isActive, readOnly, roles]);
+
+  // splitSectionHeaders walks the whole verseObjects tree — memoize on the
+  // content reference so re-renders without a content change skip the walk.
+  const sections = useMemo<SectionHeader[]>(() => {
+    const verseObjects = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+    return Array.isArray(verseObjects) ? splitSectionHeaders(verseObjects).sections : [];
+  }, [dto?.content]);
 
   useEffect(() => {
     if (!elRef.current) return;
@@ -768,17 +878,19 @@ function VerseCell({
     // the source of truth between mount/save.
     if (hasDraft) return;
     const text = dto?.plain_text ?? "";
-    const dom = elRef.current.innerText;
+    const dom = elRef.current.textContent;
     if (html !== null) {
       if (html !== lastSetRef.current) {
-        elRef.current.innerHTML = html;
+        // Caret-preserving: activating this verse flips `html` to chip HTML and
+        // would otherwise wipe the selection the activating click just placed.
+        setInnerHtmlPreservingCaret(elRef.current, html);
         lastSetRef.current = html;
         lastTextRef.current = text;
       }
       return;
     }
     if (lastSetRef.current === null || dom === lastTextRef.current) {
-      elRef.current.innerText = text;
+      elRef.current.textContent = text;
       lastSetRef.current = text;
     }
     lastTextRef.current = text;
@@ -792,26 +904,8 @@ function VerseCell({
     );
   }
 
-  const verseObjects = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  const sections: SectionHeader[] = Array.isArray(verseObjects)
-    ? splitSectionHeaders(verseObjects).sections
-    : [];
-
   return (
     <Box sx={{ lineHeight: 1.6 }}>
-      {sections.map((s, i) => (
-        <SectionHeaderBand
-          key={`bv-sec-${i}`}
-          tag={s.tag}
-          text={s.text}
-          editable={!readOnly && !!onEditSection}
-          onChange={
-            onEditSection
-              ? (next) => onEditSection({ index: i, tag: next.tag, text: next.text })
-              : undefined
-          }
-        />
-      ))}
       <Typography
         component="span"
         variant="caption"
@@ -830,7 +924,7 @@ function VerseCell({
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
-              onAlign();
+              onOpenAligner(chapter, verseNum, bibleVersion);
             }}
             size="small"
             sx={{ color: "success.main", p: 0.25, verticalAlign: "-3px" }}
@@ -844,12 +938,21 @@ function VerseCell({
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
+              // Leave the hydration guard set — hydration is a mount-only
+              // concern (a fresh mount gets a fresh ref); re-arming it here
+              // would let the next keystroke's draft stomp the live DOM again.
               void drafts.clear(draftKey);
-              hydratedFromDraftRef.current = false;
               const text = dto?.plain_text ?? "";
               if (elRef.current) {
-                elRef.current.innerText = text;
-                lastSetRef.current = text;
+                // Re-render from `html` when present (active verse) so the
+                // USFM-code chips come back, not just marker-free plain text.
+                if (html !== null) {
+                  elRef.current.innerHTML = html;
+                  lastSetRef.current = html;
+                } else {
+                  elRef.current.textContent = text;
+                  lastSetRef.current = text;
+                }
                 lastTextRef.current = text;
               }
             }}
@@ -872,6 +975,11 @@ function VerseCell({
           <HebrewLine
             verseObjects={(dto.content as { verseObjects?: unknown[] } | null)?.verseObjects}
             lexiconMap={lexiconMap}
+            twl={twl}
+            verseNum={verseNum}
+            highlights={highlights ?? undefined}
+            prevHighlights={prevHighlights ?? undefined}
+            nextHighlights={nextHighlights ?? undefined}
             findHighlights={findHighlights}
             activeFindKey={activeFindKey}
             fallbackText={dto.plain_text ?? ""}
@@ -889,8 +997,12 @@ function VerseCell({
         dir={rtl ? "rtl" : "ltr"}
         onInput={(e) => {
           if (readOnly) return;
-          const value = (e.currentTarget as HTMLSpanElement).innerText;
-          onEdit(value);
+          // textContent, not innerText: in Firefox `innerText` read inside the
+          // input handler returns a stale/truncated value (layout not flushed),
+          // which then corrupts the stored draft and the verse. textContent is
+          // synchronous and reliable in both browsers (matches the rows editor).
+          const value = (e.currentTarget as HTMLSpanElement).textContent ?? "";
+          onEditVerse(chapter, verseNum, bibleVersion, value, dto);
           lastTextRef.current = value;
           lastSetRef.current = value;
         }}
@@ -905,9 +1017,27 @@ function VerseCell({
         className="be-verse-span"
       />
       )}
+      {/* `\s*` headings live in this verse's trailing verseObjects but
+          introduce the NEXT verse — render the band AFTER the verse body
+          so it sits at the verse end (like a trailing `\p`/`\q`), not
+          glued above the verse it's attached to. */}
+      {sections.map((s, i) => (
+        <SectionHeaderBand
+          key={`bv-sec-${i}`}
+          tag={s.tag}
+          text={s.text}
+          editable={!readOnly && !!onEditSection}
+          onChange={
+            onEditSection
+              ? (next) =>
+                  onEditSection(chapter, verseNum, bibleVersion, { index: i, tag: next.tag, text: next.text }, dto)
+              : undefined
+          }
+        />
+      ))}
     </Box>
   );
-}
+});
 
 function renderFindMatchesHTML(
   plainText: string,
@@ -932,4 +1062,72 @@ function renderFindMatchesHTML(
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+}
+
+// Caret-preserving innerHTML swap for the editable verse span. Activating a
+// verse flips the `html` memo from clean text to chip-rendered HTML, and the
+// resync effect rewrites innerHTML — which destroys the caret/selection the
+// activating click just placed (the "click twice to type" bug in poetry
+// chapters). Capture the caret as a character offset within textContent before
+// the swap, then re-walk the new text nodes to restore a collapsed range at the
+// same offset. Only acts when the element is focused and the selection lives
+// inside it; otherwise it's a plain assignment, leaving IME/composition and the
+// Firefox first-keystroke draft hydration untouched.
+function setInnerHtmlPreservingCaret(el: HTMLElement, html: string): void {
+  const sel = window.getSelection();
+  const focused = document.activeElement === el;
+  const inEl =
+    focused &&
+    sel &&
+    sel.rangeCount > 0 &&
+    sel.anchorNode != null &&
+    el.contains(sel.anchorNode);
+  if (!inEl) {
+    el.innerHTML = html;
+    return;
+  }
+  const offset = caretOffsetWithin(el, sel.getRangeAt(0));
+  el.innerHTML = html;
+  restoreCaretWithin(el, offset, sel);
+}
+
+// Number of textContent characters before the caret (anchor) within `el`.
+function caretOffsetWithin(el: HTMLElement, range: Range): number {
+  const pre = range.cloneRange();
+  pre.selectNodeContents(el);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
+}
+
+// Place a collapsed caret `offset` characters into `el`'s text, clamped to the
+// available text length.
+function restoreCaretWithin(el: HTMLElement, offset: number, sel: Selection): void {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let node: Node | null = walker.nextNode();
+  let last: Text | null = null;
+  while (node) {
+    const len = node.textContent?.length ?? 0;
+    last = node as Text;
+    if (remaining <= len) {
+      const r = document.createRange();
+      r.setStart(node, remaining);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      return;
+    }
+    remaining -= len;
+    node = walker.nextNode();
+  }
+  // Offset ran past the end (text shrank) — drop the caret at the end.
+  const r = document.createRange();
+  if (last) {
+    r.setStart(last, last.textContent?.length ?? 0);
+  } else {
+    r.selectNodeContents(el);
+  }
+  r.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(r);
 }

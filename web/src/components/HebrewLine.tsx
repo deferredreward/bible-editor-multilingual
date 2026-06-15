@@ -8,13 +8,21 @@ import { Tooltip, Box } from "@mui/material";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import type { SourceWord } from "../lib/alignment";
 import type { HighlightKey } from "../lib/highlight";
-import { wordHighlightStyles } from "../lib/highlightStyles";
+import type { TwlRow } from "../sync/api";
+import { roleLineShadow, wordHighlightStyles } from "../lib/highlightStyles";
 import { SourceTooltipBody } from "./SourceTooltipBody";
+import { buildTwHintMap, twHintFromMap } from "./UhbStrip";
 
 interface Props {
   verseObjects: unknown[] | undefined | null;
   lexiconMap: Map<string, LexiconEntry | null>;
   highlights?: Set<HighlightKey> | null;
+  // Reorder stoplight: words belonging to the moved note's candidate
+  // predecessor (green underline) / successor (red overline). Composed on top
+  // of the active fill via inset box-shadow; suppressed while a find hit owns
+  // the token (find precedence, same as the yellow note highlight).
+  prevHighlights?: Set<HighlightKey> | null;
+  nextHighlights?: Set<HighlightKey> | null;
   // Find-overlay matches that should paint orange (be-find), overriding
   // any yellow note highlight on the same token. Keyed `${text}|${occ}`.
   findHighlights?: Set<HighlightKey> | null;
@@ -25,12 +33,22 @@ interface Props {
   // Used when the parent supplies a flat fallback string (e.g. when the
   // verseObjects tree is missing or invalid).
   fallbackText?: string;
+  // The chapter's TWL rows + this verse's number. When both are present each
+  // \w token's tooltip gains the "tW" hint (translationWords link) — the same
+  // hint the aligner's UHB strip / cards show. Optional so non-source columns
+  // (ULT/UST) and callers without TWL data render exactly as before.
+  twl?: TwlRow[];
+  verseNum?: number;
 }
 
-export function HebrewLine({ verseObjects, lexiconMap, highlights, findHighlights, activeFindKey, fallbackText }: Props) {
+export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlights, nextHighlights, findHighlights, activeFindKey, fallbackText, twl, verseNum }: Props) {
   if (!Array.isArray(verseObjects)) {
     return <>{fallbackText ?? ""}</>;
   }
+  // Precompute the per-verse orig-word → tw hint lookup once (see buildTwHintMap)
+  // so the token walk is an O(1) Map.get per \w instead of re-splitting every
+  // TWL row's orig_words per token.
+  const twHints = twl && verseNum != null ? buildTwHintMap(twl, verseNum) : null;
   const items: React.ReactNode[] = [];
   const walk = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
@@ -48,6 +66,8 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, findHighlight
         const isFindHit = !!findHighlights && findHighlights.has(key);
         const isActiveFind = !!activeFindKey && activeFindKey === key;
         const isHighlighted = !!highlights && highlights.has(key);
+        const isPrev = !!prevHighlights && prevHighlights.has(key);
+        const isNext = !!nextHighlights && nextHighlights.has(key);
         const src: SourceWord = {
           id: "",
           strong,
@@ -61,7 +81,13 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, findHighlight
           <Box
             component="span"
             sx={(theme) => {
-              const hl = wordHighlightStyles(theme.palette.mode);
+              const mode = theme.palette.mode;
+              const hl = wordHighlightStyles(mode);
+              // Find hits own the token (orange) and suppress both the yellow
+              // note fill and the reorder stoplight lines, matching the <mark>
+              // render path's find precedence.
+              const roleShadow =
+                !isFindHit && !isActiveFind ? roleLineShadow(mode, isPrev, isNext) : undefined;
               return {
                 cursor: "help",
                 ...(isActiveFind
@@ -71,6 +97,7 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, findHighlight
                     : isHighlighted
                       ? hl.hl
                       : {}),
+                ...(roleShadow ? { boxShadow: roleShadow } : {}),
               };
             }}
           >
@@ -80,7 +107,7 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, findHighlight
         items.push(
           <Tooltip
             key={`w${items.length}`}
-            title={<SourceTooltipBody source={src} lex={lexiconMap.get(strong) ?? null} />}
+            title={<SourceTooltipBody source={src} lex={lexiconMap.get(strong) ?? null} twHint={twHints ? twHintFromMap(twHints, text) : null} />}
             slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
           >
             {wordSpan}

@@ -18,12 +18,24 @@
 //
 // Hebrew note: TN/TQ quote text typically arrives NFC-normalized while UHB
 // stores legacy combining-mark order (see lib/hebrew.ts), so all source-
-// text equality checks go through `nfc()`. The Set keys still carry the
-// RAW verseObjects text — the consumer (HebrewLine, renderHighlightedHTML)
-// reads from the same tree, so raw matches raw with no further work.
+// text equality checks go through `matchNorm()` (NFC + joiner stripping).
+// The Set keys still carry the RAW verseObjects text — the consumer
+// (HebrewLine, renderHighlightedHTML) reads from the same tree, so raw
+// matches raw with no further work.
 
 import { nfc } from "./hebrew.ts";
-import { isInFlowMarker, SECTION_HEADER_TAGS } from "./usfm.ts";
+import { isInFlowMarker, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
+
+// U+2060 WORD JOINER glues UHB clitic morphemes to their host word
+// (הָ⁠אֶ֧בֶן); U+200D ZERO WIDTH JOINER plays the same role in some corpora.
+// They are format characters — nfc() does NOT fold them away — and TN/TQ
+// quote text routinely omits them (5 of 302 seeded ZEC quotes, e.g. ZEC
+// 4:10's הָאֶ֧בֶן), so every quote↔token EQUALITY check strips them from
+// BOTH sides. Matching only: stored text, rendered text, and HighlightKey
+// sets keep the raw joiners.
+export function matchNorm(s: string): string {
+  return nfc(s).replace(/[\u2060\u200d]/g, "");
+}
 
 type WordToken = { text: string; occurrence: number };
 type Run = { source: string; occurrence: number; targets: WordToken[] };
@@ -106,10 +118,50 @@ function nodeIsWord(n: unknown): n is Record<string, unknown> {
   return !!o && o["type"] === "word" && o["tag"] === "w";
 }
 
+// \d (Psalm superscription) is `type:"section"` but its content IS
+// alignable Hebrew verse body — the renderer already descends into it
+// (see segmentByParagraphs); the matchers must too or a quote on a
+// superscription word never highlights.
+function nodeIsPsalmTitle(n: unknown): n is Record<string, unknown> {
+  const o = n as Record<string, unknown> | null;
+  return !!o && o["type"] === "section" && o["tag"] === "d";
+}
+
+// Collect every `\w` token in a subtree (descending through nested milestones
+// and \d sections), in document order. A merge group serializes as a chain of
+// nested `\zaln-s` with ALL its target words at the innermost level, so a run's
+// `targets` must be its whole subtree — see collectMilestoneRuns / atomic-group
+// note below.
+function collectSubtreeWords(children: unknown[]): WordToken[] {
+  const out: WordToken[] = [];
+  function walk(nodes: unknown[]) {
+    for (const c of nodes ?? []) {
+      if (nodeIsWord(c)) {
+        out.push({
+          text: String((c as Record<string, unknown>)["text"] ?? ""),
+          occurrence:
+            parseInt(String((c as Record<string, unknown>)["occurrence"] ?? "1"), 10) || 1,
+        });
+      } else if (nodeIsMilestone(c) || nodeIsPsalmTitle(c)) {
+        walk(((c as Record<string, unknown>)["children"] as unknown[] | undefined) ?? []);
+      }
+    }
+  }
+  walk(children);
+  return out;
+}
+
 // Flatten the verse tree into one Run per zaln milestone (nested milestones
-// become their own runs in document order). Each run's `targets` is only
-// its DIRECT `\w` children — that way compound (nested) alignments stay
-// disjoint and the matcher can highlight each level on its own.
+// become their own runs in document order). Each run's `targets` is its FULL
+// subtree of `\w` tokens, not just direct children. Nested `\zaln-s` encode a
+// MERGE GROUP (N source words ↔ M target words) whose target words all sit at
+// the innermost level; treating each level's targets as the whole subtree makes
+// the highlight ATOMIC — quoting ANY source word in the chain lights the whole
+// group, regardless of nesting depth (matching tC / gatewayEdit). With only the
+// direct children, an outer source word (whose direct children are the nested
+// milestone, not words) would highlight nothing while the innermost lit
+// everything — an indefensible depth-dependent asymmetry. Disjoint sibling
+// alignments stay disjoint because each subtree is scoped to its own milestone.
 //
 // Split-gloss healing: an AI/tC aligner sometimes renders a single source
 // token whose target words are NON-CONTIGUOUS as two separate `\zaln-s` runs
@@ -129,30 +181,27 @@ function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
   const out: Run[] = [];
   function walk(nodes: unknown[]) {
     for (const node of nodes ?? []) {
+      if (nodeIsPsalmTitle(node)) {
+        walk((node["children"] as unknown[] | undefined) ?? []);
+        continue;
+      }
       if (!nodeIsMilestone(node)) continue;
       const source = String(node["content"] ?? "");
       const occurrence = parseInt(String(node["occurrence"] ?? "1"), 10) || 1;
       const occurrences = parseInt(String(node["occurrences"] ?? "1"), 10) || 1;
-      const targets: WordToken[] = [];
       const children = (node["children"] as unknown[] | undefined) ?? [];
-      for (const c of children) {
-        if (nodeIsWord(c)) {
-          targets.push({
-            text: String((c as Record<string, unknown>)["text"] ?? ""),
-            occurrence:
-              parseInt(String((c as Record<string, unknown>)["occurrence"] ?? "1"), 10) || 1,
-          });
-        }
-      }
-      // Split continuation: merge into the nearest preceding run with the same
-      // source content AND the same effective occurrence, rather than starting
-      // a new run.
+      const targets = collectSubtreeWords(children);
+      // Split continuation healing (both prod shapes — see comment above): fold
+      // a run into the nearest preceding run with the SAME content AND the same
+      // EFFECTIVE occurrence (clamped into [1, occurrences]) so the matcher sees
+      // ONE token carrying ALL its target words. A genuinely repeated word
+      // carries a distinct effective occurrence and never false-merges.
       const effOcc = Math.min(Math.max(occurrence, 1), Math.max(occurrences, 1));
       let merged = false;
       if (source) {
-        const want = nfc(source);
+        const want = matchNorm(source);
         for (let i = out.length - 1; i >= 0; i--) {
-          if (out[i].occurrence === effOcc && nfc(out[i].source) === want) {
+          if (out[i].occurrence === effOcc && matchNorm(out[i].source) === want) {
             out[i].targets.push(...targets);
             merged = true;
             break;
@@ -182,7 +231,7 @@ function collectBareWords(verseObjects: unknown[]): WordToken[] {
           occurrence:
             parseInt(String((node as Record<string, unknown>)["occurrence"] ?? "1"), 10) || 1,
         });
-      } else if (nodeIsMilestone(node)) {
+      } else if (nodeIsMilestone(node) || nodeIsPsalmTitle(node)) {
         const children = ((node as Record<string, unknown>)["children"] as unknown[] | undefined) ?? [];
         walk(children);
       }
@@ -195,31 +244,114 @@ function collectBareWords(verseObjects: unknown[]): WordToken[] {
 export type HighlightKey = string; // `${text}|${occurrence}`
 const k = (text: string, occurrence: number): HighlightKey => `${text}|${occurrence}`;
 
+// During a note reorder (drag held, or for a few seconds after an arrow move)
+// the active verse paints a "stoplight": the moved note keeps the normal yellow
+// fill (its quote is the existing activeNoteQuote), while its candidate
+// predecessor and successor light up on SEPARATE visual channels — green
+// underline (prev) and red overline (next). Carried as quote + occurrence so
+// each cell resolves them against its own version (and OL-anchors ULT/UST).
+export interface ReorderHighlight {
+  // The moved/hovered note itself (yellow fill). Carried explicitly so a HOVER
+  // over the grip/arrows can light the note even when it isn't the active
+  // selection; during a drag/arrow move it equals the active note.
+  movedQuote: string | null;
+  movedOccurrence: number | null;
+  prevQuote: string | null;
+  prevOccurrence: number | null;
+  nextQuote: string | null;
+  nextOccurrence: number | null;
+}
+
+// Per-token role sets handed to the renderers alongside the active highlight
+// set. A word can sit in more than one set at once (overlap is common — two
+// adjacent notes routinely quote the same or nested spans); each role rides its
+// own CSS channel (see markHighlightSx) so overlaps compose instead of one
+// colour clobbering another.
+export interface RoleHighlightSets {
+  prev?: Set<HighlightKey> | null;
+  next?: Set<HighlightKey> | null;
+}
+
+// Build the per-word renderer shared by renderHighlightedHTML /
+// renderEditableHTML. A token gets `be-hl` (active/yellow fill), `be-hl-prev`
+// (green underline) and/or `be-hl-next` (red overline); the classes stack on a
+// single <mark> so a multiply-claimed word shows every role at once.
+function markRenderer(
+  highlights: Set<HighlightKey>,
+  roles?: RoleHighlightSets,
+): (text: string, occurrence: number) => string {
+  return (text, occurrence) => {
+    const key = k(text, occurrence);
+    const cls: string[] = [];
+    if (highlights.has(key)) cls.push("be-hl");
+    if (roles?.prev?.has(key)) cls.push("be-hl-prev");
+    if (roles?.next?.has(key)) cls.push("be-hl-next");
+    if (cls.length === 0) return escapeHtml(text);
+    return `<mark class="${cls.join(" ")}">${escapeHtml(text)}</mark>`;
+  };
+}
+
 // For ULT/UST: returns target-word keys that should be highlighted.
+//
+// CANONICAL APPROACH (OL-anchored), matching gatewayEdit / tcCreate /
+// tsv-quote-converters: a TN quote is written in the SOURCE language, so we
+// resolve it against the SOURCE (UHB/UGNT) verse FIRST — giving the exact
+// (content, occurrence) source-word instances — then highlight the GL words
+// whose alignment scope (`\zaln-s` content + x-occurrence) matches one of
+// those instances. This is ORDER-INDEPENDENT: it never assumes the quoted
+// words stay adjacent (or even in source order) in the target. They usually
+// DON'T — the English freely permutes and interleaves the source words
+// (HOS 6:2 UST drops the verb between "after two days" and "on the third day";
+// ISA 28:1 UST scatters the four quoted words across the whole verse). The
+// `(content, occurrence)` join is the same one the quote-builder picker already
+// relies on (lib/quoteBuilder.ts `collectTargetTokens` + `tokenKey`).
+//
+// `sourceVerseObjects` (the OL verse) is required for the canonical path. When
+// it is absent — or the quote can't be resolved within it — we fall back to a
+// GL-only set match keyed on the milestones' own (content, occurrence); see the
+// degradation block below.
 export function findTargetHighlights(
   verseObjects: unknown[],
   quote: string,
   occurrence: number,
+  sourceVerseObjects?: unknown[],
 ): Set<HighlightKey> {
   const runs = collectMilestoneRuns(verseObjects);
-  const groups = quoteGroups(quote);
   const out = new Set<HighlightKey>();
-  if (runs.length === 0 || groups.length === 0) return out;
+  if (runs.length === 0) return out;
+  // `occurrence: -1` means "every occurrence of the quote" (TSV spec).
+  const allOcc = (occurrence | 0) === -1;
   const wantOcc = Math.max(1, occurrence | 0);
 
-  const normGroups = groups.map((g) => g.map(nfc));
-  const normSources = runs.map((r) => nfc(r.source));
-
-  const matches: number[][] = [];
-  for (let start = 0; start < runs.length; start++) {
-    const m = matchGroupsAt(start, normGroups, normSources);
-    if (m) matches.push(m);
+  // Stage 1 + 2 (canonical): resolve the quote to source instances, join GL
+  // milestones by (content, occurrence). Split-gloss duplicates share a key,
+  // so every fragment of a discontinuous gloss lights up together.
+  if (Array.isArray(sourceVerseObjects)) {
+    const olKeys = sourceInstanceKeys(sourceVerseObjects, quote, occurrence);
+    if (olKeys.size > 0) {
+      for (const r of runs) {
+        if (olKeys.has(`${matchNorm(r.source)}|${r.occurrence}`)) {
+          for (const t of r.targets) out.add(k(t.text, t.occurrence));
+        }
+      }
+      return out;
+    }
   }
 
-  const chosen = matches[wantOcc - 1];
-  if (!chosen) return out;
-  for (const i of chosen) {
-    for (const t of runs[i].targets) out.add(k(t.text, t.occurrence));
+  // Degradation: no source verse (e.g. UHB failed to load) or the quote didn't
+  // resolve in it. Match the quote as a SET of source words against the GL
+  // milestones' own (content, occurrence). Correct for the common
+  // single-occurrence case and lockstep repeats; for a quoted word whose source
+  // occurrence differs from the phrase occurrence it can pick the wrong instance
+  // — but that is unresolvable without the source verse, which the canonical
+  // path above uses whenever available.
+  const groups = quoteGroups(quote);
+  if (groups.length === 0) return out;
+  const wantWords = new Set(groups.flat().map(matchNorm));
+  for (const r of runs) {
+    if (wantWords.has(matchNorm(r.source)) && (allOcc || r.occurrence === wantOcc)) {
+      for (const t of r.targets) out.add(k(t.text, t.occurrence));
+    }
   }
   return out;
 }
@@ -245,6 +377,13 @@ export function findSourceForTargetText(
   englishText: string,
 ): string {
   const wantedWords = englishText
+    // Proofreaders paste straight from the ULT, which can carry USFM
+    // markers (\q1, \q2, \p, \m, …) when the quote spans a poetry line
+    // or paragraph break. Strip them before the punctuation pass below —
+    // that pass removes the backslash but would leave the marker's
+    // letters/digits (q1, q2, p) behind as bogus words that break the
+    // contiguous-run match against the target.
+    .replace(/\\[a-z]+\d*\*?/gi, " ")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]+/gu, " ")
     .split(/\s+/)
@@ -261,6 +400,11 @@ export function findSourceForTargetText(
         const source = String(o["content"] ?? "");
         const children = (o["children"] as unknown[] | undefined) ?? [];
         walk(children, source ? [...stack, source] : stack);
+      } else if (nodeIsPsalmTitle(o)) {
+        // \d (Psalm superscription) is type:"section" but its content IS
+        // alignable verse body — walk its children like a milestone (no
+        // source contribution of its own). Mirrors collectMilestoneRuns.
+        walk((o["children"] as unknown[] | undefined) ?? [], stack);
       } else if (nodeIsWord(o)) {
         const text = String(o["text"] ?? "");
         const norm = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -313,8 +457,9 @@ export function extractTargetSelectionText(
   verseObjects: unknown[],
   quote: string,
   occurrence: number,
+  sourceVerseObjects?: unknown[],
 ): string {
-  const highlights = findTargetHighlights(verseObjects, quote, occurrence);
+  const highlights = findTargetHighlights(verseObjects, quote, occurrence, sourceVerseObjects);
   if (highlights.size === 0) return "";
   const seen = new Set<HighlightKey>();
   const words: string[] = [];
@@ -330,7 +475,9 @@ export function extractTargetSelectionText(
           seen.add(key);
           words.push(text);
         }
-      } else if (nodeIsMilestone(o)) {
+      } else if (nodeIsMilestone(o) || nodeIsPsalmTitle(o)) {
+        // \d (Psalm superscription) descends like a milestone — its inner
+        // \w tokens are alignable verse body. Mirrors collectMilestoneRuns.
         const children = (o["children"] as unknown[] | undefined) ?? [];
         walk(children);
       }
@@ -340,20 +487,25 @@ export function extractTargetSelectionText(
   return words.join(" ");
 }
 
-// For UHB/UGNT: returns source-word keys that should be highlighted.
-export function findSourceHighlights(
+// Resolve a quote + occurrence against the source/original verse words, in
+// SOURCE document order (where the quote IS contiguous and ordered, and gap
+// markers mark the real discontinuities). Returns the matched bare-word tokens
+// of the chosen occurrence, or [] if it doesn't resolve. Shared by the UHB/UGNT
+// highlighter and the OL-anchored target join.
+function matchSourceTokens(
   verseObjects: unknown[],
   quote: string,
   occurrence: number,
-): Set<HighlightKey> {
+): WordToken[] {
   const groups = quoteGroups(quote);
   const tokens = collectBareWords(verseObjects);
-  const out = new Set<HighlightKey>();
-  if (groups.length === 0 || tokens.length === 0) return out;
+  if (groups.length === 0 || tokens.length === 0) return [];
+  // `occurrence: -1` means "every occurrence of the quote" (TSV spec).
+  const allOcc = (occurrence | 0) === -1;
   const wantOcc = Math.max(1, occurrence | 0);
 
-  const normGroups = groups.map((g) => g.map(nfc));
-  const normTokens = tokens.map((t) => nfc(t.text));
+  const normGroups = groups.map((g) => g.map(matchNorm));
+  const normTokens = tokens.map((t) => matchNorm(t.text));
 
   const matches: number[][] = [];
   for (let start = 0; start < tokens.length; start++) {
@@ -361,10 +513,43 @@ export function findSourceHighlights(
     if (m) matches.push(m);
   }
 
+  if (allOcc) {
+    // Union of every match, de-duped, in document order.
+    const union = new Set<number>();
+    for (const m of matches) for (const i of m) union.add(i);
+    return [...union].sort((a, b) => a - b).map((i) => tokens[i]);
+  }
   const chosen = matches[wantOcc - 1];
-  if (!chosen) return out;
-  for (const i of chosen) {
-    out.add(k(tokens[i].text, tokens[i].occurrence));
+  if (!chosen) return [];
+  return chosen.map((i) => tokens[i]);
+}
+
+// For UHB/UGNT: returns source-word keys that should be highlighted. Keys carry
+// RAW text — HebrewLine / renderHighlightedHTML read from the same tree.
+export function findSourceHighlights(
+  verseObjects: unknown[],
+  quote: string,
+  occurrence: number,
+): Set<HighlightKey> {
+  const out = new Set<HighlightKey>();
+  for (const t of matchSourceTokens(verseObjects, quote, occurrence)) {
+    out.add(k(t.text, t.occurrence));
+  }
+  return out;
+}
+
+// OL instance keys for the ULT/UST alignment join: `${matchNorm(content)}|occurrence`.
+// Match-normalized because UHB \w text is in legacy combining-mark order while
+// \zaln-s x-content is NFC (see lib/hebrew.ts), and joiner presence can drift
+// — the join must compare the canonical form on both sides.
+function sourceInstanceKeys(
+  verseObjects: unknown[],
+  quote: string,
+  occurrence: number,
+): Set<string> {
+  const out = new Set<string>();
+  for (const t of matchSourceTokens(verseObjects, quote, occurrence)) {
+    out.add(`${matchNorm(t.text)}|${t.occurrence}`);
   }
   return out;
 }
@@ -487,7 +672,10 @@ function segmentByParagraphs(
       }
     }
   }
-  walk(verseObjects);
+  // Split any leading punctuation usfm-js parked on a marker node (`\q2 “…`)
+  // into a following text node so it renders at the start of its poetic line
+  // instead of vanishing. No-op when no marker carries text.
+  walk(liftMarkerText(verseObjects));
   return segments;
 }
 
@@ -553,14 +741,9 @@ function segmentsToHtml(segments: Segment[], emitChips: boolean): string {
 export function renderHighlightedHTML(
   verseObjects: unknown[],
   highlights: Set<HighlightKey>,
+  roles?: RoleHighlightSets,
 ): string {
-  const segments = segmentByParagraphs(verseObjects, (text, occurrence) => {
-    const key = k(text, occurrence);
-    if (highlights.has(key)) {
-      return `<mark class="be-hl">${escapeHtml(text)}</mark>`;
-    }
-    return escapeHtml(text);
-  });
+  const segments = segmentByParagraphs(verseObjects, markRenderer(highlights, roles));
   return segmentsToHtml(segments, false);
 }
 
@@ -574,23 +757,23 @@ export function renderHighlightedHTML(
 export function renderEditableHTML(
   verseObjects: unknown[],
   highlights: Set<HighlightKey>,
+  roles?: RoleHighlightSets,
 ): string {
-  const segments = segmentByParagraphs(verseObjects, (text, occurrence) => {
-    const key = k(text, occurrence);
-    if (highlights.has(key)) {
-      return `<mark class="be-hl">${escapeHtml(text)}</mark>`;
-    }
-    return escapeHtml(text);
-  });
+  const segments = segmentByParagraphs(verseObjects, markRenderer(highlights, roles));
   return segmentsToHtml(segments, true);
 }
 
 // Convenience: pick the right highlight set for a given bible_version.
+// `sourceContent` is the active verse's UHB/UGNT verse content; pass it for
+// ULT/UST so the highlighter can OL-anchor the match (see findTargetHighlights).
+// Omitting it degrades ULT/UST to GL-only set matching; it's ignored for
+// UHB/UGNT (the source IS the verse).
 export function highlightsFor(
   bibleVersion: string,
   verseContent: unknown,
   quote: string | null | undefined,
   occurrence: number | null | undefined,
+  sourceContent?: unknown,
 ): Set<HighlightKey> {
   if (!quote) return new Set();
   const verseObjects = (verseContent as { verseObjects?: unknown[] } | null)?.verseObjects;
@@ -599,5 +782,6 @@ export function highlightsFor(
   if (bibleVersion === "UHB" || bibleVersion === "UGNT") {
     return findSourceHighlights(verseObjects, quote, occ);
   }
-  return findTargetHighlights(verseObjects, quote, occ);
+  const sourceVo = (sourceContent as { verseObjects?: unknown[] } | null)?.verseObjects;
+  return findTargetHighlights(verseObjects, quote, occ, Array.isArray(sourceVo) ? sourceVo : undefined);
 }

@@ -16,6 +16,35 @@ const KIND_TO_TABLE: Record<RowKind, string> = {
 
 const isRowKind = (k: string): k is RowKind => k in KIND_TO_TABLE;
 
+// The original-language field per kind — the cell whose Hebrew/Greek content
+// forces Occurrence >= 1 (see origLangOccurrence below).
+const QUOTE_FIELD: Record<RowKind, "quote" | "orig_words"> = {
+  tn: "quote",
+  tq: "quote",
+  twl: "orig_words",
+};
+
+// uW TSV invariant: an original-language (Hebrew/Greek) quote must carry
+// Occurrence >= 1. The editor / AI quote-builder can rewrite a Gateway-Language
+// snippet to OL words without touching occurrence, leaving it null/0, which
+// exports as invalid TSV. Mirrors export.ts's guard (the export side is the
+// last-resort net; this fixes the stored row at the source). Keep the two in
+// sync. Unicode blocks: Hebrew (0590-05FF), Hebrew presentation forms
+// (FB1D-FB4F), Greek and Coptic (0370-03FF), Greek Extended (1F00-1FFF).
+function hasOrigLang(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (
+      (c >= 0x0590 && c <= 0x05ff) ||
+      (c >= 0xfb1d && c <= 0xfb4f) ||
+      (c >= 0x0370 && c <= 0x03ff) ||
+      (c >= 0x1f00 && c <= 0x1fff)
+    )
+      return true;
+  }
+  return false;
+}
+
 // Adds a book filter to a WHERE clause. After the composite-(book, id) PK
 // migration (0015), every row lookup MUST be scoped by book — the same 4-char
 // id can exist in two books with different content. Handlers guarantee a
@@ -135,6 +164,21 @@ rows.post("/:kind", requireEditor, async (c) => {
     parsed.data.chapter,
   );
   if (lock) return c.json(lockedResponseBody(lock), 409);
+
+  // A new row must carry a sort_order. Without one it lands NULL, and the
+  // export's `ORDER BY ... sort_order ASC NULLS LAST, id` dumps it at the end
+  // of its verse keyed by id — scrambling file order in the nightly DCS diff
+  // (pure-reorder churn). Honor a client-supplied value; otherwise place the
+  // row at the end of its verse (max + 100), matching the import spacing.
+  if (data.sort_order == null) {
+    const maxRow = await c.env.DB.prepare(
+      `SELECT MAX(sort_order) AS m FROM ${KIND_TO_TABLE[kind]}
+        WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND deleted_at IS NULL`,
+    )
+      .bind(data.book, data.chapter, data.verse)
+      .first<{ m: number | null }>();
+    data.sort_order = (maxRow?.m ?? 0) + 100;
+  }
 
   // Retry around PK collision: insert under a fresh id and let the DB be the
   // source of truth instead of SELECT-then-INSERT (which races between two
@@ -343,7 +387,22 @@ rows.get("/:kind/:id/history", requireEditor, async (c) => {
     };
   });
 
-  return c.json({ versions });
+  // Drop reorder-churn from the version list. Before the write path stopped
+  // versioning sort_order (see PATCH above), every drag wrote an `update`
+  // entry that touched no content field — these reconstruct to a snapshot
+  // identical to their predecessor and read as duplicate "versions" in the
+  // dialog. An update whose trimmedPatch is empty changed only excluded fields
+  // (sort_order), so hide it. Always keep non-update actions (create/imported/
+  // delete/restore) and the row's current version, so the snapshot replay's
+  // anchor and the dialog's "current" marker / diff target still resolve.
+  const displayVersions = versions.filter(
+    (v) =>
+      v.action !== "update" ||
+      Object.keys(v.patch).length > 0 ||
+      v.version === currentRow.version,
+  );
+
+  return c.json({ versions: displayVersions });
 });
 
 // Single-row PATCH with optimistic concurrency. If-Match is mandatory and
@@ -390,7 +449,7 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
   }
   const patch = parsed.data;
 
-  const fields = Object.keys(patch);
+  let fields = Object.keys(patch);
   if (fields.length === 0) {
     return c.json({ error: "empty_patch" }, 400);
   }
@@ -411,6 +470,24 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
       }
     >();
   if (!current || current.deleted_at) return c.json({ error: "not_found" }, 404);
+
+  // Enforce the OL-quote occurrence invariant at the source. Only fires when
+  // this patch actually touches the quote or occurrence — a reorder, note-only
+  // edit, or tag toggle must never trigger a retroactive heal (and the version
+  // bump it carries). Look at the post-patch values: if the resulting quote is
+  // original-language and the resulting occurrence is null/0, force it to 1 so
+  // the stored row (and every export from it) satisfies the invariant. An
+  // existing occurrence >= 1 — a real second-occurrence target — is untouched.
+  const p = patch as Record<string, unknown>;
+  const quoteField = QUOTE_FIELD[kind];
+  if (quoteField in p || "occurrence" in p) {
+    const effQuote = quoteField in p ? p[quoteField] : current[quoteField];
+    const effOcc = "occurrence" in p ? p.occurrence : current.occurrence;
+    if (typeof effQuote === "string" && hasOrigLang(effQuote) && (effOcc == null || effOcc === 0)) {
+      p.occurrence = 1;
+      fields = Object.keys(patch);
+    }
+  }
 
   // Lock check for non-tn kinds. TN edits are always allowed during a run —
   // the first PATCH on an updated_by-NULL row implicitly "keeps" it; further
@@ -440,6 +517,51 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     }
   }
 
+  // Reorder-only fast path: sort_order is positional metadata, not content. A
+  // drag must not count as a new version — otherwise the row's version climbs
+  // and the history dialog fills with entries that reconstruct to identical
+  // content (sort_order is excluded from the snapshot), reading as duplicate
+  // "versions". Apply it under the same optimistic-concurrency guard, but skip
+  // the version bump AND the edit_log entry. Mirrors the preserve/hint/trash
+  // bit-toggles, which are likewise non-versioning. updated_at still moves so
+  // mtime views reflect the activity; updated_by stays put (standing authorship
+  // is whoever wrote the note, not whoever reordered it). Only tn/twl carry
+  // sort_order — a tq patch can never reach here (its schema has no field).
+  if (fields.length === 1 && fields[0] === "sort_order") {
+    const now = Math.floor(Date.now() / 1000);
+    const res = await c.env.DB.prepare(
+      `UPDATE ${KIND_TO_TABLE[kind]}
+         SET sort_order = ?1, updated_at = ?2
+       WHERE id = ?3 AND version = ?4 AND deleted_at IS NULL${bookClause(5)}`,
+    )
+      .bind((patch as Record<string, unknown>).sort_order, now, id, expected, book)
+      .run();
+    if (!res.meta.changes) {
+      // Version moved on under us (a content edit landed first). Surface 409
+      // so the outbox auto-heals against the server version and retries — the
+      // same path a content-field mismatch takes.
+      const fresh = await c.env.DB.prepare(
+        `SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
+      )
+        .bind(id, book)
+        .first<{ version: number; deleted_at: number | null }>();
+      if (!fresh || fresh.deleted_at) return c.json({ error: "not_found" }, 404);
+      return c.json({ error: "version_mismatch", current: fresh }, 409);
+    }
+    const updated = await c.env.DB.prepare(
+      `SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
+    )
+      .bind(id, book)
+      .first();
+    if (updated) {
+      const row = updated as unknown as TnRow | TqRow | TwlRow;
+      c.executionCtx.waitUntil(
+        broadcastChapter(c.env, row.book, row.chapter, { type: "row.upserted", kind, row }),
+      );
+    }
+    return c.json(updated);
+  }
+
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
   const setClauses = fields.map((f, i) => `${f} = ?${i + 1}`);
@@ -462,9 +584,11 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
 
   // Atomic: the audit INSERT is conditional on the UPDATE matching, so a
   // version-mismatch never leaves an orphan audit row. D1 batch() commits
-  // both statements together; SQLite evaluates the INSERT ... SELECT WHERE
-  // against the post-UPDATE row state, so the audit only lands if the row
-  // is now at expected+1.
+  // both statements together and runs them sequentially on one connection,
+  // so changes() in the second statement is the row count of THIS batch's
+  // UPDATE. (An EXISTS probe on version = expected+1 is NOT equivalent: a
+  // racing writer can move the row to expected+1, which would log the
+  // rejected patch into history and corrupt version snapshots.)
   const newVersion = expected + 1;
   const [updateRes] = await c.env.DB.batch([
     c.env.DB
@@ -480,7 +604,7 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
       .prepare(
         `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, restored_from_version)
          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'update', ?7, ?8
-         WHERE EXISTS (SELECT 1 FROM ${KIND_TO_TABLE[kind]} WHERE id = ?2 AND book = ?3 AND version = ?6)`,
+         WHERE changes() > 0`,
       )
       .bind(kind, id, book, userId, expected, newVersion, JSON.stringify(patch), restoredFromVersion),
   ]);
@@ -549,9 +673,12 @@ rows.delete("/:kind/:id", requireEditor, async (c) => {
       .bind(now, userId, id, expected, book),
     c.env.DB
       .prepare(
+        // changes()-gated like PATCH: the audit lands only when THIS batch's
+        // UPDATE soft-deleted the row, not when a racing writer matched the
+        // probed end state.
         `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action)
          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'delete'
-         WHERE EXISTS (SELECT 1 FROM ${KIND_TO_TABLE[kind]} WHERE id = ?2 AND book = ?3 AND version = ?6 AND deleted_at IS NOT NULL)`,
+         WHERE changes() > 0`,
       )
       .bind(kind, id, book, userId, expected, newVersion),
   ]);

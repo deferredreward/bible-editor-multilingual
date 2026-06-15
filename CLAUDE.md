@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-> Deployed to `https://bible-editor-api.unfoldingword.workers.dev` (Cloudflare Workers, unfoldingWord account). The default env in `api/wrangler.toml` carries dev-friendly values for `wrangler dev`; prod overrides live under `[env.production.*]` and ship via `wrangler deploy --env production`. Any `--remote` D1 / `wrangler secret` / `wrangler tail` command needs `--env production` to target the deployed worker.
+> Deployed to `https://bible-editor-api.unfoldingword.workers.dev` (Cloudflare Workers, unfoldingWord account). The default env in `api/wrangler.toml` carries dev-friendly values for `wrangler dev` and is named `bible-editor-api-dev` with **no crons**, so a plain `wrangler deploy` lands on a separate dev worker instead of overwriting prod; prod (worker name `bible-editor-api`, crons registered) lives under `[env.production.*]` and ships via `wrangler deploy --env production`. Any `--remote` D1 / `wrangler secret` / `wrangler tail` command needs `--env production` to target the deployed worker.
+
+> **Dev D1 database separated.** Created `bible_editor_dev` (ID: `ceb458bf-4608-4696-a087-9026618a6cef`) as the default remote target for `wrangler d1 ... --remote`. Production ID (`7e566abf-454d-43d6-b24e-11df74f1c0ed`) is isolated to `[env.production.*]` so `wrangler deploy --env production` targets prod only. `wrangler dev` (local) remains unchanged — it uses a local SQLite file and never touches remote.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -42,9 +44,9 @@ npx playwright test tests/concurrency/s2-same-verse.spec.ts -g "<grep>"
 API-only operations (from `api/`):
 
 ```sh
-npx wrangler d1 migrations apply bible_editor --local                       # apply migrations locally
+npx wrangler d1 migrations apply bible_editor_dev --local                   # apply migrations locally
 npx wrangler d1 migrations apply bible_editor --remote --env production     # apply migrations to prod
-npx wrangler d1 execute bible_editor --local --file=../scripts/out/import-ZEC.sql
+npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-ZEC.sql
 npm run tail                                                                 # wrangler tail (live API logs)
 ```
 

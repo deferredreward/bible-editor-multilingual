@@ -4,10 +4,10 @@ import LinkIcon from "@mui/icons-material/Link";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import UndoIcon from "@mui/icons-material/Undo";
-import type { VerseDto } from "../sync/api";
-import { highlightsFor, renderHighlightedHTML, type HighlightKey } from "../lib/highlight";
+import type { TwlRow, VerseDto } from "../sync/api";
+import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
-import { extractTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
+import { extractTrailingMarkers, stripTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
 import { SectionHeaderBand } from "./SectionHeaderBand";
 import { drafts, verseKey, draftDirtyBorderSx } from "../sync/drafts";
 import { HebrewLine } from "./HebrewLine";
@@ -41,12 +41,23 @@ interface Props {
   rtl?: boolean;
   activeNoteQuote?: string | null;
   activeNoteOccurrence?: number | null;
+  // Transient reorder stoplight for the active verse (drag held / ~3s after an
+  // arrow move): the moved note's candidate prev (green underline) + next (red
+  // overline), on channels separate from the yellow active fill.
+  reorderHighlight?: ReorderHighlight | null;
+  // Active verse's UHB/UGNT verse content — lets ULT/UST columns OL-anchor the
+  // note highlight (resolve the OL quote against the source, then map via
+  // alignment) instead of guessing from milestone order. Ignored for UHB/UGNT.
+  activeSourceContent?: unknown;
   // Increment to request a scroll-to-active even when activeVerse hasn't
   // changed — used by ScriptureColumn's "go to active" button in columns mode.
   scrollNonce?: number;
   // Present only when this column is UHB — caller pre-loads the lexicon
   // and we render each \w with a hover tooltip.
   lexiconMap?: Map<string, LexiconEntry | null>;
+  // This chapter's TWL rows (UHB column only) so the \w hover tooltips can
+  // show the tW link, matching the aligner.
+  twl?: TwlRow[];
   // Compiled find state from the overlay: English regex + classified source-
   // language query. Paints <mark.be-find> on plain_text for English mode,
   // and on token offsets / HebrewLine highlights for source-language mode.
@@ -90,8 +101,11 @@ export function DocColumn({
   rtl,
   activeNoteQuote,
   activeNoteOccurrence,
+  reorderHighlight,
+  activeSourceContent,
   scrollNonce,
   lexiconMap,
+  twl,
   search,
   findActiveMatch,
   onSelectVerse,
@@ -126,7 +140,10 @@ export function DocColumn({
         const plain = (d.payload as { plainText?: unknown }).plainText;
         if (typeof plain === "string") next.set(d.meta.verse, plain);
       }
-      setDirtyVerses(next);
+      // drafts.subscribe fires for every draft write anywhere (other
+      // columns, note typing) — bail out when nothing in THIS column
+      // changed so those keystrokes don't re-render the whole column.
+      setDirtyVerses((prev) => (dirtyMapsEqual(prev, next) ? prev : next));
     });
   }, [book, chapter, bibleVersion, readOnly]);
 
@@ -242,12 +259,27 @@ export function DocColumn({
           // "Active" if the user's navigated verse is inside this DTO's
           // range. For singletons this reduces to v === activeVerse.
           const isActive = activeVerse >= dto.verse && activeVerse <= (dto.verse_end ?? dto.verse);
+          // During a preview the yellow follows the moved/hovered note; else the
+          // active note.
+          const aQuote = reorderHighlight?.movedQuote ?? activeNoteQuote;
+          const aOcc = reorderHighlight?.movedQuote ? reorderHighlight.movedOccurrence : activeNoteOccurrence;
           const highlights = isActive
-            ? highlightsFor(bibleVersion, dto.content, activeNoteQuote, activeNoteOccurrence)
+            ? highlightsFor(bibleVersion, dto.content, aQuote, aOcc, activeSourceContent)
             : null;
+          // Reorder stoplight neighbour sets (active verse only, while live).
+          const prevHighlights =
+            isActive && reorderHighlight?.prevQuote
+              ? highlightsFor(bibleVersion, dto.content, reorderHighlight.prevQuote, reorderHighlight.prevOccurrence, activeSourceContent)
+              : null;
+          const nextHighlights =
+            isActive && reorderHighlight?.nextQuote
+              ? highlightsFor(bibleVersion, dto.content, reorderHighlight.nextQuote, reorderHighlight.nextOccurrence, activeSourceContent)
+              : null;
           // Lift any \s1/\s2/\s3 section headers in this verse's content
-          // up into block-level bands above the inline verse span. The
-          // remaining body still has them filtered by the renderer.
+          // into block-level bands rendered AFTER the inline verse span
+          // (see below) — they sit in the verse's trailing objects and
+          // introduce the next verse. The remaining body still has them
+          // filtered by the renderer.
           const verseObjects = (dto.content as { verseObjects?: unknown[] } | null)?.verseObjects;
           const sections: SectionHeader[] = Array.isArray(verseObjects)
             ? splitSectionHeaders(verseObjects).sections
@@ -265,6 +297,35 @@ export function DocColumn({
             : [];
           return (
             <Fragment key={dto.verse}>
+              <VerseSpan
+                book={book}
+                chapter={chapter}
+                verseNum={dto.verse}
+                verseLabel={formatVerseLabel(dto)}
+                isRange={isRangeRow(dto)}
+                bibleVersion={bibleVersion}
+                text={dto.plain_text ?? ""}
+                content={dto.content}
+                precedingMarkers={drift}
+                highlights={highlights}
+                prevHighlights={prevHighlights}
+                nextHighlights={nextHighlights}
+                isActive={isActive}
+                readOnly={!!readOnly}
+                rtl={!!rtl}
+                lexiconMap={lexiconMap}
+                twl={twl}
+                search={search ?? null}
+                findActiveMatch={findActiveMatch ?? null}
+                spanRef={isActive ? activeRef : null}
+                onClick={() => onSelectVerse(dto.verse)}
+                onAlign={() => onOpenAligner(dto.verse)}
+                onEdit={(plain) => onEditVerse(dto.verse, plain, dto)}
+              />
+              {/* `\s*` headings live in this verse's trailing verseObjects
+                  but introduce the NEXT verse — render the band AFTER the
+                  verse span so it sits at the verse end (like a trailing
+                  `\p`/`\q`), not glued above the verse it's attached to. */}
               {sections.map((s, i) => (
                 <SectionHeaderBand
                   key={`sec-${dto.verse}-${i}`}
@@ -279,34 +340,20 @@ export function DocColumn({
                   }
                 />
               ))}
-              <VerseSpan
-                book={book}
-                chapter={chapter}
-                verseNum={dto.verse}
-                verseLabel={formatVerseLabel(dto)}
-                isRange={isRangeRow(dto)}
-                bibleVersion={bibleVersion}
-                text={dto.plain_text ?? ""}
-                content={dto.content}
-                precedingMarkers={drift}
-                highlights={highlights}
-                isActive={isActive}
-                readOnly={!!readOnly}
-                rtl={!!rtl}
-                lexiconMap={lexiconMap}
-                search={search ?? null}
-                findActiveMatch={findActiveMatch ?? null}
-                spanRef={isActive ? activeRef : null}
-                onClick={() => onSelectVerse(dto.verse)}
-                onAlign={() => onOpenAligner(dto.verse)}
-                onEdit={(plain) => onEditVerse(dto.verse, plain, dto)}
-              />
             </Fragment>
           );
         })}
       </Box>
     </Box>
   );
+}
+
+function dirtyMapsEqual(a: Map<number, string>, b: Map<number, string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) {
+    if (b.get(k) !== v) return false;
+  }
+  return true;
 }
 
 // Locate the verse row immediately preceding `verse` in this column's
@@ -338,10 +385,13 @@ function VerseSpan({
   content,
   precedingMarkers,
   highlights,
+  prevHighlights,
+  nextHighlights,
   isActive,
   readOnly,
   rtl,
   lexiconMap,
+  twl,
   search,
   findActiveMatch,
   spanRef,
@@ -366,10 +416,15 @@ function VerseSpan({
   // breaks introduce this verse correctly.
   precedingMarkers?: unknown[];
   highlights?: Set<string> | null;
+  // Reorder stoplight neighbour sets (green underline / red overline). Set only
+  // for the active verse while a drag / recent arrow-move is live.
+  prevHighlights?: Set<string> | null;
+  nextHighlights?: Set<string> | null;
   isActive: boolean;
   readOnly: boolean;
   rtl: boolean;
   lexiconMap?: Map<string, LexiconEntry | null>;
+  twl?: TwlRow[];
   search: SearchState | null;
   findActiveMatch: FindMatch | null;
   spanRef: React.MutableRefObject<HTMLSpanElement | null> | null;
@@ -388,7 +443,7 @@ function VerseSpan({
   const elRef = useRef<HTMLSpanElement | null>(null);
   const lastTextRef = useRef(text);
   // Resync tracker for the editable span. lastSetRef.current is the most
-  // recent string we wrote to .innerText / .innerHTML; the reset effect
+  // recent string we wrote to .textContent / .innerHTML; the reset effect
   // skips when its target matches, preserving the caret during typing.
   // Hoisted so the draft-hydration path can mark it in lockstep.
   const lastSetRef = useRef<string | null>(null);
@@ -406,19 +461,25 @@ function VerseSpan({
     return drafts.subscribe((all) => {
       const rec = all.find((d) => d.key === draftKey);
       setHasDraft(!!rec);
+      // Hydrate from a PRE-EXISTING draft exactly once, on the first
+      // (mount-snapshot) callback — never from a draft the user is creating
+      // by typing right now. Writing to the live element mid-input resets the
+      // caret, and in Firefox `textContent` set here would clobber the verse
+      // the user is editing. Restore-on-mount (reload / chapter nav) is the
+      // only legitimate reason to push draft text into the DOM.
+      if (hydratedFromDraftRef.current) return;
+      hydratedFromDraftRef.current = true;
       if (
-        !hydratedFromDraftRef.current &&
         rec &&
         typeof (rec.payload as { plainText?: unknown }).plainText === "string" &&
         elRef.current
       ) {
         const plain = (rec.payload as { plainText: string }).plainText;
-        if (elRef.current.innerText !== plain) {
-          elRef.current.innerText = plain;
+        if (elRef.current.textContent !== plain) {
+          elRef.current.textContent = plain;
           lastSetRef.current = plain;
           lastTextRef.current = plain;
         }
-        hydratedFromDraftRef.current = true;
       }
     });
   }, [draftKey, readOnly]);
@@ -460,21 +521,40 @@ function VerseSpan({
     return out.includes("be-find") ? out : null;
   }, [search, sourceHits, text, isSource, activeRange]);
 
+  // Stoplight role sets → render channels. undefined unless a reorder is live,
+  // so the common render path is byte-identical to before the feature.
+  const roles = useMemo(() => {
+    if (!prevHighlights?.size && !nextHighlights?.size) return undefined;
+    return { prev: prevHighlights, next: nextHighlights };
+  }, [prevHighlights, nextHighlights]);
+
   const html = useMemo(() => {
     if (findHTML) return findHTML;
     if (!content) return null;
     const verseObjects = (content as { verseObjects?: unknown[] } | null)?.verseObjects;
     if (!Array.isArray(verseObjects)) return null;
+    // Active editable verse: surface paragraph / poetry markers as literal
+    // "\p" / "\q1" chips so they can be seen and adjusted in place — same as
+    // the rows view active line. Render the verse's OWN objects (not the
+    // drifted-composed set) so the contentEditable's textContent matches
+    // extractEditableText and the smartEditVerse save diff lines up. Only the
+    // active verse gets chips; the rest of the column stays clean.
+    if (isActive && !readOnly) {
+      return renderEditableHTML(verseObjects, highlights ?? new Set(), roles);
+    }
     // Compose any drifted-down markers (from the previous verse's
     // trailing `\q1`/`\p` etc.) at the front so the visual break
     // introduces this verse, matching USFM intent.
+    // Strip THIS verse's own trailing markers — they drift to the next verse,
+    // so rendering them here too would double a text-bearing `\qa` acrostic.
+    const body = stripTrailingMarkers(verseObjects);
     const drifted = precedingMarkers && precedingMarkers.length > 0
-      ? [...precedingMarkers, ...verseObjects]
-      : verseObjects;
+      ? [...precedingMarkers, ...body]
+      : body;
     // Render unconditionally so paragraph / poetry markers turn into
     // visual breaks / indents even without an active highlight set.
-    return renderHighlightedHTML(drifted, highlights ?? new Set());
-  }, [findHTML, content, highlights, precedingMarkers]);
+    return renderHighlightedHTML(drifted, highlights ?? new Set(), roles);
+  }, [findHTML, content, highlights, precedingMarkers, isActive, readOnly, roles]);
 
   // Resync the editable span when (a) text changes from outside and the user
   // hasn't been typing since, or (b) highlights change. We let the user type
@@ -485,10 +565,12 @@ function VerseSpan({
   useEffect(() => {
     if (!elRef.current) return;
     if (hasDraft) return;
-    const dom = elRef.current.innerText;
+    const dom = elRef.current.textContent;
     if (html !== null) {
       if (html !== lastSetRef.current) {
-        elRef.current.innerHTML = html;
+        // Caret-preserving: activating this verse flips `html` to chip HTML and
+        // would otherwise wipe the selection the activating click just placed.
+        setInnerHtmlPreservingCaret(elRef.current, html);
         lastSetRef.current = html;
         lastTextRef.current = text;
       }
@@ -496,7 +578,7 @@ function VerseSpan({
     }
     // Plain-text mode.
     if (lastSetRef.current === null || dom === lastTextRef.current) {
-      elRef.current.innerText = text;
+      elRef.current.textContent = text;
       lastSetRef.current = text;
     }
     lastTextRef.current = text;
@@ -516,6 +598,12 @@ function VerseSpan({
         borderRadius: 4,
         padding: isActive ? "1px 2px" : 0,
         backgroundColor: isActive ? "rgba(49,173,227,0.14)" : "transparent",
+        // RTL only: isolate each verse as its own bidi unit. In the continuous
+        // columns flow the bare LTR verse marker ("6:3") otherwise reorders
+        // against the neighboring verses' Hebrew runs and lands between the
+        // start of this verse and the tail of the previous one. Isolating the
+        // verse mirrors how book mode (per-verse blocks) already renders right.
+        unicodeBidi: rtl ? "isolate" : undefined,
       }}
     >
       <span
@@ -550,14 +638,21 @@ function VerseSpan({
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
-              // Drop the draft and force the DOM back to server text. The
-              // hydration guard resets too so the next mount goes through
-              // the normal text-prop path.
+              // Drop the draft and force the DOM back to server text. Leave
+              // the hydration guard set — hydration is a mount-only concern
+              // (a fresh mount gets a fresh ref); re-arming it here would let
+              // the next keystroke's draft stomp the live DOM again.
               void drafts.clear(draftKey);
-              hydratedFromDraftRef.current = false;
               if (elRef.current) {
-                elRef.current.innerText = text;
-                lastSetRef.current = text;
+                // Re-render from `html` when present (active verse) so the
+                // USFM-code chips come back, not just marker-free plain text.
+                if (html !== null) {
+                  elRef.current.innerHTML = html;
+                  lastSetRef.current = html;
+                } else {
+                  elRef.current.textContent = text;
+                  lastSetRef.current = text;
+                }
                 lastTextRef.current = text;
               }
             }}
@@ -580,7 +675,11 @@ function VerseSpan({
           <HebrewLine
             verseObjects={(content as { verseObjects?: unknown[] } | null)?.verseObjects}
             lexiconMap={lexiconMap}
+            twl={twl}
+            verseNum={verseNum}
             highlights={highlights ?? undefined}
+            prevHighlights={prevHighlights ?? undefined}
+            nextHighlights={nextHighlights ?? undefined}
             findHighlights={findHighlights}
             activeFindKey={activeFindKey}
             fallbackText={text}
@@ -598,7 +697,11 @@ function VerseSpan({
         dir={rtl ? "rtl" : "ltr"}
         onInput={(e) => {
           if (readOnly) return;
-          const value = (e.currentTarget as HTMLSpanElement).innerText;
+          // textContent, not innerText: in Firefox `innerText` read inside the
+          // input handler returns a stale/truncated value (layout not flushed),
+          // which then corrupts the stored draft and the verse. textContent is
+          // synchronous and reliable in both browsers (matches the rows editor).
+          const value = (e.currentTarget as HTMLSpanElement).textContent ?? "";
           onEdit(value);
           lastTextRef.current = value;
           lastSetRef.current = value;
@@ -639,4 +742,72 @@ function renderFindMatchesHTML(
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+}
+
+// Caret-preserving innerHTML swap for the editable verse span. Activating a
+// verse flips the `html` memo from clean text to chip-rendered HTML, and the
+// resync effect rewrites innerHTML — which destroys the caret/selection the
+// activating click just placed (the "click twice to type" bug in poetry
+// chapters). Capture the caret as a character offset within textContent before
+// the swap, then re-walk the new text nodes to restore a collapsed range at the
+// same offset. Only acts when the element is focused and the selection lives
+// inside it; otherwise it's a plain assignment, leaving IME/composition and the
+// Firefox first-keystroke draft hydration untouched.
+function setInnerHtmlPreservingCaret(el: HTMLElement, html: string): void {
+  const sel = window.getSelection();
+  const focused = document.activeElement === el;
+  const inEl =
+    focused &&
+    sel &&
+    sel.rangeCount > 0 &&
+    sel.anchorNode != null &&
+    el.contains(sel.anchorNode);
+  if (!inEl) {
+    el.innerHTML = html;
+    return;
+  }
+  const offset = caretOffsetWithin(el, sel.getRangeAt(0));
+  el.innerHTML = html;
+  restoreCaretWithin(el, offset, sel);
+}
+
+// Number of textContent characters before the caret (anchor) within `el`.
+function caretOffsetWithin(el: HTMLElement, range: Range): number {
+  const pre = range.cloneRange();
+  pre.selectNodeContents(el);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
+}
+
+// Place a collapsed caret `offset` characters into `el`'s text, clamped to the
+// available text length.
+function restoreCaretWithin(el: HTMLElement, offset: number, sel: Selection): void {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let node: Node | null = walker.nextNode();
+  let last: Text | null = null;
+  while (node) {
+    const len = node.textContent?.length ?? 0;
+    last = node as Text;
+    if (remaining <= len) {
+      const r = document.createRange();
+      r.setStart(node, remaining);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      return;
+    }
+    remaining -= len;
+    node = walker.nextNode();
+  }
+  // Offset ran past the end (text shrank) — drop the caret at the end.
+  const r = document.createRange();
+  if (last) {
+    r.setStart(last, last.textContent?.length ?? 0);
+  } else {
+    r.selectNodeContents(el);
+  }
+  r.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(r);
 }

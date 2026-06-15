@@ -1,4 +1,4 @@
-import { Fragment, type Ref, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import PushPinIcon from "@mui/icons-material/PushPin";
@@ -10,6 +10,18 @@ import { QuestionsTable } from "./QuestionsTable";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 
 export type PanelMode = "resources" | "alignment";
+
+// Candidate slot for the reorder "stoplight" — the moved note plus the note
+// ids that would become its predecessor / successor at the current drag target
+// (or after an arrow move). Shell resolves these ids to quotes and lights the
+// active verse green (prev) / red (next). null prev/next means "no neighbour on
+// that side" (moved note is first / last in its verse).
+export interface ReorderPreview {
+  verse: number;
+  movedId: string;
+  prevId: string | null;
+  nextId: string | null;
+}
 
 export interface AlignmentTabProps {
   book: string;
@@ -24,6 +36,7 @@ export interface AlignmentTabProps {
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   panelRef?: Ref<AlignmentPanelHandle>;
+  onOpenDual?: () => void;
 }
 
 interface Props {
@@ -52,6 +65,11 @@ interface Props {
   onNoteRestore: (id: string) => void;
   onNoteInsertAfter: (refId: string) => void;
   onNoteReorder: (draggedId: string, refId: string, position: DropPosition) => void;
+  // Report the moved note's candidate neighbours so Shell can paint the
+  // active-verse stoplight. Fired live as a drag hovers each slot (sticky =
+  // false; cleared on drop), and once after an arrow move (sticky = true,
+  // auto-clears in Shell after ~3s). null clears the preview.
+  onReorderPreview?: (preview: ReorderPreview | null, sticky?: boolean) => void;
   onNoteFocus: (row: TnRow) => void;
   onNoteCreate: () => void;
   // Async AI-draft wiring. All optional — when absent, sparkles hides.
@@ -105,8 +123,14 @@ interface Props {
 
 type PinKey = "notes" | "words" | "questions";
 type Pinned = Record<PinKey, boolean>;
+type ResourceTab = "notes" | "words" | "questions";
 
 const PINNED_KEY = "be:pinned";
+
+// Drag auto-scroll: begin scrolling when the pointer is within this many px of
+// the list's top/bottom edge, advancing this many px per animation frame.
+const DRAG_SCROLL_EDGE_PX = 56;
+const DRAG_SCROLL_SPEED_PX = 12;
 
 function loadPinned(): Pinned {
   try {
@@ -174,6 +198,7 @@ export function ResourceColumn({
   onNoteRestore,
   onNoteInsertAfter,
   onNoteReorder,
+  onReorderPreview,
   onNoteFocus,
   onNoteCreate,
   onNoteStartAi,
@@ -207,6 +232,16 @@ export function ResourceColumn({
     const next = { ...pinned, [k]: !pinned[k] };
     setPinned(next);
     savePinned(next);
+  };
+
+  // Which resource the body shows when panelMode === "resources". Splitting
+  // Notes / Words / Questions into separate views keeps the Notes column free
+  // of TWL/TQ clutter; the tabs now switch the view instead of scroll-jumping
+  // within one stacked body.
+  const [resourceTab, setResourceTab] = useState<ResourceTab>("notes");
+  const showResource = (tab: ResourceTab) => {
+    if (panelMode !== "resources") onSetPanelMode?.("resources");
+    setResourceTab(tab);
   };
 
   const [rangeStart, rangeEnd] = displayVerseRange;
@@ -253,12 +288,87 @@ export function ResourceColumn({
     { targetId: string; position: DropPosition } | null
   >(null);
 
-  const notesRef = useRef<HTMLDivElement | null>(null);
-  const wordsRef = useRef<HTMLDivElement | null>(null);
-  const questionsRef = useRef<HTMLDivElement | null>(null);
+  // Resolve the moved note's candidate neighbours at a given drop target —
+  // shared by the live drag hover and the arrow moves. Scoped to the moved
+  // note's verse, excluding the moved note and any trashed notes (the same
+  // per-verse, non-trashed ordering the reorder itself renumbers).
+  const computeNeighbors = useCallback(
+    (movedId: string, targetId: string, position: DropPosition): ReorderPreview | null => {
+      const moved = tn.find((r) => r.id === movedId);
+      if (!moved) return null;
+      const list = sortBySortOrder(
+        tn.filter((r) => r.verse === moved.verse && r.trashed_at == null && r.id !== movedId),
+      );
+      const ti = list.findIndex((r) => r.id === targetId);
+      const insertion = ti < 0 ? list.length : position === "before" ? ti : ti + 1;
+      return {
+        verse: moved.verse,
+        movedId,
+        prevId: list[insertion - 1]?.id ?? null,
+        nextId: list[insertion]?.id ?? null,
+      };
+    },
+    [tn],
+  );
+
+  // Live drag preview: as the dragged card hovers each slot, report the
+  // neighbours it would land between. dragOver only changes ref when the slot
+  // actually changes (see onCardDragOver), so this fires once per slot. The
+  // preview is cleared on dragend (onDragEnd below), not here — returning early
+  // when the drag stops avoids wiping a sticky arrow-move preview.
+  useEffect(() => {
+    if (!onReorderPreview || !dragId || !dragOver) return;
+    const preview = computeNeighbors(dragId, dragOver.targetId, dragOver.position);
+    if (preview) onReorderPreview(preview, false);
+  }, [dragId, dragOver, computeNeighbors, onReorderPreview]);
+
   const scrollBodyRef = useRef<HTMLDivElement | null>(null);
-  const scrollTo = (r: React.RefObject<HTMLDivElement | null>) =>
-    r.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // Auto-scroll the list while a reorder drag hovers near its top/bottom edge.
+  // Native HTML5 DnD only auto-scrolls the window, never a nested overflow
+  // container, so without this a note/word can't be dropped onto a card that
+  // started scrolled out of view. Direction lives in a ref the rAF loop reads;
+  // a drag can end on a card, outside the list, or via Esc, but the global
+  // `dragend` always fires, so it's the reliable place to kill the loop.
+  const autoScrollRaf = useRef<number | null>(null);
+  const autoScrollDir = useRef(0);
+  useEffect(() => {
+    const stop = () => {
+      if (autoScrollRaf.current != null) {
+        cancelAnimationFrame(autoScrollRaf.current);
+        autoScrollRaf.current = null;
+      }
+      autoScrollDir.current = 0;
+    };
+    window.addEventListener("dragend", stop);
+    return () => {
+      window.removeEventListener("dragend", stop);
+      stop();
+    };
+  }, []);
+  const handleDragAutoScroll = (e: React.DragEvent) => {
+    const el = scrollBodyRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    autoScrollDir.current =
+      e.clientY < rect.top + DRAG_SCROLL_EDGE_PX
+        ? -1
+        : e.clientY > rect.bottom - DRAG_SCROLL_EDGE_PX
+          ? 1
+          : 0;
+    if (autoScrollDir.current !== 0 && autoScrollRaf.current == null) {
+      const step = () => {
+        const node = scrollBodyRef.current;
+        if (!node || autoScrollDir.current === 0) {
+          autoScrollRaf.current = null;
+          return;
+        }
+        node.scrollTop += autoScrollDir.current * DRAG_SCROLL_SPEED_PX;
+        autoScrollRaf.current = requestAnimationFrame(step);
+      };
+      autoScrollRaf.current = requestAnimationFrame(step);
+    }
+  };
 
   // Keep the resource column lined up with the active selection. We fire on:
   //   - scrollNonce (Shell's "go to active" button)
@@ -270,11 +380,14 @@ export function ResourceColumn({
   // Priority: active note > active word > active-verse group in any pinned
   // section. Without any of those, no scroll.
   const prevNonceRef = useRef(scrollNonce);
+  const prevVerseRef = useRef(activeVerse);
   useEffect(() => {
     const root = scrollBodyRef.current;
     if (!root) return;
     const fromButton = prevNonceRef.current !== scrollNonce;
     prevNonceRef.current = scrollNonce;
+    const verseChanged = prevVerseRef.current !== activeVerse;
+    prevVerseRef.current = activeVerse;
     let target: HTMLElement | null = null;
     let isVerseGroup = false;
     if (activeNoteId) {
@@ -286,9 +399,41 @@ export function ResourceColumn({
       target = root.querySelector<HTMLElement>(`[data-verse-group="${activeVerse}"]`);
       isVerseGroup = !!target;
     }
+    // Pinned notes, active verse has no notes of its own: there's no group
+    // head to land on, so fall back to the end of the previous verse's notes
+    // (the last note card before the active verse's slot in the chapter).
+    let atVerseEnd = false;
+    if (!target && pinned.notes) {
+      const heads = [...root.querySelectorAll<HTMLElement>('[data-vg-section="notes"]')];
+      const prevHead = heads
+        .filter((el) => Number(el.dataset.verseGroup) < activeVerse)
+        .at(-1);
+      if (prevHead) {
+        // Walk forward over the previous verse's note cards, stopping at the
+        // next verse group head; the last card is the end of that verse.
+        let lastNote = prevHead;
+        for (
+          let el = prevHead.nextElementSibling;
+          el && !el.hasAttribute("data-verse-group");
+          el = el.nextElementSibling
+        ) {
+          if (el.hasAttribute("data-note-id")) lastNote = el as HTMLElement;
+        }
+        target = lastNote;
+        atVerseEnd = true;
+      }
+    }
+    // Individual-verse mode (nothing pinned): the list only ever shows the
+    // active verse's resources, so a verse change swaps the whole list and
+    // there's no target to land on. Reset to the top instead of stranding the
+    // scroll wherever the previous verse left it.
+    if (!target && verseChanged && !pinned.notes && !pinned.words && !pinned.questions) {
+      root.scrollTo({ top: 0, behavior: "auto" });
+      return;
+    }
     target?.scrollIntoView({
       behavior: "smooth",
-      block: isVerseGroup ? "start" : fromButton ? "center" : "nearest",
+      block: isVerseGroup ? "start" : atVerseEnd ? "end" : fromButton ? "center" : "nearest",
     });
   }, [
     scrollNonce,
@@ -333,34 +478,25 @@ export function ResourceColumn({
           label="Notes"
           count={totalTn}
           countSuffix={pinned.notes ? " · ch" : ""}
-          active={panelMode === "resources"}
+          active={panelMode === "resources" && resourceTab === "notes"}
           accent={false}
-          onClick={() => {
-            if (panelMode !== "resources") onSetPanelMode?.("resources");
-            scrollTo(notesRef);
-          }}
+          onClick={() => showResource("notes")}
         />
         <PanelTab
           label="Words"
           count={totalTwl}
           countSuffix={pinned.words ? " · ch" : ""}
-          active={panelMode === "resources"}
+          active={panelMode === "resources" && resourceTab === "words"}
           accent={false}
-          onClick={() => {
-            if (panelMode !== "resources") onSetPanelMode?.("resources");
-            scrollTo(wordsRef);
-          }}
+          onClick={() => showResource("words")}
         />
         <PanelTab
           label="Questions"
           count={totalTq}
           countSuffix={pinned.questions ? " · ch" : ""}
-          active={panelMode === "resources"}
+          active={panelMode === "resources" && resourceTab === "questions"}
           accent={false}
-          onClick={() => {
-            if (panelMode !== "resources") onSetPanelMode?.("resources");
-            scrollTo(questionsRef);
-          }}
+          onClick={() => showResource("questions")}
         />
         <PanelTab
           label="Alignment"
@@ -373,6 +509,16 @@ export function ResourceColumn({
       {panelMode === "alignment" ? (
         alignmentProps ? (
           <AlignmentPanel
+            // Remount on any target change (version OR verse). Without a key,
+            // React reuses the instance and the panel's `state` only resets via
+            // a passive useEffect that runs AFTER paint — leaving a window where
+            // `state` still holds the PREVIOUS version's alignment while `verse`
+            // / `onSave` are already bound to the new target. A save landing in
+            // that window writes the old content to the new row (e.g. UST
+            // alignment saved onto the ULT verse). Keying forces a fresh mount
+            // whose useState(computedInitial) seeds the correct state
+            // synchronously, closing the race.
+            key={`${alignmentProps.bibleVersion}:${alignmentProps.chapter}:${alignmentProps.verseNum}`}
             ref={alignmentProps.panelRef}
             book={alignmentProps.book}
             chapter={alignmentProps.chapter}
@@ -385,6 +531,7 @@ export function ResourceColumn({
             onSave={alignmentProps.onSave}
             onCancel={alignmentProps.onCancel}
             onDirtyChange={alignmentProps.onDirtyChange}
+            onOpenDual={alignmentProps.onOpenDual}
           />
         ) : (
           <Box sx={{ p: 3 }}>
@@ -394,108 +541,125 @@ export function ResourceColumn({
           </Box>
         )
       ) : (
-      <Box ref={scrollBodyRef} sx={{ flex: 1, overflowY: "auto", px: 2, py: 1 }}>
-        <div ref={notesRef} />
-        <SectionHead
-          title="Notes"
-          count={totalTn}
-          pinned={pinned.notes}
-          onTogglePin={() => togglePinned("notes")}
-          onAdd={onNoteCreate}
-          sticky
-          hideAdd={locked}
-        />
-        {tnGroups ? (
-          tnGroups.length === 0 ? (
-            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-              no notes in this chapter
-            </Typography>
-          ) : (
-            tnGroups.map(([verse, rows]) => (
-              <Fragment key={`tn-${verse}`}>
-                <VerseGroupHead verse={verse} active={verse === activeVerse} />
-                {rows.map((r) => renderNoteCard(r, rows))}
-              </Fragment>
-            ))
-          )
-        ) : tnForVerse.length === 0 ? (
-          <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-            no notes for this verse
-          </Typography>
-        ) : (
-          tnForVerse.map((r) => renderNoteCard(r, tnForVerse))
+      <Box
+        ref={scrollBodyRef}
+        onDragOver={handleDragAutoScroll}
+        // scrollbarGutter:stable reserves the scrollbar's width whether or not
+        // it's showing, so the cards' content width never changes as the
+        // scrollbar appears/disappears. Without it, a card header sitting right
+        // at its flex-wrap boundary can flip-flop a line as the gutter toggles.
+        sx={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable", px: 2, py: 1 }}
+      >
+        {resourceTab === "notes" && (
+          <>
+            <SectionHead
+              title="Notes"
+              count={totalTn}
+              pinned={pinned.notes}
+              onTogglePin={() => togglePinned("notes")}
+              onAdd={onNoteCreate}
+              sticky
+              hideAdd={locked}
+            />
+            {tnGroups ? (
+              tnGroups.length === 0 ? (
+                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+                  no notes in this chapter
+                </Typography>
+              ) : (
+                tnGroups.map(([verse, rows]) => (
+                  <Fragment key={`tn-${verse}`}>
+                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="notes" />
+                    {rows.map((r) => renderNoteCard(r, rows))}
+                  </Fragment>
+                ))
+              )
+            ) : tnForVerse.length === 0 ? (
+              <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+                no notes for this verse
+              </Typography>
+            ) : (
+              tnForVerse.map((r) => renderNoteCard(r, tnForVerse))
+            )}
+          </>
         )}
 
-        <Box sx={{ height: 16 }} />
-        <div ref={wordsRef} />
-        <SectionHead
-          title="Words"
-          count={totalTwl}
-          pinned={pinned.words}
-          onTogglePin={() => togglePinned("words")}
-          onAdd={onWordCreate}
-          hideAdd={locked}
-        />
-        {twlGroups ? (
-          twlGroups.length === 0 ? (
-            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-              no words in this chapter
-            </Typography>
-          ) : (
-            twlGroups.map(([verse, rows]) => (
-              <Fragment key={`twl-${verse}`}>
-                <VerseGroupHead verse={verse} active={verse === activeVerse} />
-                <WordsTable
-                  rows={rows}
-                  activeId={activeWordId}
-                  onSave={onWordSave}
-                  onDelete={onWordDelete}
-                  onFocus={onWordFocus}
-                  onReorder={onWordReorder}
-                  locked={locked}
-                  onTranslateQuote={onWordTranslateQuote}
-                />
-              </Fragment>
-            ))
-          )
-        ) : (
-          <WordsTable
-            rows={twlForVerse}
-            activeId={activeWordId}
-            onSave={onWordSave}
-            onDelete={onWordDelete}
-            onFocus={onWordFocus}
-            onReorder={onWordReorder}
-            locked={locked}
-            onTranslateQuote={onWordTranslateQuote}
-          />
+        {resourceTab === "words" && (
+          <>
+            <SectionHead
+              title="Words"
+              count={totalTwl}
+              pinned={pinned.words}
+              onTogglePin={() => togglePinned("words")}
+              onAdd={onWordCreate}
+              sticky
+              hideAdd={locked}
+            />
+            {twlGroups ? (
+              twlGroups.length === 0 ? (
+                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+                  no words in this chapter
+                </Typography>
+              ) : (
+                twlGroups.map(([verse, rows]) => (
+                  <Fragment key={`twl-${verse}`}>
+                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="words" />
+                    <WordsTable
+                      rows={rows}
+                      activeId={activeWordId}
+                      onSave={onWordSave}
+                      onDelete={onWordDelete}
+                      onFocus={onWordFocus}
+                      onReorder={onWordReorder}
+                      locked={locked}
+                      onTranslateQuote={onWordTranslateQuote}
+                    />
+                  </Fragment>
+                ))
+              )
+            ) : (
+              <WordsTable
+                rows={twlForVerse}
+                activeId={activeWordId}
+                onSave={onWordSave}
+                onDelete={onWordDelete}
+                onFocus={onWordFocus}
+                onReorder={onWordReorder}
+                locked={locked}
+                onTranslateQuote={onWordTranslateQuote}
+              />
+            )}
+          </>
         )}
 
-        <Box sx={{ height: 16 }} />
-        <div ref={questionsRef} />
-        <SectionHead
-          title="Questions"
-          count={totalTq}
-          pinned={pinned.questions}
-          onTogglePin={() => togglePinned("questions")}
-          onAdd={onQuestionCreate}
-          hideAdd={locked}
-        />
-        {tqGroups ? (
-          tqGroups.length === 0 ? (
-            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-              no questions in this chapter
-            </Typography>
-          ) : (
-            tqGroups.map(([verse, rows]) => (
-              <Fragment key={`tq-${verse}`}>
-                <VerseGroupHead verse={verse} active={verse === activeVerse} />
-                <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
-              </Fragment>
-            ))
-          )
-        ) : (
-          <QuestionsTable rows={tqForVerse} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
+        {resourceTab === "questions" && (
+          <>
+            <SectionHead
+              title="Questions"
+              count={totalTq}
+              pinned={pinned.questions}
+              onTogglePin={() => togglePinned("questions")}
+              onAdd={onQuestionCreate}
+              sticky
+              hideAdd={locked}
+            />
+            {tqGroups ? (
+              tqGroups.length === 0 ? (
+                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+                  no questions in this chapter
+                </Typography>
+              ) : (
+                tqGroups.map(([verse, rows]) => (
+                  <Fragment key={`tq-${verse}`}>
+                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="questions" />
+                    <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
+                  </Fragment>
+                ))
+              )
+            ) : (
+              <QuestionsTable rows={tqForVerse} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
+            )}
+          </>
         )}
       </Box>
       )}
@@ -528,11 +692,37 @@ export function ResourceColumn({
           onInsertAfter={() => onNoteInsertAfter(r.id)}
           onFocus={() => onNoteFocus(r)}
           onGripDragStart={() => setDragId(r.id)}
-          onMoveUp={prevNote ? () => onNoteReorder(r.id, prevNote.id, "before") : undefined}
-          onMoveDown={nextNote ? () => onNoteReorder(r.id, nextNote.id, "after") : undefined}
+          onMoveUp={
+            prevNote
+              ? () => {
+                  onNoteReorder(r.id, prevNote.id, "before");
+                  onReorderPreview?.(computeNeighbors(r.id, prevNote.id, "before"), true);
+                }
+              : undefined
+          }
+          onMoveDown={
+            nextNote
+              ? () => {
+                  onNoteReorder(r.id, nextNote.id, "after");
+                  onReorderPreview?.(computeNeighbors(r.id, nextNote.id, "after"), true);
+                }
+              : undefined
+          }
+          onReorderHover={
+            onReorderPreview
+              ? (entering) =>
+                  onReorderPreview(
+                    entering
+                      ? { verse: r.verse, movedId: r.id, prevId: prevNote?.id ?? null, nextId: nextNote?.id ?? null }
+                      : null,
+                    false,
+                  )
+              : undefined
+          }
           onDragEnd={() => {
             setDragId(null);
             setDragOver(null);
+            onReorderPreview?.(null, false);
           }}
           onCardDragOver={(position) => {
             setDragOver((cur) =>
@@ -594,14 +784,27 @@ function DropIndicator() {
   );
 }
 
-function VerseGroupHead({ verse, active }: { verse: number; active: boolean }) {
+function VerseGroupHead({
+  verse,
+  active,
+  section,
+}: {
+  verse: number;
+  active: boolean;
+  section: PinKey;
+}) {
   return (
     <Stack
       direction="row"
       spacing={1}
       alignItems="center"
       data-verse-group={verse}
+      data-vg-section={section}
       sx={{
+        // Clear the sticky SectionHead when scrollIntoView lands here with
+        // block: "start", so the verse number stays visible rather than
+        // tucking behind the pinned header.
+        scrollMarginTop: "40px",
         mt: 1,
         mb: 0.25,
         py: 0.25,
@@ -733,7 +936,7 @@ function PanelTab({
         fontWeight: active ? 600 : 500,
         color: active && accent ? "primary.main" : active ? "text.primary" : "text.secondary",
         borderBottom: "2px solid",
-        borderColor: active && accent ? "primary.main" : "transparent",
+        borderColor: active ? (accent ? "primary.main" : "text.primary") : "transparent",
         marginBottom: "-1px",
         "&:hover": { color: accent ? "primary.main" : "text.primary" },
       }}

@@ -1,4 +1,8 @@
-name = "bible-editor-api"
+# Dev-suffixed on purpose: the production worker is `bible-editor-api` (set in
+# [env.production] below). With a distinct top-level name, a plain
+# `wrangler deploy` (missing `--env production`) lands on a separate dev worker
+# instead of overwriting prod with dev bindings.
+name = "bible-editor-api-dev"
 main = "src/index.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
@@ -11,8 +15,12 @@ port = 8787
 # `wrangler dev` (and `npm run dev`) reads everything from the top level.
 # Vars here are dev-friendly; the prod overrides live in [env.production.*]
 # blocks at the bottom. Bindings (D1/R2/DO/Workflow/Assets) are NOT inherited
-# by env blocks in wrangler v4 — they're duplicated, pointing at the same
-# Cloudflare resources so both envs share state.
+# by env blocks in wrangler v4 — they're duplicated per env. Dev and prod are
+# isolated for stateful resources: D1 (bible_editor_dev vs bible_editor), R2
+# (bible-editor-blobs-dev vs bible-editor-blobs), and the Workflow name
+# (bible-editor-export-dev vs bible-editor-export). So a plain `wrangler deploy`
+# can never read/write prod state. DO + Assets remain identical (no shared
+# durable state to clobber).
 
 [assets]
 directory = "../web/dist"
@@ -26,13 +34,13 @@ run_worker_first = ["/api/*"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "bible_editor"
-database_id = "7e566abf-454d-43d6-b24e-11df74f1c0ed"
+database_name = "bible_editor_dev"
+database_id = "ceb458bf-4608-4696-a087-9026618a6cef"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "BLOBS"
-bucket_name = "bible-editor-blobs"
+bucket_name = "bible-editor-blobs-dev"
 
 [[durable_objects.bindings]]
 name = "CHAPTER_ROOM"
@@ -43,20 +51,17 @@ tag = "v1"
 new_classes = ["ChapterRoom"]
 
 [[workflows]]
-name = "bible-editor-export"
+# Dev-suffixed: Workflow names are account-scoped and owned by one script, so
+# sharing prod's name ("bible-editor-export") would let a plain dev deploy
+# collide with prod's workflow. Binding stays EXPORT_WORKFLOW so code is
+# unaffected.
+name = "bible-editor-export-dev"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
-[triggers]
-# Future: nightly DCS re-import is wired up in src/index.ts (REIMPORT_CRON
-# branch) but deliberately not registered here yet. Uncomment "0 8 * * *"
-# below once the export → DCS git-action merge loop is verified end-to-end.
-# crons = ["0 6 * * *", "*/5 * * * *", "0 8 * * *"]
-# Export cron retimed to 05:30 UTC (was "0 6 * * *") so the -be- branches land
-# ~30 min before Rich's 06:00 UTC DCS-side validate-and-merge job (sequence:
-# export -> per-push validation -> 06:00 merge). The */5 pipeline-poll cron is
-# unrelated (AI auto-apply).
-crons = ["30 5 * * *", "*/5 * * * *"]
+# No [triggers] on the default env: crons are registered only on production
+# (below) so an accidental dev deploy can't double-fire the nightly export.
+# `wrangler dev --test-scheduled` exposes /__scheduled regardless.
 
 # Public-safe defaults; secrets go in `wrangler secret put` (DCS_CLIENT_ID,
 # DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN, BT_API_TOKEN).
@@ -120,8 +125,13 @@ binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
 [env.production.triggers]
-# See [triggers] above re: dormant "0 8 * * *" nightly DCS re-import.
-# Export cron at 05:30 UTC, ~30 min before Rich's 06:00 merge (see [triggers]).
+# Export cron retimed to 05:30 UTC (was "0 6 * * *") so the -be- branches land
+# ~30 min before Rich's 06:00 UTC DCS-side validate-and-merge job (sequence:
+# export -> per-push validation -> 06:00 merge). The */5 pipeline-poll cron is
+# unrelated (AI auto-apply).
+# Future: nightly DCS re-import is wired up in src/index.ts (REIMPORT_CRON
+# branch) but deliberately not registered yet. Add "0 8 * * *" once the
+# export → DCS git-action merge loop is verified end-to-end.
 crons = ["30 5 * * *", "*/5 * * * *"]
 
 [env.production.vars]
