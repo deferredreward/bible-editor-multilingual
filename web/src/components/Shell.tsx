@@ -35,7 +35,11 @@ import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview } from "./ResourceColumn";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
-import { SideBySideAligner, type PanelSlot } from "./SideBySideAligner";
+import {
+  SideBySideAligner,
+  type PanelSlot,
+  type ReadingLineHandle,
+} from "./SideBySideAligner";
 import { TopBar } from "./TopBar";
 import { LogosSyncToggle } from "./LogosSyncToggle";
 import { PipelineMenu } from "./PipelineMenu";
@@ -233,6 +237,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const dualRightRef = useRef<AlignmentPanelHandle | null>(null);
   const [dualLeftDirty, setDualLeftDirty] = useState(false);
   const [dualRightDirty, setDualRightDirty] = useState(false);
+  // Same machinery for the editable reading lines, so the gate prompts before a
+  // close/nav drops an unsaved reading-text edit.
+  const dualLeftReadingRef = useRef<ReadingLineHandle | null>(null);
+  const dualRightReadingRef = useRef<ReadingLineHandle | null>(null);
+  const [dualLeftReadingDirty, setDualLeftReadingDirty] = useState(false);
+  const [dualRightReadingDirty, setDualRightReadingDirty] = useState(false);
   // Queued action (close / verse-nav) awaiting the user's save-or-discard
   // choice when a dual panel has unsaved drags.
   const [pendingDualAction, setPendingDualAction] = useState<{ run: () => void } | null>(null);
@@ -892,14 +902,17 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     },
     [runWithDirtyGate],
   );
-  // Any action that leaves or re-targets the dual aligner gates on unsaved
-  // drags in either panel (save/discard prompt) — shared by close + verse nav.
+  // Any action that leaves or re-targets the dual aligner gates on unsaved work
+  // — alignment drags OR reading-text edits in either panel (save/discard
+  // prompt) — shared by close + verse nav.
+  const dualDirty =
+    dualLeftDirty || dualRightDirty || dualLeftReadingDirty || dualRightReadingDirty;
   const requestDualAction = useCallback(
     (run: () => void) => {
-      if (dualLeftDirty || dualRightDirty) setPendingDualAction({ run });
+      if (dualDirty) setPendingDualAction({ run });
       else run();
     },
-    [dualLeftDirty, dualRightDirty],
+    [dualDirty],
   );
   const requestCloseDual = useCallback(
     () => requestDualAction(() => setDualTarget(null)),
@@ -923,13 +936,17 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       if (choice === "save") {
         if (dualLeftDirty) dualLeftRef.current?.save();
         if (dualRightDirty) dualRightRef.current?.save();
+        if (dualLeftReadingDirty) dualLeftReadingRef.current?.save();
+        if (dualRightReadingDirty) dualRightReadingRef.current?.save();
       } else {
         if (dualLeftDirty) dualLeftRef.current?.discard();
         if (dualRightDirty) dualRightRef.current?.discard();
+        if (dualLeftReadingDirty) dualLeftReadingRef.current?.discard();
+        if (dualRightReadingDirty) dualRightReadingRef.current?.discard();
       }
       action?.run();
     },
-    [pendingDualAction, dualLeftDirty, dualRightDirty],
+    [pendingDualAction, dualLeftDirty, dualRightDirty, dualLeftReadingDirty, dualRightReadingDirty],
   );
 
   const handleSetPanelMode = useCallback(
@@ -1075,6 +1092,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       onSave: enqueue("ULT", ult.targetVerse),
       onDirtyChange: setDualLeftDirty,
       panelRef: dualLeftRef,
+      onReadingDirtyChange: setDualLeftReadingDirty,
+      readingRef: dualLeftReadingRef,
     };
     const right: PanelSlot = {
       bibleVersion: "UST",
@@ -1085,6 +1104,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       onSave: enqueue("UST", ust.targetVerse),
       onDirtyChange: setDualRightDirty,
       panelRef: dualRightRef,
+      onReadingDirtyChange: setDualRightReadingDirty,
+      readingRef: dualRightReadingRef,
     };
     return {
       book,
@@ -1791,22 +1812,19 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           right={dualAlignerProps.right}
           onPrevVerse={dualNav.prev != null ? () => dualNavTo(dualNav.prev!) : undefined}
           onNextVerse={dualNav.next != null ? () => dualNavTo(dualNav.next!) : undefined}
-          onEditReading={(bv, plain, base) =>
+          onSaveReading={(bv, plain, base) =>
             // base.verse, not verseNum — each side's row may start at a
             // different verse (ULT v7 singleton vs UST 6-9 range row).
-            stashVerseDraft(dualAlignerProps.chapter, base.verse, bv, plain, base)
-          }
-          onSaveReading={(bv, plain, base) =>
             saveVerseDraft(dualAlignerProps.chapter, base.verse, bv, plain, base)
           }
         />
       )}
       <Dialog open={!!pendingDualAction} onClose={() => setPendingDualAction(null)}>
-        <DialogTitle>Unsaved alignment changes</DialogTitle>
+        <DialogTitle>Unsaved changes</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            You have unsaved changes in the side-by-side aligner. Save them, discard them, or cancel
-            to keep editing.
+            You have unsaved changes in the side-by-side aligner (alignment edits or reading text).
+            Save them, discard them, or cancel to keep editing.
           </DialogContentText>
         </DialogContent>
         <DialogActions>

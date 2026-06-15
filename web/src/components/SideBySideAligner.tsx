@@ -1,5 +1,13 @@
-import { type Ref, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Typography, IconButton, Dialog, Tooltip, useTheme } from "@mui/material";
+import {
+  forwardRef,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Box, Typography, IconButton, Dialog, Tooltip, Button, useTheme } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import KeyboardArrowLeftIcon from "@mui/icons-material/KeyboardArrowLeft";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
@@ -8,7 +16,7 @@ import { UhbStrip } from "./UhbStrip";
 import { type HoverHighlight, type HighlightCtx } from "../lib/highlightTypes";
 import type { TwlRow, VerseDto } from "../sync/api";
 import type { LexiconEntry } from "../hooks/useLexicon";
-import { extractEditableText } from "../lib/usfm";
+import { extractEditableText, normalizeEditable } from "../lib/usfm";
 
 // Separate key from the single-panel aligner's `be:alignmentHoverLink`
 // (which defaults OFF). The side-by-side popup's whole point is the
@@ -49,6 +57,17 @@ export interface PanelSlot {
   onSave: (newContent: unknown, plainText: string, expectedVersion: number) => void;
   onDirtyChange: (dirty: boolean) => void;
   panelRef: Ref<AlignmentPanelHandle>;
+  // Reading-line dirty mirror + imperative save/discard, so the close/verse-nav
+  // gate can prompt before silently dropping an unsaved reading-text edit
+  // (parallels onDirtyChange/panelRef for the alignment panel below).
+  onReadingDirtyChange: (dirty: boolean) => void;
+  readingRef: Ref<ReadingLineHandle>;
+}
+
+// Imperative surface the gate uses to flush or revert a reading line.
+export interface ReadingLineHandle {
+  save: () => void;
+  discard: () => void;
 }
 
 interface Props {
@@ -64,9 +83,9 @@ interface Props {
   lexiconMap: Map<string, LexiconEntry | null>;
   left: PanelSlot;
   right: PanelSlot;
-  // Reuse Shell's existing verse-text edit path (stash on input, smart-edit on
-  // blur). Keyed by bibleVersion so the same callbacks serve both sides.
-  onEditReading: (bibleVersion: string, plain: string, base: VerseDto) => void;
+  // Commit a reading-text edit (smart-edit + enqueue). Fired only by the
+  // explicit Save button — the reading line no longer autosaves on blur.
+  // Keyed by bibleVersion so the same callback serves both sides.
   onSaveReading: (bibleVersion: string, plain: string, base: VerseDto) => void;
   // Verse nav (titlebar arrows). Undefined at the chapter's ends.
   onPrevVerse?: () => void;
@@ -90,7 +109,6 @@ export function SideBySideAligner({
   lexiconMap,
   left,
   right,
-  onEditReading,
   onSaveReading,
   onPrevVerse,
   onNextVerse,
@@ -260,8 +278,20 @@ export function SideBySideAligner({
             flexShrink: 0,
           }}
         >
-          <ReadingLine slot={left} onEdit={onEditReading} onSave={onSaveReading} locked={leftDirty} />
-          <ReadingLine slot={right} onEdit={onEditReading} onSave={onSaveReading} locked={rightDirty} />
+          <ReadingLine
+            ref={left.readingRef}
+            slot={left}
+            onSave={onSaveReading}
+            onDirtyChange={left.onReadingDirtyChange}
+            locked={leftDirty}
+          />
+          <ReadingLine
+            ref={right.readingRef}
+            slot={right}
+            onSave={onSaveReading}
+            onDirtyChange={right.onReadingDirtyChange}
+            locked={rightDirty}
+          />
         </Box>
 
         {/* one shared source strip — both sides align to the same Hebrew/Greek */}
@@ -375,30 +405,35 @@ function SharedUhbStrip({
   );
 }
 
-// ─── small editable reading line (reuses Shell's stash/save edit path) ──────
+// ─── small editable reading line (explicit Save / Undo, no autosave) ────────
 // Follows the DocColumn VerseSpan contract: write via textContent (Firefox-safe),
 // seed the DOM once, and only resync from a prop change when the user isn't
-// mid-edit. Stash on input, smart-edit on blur.
-function ReadingLine({
-  slot,
-  onEdit,
-  onSave,
-  locked = false,
-}: {
+// mid-edit. Edits live in the DOM until the translator clicks Save (smart-edit
+// + enqueue) or Undo (revert to the last-saved text) — nothing autosaves.
+const ReadingLine = forwardRef<ReadingLineHandle, {
   slot: PanelSlot;
-  onEdit: (bibleVersion: string, plain: string, base: VerseDto) => void;
   onSave: (bibleVersion: string, plain: string, base: VerseDto) => void;
+  onDirtyChange: (dirty: boolean) => void;
   // Locked while this side's AlignmentPanel has unsaved drags: a text edit
   // here would swap the verse prop and silently wipe those drags (see the
   // dirty-state note in SideBySideAligner). The translator saves/cancels the
   // alignment first, then the line unlocks.
   locked?: boolean;
-}) {
+}>(function ReadingLine({ slot, onSave, onDirtyChange, locked = false }, ref) {
   const { bibleVersion, verse } = slot;
   const editable = useMemo(() => (verse ? extractEditableText(verse.content) : ""), [verse]);
   const elRef = useRef<HTMLDivElement | null>(null);
   const lastTextRef = useRef("");
   const lastSetRef = useRef<string | null>(null);
+  // Enables Save/Undo only when the DOM text actually differs from the saved
+  // baseline — normalized so editor-emitted trailing whitespace doesn't arm the
+  // buttons (and matches saveVerseDraft's no-op guard exactly). Mirrored up to
+  // the parent so the close/nav gate can prompt before losing the edit.
+  const [dirty, setDirty] = useState(false);
+  const markDirty = (next: boolean) => {
+    setDirty(next);
+    onDirtyChange(next);
+  };
 
   useEffect(() => {
     const el = elRef.current;
@@ -418,35 +453,96 @@ function ReadingLine({
       lastSetRef.current = editable;
     }
     lastTextRef.current = editable;
+    // Baseline moved (a Save landed, or a verse nav swapped the verse): the
+    // line now matches saved text, so it's no longer dirty.
+    markDirty(normalizeEditable(el.textContent ?? "") !== normalizeEditable(editable));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editable]);
+
+  const handleSave = () => {
+    const el = elRef.current;
+    if (!el || !verse) return;
+    onSave(bibleVersion, el.textContent ?? "", verse);
+    markDirty(false);
+  };
+
+  const handleUndo = () => {
+    const el = elRef.current;
+    if (!el) return;
+    el.textContent = editable;
+    lastTextRef.current = editable;
+    lastSetRef.current = editable;
+    markDirty(false);
+  };
+
+  // The gate (close / verse-nav) drives these: save flushes the edit, discard
+  // reverts to the last-saved text — same as the Save / Undo buttons.
+  useImperativeHandle(ref, () => ({ save: handleSave, discard: handleUndo }));
 
   return (
     <Box sx={{ bgcolor: "background.paper", px: 2, pt: 0.75, pb: 1, minWidth: 0 }}>
-      <Typography
-        variant="caption"
-        sx={{
-          fontFamily: "monospace",
-          fontSize: 9,
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
-          color: "text.secondary",
-          fontWeight: 600,
-          display: "block",
-          mb: 0.5,
-        }}
-      >
-        {bibleVersion} · reading text{" "}
-        <Box
-          component="span"
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5, minHeight: 26 }}>
+        <Typography
+          variant="caption"
           sx={{
-            color: locked ? "text.disabled" : "primary.main",
-            textTransform: "none",
-            letterSpacing: 0,
+            fontFamily: "monospace",
+            fontSize: 9,
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            color: "text.secondary",
+            fontWeight: 600,
           }}
         >
-          {locked ? "🔒 save alignment first" : "✎ editable"}
-        </Box>
-      </Typography>
+          {bibleVersion} · reading text{" "}
+          <Box
+            component="span"
+            sx={{
+              color: locked ? "text.disabled" : "primary.main",
+              textTransform: "none",
+              letterSpacing: 0,
+            }}
+          >
+            {locked ? "🔒 save alignment first" : "✎ editable"}
+          </Box>
+        </Typography>
+        <Box sx={{ flex: 1 }} />
+        {verse && !locked && (
+          <>
+            <Button
+              size="small"
+              onClick={handleUndo}
+              disabled={!dirty}
+              sx={{
+                color: "text.secondary",
+                textTransform: "uppercase",
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                fontWeight: 600,
+                minWidth: 0,
+                py: 0.25,
+              }}
+            >
+              Undo
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              onClick={handleSave}
+              disabled={!dirty}
+              sx={{
+                textTransform: "uppercase",
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                fontWeight: 700,
+                px: 1.5,
+                py: 0.25,
+              }}
+            >
+              Save {bibleVersion}
+            </Button>
+          </>
+        )}
+      </Box>
       {verse ? (
         <Box
           ref={elRef}
@@ -460,13 +556,9 @@ function ReadingLine({
           }
           onInput={(e) => {
             const value = (e.currentTarget as HTMLDivElement).textContent ?? "";
-            onEdit(bibleVersion, value, verse);
             lastTextRef.current = value;
             lastSetRef.current = value;
-          }}
-          onBlur={(e) => {
-            const value = (e.currentTarget as HTMLDivElement).textContent ?? "";
-            onSave(bibleVersion, value, verse);
+            markDirty(normalizeEditable(value) !== normalizeEditable(editable));
           }}
           sx={{
             maxHeight: 64,
@@ -499,4 +591,4 @@ function ReadingLine({
       )}
     </Box>
   );
-}
+});
