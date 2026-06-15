@@ -19,6 +19,7 @@ import {
   clearGroup,
   stripCompoundOverlaps,
   mergeAdjacentSameSource,
+  cardKey,
 } from "./alignment.ts";
 import { extractPlainText } from "./usfm.ts";
 import { findTargetHighlights, findSourceHighlights } from "./highlight.ts";
@@ -2199,6 +2200,80 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
   assert(
     okOrder[0] === "H0853" && okOrder[1] === "H1964",
     `canonical input preserved (got [${okOrder.join(", ")}])`,
+  );
+}
+
+// ─── Card-key uniqueness for split-aligned source tokens (JER 28:1 UST) ──
+// One source token aligned to two non-contiguous target runs yields two
+// distinct groups whose source words resolve to the SAME source position (the
+// token appears once in the UHB). A position-only React key collided across
+// them, so the cards piled up on every hover-driven re-render. cardKey must
+// stay unique here while still separating same-Strong different-pointing words.
+{
+  console.log("\n[Case] cardKey stays unique for split-aligned source tokens (JER 28:1)");
+  const mk = (id, strong, occurrence, occurrences, content) => ({
+    id,
+    strong,
+    occurrence,
+    occurrences,
+    content,
+  });
+  // The single אָמַר (pos 12) + אֵלַי (pos 13) wrap BOTH "spoke to me" runs,
+  // stamped occ 1/2 and 2/2 — exactly the real displayGroups output.
+  const gSpoke1 = {
+    id: "grp-spoke-1",
+    source: [mk("s-amar-1", "H0559", "1", "2", "אָמַר"), mk("s-elay-1", "H0413", "1", "2", "אֵלַי")],
+    targets: [],
+  };
+  const gSpoke2 = {
+    id: "grp-spoke-2",
+    source: [mk("s-amar-2", "H0559", "2", "2", "אָמַר"), mk("s-elay-2", "H0413", "2", "2", "אֵלַי")],
+    targets: [],
+  };
+  // לְעֵינֵי (pos 22) → "while" / "watched".
+  const gWhile = { id: "grp-while", source: [mk("s-le-1", "l:H5869a", "1", "2", "לְעֵינֵי")], targets: [] };
+  const gWatched = { id: "grp-watched", source: [mk("s-le-2", "l:H5869a", "2", "2", "לְעֵינֵי")], targets: [] };
+  // Both halves of each split resolve to the same physical source position.
+  const sourcePos = new Map([
+    ["s-amar-1", 12],
+    ["s-amar-2", 12],
+    ["s-elay-1", 13],
+    ["s-elay-2", 13],
+    ["s-le-1", 22],
+    ["s-le-2", 22],
+  ]);
+  const groups = [gSpoke1, gSpoke2, gWhile, gWatched];
+  const keys = groups.map((g) => cardKey(g, sourcePos));
+  assert(
+    new Set(keys).size === keys.length,
+    `all split-aligned card keys are unique (got ${JSON.stringify(keys)})`,
+  );
+  assert(
+    cardKey(gSpoke1, sourcePos) !== cardKey(gSpoke2, sourcePos),
+    "the two 'spoke to me' groups get distinct keys",
+  );
+  assert(
+    cardKey(gWhile, sourcePos) !== cardKey(gWatched, sourcePos),
+    "while / watched groups get distinct keys",
+  );
+
+  // Regression guard for the case the position key was introduced for: same
+  // Strong, different pointing, DIFFERENT positions — must stay distinct.
+  const gAlefA = { id: "x", source: [mk("a1", "H0413", "1", "1", "אֶל")], targets: [] };
+  const gAlefB = { id: "y", source: [mk("a2", "H0413", "1", "1", "אֵלָיו")], targets: [] };
+  const posMap2 = new Map([
+    ["a1", 3],
+    ["a2", 7],
+  ]);
+  assert(
+    cardKey(gAlefA, posMap2) !== cardKey(gAlefB, posMap2),
+    "same-Strong different-pointing words at different positions get distinct keys",
+  );
+
+  // Empty-source group (shouldn't happen, but guard) falls back to its id.
+  assert(
+    cardKey({ id: "ph", source: [], targets: [] }, sourcePos) === "ph",
+    "empty-source group falls back to group id",
   );
 }
 
