@@ -22,6 +22,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import { assignChipHues, chipAccentColor, chipSupColor } from "../lib/highlightStyles";
 import {
   alignmentPlainText,
+  cardKey,
   clearAll,
   clearGroup,
   extractSource,
@@ -1268,24 +1269,13 @@ function AlignmentCards({
     >
       {groups.map((g) => {
         const ghost = ghostByGroup.get(g.id);
-        // Stable, content-derived key (group ids are regenerated every parse via
-        // crypto.randomUUID, which would remount the whole grid on every
-        // re-derive — e.g. a reading-text edit — causing a jarring flash).
-        // Keyed by the first Hebrew word's source POSITION — unique per card by
-        // construction and stable across re-derives. NOT strong|occurrence:
-        // same-Strong words with different pointing share that pair (three אֶל
-        // forms in ZEC 1:3 are all H0413|1), which made duplicate React keys.
-        // Unresolved positions (-1, malformed data) fall back to a content key.
-        const s0 = g.source[0];
-        const s0pos = s0 ? sourcePos.get(s0.id) ?? -1 : -1;
-        const cardKey = s0
-          ? s0pos >= 0
-            ? `src:p${s0pos}`
-            : `src:${s0.strong}|${nfc(s0.content ?? "")}|${s0.occurrence}`
-          : g.id;
+        // Stable per-card React key derived from the source chain (see cardKey
+        // in ../lib/alignment — a `p{pos}`-only key collided when one source
+        // token was split-aligned to two target runs, piling up cards).
+        const key = cardKey(g, sourcePos);
         return (
         <DropTargetCard
-          key={cardKey}
+          key={key}
           groupId={g.id}
           onTargetsDrop={(wordIds) => onTargetsDrop(`g:${g.id}`, wordIds)}
           onSourceDrop={(sourceId) => onSourceDrop(g.id, sourceId)}

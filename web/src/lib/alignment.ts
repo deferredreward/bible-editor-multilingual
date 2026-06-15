@@ -369,6 +369,38 @@ export function stripCompoundOverlaps(groups: AlignmentGroup[]): AlignmentGroup[
   });
 }
 
+// Stable React key for an alignment card. Group ids regenerate on every parse
+// (crypto.randomUUID), so keying on them would remount the whole grid on any
+// re-derive (e.g. a reading-text edit) — a jarring flash. Key instead on the
+// FULL source chain: each source word's POSITION in the source verse plus its
+// occurrence.
+//
+// Position ALONE is not unique. One source token split-aligned to two
+// non-contiguous target runs produces two distinct groups whose FIRST source
+// word resolves to the same position (JER 28:1 UST aligns the single אָמַר to
+// both "spoke to me" phrases as occ 1/2 and 2/2; likewise לְעֵינֵי →
+// "while"/"watched"). A `p{pos}`-only key collided across those siblings, and
+// duplicate React keys made the cards pile up on every hover-driven re-render.
+// Appending occurrence separates the split halves; keeping position separates
+// same-Strong words with different pointing (three אֶל forms in ZEC 1:3 are all
+// H0413|1). Unresolved positions (-1, malformed data) fall back to a
+// strong|content|occurrence content key. `sourcePos` maps source-word id →
+// position (the panel's posMaps.sourcePosById).
+export function cardKey(g: AlignmentGroup, sourcePos: Map<string, number>): string {
+  if (g.source.length === 0) return g.id;
+  return (
+    "src:" +
+    g.source
+      .map((s) => {
+        const p = sourcePos.get(s.id) ?? -1;
+        return p >= 0
+          ? `p${p}.${s.occurrence}`
+          : `${s.strong}|${nfc(s.content ?? "")}|${s.occurrence}`;
+      })
+      .join("~")
+  );
+}
+
 export function mergeAdjacentSameSource(groups: AlignmentGroup[]): AlignmentGroup[] {
   const out: AlignmentGroup[] = [];
   for (const g of groups) {
