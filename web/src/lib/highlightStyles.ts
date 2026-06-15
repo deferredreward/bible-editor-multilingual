@@ -9,31 +9,41 @@
 type Mode = "light" | "dark";
 
 // Reorder "stoplight" channel colours. The moved note keeps the yellow be-hl
-// fill; its predecessor and successor ride separate edges so they compose with
-// the fill (and each other) instead of fighting for one background. Green/red
-// are the conventional stoplight pair, but the meaning is carried by the EDGE
-// (prev = bottom underline, next = top overline) so it survives red/green
-// colour-blindness. Dark mode lifts the hues so they read on the dark canvas.
+// fill; its predecessor and successor both ride the BOTTOM edge so they compose
+// with the fill (and each other) instead of fighting for one background.
+// Green/red are the conventional stoplight pair, but the meaning is carried by
+// the LINE STYLE (prev = solid green underline, next = dashed red underline) so
+// it survives red/green colour-blindness now that both sit on the same edge — a
+// word claimed by both shows a green-solid-over-red-dashed double underline.
+// Dark mode lifts the hues so they read on the dark canvas.
 const ROLE_PREV_COLOR = { light: "#2e7d32", dark: "#66bb6a" }; // green — previous note
 const ROLE_NEXT_COLOR = { light: "#d32f2f", dark: "#ef5350" }; // red — next note
 
-// box-shadow string for a token that belongs to the prev and/or next note.
-// inset (not border) so adding it never reflows the line; the two insets sit in
-// one declaration so a word claimed by both shows underline + overline at once.
-// Returns undefined when neither role applies. Shared by the <mark> stylesheet
-// (markHighlightSx) and HebrewLine's per-token sx so both channels match.
-export function roleLineShadow(mode: Mode, isPrev: boolean, isNext: boolean): string | undefined {
-  const parts: string[] = [];
-  if (isPrev) parts.push(`inset 0 -3px 0 ${mode === "dark" ? ROLE_PREV_COLOR.dark : ROLE_PREV_COLOR.light}`);
-  if (isNext) parts.push(`inset 0 3px 0 ${mode === "dark" ? ROLE_NEXT_COLOR.dark : ROLE_NEXT_COLOR.light}`);
-  return parts.length ? parts.join(", ") : undefined;
+// sx fragment for a token that belongs to the prev and/or next note. Prev draws
+// a solid green underline via inset box-shadow (no reflow); next draws a dashed
+// red underline via border-bottom — on an inline element this paints without
+// shifting surrounding line boxes. The two properties don't collide, so a word
+// claimed by both composes into a double underline. Returns undefined when
+// neither role applies. Shared by the <mark> stylesheet (markHighlightSx) and
+// HebrewLine's per-token sx so both channels match.
+export function roleLineSx(
+  mode: Mode,
+  isPrev: boolean,
+  isNext: boolean,
+): { boxShadow?: string; borderBottom?: string } | undefined {
+  if (!isPrev && !isNext) return undefined;
+  const sx: { boxShadow?: string; borderBottom?: string } = {};
+  if (isPrev) sx.boxShadow = `inset 0 -3px 0 ${mode === "dark" ? ROLE_PREV_COLOR.dark : ROLE_PREV_COLOR.light}`;
+  if (isNext) sx.borderBottom = `3px dashed ${mode === "dark" ? ROLE_NEXT_COLOR.dark : ROLE_NEXT_COLOR.light}`;
+  return sx;
 }
 
 // `& mark.be-hl-prev` / `.be-hl-next` channel rules for the reorder stoplight,
 // spread into both light/dark markHighlightSx branches. The :not(.be-hl) reset
 // clears the browser-default <mark> yellow on prev/next-ONLY words without
-// touching the active fill (active+prev keeps yellow bg + green underline). The
-// combined selector outranks the singles so a both-roles word shows both lines.
+// touching the active fill (active+prev keeps yellow bg + green underline).
+// Prev and next now paint different CSS properties (box-shadow vs border-bottom)
+// so they compose without conflict; the combined selector is kept for clarity.
 function roleMarkSx(mode: Mode) {
   return {
     "& mark.be-hl-prev:not(.be-hl), & mark.be-hl-next:not(.be-hl)": {
@@ -41,9 +51,9 @@ function roleMarkSx(mode: Mode) {
       color: "inherit",
       padding: "0 2px",
     },
-    "& mark.be-hl-prev": { boxShadow: roleLineShadow(mode, true, false), borderRadius: 0 },
-    "& mark.be-hl-next": { boxShadow: roleLineShadow(mode, false, true), borderRadius: 0 },
-    "& mark.be-hl-prev.be-hl-next": { boxShadow: roleLineShadow(mode, true, true) },
+    "& mark.be-hl-prev": { ...roleLineSx(mode, true, false), borderRadius: 0 },
+    "& mark.be-hl-next": { ...roleLineSx(mode, false, true), borderRadius: 0 },
+    "& mark.be-hl-prev.be-hl-next": { ...roleLineSx(mode, true, true) },
   };
 }
 

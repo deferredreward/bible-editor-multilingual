@@ -9,7 +9,7 @@ import type { LexiconEntry } from "../hooks/useLexicon";
 import type { SourceWord } from "../lib/alignment";
 import type { HighlightKey } from "../lib/highlight";
 import type { TwlRow } from "../sync/api";
-import { roleLineShadow, wordHighlightStyles } from "../lib/highlightStyles";
+import { roleLineSx, wordHighlightStyles } from "../lib/highlightStyles";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 import { buildTwHintMap, twHintFromMap } from "./UhbStrip";
 
@@ -18,9 +18,10 @@ interface Props {
   lexiconMap: Map<string, LexiconEntry | null>;
   highlights?: Set<HighlightKey> | null;
   // Reorder stoplight: words belonging to the moved note's candidate
-  // predecessor (green underline) / successor (red overline). Composed on top
-  // of the active fill via inset box-shadow; suppressed while a find hit owns
-  // the token (find precedence, same as the yellow note highlight).
+  // predecessor (solid green underline) / successor (dashed red underline).
+  // Composed on top of the active fill via inset box-shadow (green) + dashed
+  // border-bottom (red); suppressed while a find hit owns the token (find
+  // precedence, same as the yellow note highlight).
   prevHighlights?: Set<HighlightKey> | null;
   nextHighlights?: Set<HighlightKey> | null;
   // Find-overlay matches that should paint orange (be-find), overriding
@@ -86,8 +87,8 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
               // Find hits own the token (orange) and suppress both the yellow
               // note fill and the reorder stoplight lines, matching the <mark>
               // render path's find precedence.
-              const roleShadow =
-                !isFindHit && !isActiveFind ? roleLineShadow(mode, isPrev, isNext) : undefined;
+              const roleSx =
+                !isFindHit && !isActiveFind ? roleLineSx(mode, isPrev, isNext) : undefined;
               return {
                 cursor: "help",
                 ...(isActiveFind
@@ -97,7 +98,7 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
                     : isHighlighted
                       ? hl.hl
                       : {}),
-                ...(roleShadow ? { boxShadow: roleShadow } : {}),
+                ...(roleSx ?? {}),
               };
             }}
           >
