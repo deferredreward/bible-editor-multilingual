@@ -11,7 +11,6 @@
 
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, IconButton, Tooltip, CircularProgress } from "@mui/material";
-import LinkIcon from "@mui/icons-material/Link";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import UndoIcon from "@mui/icons-material/Undo";
@@ -21,6 +20,7 @@ import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type Highligh
 import { markHighlightSx } from "../lib/highlightStyles";
 import { extractTrailingMarkers, stripTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
 import { SectionHeaderBand } from "./SectionHeaderBand";
+import { AlignLinkButton } from "./AlignLinkButton";
 import { drafts, verseKey, draftDirtyBorderSx } from "../sync/drafts";
 import type { FindMatch } from "./FindReplaceOverlay";
 import type { FindQuery } from "./ScriptureColumn";
@@ -649,6 +649,10 @@ const VerseRow = memo(function VerseRow({
               bibleVersion={bv}
               dto={dto}
               prevDto={prevDto}
+              sourceContent={
+                versesByVersion["UHB"]?.[verseNum]?.content ??
+                versesByVersion["UGNT"]?.[verseNum]?.content
+              }
               isActive={isActive}
               activeNoteQuote={activeNoteQuote}
               activeNoteOccurrence={activeNoteOccurrence}
@@ -677,6 +681,7 @@ const VerseCell = memo(function VerseCell({
   bibleVersion,
   dto,
   prevDto,
+  sourceContent,
   isActive,
   activeNoteQuote,
   activeNoteOccurrence,
@@ -700,6 +705,9 @@ const VerseCell = memo(function VerseCell({
   // Its trailing markers (`\q1`, `\p`) drift down to lead this verse
   // visually, matching USFM convention. Storage stays untouched.
   prevDto: VerseDto | undefined;
+  // The matching UHB/UGNT verse content_json so the align button flags a
+  // broken link when a source word lacks a target. Absent on source columns.
+  sourceContent?: unknown;
   isActive: boolean;
   activeNoteQuote: string | null;
   activeNoteOccurrence: number | null;
@@ -931,18 +939,17 @@ const VerseCell = memo(function VerseCell({
         {verseNum === 0 ? "intro" : `${chapter}:${formatVerseLabel(dto)}`}
       </Typography>
       {!readOnly && (
-        <Tooltip title={`align verse ${verseNum}`}>
-          <IconButton
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenAligner(chapter, verseNum, bibleVersion);
-            }}
-            size="small"
-            sx={{ color: "success.main", p: 0.25, verticalAlign: "-3px" }}
-          >
-            <LinkIcon sx={{ fontSize: 14 }} />
-          </IconButton>
-        </Tooltip>
+        <AlignLinkButton
+          targetContent={dto.content}
+          sourceContent={sourceContent}
+          tooltip={`align verse ${verseNum}`}
+          iconSize={14}
+          sx={{ p: 0.25, verticalAlign: "-3px" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenAligner(chapter, verseNum, bibleVersion);
+          }}
+        />
       )}
       {!readOnly && hasDraft && (
         <Tooltip title={`undo edits to verse ${verseNum}`}>
