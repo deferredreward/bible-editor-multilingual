@@ -1,6 +1,6 @@
 import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button } from "@mui/material";
-import LinkIcon from "@mui/icons-material/Link";
+import { AlignLinkButton } from "./AlignLinkButton";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import ViewStreamIcon from "@mui/icons-material/ViewStream";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
@@ -520,6 +520,7 @@ function ScriptureColumnInner({
                 book={book}
                 bibleVersion={v}
                 versesByVerseNum={indexByVersion[v] ?? {}}
+                sourceByVerseNum={indexByVersion["UHB"] ?? indexByVersion["UGNT"]}
                 verseNumbers={verseNumbers}
                 chapter={chapter}
                 activeVerse={activeVerse}
@@ -743,6 +744,7 @@ function StackedBody({
                 verseNum={ultStart}
                 text={ultV?.plain_text ?? ""}
                 content={ultV?.content}
+                sourceContent={uhbV?.content}
                 prevContent={ultPrev?.content}
                 highlights={ultHL}
                 prevHighlights={ultPrevHL}
@@ -771,6 +773,7 @@ function StackedBody({
                 verseNum={ustStart}
                 text={ustV?.plain_text ?? ""}
                 content={ustV?.content}
+                sourceContent={uhbV?.content}
                 prevContent={ustPrev?.content}
                 highlights={ustHL}
                 prevHighlights={ustPrevHL}
@@ -1035,6 +1038,7 @@ function ActiveLine({
   verseNum,
   text,
   content,
+  sourceContent,
   prevContent,
   highlights,
   prevHighlights,
@@ -1062,6 +1066,9 @@ function ActiveLine({
   verseNum: number;
   text: string;
   content?: unknown;
+  // The matching UHB/UGNT verse content_json — lets the align button flag a
+  // broken link when any source word lacks a target. Only passed for ULT/UST.
+  sourceContent?: unknown;
   // Previous verse's content_json. Its trailing in-flow markers (\q1,
   // \p ...) are surfaced as read-only chip bands above this verse's
   // editable area — usfm-js stores those markers on the prior verse
@@ -1295,11 +1302,14 @@ function ActiveLine({
           {VERSION_LABEL[label] ?? label}
         </Typography>
         {onOpenAligner && (
-          <Tooltip title={`align ${label}`}>
-            <IconButton size="small" onClick={onOpenAligner} sx={{ color: "success.main", p: 0.5 }}>
-              <LinkIcon sx={{ fontSize: 22 }} />
-            </IconButton>
-          </Tooltip>
+          <AlignLinkButton
+            targetContent={content}
+            sourceContent={sourceContent}
+            tooltip={`align ${label}`}
+            iconSize={22}
+            sx={{ p: 0.5 }}
+            onClick={onOpenAligner}
+          />
         )}
         {editable && !readOnly && onSave && (
           <Tooltip title={hasDraft ? "save edits" : "no unsaved edits"}>

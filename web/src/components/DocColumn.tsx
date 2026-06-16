@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, IconButton, Tooltip } from "@mui/material";
-import LinkIcon from "@mui/icons-material/Link";
 import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import UndoIcon from "@mui/icons-material/Undo";
@@ -9,6 +8,7 @@ import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type Highligh
 import { markHighlightSx } from "../lib/highlightStyles";
 import { extractTrailingMarkers, stripTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
 import { SectionHeaderBand } from "./SectionHeaderBand";
+import { AlignLinkButton } from "./AlignLinkButton";
 import { drafts, verseKey, draftDirtyBorderSx } from "../sync/drafts";
 import { HebrewLine } from "./HebrewLine";
 import type { LexiconEntry } from "../hooks/useLexicon";
@@ -34,6 +34,10 @@ interface Props {
   // via buildVerseIndex; the wire shape (keyed by verse_start) stays in
   // versesByVersion at the Shell level.
   versesByVerseNum: Record<number, VerseDto>;
+  // The UHB/UGNT per-verse index (verse_start keyed), so each verse's align
+  // button can flag a broken link when a source word has no target. Same shape
+  // as versesByVerseNum; absent for source columns (which show no align button).
+  sourceByVerseNum?: Record<number, VerseDto>;
   verseNumbers: number[];
   chapter: number;
   activeVerse: number;
@@ -94,6 +98,7 @@ export function DocColumn({
   book,
   bibleVersion,
   versesByVerseNum,
+  sourceByVerseNum,
   verseNumbers,
   chapter,
   activeVerse,
@@ -306,6 +311,7 @@ export function DocColumn({
                 bibleVersion={bibleVersion}
                 text={dto.plain_text ?? ""}
                 content={dto.content}
+                sourceContent={sourceByVerseNum?.[dto.verse]?.content}
                 precedingMarkers={drift}
                 highlights={highlights}
                 prevHighlights={prevHighlights}
@@ -383,6 +389,7 @@ function VerseSpan({
   bibleVersion,
   text,
   content,
+  sourceContent,
   precedingMarkers,
   highlights,
   prevHighlights,
@@ -411,6 +418,9 @@ function VerseSpan({
   bibleVersion: string;
   text: string;
   content?: unknown;
+  // The matching UHB/UGNT verse content_json (verse_start keyed) so the align
+  // button flags a broken link when a source word lacks a target.
+  sourceContent?: unknown;
   // Trailing markers drifted from the previous verse — composed at the
   // start of the rendered verseObjects so visual paragraph / poetry
   // breaks introduce this verse correctly.
@@ -632,18 +642,17 @@ function VerseSpan({
         {verseNum === 0 ? "intro" : `${chapter}:${verseLabel}`}
       </span>
       {!readOnly && (
-        <Tooltip title={`align verse ${verseNum}`}>
-          <IconButton
-            onClick={(e) => {
-              e.stopPropagation();
-              onAlign();
-            }}
-            size="small"
-            sx={{ color: "success.main", p: 0.25, verticalAlign: "-3px" }}
-          >
-            <LinkIcon sx={{ fontSize: 14 }} />
-          </IconButton>
-        </Tooltip>
+        <AlignLinkButton
+          targetContent={content}
+          sourceContent={sourceContent}
+          tooltip={`align verse ${verseNum}`}
+          iconSize={14}
+          sx={{ p: 0.25, verticalAlign: "-3px" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAlign();
+          }}
+        />
       )}
       {!readOnly && hasDraft && (
         <Tooltip title={`undo edits to verse ${verseNum}`}>
