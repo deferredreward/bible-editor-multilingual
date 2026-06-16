@@ -491,8 +491,9 @@ export function extractTargetSelectionText(
 // SOURCE document order (where the quote IS contiguous and ordered, and gap
 // markers mark the real discontinuities). Returns the matched bare-word tokens
 // of the chosen occurrence, or [] if it doesn't resolve. Shared by the UHB/UGNT
-// highlighter and the OL-anchored target join.
-function matchSourceTokens(
+// highlighter, the OL-anchored target join, and the quote-builder picker's
+// pre-seed (lib/quoteBuilder.ts selectionFromQuote).
+export function matchSourceTokens(
   verseObjects: unknown[],
   quote: string,
   occurrence: number,

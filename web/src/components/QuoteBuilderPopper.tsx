@@ -14,7 +14,7 @@
 // ancestor chain (outer-to-inner zaln milestones), so a click on "first"
 // inside zaln(בַחֹדֶשׁ) > zaln(הָרִאשׁוֹן) toggles both Hebrew words at once.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Popper,
   Paper,
@@ -31,11 +31,14 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import { collectTargetTokens, buildQuoteFromSelection, tokenKey } from "../lib/quoteBuilder";
 import type { HighlightKey } from "../lib/highlight";
-import type { SourceAncestor } from "../lib/quoteBuilder";
+import type { SourceAncestor, TargetToken } from "../lib/quoteBuilder";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import type { SourceWord } from "../lib/alignment";
 import { isHebrewBook } from "../lib/sourceSearch";
 import { SourceTooltipBody } from "./SourceTooltipBody";
+
+// Which row a shift-click range is anchored in. A range never spans rows.
+type Row = "src" | "ult" | "ust";
 
 interface Props {
   open: boolean;
@@ -52,6 +55,9 @@ interface Props {
   lexiconMap: Map<string, LexiconEntry | null>;
   selectedKeys: Set<HighlightKey>;
   onToggleKey: (key: HighlightKey) => void;
+  // Additive range select for shift-click — adds every key in the range
+  // without toggling already-selected words off.
+  onSelectKeys: (keys: HighlightKey[]) => void;
   onCancel: () => void;
   onCommit: () => void;
 }
@@ -68,6 +74,7 @@ export function QuoteBuilderPopper({
   lexiconMap,
   selectedKeys,
   onToggleKey,
+  onSelectKeys,
   onCancel,
   onCommit,
 }: Props) {
@@ -87,6 +94,50 @@ export function QuoteBuilderPopper({
     () => buildQuoteFromSelection(uhbVerseObjects, selectedKeys),
     [uhbVerseObjects, selectedKeys],
   );
+
+  // Anchor for shift-click range selection — the last chip clicked without
+  // shift. Scoped to a row ("src" | "ult" | "ust") so a shift-click only
+  // extends a range within the same row it was started in. Reset whenever the
+  // picker re-targets a different verse so a stale index can't span the wrong
+  // token list.
+  const [anchor, setAnchor] = useState<{ row: Row; index: number } | null>(null);
+  useEffect(() => {
+    setAnchor(null);
+  }, [book, chapter, verse]);
+
+  // UHB/UGNT source row: plain click toggles one word; shift-click adds the
+  // inclusive range from the anchor to the clicked chip.
+  const handleSourceClick = (index: number, e: React.MouseEvent) => {
+    const tok = uhbTokens[index];
+    const key = tokenKey(tok.text, tok.occurrence);
+    if (e.shiftKey && anchor?.row === "src") {
+      const [lo, hi] = anchor.index <= index ? [anchor.index, index] : [index, anchor.index];
+      onSelectKeys(uhbTokens.slice(lo, hi + 1).map((t) => tokenKey(t.text, t.occurrence)));
+    } else {
+      onToggleKey(key);
+    }
+    setAnchor({ row: "src", index });
+  };
+
+  // ULT/UST target row: plain click toggles the clicked word's full source
+  // chain (handleEnglishClick); shift-click adds the union of source chains
+  // across the inclusive range from the anchor to the clicked chip.
+  const handleTargetClick = (
+    row: "ult" | "ust",
+    tokens: TargetToken[],
+    index: number,
+    e: React.MouseEvent,
+  ) => {
+    const tok = tokens[index];
+    if (tok.sources.length === 0) return;
+    if (e.shiftKey && anchor?.row === row) {
+      const [lo, hi] = anchor.index <= index ? [anchor.index, index] : [index, anchor.index];
+      onSelectKeys(tokens.slice(lo, hi + 1).flatMap((t) => t.sources.map((s) => s.key)));
+    } else {
+      handleEnglishClick(tok.sources);
+    }
+    setAnchor({ row, index });
+  };
 
   const handleEnglishClick = (sources: SourceAncestor[]) => {
     if (sources.length === 0) return;
@@ -146,6 +197,9 @@ export function QuoteBuilderPopper({
               Build quote · {book} {chapter}:{verse}
             </Typography>
             <Box sx={{ flex: 1 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+              shift-click for a range
+            </Typography>
             <IconButton size="small" onClick={onCancel} aria-label="close">
               <CloseIcon fontSize="small" />
             </IconButton>
@@ -156,7 +210,7 @@ export function QuoteBuilderPopper({
             {uhbTokens.length === 0 ? (
               <EmptyHint>no source words for this verse</EmptyHint>
             ) : (
-              uhbTokens.map((tok) => {
+              uhbTokens.map((tok, i) => {
                 // Always use nfc-normalized keys — UHB \w text drifts from
                 // zaln x-content in combining-mark order, so a raw
                 // `${text}|${occ}` comparison would miss cross-row matches.
@@ -178,7 +232,7 @@ export function QuoteBuilderPopper({
                     occurrence={tok.occurrence}
                     selected={selected}
                     rtl={sourceIsHebrew}
-                    onClick={() => onToggleKey(key)}
+                    onClick={(e) => handleSourceClick(i, e)}
                     lexiconBody={
                       <SourceTooltipBody
                         source={src}
@@ -196,14 +250,14 @@ export function QuoteBuilderPopper({
             {ultTokens.length === 0 ? (
               <EmptyHint>no ULT alignment for this verse</EmptyHint>
             ) : (
-              ultTokens.map((tok) => (
+              ultTokens.map((tok, i) => (
                 <TargetChip
                   key={`ult|${tok.position}`}
                   text={tok.text}
                   occurrence={tok.occurrence}
                   selected={chainSelected(tok.sources, selectedKeys)}
                   hasChain={tok.sources.length > 0}
-                  onClick={() => handleEnglishClick(tok.sources)}
+                  onClick={(e) => handleTargetClick("ult", ultTokens, i, e)}
                   tooltip={
                     tok.sources.length === 0
                       ? "no Hebrew alignment for this word"
@@ -219,14 +273,14 @@ export function QuoteBuilderPopper({
             {ustTokens.length === 0 ? (
               <EmptyHint>no UST alignment for this verse</EmptyHint>
             ) : (
-              ustTokens.map((tok) => (
+              ustTokens.map((tok, i) => (
                 <TargetChip
                   key={`ust|${tok.position}`}
                   text={tok.text}
                   occurrence={tok.occurrence}
                   selected={chainSelected(tok.sources, selectedKeys)}
                   hasChain={tok.sources.length > 0}
-                  onClick={() => handleEnglishClick(tok.sources)}
+                  onClick={(e) => handleTargetClick("ust", ustTokens, i, e)}
                   tooltip={
                     tok.sources.length === 0
                       ? "no Hebrew alignment for this word"
@@ -348,7 +402,7 @@ function SourceChip({
   occurrence: number;
   selected: boolean;
   rtl?: boolean;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
   // When provided, wraps the chip in the same SourceTooltipBody hovercard
   // the scripture column's HebrewLine uses — strong/lemma/morph/gloss.
   lexiconBody?: React.ReactNode;
@@ -396,7 +450,7 @@ function TargetChip({
   occurrence: number;
   selected: boolean;
   hasChain: boolean;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
   tooltip: string;
 }) {
   const chip = (

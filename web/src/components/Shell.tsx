@@ -29,7 +29,7 @@ import { verseHasUnalignedWork } from "../lib/alignment";
 import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { findSourceForTargetText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
-import { buildQuoteFromSelection } from "../lib/quoteBuilder";
+import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
 import { nfc } from "../lib/hebrew";
 import { TimelineRail } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
@@ -692,10 +692,34 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     },
     [],
   );
-  const startQuoteBuild = useCallback((noteId: string) => {
-    setQuoteBuildNoteId(noteId);
-    setQuoteBuildSelectedKeys(new Set());
+  // Additive multi-select for shift-click range selection in the picker —
+  // adds every key in the dragged range without toggling any already-selected
+  // word back off (range select is "extend the selection," not "toggle each").
+  const selectQuoteBuildWords = useCallback((keys: HighlightKey[]) => {
+    setQuoteBuildSelectedKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of keys) next.add(key);
+      return next;
+    });
   }, []);
+  const startQuoteBuild = useCallback(
+    (noteId: string) => {
+      setQuoteBuildNoteId(noteId);
+      // Pre-seed the selection from the note's existing quote so the translator
+      // can ADD to it instead of starting over. Resolves the stored quote +
+      // occurrence against the UHB/UGNT verse; an unresolvable quote (e.g.
+      // hand-typed English) yields an empty set and the picker starts fresh.
+      const row = data?.tn.find((r) => r.id === noteId);
+      const uhb = row
+        ? verseIndexByVersion["UHB"]?.[row.verse] ?? verseIndexByVersion["UGNT"]?.[row.verse]
+        : undefined;
+      const verseObjects = (uhb?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+      setQuoteBuildSelectedKeys(
+        row ? selectionFromQuote(verseObjects, row.quote, row.occurrence) : new Set(),
+      );
+    },
+    [data, verseIndexByVersion],
+  );
   const cancelQuoteBuild = useCallback(() => {
     setQuoteBuildNoteId(null);
     setQuoteBuildSelectedKeys(new Set());
@@ -1926,6 +1950,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           lexiconMap={lexiconMap}
           selectedKeys={quoteBuildSelectedKeys}
           onToggleKey={toggleQuoteBuildWord}
+          onSelectKeys={selectQuoteBuildWords}
           onCancel={cancelQuoteBuild}
           onCommit={commitQuoteBuild}
         />
