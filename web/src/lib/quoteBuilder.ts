@@ -11,7 +11,7 @@
 // always 1, matching how new TNs are typically written.
 
 import type { HighlightKey } from "./highlight";
-import { matchNorm } from "./highlight.ts";
+import { matchNorm, matchSourceTokens } from "./highlight.ts";
 
 // Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
 // All callers (picker + buildQuoteFromSelection + collectTargetTokens)
@@ -77,6 +77,31 @@ function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
 export interface BuiltQuote {
   quote: string;
   occurrence: number;
+}
+
+// Reverse of buildQuoteFromSelection: resolve a stored quote + occurrence
+// against the UHB/UGNT verse and return the picker selection keys (tokenKey
+// format) for the matched source words. Used to PRE-SEED the picker when
+// "build from source" opens on a note that already carries a quote — the
+// translator keeps the existing words selected and just adds more, rather
+// than starting from scratch. Returns an empty set when the quote doesn't
+// resolve in this verse (e.g. it was typed by hand as English support text
+// and never converted to source), so the picker simply starts fresh.
+//
+// Keys go through tokenKey (matchNorm) so they match what
+// buildQuoteFromSelection / collectUhbWords look up — matchSourceTokens
+// returns the same per-word (text, occurrence) the builder keys by.
+export function selectionFromQuote(
+  verseObjects: unknown[] | undefined | null,
+  quote: string | null | undefined,
+  occurrence: number | null | undefined,
+): Set<HighlightKey> {
+  const out = new Set<HighlightKey>();
+  if (!Array.isArray(verseObjects) || !quote) return out;
+  for (const t of matchSourceTokens(verseObjects, quote, occurrence ?? 1)) {
+    out.add(tokenKey(t.text, t.occurrence));
+  }
+  return out;
 }
 
 // Separator to place after `w` when rejoining it with the next word in the
