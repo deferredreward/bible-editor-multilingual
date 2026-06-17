@@ -1,0 +1,42 @@
+name: Deploy to production
+
+# Manual-only: click "Run workflow" on the Actions tab to ship.
+# No push trigger, so a merge to main never auto-deploys.
+on:
+  workflow_dispatch:
+
+# Avoid two concurrent prod deploys racing each other.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # api typecheck (tsc --noEmit) + web vite build -> web/dist.
+      # wrangler deploy below reads ../web/dist as the SPA assets, so this
+      # must run first.
+      - name: Build
+        run: npm run build
+
+      # Uses the wrangler pinned in api/devDependencies (not a separate action)
+      # so CI matches `npm run deploy` locally. --env production activates the
+      # [env.production.*] blocks in wrangler.toml. Worker secrets (JWT key, DCS
+      # OAuth, etc.) already live in Cloudflare and are not touched here.
+      - name: Deploy Worker + SPA
+        working-directory: api
+        run: npx wrangler deploy --env production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
