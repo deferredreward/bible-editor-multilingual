@@ -16,6 +16,9 @@ import {
   parseTsv,
   refParts,
   makeVerseSortOrder,
+  collectSourceWords,
+  healReplacementChars,
+  hasReplacementChar,
 } from "./importParsers.ts";
 
 // Collect target `\w` words with their alignment status (inside a `\zaln-s`?).
@@ -560,6 +563,100 @@ function quoteCount(extract, tag) {
     JSON.stringify(seqA) === JSON.stringify([100, 200, 100, 100, 200, 300]),
     `expected per-verse stepping (${seqA.join(",")})`,
   );
+}
+
+// --- healReplacementChars: AI-mangled U+FFFD in alignment source attrs --------
+//
+// Fixtures are built from real prod corruption (HOS 8:4, HOS 9:4, JER 5:21),
+// codepoint by codepoint, so the test never depends on copy-paste of combining
+// marks. `cp(...)` builds a string from Unicode code points; 0xFFFD is the
+// U+FFFD REPLACEMENT CHARACTER the generator leaves behind.
+const cp = (...nums) => String.fromCodePoint(...nums);
+const FFFD = 0xfffd;
+
+// A `\zaln-s` milestone wrapping one target `\w`, mirroring the usfm-js shape.
+const zaln = (attrs, targetText) => ({
+  tag: "zaln",
+  type: "milestone",
+  ...attrs,
+  children: [{ text: targetText, tag: "w", type: "word", occurrence: "1", occurrences: "1" }],
+  endTag: "zaln-e\\*",
+});
+
+{
+  // HOS 8:4 UST "gold": x-content lost its qamats (U+05B8) → two U+FFFD.
+  const clean = cp(0x05d5, 0x05bc, 0x2060, 0x05d6, 0x05b0, 0x05d4, 0x05b8, 0x05d1, 0x05b8, 0x0597, 0x2060, 0x05dd);
+  const corrupt = cp(0x05d5, 0x05bc, 0x2060, 0x05d6, 0x05b0, 0x05d4, FFFD, FFFD, 0x05d1, 0x05b8, 0x0597, 0x2060, 0x05dd);
+  const vo = [zaln({ strong: "c:H2091", lemma: "זָהָב", content: corrupt }, "gold")];
+  const before = structuredClone(vo);
+  const srcWords = [{ text: clean, strong: "c:H2091", lemma: "זָהָב", morph: "He,C:Ncmsc:Sp3mp" }];
+  const report = healReplacementChars(vo, srcWords);
+  assert(report.repaired.length === 1 && report.unrepaired.length === 0, `HOS 8:4 content: one repair, no flags`);
+  assert(vo[0].content === clean, `HOS 8:4 content reconstructed to clean UHB surface form`);
+  assert(!hasReplacementChar(vo[0].content), `HOS 8:4 content has no residual U+FFFD`);
+  // Structure preservation: copy the repaired field onto the pre-heal clone and
+  // the trees must be byte-identical — proving ONLY the attribute string changed.
+  before[0].content = vo[0].content;
+  assert(JSON.stringify(before) === JSON.stringify(vo), `HOS 8:4 heal changed nothing but x-content (no unalignment)`);
+}
+
+{
+  // HOS 9:4 UST: corruption in x-lemma (invisible in the aligner, but bad data).
+  const cleanLemma = cp(0x05d0, 0x05b8, 0x05d5, 0x05b6, 0x05df); // אָוֶן
+  const corruptLemma = cp(0x05d0, 0x05b8, 0x05d5, 0x05b6, FFFD, FFFD);
+  const vo = [zaln({ strong: "H0205", content: cp(0x05d0, 0x05d5, 0x05df), lemma: corruptLemma }, "wickedness")];
+  const srcWords = [{ text: cp(0x05d0, 0x05d5, 0x05df), strong: "H0205", lemma: cleanLemma, morph: "He,Ncmpa" }];
+  const report = healReplacementChars(vo, srcWords);
+  assert(report.repaired.length === 1 && vo[0].lemma === cleanLemma, `HOS 9:4 x-lemma reconstructed`);
+}
+
+{
+  // JER 5:21 UST: two source words share Strong's H8085 (שִׁמְעוּ / יִשְׁמָֽעוּ).
+  // The surviving characters must disambiguate to the yod-initial form.
+  const corrupt = cp(0x05d9, 0x05b4, 0x05e9, 0x05c1, 0x05b0, 0x05de, 0x05b8, 0x05bd, 0x05e2, 0x05d5, FFFD, FFFD);
+  const right = cp(0x05d9, 0x05b4, 0x05e9, 0x05c1, 0x05b0, 0x05de, 0x05b8, 0x05bd, 0x05e2, 0x05d5, 0x05bc);
+  const wrong = cp(0x05e9, 0x05c1, 0x05b4, 0x05de, 0x05b0, 0x05e2, 0x05d5, 0x05bc);
+  const vo = [zaln({ strong: "H8085", content: corrupt }, "hear")];
+  const srcWords = [
+    { text: wrong, strong: "H8085", lemma: "שָׁמַע", morph: "He,Vqv2mp" },
+    { text: right, strong: "H8085", lemma: "שָׁמַע", morph: "He,Vqi3mp" },
+  ];
+  const report = healReplacementChars(vo, srcWords);
+  assert(vo[0].content === right, `JER 5:21 disambiguated to the subsequence-matching source word`);
+  assert(report.repaired.length === 1, `JER 5:21 one repair`);
+}
+
+{
+  // Ambiguity bail: surviving chars match two DIFFERENT source values → leave it.
+  const corrupt = cp(0x05d0, FFFD); // aleph + FFFD
+  const vo = [zaln({ strong: "H9999", content: corrupt }, "x")];
+  const srcWords = [
+    { text: cp(0x05d0, 0x05d1), strong: "H9999", lemma: "", morph: "" },
+    { text: cp(0x05d0, 0x05d2), strong: "H9999", lemma: "", morph: "" },
+  ];
+  const report = healReplacementChars(vo, srcWords);
+  assert(report.repaired.length === 0 && report.unrepaired.length === 1, `ambiguous match is left unrepaired (no guess)`);
+  assert(vo[0].content === corrupt, `ambiguous content is untouched`);
+}
+
+{
+  // No-op on clean input: zero repairs, zero flags, identical bytes.
+  const vo = [zaln({ strong: "c:H2091", content: cp(0x05d6, 0x05b8, 0x05d4, 0x05b8, 0x05d1) }, "gold")];
+  const before = JSON.stringify(vo);
+  const report = healReplacementChars(vo, [{ text: cp(0x05d6, 0x05b8, 0x05d4, 0x05b8, 0x05d1), strong: "c:H2091", lemma: "", morph: "" }]);
+  assert(report.repaired.length === 0 && report.unrepaired.length === 0, `clean verse: no-op`);
+  assert(JSON.stringify(vo) === before, `clean verse: byte-identical after heal`);
+}
+
+{
+  // collectSourceWords pulls \w tokens (incl. nested in milestones) with attrs.
+  const vo = [
+    { tag: "zaln", type: "milestone", strong: "H1", children: [{ tag: "w", type: "word", text: "אב", strong: "H1", lemma: "אָב", morph: "He,Ncmsa" }] },
+    { tag: "w", type: "word", text: "גם", strong: "H1571", lemma: "גַּם", morph: "He,D" },
+  ];
+  const got = collectSourceWords(vo);
+  assert(got.length === 2, `collectSourceWords found both \\w (incl. nested)`);
+  assert(got[0].strong === "H1" && got[0].text === "אב", `nested source word collected with strong`);
 }
 
 console.log("\nAll parser smoke checks passed.");

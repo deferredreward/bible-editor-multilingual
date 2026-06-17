@@ -8,12 +8,15 @@
 
 import type { Env } from "./index";
 import {
+  collectSourceWords,
   extractVersesForRange,
+  healReplacementChars,
   parseTsv,
   recomputeTargetOccurrences,
   refParts,
   type VerseExtract,
 } from "./importParsers";
+import { NT_BOOKS } from "./dcsSources";
 import { newRowId } from "./rows";
 
 interface OutputEntry {
@@ -807,6 +810,40 @@ async function applyVerseUpdate(
       }
     } catch {
       /* leave contentJson as-is if it isn't parseable JSON */
+    }
+  }
+
+  // Heal AI-mangled U+FFFD in `\zaln-s` source attributes (the generator can emit
+  // garbled multi-byte Hebrew, e.g. וּזְה❖❖בָם for "gold") before it lands in D1
+  // — otherwise it shows as a broken aligner card and exports the garble to DCS.
+  // Reconstruct from the parallel UHB/UGNT row; gated on the rare defect, and
+  // structure-preserving so no word unaligns. See healReplacementChars.
+  if ((bibleVersion === "ULT" || bibleVersion === "UST") && contentJson.includes("�")) {
+    try {
+      const parsed = JSON.parse(contentJson) as { verseObjects?: unknown[] };
+      const srcVersion = NT_BOOKS.has(book) ? "UGNT" : "UHB";
+      const src = await env.DB.prepare(
+        `SELECT content_json FROM verses
+          WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+      )
+        .bind(book, chapter, verse, srcVersion)
+        .first<{ content_json: string }>();
+      const srcWords = src
+        ? collectSourceWords((JSON.parse(src.content_json) as { verseObjects?: unknown[] }).verseObjects ?? [])
+        : [];
+      const report = healReplacementChars(parsed.verseObjects ?? [], srcWords);
+      if (report.repaired.length > 0) contentJson = JSON.stringify(parsed);
+      if (report.unrepaired.length > 0) {
+        console.warn("pipeline apply: unrepaired U+FFFD in alignment source attrs", {
+          book,
+          chapter,
+          verse,
+          bibleVersion,
+          unrepaired: report.unrepaired,
+        });
+      }
+    } catch {
+      /* leave contentJson as-is if anything is unparseable */
     }
   }
 

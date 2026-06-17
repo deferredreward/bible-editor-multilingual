@@ -277,6 +277,146 @@ export function recomputeTargetOccurrences(verseObjects: unknown[]): unknown[] {
   return verseObjects;
 }
 
+// ─── Heal U+FFFD replacement chars in alignment source attributes ────────────
+//
+// The AI aligner has emitted `\zaln-s` milestones whose source-language
+// attributes (x-content = the displayed Hebrew/Greek surface form, x-lemma,
+// x-morph) carry one or more U+FFFD REPLACEMENT CHARACTERs where a multi-byte
+// Hebrew vowel / cantillation mark / consonant was mangled during generation
+// (a UTF-8 round-trip bug upstream). The garbled text round-tripped out to
+// door43 master and flows back in through the nightly reimport, so it shows up
+// in the aligner as a broken word (e.g. HOS 8:4 UST "gold": וּזְה❖❖בָם).
+//
+// We repair it WITHOUT touching alignment structure: only the corrupt attribute
+// STRING is rewritten, reconstructed from the parallel original-language source
+// word (UHB / UGNT). No node is added, removed, reordered, or re-nested and no
+// `\w` occurrence is renumbered, so an edit here can never unalign a word — the
+// invariant the whole save engine protects. plain_text is unaffected too (it
+// concatenates node `.text`, never these milestone attributes).
+//
+// Matching is conservative: a corrupt attribute is repaired only when exactly
+// ONE distinct clean source value (a) shares the milestone's Strong's number and
+// (b) has the corrupt value's surviving (non-FFFD) characters as an in-order
+// subsequence. Anything ambiguous or unmatched is LEFT AS-IS (and reported), so
+// the heal never guesses. A no-op on clean verses — gate callers on a cheap
+// string `.includes("�")` so the source lookup only runs when needed.
+
+const REPLACEMENT_CHAR = "�";
+
+// One source-language `\w` token, for matching a corrupt milestone attribute
+// back to its clean original-language form.
+export interface SourceWord {
+  text: string;
+  strong: string;
+  lemma: string;
+  morph: string;
+}
+
+// Which clean SourceWord field repairs each corrupt milestone attribute.
+const ATTR_TO_SOURCE_FIELD: Record<string, keyof SourceWord> = {
+  content: "text", // x-content — the displayed surface form
+  lemma: "lemma",
+  morph: "morph",
+};
+
+export function hasReplacementChar(s: unknown): boolean {
+  return typeof s === "string" && s.includes(REPLACEMENT_CHAR);
+}
+
+// True iff `corrupt` with its U+FFFD removed is an in-order subsequence of
+// `clean` — i.e. the surviving characters all appear, in sequence, in the clean
+// value. The mangled bytes only ever DROP content (a vowel/mark/letter became
+// FFFD), so a correct reconstruction must contain every surviving character.
+function survivingIsSubsequence(corrupt: string, clean: string): boolean {
+  let i = 0;
+  const surviving = [...corrupt].filter((ch) => ch !== REPLACEMENT_CHAR);
+  for (const ch of clean) {
+    if (i < surviving.length && ch === surviving[i]) i++;
+  }
+  return i === surviving.length;
+}
+
+// Collect every source-language `\w` token in document order, for use as the
+// repair reference. Source `\w` carry strong/lemma/morph but (per import) no
+// x-occurrence — matching is by Strong's + surviving-character subsequence.
+export function collectSourceWords(verseObjects: unknown[]): SourceWord[] {
+  const out: SourceWord[] = [];
+  const walk = (nodes: unknown[]): void => {
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
+      const o = node as Record<string, unknown>;
+      if (o["type"] === "word" && o["tag"] === "w" && typeof o["text"] === "string") {
+        out.push({
+          text: o["text"] as string,
+          strong: typeof o["strong"] === "string" ? (o["strong"] as string) : "",
+          lemma: typeof o["lemma"] === "string" ? (o["lemma"] as string) : "",
+          morph: typeof o["morph"] === "string" ? (o["morph"] as string) : "",
+        });
+      } else if (Array.isArray(o["children"])) {
+        walk(o["children"] as unknown[]);
+      }
+    }
+  };
+  walk(verseObjects);
+  return out;
+}
+
+export interface HealReport {
+  repaired: Array<{ attr: string; strong: string; from: string; to: string }>;
+  unrepaired: Array<{ attr: string; strong: string; value: string }>;
+}
+
+// Resolve the single unambiguous clean value for one corrupt attribute, or null.
+function resolveRepair(
+  corrupt: string,
+  strong: string,
+  sourceField: keyof SourceWord,
+  sourceWords: SourceWord[],
+): string | null {
+  if (!strong || strong.includes(REPLACEMENT_CHAR)) return null;
+  const distinct = new Set<string>();
+  for (const w of sourceWords) {
+    if (w.strong !== strong) continue;
+    const clean = w[sourceField];
+    if (!clean || clean.includes(REPLACEMENT_CHAR)) continue;
+    if (survivingIsSubsequence(corrupt, clean)) distinct.add(clean);
+  }
+  return distinct.size === 1 ? [...distinct][0] : null;
+}
+
+// Repair U+FFFD in `\zaln-s` source attributes (x-content / x-lemma / x-morph)
+// in place, reconstructing from `sourceWords`. Returns what was (and wasn't)
+// repaired. Mutates `verseObjects`. Structure-preserving by construction — it
+// only reassigns string attribute values on existing milestone nodes.
+export function healReplacementChars(
+  verseObjects: unknown[],
+  sourceWords: SourceWord[],
+): HealReport {
+  const report: HealReport = { repaired: [], unrepaired: [] };
+  if (!Array.isArray(verseObjects)) return report;
+  const walk = (nodes: unknown[]): void => {
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
+      const o = node as Record<string, unknown>;
+      const strong = typeof o["strong"] === "string" ? (o["strong"] as string) : "";
+      for (const attr of Object.keys(ATTR_TO_SOURCE_FIELD)) {
+        const val = o[attr];
+        if (!hasReplacementChar(val)) continue;
+        const fixed = resolveRepair(val as string, strong, ATTR_TO_SOURCE_FIELD[attr], sourceWords);
+        if (fixed === null) {
+          report.unrepaired.push({ attr, strong, value: val as string });
+        } else {
+          report.repaired.push({ attr, strong, from: val as string, to: fixed });
+          o[attr] = fixed;
+        }
+      }
+      if (Array.isArray(o["children"])) walk(o["children"] as unknown[]);
+    }
+  };
+  walk(verseObjects);
+  return report;
+}
+
 // Split AI-glued `\w` tokens and drop their fragments to unaligned. No-op when
 // nothing is glued — clean verses (and Hebrew / Greek source text, which has
 // no Latin boundary punctuation) pass through untouched, no occurrence churn.

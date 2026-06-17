@@ -33,6 +33,17 @@
 
 ## Completed (recently merged → main, newest first)
 
+- **charming-bardeen** — Heal AI-mangled `U+FFFD` in alignment source attrs (x-content/x-lemma/x-morph).
+  HOS 8:4 UST "gold" showed `וּזְה❖❖בָם` — real byte corruption (a multi-byte Hebrew mark mangled to
+  replacement chars by the AI aligner), not display. Corpus-wide: **69 prod rows** (45 UST + 24 ULT)
+  across the AI-worked books (ECC, HOS, ISA, JER, LAM, MIC, NUM, PSA, ZEC); 68 pristine, so the nightly
+  reimport of the still-corrupt upstream master would re-clobber a data-only fix. Fix = shared
+  `healReplacementChars` (importParsers.ts) reconstructing each corrupt attr from the parallel UHB/UGNT
+  word (match by Strong's + surviving-char subsequence; ambiguous → left as-is), wired into the reimport
+  (`bookReimport.applyVerseRows`) and AI-apply (`pipelineImport`) paths, both gated on a `.includes("�")`.
+  Structure-preserving — only the attribute string changes, so nothing unaligns (proven on all 69 real
+  rows: 0 structural/plain_text deltas). **Prod data already healed** via `scripts/scan-replacement-chars.mjs`
+  (version-bumped + edit_log `heal-replacement-chars`); 0 `U+FFFD` remain corpus-wide.
 - #214 — Fix whole-verse unalign when adding quotes at a verse's edges (`7acb5266`)
 - #213 — Spacing between undo and save buttons + document PR merge-check workflow in CLAUDE.md
 - #212 — Move save button to verse level; add column labels above columns in book view

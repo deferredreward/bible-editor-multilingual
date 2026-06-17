@@ -32,12 +32,15 @@
 
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
-import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText } from "./dcsSources";
+import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, NT_BOOKS } from "./dcsSources";
 import {
+  collectSourceWords,
   extractVersesForRange,
+  healReplacementChars,
   makeVerseSortOrder,
   parseTsv,
   refParts,
+  type SourceWord,
   type VerseExtract,
 } from "./importParsers";
 import { activePipelineForChapter } from "./chapterLock";
@@ -602,6 +605,63 @@ async function reimportVersesForChapter(
   return applyVerseRows(env, book, bibleVersion, extractVersesForRange(rawUsfm, chapter, chapter), userId);
 }
 
+// Heal AI-mangled U+FFFD in `\zaln-s` source attributes (x-content / x-lemma /
+// x-morph) on the incoming verses, reconstructing from the parallel UHB/UGNT row
+// in D1, BEFORE the diff/write so the repaired (clean) content lands instead of
+// re-importing upstream's garbled bytes. Gated on a string `.includes("�")`, so
+// the source lookup only runs for the rare verse that carries the defect — no
+// extra subrequests on clean chapters (which is every chapter in steady state).
+// Structure-preserving (see healReplacementChars): only attribute strings change,
+// so plain_text/verse_end are untouched and nothing unaligns. Mutates each
+// affected verse's contentJson in place (the same objects the write + per-row
+// fallback reuse).
+async function healIncomingReplacementChars(
+  env: Env,
+  book: string,
+  bibleVersion: "ULT" | "UST",
+  verses: VerseExtract[],
+): Promise<void> {
+  const need = verses.filter((v) => v.contentJson.includes("�"));
+  if (need.length === 0) return;
+  const srcVersion = NT_BOOKS.has(book) ? "UGNT" : "UHB";
+  const chapters = [...new Set(need.map((v) => v.chapter))];
+  const ph = chapters.map((_c, i) => `?${i + 3}`).join(", ");
+  const rs = await env.DB.prepare(
+    `SELECT chapter, verse, content_json FROM verses
+      WHERE book = ?1 AND bible_version = ?2 AND chapter IN (${ph})`,
+  )
+    .bind(book, srcVersion, ...chapters)
+    .all<{ chapter: number; verse: number; content_json: string }>();
+  const srcByKey = new Map<string, SourceWord[]>();
+  for (const r of rs.results ?? []) {
+    try {
+      const vo = (JSON.parse(r.content_json) as { verseObjects?: unknown[] }).verseObjects ?? [];
+      srcByKey.set(`${r.chapter}:${r.verse}`, collectSourceWords(vo));
+    } catch {
+      /* unparseable source row — leave the target's FFFD unrepaired */
+    }
+  }
+  for (const v of need) {
+    let parsed: { verseObjects?: unknown[] };
+    try {
+      parsed = JSON.parse(v.contentJson) as { verseObjects?: unknown[] };
+    } catch {
+      continue;
+    }
+    const report = healReplacementChars(parsed.verseObjects ?? [], srcByKey.get(`${v.chapter}:${v.verse}`) ?? []);
+    if (report.repaired.length > 0) v.contentJson = JSON.stringify(parsed);
+    if (report.unrepaired.length > 0) {
+      console.warn("reimport: unrepaired U+FFFD in alignment source attrs", {
+        book,
+        bibleVersion,
+        chapter: v.chapter,
+        verse: v.verse,
+        unrepaired: report.unrepaired,
+      });
+    }
+  }
+}
+
 // Per-verse upsert over already-parsed verses (keys off each verse's own
 // chapter, so it works across a whole chunk range). Batched: ONE read of the
 // current rows for these verses' chapters, an in-memory diff, then ONE atomic
@@ -628,6 +688,11 @@ async function applyVerseRows(
 ): Promise<ReimportCounts> {
   const counts = zeroCounts();
   if (verses.length === 0) return counts;
+
+  // Heal AI-mangled U+FFFD source attributes before the diff so we never write
+  // (or no-op against) upstream's garbled bytes. No-op + zero extra reads unless
+  // an incoming verse actually carries the defect.
+  await healIncomingReplacementChars(env, book, bibleVersion, verses);
 
   const now = Math.floor(Date.now() / 1000);
 
