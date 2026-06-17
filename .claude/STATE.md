@@ -18,6 +18,11 @@
 
 ## In progress
 
+- **trusting-galileo** — Fix: in book mode with TN scope on, typing in find collapsed the book + closed the
+  find box. Root cause: auto-jump-to-first-match fired `focusNoteMatch` on the chapter-0 book-intro note
+  (sorts first, matches common words), which is a *different* chapter than active → URL nav → Shell remount.
+  Fix gates the **auto** scroll path to skip cross-chapter notes (bible matches + explicit prev/next unchanged).
+  `FindReplaceOverlay.tsx` + `ScriptureColumn.tsx`. Verified live (Playwright). PR pending.
 - _(none currently tracked here — add the branch + a one-line status when you pick up work)_
 - Follow-up watch: edge-punctuation whole-verse unalign fix (PR #214, merged) is **code branch-only**;
   prod ZEC 7:14 ULT was healed to v5 by data fix but the engine change is **not yet deployed**.
