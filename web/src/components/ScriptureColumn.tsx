@@ -447,6 +447,7 @@ function ScriptureColumnInner({
               open
               onClose={closeFind}
               book={book}
+              activeChapter={chapter}
               chapters={overlayChapters}
               chapterList={overlayChapterList}
               onLoadChapter={overlayLoadChapter}

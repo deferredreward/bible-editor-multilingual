@@ -102,6 +102,10 @@ interface Props {
   // Active book code (e.g. "ZEC" / "MAT"). Used to disambiguate bare
   // Strong's queries — "559" in an OT book → H559, in an NT book → G559.
   book: string;
+  // The currently-active chapter (the one the URL points at). The auto-jump
+  // path uses it to avoid yanking the user across chapters on a keystroke —
+  // see the clamp effect below.
+  activeChapter: number;
   chapters: Map<number, ChapterState>;
   chapterList: number[];
   onLoadChapter: (ch: number) => void;
@@ -141,6 +145,7 @@ export function FindReplaceOverlay({
   open,
   onClose,
   book,
+  activeChapter,
   chapters,
   chapterList,
   onLoadChapter,
@@ -294,7 +299,19 @@ export function FindReplaceOverlay({
     if (idx !== activeIdx) setActiveIdx(idx);
     if (wantsScrollRef.current) {
       wantsScrollRef.current = false;
-      navTo(idx);
+      // Auto-jump (typing / scope toggle) must NOT trigger a disruptive
+      // cross-chapter navigation. In book mode a note match in another
+      // chapter routes through focusNoteMatch → URL navigation, which
+      // remounts Shell — closing this overlay and collapsing the book view.
+      // The book-intro note (chapter 0) sorts first and matches common words,
+      // so the very first keystroke would yank the user to ZEC/0 and the find
+      // box would vanish. Bible matches scroll in-view without a remount, and
+      // same-chapter notes just re-focus, so only the cross-chapter note case
+      // is suppressed here — explicit prev/next (goPrev/goNext call navTo
+      // directly) may still cross chapters deliberately.
+      const r = results[idx];
+      const crossChapterNote = r?.kind === "note" && r.chapter !== activeChapter;
+      if (!crossChapterNote) navTo(idx);
     }
     // navTo closes over the current results; onScrollToMatch is the stable
     // dep that matters here (mirrors the original effect's dep list).
