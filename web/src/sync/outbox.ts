@@ -14,6 +14,7 @@ import {
   isReadOnly,
   onAuthRefreshed,
   type ChapterLockedBody,
+  type AlignmentIntent,
   type RowKind,
 } from "./api";
 import { backoffMs } from "./backoff";
@@ -262,7 +263,7 @@ export const outbox = {
     verse: number,
     bibleVersion: string,
     expectedVersion: number,
-    patch: { content: unknown; plain_text?: string | null },
+    patch: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
   ): Promise<OutboxOp> {
     if (isReadOnly()) {
       return noopOp(

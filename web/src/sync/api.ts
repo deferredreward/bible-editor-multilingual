@@ -93,6 +93,12 @@ export interface VerseDto {
   content: unknown;
 }
 
+export type AlignmentIntent =
+  | "text_edit"
+  | "find_replace"
+  | "section_edit"
+  | "alignment_edit";
+
 export interface VerseStatus {
   book: string;
   chapter: number;
@@ -1020,7 +1026,7 @@ export const api = {
     verse: number,
     bibleVersion: string,
     expectedVersion: number,
-    payload: { content: unknown; plain_text?: string | null },
+    payload: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
   ) =>
     request<T>(
       `/api/verses/${encodeURIComponent(book)}/${chapter}/${verse}/${encodeURIComponent(bibleVersion)}`,

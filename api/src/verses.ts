@@ -12,6 +12,11 @@ import {
   logCorruptContentJson,
   parseVerseContentJson,
 } from "./contentJson.ts";
+import {
+  analyzeAlignmentDelta,
+  intentAllowsUnexpectedAlignmentLoss,
+  type AlignmentIntent,
+} from "./alignmentDelta.ts";
 
 // Verse content can carry malformed/missing `\w` occurrence data — colliding
 // `(text, occurrence)` pairs from a bad import or AI alignment (ULT/UST), or no
@@ -43,6 +48,9 @@ const PatchSchema = z.object({
   // explicit null would silently mean "keep" rather than "clear". Restrict to
   // string|absent so the API contract matches the SQL (omit to keep).
   plain_text: z.string().optional(),
+  alignment_intent: z
+    .enum(["text_edit", "find_replace", "section_edit", "alignment_edit"])
+    .optional(),
 });
 
 // Valid USFM marker names are alphanumeric (e.g. "p", "q1", "zaln", "ts"); a
@@ -153,6 +161,38 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
   // were rejected above. Mutates parsed.data.content.verseObjects in place.
   normalizeOccurrences(parsed.data.content);
 
+  const existing = await c.env.DB.prepare(
+    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+  )
+    .bind(book, chapter, verse, bibleVersion)
+    .first<VerseRow>();
+  if (!existing) return c.json({ error: "not_found" }, 404);
+  let existingParsed: unknown;
+  try {
+    existingParsed = parseVerseContentJson(existing);
+  } catch (err) {
+    if (err instanceof CorruptContentJsonError) {
+      logCorruptContentJson(err);
+      return c.json(corruptContentJsonBody(err), 500);
+    }
+    throw err;
+  }
+  const alignmentIntent = (parsed.data.alignment_intent ?? "text_edit") as AlignmentIntent;
+  const delta = analyzeAlignmentDelta(existingParsed, parsed.data.content);
+  if (
+    delta.unexpectedLosses.length > 0 &&
+    !intentAllowsUnexpectedAlignmentLoss(alignmentIntent)
+  ) {
+    return c.json(
+      {
+        error: "unexpected_alignment_loss",
+        intent: alignmentIntent,
+        delta,
+      },
+      409,
+    );
+  }
+
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
   const newVersion = expected + 1;
@@ -197,7 +237,7 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
         userId,
         expected,
         newVersion,
-        JSON.stringify(parsed.data),
+        JSON.stringify({ ...parsed.data, alignment_delta: delta }),
       ),
   ]);
 
