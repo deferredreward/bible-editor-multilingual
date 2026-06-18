@@ -183,14 +183,31 @@ function unmerge(verseObjects: unknown[]): PivotWord[] | null {
         continue;
       }
 
-      // Plain text node, or some other leaf — carries no word, skip. (Punctuation
-      // is re-laid fresh from the new target string, so old text is discarded.)
-      if (Array.isArray(o["children"])) {
-        // An unknown wrapper with children that isn't \zaln / \qs / marker — bail
-        // rather than silently flatten its descendants.
-        bail = true;
-        return;
-      }
+      // A plain text node carries punctuation/whitespace only — skip it (the gap
+      // re-layout rebuilds all non-word text fresh from the new target string).
+      if (o["type"] === "text") continue;
+
+      // A childless, payload-free position anchor — the imported `\ts\*` chunk
+      // milestone (tag `ts\*`, which isInFlowMarker doesn't match), an empty
+      // `\b`/`\p`, etc. It carries no word, no text, no content and no children, so
+      // it's safe to skip exactly as the inert in-flow markers above are; the
+      // caller's reconcileMarkers / the diff tiers re-place such anchors. (Keeping
+      // this skip is what lets NUM 24:19 — whose tail is a `ts\*` + `\m` — still
+      // reassemble; bailing on it would regress that verse to the legacy flatten.)
+      const hasChildren = Array.isArray(o["children"]) && (o["children"] as unknown[]).length > 0;
+      const hasContent = typeof o["content"] === "string" && o["content"] !== "";
+      const hasText = typeof o["text"] === "string" && o["text"] !== "";
+      if (!hasChildren && !hasContent && !hasText) continue;
+
+      // Anything else carries CONTENT reassembly can't faithfully rebuild — a
+      // `\s1`/`\s2` section header (heading in `content`, not `children`, and
+      // invisible to the editable-text self-check since sections are excluded from
+      // extractEditableText), or any unknown wrapper/leaf bearing content/text/
+      // children. BAIL so the caller falls back to the legacy diff tiers, which do
+      // localized edits and leave such nodes untouched. Fail-closed for any future
+      // node type we don't explicitly handle here.
+      bail = true;
+      return;
     }
   };
 
@@ -337,6 +354,59 @@ function normalizeWs(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+// Collect the multiset of STRUCTURAL nodes in a tree — every node that CARRIES
+// CONTENT and is NOT a word leaf, a `\zaln` milestone, a plain `type:"text"`
+// node, an in-flow marker, or a payload-free position anchor (an `\ts\*`/empty
+// `\b` — no content/text/children; reassembly legitimately strips these, and the
+// caller's reconcileMarkers re-places them). In practice this is section headers
+// (`\s1`/`\s2`) and any node type we don't explicitly handle that bears content.
+// These carry content (e.g. a section's heading lives in `content`, not in the
+// editable target string), so the text self-check can't see them — this lets us
+// assert they round-trip. Keyed by type+tag+content/text so a missing or altered
+// structural node is detectable. We do NOT recurse into `\zaln` children (their
+// words/text are covered by the text self-check); we walk other wrappers'
+// children so a structural node nested anywhere is still counted.
+function structuralNodeSignatures(nodes: unknown[]): Map<string, number> {
+  const sigs = new Map<string, number>();
+  const walk = (ns: unknown[]) => {
+    for (const n of ns ?? []) {
+      const o = n as Record<string, unknown> | null;
+      if (!o || typeof o !== "object") continue;
+      if (isWordLeaf(o) || o["type"] === "text") continue;
+      if (isInFlowMarker(o)) continue;
+      if (isZaln(o)) {
+        // A milestone is structurally a word-wrapper; its words/text are covered by
+        // the text self-check. Don't count the milestone itself, but DO descend in
+        // case a structural node was (improperly) nested inside.
+        walk(o["children"] as unknown[]);
+        continue;
+      }
+      // A payload-free position anchor (`\ts\*`, empty `\b`/`\p`) carries no
+      // content reassembly could lose — and reassembly strips it deliberately for
+      // reconcileMarkers to re-place. Don't count it (counting it would spuriously
+      // fail the completeness check, since the reassembled output omits it). Mirror
+      // the unmerge skip exactly.
+      const hasChildrenAnchor = Array.isArray(o["children"]) && (o["children"] as unknown[]).length > 0;
+      const hasContentAnchor = typeof o["content"] === "string" && o["content"] !== "";
+      const hasTextAnchor = typeof o["text"] === "string" && o["text"] !== "";
+      if (!hasChildrenAnchor && !hasContentAnchor && !hasTextAnchor) continue;
+      // A structural node (section header, character wrapper, or any unknown leaf/
+      // wrapper) that bears content. Record it; key on the fields that carry its
+      // identity + content.
+      const sig = JSON.stringify([
+        o["type"] ?? "",
+        o["tag"] ?? "",
+        o["content"] ?? "",
+        o["text"] ?? "",
+      ]);
+      sigs.set(sig, (sigs.get(sig) ?? 0) + 1);
+      if (Array.isArray(o["children"])) walk(o["children"] as unknown[]);
+    }
+  };
+  walk(nodes);
+  return sigs;
+}
+
 // Count the disjoint CHANGE REGIONS between two word-token sequences (NFC),
 // using the LCS to find the surviving anchors. A region is a maximal run of
 // non-survivor positions (inserted new words and/or deleted old words) flanked by
@@ -454,6 +524,21 @@ export function reassembleAlignment(
   // to the next tier (which then fails CLOSED if it can't preserve either).
   const rebuilt = normalizeWs(rebuildRaw(result.verseObjects));
   if (rebuilt !== normalizeWs(newStripped)) return null;
+
+  // Node-completeness self-check (defense in depth). The text self-check above
+  // only covers WORD + punctuation/whitespace content; STRUCTURAL nodes (section
+  // headers, and any node type we don't explicitly handle) carry content the
+  // editable string never sees, so a dropped section would slip past it. Assert
+  // every structural node present in the INPUT is present, unaltered, in the
+  // OUTPUT. Any missing/changed one → bail to the legacy tiers (which do localized
+  // edits and preserve such nodes). With the unmerge bail above this is already
+  // unreachable for sections today; it makes the engine FAIL-CLOSED for any future
+  // node type too, not just the ones we know about.
+  const inSigs = structuralNodeSignatures(verseObjects);
+  const outSigs = structuralNodeSignatures(result.verseObjects);
+  for (const [sig, count] of inSigs) {
+    if ((outSigs.get(sig) ?? 0) < count) return null;
+  }
 
   return result;
 }

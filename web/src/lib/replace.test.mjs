@@ -1612,6 +1612,46 @@ function countAligned(content) {
   assert(r.plainText === after, `plainText reconstructs the typed text exactly (got ${JSON.stringify(r.plainText)})`);
 }
 
+// ─── Case 65: section header survives a multi-region (reassembly-class) edit ──
+// A `\s1` section heading sits before aligned words "alpha beta gamma delta".
+// Editing the first AND last word (alpha→one, delta→two) is two disjoint change
+// regions — exactly the multi-region shape that routes through the occurrence-
+// keyed reassembly engine. Reassembly's unmerge() only walks word/\zaln/marker
+// nodes; a section node is CHILDLESS (its heading lives in `content`), so it used
+// to fall through and be silently dropped from the rebuilt tree — and neither the
+// text self-check (sections are excluded from extractEditableText) nor the #233
+// alignment guard noticed. The fix: unmerge BAILS on any non-text childless leaf,
+// so reassembly returns null and the legacy diff tiers (which do localized edits)
+// run instead — they leave the section node untouched. A node-completeness self-
+// check backs this up for any future structural node type.
+{
+  console.log("\n[Case 65] section header survives a multi-region edit (reassembly bails → tiers preserve it)");
+  const verse = { verseObjects: [
+    { type: "section", tag: "s1", content: "Heading\n" },
+    zaln("H1", [w("alpha"), t(" "), w("beta")]),
+    t(" "),
+    zaln("H2", [w("gamma"), t(" "), w("delta")]),
+  ] };
+  const old = extractEditableText(verse);
+  assert(old === "alpha beta gamma delta", `section excluded from editable text (got ${JSON.stringify(old)})`);
+  const after = "one beta gamma two"; // first + last word change → 2 regions
+  const r = smartEditVerse(verse, old, after);
+  // The section node must SURVIVE with its heading intact.
+  const sec = (r.content.verseObjects ?? []).find((n) => n && n.type === "section" && n.tag === "s1");
+  assert(!!sec, "the \\s1 section node survives the edit (was being dropped)");
+  assert(sec && sec.content === "Heading\n", `the section heading content is intact (got ${JSON.stringify(sec && sec.content)})`);
+  // And the untouched aligned words keep their milestone ancestry; only the two
+  // genuinely changed words go bare.
+  const out = alignedWords(r.content);
+  const beta = out.find((x) => x.text === "beta");
+  const gamma = out.find((x) => x.text === "gamma");
+  assert(beta && beta.strongs.includes("H1"), "untouched 'beta' keeps its H1 alignment");
+  assert(gamma && gamma.strongs.includes("H2"), "untouched 'gamma' keeps its H2 alignment");
+  const bare = out.filter((x) => x.strongs.length === 0).map((x) => x.text).sort();
+  assert(JSON.stringify(bare) === JSON.stringify(["one", "two"]), `only the two changed words unalign (got ${JSON.stringify(bare)})`);
+  assert(r.plainText === after, `plainText reconstructs the typed text exactly (got ${JSON.stringify(r.plainText)})`);
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
