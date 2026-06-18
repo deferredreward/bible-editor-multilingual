@@ -26,6 +26,11 @@ import { drafts, verseKey } from "../sync/drafts";
 import { smartEditVerse } from "../lib/replace";
 import { extractEditableText, extractPlainText, normalizeEditable, SECTION_HEADER_TAGS } from "../lib/usfm";
 import { verseHasUnalignedWork, countUnalignedTargetWords } from "../lib/alignment";
+import {
+  analyzeAlignmentDelta,
+  intentAllowsUnexpectedAlignmentLoss,
+  type AlignmentIntent,
+} from "../lib/alignmentDelta";
 import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { findSourceForTargetText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
@@ -1029,6 +1034,51 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     [pendingNav],
   );
 
+  const enqueueVerseSafely = useCallback((
+    chapterNum: number,
+    verseNum: number,
+    bibleVersion: string,
+    base: VerseDto,
+    content: unknown,
+    plainText: string,
+    intent: AlignmentIntent,
+    expectedVersion = base.version,
+  ): boolean => {
+    const delta = analyzeAlignmentDelta(base.content, content);
+    if (
+      delta.unexpectedLosses.length > 0 &&
+      delta.wordSequenceUnchanged &&
+      !intentAllowsUnexpectedAlignmentLoss(intent)
+    ) {
+      const sample = delta.unexpectedLosses
+        .slice(0, 3)
+        .map((loss) => loss.text)
+        .join(", ");
+      if (intent === "text_edit") {
+        pushPipelineToast(
+          `Save blocked for ${book} ${chapterNum}:${verseNum} ${bibleVersion}: unexpected alignment loss${sample ? ` (${sample})` : ""}. The unsaved draft was discarded; re-open the alignment panel or make the text edit more narrowly.`,
+          "error",
+        );
+        void drafts.clear(verseKey(book, chapterNum, verseNum, bibleVersion));
+      } else {
+        pushPipelineToast(
+          `Save blocked for ${book} ${chapterNum}:${verseNum} ${bibleVersion}: unexpected alignment loss${sample ? ` (${sample})` : ""}. Re-open the alignment panel or make the text edit more narrowly.`,
+          "error",
+        );
+      }
+      return false;
+    }
+    void outbox.enqueueVerse(
+      book,
+      chapterNum,
+      verseNum,
+      bibleVersion,
+      expectedVersion,
+      { content, plain_text: plainText, alignment_intent: intent },
+    );
+    return true;
+  }, [book, pushPipelineToast]);
+
   // Compute the alignment panel's props from the current chapter cache.
   // Memoized so identity stays stable when the chapter hasn't changed under
   // it; the panel uses verse identity to re-init its internal state.
@@ -1062,18 +1112,22 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       sourceVerse,
       sourceLabel,
       twlForVerse,
-      onSave: (content, plain, expectedVersion) => {
+      onSave: (content, plain, _expectedVersion) => {
         // Key the PATCH by the resolved row's verse_start — alignerTarget.verse
         // may sit INSIDE a range row (v7 of a UST 6-9 block) now that the
         // slice resolves through buildVerseIndex.
-        void outbox.enqueueVerse(
-          book,
-          alignerTarget.chapter,
-          targetVerse?.verse ?? alignerTarget.verse,
-          alignerTarget.bibleVersion,
-          expectedVersion,
-          { content, plain_text: plain },
-        );
+        if (targetVerse) {
+          enqueueVerseSafely(
+            alignerTarget.chapter,
+            targetVerse.verse,
+            alignerTarget.bibleVersion,
+            targetVerse,
+            content,
+            plain,
+            "alignment_edit",
+            _expectedVersion,
+          );
+        }
         // Optimistically fold the new alignment into the local chapter cache so
         // content-derived UI (the broken-alignment link, OL-anchored note
         // highlights) updates immediately instead of waiting for a refetch.
@@ -1092,7 +1146,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       panelRef: alignmentPanelRef,
       onOpenDual: () => openDualAligner(alignerTarget.chapter, alignerTarget.verse),
     };
-  }, [alignerTarget, data, chapter, bookHook, book, openDualAligner, applyLocalVerse]);
+  }, [alignerTarget, data, chapter, bookHook, book, openDualAligner, applyLocalVerse, enqueueVerseSafely]);
 
   // Props for the side-by-side popup: ULT + UST slices against one shared
   // source. Undefined (popup closed) unless a dualTarget is set and at least
@@ -1139,15 +1193,17 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     // PATCH key is the resolved row's verse_start — dualTarget.verse may sit
     // inside a range row now that slices resolve through buildVerseIndex.
     const enqueue = (bibleVersion: string, row: VerseDto | null) =>
-      (content: unknown, plain: string, expectedVersion: number) => {
+      (content: unknown, plain: string, _expectedVersion: number) => {
         if (!row) return;
-        void outbox.enqueueVerse(
-          book,
+        enqueueVerseSafely(
           dualTarget.chapter,
           row.verse,
           bibleVersion,
-          expectedVersion,
-          { content, plain_text: plain },
+          row,
+          content,
+          plain,
+          "alignment_edit",
+          _expectedVersion,
         );
         // Optimistic local update so content-derived UI (the broken-alignment
         // link) refreshes immediately — same as the single-panel aligner.
@@ -1190,7 +1246,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       left,
       right,
     };
-  }, [dualTarget, data, chapter, bookHook, book, applyLocalVerse]);
+  }, [dualTarget, data, chapter, bookHook, book, applyLocalVerse, enqueueVerseSafely]);
 
   // Prev/next verse for the dual aligner's titlebar arrows, within the current
   // chapter's verse list (excluding the intro tile). Null at the ends.
@@ -1353,16 +1409,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       plain_text: newPlainText,
       content: result.content,
     } as VerseDto;
+    if (!enqueueVerseSafely(chapterNum, verseNum, bibleVersion, base, result.content, newPlainText, "text_edit")) {
+      return;
+    }
     bookHook?.applyLocalVerse(newDto);
     if (chapterNum === chapter) applyLocalVerse(newDto);
-    void outbox.enqueueVerse(
-      book,
-      chapterNum,
-      verseNum,
-      bibleVersion,
-      base.version,
-      { content: result.content, plain_text: newPlainText },
-    );
   };
 
   // Section header (\s1/\s2/\s3) edit / delete. `change.index` is the
@@ -1418,16 +1469,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       plain_text: newPlainText,
       content: newContent,
     } as VerseDto;
+    if (!enqueueVerseSafely(chapterNum, verseNum, bibleVersion, base, newContent, newPlainText, "section_edit")) {
+      return;
+    }
     bookHook?.applyLocalVerse(newDto);
     if (chapterNum === chapter) applyLocalVerse(newDto);
-    void outbox.enqueueVerse(
-      book,
-      chapterNum,
-      verseNum,
-      bibleVersion,
-      base.version,
-      { content: newContent, plain_text: newPlainText },
-    );
   };
 
   return (
@@ -1592,16 +1638,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
               plain_text: newPlainText,
               content: newContent,
             } as VerseDto;
+            if (!enqueueVerseSafely(ch, verseNum, bibleVersion, base, newContent, newPlainText, "find_replace")) {
+              return;
+            }
             bookHook?.applyLocalVerse(newDto);
             if (ch === chapter) applyLocalVerse(newDto);
-            void outbox.enqueueVerse(
-              book,
-              ch,
-              verseNum,
-              bibleVersion,
-              base.version,
-              { content: newContent, plain_text: newPlainText },
-            );
           }}
           onSelectVerse={(v) => requestSelectVerse(v)}
           onModeChange={(m) => {
