@@ -24,9 +24,11 @@ word count so `markersChanged` was false and Step 2 was being skipped. The relay
 the marker-STRIPPED text correct (self-checked); reconcile re-places markers by word-anchor +
 closing-punct rule (opening `“`/`‘` correctly stay AFTER the marker). Verified on the REAL verse
 (DCS master `28-HOS.usfm` via usfm-js): 13→13 ms, 3 markers + both edge quotes intact. replace.test
-Cases 60 (updated) + 61 (new); 271 assertions + full typecheck green. CODE-ONLY, not deployed, not
-yet PR'd. ⚠️ Prod HOS/9/17/UST may be flattened in D1 if the editor's bad save persisted — needs a
-check + heal-from-master (master still had all 13 ms when fetched). Branch `claude/epic-yalow-f452cc`.
+Cases 60 (updated) + 61 (new); 271 assertions + full typecheck green. Shipped as PR #226.
+Prod HOS/9/17/UST checked (v6): NOT flattened — the editor manually re-aligned after the flattening
+(10 ms, all 31 words covered, 0 unaligned), so NO heal-from-master (would clobber her work). Two
+cosmetic marker deltas vs master remain (missing `\q2` before "The God…"; stray trailing `\q1`) —
+editor will fix the line breaks in-app; zero alignment impact. Branch `claude/epic-yalow-f452cc`.
 
 2026-06-17 · **goofy-ptolemy** — Root-cause fix: Shell no longer remounts on chapter nav.
 App.tsx keys Shell on `book` only (was `book-chapter-verse`); a new Shell effect keyed on
@@ -42,9 +44,8 @@ Not yet PR'd.
 
 ## In progress
 
-- **epic-yalow** — HOS 9:17 interior-marker edge-quote unalign fix (see Last run). Branch
-  `claude/epic-yalow-f452cc`. Ready for PR. ⚠️ separately, prod HOS/9/17/UST may need a
-  heal-from-master if the editor's bad save persisted.
+- **epic-yalow** — HOS 9:17 interior-marker edge-quote unalign fix → PR #226. Prod data checked:
+  fully aligned (editor recovered it), no heal needed; minor markers left for in-app fix.
 - **goofy-ptolemy** — Shell-remount root-cause fix (see Last run). Branch
   `claude/goofy-ptolemy-e9369f`. Ready for PR.
 - **trusting-galileo** (PR #220) — Find in book mode: two fixes for cross-chapter notes remounting Shell
