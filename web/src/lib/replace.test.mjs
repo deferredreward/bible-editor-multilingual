@@ -1567,29 +1567,22 @@ function countAligned(content) {
   assert(aligned >= 25, `most words stay aligned, not flattened (got ${aligned}/${out.length})`);
 }
 
-// ─── Case 64: NUM 24:19 — KNOWN FAILURE / LIVE BUG ───────────────────────────
-// A word edit near the verse START combined with a punctuation removal at the
-// verse END produces TWO separated changes. diffSingleChange (replace.ts:1232)
-// collapses the common prefix to the first divergence and the common suffix to
-// the last, so the single change range BALLOONS to span almost the whole verse —
-// from "he…" all the way to the trailing "”". That ballooned range carries a
-// word change, so it routes to smartReplaceVerse/localizedRewriteVerse, which
-// flattens every \zaln milestone it spans. Result: 14 of 15 untouched words lose
-// alignment from a two-word edit.
+// ─── Case 64: NUM 24:19 — multi-region edit now degrades LOCALLY ─────────────
+// A word edit near the verse START (he→{one}) combined with a punctuation removal
+// + word change at the verse END (a→{the}, dropping the closing quote) produces
+// TWO separated change regions. The legacy single-range diff (diffSingleChange,
+// replace.ts) collapses the common prefix to the first divergence and the common
+// suffix to the last, ballooning the change range across the whole verse →
+// localizedRewriteVerse flattened every \zaln it spanned (was 1/15).
 //
-// This is the NUM 24 prod alignment-loss pattern, STILL LIVE on the current
-// engine (the 1CH 4:21 fix did NOT cover it — that fix handled a SINGLE localized
-// range; this is a MULTI-range diff limitation). relayoutUnchangedWords can't
-// rescue it because a word genuinely changed, so it is not a pure-punctuation
-// relayout. A proper fix needs a multi-range diff (or splitting the edit into the
-// independent start-edit and end-punctuation changes before applying).
-//
-// The asserts below pin the CURRENT (buggy) output so the suite stays green and
-// fails LOUDLY the moment the engine is fixed — at which point flip the
-// expectations to "preserved" (~13/15, only {one}/{the} unalign) and delete this
-// banner.
+// The occurrence-keyed reassembly engine (alignmentReassembly.ts), now the
+// PRIMARY path, diffs per WORD instead of by character range: it counts 2 change
+// regions, fires, and re-wraps every surviving word in its EXACT original
+// milestone ancestry. Only the two genuinely changed words ({one}, {the}) unalign
+// — 13/15 survive — and the result reconstructs the typed text byte-for-byte. The
+// fix is structural (local-by-construction), not another range-tightening tier.
 {
-  console.log("\n[Case 64] NUM 24:19: KNOWN FAILURE — start word edit + end punct removal flattens the verse");
+  console.log("\n[Case 64] NUM 24:19: multi-region edit keeps all but the two changed words aligned");
   const verse = NUM_24_19();
   const before = countAligned(verse);
   assert(before.aligned === 15 && before.total === 15, `fixture starts fully aligned (got ${before.aligned}/${before.total})`);
@@ -1598,12 +1591,25 @@ function countAligned(content) {
   const r = smartEditVerse(verse, old, after);
   const out = alignedWords(r.content);
   const aligned = out.filter((x) => x.strongs.length > 0).length;
-  // KNOWN-BAD current behavior: near-total flatten. A CORRECT engine would keep
-  // ~13/15 (only "{one}" and "{the}" should unalign).
-  assert(aligned <= 1,
-    `KNOWN FAILURE: verse is flattened to ${aligned}/${out.length} (a correct engine should keep ~13/15). ` +
-    `If this assert fails because alignment IMPROVED, the multi-range diff bug was fixed — update this case.`);
-  assert(r.preservedAlignment === false, "KNOWN FAILURE: preservedAlignment is false (whole-verse rewrite)");
+  // FIXED: the verse degrades LOCALLY — at least 14/15 of the 15 source words
+  // stay aligned (the acceptance bar; reassembly preserves all but the two
+  // genuinely changed words, i.e. 13 of 15 NEW words but 14 of the unchanged
+  // source words — see the per-word asserts below).
+  assert(aligned === 13,
+    `reassembly keeps every word but the two that changed (got ${aligned}/${out.length}; expected 13)`);
+  assert(r.preservedAlignment === true, "preservedAlignment is true (survivors keep their milestone ancestry)");
+  // Only the two genuinely new/changed words are unaligned.
+  const bare = out.filter((x) => x.strongs.length === 0).map((x) => x.text).sort();
+  assert(JSON.stringify(bare) === JSON.stringify(["one", "the"]),
+    `only {one}/{the} unalign (got ${JSON.stringify(bare)})`);
+  // Untouched words across the WHOLE verse keep their exact source — the words
+  // the legacy engine collaterally flattened.
+  for (const [word, strong] of [["And", "c:H7287a"], ["rule", "c:H7287a"], ["Jacob", "m:H3290"], ["destroy", "c:H0006"], ["survivor", "H8300"], ["city", "m:H5892b"]]) {
+    const found = out.find((x) => x.text === word);
+    assert(found && found.strongs.includes(strong), `untouched '${word}' keeps its ${strong} alignment`);
+  }
+  // The typed text is reconstructed exactly.
+  assert(r.plainText === after, `plainText reconstructs the typed text exactly (got ${JSON.stringify(r.plainText)})`);
 }
 
 if (failed > 0) {
