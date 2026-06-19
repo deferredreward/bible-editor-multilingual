@@ -935,12 +935,15 @@ async function applyVerseUpdate(
     }
   }
 
+  // Pull the outgoing row too (not just its version): the AI write overwrites
+  // content_json, so this is our one chance to preserve the PRE-AI state ("v0")
+  // for verse history — see the guarded baseline insert below.
   const existing = await env.DB.prepare(
-    `SELECT version FROM verses
+    `SELECT version, content_json, plain_text, updated_at FROM verses
       WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
   )
     .bind(book, chapter, verse, bibleVersion)
-    .first<{ version: number }>();
+    .first<{ version: number; content_json: string; plain_text: string | null; updated_at: number }>();
 
   const now = Math.floor(Date.now() / 1000);
   if (existing) {
@@ -954,13 +957,36 @@ async function applyVerseUpdate(
             WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9`,
         )
         .bind(contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion),
+      // Preserve the pre-AI content as a baseline at its own version, so verse
+      // history can restore the state before the AI ran. Guarded: only when that
+      // version was never logged (i.e. the original bootstrap import), so repeat
+      // AI runs / prior edits — which already logged their content — don't
+      // duplicate it. created_at carries the outgoing row's own timestamp.
+      env.DB
+        .prepare(
+          `INSERT INTO edit_log
+             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at)
+           SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5
+            WHERE NOT EXISTS (
+              SELECT 1 FROM edit_log WHERE kind = 'verse' AND row_key = ?1 AND new_version = ?3
+            )`,
+        )
+        .bind(
+          rowKey,
+          book,
+          existing.version,
+          JSON.stringify({ plain_text: existing.plain_text, content: existing.content_json }),
+          existing.updated_at,
+        ),
+      // The AI version itself: log full content (not just plain_text) so it is
+      // restorable — this is the alignment-bearing base translators edit from.
       env.DB
         .prepare(
           `INSERT INTO edit_log
              (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
            VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7)`,
         )
-        .bind(rowKey, book, userId, existing.version, newVersion, JSON.stringify({ plain_text: plainText }), AI_SOURCE),
+        .bind(rowKey, book, userId, existing.version, newVersion, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE),
       env.DB
         .prepare(
           `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
@@ -985,7 +1011,7 @@ async function applyVerseUpdate(
            (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
          VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5)`,
       )
-      .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText }), AI_SOURCE),
+      .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE),
     env.DB
       .prepare(
         `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,

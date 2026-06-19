@@ -37,6 +37,8 @@ export interface AlignmentTabProps {
   onDirtyChange?: (dirty: boolean) => void;
   panelRef?: Ref<AlignmentPanelHandle>;
   onOpenDual?: () => void;
+  // Restore a previously-saved verse version from the panel's history button.
+  onRestoreVersion?: (content: unknown, plainText: string | null) => void;
 }
 
 interface Props {
@@ -561,6 +563,7 @@ export function ResourceColumn({
             onCancel={alignmentProps.onCancel}
             onDirtyChange={alignmentProps.onDirtyChange}
             onOpenDual={alignmentProps.onOpenDual}
+            onRestoreVersion={alignmentProps.onRestoreVersion}
           />
         ) : (
           <Box sx={{ p: 3 }}>

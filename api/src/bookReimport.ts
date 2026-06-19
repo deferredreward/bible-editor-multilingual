@@ -786,7 +786,7 @@ async function applyVerseRows(
         env.DB.prepare(
           `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
            VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5)`,
-        ).bind(rowKey, book, userId, JSON.stringify({ plain_text: v.plainText }), REIMPORT_SOURCE),
+        ).bind(rowKey, book, userId, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE),
       );
       continue;
     }
@@ -817,7 +817,7 @@ async function applyVerseRows(
       env.DB.prepare(
         `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
          VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7)`,
-      ).bind(rowKey, book, userId, ex.version, ex.version + 1, JSON.stringify({ plain_text: v.plainText }), REIMPORT_SOURCE),
+      ).bind(rowKey, book, userId, ex.version, ex.version + 1, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE),
     );
   }
 
@@ -871,7 +871,7 @@ async function applyVerseRowsPerRow(
           env, "verse",
           `${book}/${v.chapter}/${v.verse}/${bibleVersion}`,
           book, userId, null, 1, "create",
-          { plain_text: v.plainText },
+          { plain_text: v.plainText, content: v.contentJson },
         );
         continue;
       }
@@ -917,7 +917,7 @@ async function applyVerseRowsPerRow(
             env, "verse",
             `${book}/${v.chapter}/${v.verse}/${bibleVersion}`,
             book, userId, got.version - 1, got.version, "update",
-            { plain_text: v.plainText },
+            { plain_text: v.plainText, content: v.contentJson },
           );
         }
       } else {

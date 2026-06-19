@@ -1,5 +1,6 @@
 import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button } from "@mui/material";
+import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button, Chip } from "@mui/material";
+import HistoryIcon from "@mui/icons-material/History";
 import { AlignLinkButton } from "./AlignLinkButton";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import ViewStreamIcon from "@mui/icons-material/ViewStream";
@@ -106,6 +107,16 @@ interface Props {
   // runs it through smartEditVerse, and enqueues. Shell wires this; both
   // stacked rows and the column-style modes call it on Save click.
   onSaveVerse: (verseNum: number, bibleVersion: string, plain: string, base: VerseDto) => void;
+  // Restore a ULT/UST verse to a previously-saved version: re-saves the exact
+  // stored content tree (alignment included) through the normal verse pipe.
+  // Stacked-mode only (the version chip lives on the active stacked card).
+  onRestoreVerse: (
+    verseNum: number,
+    bibleVersion: string,
+    content: unknown,
+    plainText: string | null,
+    base: VerseDto,
+  ) => void;
   // Section-band edit / delete. Splice the new (tag, text) into the
   // verse's verseObjects.sections (filtered by splitSectionHeaders) and
   // save via outbox. tag === null deletes the band entirely. Used by
@@ -153,6 +164,9 @@ const BookView = lazy(() =>
 const FindReplaceOverlay = lazy(() =>
   import("./FindReplaceOverlay").then((m) => ({ default: m.FindReplaceOverlay })),
 );
+const VerseHistoryDialog = lazy(() =>
+  import("./VerseHistoryDialog").then((m) => ({ default: m.VerseHistoryDialog })),
+);
 
 function ScriptureColumnInner({
   book,
@@ -187,6 +201,7 @@ function ScriptureColumnInner({
   onEnabledVersionsChange,
   onEditVerse,
   onSaveVerse,
+  onRestoreVerse,
   onEditSection,
   onEditBookSection,
   locked = false,
@@ -488,6 +503,7 @@ function ScriptureColumnInner({
             onOpenAligner={onOpenAligner}
             onEditVerse={onEditVerse}
             onSaveVerse={onSaveVerse}
+            onRestoreVerse={onRestoreVerse}
             onEditSection={onEditSection}
             locked={locked}
           />
@@ -635,6 +651,7 @@ function StackedBody({
   onOpenAligner,
   onEditVerse,
   onSaveVerse,
+  onRestoreVerse,
   onEditSection,
   locked,
 }: {
@@ -656,6 +673,13 @@ function StackedBody({
   onOpenAligner: (verse: number, bibleVersion: string) => void;
   onEditVerse: (verseNum: number, bibleVersion: string, plain: string, base: VerseDto) => void;
   onSaveVerse: (verseNum: number, bibleVersion: string, plain: string, base: VerseDto) => void;
+  onRestoreVerse: (
+    verseNum: number,
+    bibleVersion: string,
+    content: unknown,
+    plainText: string | null,
+    base: VerseDto,
+  ) => void;
   onEditSection?: (
     verseNum: number,
     bibleVersion: string,
@@ -768,6 +792,12 @@ function StackedBody({
                 onSave={
                   ultV ? (plain) => onSaveVerse(ultStart, "ULT", plain, ultV) : undefined
                 }
+                version={ultV?.version}
+                onRestoreVersion={
+                  ultV
+                    ? (content, plainText) => onRestoreVerse(ultStart, "ULT", content, plainText, ultV)
+                    : undefined
+                }
                 onEditSection={
                   ultV && onEditSection
                     ? (change) => onEditSection(ultStart, "ULT", change, ultV)
@@ -796,6 +826,12 @@ function StackedBody({
                 }
                 onSave={
                   ustV ? (plain) => onSaveVerse(ustStart, "UST", plain, ustV) : undefined
+                }
+                version={ustV?.version}
+                onRestoreVersion={
+                  ustV
+                    ? (content, plainText) => onRestoreVerse(ustStart, "UST", content, plainText, ustV)
+                    : undefined
                 }
                 onEditSection={
                   ustV && onEditSection
@@ -1061,6 +1097,8 @@ function ActiveLine({
   onEditPlain,
   onSave,
   onEditSection,
+  version,
+  onRestoreVersion,
   lexiconMap,
   twl,
 }: {
@@ -1106,10 +1144,22 @@ function ActiveLine({
   // means delete the section header at that index. Shell mutates the
   // verseObjects tree directly and re-saves.
   onEditSection?: (change: { index: number; tag: string | null; text: string }) => void;
+  // The verse row's monotonic version — drives the `v{N}` history chip
+  // (editable ULT/UST only). Absent ⇒ no chip.
+  version?: number;
+  // Restore a previously-saved version: re-saves the exact stored content tree
+  // (alignment included) through the normal verse pipe. Wired only for editable
+  // ULT/UST lines; the chip + dialog mount only when this is present.
+  onRestoreVersion?: (content: unknown, plainText: string | null) => void;
   lexiconMap?: Map<string, LexiconEntry | null>;
   twl?: TwlRow[];
 }) {
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // The version chip + history are editable-ULT/UST only — read-only source
+  // lines and any line without a known version/restore handler get nothing.
+  const showHistory =
+    !!book && !!editable && !readOnly && !isSource && version != null && !!onRestoreVersion;
   const draftKey = useMemo(
     () =>
       book && bibleVersion ? verseKey(book, chapter, verseNum, bibleVersion) : null,
@@ -1310,6 +1360,24 @@ function ActiveLine({
         >
           {VERSION_LABEL[label] ?? label}
         </Typography>
+        {showHistory && (
+          <Tooltip title="version history — view or restore an earlier save">
+            <Chip
+              icon={<HistoryIcon sx={{ fontSize: 14 }} />}
+              label={`v${version}`}
+              size="small"
+              variant="outlined"
+              onClick={() => setHistoryOpen(true)}
+              sx={{
+                height: 20,
+                fontSize: 11,
+                fontFamily: "monospace",
+                cursor: "pointer",
+                "& .MuiChip-icon": { ml: 0.5 },
+              }}
+            />
+          </Tooltip>
+        )}
         {onOpenAligner && (
           <AlignLinkButton
             targetContent={content}
@@ -1505,6 +1573,20 @@ function ActiveLine({
             />
           ))}
         </Stack>
+      )}
+      {historyOpen && book && version != null && (
+        <Suspense fallback={null}>
+          <VerseHistoryDialog
+            open={historyOpen}
+            book={book}
+            chapter={chapter}
+            verseNum={verseNum}
+            bibleVersion={bibleVersion}
+            currentVersion={version}
+            onClose={() => setHistoryOpen(false)}
+            onUseVersion={(content, plainText) => onRestoreVersion?.(content, plainText)}
+          />
+        </Suspense>
       )}
     </Box>
   );

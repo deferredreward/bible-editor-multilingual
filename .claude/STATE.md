@@ -14,6 +14,29 @@
 
 ## Last run
 
+2026-06-19 · **great-jemison** — Built **ULT/UST verse version history** (mirrors note history). There was
+no pre-existing admin versioning to "open up" — verses were audited to `edit_log` but had no endpoint/UI.
+**(A)** New `GET /api/verses/:book/:ch/:v/:bv/history` (`requireEditor`, same gate as notes) backed by a
+pure `api/src/verseHistory.ts` (`buildVerseHistory`, 19-assert test) — verse `edit_log` payloads are FULL
+snapshots (no replay); anchors "current" with the live row content; an entry is `restorable` only if its
+payload carries `content`. New lean `VerseHistoryDialog.tsx` (single-field text snapshot/diff) + a `v{N}`
+**history chip** on the editable ULT/UST line in `ActiveLine` (ScriptureColumn) — **rows-mode only by
+construction** (ActiveLine is used only in stacked mode; columns→DocColumn, book→BookView). Restore re-saves
+the exact stored tree (alignment included) via the existing `enqueueVerseSafely` pipe with **`alignment_edit`**
+intent (only intent that bypasses `guardBlocksSave`); version climbs normally, no `restored_from_version`
+bookkeeping / no migration. Extracted the LCS word-diff into shared `web/src/lib/wordDiff.ts` (+test), reused
+by both dialogs. **(B)** Per user ("the AI version is basically v1"): enriched AI-apply (`pipelineImport.ts`)
++ re-import (`bookReimport.ts`) `edit_log` payloads from `{plain_text}`→`{plain_text, content}` so the AI
+base becomes restorable, and added a **guarded pre-AI baseline** insert at the AI transition (captures the
+outgoing bootstrap content at `existing.version` iff that version was never logged) so "v0" is restorable too.
+Caveat: only helps verses AI'd/re-imported AFTER this ships (already-overwritten pre-AI content is gone). **(C)**
+Per user, also added the same history dialog to the **alignment panel** (history button in `ActionBar`, threaded
+`onRestoreVersion` through AlignmentTabProps→ResourceColumn→AlignmentPanel→Shell.restoreVerse). Verified live
+(Chrome MCP, local ZEC against worktree bundle on :8799): chip on ULT+UST, dialog list/snapshot/diff, restore
+v8→v9 kept the alignment tree (17 zaln / 29 words, not flattened), chip updated optimistically, aligner-panel
+history works, **no scripture chip in columns/book modes or on the UHB line**. typecheck + api+web tests + build
+all green. Branch `claude/great-jemison-bbd01e`. **Not yet committed / PR'd.**
+
 2026-06-19 · **relaxed-hoover** — HOS TN data cleanup in prod D1 (PR #7171 "HOS tn → master" was
 `mergeable:false`). Diagnosed the blocked merge: it's NOT just duplicates — it's a 13-hunk 3-way
 conflict from master being edited **out-of-band** (commit `8046caaab73e` "Heal AI-TN id/dup rot"
@@ -152,6 +175,9 @@ Not yet PR'd.
   double-write of the already-replaced note; tab block disables replace). Branch
   `claude/focused-albattani-c5bb6f`. Not yet PR'd.
 
+- **great-jemison** (2026-06-19) — ULT/UST verse version history + alignment-panel history + AI/import
+  content logging (see Last run). Branch `claude/great-jemison-bbd01e`. Code + unit tests + live browser
+  verification done; typecheck/tests/build green. **Ready for PR — not yet committed.**
 - **trusting-mclean** (2026-06-18) — Fix AI "-e"/orphan-`\zaln-e` corruption (MIC 6:10 UST; deferred
   workstream from `project_ai_dash_e_zaln_corruption_mic610`). Confirmed via parsing the REAL en_ust master
   verse that usfm-js produces two junk shapes — a node whose own `tag` IS the end-marker

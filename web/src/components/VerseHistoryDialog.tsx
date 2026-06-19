@@ -1,0 +1,376 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Box,
+  Typography,
+  Stack,
+  Chip,
+  List,
+  ListItemButton,
+  ListItemText,
+  CircularProgress,
+  Alert,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+} from "@mui/material";
+import { api, type VerseHistoryEntry } from "../sync/api";
+import { diffWords } from "../lib/wordDiff";
+
+interface Props {
+  open: boolean;
+  book: string;
+  chapter: number;
+  verseNum: number;
+  bibleVersion: string;
+  // The live row.version — what the chip shows and what the timeline marks
+  // "current".
+  currentVersion: number;
+  onClose: () => void;
+  // Fires the chosen version's stored content + plain text back to the card,
+  // which re-saves it through the normal verse pipe (alignment_edit intent) so
+  // the exact tree — alignment included — is restored.
+  onUseVersion: (content: unknown, plainText: string | null) => void;
+}
+
+const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
+
+const userLabel = (e: VerseHistoryEntry) => {
+  if (!e.user) return "unknown";
+  return e.user.full_name || e.user.username || `user #${e.user.id}`;
+};
+
+// edit_log.source → a short human label. AI sub-sources collapse to "AI".
+const sourceChip = (source: string | null): string | null => {
+  if (source === "ai_pipeline" || source === "hint_expansion") return "AI";
+  if (source === "dcs_reimport") return "re-import";
+  return null;
+};
+
+type ViewMode = "snapshot" | "diff";
+
+export function VerseHistoryDialog({
+  open,
+  book,
+  chapter,
+  verseNum,
+  bibleVersion,
+  currentVersion,
+  onClose,
+  onUseVersion,
+}: Props) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<VerseHistoryEntry[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("snapshot");
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .getVerseHistory(book, chapter, verseNum, bibleVersion)
+      .then((res) => {
+        if (cancelled) return;
+        setEntries(res.versions);
+        // Open showing the most recent restorable version that ISN'T current —
+        // i.e. "what you'd roll back to". Fall back to the newest non-current,
+        // else current.
+        const desc = [...res.versions].sort((a, b) => b.version - a.version);
+        const target =
+          desc.find((v) => !v.current && v.restorable) ??
+          desc.find((v) => !v.current) ??
+          desc[0];
+        setSelectedVersion(target?.version ?? null);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(String(e));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, book, chapter, verseNum, bibleVersion]);
+
+  // Newest first for display.
+  const ordered = useMemo(
+    () => [...entries].sort((a, b) => b.version - a.version),
+    [entries],
+  );
+
+  const selected = useMemo(
+    () => entries.find((e) => e.version === selectedVersion) ?? null,
+    [entries, selectedVersion],
+  );
+  const current = useMemo(
+    () => entries.find((e) => e.current) ?? null,
+    [entries],
+  );
+
+  const isCurrent = !!selected?.current;
+  const canDiff = !isCurrent && selected !== null && current !== null;
+  const canRestore = !!selected && !isCurrent && selected.restorable;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="h6" component="span">
+            Verse history
+          </Typography>
+          <Chip
+            label={`${bibleVersion} ${chapter}:${verseNum}`}
+            size="small"
+            variant="outlined"
+            sx={{ fontFamily: "monospace", height: 22 }}
+          />
+          <Box sx={{ flex: 1 }} />
+          <Typography variant="caption" color="text.secondary">
+            current: v{currentVersion}
+          </Typography>
+        </Stack>
+      </DialogTitle>
+      <DialogContent dividers sx={{ p: 0 }}>
+        {loading ? (
+          <Box sx={{ p: 4, display: "flex", justifyContent: "center" }}>
+            <CircularProgress size={24} />
+          </Box>
+        ) : error ? (
+          <Box sx={{ p: 2 }}>
+            <Alert severity="error">failed to load history: {error}</Alert>
+          </Box>
+        ) : (
+          <Stack direction="row" sx={{ minHeight: 360 }}>
+            <Box
+              sx={{
+                width: 260,
+                borderRight: "1px solid",
+                borderColor: "divider",
+                overflowY: "auto",
+                maxHeight: 480,
+              }}
+            >
+              <List dense disablePadding>
+                {ordered.map((e) => {
+                  const src = sourceChip(e.source);
+                  return (
+                    <ListItemButton
+                      key={e.version}
+                      selected={e.version === selectedVersion}
+                      onClick={() => setSelectedVersion(e.version)}
+                    >
+                      <ListItemText
+                        primary={
+                          <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                            <Typography
+                              variant="body2"
+                              sx={{ fontFamily: "monospace", fontWeight: 600 }}
+                            >
+                              v{e.version}
+                            </Typography>
+                            {e.current && (
+                              <Chip label="current" size="small" color="primary" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                            )}
+                            {e.action === "imported" && (
+                              <Chip label="imported" size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                            )}
+                            {e.action === "baseline" && (
+                              <Chip label="pre-AI" size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                            )}
+                            {src && (
+                              <Chip label={src} size="small" variant="outlined" color="secondary" sx={{ height: 18, fontSize: 10 }} />
+                            )}
+                            {!e.restorable && (
+                              <Tooltip title="alignment wasn't stored for this version — can't restore it">
+                                <Chip label="text only" size="small" variant="outlined" color="warning" sx={{ height: 18, fontSize: 10 }} />
+                              </Tooltip>
+                            )}
+                          </Stack>
+                        }
+                        secondary={
+                          <>
+                            <Typography variant="caption" component="div">
+                              {fmtTime(e.created_at)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" component="div">
+                              {userLabel(e)}
+                            </Typography>
+                          </>
+                        }
+                      />
+                    </ListItemButton>
+                  );
+                })}
+              </List>
+            </Box>
+            <Box sx={{ flex: 1, p: 2, overflowY: "auto", maxHeight: 480 }}>
+              {selected ? (
+                <Stack spacing={1.5}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Typography variant="caption" color="text.secondary">
+                      {viewMode === "diff" && canDiff
+                        ? `diff: v${selected.version} → v${currentVersion}`
+                        : `preview of v${selected.version}`}
+                    </Typography>
+                    <Box sx={{ flex: 1 }} />
+                    <ToggleButtonGroup
+                      size="small"
+                      exclusive
+                      value={viewMode}
+                      onChange={(_, v) => {
+                        if (v) setViewMode(v as ViewMode);
+                      }}
+                      sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1 } }}
+                    >
+                      <ToggleButton value="snapshot">snapshot</ToggleButton>
+                      <ToggleButton value="diff" disabled={!canDiff}>
+                        diff vs current
+                      </ToggleButton>
+                    </ToggleButtonGroup>
+                  </Stack>
+                  {viewMode === "diff" && canDiff ? (
+                    <TextDiff from={selected.plain_text} to={current!.plain_text} />
+                  ) : (
+                    <TextPreview value={selected.plain_text} />
+                  )}
+                  {!selected.restorable && !isCurrent && (
+                    <Alert severity="info" sx={{ py: 0 }}>
+                      This point in history kept only the verse text, not its word
+                      alignment, so it can be viewed but not restored.
+                    </Alert>
+                  )}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  pick a version on the left to preview.
+                </Typography>
+              )}
+            </Box>
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions sx={{ justifyContent: "space-between" }}>
+        <Typography variant="caption" color="text.secondary" sx={{ pl: 1 }}>
+          History begins at the first saved edit; the original imported text may
+          not be retained.
+        </Typography>
+        <Box>
+          <Button onClick={onClose}>Close</Button>
+          <Button
+            variant="contained"
+            disabled={!canRestore || loading}
+            onClick={() => {
+              if (!selected || !selected.restorable) return;
+              onUseVersion(selected.content, selected.plain_text);
+              onClose();
+            }}
+          >
+            {isCurrent
+              ? "Already current"
+              : selected
+                ? `Switch to v${selected.version}`
+                : "Switch"}
+          </Button>
+        </Box>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function TextPreview({ value }: { value: string | null }) {
+  return (
+    <Box
+      sx={{
+        p: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "grey.50",
+        minHeight: 32,
+        whiteSpace: "pre-wrap",
+        fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+        fontSize: 15,
+        color: value ? "text.primary" : "text.disabled",
+      }}
+    >
+      {value || "(empty)"}
+    </Box>
+  );
+}
+
+function TextDiff({ from, to }: { from: string | null; to: string | null }) {
+  const fromStr = from ?? "";
+  const toStr = to ?? "";
+  const ops = useMemo(() => diffWords(fromStr, toStr), [fromStr, toStr]);
+  const identical = ops.every((o) => o.type === "eq");
+  return (
+    <Box
+      sx={{
+        p: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "grey.50",
+        minHeight: 32,
+        whiteSpace: "pre-wrap",
+        fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+        fontSize: 15,
+      }}
+    >
+      {identical && fromStr === "" && toStr === "" ? (
+        <Box component="span" sx={{ color: "text.disabled" }}>
+          (empty)
+        </Box>
+      ) : identical ? (
+        <Box component="span">{fromStr}</Box>
+      ) : (
+        ops.map((op, idx) => {
+          if (op.type === "eq") {
+            return (
+              <Box key={idx} component="span">
+                {op.text}
+              </Box>
+            );
+          }
+          if (op.type === "del") {
+            return (
+              <Box
+                key={idx}
+                component="span"
+                sx={{
+                  backgroundColor: "rgba(244, 67, 54, 0.18)",
+                  color: "#b71c1c",
+                  textDecoration: "line-through",
+                  borderRadius: 0.5,
+                }}
+              >
+                {op.text}
+              </Box>
+            );
+          }
+          return (
+            <Box
+              key={idx}
+              component="span"
+              sx={{
+                backgroundColor: "rgba(76, 175, 80, 0.22)",
+                color: "#1b5e20",
+                borderRadius: 0.5,
+              }}
+            >
+              {op.text}
+            </Box>
+          );
+        })
+      )}
+    </Box>
+  );
+}

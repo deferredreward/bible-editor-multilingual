@@ -1,5 +1,7 @@
 import {
   forwardRef,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -19,6 +21,7 @@ import {
   useTheme,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import HistoryIcon from "@mui/icons-material/History";
 import { assignChipHues, chipAccentColor, chipSupColor } from "../lib/highlightStyles";
 import {
   alignmentPlainText,
@@ -140,6 +143,11 @@ interface Props {
   onToggleHoverLink?: () => void;
   renderUhbStrip?: boolean;
   onOpenDual?: () => void;
+  // Restore a previously-saved version of this verse (content tree, alignment
+  // included). When present, the action bar shows a version-history button that
+  // opens the same dialog as rows mode. Absent ⇒ no history button (e.g. the
+  // side-by-side panels, whose lifecycle/saves are parent-owned).
+  onRestoreVersion?: (content: unknown, plainText: string | null) => void;
   // Hide the panel's own Cancel button. In side-by-side mode the panel's
   // lifecycle is owned by the parent (one shared close + dirty gate); the
   // per-panel Cancel would call handleReset() before that gate runs, wiping
@@ -154,9 +162,15 @@ interface Props {
   posOffset?: number;
 }
 
+const VerseHistoryDialog = lazy(() =>
+  import("./VerseHistoryDialog").then((m) => ({ default: m.VerseHistoryDialog })),
+);
+
 export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
   function AlignmentPanel(
     {
+      book,
+      chapter,
       verse,
       verseNum,
       bibleVersion,
@@ -172,12 +186,14 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       onToggleHoverLink,
       renderUhbStrip = true,
       onOpenDual,
+      onRestoreVersion,
       hideCancel = false,
       showSourceInfo = true,
       posOffset = 0,
     },
     ref,
   ) {
+    const [historyOpen, setHistoryOpen] = useState(false);
     const computedInitial = useMemo<AlignmentState | null>(() => {
       if (!verse?.content) return null;
       const verseObjects = (verse.content as { verseObjects?: unknown[] }).verseObjects;
@@ -791,6 +807,8 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
               onSave={handleSave}
               bibleVersion={bibleVersion}
               onOpenDual={onOpenDual}
+              version={verse?.version}
+              onOpenHistory={onRestoreVersion ? () => setHistoryOpen(true) : undefined}
             />
             <Snackbar
               open={mergeUndo !== null}
@@ -810,6 +828,20 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
               }
             />
           </>
+        )}
+        {historyOpen && verse && (
+          <Suspense fallback={null}>
+            <VerseHistoryDialog
+              open={historyOpen}
+              book={book}
+              chapter={chapter}
+              verseNum={verseNum}
+              bibleVersion={bibleVersion}
+              currentVersion={verse.version}
+              onClose={() => setHistoryOpen(false)}
+              onUseVersion={(content, plainText) => onRestoreVersion?.(content, plainText)}
+            />
+          </Suspense>
         )}
       </Box>
     );
@@ -1097,6 +1129,8 @@ function ActionBar({
   onSave,
   bibleVersion,
   onOpenDual,
+  version,
+  onOpenHistory,
 }: {
   dirty: boolean;
   ghostCount: number;
@@ -1108,6 +1142,8 @@ function ActionBar({
   onSave: () => void;
   bibleVersion: string;
   onOpenDual?: () => void;
+  version?: number;
+  onOpenHistory?: () => void;
 }) {
   return (
     <Stack
@@ -1130,6 +1166,24 @@ function ActionBar({
         editing {bibleVersion}
       </Typography>
       <Box sx={{ flex: 1 }} />
+      {onOpenHistory && version != null && (
+        <Tooltip title="version history — view or restore an earlier alignment">
+          <Button
+            size="small"
+            startIcon={<HistoryIcon sx={{ fontSize: 16 }} />}
+            onClick={onOpenHistory}
+            sx={{
+              textTransform: "none",
+              fontSize: 11,
+              mr: 0.5,
+              color: "text.secondary",
+              fontFamily: "monospace",
+            }}
+          >
+            v{version}
+          </Button>
+        </Tooltip>
+      )}
       {onOpenDual && (
         <Tooltip title="open ULT + UST side by side (aligned to the same Hebrew)">
           <Button

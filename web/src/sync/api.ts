@@ -612,6 +612,27 @@ export interface RowHistory {
   versions: RowHistoryEntry[];
 }
 
+export interface VerseHistoryEntry {
+  version: number;
+  // 'create' | 'update' | 'baseline' (pre-AI capture) | 'imported' (synthetic
+  // anchor for an unedited verse with no log entry).
+  action: string;
+  // edit_log.source: 'ai_pipeline' | 'dcs_reimport' | 'hint_expansion' | null.
+  source: string | null;
+  created_at: number;
+  user: RowHistoryUser | null;
+  plain_text: string | null;
+  // Full verse-objects tree at this version, or null when only plain_text was
+  // logged (older AI / re-import entries). null ⇒ not restorable.
+  content: unknown | null;
+  restorable: boolean;
+  current: boolean;
+}
+
+export interface VerseHistory {
+  versions: VerseHistoryEntry[];
+}
+
 export interface Catalogs {
   supportReferences: string[];
   twLinks: string[];
@@ -1020,6 +1041,14 @@ export const api = {
     request<TnRow>(`/api/rows/tn/${encodeURIComponent(id)}/restore?book=${encodeURIComponent(book)}`, {
       method: "POST",
     }),
+
+  // Verse version history (ULT/UST), reconstructed from the edit_log audit
+  // trail server-side. requireEditor — same gate as note history. Mirrors
+  // getRowHistory above.
+  getVerseHistory: (book: string, chapter: number, verse: number, bibleVersion: string) =>
+    request<VerseHistory>(
+      `/api/verses/${encodeURIComponent(book)}/${chapter}/${verse}/${encodeURIComponent(bibleVersion)}/history`,
+    ),
 
   patchVerse: <T = unknown>(
     book: string,

@@ -17,6 +17,7 @@ import {
   guardBlocksSave,
   type AlignmentIntent,
 } from "./alignmentDelta.ts";
+import { buildVerseHistory, type VerseHistoryLogRow } from "./verseHistory.ts";
 
 // Verse content can carry malformed/missing `\w` occurrence data — colliding
 // `(text, occurrence)` pairs from a bad import or AI alignment (ULT/UST), or no
@@ -116,6 +117,70 @@ verses.get("/:book/:chapter/:verse/:bibleVersion", async (c) => {
   // emit source verbatim, so round-trip fidelity is unaffected.
   normalizeOccurrences(parsed);
   return c.json({ ...row, content: parsed });
+});
+
+// Version history for a ULT/UST verse. requireEditor — same gate as note
+// history (api/src/rows.ts); there is no admin-only versioning to "open up",
+// so every editor sees and can restore verse versions, exactly like notes.
+//
+// Unlike the rows history endpoint, no forward-replay is needed: each
+// `kind='verse'` edit_log payload is a full snapshot. buildVerseHistory maps
+// the rows and anchors "current" with the live row content. The SELECT mirrors
+// rows.ts (users join, book-or-null for pre-0017 entries, version-advancing
+// actions). Path length differs from the verse GET above, so no route clash.
+verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async (c) => {
+  const book = c.req.param("book").toUpperCase();
+  const chapter = parseInt(c.req.param("chapter"), 10);
+  const verse = parseInt(c.req.param("verse"), 10);
+  const bibleVersion = c.req.param("bibleVersion").toUpperCase();
+  if (!isAllowedBibleVersion(bibleVersion)) {
+    return c.json({ error: "invalid_bible_version" }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+  )
+    .bind(book, chapter, verse, bibleVersion)
+    .first<VerseRow>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  let parsed: unknown;
+  try {
+    parsed = parseVerseContentJson(row);
+  } catch (err) {
+    if (err instanceof CorruptContentJsonError) {
+      logCorruptContentJson(err);
+      return c.json(corruptContentJsonBody(err), 500);
+    }
+    throw err;
+  }
+
+  const rowKey = `${book}/${chapter}/${verse}/${bibleVersion}`;
+  const rs = await c.env.DB.prepare(
+    `SELECT el.new_version AS version,
+            el.action,
+            el.source,
+            el.created_at,
+            el.payload_json,
+            u.id AS user_id,
+            u.dcs_username AS username,
+            u.dcs_full_name AS full_name
+       FROM edit_log el
+       LEFT JOIN users u ON u.id = el.user_id
+      WHERE el.kind = 'verse' AND el.row_key = ?1
+        AND (el.book = ?2 OR el.book IS NULL)
+        AND el.new_version IS NOT NULL
+      ORDER BY el.new_version ASC, el.created_at ASC`,
+  )
+    .bind(rowKey, book)
+    .all<VerseHistoryLogRow>();
+
+  const versions = buildVerseHistory(rs.results ?? [], {
+    version: row.version,
+    content: parsed,
+    plain_text: row.plain_text,
+    updated_at: row.updated_at,
+  });
+  return c.json({ versions });
 });
 
 verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) => {

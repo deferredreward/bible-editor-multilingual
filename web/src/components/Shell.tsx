@@ -1147,6 +1147,17 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       onDirtyChange: setAlignmentDirty,
       panelRef: alignmentPanelRef,
       onOpenDual: () => openDualAligner(alignerTarget.chapter, alignerTarget.verse),
+      onRestoreVersion: targetVerse
+        ? (content, plainText) =>
+            restoreVerse(
+              alignerTarget.chapter,
+              targetVerse.verse,
+              alignerTarget.bibleVersion,
+              content,
+              plainText,
+              targetVerse,
+            )
+        : undefined,
     };
   }, [alignerTarget, data, chapter, bookHook, book, openDualAligner, applyLocalVerse, enqueueVerseSafely]);
 
@@ -1418,6 +1429,41 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     if (chapterNum === chapter) applyLocalVerse(newDto);
   };
 
+  // Restore a previously-saved verse version (from the history dialog). Unlike
+  // saveVerseDraft, there is no smartEditVerse pass — we re-save the exact
+  // stored content tree verbatim (alignment milestones included). It routes
+  // through the same pipe with the alignment_edit intent: a deliberate
+  // full-tree replacement legitimately changes alignment, and that is the only
+  // intent the collateral-loss guard exempts (guardBlocksSave). The version
+  // climbs normally, so the new entry's content matches the restored one — no
+  // restored_from_version bookkeeping needed (unlike notes).
+  const restoreVerse = (
+    chapterNum: number,
+    verseNum: number,
+    bibleVersion: string,
+    content: unknown,
+    plainText: string | null,
+    base: VerseDto,
+  ) => {
+    const newPlainText = plainText ?? extractPlainText(content);
+    const newDto = {
+      ...base,
+      chapter: chapterNum,
+      verse: verseNum,
+      bible_version: bibleVersion,
+      plain_text: newPlainText,
+      content,
+    } as VerseDto;
+    if (!enqueueVerseSafely(chapterNum, verseNum, bibleVersion, base, content, newPlainText, "alignment_edit")) {
+      return;
+    }
+    // Drop any stranded keystroke draft so the dirty border / "unsaved edits"
+    // toast don't linger over content the restore just replaced.
+    void drafts.clear(verseKey(book, chapterNum, verseNum, bibleVersion));
+    bookHook?.applyLocalVerse(newDto);
+    if (chapterNum === chapter) applyLocalVerse(newDto);
+  };
+
   // Section header (\s1/\s2/\s3) edit / delete. `change.index` is the
   // i'th section header inside this verse's content per
   // splitSectionHeaders. tag === null deletes the band. The verseObjects
@@ -1675,6 +1721,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           }}
           onSaveVerse={(verseNum, bibleVersion, plain, base) => {
             saveVerseDraft(chapter, verseNum, bibleVersion, plain, base);
+          }}
+          onRestoreVerse={(verseNum, bibleVersion, content, plainText, base) => {
+            restoreVerse(chapter, verseNum, bibleVersion, content, plainText, base);
           }}
           onEditSection={(verseNum, bibleVersion, change, base) => {
             saveSectionEdit(chapter, verseNum, bibleVersion, change, base);
