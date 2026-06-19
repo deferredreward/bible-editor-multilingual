@@ -127,6 +127,31 @@ Not yet PR'd.
 
 ## In progress
 
+- **focused-albattani** (2026-06-19) — Find/replace now works on TN note bodies, not just ULT/UST.
+  The TN scope was already searchable; this adds **replace** for it. Design (user-directed): replace
+  acts on exactly **one** scope — with both Bible + TN checked, replace/replace-all/the replace input
+  disable and show "select a single scope to replace" (find still spans both). TN replace rewrites the
+  **note body only** — `id` (PK) and `support_reference` (rc:// link) are never touched; a note that
+  matched only via id/SR is skipped + counted. Safeties: reject tab/newline in the replacement (TSV
+  column/row separators; notes store line breaks as the literal `\n` escape), skip any replace that would
+  blank a note, replace-all behind a confirm dialog with a pre-counted blast radius, reuse outbox
+  `enqueueRow` (If-Match on row.version → 409 merge handling). UI prominence reordered per request:
+  find/next (filled-primary ▲▼) > replace (outlined) > replace-all (quiet underlined warning text).
+  **Per-instance (not per-note):** note BODY matches are emitted ONE PER OCCURRENCE (NoteMatch carries
+  start/end), so the "X/Y" count = occurrences and single `replace` rewrites just the active instance
+  (verified: "return"×4 in one note → 1/4 count; one replace → 1/3, server 4→3 "return"; replace-all →
+  0, summary "replaced 3 matches"). support_reference/id stay search-only single fallbacks (emitted only
+  when the body doesn't match). Confirm dialog reads "Replace N matches across M notes".
+  Key gotcha (see memory): `ScriptureColumn` is memoized and ignores note edits, so in stacked/columns
+  mode a note replace doesn't re-render the overlay and `searchNotes()` reads an effect-lagged ref — the
+  result list would go stale. Fixed with a short-lived in-overlay `noteOverrides` map so noteMatches
+  recompute immediately (book mode already refreshes via the `bookChapters` ref change). Files:
+  `FindReplaceOverlay.tsx` (core), `ScriptureColumn.tsx` + `Shell.tsx` (thread `onReplaceNote`). typecheck +
+  web tests + build green; verified live in Chrome (single replace persisted v4→v5 with id/SR intact;
+  both-scopes gating; confirm dialog "Replace 7 notes"; replace-all → 7 rewritten server-side, no
+  double-write of the already-replaced note; tab block disables replace). Branch
+  `claude/focused-albattani-c5bb6f`. Not yet PR'd.
+
 - **trusting-mclean** (2026-06-18) — Fix AI "-e"/orphan-`\zaln-e` corruption (MIC 6:10 UST; deferred
   workstream from `project_ai_dash_e_zaln_corruption_mic610`). Confirmed via parsing the REAL en_ust master
   verse that usfm-js produces two junk shapes — a node whose own `tag` IS the end-marker

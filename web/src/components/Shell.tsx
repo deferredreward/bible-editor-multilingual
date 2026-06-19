@@ -1646,6 +1646,21 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             bookHook?.applyLocalVerse(newDto);
             if (ch === chapter) applyLocalVerse(newDto);
           }}
+          onReplaceNote={(row, newNote) => {
+            // Find/replace on a translation note rewrites the BODY only (id is
+            // the PK, support_reference is a structured rc:// link — both stay
+            // put; the overlay enforces this). Reuse the standard note save
+            // path so it gets the same outbox If-Match (on row.version),
+            // restored_from_version clear, and 409 merge handling as a manual
+            // edit. Also patch the book-mode cache so a cross-chapter note in
+            // book view updates immediately (enqueueRow's local apply only
+            // touches the active chapter's useChapter data).
+            enqueueRow("tn", row, { note: newNote });
+            bookHook?.applyLocalRowPatch("tn", row.chapter, row.id, {
+              note: newNote,
+              restored_from_version: null,
+            });
+          }}
           onSelectVerse={(v) => requestSelectVerse(v)}
           onModeChange={(m) => {
             setMode(m);
