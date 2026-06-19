@@ -14,6 +14,34 @@
 
 ## Last run
 
+2026-06-19 · **relaxed-hoover** — HOS TN data cleanup in prod D1 (PR #7171 "HOS tn → master" was
+`mergeable:false`). Diagnosed the blocked merge: it's NOT just duplicates — it's a 13-hunk 3-way
+conflict from master being edited **out-of-band** (commit `8046caaab73e` "Heal AI-TN id/dup rot"
+re-minted ids `4znz→za3b` etc.; #7167 "Adding Beth edits" + bp-assistant "TN: HOS 8/9/10" direct
+commits) while the nightly export branch was never rebased. Three classes: (a) dup+id-rename
+conflicts (5:13/7:1/7:4), (b) genuine parallel human edits on the same notes (front:intro, 7:10,
+8:4–8:10, ch9 "Hosea" vs "the speaker/Yahweh"), (c) HOS 10 wholesale — master has the finished
+Hebrew-aligned set, D1 still held the **old legacy English-quote notes** interleaved.
+**Executed (prod D1, soft-delete + edit_log audit, `scripts/out/cleanup-hos-tn.sql`):** (1) deduped
+6 redundant note copies — each pair = human row (`updated_by=35`) + untouched re-import (`by=null`,
+v1); kept the occ=1 survivor, deleted idxe/c36i/bu7i/ywnu/wjmm/uguy. (2) Deleted 32 HOS 10 legacy
+English-quote notes; **excluded `zgru` (10:5 "Beth Aven", tag=`keep`)** since master keeps the
+equivalent. Verified: 0 dups remain, only `zgru` English-quote left in HOS 10. (3) Then deleted the 6 HOS 10
+`# General Information:` empty-quote legacy notes (vux7/rxam/n8ww/hb3n/rn4r/rv3v,
+`scripts/out/cleanup-hos10-geninfo.sql`) — user confirmed. HOS 10 now has only Hebrew-quote notes +
+the new intro `nux1` + keep-tagged `zgru`. Editor ruled **"B (Bible Editor/D1) wins everywhere"** for the
+ch8/ch9 wording. Resolved by building D1's authoritative HOS render (theirs.tsv-minus-44-deleted-rows,
+validated byte-equal to current D1; the "15 diffs" were a ref-label artifact `10:0` vs `10:intro`),
+saved `scripts/out/tn_HOS.reconciled.tsv`. **Did NOT use the export pipeline** — its pre-export
+DCS→D1 sync would pull master's old ch8-9 wording back into D1 and clobber the editor's work. Instead
+committed the reconciled file to a fresh branch off current master → **PR #7175**
+(https://git.door43.org/unfoldingWord/en_tn/pulls/7175), mergeable, 1 file +38/-39. Verified safe: 0
+master-only aligned HOS10 notes (nothing dropped); HOS10 converges to master (only `10:5` ete5→zgru
+"Beth Aven" id swap + intro wording remain). **Handed to user:** they review the DCS validator on
+#7175, then merge it and close/delete last night's #7171 + branch `HOS-be-deferredreward-bethoakes`
+(I did NOT merge/delete per their instruction). Cleanup SQL: `scripts/out/cleanup-hos-tn.sql` +
+`cleanup-hos10-geninfo.sql`. Editor-facing diff doc: `docs/hos-tn-divergence-for-editors.md`.
+
 2026-06-18 · **editor-punctuation-placement** — Fixed reported prod bug: punctuation typed at
 the END of a poetic line (em-dash after "city" on a `\q1` line) jumped to the START of the next
 (`\q2`) line on save. Root cause in `reconcileMarkers` (`web/src/lib/replace.ts`): marker placement
