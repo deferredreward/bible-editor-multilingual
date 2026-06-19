@@ -12,6 +12,11 @@ import {
   Alert,
   Box,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControlLabel,
   Stack,
   TextField,
@@ -24,6 +29,7 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import type { ChapterState } from "../hooks/useBook";
 import type { TnRow, VerseDto } from "../sync/api";
 import { smartReplaceVerse } from "../lib/replace";
@@ -52,11 +58,18 @@ export interface FindMatch {
 // A translation-note hit. The TN checkbox folds the note body, support
 // reference, and note id into one searchable corpus — each is distinct
 // enough that a single query against all three rarely collides.
+//
+// Body (`field === "note"`) hits are emitted ONE PER OCCURRENCE — `start`/`end`
+// index into the body string so replace can target a single instance, exactly
+// like scripture matches. Structured fields (support_reference / id) are
+// search-only fallbacks, emitted at most once per note, with start/end unused.
 export interface NoteMatch {
   chapter: number;
   verse: number;
   noteId: string;
   field: "note" | "support_reference" | "id";
+  start: number;
+  end: number;
   matchText: string;
 }
 
@@ -121,6 +134,11 @@ interface Props {
     newPlainText: string,
     base: VerseDto,
   ) => void;
+  // Replace target for translation notes — only the note BODY is rewritten
+  // (id is the primary key, support_reference is a structured rc:// link, so
+  // both are off-limits). Shell carries the live row's version into the
+  // outbox If-Match and dual-applies to the current chapter + book caches.
+  onReplaceNote: (row: TnRow, newNote: string) => void;
   // Fires only on user-initiated navigation (find/regex/case change, prev,
   // next, replace-this). Typing in a verse cell while the overlay is open
   // reshapes the match list but should NOT pull the user away — those
@@ -151,6 +169,7 @@ export function FindReplaceOverlay({
   onLoadChapter,
   enabledVersions,
   onReplaceVerse,
+  onReplaceNote,
   onScrollToMatch,
   onQueryChange,
   searchNotes,
@@ -237,10 +256,20 @@ export function FindReplaceOverlay({
   // result list + "X / Y" count would go stale. Every note edit produces a new
   // ChapterPayload reference (see useChapter applyLocalRow*), so the `chapters`
   // map identity changes and this memo re-reads the fresh notes.
+  // Just-replaced note bodies, keyed by note id. The scripture column is
+  // memoized and ignores note edits, so in stacked/columns mode a note replace
+  // doesn't re-render this overlay, and searchNotes() reads an effect-lagged
+  // ref — the result list would go stale and single-replace wouldn't advance.
+  // Overriding the body locally makes noteMatches recompute off this state
+  // immediately (the replaced note drops out, count updates, clamp auto-jumps
+  // to the next hit), independent of when the server / book cache catch up.
+  // Short-lived: cleared on any query / scope change, where live data rules.
+  const [noteOverrides, setNoteOverrides] = useState<Map<string, string>>(() => new Map());
+
   const noteMatches = useMemo<NoteMatch[]>(() => {
     if (!open || !scope.tn || !find) return [];
-    return collectNoteMatches(searchNotes(), compiled.re);
-  }, [open, scope.tn, find, compiled.re, searchNotes, chapters]);
+    return collectNoteMatches(searchNotes(), compiled.re, noteOverrides);
+  }, [open, scope.tn, find, compiled.re, searchNotes, chapters, noteOverrides]);
 
   // Merge + order both scopes by chapter then verse, bible before note within
   // the same verse, so prev/next walks the document top-to-bottom.
@@ -254,7 +283,10 @@ export function FindReplaceOverlay({
       (a, b) =>
         a.chapter - b.chapter ||
         a.verse - b.verse ||
-        (a.kind === b.kind ? 0 : a.kind === "bible" ? -1 : 1),
+        (a.kind === b.kind ? 0 : a.kind === "bible" ? -1 : 1) ||
+        // Same verse + kind: order occurrences left-to-right by position so
+        // prev/next walks instances in reading order within a verse / note.
+        (a.kind === "bible" ? a.match.startIndex - (b.match as FindMatch).startIndex : a.match.start - (b.match as NoteMatch).start),
     );
     return out;
   }, [bibleMatches, noteMatches]);
@@ -265,6 +297,31 @@ export function FindReplaceOverlay({
     results[activeIdx]?.kind === "bible"
       ? (results[activeIdx] as Extract<SearchResult, { kind: "bible" }>).match
       : null;
+
+  // Replace must target exactly ONE corpus — find may span both, but mixing
+  // scripture (alignment-bearing USFM) and notes (plain TSV text) in a single
+  // replace pass is confusing and error-prone. With both scopes on, replace is
+  // gated off and the user is told to pick one. null === "both selected".
+  const replaceScope: "bible" | "tn" | null =
+    scope.bible && scope.tn ? null : scope.bible ? "bible" : "tn";
+
+  // Notes live in tab-separated, newline-delimited TSV; line breaks are stored
+  // as the literal two-char `\n` escape, never a raw control char. A tab or raw
+  // newline in the replacement would shift columns / split rows on export and
+  // silently corrupt the file, so block it for note replaces. (Scripture goes
+  // through smartReplaceVerse → normalize(), which collapses such chars, so the
+  // guard only matters for the TN scope.)
+  const replaceHasControlChars = /[\t\r\n]/.test(replace);
+  const replaceBlockedByChars = replaceScope === "tn" && replaceHasControlChars;
+
+  // The active result is a replaceable note iff its body (not id / SR) matched.
+  // collectNoteMatches checks fields in [note, support_reference, id] order and
+  // records the first hit, so field === "note" means the note body contains the
+  // match; anything else means only a structured field did (off-limits).
+  const activeNoteReplaceable =
+    replaceScope === "tn" &&
+    results[activeIdx]?.kind === "note" &&
+    (results[activeIdx] as Extract<SearchResult, { kind: "note" }>).match.field === "note";
 
   // Route the active result to the right surface: scripture cells scroll +
   // highlight via onScrollToMatch; notes navigate + activate via
@@ -329,17 +386,35 @@ export function FindReplaceOverlay({
     navTo(next);
   };
 
-  // Status surfaced after a replace-all so the user sees when alignment
-  // milestones were destroyed (no inline indicator otherwise — the verse
-  // looks the same except for missing \zaln-s tags). Cleared on the next
-  // find-query change.
-  const [replaceSummary, setReplaceSummary] = useState<
-    | null
-    | { versesReplaced: number; alignmentLost: number; readOnlySkipped: number }
-  >(null);
+  // Status surfaced after a replace so the user sees what happened.
+  //  - bible: how many verses changed + where alignment milestones were
+  //    destroyed (no inline indicator otherwise) + read-only matches skipped.
+  //  - tn: how many note bodies changed, plus matches we deliberately did NOT
+  //    touch — structured (id/SR-only) and any replace that would blank a note.
+  // Cleared on the next find-query / scope change.
+  type ReplaceSummary =
+    | { scope: "bible"; versesReplaced: number; alignmentLost: number; readOnlySkipped: number }
+    | {
+        scope: "tn";
+        matchesReplaced: number;
+        notesReplaced: number;
+        structuralSkipped: number;
+        emptySkipped: number;
+      };
+  const [replaceSummary, setReplaceSummary] = useState<ReplaceSummary | null>(null);
   useEffect(() => {
     setReplaceSummary(null);
-  }, [find, regex, caseSensitive]);
+    setNoteOverrides(new Map());
+  }, [find, regex, caseSensitive, scope.bible, scope.tn]);
+
+  // Confirm gate for the bulk replace-all action (see requestReplaceAll). Holds
+  // the chosen scope + a pre-counted preview so the dialog can say exactly how
+  // many verses / notes are about to change.
+  // `count` is the unit the dialog leads with (verses for bible, matches for
+  // tn); `notes` is the number of note rows tn replace-all will write.
+  const [confirmAll, setConfirmAll] = useState<
+    null | { scope: "bible"; count: number } | { scope: "tn"; count: number; notes: number }
+  >(null);
 
   const doReplaceMatch = (m: FindMatch) => {
     if (READ_ONLY_VERSIONS.has(m.bibleVersion)) return;
@@ -358,21 +433,21 @@ export function FindReplaceOverlay({
       replace,
     );
     if (result.plainText === text) return;
-    if (!result.preservedAlignment) {
-      setReplaceSummary({ versesReplaced: 1, alignmentLost: 1, readOnlySkipped: 0 });
-    } else {
-      setReplaceSummary({ versesReplaced: 1, alignmentLost: 0, readOnlySkipped: 0 });
-    }
+    setReplaceSummary({
+      scope: "bible",
+      versesReplaced: 1,
+      alignmentLost: result.preservedAlignment ? 0 : 1,
+      readOnlySkipped: 0,
+    });
     // The replace will trigger a matches reshape (the current match is
     // gone); flag the upcoming reshape so we scroll to whatever's next.
     wantsScrollRef.current = true;
     onReplaceVerse(m.chapter, m.verse, m.bibleVersion, result.content, result.plainText, verse);
   };
 
-  const doReplaceAll = () => {
+  const doReplaceAllBible = () => {
     if (!compiled.re || bibleMatches.length === 0) return;
-    // Replace only touches scripture (bible) matches — TN notes are never
-    // rewritten by find/replace. Group matches by verse. Re-derive matches in
+    // Scripture replace-all. Group matches by verse. Re-derive matches in
     // the *current* plain text for each iteration instead of trusting
     // `startIndex` from the original collection — normalize() inside
     // smartReplaceVerse can collapse whitespace and shift the indices of every
@@ -430,8 +505,131 @@ export function FindReplaceOverlay({
       if (!preservedThisVerse) alignmentLost += 1;
       onReplaceVerse(ch, v, bv, content, plainText, verse);
     }
-    setReplaceSummary({ versesReplaced, alignmentLost, readOnlySkipped });
+    setReplaceSummary({ scope: "bible", versesReplaced, alignmentLost, readOnlySkipped });
   };
+
+  // ---- Translation-note replace ----------------------------------------
+  // Replace acts on the note BODY only, ONE OCCURRENCE at a time: the active
+  // result is a single body instance (start/end), so "replace" rewrites just
+  // that instance and the clamp effect advances to the next one. The override
+  // map makes the list recompute immediately so positions stay correct.
+  const doReplaceNoteMatch = (m: NoteMatch) => {
+    if (!compiled.re || replaceBlockedByChars || m.field !== "note") return;
+    const row = searchNotes().find(
+      (r) => r.id === m.noteId && r.trashed_at == null && r.deleted_at == null,
+    );
+    if (!row) return;
+    const body = noteOverrides.get(row.id) ?? row.note;
+    // m.start/m.end index into this exact body (computed in the same render),
+    // but guard against any drift before slicing.
+    if (!body || m.start < 0 || m.end > body.length || m.start >= m.end) return;
+    const newNote = body.slice(0, m.start) + replace + body.slice(m.end);
+    if (newNote === body) return;
+    // Never let a replace blank a note — an empty note body exports as an
+    // empty TN cell and is almost never intended; skip + report instead.
+    if (newNote.trim() === "") {
+      setReplaceSummary({
+        scope: "tn",
+        matchesReplaced: 0,
+        notesReplaced: 0,
+        structuralSkipped: 0,
+        emptySkipped: 1,
+      });
+      return;
+    }
+    wantsScrollRef.current = true;
+    onReplaceNote(row, newNote);
+    setNoteOverrides((prev) => new Map(prev).set(row.id, newNote));
+    setReplaceSummary({
+      scope: "tn",
+      matchesReplaced: 1,
+      notesReplaced: 1,
+      structuralSkipped: 0,
+      emptySkipped: 0,
+    });
+  };
+
+  const doReplaceAllNotes = () => {
+    if (!compiled.re || replaceBlockedByChars) return;
+    let matchesReplaced = 0;
+    let notesReplaced = 0;
+    let emptySkipped = 0;
+    const nextOverrides = new Map(noteOverrides);
+    for (const n of searchNotes()) {
+      if (n.trashed_at != null || n.deleted_at != null) continue;
+      const body = nextOverrides.get(n.id) ?? n.note ?? "";
+      if (!body) continue;
+      const { text: newNote, count } = replaceAllLiteral(body, compiled.re, replace);
+      if (count === 0 || newNote === body) continue;
+      if (newNote.trim() === "") {
+        emptySkipped += 1;
+        continue;
+      }
+      onReplaceNote(n, newNote);
+      nextOverrides.set(n.id, newNote);
+      notesReplaced += 1;
+      matchesReplaced += count;
+    }
+    // Matches that landed only in a structured field (support_reference / id)
+    // are reported as deliberately untouched, mirroring read-only scripture.
+    const structuralSkipped = noteMatches.filter((m) => m.field !== "note").length;
+    setNoteOverrides(nextOverrides);
+    setReplaceSummary({ scope: "tn", matchesReplaced, notesReplaced, structuralSkipped, emptySkipped });
+  };
+
+  // Replace-all is gated behind a confirm dialog (it can rewrite many rows at
+  // once and is intentionally the quietest button). Pre-count the affected
+  // verses / notes so the dialog states the blast radius; bail without a dialog
+  // when nothing would actually change.
+  const requestReplaceAll = () => {
+    if (replaceScope === "bible") {
+      const verses = new Set<string>();
+      for (const m of bibleMatches) {
+        if (READ_ONLY_VERSIONS.has(m.bibleVersion)) continue;
+        verses.add(`${m.chapter}|${m.verse}|${m.bibleVersion}`);
+      }
+      if (verses.size === 0) return;
+      setConfirmAll({ scope: "bible", count: verses.size });
+    } else if (replaceScope === "tn") {
+      if (!compiled.re || replaceBlockedByChars) return;
+      let matches = 0;
+      let notes = 0;
+      for (const n of searchNotes()) {
+        if (n.trashed_at != null || n.deleted_at != null) continue;
+        const body = noteOverrides.get(n.id) ?? n.note ?? "";
+        if (!body) continue;
+        const flags = compiled.re.flags.includes("g") ? compiled.re.flags : compiled.re.flags + "g";
+        const found = body.match(new RegExp(compiled.re.source, flags));
+        if (found && found.length > 0) {
+          matches += found.length;
+          notes += 1;
+        }
+      }
+      if (matches === 0) return;
+      setConfirmAll({ scope: "tn", count: matches, notes });
+    }
+  };
+
+  const runReplaceAll = () => {
+    if (confirmAll?.scope === "bible") doReplaceAllBible();
+    else if (confirmAll?.scope === "tn") doReplaceAllNotes();
+    setConfirmAll(null);
+  };
+
+  // Single-replace and replace-all enablement, factoring in the single-scope
+  // rule and the note control-char block.
+  const replaceOneEnabled = replaceBlockedByChars
+    ? false
+    : replaceScope === "bible"
+      ? !!activeBibleMatch
+      : activeNoteReplaceable;
+  const replaceAllEnabled = replaceBlockedByChars
+    ? false
+    : replaceScope === "bible"
+      ? bibleMatches.length > 0
+      : replaceScope === "tn"
+        ? noteMatches.length > 0
+        : false;
 
   if (!open) return null;
 
@@ -554,20 +752,59 @@ export function FindReplaceOverlay({
         >
           {results.length === 0 ? "no results" : `${activeIdx + 1} / ${results.length}`}
         </Typography>
-        <Tooltip title="previous match (Shift+Enter)">
-          <span>
-            <IconButton size="small" onClick={goPrev} disabled={results.length === 0}>
-              <ArrowUpwardIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-        <Tooltip title="next match (Enter)">
-          <span>
-            <IconButton size="small" onClick={goNext} disabled={results.length === 0}>
-              <ArrowDownwardIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
+        {/* Find/next is the primary control — filled + colored so it draws the
+            eye and the Enter/Shift+Enter habit, above replace and replace-all. */}
+        <Box
+          sx={{
+            display: "inline-flex",
+            borderRadius: 1,
+            overflow: "hidden",
+            border: "1px solid",
+            borderColor: "primary.main",
+            opacity: results.length === 0 ? 0.45 : 1,
+          }}
+        >
+          <Tooltip title="previous match (Shift+Enter)">
+            <span>
+              <IconButton
+                size="small"
+                onClick={goPrev}
+                disabled={results.length === 0}
+                sx={{
+                  borderRadius: 0,
+                  px: 0.75,
+                  color: "primary.contrastText",
+                  bgcolor: "primary.main",
+                  borderRight: "1px solid",
+                  borderColor: "primary.dark",
+                  "&:hover": { bgcolor: "primary.dark" },
+                  "&.Mui-disabled": { color: "primary.contrastText", bgcolor: "primary.main" },
+                }}
+              >
+                <ArrowUpwardIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="next match (Enter)">
+            <span>
+              <IconButton
+                size="small"
+                onClick={goNext}
+                disabled={results.length === 0}
+                sx={{
+                  borderRadius: 0,
+                  px: 0.75,
+                  color: "primary.contrastText",
+                  bgcolor: "primary.main",
+                  "&:hover": { bgcolor: "primary.dark" },
+                  "&.Mui-disabled": { color: "primary.contrastText", bgcolor: "primary.main" },
+                }}
+              >
+                <ArrowDownwardIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Box>
         <Box sx={{ flex: 1 }} />
         {chapterList.length === 1 && (
           <Tooltip title="Find is searching the current chapter only. Switch Scripture to “book” mode to search the whole book.">
@@ -621,60 +858,181 @@ export function FindReplaceOverlay({
           }}
           size="small"
           placeholder="replace"
-          sx={{ minWidth: 240 }}
+          disabled={replaceScope === null}
+          error={replaceBlockedByChars}
+          helperText={replaceBlockedByChars ? "no tabs or line breaks in notes" : undefined}
+          sx={{
+            minWidth: 240,
+            "& .MuiFormHelperText-root": { m: 0, lineHeight: 1.2, fontFamily: "monospace", fontSize: 11 },
+          }}
           inputProps={{ style: { fontFamily: "monospace", fontSize: 13 } }}
         />
-        <Tooltip title="replace the active match (scripture only, this verse, overwrites alignment for it)">
+        <Tooltip
+          title={
+            replaceScope === "tn"
+              ? "replace this match in the note body (id & support reference are never changed)"
+              : "replace the active match (scripture only, this verse, overwrites alignment for it)"
+          }
+        >
           <span>
             <Button
               size="small"
               variant="outlined"
               onClick={() => {
-                if (activeBibleMatch) doReplaceMatch(activeBibleMatch);
+                if (replaceScope === "bible") {
+                  if (activeBibleMatch) doReplaceMatch(activeBibleMatch);
+                } else if (replaceScope === "tn") {
+                  const r = results[activeIdx];
+                  if (r?.kind === "note") doReplaceNoteMatch(r.match);
+                }
               }}
-              disabled={!activeBibleMatch}
+              disabled={!replaceOneEnabled}
               sx={{ textTransform: "none" }}
             >
               replace
             </Button>
           </span>
         </Tooltip>
-        <Tooltip title="replace every scripture match in every loaded chapter (one PATCH per affected verse; alignment is overwritten where it lands; notes are never rewritten)">
+        <Tooltip
+          title={
+            replaceScope === "tn"
+              ? "replace across every matching note body in all loaded chapters (id & support reference are never changed)"
+              : "replace every scripture match in every loaded chapter (one PATCH per affected verse; alignment is overwritten where it lands)"
+          }
+        >
           <span>
             <Button
               size="small"
-              variant="contained"
+              variant="text"
               color="warning"
-              onClick={doReplaceAll}
-              disabled={bibleMatches.length === 0}
-              sx={{ textTransform: "none" }}
+              onClick={requestReplaceAll}
+              disabled={!replaceAllEnabled}
+              sx={{ textTransform: "none", textDecoration: "underline", textUnderlineOffset: "3px" }}
             >
               replace all
             </Button>
           </span>
         </Tooltip>
+        {replaceScope === null && (
+          <Typography
+            variant="caption"
+            sx={{ display: "flex", alignItems: "center", gap: 0.5, color: "warning.dark", fontSize: 12 }}
+          >
+            <InfoOutlinedIcon sx={{ fontSize: 15 }} />
+            select a single scope to replace
+          </Typography>
+        )}
+        {replaceScope === "tn" && !replaceBlockedByChars && (
+          <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 12 }}>
+            note text only · id &amp; SR untouched
+          </Typography>
+        )}
       </Stack>
-      {replaceSummary && (replaceSummary.versesReplaced > 0 || replaceSummary.readOnlySkipped > 0) && (
-        <Alert
-          severity={replaceSummary.alignmentLost > 0 ? "warning" : "success"}
-          sx={{ mt: 0.75, py: 0.25, "& .MuiAlert-message": { py: 0.5, fontSize: 12 } }}
-          onClose={() => setReplaceSummary(null)}
-        >
-          replaced {replaceSummary.versesReplaced} verse
-          {replaceSummary.versesReplaced === 1 ? "" : "s"}
-          {replaceSummary.alignmentLost > 0 &&
-            ` — alignment milestones destroyed in ${replaceSummary.alignmentLost}`}
-          {replaceSummary.readOnlySkipped > 0 &&
-            ` — ${replaceSummary.readOnlySkipped} match${
-              replaceSummary.readOnlySkipped === 1 ? "" : "es"
-            } in UHB/UGNT skipped (read-only)`}
-        </Alert>
-      )}
+      {replaceSummary &&
+        ((replaceSummary.scope === "bible" &&
+          (replaceSummary.versesReplaced > 0 || replaceSummary.readOnlySkipped > 0)) ||
+          (replaceSummary.scope === "tn" &&
+            (replaceSummary.matchesReplaced > 0 ||
+              replaceSummary.structuralSkipped > 0 ||
+              replaceSummary.emptySkipped > 0))) && (
+          <Alert
+            severity={
+              replaceSummary.scope === "bible"
+                ? replaceSummary.alignmentLost > 0
+                  ? "warning"
+                  : "success"
+                : replaceSummary.emptySkipped > 0
+                  ? "warning"
+                  : "success"
+            }
+            sx={{ mt: 0.75, py: 0.25, "& .MuiAlert-message": { py: 0.5, fontSize: 12 } }}
+            onClose={() => setReplaceSummary(null)}
+          >
+            {replaceSummary.scope === "bible" ? (
+              <>
+                replaced {replaceSummary.versesReplaced} verse
+                {replaceSummary.versesReplaced === 1 ? "" : "s"}
+                {replaceSummary.alignmentLost > 0 &&
+                  ` — alignment milestones destroyed in ${replaceSummary.alignmentLost}`}
+                {replaceSummary.readOnlySkipped > 0 &&
+                  ` — ${replaceSummary.readOnlySkipped} match${
+                    replaceSummary.readOnlySkipped === 1 ? "" : "es"
+                  } in UHB/UGNT skipped (read-only)`}
+              </>
+            ) : (
+              <>
+                replaced {replaceSummary.matchesReplaced} match
+                {replaceSummary.matchesReplaced === 1 ? "" : "es"}
+                {replaceSummary.notesReplaced > 1 && ` in ${replaceSummary.notesReplaced} notes`}
+                {replaceSummary.structuralSkipped > 0 &&
+                  ` — ${replaceSummary.structuralSkipped} match${
+                    replaceSummary.structuralSkipped === 1 ? "" : "es"
+                  } in id / support reference skipped`}
+                {replaceSummary.emptySkipped > 0 &&
+                  ` — ${replaceSummary.emptySkipped} skipped (would empty the note)`}
+              </>
+            )}
+          </Alert>
+        )}
+      <Dialog open={confirmAll !== null} onClose={() => setConfirmAll(null)} maxWidth="xs">
+        <DialogTitle sx={{ fontSize: 16 }}>Replace all?</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ fontSize: 14 }}>
+            {confirmAll?.scope === "bible"
+              ? `Rewrite ${confirmAll.count} verse${
+                  confirmAll.count === 1 ? "" : "s"
+                } across all loaded chapters. Alignment is overwritten wherever the replacement lands, and there is no bulk undo.`
+              : `Replace ${confirmAll?.count ?? 0} match${confirmAll?.count === 1 ? "" : "es"} across ${
+                  confirmAll?.notes ?? 0
+                } note${confirmAll?.notes === 1 ? "" : "s"} in all loaded chapters. Note ids and support references are left unchanged, and there is no bulk undo.`}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button size="small" onClick={() => setConfirmAll(null)} sx={{ textTransform: "none" }}>
+            Cancel
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="warning"
+            onClick={runReplaceAll}
+            sx={{ textTransform: "none" }}
+          >
+            Replace {confirmAll?.count} {confirmAll?.scope === "bible" ? "verse" : "match"}
+            {confirmAll?.count === 1 ? "" : confirmAll?.scope === "bible" ? "s" : "es"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
 
 // ---------- helpers ----------
+
+// Replace every regex match in a plain string with the replacement inserted
+// LITERALLY (no `$1` / `$&` substitution), matching smartReplaceVerse's
+// scripture semantics so notes and verses behave identically. Returns the new
+// text and the number of occurrences replaced. Guards the zero-width-match case
+// so an empty-matching pattern can't loop forever.
+function replaceAllLiteral(
+  text: string,
+  re: RegExp,
+  replacement: string,
+): { text: string; count: number } {
+  const flags = re.flags.includes("g") ? re.flags : re.flags + "g";
+  const g = new RegExp(re.source, flags);
+  let out = "";
+  let last = 0;
+  let count = 0;
+  let m: RegExpExecArray | null;
+  while ((m = g.exec(text)) !== null) {
+    out += text.slice(last, m.index) + replacement;
+    last = m.index + m[0].length;
+    count += 1;
+    if (m[0].length === 0) g.lastIndex++;
+  }
+  return { text: out + text.slice(last), count };
+}
 
 function buildSearchRegex(
   query: string,
@@ -758,20 +1116,49 @@ function collectMatches(
 }
 
 // Match a query against translation notes. The TN checkbox searches three
-// fields per note — body, support reference, id — and emits at most one result
-// per note (the first field that hits) so prev/next jumps note-to-note rather
-// than field-to-field. Trashed / deleted notes are skipped: they aren't shown
-// in the resource column, so there'd be nothing to scroll to.
-function collectNoteMatches(notes: TnRow[], re: RegExp | null): NoteMatch[] {
+// fields per note — body, support reference, id. Body matches are emitted ONE
+// PER OCCURRENCE (so prev/next + replace step instance-by-instance, like
+// scripture); the body's just-replaced text is read from `noteOverrides` so the
+// list refreshes immediately. support_reference / id are search-only fallbacks,
+// emitted once per note and only when the body has no match — they're never
+// replaced, so a per-occurrence breakdown would be noise. Trashed / deleted
+// notes are skipped: they aren't shown in the resource column, so there'd be
+// nothing to scroll to.
+function collectNoteMatches(
+  notes: TnRow[],
+  re: RegExp | null,
+  noteOverrides?: Map<string, string>,
+): NoteMatch[] {
   if (!re) return [];
   const out: NoteMatch[] = [];
-  const fields: NoteMatch["field"][] = ["note", "support_reference", "id"];
   for (const n of notes) {
     if (n.trashed_at != null || n.deleted_at != null) continue;
-    for (const field of fields) {
+    const body = noteOverrides?.get(n.id) ?? n.note;
+    let bodyHit = false;
+    if (body) {
+      // Fresh /g regex per note so lastIndex doesn't bleed across notes.
+      const flags = re.flags.includes("g") ? re.flags : re.flags + "g";
+      const local = new RegExp(re.source, flags);
+      let m: RegExpExecArray | null;
+      while ((m = local.exec(body)) !== null) {
+        out.push({
+          chapter: n.chapter,
+          verse: n.verse,
+          noteId: n.id,
+          field: "note",
+          start: m.index,
+          end: m.index + m[0].length,
+          matchText: m[0],
+        });
+        bodyHit = true;
+        if (m[0].length === 0) local.lastIndex++;
+      }
+    }
+    if (bodyHit) continue;
+    // Body didn't match — fall back to the structured fields (search-only).
+    for (const field of ["support_reference", "id"] as const) {
       const value = n[field];
       if (!value) continue;
-      // Fresh regex per test so a stateful /g lastIndex doesn't carry over.
       const local = new RegExp(re.source, re.flags);
       if (local.test(value)) {
         out.push({
@@ -779,6 +1166,8 @@ function collectNoteMatches(notes: TnRow[], re: RegExp | null): NoteMatch[] {
           verse: n.verse,
           noteId: n.id,
           field,
+          start: 0,
+          end: 0,
           matchText: value,
         });
         break;

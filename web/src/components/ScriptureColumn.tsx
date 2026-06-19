@@ -76,6 +76,9 @@ interface Props {
   // chapter from the book cache; stacked/columns always pass the current
   // chapter. Shell dual-applies to useChapter when the chapter is loaded.
   onReplaceVerse: (chapter: number, verse: number, bibleVersion: string, newContent: unknown, newPlainText: string, base: VerseDto) => void;
+  // Find/replace target for translation notes (body only). Forwarded to the
+  // overlay; Shell carries the live row version into the outbox If-Match.
+  onReplaceNote: (row: TnRow, newNote: string) => void;
   // Shared with the rest of the shell — bumped here on the "go to active"
   // click, and shipped to ResourceColumn so it can scroll the active
   // note/word/verse-group into view alongside the scripture.
@@ -171,6 +174,7 @@ function ScriptureColumnInner({
   onSaveBookVerse,
   onOpenBookAligner,
   onReplaceVerse,
+  onReplaceNote,
   scrollNonce,
   onRequestScrollToActive,
   searchNotes,
@@ -456,6 +460,7 @@ function ScriptureColumnInner({
               onLoadChapter={overlayLoadChapter}
               enabledVersions={enabledVersions}
               onReplaceVerse={onReplaceVerse}
+              onReplaceNote={onReplaceNote}
               onScrollToMatch={onFindScrollToMatch}
               onQueryChange={onFindQueryChange}
               searchNotes={searchNotes}
