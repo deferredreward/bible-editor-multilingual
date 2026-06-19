@@ -91,6 +91,10 @@ interface Props {
   // re-renders on every note keystroke.
   searchNotes: () => TnRow[];
   onScrollToNoteMatch: (chapter: number, verse: number, noteId: string) => void;
+  // Lift the TN find query + active body match so note cards can highlight
+  // matches (forwarded straight to the overlay).
+  onNoteQueryChange: (query: { find: string; regex: boolean; caseSensitive: boolean } | null) => void;
+  onActiveNoteMatchChange: (match: { noteId: string; occurrence: number } | null) => void;
   // Pre-loaded UHB strong → entry map (Shell collects from useChapter +
   // useBook) so per-word hover tooltips don't shimmer.
   lexiconMap: Map<string, LexiconEntry | null>;
@@ -193,6 +197,8 @@ function ScriptureColumnInner({
   onRequestScrollToActive,
   searchNotes,
   onScrollToNoteMatch,
+  onNoteQueryChange,
+  onActiveNoteMatchChange,
   lexiconMap,
   twl,
   onSelectVerse,
@@ -480,6 +486,8 @@ function ScriptureColumnInner({
               onQueryChange={onFindQueryChange}
               searchNotes={searchNotes}
               onScrollToNoteMatch={onScrollToNoteMatch}
+              onNoteQueryChange={onNoteQueryChange}
+              onActiveNoteMatchChange={onActiveNoteMatchChange}
             />
           </Suspense>
         )}

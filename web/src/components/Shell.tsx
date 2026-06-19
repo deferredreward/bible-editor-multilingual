@@ -848,6 +848,17 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // ScriptureColumn to re-render on every edit. Identity only churns on
   // mode / book-cache changes, both of which ScriptureColumn already re-renders
   // for, so the overlay always receives a current getter.
+  // Find-in-notes highlight state, lifted from the overlay (which lives inside
+  // ScriptureColumn) so the sibling ResourceColumn's note cards can paint
+  // matches. `findNoteQuery` marks every match; `activeNoteMatch` emphasizes
+  // the one the user is navigating to.
+  const [findNoteQuery, setFindNoteQuery] = useState<
+    { find: string; regex: boolean; caseSensitive: boolean } | null
+  >(null);
+  const [activeNoteMatch, setActiveNoteMatch] = useState<
+    { noteId: string; occurrence: number } | null
+  >(null);
+
   const getSearchNotes = useCallback((): TnRow[] => {
     if (mode === "book" && bookHook) {
       const out: TnRow[] = [];
@@ -1736,6 +1747,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onRequestScrollToActive={requestScrollToActive}
           searchNotes={getSearchNotes}
           onScrollToNoteMatch={focusNoteMatch}
+          onNoteQueryChange={setFindNoteQuery}
+          onActiveNoteMatchChange={setActiveNoteMatch}
           lexiconMap={lexiconMap}
           twl={data.twl}
           locked={Boolean(chapterLock)}
@@ -1779,6 +1792,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           twl={data.twl}
           activeNoteId={activeNoteId}
           activeWordId={activeWordId}
+          findNoteQuery={findNoteQuery}
+          activeNoteMatch={activeNoteMatch}
           scrollNonce={scrollNonce}
           onNoteChange={(id, patch) => {
             applyLocalRowPatch("tn", id, patch);

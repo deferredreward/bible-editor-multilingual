@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Paper,
   Stack,
@@ -52,6 +52,11 @@ export type DropPosition = "before" | "after";
 interface Props {
   row: TnRow;
   active: boolean;
+  // Find-in-notes highlight: when set, every match of the query in the note
+  // body is marked (yellow); the `activeMatchOccurrence`-th match is emphasized
+  // (orange) and scrolled into view. Null when find is closed / TN scope off.
+  findQuery?: { find: string; regex: boolean; caseSensitive: boolean } | null;
+  activeMatchOccurrence?: number | null;
   dragging: boolean;
   isDropTarget: boolean;
   // Optimistic local-only apply, fired on every keystroke / chip pick so
@@ -162,9 +167,115 @@ interface SessionSnapshot {
   support_reference: string | null;
 }
 
+// Compile a find query the same way FindReplaceOverlay does: escape literals
+// unless in regex mode; case-insensitive unless requested. Invalid regex → null.
+function buildNoteFindRegex(q: {
+  find: string;
+  regex: boolean;
+  caseSensitive: boolean;
+}): RegExp | null {
+  if (!q.find) return null;
+  try {
+    const pattern = q.regex ? q.find : q.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(pattern, q.caseSensitive ? "g" : "gi");
+  } catch {
+    return null;
+  }
+}
+
+// Read-only render of a note body with the ACTIVE find match highlighted
+// (orange, "here I am"). Shown in place of the textarea while the user is
+// navigating find and hasn't clicked into this note to edit — a real inline
+// <mark> in a normal block, so it's pixel-accurate and scrolls naturally (no
+// overlay alignment games). Clicking anywhere swaps to the editable textarea.
+function NoteBodyReadView({
+  text,
+  query,
+  activeOccurrence,
+  onActivate,
+}: {
+  text: string;
+  query: { find: string; regex: boolean; caseSensitive: boolean };
+  activeOccurrence: number | null;
+  onActivate: () => void;
+}) {
+  const markRef = useRef<HTMLElement | null>(null);
+
+  // Char range of the active occurrence in the display text. Occurrence index
+  // comes from the overlay (computed on the raw body); display/body differ only
+  // by `\n` escape ↔ newline, so the Nth match lines up unless a match sits
+  // inside an escape — a rare cosmetic edge for the emphasis only.
+  const range = useMemo(() => {
+    const re = buildNoteFindRegex(query);
+    if (!re || activeOccurrence == null) return null;
+    let m: RegExpExecArray | null;
+    let i = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (i === activeOccurrence) return { start: m.index, end: m.index + m[0].length };
+      i += 1;
+      if (m[0].length === 0) re.lastIndex++;
+    }
+    return null;
+  }, [text, query, activeOccurrence]);
+
+  useEffect(() => {
+    markRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [range]);
+
+  const nodes = range
+    ? [
+        <span key="a">{text.slice(0, range.start)}</span>,
+        <Box
+          component="mark"
+          key="m"
+          ref={(el: HTMLElement | null) => {
+            markRef.current = el;
+          }}
+          sx={{
+            borderRadius: "2px",
+            padding: "0 1px",
+            color: "inherit",
+            backgroundColor: (t) => (t.palette.mode === "dark" ? "rgba(251, 146, 60, 0.5)" : "#fb923c"),
+            outline: (t) => `2px solid ${t.palette.mode === "dark" ? "#fb923c" : "#c2410c"}`,
+          }}
+        >
+          {text.slice(range.start, range.end)}
+        </Box>,
+        <span key="b">{text.slice(range.end)}</span>,
+      ]
+    : text;
+
+  return (
+    <Box
+      onClick={onActivate}
+      title="click to edit"
+      sx={{
+        cursor: "text",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "break-word",
+        wordBreak: "break-word",
+        minHeight: 56,
+        px: "14px",
+        py: "8.5px",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        fontSize: 13,
+        lineHeight: 1.55,
+        fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+        "&:hover": { borderColor: "text.primary" },
+      }}
+    >
+      {text ? nodes : " "}
+    </Box>
+  );
+}
+
 function NoteCardInner({
   row,
   active,
+  findQuery = null,
+  activeMatchOccurrence = null,
   dragging,
   isDropTarget,
   onChange,
@@ -212,6 +323,26 @@ function NoteCardInner({
   const readOnly = trashed || (locked && !isPreserved && !isHint);
   const [quote, setQuote] = useState(tsvToDisplay(row.quote));
   const [note, setNote] = useState(tsvToDisplay(row.note));
+  // Find-highlight: the active match note shows a read view (with the match
+  // highlighted) until the user clicks in; then it swaps to the textarea.
+  const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [editingBody, setEditingBody] = useState(false);
+  // A new find target (different occurrence / note) always returns to the read
+  // view so the highlight shows; clicking sets editingBody back to true.
+  useEffect(() => {
+    setEditingBody(false);
+  }, [activeMatchOccurrence, row.id]);
+  // When the user clicks the read view to edit, focus the now-shown textarea
+  // and put the caret at the end.
+  useEffect(() => {
+    if (!editingBody) return;
+    const ta = noteTextareaRef.current;
+    if (ta) {
+      ta.focus();
+      const len = ta.value.length;
+      ta.setSelectionRange(len, len);
+    }
+  }, [editingBody]);
   const [supportRef, setSupportRef] = useState<string | null>(row.support_reference);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [aiConfirmOpen, setAiConfirmOpen] = useState(false);
@@ -1157,32 +1288,42 @@ function NoteCardInner({
             </span>
           </Tooltip>
         </Stack>
-        <TextField
-          value={note}
-          onChange={(e) => {
-            // Body text is consumed only by this card — keep it purely local
-            // (persisted via the draft store, saved through flushPending). No
-            // applyLocalRowPatch, so a keystroke doesn't re-render the app.
-            setNote(e.target.value);
-          }}
-          multiline
-          fullWidth
-          minRows={2}
-          size="small"
-          spellCheck
-          onFocus={onFocus}
-          InputProps={{
-            readOnly,
-            ...(hasRowDiff && note !== rowNoteDisplay ? { "data-dirty": "true" } : {}),
-          }}
-          inputProps={{
-            style: {
-              fontSize: 13,
-              lineHeight: 1.55,
-              fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
-            },
-          }}
-        />
+        {findQuery && activeMatchOccurrence != null && !editingBody ? (
+          <NoteBodyReadView
+            text={note}
+            query={findQuery}
+            activeOccurrence={activeMatchOccurrence}
+            onActivate={() => setEditingBody(true)}
+          />
+        ) : (
+          <TextField
+            value={note}
+            inputRef={noteTextareaRef}
+            onChange={(e) => {
+              // Body text is consumed only by this card — keep it purely local
+              // (persisted via the draft store, saved through flushPending). No
+              // applyLocalRowPatch, so a keystroke doesn't re-render the app.
+              setNote(e.target.value);
+            }}
+            multiline
+            fullWidth
+            minRows={2}
+            size="small"
+            spellCheck
+            onFocus={onFocus}
+            InputProps={{
+              readOnly,
+              ...(hasRowDiff && note !== rowNoteDisplay ? { "data-dirty": "true" } : {}),
+            }}
+            inputProps={{
+              style: {
+                fontSize: 13,
+                lineHeight: 1.55,
+                fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+              },
+            }}
+          />
+        )}
       </Box>
 
       {/* ── Footer chips ── */}
@@ -1423,9 +1564,20 @@ function NoteCardInner({
 // load-bearing check — useChapter.applyLocalRowPatch preserves identity for
 // untouched rows, so an edit or save on one note doesn't churn the others.
 function areNotePropsEqual(a: Props, b: Props): boolean {
+  const qa = a.findQuery ?? null;
+  const qb = b.findQuery ?? null;
+  const sameQuery =
+    qa === qb ||
+    (!!qa &&
+      !!qb &&
+      qa.find === qb.find &&
+      qa.regex === qb.regex &&
+      qa.caseSensitive === qb.caseSensitive);
   return (
     a.row === b.row &&
     a.active === b.active &&
+    sameQuery &&
+    (a.activeMatchOccurrence ?? null) === (b.activeMatchOccurrence ?? null) &&
     a.dragging === b.dragging &&
     a.isDropTarget === b.isDropTarget &&
     a.isAiPending === b.isAiPending &&
