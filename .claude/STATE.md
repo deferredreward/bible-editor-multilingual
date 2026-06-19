@@ -35,7 +35,12 @@ Per user, also added the same history dialog to the **alignment panel** (history
 (Chrome MCP, local ZEC against worktree bundle on :8799): chip on ULT+UST, dialog list/snapshot/diff, restore
 v8→v9 kept the alignment tree (17 zaln / 29 words, not flattened), chip updated optimistically, aligner-panel
 history works, **no scripture chip in columns/book modes or on the UHB line**. typecheck + api+web tests + build
-all green. Branch `claude/great-jemison-bbd01e`. **Not yet committed / PR'd.**
+all green. **PR #245** (https://github.com/deferredreward/bible-editor/pull/245), rebased onto main. Review
+follow-up landed: the batched reimport audit inserts (`bookReimport.ts`) were unconditional — with #245
+logging full content, a phantom row from a missed write (UPDATE guarded on `updated_by IS NULL` losing a
+race, or `ON CONFLICT DO NOTHING`) would become a **restorable** stale-DCS version, so both now guard with
+`WHERE changes() > 0` (mirrors verses.ts). AI-apply left as-is (lock-protected + baseline insert sits between
+its UPDATE and audit row, so a `changes()` guard there would read the wrong statement).
 
 2026-06-19 · **relaxed-hoover** — HOS TN data cleanup in prod D1 (PR #7171 "HOS tn → master" was
 `mergeable:false`). Diagnosed the blocked merge: it's NOT just duplicates — it's a 13-hunk 3-way
@@ -176,8 +181,8 @@ Not yet PR'd.
   `claude/focused-albattani-c5bb6f`. Not yet PR'd.
 
 - **great-jemison** (2026-06-19) — ULT/UST verse version history + alignment-panel history + AI/import
-  content logging (see Last run). Branch `claude/great-jemison-bbd01e`. Code + unit tests + live browser
-  verification done; typecheck/tests/build green. **Ready for PR — not yet committed.**
+  content logging (see Last run). **PR #245 open**, rebased onto main, review follow-up pushed (conditional
+  reimport audit). typecheck/tests/build green + live-verified. Awaiting review/merge.
 - **trusting-mclean** (2026-06-18) — Fix AI "-e"/orphan-`\zaln-e` corruption (MIC 6:10 UST; deferred
   workstream from `project_ai_dash_e_zaln_corruption_mic610`). Confirmed via parsing the REAL en_ust master
   verse that usfm-js produces two junk shapes — a node whose own `tag` IS the end-marker
