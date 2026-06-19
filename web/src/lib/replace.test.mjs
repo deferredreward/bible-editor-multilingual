@@ -528,6 +528,40 @@ function milestoneCount(content) {
   assert(quoteBeforeMarker, "closing quote stays before the marker");
 }
 
+// ─── Case 22b: an em-dash typed at the END of a line stays before the marker ──
+// The reported prod bug (PRO 6:9-style poetry): the translator types `—` at the
+// end of the `\q1` line, right after "city", then saves — and the em-dash jumps
+// to the START of the next (`\q2`) line: `city \q2 —(and …`. Counterpart to Case
+// 22: there the dash OPENED the next line and had to stay AFTER the marker; here
+// the translator put it BEFORE the marker, so it must stay there. The fix honors
+// the typed position rather than treating every em-dash as opening punctuation.
+{
+  console.log("\n[Case 22b] An em-dash typed at a line end stays before the marker");
+  const q = (tag) => ({ type: "quote", tag });
+  const verse = {
+    verseObjects: [
+      q("q1"),
+      zaln("H1", [w("the")]), t(" "), zaln("H2", [w("city")]), t("\n"), q("q2"),
+      t("("), zaln("H3", [w("and")]), t(" "), zaln("H4", [w("wisdom")]), t("),"),
+    ],
+  };
+  const old = extractEditableText(verse); // "\q1 the city \q2 (and wisdom),"
+  // Type an em-dash right after "city", before the \q2 marker token.
+  const r = smartEditVerse(verse, old, old.replace("city", "city—"));
+  const vos = r.content.verseObjects;
+  const qIdx = vos.findIndex((n) => n.type === "quote" && n.tag === "q2");
+  const dashBeforeMarker = vos.slice(0, qIdx).some((n) => n.type === "text" && n.text.includes("—"));
+  const dashAfterMarker = vos.slice(qIdx + 1).some((n) => n.type === "text" && n.text.includes("—"));
+  assert(dashBeforeMarker && !dashAfterMarker, `em-dash stays BEFORE the \\q2 (on the line it was typed), not after it (raw ${JSON.stringify(r.plainText)})`);
+  // The opening paren that leads the next line stays AFTER the marker.
+  const parenAfterMarker = vos.slice(qIdx + 1).some((n) => n.type === "text" && n.text.includes("("));
+  assert(parenAfterMarker, "the opening paren stays after the marker (leads the next line)");
+  // Alignment is untouched — pure punctuation edit.
+  const words = alignedWords(r.content);
+  assert(words.find((x) => x.text === "city")?.strongs.includes("H2"), "'city' keeps its alignment");
+  assert(words.find((x) => x.text === "and")?.strongs.includes("H3"), "'and' keeps its alignment");
+}
+
 // ─── Case 23: opening quote parked on a marker node is surfaced & editable ──
 // usfm-js attaches the leading punctuation after a marker (`\q2 “I am…`) to the
 // MARKER node's own `text` (ISA 28:12 / 28:15, 151 such nodes in ISA UST alone).
@@ -1317,6 +1351,35 @@ function transplants(origContent, resultContent) {
   assert(dashAfterMarker, "em-dash stays AFTER the marker (leading the new line)");
   assert(alignedWords(r.content).find((x) => x.text === "companion")?.strongs.includes("H1"), "'companion' keeps alignment");
   assert(alignedWords(r.content).find((x) => x.text === "word")?.strongs.includes("H3"), "'word' keeps alignment");
+}
+
+// --- Case 55b: a word edit that ALSO adds a line-ending em-dash keeps the dash
+// before the marker -----------------------------------------------------------
+// The reported prod class (em-dash typed at the end of a poetic line), but here
+// combined with a word change so it routes through the diff tier (smartReplace-
+// Verse) rather than the pure-punctuation relayout of Case 22b. Typing the dash
+// changes the marker's adjacent punctuation, flipping markerSignature ->
+// markersChanged, so Step 2 reconcileMarkers (which honors the typed position,
+// #240) owns the placement and keeps the dash on the line it was typed.
+{
+  console.log("\n[Case 55b] Word edit + line-ending em-dash keeps the dash before the marker");
+  const q = (tag) => ({ type: "quote", tag });
+  const verse = {
+    verseObjects: [
+      zaln("H1", [w("the")]), t(" "), zaln("H2", [w("city")]), t("\n"), q("q2"),
+      zaln("H3", [w("and")]), t(" "), zaln("H4", [w("wisdom")]),
+    ],
+  };
+  const old = extractEditableText(verse); // "the city \q2 and wisdom"
+  // Change "city"->"town" AND append an em-dash at the end of the \q1 line.
+  const r = smartEditVerse(verse, old, old.replace("city", "town—"));
+  const vos = r.content.verseObjects;
+  const qi = vos.findIndex((n) => n.type === "quote" && n.tag === "q2");
+  assert(qi >= 0, "the \\q2 marker is present");
+  const hasDash = (arr) => arr.some((n) => (n.type === "text" && n.text.includes("—")) || (Array.isArray(n.children) && n.children.some((c) => c.type === "text" && c.text.includes("—"))));
+  assert(hasDash(vos.slice(0, qi)) && !hasDash(vos.slice(qi + 1)), `em-dash stays BEFORE the \\q2 marker, on the line it was typed (raw ${JSON.stringify(r.plainText)})`);
+  assert(alignedWords(r.content).find((x) => x.text === "and")?.strongs.includes("H3"), "'and' keeps its alignment");
+  assert(alignedWords(r.content).find((x) => x.text === "wisdom")?.strongs.includes("H4"), "'wisdom' keeps its alignment");
 }
 
 // ─── Case 56: deleting a clause-final word doesn't push its punctuation across a \q ─
