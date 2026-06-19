@@ -155,6 +155,20 @@ Not yet PR'd.
 
 ## In progress
 
+- **note-find-highlight** (2026-06-19, PR #246, based on #244 branch) — Highlight the active find match
+  INSIDE a TN note (user follow-up to #244: matched word wasn't visible in the note column). Notes are an
+  editable `<textarea>` (no inline `<mark>`). First cut = transparent highlight layer behind the textarea →
+  misaligned vs MUI's box model + looked "pasted on top" (user rejected). Reworked per user suggestion
+  ("change the display type until clicked in"): the active-match note renders a **read-view div** with the
+  active occurrence in a real inline `<mark>` (orange `#fb923c`, pixel-accurate, scrolls naturally); clicking
+  swaps to the editable textarea (focused), next/prev find nav reverts to read-view. Scope = "show where you
+  are" (active occurrence only), NOT "show all" (only one note visible at a time). Query + active
+  `{noteId, occurrence}` lifted overlay→ScriptureColumn→Shell→ResourceColumn, passed ONLY to the active note
+  (no per-keystroke re-render of all cards). `NoteMatch` gained per-note `occurrence` index. Save semantics
+  unchanged. Files: FindReplaceOverlay/ScriptureColumn/Shell/ResourceColumn/NoteCard. typecheck+build green;
+  verified live in Chrome (aligned highlight, next/prev moves it, click→editable textarea). Retarget PR to
+  main once #244 merges.
+
 - **focused-albattani** (2026-06-19) — Find/replace now works on TN note bodies, not just ULT/UST.
   The TN scope was already searchable; this adds **replace** for it. Design (user-directed): replace
   acts on exactly **one** scope — with both Bible + TN checked, replace/replace-all/the replace input
