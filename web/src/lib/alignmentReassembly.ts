@@ -441,6 +441,61 @@ function countChangeRegions(oldWords: string[], newWords: string[]): number {
   return regions;
 }
 
+// Char-level change bounding range [start, end) in the OLD target text — the SAME
+// span the single-range diff (diffSingleChange → localizedRewriteVerse in
+// replace.ts) collapses to and rewrites: common prefix to the first divergence,
+// common suffix to the last. Returns null when the change is a pure INSERTION (the
+// whole OLD string survives as prefix+suffix, so the OLD range is zero-width) —
+// the tiers' insertion path preserves neighbours there, no need for reassembly.
+function changeBoundingRange(oldText: string, newText: string): { start: number; end: number } | null {
+  const aLen = oldText.length;
+  const bLen = newText.length;
+  const max = Math.min(aLen, bLen);
+  let p = 0;
+  while (p < max && oldText[p] === newText[p]) p++;
+  let s = 0;
+  while (s < max - p && oldText[aLen - 1 - s] === newText[bLen - 1 - s]) s++;
+  const start = p;
+  const end = aLen - s;
+  return end > start ? { start, end } : null;
+}
+
+// Would the proven single-range diff tiers flatten an ALIGNED word that SURVIVES
+// the edit? Compute the char bounding range the tiers would rewrite, then check
+// whether any aligned survivor (matched by LCS, same NFC surface) sits fully
+// inside it. This generalizes the word-only countChangeRegions: a SINGLE
+// contiguous edit keeps every survivor in the common prefix/suffix (outside the
+// range), so this returns false and the edit defers to the tiers; but a word edit
+// PLUS a SEPARATED punctuation/whitespace change balloons the range across
+// untouched survivors — and the far-end change is punctuation, not a word token,
+// so countChangeRegions counts only ONE region and misses it. Mirrors exactly the
+// span localizedRewriteVerse would flatten, so it fires reassembly iff the tiers
+// would actually de-align an untouched aligned word.
+function diffRangeCoversAlignedSurvivor(
+  oldNorm: string,
+  newNorm: string,
+  pivot: PivotWord[],
+  link: number[],
+): boolean {
+  const range = changeBoundingRange(oldNorm, newNorm);
+  if (!range) return false;
+  const survivingOld = new Set<number>();
+  for (let j = 0; j < link.length; j++) if (link[j] >= 0) survivingOld.add(link[j]);
+  const matches = [...oldNorm.matchAll(WORD_RUN_RE)];
+  // pivot is 1:1 with the OLD word tokens (GATE 1) and normalizeWs changes only
+  // whitespace, so the i-th match in oldNorm is pivot[i]. Bail defensively if not.
+  if (matches.length !== pivot.length) return false;
+  for (let i = 0; i < pivot.length; i++) {
+    if (pivot[i].sourceKey === null) continue; // unaligned — nothing to protect
+    if (!survivingOld.has(i)) continue; // genuinely edited word, not a survivor
+    const m = matches[i];
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (start >= range.start && end <= range.end) return true;
+  }
+  return false;
+}
+
 // PRIMARY ENGINE ENTRY POINT.
 //
 // Given the current inline verseObjects (markers already lifted by the caller)
@@ -485,21 +540,6 @@ export function reassembleAlignment(
   const newWords = tokenize(newStripped);
   if (newWords.length === 0) return null;
 
-  // GATE 2 — only fire when the edit is genuinely MULTI-REGION (the class that
-  // balloons the single-range diff and flattens untouched neighbours, e.g. NUM
-  // 24:19's start word edit + end punctuation). A SINGLE contiguous change region
-  // is exactly what the proven diff tiers handle best — including the in-word
-  // edits reassembly would regress: a space/bracket typed into an aligned word
-  // ("beta" → "be ta") splits it into NEW surface forms; the localized rewrite
-  // keeps the split fragments aligned inside the original milestone (Cases
-  // 25/26/27/50), whereas reassembly drops both fragments bare. So: count the
-  // disjoint word-token change regions between old and new; defer to the tiers
-  // unless there are 2+. Equal-length common-prefix/suffix word matching gives a
-  // cheap region count.
-  if (countChangeRegions(oldTokens.map((t) => nfc(t)), newWords.map((w) => nfc(w))) < 2) {
-    return null;
-  }
-
   // Require at least one survivor — otherwise this is a pure insertion / total
   // replacement with no anchor, which the diff tiers handle (and where there is
   // no alignment to preserve anyway).
@@ -515,6 +555,30 @@ export function reassembleAlignment(
     // Only proceed if at least one ALIGNED word survives.
     return null;
   }
+
+  // GATE 2 — only fire when the edit is genuinely MULTI-REGION (the class that
+  // balloons the single-range diff and flattens untouched neighbours). A SINGLE
+  // contiguous change region is exactly what the proven diff tiers handle best —
+  // including the in-word edits reassembly would regress: a space/bracket typed
+  // into an aligned word ("beta" → "be ta") splits it into NEW surface forms; the
+  // localized rewrite keeps the split fragments aligned inside the original
+  // milestone (Cases 25/26/27/50), whereas reassembly drops both fragments bare.
+  // So defer to the tiers unless EITHER signal of a multi-region edit holds:
+  //   (a) 2+ disjoint WORD-token change regions (NUM 24:19's two word edits); or
+  //   (b) the single-range char diff would flatten an ALIGNED SURVIVOR — i.e. a
+  //       word edit PLUS a SEPARATED punctuation/whitespace change. JER 29:31 UST
+  //       (insert "Because" mid-verse + change the trailing "." to ",") is only
+  //       ONE word-token region, so (a) misses it, but the trailing-punctuation
+  //       change kills the diff's common suffix and balloons the range across
+  //       every untouched survivor to the verse end — the exact flatten this
+  //       engine exists to prevent. A single contiguous edit satisfies neither
+  //       (its survivors stay in the common prefix/suffix), so it still defers.
+  const oldNorm = nfc(normalizeWs(oldRaw));
+  const newNorm = nfc(normalizeWs(newStripped));
+  const multiRegion =
+    countChangeRegions(oldTokens.map((t) => nfc(t)), newSurfaces) >= 2 ||
+    diffRangeCoversAlignedSurvivor(oldNorm, newNorm, pivot, link);
+  if (!multiRegion) return null;
 
   const result = reassemble(pivot, newWords, newStripped);
 
