@@ -53,6 +53,10 @@ interface Props {
   twl: TwlRow[];
   activeNoteId: string | null;
   activeWordId: string | null;
+  // Find-in-notes highlight: query marks every match in each note body; the
+  // active match (by note id + occurrence index) is emphasized + scrolled to.
+  findNoteQuery?: { find: string; regex: boolean; caseSensitive: boolean } | null;
+  activeNoteMatch?: { noteId: string; occurrence: number } | null;
   // Bumped by Shell's "go to active" button so the resource column can
   // recentre on the active note / word / verse group alongside the
   // scripture column.
@@ -200,6 +204,8 @@ export function ResourceColumn({
   twl,
   activeNoteId,
   activeWordId,
+  findNoteQuery,
+  activeNoteMatch,
   scrollNonce,
   onNoteChange,
   onNoteSave,
@@ -715,6 +721,13 @@ export function ResourceColumn({
         <NoteCard
           row={r}
           active={r.id === activeNoteId}
+          // Only the active-match note needs the query (it's the only one that
+          // renders the highlight read view) — scoping it here keeps a find
+          // keystroke from re-rendering every note card.
+          findQuery={activeNoteMatch && activeNoteMatch.noteId === r.id ? (findNoteQuery ?? null) : null}
+          activeMatchOccurrence={
+            activeNoteMatch && activeNoteMatch.noteId === r.id ? activeNoteMatch.occurrence : null
+          }
           dragging={dragId === r.id}
           isDropTarget={dragId !== null && dragId !== r.id}
           onChange={(p) => onNoteChange(r.id, p)}

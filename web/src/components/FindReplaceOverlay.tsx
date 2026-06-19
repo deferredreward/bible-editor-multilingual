@@ -70,6 +70,12 @@ export interface NoteMatch {
   field: "note" | "support_reference" | "id";
   start: number;
   end: number;
+  // 0-based index of this body occurrence among the note's body matches. The
+  // note card highlights its own matches in the same order, so this picks out
+  // which one to emphasize ("here I am") without sharing string positions
+  // (the card works on display text, the overlay on the raw body). 0 for
+  // structured-field fallbacks (not highlighted).
+  occurrence: number;
   matchText: string;
 }
 
@@ -157,6 +163,15 @@ interface Props {
   // Navigate to + activate a TN match: focus its verse and note so the
   // resource column scrolls it into view.
   onScrollToNoteMatch: (chapter: number, verse: number, noteId: string) => void;
+  // Lift the TN query so note cards can paint every match in their body
+  // (mirrors onQueryChange for scripture). Null when TN scope is off / no query.
+  onNoteQueryChange: (
+    query: { find: string; regex: boolean; caseSensitive: boolean } | null,
+  ) => void;
+  // The active TN body match, so the matching note can emphasize that one
+  // occurrence ("here I am") and scroll it into view. Null when the active
+  // result isn't a replaceable note body hit.
+  onActiveNoteMatchChange: (match: { noteId: string; occurrence: number } | null) => void;
 }
 
 export function FindReplaceOverlay({
@@ -174,6 +189,8 @@ export function FindReplaceOverlay({
   onQueryChange,
   searchNotes,
   onScrollToNoteMatch,
+  onNoteQueryChange,
+  onActiveNoteMatchChange,
 }: Props) {
   const [find, setFind] = useState("");
   const [replace, setReplace] = useState("");
@@ -213,6 +230,17 @@ export function FindReplaceOverlay({
     }
   }, [open]);
 
+  // Clear note-highlight state when the overlay unmounts (find closed) — the
+  // conditional render means the `null` branches of the lift effects won't fire
+  // on the way out, so notes would keep their marks. setState fns are stable.
+  useEffect(
+    () => () => {
+      onNoteQueryChange(null);
+      onActiveNoteMatchChange(null);
+    },
+    [onNoteQueryChange, onActiveNoteMatchChange],
+  );
+
   // Push query down to the caller so verse cells can paint match marks.
   // Any change to the search inputs counts as user navigation — once the
   // new matches settle, scroll to the first hit.
@@ -242,6 +270,18 @@ export function FindReplaceOverlay({
     () => (regex ? { kind: "english" } : classifySourceQuery(find, book, strongs)),
     [find, regex, book, strongs],
   );
+
+  // Mirror onQueryChange for notes: lift the query so note cards mark every
+  // match in their body. Only when the TN scope is on (a Bible-only search
+  // shouldn't light up notes), and not in source/Strong's mode (those query
+  // Hebrew/Greek; English note text would never match anyway).
+  useEffect(() => {
+    if (!open || !find || !scope.tn || sourceQuery.kind !== "english") {
+      onNoteQueryChange(null);
+      return;
+    }
+    onNoteQueryChange({ find, regex, caseSensitive });
+  }, [open, find, regex, caseSensitive, scope.tn, sourceQuery.kind, onNoteQueryChange]);
 
   const bibleMatches = useMemo<FindMatch[]>(() => {
     if (!open || !scope.bible) return [];
@@ -322,6 +362,18 @@ export function FindReplaceOverlay({
     replaceScope === "tn" &&
     results[activeIdx]?.kind === "note" &&
     (results[activeIdx] as Extract<SearchResult, { kind: "note" }>).match.field === "note";
+
+  // Lift the active note body match so its card can emphasize that one
+  // occurrence ("here I am"). Tracks the active result continuously (nav,
+  // reshape, scope change) so the orange mark follows prev/next.
+  useEffect(() => {
+    const r = results[activeIdx];
+    if (open && scope.tn && r?.kind === "note" && r.match.field === "note") {
+      onActiveNoteMatchChange({ noteId: r.match.noteId, occurrence: r.match.occurrence });
+    } else {
+      onActiveNoteMatchChange(null);
+    }
+  }, [open, scope.tn, results, activeIdx, onActiveNoteMatchChange]);
 
   // Route the active result to the right surface: scripture cells scroll +
   // highlight via onScrollToMatch; notes navigate + activate via
@@ -1140,6 +1192,7 @@ function collectNoteMatches(
       const flags = re.flags.includes("g") ? re.flags : re.flags + "g";
       const local = new RegExp(re.source, flags);
       let m: RegExpExecArray | null;
+      let occ = 0;
       while ((m = local.exec(body)) !== null) {
         out.push({
           chapter: n.chapter,
@@ -1148,9 +1201,11 @@ function collectNoteMatches(
           field: "note",
           start: m.index,
           end: m.index + m[0].length,
+          occurrence: occ,
           matchText: m[0],
         });
         bodyHit = true;
+        occ += 1;
         if (m[0].length === 0) local.lastIndex++;
       }
     }
@@ -1168,6 +1223,7 @@ function collectNoteMatches(
           field,
           start: 0,
           end: 0,
+          occurrence: 0,
           matchText: value,
         });
         break;
