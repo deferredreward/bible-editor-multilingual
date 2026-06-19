@@ -783,9 +783,13 @@ async function applyVerseRows(
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
            ON CONFLICT(book, chapter, verse, bible_version) DO NOTHING`,
         ).bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, v.contentJson, v.plainText),
+        // Audit conditional on the INSERT actually landing: ON CONFLICT DO
+        // NOTHING means a verse that already exists (created between our read
+        // and this batch) inserts 0 rows — don't log a phantom restorable v1.
         env.DB.prepare(
           `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-           VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5)`,
+           SELECT 'verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5
+            WHERE changes() > 0`,
         ).bind(rowKey, book, userId, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE),
       );
       continue;
@@ -814,9 +818,17 @@ async function applyVerseRows(
           WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
             AND updated_by IS NULL`,
       ).bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion),
+      // Audit conditional on the UPDATE actually landing (mirrors verses.ts).
+      // The UPDATE is guarded on `updated_by IS NULL`, so if an editor touched
+      // this verse between our read and this batch the UPDATE matches 0 rows —
+      // but the content we'd log never landed. An unconditional insert would
+      // record a phantom restorable version carrying stale DCS content (and
+      // could shadow the real ex.version+1 the editor just created). changes()
+      // reflects the immediately-preceding UPDATE in this batch.
       env.DB.prepare(
         `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-         VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7)`,
+         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
+          WHERE changes() > 0`,
       ).bind(rowKey, book, userId, ex.version, ex.version + 1, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE),
     );
   }
