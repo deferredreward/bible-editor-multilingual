@@ -1667,6 +1667,39 @@ function reconcileMarkers(content: unknown, newPlain: string): SmartReplaceResul
     const o = n as Record<string, unknown> | null;
     return !!o && o["type"] === "text" && typeof o["text"] === "string";
   };
+  // Pull the LEADING closing-punctuation run out of a word-bearing milestone
+  // (or wrapper) node so it can be re-emitted BEFORE an anchored line-break
+  // marker. The no-gap shape that needs this: a `\w hello\w*` milestone abutting
+  // the `\q` marker with NO bare text gap between them. When the translator adds
+  // closing punctuation before the marker (`hello\q1 world` → `hello, \q1 world`),
+  // the relayout/reassembly tiers have nowhere to park the comma in hello's
+  // (text-free) milestone, so it lands as the leading text of the FOLLOWING
+  // word's milestone — i.e. AFTER the marker, trapped on the wrong line. The
+  // bare-gap split below only re-splits TOP-LEVEL bare text gaps; it cannot reach
+  // inside a milestone. This does. Honor the marker's typed position (leadPunct)
+  // when it cleanly prefixes the leading run; otherwise fall back to the closing-
+  // punctuation class (splitGapAtMarker). Returns the extracted closing run and
+  // mutates `node` to drop it; returns "" (node untouched) when there's no leading
+  // closing-punct child to pull. Opening punctuation / a line-leading em-dash
+  // isn't closing, so it stays inside the milestone, after the marker.
+  const pullLeadingClosing = (node: unknown, leadPunct: string): string => {
+    const o = node as Record<string, unknown> | null;
+    if (!o || !Array.isArray(o["children"])) return "";
+    const kids = o["children"] as unknown[];
+    if (kids.length === 0 || !isBareText(kids[0])) return "";
+    const leadText = (kids[0] as { text: string }).text;
+    let split = splitAtLead(leadText, leadPunct);
+    if (split < 0) {
+      const { closing } = splitGapAtMarker(leadText);
+      split = closing.length;
+    }
+    if (split <= 0) return "";
+    const closing = leadText.slice(0, split);
+    const rest = leadText.slice(split);
+    if (rest) (kids[0] as { text: string }).text = rest;
+    else kids.shift();
+    return closing;
+  };
   const out: unknown[] = [];
   let wordCount = 0;
   let mi = 0;
@@ -1678,7 +1711,13 @@ function reconcileMarkers(content: unknown, newPlain: string): SmartReplaceResul
     const nodeWords = countWords(rawTextOfNode(node));
     if (nodeWords > 0 || !isBareText(node)) {
       // Word-bearing node (or a wordless milestone) — a marker anchored here
-      // breaks the line right before it.
+      // breaks the line right before it. If this node's leading text is closing
+      // punctuation that belongs to the PREVIOUS line (the no-gap milestone shape
+      // above), pull it out and emit it BEFORE the marker so it stays on that line.
+      if (flushable()) {
+        const closing = pullLeadingClosing(node, markers[mi].leadPunct);
+        if (closing) out.push({ type: "text", text: closing });
+      }
       while (flushable()) out.push(markers[mi++].node);
       out.push(node);
       wordCount += nodeWords;
