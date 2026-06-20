@@ -1859,6 +1859,48 @@ function countAligned(content) {
   assert(extractPlainText(selah) === "Selah", `\\qs Selah wrapper text survives (got ${JSON.stringify(extractPlainText(selah))})`);
 }
 
+// ─── Case 69: closing punctuation typed before a \q that ABUTS the prior word's ─
+// milestone (NO gap text node) stays BEFORE the marker — Perry's MIC 7:9 prod
+// shape. Counterpart to Case 54, but where the marker abuts the preceding word's
+// milestone directly (`\w hello\w*` then `\q1`, no bare text between them). The
+// translator adds a comma before the line break (`hello\q1 world` →
+// `hello, \q1 world`). The word sequence is unchanged, so the relayout/reconcile
+// path runs — but hello's milestone has no text leaf to hold the comma, so the
+// comma was spliced as the LEADING text of the FOLLOWING word's milestone, i.e.
+// AFTER the marker, trapping it on the wrong poetic line (`hello\q1 , world`).
+// analyzeAlignmentDelta reports NO loss for it, so the save guard never caught it
+// and it persisted silently. With a bare-text gap present (Case 54) it was already
+// correct; this is the no-gap variant. The marker-aware split must pull the
+// closing comma back out of the milestone and emit it BEFORE the marker.
+{
+  console.log("\n[Case 69] Closing punctuation before a \\q that ABUTS the prior milestone (no gap) stays before the marker");
+  const q = (tag) => ({ type: "quote", tag });
+  const verse = {
+    verseObjects: [
+      zaln("H1", [w("hello")]), q("q1"), zaln("H2", [w("world")]),
+    ],
+  };
+  const old = extractEditableText(verse); // "hello\q1 world" (word abuts marker, no gap)
+  assert(old === "hello\\q1 world", `baseline has the word abutting the marker with no gap (got ${JSON.stringify(old)})`);
+  const r = smartEditVerse(verse, old, "hello, \\q1 world"); // add a comma before the line break
+  const vos = r.content.verseObjects;
+  const qi = vos.findIndex((n) => n.type === "quote" && n.tag === "q1");
+  assert(qi >= 0, "the \\q1 marker is present");
+  // The node immediately before the marker is a bare text node carrying the comma.
+  const prev = vos[qi - 1];
+  assert(prev && prev.type === "text" && prev.text.includes(","), `comma is a bare text node right before the marker (prev ${JSON.stringify(prev)})`);
+  // The comma must NOT be trapped inside the FOLLOWING milestone (world).
+  const after = vos[qi + 1];
+  const afterFirstText = after && Array.isArray(after.children) ? after.children.find((c) => c.type === "text") : null;
+  assert(!afterFirstText || !afterFirstText.text.includes(","), `the comma is NOT trapped inside the following milestone (after ${JSON.stringify(after)})`);
+  // Both words keep their alignment.
+  assert(alignedWords(r.content).find((x) => x.text === "hello")?.strongs.includes("H1"), "'hello' keeps alignment");
+  assert(alignedWords(r.content).find((x) => x.text === "world")?.strongs.includes("H2"), "'world' keeps alignment");
+  const delta = analyzeAlignmentDelta(verse, r.content);
+  assert(delta.unexpectedLosses.length === 0,
+    `no collateral alignment loss → guard passes (got ${JSON.stringify(delta.unexpectedLosses.map((l) => l.text))})`);
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
