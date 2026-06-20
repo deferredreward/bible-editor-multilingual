@@ -56,6 +56,16 @@ typecheck + full web suite + build green. **Browser-verified** (own isolated Pla
 the worktree bundle): Clear→Save shows the dialog naming the words ("…block the nightly export…"), Cancel keeps
 dirty + fires 0 PATCHes, Save anyway PATCHes 200. Restored the test's local-DB mutation (ZEC 1:3 ULT) from the
 seed. Branch `claude/suspicious-poitras-2a402b`, folded into PR #250.
+**Codex review (`codex exec "review pr 250"`) caught a real high-sev interaction bug, now fixed:** the
+deferred-commit broke the existing nav/close dirty gates — `resolvePendingNav`/`resolveDualAction` called
+`panelRef.save()` then **immediately** ran the navigation, so with the unalign confirm open the nav fired
+anyway (Cancel couldn't "keep editing"; in the dual aligner a second confirm could clobber the first pending
+commit). Fix: `AlignmentPanelHandle.save(afterCommit?)` now returns committed-sync vs deferred and runs
+`afterCommit` only once the save actually lands (never on cancel); the gates pass `nav.run` as `afterCommit`
+(single panel) and **chain** the two dual panels so at most one confirm is open at a time; the confirm's
+"Save anyway" clears state BEFORE running commit so a chained confirm isn't clobbered. Browser-verified the
+gate path: Clear→switch tab→"Save"→unalign confirm→Cancel keeps the panel + fires 0 PATCHes; "Save anyway"
+PATCHes 200. typecheck + web suite + build green.
 
 2026-06-19 · **sweet-moore** — Fixed Perry's **JER 29:31 UST** alignment-save block (PR #248). Repro'd on
 `main` (NOT an outdated app): inserting "Because" mid-verse + changing the verse-final `.`→`,` flattened

@@ -1013,18 +1013,30 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       // Only touch the dirty panel(s): save() serializes + enqueues a PATCH
       // unconditionally, so calling it on the clean side would bump that
       // version row for nothing (and could 409 against a concurrent editor).
-      if (choice === "save") {
-        if (dualLeftDirty) dualLeftRef.current?.save();
-        if (dualRightDirty) dualRightRef.current?.save();
-        if (dualLeftReadingDirty) dualLeftReadingRef.current?.save();
-        if (dualRightReadingDirty) dualRightReadingRef.current?.save();
-      } else {
+      if (choice === "discard") {
         if (dualLeftDirty) dualLeftRef.current?.discard();
         if (dualRightDirty) dualRightRef.current?.discard();
         if (dualLeftReadingDirty) dualLeftReadingRef.current?.discard();
         if (dualRightReadingDirty) dualRightReadingRef.current?.discard();
+        action?.run();
+        return;
       }
-      action?.run();
+      // Save. Reading-line edits are plain text — synchronous, no unalign confirm.
+      if (dualLeftReadingDirty) dualLeftReadingRef.current?.save();
+      if (dualRightReadingDirty) dualRightReadingRef.current?.save();
+      // Each alignment panel may defer behind the unalign confirm, so CHAIN them:
+      // run the close/nav only after both have actually committed. Chaining (vs.
+      // firing both saves up front) also guarantees at most one unalign confirm is
+      // open at a time — the right panel's confirm opens only after the left one
+      // resolves — so a second setPendingAlignmentLoss can't clobber the first
+      // pending commit. A cancel anywhere in the chain stops the close entirely.
+      const finish = () => action?.run();
+      const saveRight = () => {
+        if (dualRightDirty && dualRightRef.current) dualRightRef.current.save(finish);
+        else finish();
+      };
+      if (dualLeftDirty && dualLeftRef.current) dualLeftRef.current.save(saveRight);
+      else saveRight();
     },
     [pendingDualAction, dualLeftDirty, dualRightDirty, dualLeftReadingDirty, dualRightReadingDirty],
   );
@@ -1052,9 +1064,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       const nav = pendingNav;
       setPendingNav(null);
       if (!nav) return;
-      if (choice === "save") alignmentPanelRef.current?.save();
-      else alignmentPanelRef.current?.discard();
-      nav.run();
+      if (choice === "discard") {
+        alignmentPanelRef.current?.discard();
+        nav.run();
+        return;
+      }
+      // Save: the panel may defer behind the unalign confirm, so DON'T navigate
+      // up front. Pass nav.run as the afterCommit — save() runs it once the save
+      // actually lands (immediately on a clean save, or after "Save anyway"), and
+      // never if the user cancels the confirm. Without a panel, just navigate.
+      const ref = alignmentPanelRef.current;
+      if (ref) ref.save(nav.run);
+      else nav.run();
     },
     [pendingNav],
   );
@@ -2124,8 +2145,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             color="error"
             variant="contained"
             onClick={() => {
-              pendingAlignmentLoss?.commit();
+              // Clear BEFORE running commit: commit may chain into the next
+              // panel's save and open a fresh confirm (the dual aligner), and a
+              // trailing setPendingAlignmentLoss(null) would clobber it.
+              const commit = pendingAlignmentLoss?.commit;
               setPendingAlignmentLoss(null);
+              commit?.();
             }}
           >
             Save anyway
