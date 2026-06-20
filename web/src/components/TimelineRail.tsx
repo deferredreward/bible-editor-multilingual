@@ -1,6 +1,4 @@
-import { Box, Tooltip, Checkbox } from "@mui/material";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
+import { Box, Tooltip } from "@mui/material";
 
 export interface VerseTile {
   verse: number;
@@ -21,7 +19,7 @@ interface Props {
   onToggleDone: (verse: number, done: boolean) => void;
 }
 
-export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = false, onSelect, onToggleDone }: Props) {
+export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = false, onSelect }: Props) {
   return (
     <Box
       sx={{
@@ -56,16 +54,6 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = 
               "&:hover": active ? {} : { bgcolor: "action.hover" },
             }}
           >
-            <Tooltip title={t.done ? "mark not done" : "mark done"} placement="right">
-              <Checkbox
-                size="small"
-                checked={!!t.done}
-                onChange={(_e, v) => onToggleDone(t.verse, v)}
-                icon={<RadioButtonUncheckedIcon sx={{ fontSize: 16 }} />}
-                checkedIcon={<CheckCircleIcon sx={{ fontSize: 16, color: "success.main" }} />}
-                sx={{ p: 0.25 }}
-              />
-            </Tooltip>
             <Tooltip
               title={t.verse === 0 ? `${book} ${chapter} introduction` : `${book} ${chapter}:${t.verse}`}
               placement="right"
