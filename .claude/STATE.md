@@ -37,6 +37,26 @@ banner alert (id 9) was already dismissed. PR #4122 still needs MERGE to land on
 `validateAndMerge=false`) — the 06:00 UTC nightly validate-and-merge will pick it up, or merge by hand.
 (memory: project_export_align_damage_1ch_num — guard now confirmed LIVE + firing in prod)
 
+2026-06-20 · **suspicious-poitras (follow-up: code hardening)** — After healing the data, traced HOW JER 30:1
+got de-aligned: the edit_log shows the de-align landed at v2→v3, an **editor save that did NOT change the
+verse text** (v2 plain == v3 plain == `…another…Jeremiah…`), so it was NOT a text edit — `smartEditVerse`
+replays of every transition on the CURRENT engine preserve alignment (0 collateral loss). It was an
+**alignment-panel save** (`alignment_edit` intent), which `guardBlocksSave` exempts by design (re-aligning
+legitimately removes/repoints sources). So the text engine has no bug to fix; the gap was that an accidental
+unlink in the aligner saves **silently** and only surfaces when the export shrink-guard blocks it. **Fix
+(preventive UI):** the aligner panel now WARNS (confirm dialog) before a save that would leave a
+previously-aligned word bare. New pure `lostAlignedWords(before, after)` in `web/src/lib/alignmentDelta.ts`
+(filters `reason==="lost"`, ignores `changed_source`); `AlignmentPanel.handleSave` defers the WHOLE commit
+(onSave + optimistic `setInitial`) behind a new optional `onConfirmUnalign(lostWords, commit)` prop so
+**Cancel keeps the panel dirty** (no save, re-editable) and **Save anyway** commits. Threaded through
+`ResourceColumn` (`AlignmentTabProps`) + `SideBySideAligner` (`PanelSlot`) so it covers BOTH the single panel
+and the dual aligner; Shell holds the `pendingAlignmentLoss` confirm (mirrors `pendingNav`/`pendingDualAction`).
+Regression: `alignmentDelta.test.mjs` (lostAlignedWords: flags an unalign, 0 on no-op, 0 on re-point).
+typecheck + full web suite + build green. **Browser-verified** (own isolated Playwright Chromium on :8799 against
+the worktree bundle): Clear→Save shows the dialog naming the words ("…block the nightly export…"), Cancel keeps
+dirty + fires 0 PATCHes, Save anyway PATCHes 200. Restored the test's local-DB mutation (ZEC 1:3 ULT) from the
+seed. Branch `claude/suspicious-poitras-2a402b`, folded into PR #250.
+
 2026-06-19 · **sweet-moore** — Fixed Perry's **JER 29:31 UST** alignment-save block (PR #248). Repro'd on
 `main` (NOT an outdated app): inserting "Because" mid-verse + changing the verse-final `.`→`,` flattened
 37→17 aligned and the #233 guard discarded the draft. Root cause = a gap in the #235 reassembly engine:

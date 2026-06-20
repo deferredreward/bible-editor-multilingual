@@ -251,6 +251,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // Queued action (close / verse-nav) awaiting the user's save-or-discard
   // choice when a dual panel has unsaved drags.
   const [pendingDualAction, setPendingDualAction] = useState<{ run: () => void } | null>(null);
+  // Confirm gate for an aligner save that would leave a previously-aligned word
+  // bare. alignment_edit is exempt from the collateral-loss save guard, so this
+  // is the "out loud" surface for an accidental unlink (the JER 30:1 incident):
+  // commit runs only if the user proceeds.
+  const [pendingAlignmentLoss, setPendingAlignmentLoss] = useState<
+    { ref: string; lostWords: string[]; commit: () => void } | null
+  >(null);
   // Shared by the scripture + resource columns so a single "go to active"
   // click re-centers both. Bumped via requestScrollToActive (and elsewhere
   // when the active selection changes through other paths).
@@ -1159,6 +1166,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           if (alignerTarget.chapter === chapter) applyLocalVerse(newDto);
         }
       },
+      onConfirmUnalign: (lostWords, commit) =>
+        setPendingAlignmentLoss({
+          ref: `${book} ${alignerTarget.chapter}:${targetVerse?.verse ?? alignerTarget.verse} ${alignerTarget.bibleVersion}`,
+          lostWords,
+          commit,
+        }),
       onCancel: () => {
         setPanelMode("resources");
       },
@@ -1242,6 +1255,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         bookHook?.applyLocalVerse(newDto);
         if (dualTarget.chapter === chapter) applyLocalVerse(newDto);
       };
+    const confirmUnalign = (bibleVersion: string, row: VerseDto | null) =>
+      (lostWords: string[], commit: () => void) =>
+        setPendingAlignmentLoss({
+          ref: `${book} ${dualTarget.chapter}:${row?.verse ?? dualTarget.verse} ${bibleVersion}`,
+          lostWords,
+          commit,
+        });
     const left: PanelSlot = {
       bibleVersion: "ULT",
       verse: ult.targetVerse,
@@ -1249,6 +1269,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       twlForVerse: ult.twlForVerse,
       posOffset: offsetFor(ult.rangeStart),
       onSave: enqueue("ULT", ult.targetVerse),
+      onConfirmUnalign: confirmUnalign("ULT", ult.targetVerse),
       onDirtyChange: setDualLeftDirty,
       panelRef: dualLeftRef,
       onReadingDirtyChange: setDualLeftReadingDirty,
@@ -1261,6 +1282,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       twlForVerse: ust.twlForVerse,
       posOffset: offsetFor(ust.rangeStart),
       onSave: enqueue("UST", ust.targetVerse),
+      onConfirmUnalign: confirmUnalign("UST", ust.targetVerse),
       onDirtyChange: setDualRightDirty,
       panelRef: dualRightRef,
       onReadingDirtyChange: setDualRightReadingDirty,
@@ -2074,6 +2096,42 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           }
         />
       )}
+      <Dialog open={!!pendingAlignmentLoss} onClose={() => setPendingAlignmentLoss(null)}>
+        <DialogTitle>
+          {pendingAlignmentLoss && pendingAlignmentLoss.lostWords.length === 1
+            ? "A word will be unaligned"
+            : "Words will be unaligned"}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Saving this alignment will leave{" "}
+            {pendingAlignmentLoss?.lostWords.length === 1 ? "this word" : "these words"} with no
+            source link in {pendingAlignmentLoss?.ref}:{" "}
+            <Box component="span" sx={{ fontWeight: 700 }}>
+              {pendingAlignmentLoss?.lostWords.slice(0, 8).join(", ")}
+              {pendingAlignmentLoss && pendingAlignmentLoss.lostWords.length > 8
+                ? ` (+${pendingAlignmentLoss.lostWords.length - 8} more)`
+                : ""}
+            </Box>
+            . That's fine if you meant to re-align — but if it's accidental it will block the
+            nightly export to master until the {pendingAlignmentLoss?.lostWords.length === 1 ? "word is" : "words are"}{" "}
+            aligned again. Save anyway, or cancel to keep editing.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingAlignmentLoss(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => {
+              pendingAlignmentLoss?.commit();
+              setPendingAlignmentLoss(null);
+            }}
+          >
+            Save anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Dialog open={!!pendingDualAction} onClose={() => setPendingDualAction(null)}>
         <DialogTitle>Unsaved changes</DialogTitle>
         <DialogContent>
