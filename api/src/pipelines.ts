@@ -458,14 +458,40 @@ async function pollPipelineJob(
   // prior poll already failed the import, give up now: force 'failed', which is
   // terminal and frees both the slot (dispatchNext below) and the chapter lock.
   // Surface the failure via error_kind either way so the UI can flag it.
+  // The bot sets interrupted:true when its process died mid-run and the job
+  // was not resumed (a crash during a skill). It then keeps returning the
+  // frozen last-known state='running' on every poll, so without honoring this
+  // flag we hold the bot slot AND the chapter write-lock until the blunt
+  // MAX_POLL_ATTEMPTS backstop (~8h of polling; took ~26h in the wild). The bot
+  // is telling us the run is dead — fail it now and free both. (justplainjane47
+  // ISA 41 notes, 2026-06-20: bot EACCES'd writing notes.log, reported
+  // interrupted:true for ~26h before the poll-count backstop caught it.) Healthy
+  // jobs report interrupted:false, including on done, so this only fires on a
+  // genuinely interrupted, still-non-terminal run.
+  const upstreamInterrupted =
+    data.interrupted === true &&
+    data.state !== "done" &&
+    data.state !== "failed" &&
+    data.state !== "cancelled";
+
   const importFailedAgain = importFailed && job.error_kind === "import_failed";
   const effectiveState = importFailed
     ? importFailedAgain
       ? "failed"
       : "running"
-    : (data.state ?? "running");
-  const effectiveErrorKind = importFailed ? "import_failed" : (data.current?.errorKind ?? null);
-  const effectiveErrorMessage = importFailed ? importErrMessage : (data.current?.error ?? null);
+    : upstreamInterrupted
+      ? "failed"
+      : (data.state ?? "running");
+  const effectiveErrorKind = importFailed
+    ? "import_failed"
+    : upstreamInterrupted
+      ? "interrupted"
+      : (data.current?.errorKind ?? null);
+  const effectiveErrorMessage = importFailed
+    ? importErrMessage
+    : upstreamInterrupted
+      ? (data.current?.error ?? "upstream reported interrupted")
+      : (data.current?.error ?? null);
 
   await env.DB.prepare(
     `UPDATE pipeline_jobs SET
@@ -554,6 +580,18 @@ async function pollPipelineJob(
       },
     };
     responseText = JSON.stringify(adjusted);
+  } else if (upstreamInterrupted) {
+    // Upstream still says 'running'; we stored 'failed'. Rewrite so a tab
+    // polling this job by id sees terminal and stops polling.
+    responseText = JSON.stringify({
+      ...data,
+      state: "failed",
+      current: {
+        ...(data.current ?? { chapter: 0, skill: "", status: "", startedAt: "" }),
+        errorKind: "interrupted",
+        error: data.current?.error ?? "upstream reported interrupted",
+      },
+    });
   }
 
   return { kind: "ok", text: responseText, status: upstream.status, state: effectiveState };
