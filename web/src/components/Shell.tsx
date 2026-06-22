@@ -213,6 +213,33 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // indicator. Keyed on book, so it fetches once per book change — never on
   // chapter/verse navigation within a book.
   const bookLint = useBookLint(book, true);
+  // The lint report is otherwise fetched once per book, so a translator who
+  // fixes a flagged note (e.g. unbalanced brackets around an Alternate
+  // translation) would keep seeing the stale count until a reload. Refetch when
+  // a TN-row or verse write for THIS book lands successfully — those are the
+  // only edits the lint covers (TN flags + ULT/UST footnote integrity) —
+  // debounced so a burst of saves coalesces into one request.
+  const bookLintRefetch = bookLint.refetch;
+  const lintRefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const unsub = onOutboxResult((op, result) => {
+      if (result.kind !== "ok") return;
+      const t = op.target;
+      const touchesLint =
+        (t.kind === "row" && t.rowKind === "tn" && t.book === book) ||
+        (t.kind === "verse" && t.book === book);
+      if (!touchesLint) return;
+      if (lintRefetchTimer.current) clearTimeout(lintRefetchTimer.current);
+      lintRefetchTimer.current = setTimeout(() => {
+        lintRefetchTimer.current = null;
+        bookLintRefetch();
+      }, 1000);
+    });
+    return () => {
+      unsub();
+      if (lintRefetchTimer.current) clearTimeout(lintRefetchTimer.current);
+    };
+  }, [book, bookLintRefetch]);
   const [activeVerse, setActiveVerse] = useState(initialVerse);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [activeWordId, setActiveWordId] = useState<string | null>(null);
