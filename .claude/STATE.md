@@ -14,6 +14,22 @@
 
 ## Last run
 
+2026-06-22 · **lucid-lewin** — Diagnosed + fixed AI pipeline jobs stuck on **"running"**. Coworker
+reported `notes ISA 41` (justplainjane47) wedged on running even after a Zulip msg said it `failed: EACCES …
+/app/logs/notes.log`. **Task 1 (clear if running): nothing to clear** — prod D1 had two ISA 41 notes rows,
+both terminal: justplainjane47's `be42c513…` already auto-`failed` via the 100-poll backstop (`error_kind=
+interrupted`, attempt_count 101, ~26h late), and stephenwunrow's re-run `8d2d2a68…` (today) `done` (door43
+PR #7185). Zero non-terminal jobs anywhere. **Task 2 (get updated info sooner): root cause found** — the bot
+returns `interrupted:true` with a **frozen** `state:"running"` on every poll; `pollPipelineJob` read
+`data.state` but **ignored `data.interrupted`**, so the job held the bot slot + chapter lock until the blunt
+`MAX_POLL_ATTEMPTS` (~8h) backstop. Local `updated_at` refreshes each poll so the 48h time guard never fires
+for this mode. **Fix (PR #254, this branch):** honor `data.interrupted` — when true AND state non-terminal,
+store `failed`/`error_kind=interrupted`, rewrite the GET-by-id response so the tab stops polling; existing
+terminal-transition `dispatchNext` frees the slot. Signal verified clean: stuck job was the ONLY prod row ever
+carrying `interrupted:true`; healthy/done carry `interrupted:false`. API `tsc` clean. **NOT yet deployed to
+prod** (awaiting OK). **Open, bp-assistant side (not this repo):** the bot's silent admin-log EACCES means
+failures don't reach `uw-bt-bot.fly.dev/admin` — flag to that team. (memory: project_pipeline_interrupted_flag_gap)
+
 2026-06-20 · **suspicious-poitras** — Cleared the nightly export's **align-shrink block on JER UST** (the
 `export_align_shrink:JER:ust` "BLOCKED … lost alignment on \"Jeremiah\"" alert). This was a **prod DATA
 repair, not a code change** — the export-side `usfmAlignmentShrinkRefused` guard (`exportWorkflow.ts`
