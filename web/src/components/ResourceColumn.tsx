@@ -434,6 +434,7 @@ export function ResourceColumn({
   // section. Without any of those, no scroll.
   const prevNonceRef = useRef(scrollNonce);
   const prevVerseRef = useRef(activeVerse);
+  const prevPinnedRef = useRef(pinned);
   useEffect(() => {
     const root = scrollBodyRef.current;
     if (!root) return;
@@ -441,6 +442,17 @@ export function ResourceColumn({
     prevNonceRef.current = scrollNonce;
     const verseChanged = prevVerseRef.current !== activeVerse;
     prevVerseRef.current = activeVerse;
+    const pinChanged =
+      prevPinnedRef.current.notes !== pinned.notes ||
+      prevPinnedRef.current.words !== pinned.words ||
+      prevPinnedRef.current.questions !== pinned.questions;
+    prevPinnedRef.current = pinned;
+    // The verse-group / verse-end fallbacks below reposition the whole list to
+    // a verse boundary. They're meant for navigation (button, verse change, pin
+    // toggle) — NOT for incidental re-runs like clearing the active note when a
+    // card is trashed, which would otherwise jerk the list back to the top of
+    // the verse's note group.
+    const navTriggered = fromButton || verseChanged || pinChanged;
     let target: HTMLElement | null = null;
     let isVerseGroup = false;
     if (activeNoteId) {
@@ -448,7 +460,7 @@ export function ResourceColumn({
     } else if (activeWordId) {
       target = root.querySelector<HTMLElement>(`[data-word-id="${activeWordId}"]`);
     }
-    if (!target && (pinned.notes || pinned.words || pinned.questions)) {
+    if (navTriggered && !target && (pinned.notes || pinned.words || pinned.questions)) {
       target = root.querySelector<HTMLElement>(`[data-verse-group="${activeVerse}"]`);
       isVerseGroup = !!target;
     }
@@ -456,7 +468,7 @@ export function ResourceColumn({
     // head to land on, so fall back to the end of the previous verse's notes
     // (the last note card before the active verse's slot in the chapter).
     let atVerseEnd = false;
-    if (!target && pinned.notes) {
+    if (navTriggered && !target && pinned.notes) {
       const heads = [...root.querySelectorAll<HTMLElement>('[data-vg-section="notes"]')];
       const prevHead = heads
         .filter((el) => Number(el.dataset.verseGroup) < activeVerse)
