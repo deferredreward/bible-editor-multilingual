@@ -14,6 +14,16 @@
 
 ## Last run
 
+2026-06-23 (late) · **inspiring-faraday** — **SHIPPED + LOADED TO PROD.** PR #261 merged (Codex-reviewed:
+2 blocking — no-op review-clear now excludes reorder-only + version/deleted_at-guarded; load preflight done).
+Migration 0031 applied to prod; worker deployed (version 40695761). **Deterministic load applied to prod D1**
+(snapshot saved scripts/out/kings-isa/snapshot-ISA-36-39.json; 5664 existing ISA ids excluded → 0 id
+collisions; 0 preserve/hint rows in target verses): soft-deleted 207 live notes in 65 target verses, inserted
+236 adapted notes (source='parallel_migration'). **Verified prod: 298 live ISA 36-39 notes, 156 flagged (in
+cleanup chip), 37:1-9=23 untouched, 38:9-20=27 untouched.** NEXT: AI enhancement loop overnight (Sonnet
+subagents re-anchor the ~116 quote flags + clean the 48 dropped cross-refs, validated against Isaiah UHB,
+update prod notes) — autonomous until 7am local, breaks OK. Rollback = snapshot file.
+
 2026-06-23 · **inspiring-faraday** — Started the 2 Kings 18-20 → Isaiah 36-39 TN adaptation (see **In
 progress** for full detail). Track A (cleanup-chip review-flag feature: migration 0031 + lint + rows PATCH
 clear) is code-complete, API-typecheck-clean, 17 lint tests green, 0031 applied to local dev. Track B spine
