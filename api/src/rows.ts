@@ -544,6 +544,41 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     const restoreMatches =
       (current.restored_from_version ?? null) === restoredFromVersion;
     if (allMatch && restoreMatches) {
+      // A re-save that changes no content still acknowledges a review flag:
+      // clear it (no version bump, like a bit-toggle) so the cleanup chip
+      // drops. Covers "proofreader verified the adapted quote, it was fine".
+      // EXCLUDE a sort_order-only patch — a drag/reorder must not acknowledge a
+      // review (that path is handled separately below and never reaches here on
+      // a non-no-op). Guard the clear on version + deleted_at so a concurrent
+      // edit/delete in the SELECT→UPDATE window still yields 409/404, not a
+      // false 200 no-op.
+      const reorderOnly = fields.length === 1 && fields[0] === "sort_order";
+      if (kind === "tn" && !reorderOnly && (current as unknown as TnRow).review_kind != null) {
+        const now = Math.floor(Date.now() / 1000);
+        const res = await c.env.DB.prepare(
+          `UPDATE tn_rows SET review_kind = NULL, review_reason = NULL, updated_at = ?1
+             WHERE id = ?2 AND version = ?3 AND deleted_at IS NULL${bookClause(4)}`,
+        )
+          .bind(now, id, expected, book)
+          .run();
+        if (res.meta.changes) {
+          const fresh = await c.env.DB.prepare(
+            `SELECT * FROM tn_rows WHERE id = ?1${bookClause(2)}`,
+          )
+            .bind(id, book)
+            .first();
+          return c.json(fresh ?? current);
+        }
+        // Row moved or was deleted between the SELECT and this UPDATE — surface
+        // the normal concurrency response instead of a stale 200.
+        const fresh = await c.env.DB.prepare(
+          `SELECT * FROM tn_rows WHERE id = ?1${bookClause(2)}`,
+        )
+          .bind(id, book)
+          .first<{ version: number; deleted_at: number | null }>();
+        if (!fresh || fresh.deleted_at) return c.json({ error: "not_found" }, 404);
+        return c.json({ error: "version_mismatch", current: fresh }, 409);
+      }
       return c.json(current);
     }
   }
@@ -596,6 +631,14 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
   const setClauses = fields.map((f, i) => `${f} = ?${i + 1}`);
+  // Any TN content edit clears a pending review flag (the adapted-note verify
+  // queue). Literal NULLs — no bind params, so positional indices below are
+  // unaffected. The reorder-only fast path above returns before here, so a
+  // drag never clears a flag.
+  if (kind === "tn") {
+    setClauses.push("review_kind = NULL");
+    setClauses.push("review_reason = NULL");
+  }
   const baseParams = fields.length;
   // version bump and metadata go after the patch fields, then the WHERE
   // params (id + expected version + book) tail the bindings.
