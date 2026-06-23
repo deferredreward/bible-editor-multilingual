@@ -1188,9 +1188,12 @@ function ActionBar({
       direction="row"
       alignItems="center"
       spacing={0.5}
+      useFlexGap
+      flexWrap="wrap"
       sx={{
         px: 1.5,
         py: 1,
+        rowGap: 0.5,
         borderTop: "1px solid",
         borderColor: "divider",
         bgcolor: "background.paper",
@@ -1203,7 +1206,10 @@ function ActionBar({
       >
         editing {bibleVersion}
       </Typography>
-      <Box sx={{ flex: 1 }} />
+      {/* Spacer keeps the actions right-aligned when the bar fits on one line;
+          when it doesn't (narrow laptop screens), the actions wrap to a second
+          row instead of the rightmost Save button overflowing off-screen. */}
+      <Box sx={{ flex: 1, minWidth: 0 }} />
       {onOpenHistory && version != null && (
         <Tooltip title="version history — view or restore an earlier alignment">
           <Button
