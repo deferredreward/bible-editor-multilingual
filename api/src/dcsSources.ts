@@ -77,7 +77,17 @@ export function dcsUrls(env: Env, book: string): DcsUrlSet | null {
 //
 // We reject only SHORT bodies, never LONGER-than-declared ones: transparent
 // gzip makes the decoded length exceed the (compressed) Content-Length, which
-// is not a truncation. A response with no Content-Length is returned as-is.
+// is not a truncation.
+//
+// BLIND SPOT (the HAB tn incident, 2026-06-23/24): this declared-length check
+// is BYPASSED when the response carries no Content-Length at all — HAB's raw
+// endpoint apparently omits it, so a partial body slipped through twice, the
+// reimport stamped the master commit SHA onto it, and the nightly prune then
+// soft-deleted 559 pristine rows (twl_PSA pattern, recurring). Transport here
+// cannot verify completeness without a declared length, so we at least SURFACE
+// the condition (warn) — the real backstop is the reimport's row-count gate
+// (tsvFetchLooksTruncated in bookReimport.ts), which rejects a body that parses
+// to drastically fewer rows than the book already holds in D1.
 export async function fetchText(url: string): Promise<string | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -94,6 +104,15 @@ export async function fetchText(url: string): Promise<string | null> {
           attempt,
         });
         continue;
+      }
+      if (expected == null) {
+        // No declared length → completeness unverifiable at this layer. Log so
+        // the condition that hid the HAB truncation is visible; downstream
+        // callers must apply their own sanity check (see tsvFetchLooksTruncated).
+        console.warn("fetchText: response has no content-length; completeness unverified", {
+          url,
+          gotBytes: buf.byteLength,
+        });
       }
       return new TextDecoder("utf-8").decode(buf);
     } catch {

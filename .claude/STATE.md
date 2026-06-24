@@ -14,6 +14,33 @@
 
 ## Last run
 
+2026-06-24 · **reverent-nightingale** — Closed the TWO latent nightly-sync code gaps behind the HAB tn
+incident (truncated master fetch soft-deleted 559 pristine tn rows; export guards caught it, manual repair
+fixed the data). **Not yet committed/PR'd.** API typecheck + full api test suite green.
+**(1) Truncated-fetch completeness gate** — new pure module `api/src/shrinkGuard.ts`
+(`isCatastrophicTsvShrink`, MIN_LIVE=20, RATIO=0.5: bail when a ≥20-row book's incoming TSV parses to <50%
+of live D1 rows). `tsvFetchLooksTruncated` (bookReimport.ts) wraps it with the row counts and is wired into
+**both** `planAndStageBookResources` (nightly — returns the resource with `masterSha:null` so NO watermark
+is stamped, which kills the SHA-poison "second trap") and `runReimport` (user path — nulls the raw → no
+apply/prune; shows as dcs_404). Verses exempt (never row-pruned). `fetchText` (dcsSources.ts) now warns on a
+missing Content-Length (transport layer can't verify completeness without it; the row-count gate is the real
+backstop). **(2) Tombstone resurrection** — `applyTsvRows` revives a pristine tombstone master still carries
+(new `cur.deleted_at != null` branch, runs BEFORE the no-op check) iff `isPristineTombstone` (column shape)
+AND `lastTsvDeleteWasReimport` (edit_log latest delete `source='dcs_reimport'`). The edit_log check is
+**mandatory**: nightly trash-finalize (index.ts:244) does `deleted_at=trashed_at, trashed_at=NULL` leaving
+`updated_by` NULL, so a human-trashed-then-promoted note is column-identical to a reimport prune — only
+`source` ('nightly_finalize' vs 'dcs_reimport') separates them. Resurrect reuses `buildTsvUpdateStmt(...,
+resurrect=true)` (flips guard to `deleted_at IS NOT NULL`, prepends `deleted_at=NULL` to SET — no param-pos
+shift), audited action='restore', new `resurrected` ReimportCounts field. Also converted the two
+`BookNotImportedError`/`ImportInProgressError` parameter-property constructors to explicit field assignment
+so node `--experimental-strip-types` can load the module for tests. **Tests:** `shrinkGuard.test.mjs`
+(14 asserts, incl. the HAB 252→1 case + 50% boundary + small-book exemption) and `dcsSources.test.mjs`
+(fetchText with a mocked global fetch: declared-length short-read retry, both-truncated→null, missing-CL
+still returns, gzip-longer accepted) — both registered in `api` npm test. **Note:** the already-poisoned prod
+HAB watermark from the incident still needs the manual repair / an advancing master SHA to trigger the new
+self-heal; the code prevents recurrence and auto-heals on the next genuine fetch. Branch
+`claude/reverent-nightingale-4bc705`.
+
 2026-06-24 · **objective-kilby** — Fixed "Find in book mode blanks the page / bumps me out." Root cause
 (reproduced live, ZEC seeded): Find's results sort the **book-intro note at chapter 0** first; pressing
 Enter/Next navigates there (`#/ZEC/0`). Chapter 0 (front matter) has a note but **no scripture verses**, so
