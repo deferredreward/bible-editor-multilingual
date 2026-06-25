@@ -49,6 +49,57 @@ finding: the app already owns occurrence round-trip + the English→OL quote+occ
 is English-first (match ULT→TW headwords; OL occurrence comes from alignment the app already has). Memory:
 [[project_twl_generation_into_app]].
 
+2026-06-25 · **vigorous-wilson** — Closed a systemic nightly-sync data-loss hole (VERSE side): an
+out-of-band **source-spelling fix on master** to an **edited** verse (verses.updated_by != null) was silently
+reverted by the nightly export. Confirmed live: en_ult NUM 20–22 unicode/combining-mark fix (commit 8c8569924,
+merged 2026-06-24 23:16 UTC; UHB-legacy dagesh-before-vowel order in x-lemma/x-content across 159 lines)
+reverted by export commit 323ecb7f (2026-06-25 05:47 UTC). **Mechanism:** the pre-export DCS→D1 reimport
+(`applyVerseRows`) SKIPS edited verses (`if (ex.updated_by != null) skipped_edited`) so the fix never reaches
+D1; the `reimport-sync-{book}` step then advances the **per-(book,resource)** watermark to master HEAD even
+though specific edited verses were skipped → `checkMasterFreshness` sees `watermark==masterSha` → "current" →
+export commits stale D1 → reverts. Alignment-shrink guard misses it (combining-mark reorder = identical
+aligned-word count + plain text). Same class as TWL-PSA / Hebrew-NFC. **Fix shipped (Option B, PR #268,
+branch `claude/vigorous-wilson-6a33f9`):** new pure `reconcileSourceAttrsFromMaster(targetVos, masterVos)` in
+`importParsers.ts` — adopts SOURCE-owned `\zaln-s` attrs (x-content/x-lemma/x-morph) from master onto an
+edited verse's milestones, keyed on source identity `strong|occurrence|occurrences` (stable across English
+edits + regrouping; NOT position), conservative/never-guess (single distinct master value per key else flag
+`divergent`), structure-preserving (only existing string attrs reassigned → can't unalign), x-strong is the
+match key (re-pointed strong = out of scope). Wired into `applyVerseRows` (`bookReimport.ts`): edited-verse
+branch reconciles into a **separate version-CAS batch** (guarded `AND version=oldVersion`, intentionally NOT
+`updated_by IS NULL` — only source spelling syncs; updated_by untouched so the row stays translator-owned).
+New `ReimportCounts` fields `source_attr_reconciled`/`source_attr_divergent`. After reconcile D1's source
+attrs match master so the existing export path + freshness gate work unchanged; target text + grouping
+preserved. **Rejected Option A** (blanket export-time reconcile against UHB) — assumes D1's UHB is uniformly
+UHB-legacy order for every book, but ZEC/LAM milestones come out NFC (the WRONG order), so A risks
+reintroducing the corruption corpus-wide. **Tests:** 6 blocks in `importParsers.test.mjs` (NUM combining-mark
++ edited-English, no-op, re-pointed-strong, occurrence-key isolation, ambiguous→divergent, nested compound).
+**Verified from the WORKTREE** (a process trap: `cd .../bible-editor/api` is MAIN, not the worktree at
+`.../bible-editor/.claude/worktrees/<name>/api`; ran `scripts/worktree-init.ps1` to junction web's
+node_modules so web typecheck resolves `vite/client`): `npm run typecheck` (both workspaces) + full api suite
+EXIT 0. **PR #268 opened; NOT merged/deployed.**
+**CORRECTION — PR #268 prevents RECURRENCE, it does NOT heal the existing NUM damage.** The export ALREADY
+reverted master back to pre-fix bytes (prior session: "current master == pre-fix at all 159 lines"; commit
+8c8569924's corrected bytes live only in git history). reconcile pulls source attrs FROM master, so with
+master == pre-fix it is a NO-OP for NUM — D1 (also pre-fix) stays pre-fix. **To heal NUM, re-apply the fix to
+MASTER** (re-commit 8c8569924's bytes / cherry-pick); the next nightly reconcile then propagates it into D1.
+**Do NOT run the prior session's D1-only `scratch-num/` repair in isolation now** — reconcile makes master
+authoritative for source attrs, so if the reimport runs (SHA gate doesn't skip NUM) it would pull master's
+pre-fix bytes back over the D1 repair. Fix master (then D1 follows), or fix master AND D1 together. See
+[[project_num2022_unicode_export_revert]].
+
+**TWO follow-ups decided this session (NOT built):**
+**(a) TSV side of the same class** — the user reports en_tn **HOS 11 note REORDER** done on master never
+ingested + got export-reverted: `applyTsvRows` skips edited tn/tq/twl rows (updated_by/preserve/hint/trashed)
+INCLUDING their sort_order, so a master reorder of edited rows is lost. Spawned a one-time **HOS 11 data
+repair** task (chip `task_20ef3dfd`) — couldn't measure live divergence from this offline worktree (no
+network: PR push first failed DNS). **(b) General three-way merge** — agreed approach for arbitrary
+out-of-band master edits to edited verses/rows (only Benjamin has D1; other contributors do scripted master
+edits that MUST land). Base/common-ancestor is recoverable from edit_log full snapshots (no extra fetch);
+TSV field-level merge is tractable; verse sub-tree merge is NOT (do source-attr Tier 1 auto + treat the rest
+as conflict). **Conflict policy = master wins, set the existing review-flag cleanup chip (migration 0031) for
+in-book adjudication** (recoverable via verse version-history). Build as a separate PR; Option B (PR #268) is
+Tier 1 of it.
+
 2026-06-24 · **reverent-nightingale** — Closed the TWO latent nightly-sync code gaps behind the HAB tn
 incident (truncated master fetch soft-deleted 559 pristine tn rows; export guards caught it, manual repair
 fixed the data). **Not yet committed/PR'd.** API typecheck + full api test suite green.
