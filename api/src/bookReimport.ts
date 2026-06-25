@@ -46,6 +46,7 @@ import {
 import { activePipelineForChapter } from "./chapterLock";
 import { coerceRowId } from "./rowId";
 import { planTnContentDedup } from "./tnDedup";
+import { isCatastrophicTsvShrink } from "./shrinkGuard";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -79,6 +80,10 @@ export interface ReimportCounts {
   // (Guard 2, content-dedup). Tracked separately from skipped_noop so the guard
   // firing is visible in the reimport summary / logs.
   skipped_dup: number;
+  // Pristine tombstone that master still carries, brought back to life because
+  // an earlier reimport prune had erroneously soft-deleted it (the HAB tn
+  // truncated-fetch incident). Human-deleted/trashed rows are never resurrected.
+  resurrected: number;
   dcs_404: number;
   errors: string[];
 }
@@ -100,6 +105,7 @@ function zeroCounts(): ReimportCounts {
     skipped_locked: 0,
     skipped_noop: 0,
     skipped_dup: 0,
+    resurrected: 0,
     dcs_404: 0,
     errors: [],
   };
@@ -113,19 +119,24 @@ function addCounts(into: ReimportCounts, from: ReimportCounts): void {
   into.skipped_locked += from.skipped_locked;
   into.skipped_noop += from.skipped_noop;
   into.skipped_dup += from.skipped_dup;
+  into.resurrected += from.resurrected;
   into.dcs_404 += from.dcs_404;
   if (from.errors.length) into.errors.push(...from.errors);
 }
 
 export class BookNotImportedError extends Error {
-  constructor(public book: string) {
+  book: string;
+  constructor(book: string) {
     super(`book not imported: ${book}`);
+    this.book = book;
   }
 }
 
 export class ImportInProgressError extends Error {
-  constructor(public book: string) {
+  book: string;
+  constructor(book: string) {
     super(`import in progress for ${book}`);
+    this.book = book;
   }
 }
 
@@ -184,13 +195,23 @@ async function runReimport(
   // Fetch each requested resource once at the book level. ULT/UST/TN/TQ/TWL
   // are whole-book files; chapter filtering happens after parse.
   const want = new Set(resources);
-  const [ultRaw, ustRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
+  let [ultRaw, ustRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
     want.has("ult") ? fetchText(urls.ult) : Promise.resolve(null),
     want.has("ust") ? fetchText(urls.ust) : Promise.resolve(null),
     want.has("tn") ? fetchText(urls.tn) : Promise.resolve(null),
     want.has("tq") ? fetchText(urls.tq) : Promise.resolve(null),
     want.has("twl") ? fetchText(urls.twl) : Promise.resolve(null),
   ]);
+
+  // Completeness gate (TSV only). A truncated master fetch that slipped past
+  // fetchText (e.g. a no-Content-Length partial body — the HAB tn incident)
+  // parses to far fewer rows than the book holds live in D1. Treat it as
+  // not-fetched so it can't drive the apply OR the prune; the existing dcs_404
+  // tally below records the miss. Verses are exempt (never row-pruned; a short
+  // USFM just no-ops its missing chapters).
+  if (tnRaw && (await tsvFetchLooksTruncated(env, book, "tn", tnRaw))) tnRaw = null;
+  if (tqRaw && (await tsvFetchLooksTruncated(env, book, "tq", tqRaw))) tqRaw = null;
+  if (twlRaw && (await tsvFetchLooksTruncated(env, book, "twl", twlRaw))) twlRaw = null;
 
   const perResource: Record<Resource, ReimportCounts> = {
     ult: zeroCounts(),
@@ -419,9 +440,11 @@ async function applyTsvRows(
     skipDupIdx = planTnContentDedup(incoming, existsPristineId, existsAnyId);
   }
 
-  // Classify. Inserts run per-row (DCS-new rows are rare); updates are batched.
+  // Classify. Inserts run per-row (DCS-new rows are rare); updates +
+  // resurrections are batched.
   const nextSort = makeVerseSortOrder();
   const updates: Array<{ row: ParsedTsvRow; sortOrder: number; oldVersion: number }> = [];
+  const resurrects: Array<{ row: ParsedTsvRow; sortOrder: number; oldVersion: number }> = [];
   for (let i = 0; i < incoming.length; i++) {
     const row = incoming[i];
     const sortOrder = nextSort(row.chapter, row.verse);
@@ -446,6 +469,24 @@ async function applyTsvRows(
         }
       } catch (e) {
         counts.errors.push(`${kind} ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      continue;
+    }
+    // Tombstone master still carries. Normally a deleted row stays dead — but an
+    // erroneous earlier prune (the HAB tn truncated-fetch incident: a short
+    // master fetch soft-deleted 559 pristine rows master never actually dropped)
+    // leaves a row that should still exist. Resurrect ONLY a pristine tombstone
+    // whose latest delete was a reimport prune (source='dcs_reimport'); a
+    // human-deleted/trashed row (or any non-reimport delete) stays dead. Must run
+    // BEFORE the no-op check below: a tombstone whose content already matches
+    // master still needs deleted_at cleared, so it can never be a no-op. See
+    // tsvFetchLooksTruncated — this is the self-heal half of the same fix (the
+    // gate stops new damage; this revives rows a past truncation already killed).
+    if (cur.deleted_at != null) {
+      if (isPristineTombstone(kind, cur) && (await lastTsvDeleteWasReimport(env, kind, row.id, book))) {
+        resurrects.push({ row, sortOrder, oldVersion: Number(cur.version) });
+      } else {
+        counts.skipped_edited++;
       }
       continue;
     }
@@ -486,6 +527,39 @@ async function applyTsvRows(
       if (logs.length) await env.DB.batch(logs);
     } catch (e) {
       counts.errors.push(`${kind} update batch: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Batch the resurrections (clear deleted_at + bring content to master). Same
+  // version-CAS + pristine guard as the UPDATE path, but flipped to require a
+  // tombstone (deleted_at IS NOT NULL); a row a human deleted/edited between the
+  // read and the batch matches 0 rows and is counted skipped_edited. updated_by
+  // stays NULL so the row remains reimport-owned. Audited as 'restore'.
+  for (let i = 0; i < resurrects.length; i += WRITE_BATCH) {
+    const slice = resurrects.slice(i, i + WRITE_BATCH);
+    try {
+      const results = await env.DB.batch(
+        slice.map((u) => buildTsvUpdateStmt(env, book, kind, u.row, u.sortOrder, u.oldVersion, now, true)),
+      );
+      const logs: D1PreparedStatement[] = [];
+      slice.forEach((u, j) => {
+        if ((results[j]?.meta.changes ?? 0) > 0) {
+          counts.resurrected++;
+          console.warn("reimport: resurrected pristine tombstone master still carries", {
+            book,
+            kind,
+            id: u.row.id,
+            chapter: u.row.chapter,
+            verse: u.row.verse,
+          });
+          logs.push(logEditStmt(env, kind, u.row.id, book, userId, u.oldVersion, u.oldVersion + 1, "restore", u.row));
+        } else {
+          counts.skipped_edited++;
+        }
+      });
+      if (logs.length) await env.DB.batch(logs);
+    } catch (e) {
+      counts.errors.push(`${kind} resurrect batch: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -559,11 +633,84 @@ function isPristineTsv(kind: TsvKind, row: Record<string, unknown>): boolean {
   return true;
 }
 
+// True iff this stored row is a TOMBSTONE that is otherwise pristine — deleted,
+// but never human-edited, not in the trash queue, no preserve/hint. Mirror of
+// isPristineTsv with the deleted_at test INVERTED. Column-shape only: it does
+// NOT prove WHO deleted the row. A human trash promoted by the nightly job sets
+// `deleted_at = trashed_at, trashed_at = NULL` and never touches updated_by, so
+// it is column-identical to a reimport prune here — the caller MUST also gate on
+// lastTsvDeleteWasReimport to keep human deletions dead.
+function isPristineTombstone(kind: TsvKind, row: Record<string, unknown>): boolean {
+  if (row.deleted_at == null) return false;
+  if (row.updated_by != null) return false;
+  if (kind === "tn") {
+    if (row.trashed_at != null) return false;
+    if (Number(row.preserve ?? 0) !== 0) return false;
+    if (Number(row.hint ?? 0) !== 0) return false;
+  }
+  return true;
+}
+
+// True iff the most recent 'delete' on this row was a reimport prune
+// (source='dcs_reimport'), not a human trash-finalize ('nightly_finalize') or
+// any other delete. This is the ONLY signal that separates an erroneous
+// truncated-fetch prune (resurrect it) from a human deletion (keep it dead),
+// because the nightly trash promotion erases the column-level trace. One indexed
+// read (edit_log_row covers kind, row_key); resurrection candidates are rare
+// (normally zero — a tombstone whose id master still carries).
+async function lastTsvDeleteWasReimport(
+  env: Env,
+  kind: TsvKind,
+  id: string,
+  book: string,
+): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT source FROM edit_log
+      WHERE kind = ?1 AND row_key = ?2 AND book = ?3 AND action = 'delete'
+      ORDER BY id DESC LIMIT 1`,
+  )
+    .bind(kind, id, book)
+    .first<{ source: string | null }>();
+  return row?.source === REIMPORT_SOURCE;
+}
+
+// ── Truncated-fetch completeness gate ───────────────────────────────────────
+// Does this fetched TSV body look truncated relative to what D1 already holds?
+// Compares parsed incoming rows (valid-id only, same normalizer the apply path
+// uses) against live (non-deleted) D1 rows for the book/resource. Returns true
+// → caller treats the fetch as failed (no apply / no prune / no watermark).
+async function tsvFetchLooksTruncated(
+  env: Env,
+  book: string,
+  kind: TsvKind,
+  raw: string,
+): Promise<boolean> {
+  const liveRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM ${kind}_rows WHERE book = ?1 AND deleted_at IS NULL`,
+  )
+    .bind(book)
+    .first<{ n: number }>();
+  const live = Number(liveRow?.n ?? 0);
+  let incoming = 0;
+  for (const r of parseTsv(raw).rows) if (parseTsvRow(r, kind)) incoming++;
+  if (!isCatastrophicTsvShrink(live, incoming)) return false;
+  console.error(
+    "reimport: incoming TSV is a catastrophic shrink vs live D1 — treating as a truncated fetch (no apply/prune/watermark)",
+    { book, kind, liveRows: live, incomingRows: incoming },
+  );
+  return true;
+}
+
 // Build (don't run) the pristine UPDATE for one TSV row, for env.DB.batch().
 // version-CAS (`AND version = oldVersion`) + the pristine predicate keep the
 // write safe: a row a translator edited between the read and the batch matches
 // 0 rows (meta.changes 0 → caller counts skipped_edited; no clobber, no audit).
 // updated_by stays NULL so future re-imports still see the row as overwritable.
+// `resurrect` flips the deleted_at guard: a normal pristine UPDATE requires a
+// LIVE row (deleted_at IS NULL); a resurrection requires a TOMBSTONE
+// (deleted_at IS NOT NULL) and clears it in the SET. Bound-param positions are
+// identical in both modes (the `deleted_at = NULL` clause carries no param), so
+// the .bind() lists below are unchanged.
 function buildTsvUpdateStmt(
   env: Env,
   book: string,
@@ -572,16 +719,19 @@ function buildTsvUpdateStmt(
   sortOrder: number,
   oldVersion: number,
   now: number,
+  resurrect = false,
 ): D1PreparedStatement {
+  const deletedGuard = resurrect ? "deleted_at IS NOT NULL" : "deleted_at IS NULL";
   const pristine =
     kind === "tn"
-      ? `updated_by IS NULL AND deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
-      : `updated_by IS NULL AND deleted_at IS NULL`;
+      ? `updated_by IS NULL AND ${deletedGuard} AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
+      : `updated_by IS NULL AND ${deletedGuard}`;
+  const clearDeleted = resurrect ? "deleted_at = NULL, " : "";
   const newVersion = oldVersion + 1;
   if (kind === "tn") {
     return env.DB.prepare(
       `UPDATE tn_rows
-          SET ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
+          SET ${clearDeleted}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
               support_reference = ?5, quote = ?6, occurrence = ?7, note = ?8,
               sort_order = ?9, version = ?10, updated_at = ?11
         WHERE id = ?12 AND book = ?13 AND ${pristine} AND version = ?14`,
@@ -594,7 +744,7 @@ function buildTsvUpdateStmt(
   if (kind === "tq") {
     return env.DB.prepare(
       `UPDATE tq_rows
-          SET ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
+          SET ${clearDeleted}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
               quote = ?5, occurrence = ?6, question = ?7, response = ?8,
               sort_order = ?9, version = ?10, updated_at = ?11
         WHERE id = ?12 AND book = ?13 AND ${pristine} AND version = ?14`,
@@ -606,7 +756,7 @@ function buildTsvUpdateStmt(
   }
   return env.DB.prepare(
     `UPDATE twl_rows
-        SET ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
+        SET ${clearDeleted}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
             orig_words = ?5, occurrence = ?6, tw_link = ?7,
             sort_order = ?8, version = ?9, updated_at = ?10
       WHERE id = ?11 AND book = ?12 AND ${pristine} AND version = ?13`,
@@ -627,7 +777,7 @@ function logEditStmt(
   userId: number | null,
   prevVersion: number | null,
   newVersion: number,
-  action: "create" | "update",
+  action: "create" | "update" | "restore",
   payload: unknown,
 ): D1PreparedStatement {
   return env.DB.prepare(
@@ -1242,6 +1392,17 @@ async function planAndStageBookResources(
     const raw = await fetchText(dcsRawUrl(env, file.repo, file.path));
     if (raw == null) {
       // DCS 404 / fetch error → nothing to import, no watermark.
+      entries.push({ resource, changed: false, masterSha: null, r2Key: null });
+      continue;
+    }
+    // Completeness gate (TSV only). A truncated body must NOT be staged or get a
+    // watermark — otherwise it prunes the book AND certifies it "in sync",
+    // hiding the damage (the HAB tn incident). masterSha:null here is critical:
+    // the reimport-sync step only stamps watermarks for entries with a masterSha.
+    if (
+      (resource === "tn" || resource === "tq" || resource === "twl") &&
+      (await tsvFetchLooksTruncated(env, book, resource, raw))
+    ) {
       entries.push({ resource, changed: false, masterSha: null, r2Key: null });
       continue;
     }
