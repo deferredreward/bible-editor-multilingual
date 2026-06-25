@@ -39,6 +39,7 @@ import {
   healReplacementChars,
   makeVerseSortOrder,
   parseTsv,
+  reconcileSourceAttrsFromMaster,
   refParts,
   type SourceWord,
   type VerseExtract,
@@ -84,6 +85,16 @@ export interface ReimportCounts {
   // an earlier reimport prune had erroneously soft-deleted it (the HAB tn
   // truncated-fetch incident). Human-deleted/trashed rows are never resurrected.
   resurrected: number;
+  // Edited verse (updated_by != null) whose SOURCE-owned `\zaln-s` attributes
+  // (x-content/x-lemma/x-morph) were reconciled from master while preserving the
+  // translator's target text + grouping. Stops the nightly export from reverting
+  // a curated original-language fix on an edited verse (the NUM 20–22 incident).
+  // verses only — TSV rows have no source attrs.
+  source_attr_reconciled: number;
+  // Source-attr divergence on an edited verse that could NOT be uniquely
+  // reconciled (master ambiguous for the source key). Left as-is, logged so the
+  // residual potential clobber is visible. Normally zero.
+  source_attr_divergent: number;
   dcs_404: number;
   errors: string[];
 }
@@ -106,6 +117,8 @@ function zeroCounts(): ReimportCounts {
     skipped_noop: 0,
     skipped_dup: 0,
     resurrected: 0,
+    source_attr_reconciled: 0,
+    source_attr_divergent: 0,
     dcs_404: 0,
     errors: [],
   };
@@ -120,6 +133,8 @@ function addCounts(into: ReimportCounts, from: ReimportCounts): void {
   into.skipped_noop += from.skipped_noop;
   into.skipped_dup += from.skipped_dup;
   into.resurrected += from.resurrected;
+  into.source_attr_reconciled += from.source_attr_reconciled;
+  into.source_attr_divergent += from.source_attr_divergent;
   into.dcs_404 += from.dcs_404;
   if (from.errors.length) into.errors.push(...from.errors);
 }
@@ -857,6 +872,30 @@ async function healIncomingReplacementChars(
   }
 }
 
+// Reconcile the source-owned `\zaln-s` attributes (x-content/x-lemma/x-morph) of
+// an EDITED verse against the incoming master verse, returning the merged
+// content_json (translator's target text + grouping preserved, source spelling
+// adopted from master) plus a count of source divergences that couldn't be
+// uniquely reconciled. `changed` is false (json === d1Json) when nothing applied.
+// Unparseable input is treated as a no-op (changed:false) so a malformed row can
+// never throw out of the verse diff loop. See reconcileSourceAttrsFromMaster.
+function reconcileEditedVerseSourceAttrs(
+  d1Json: string,
+  masterJson: string,
+): { changed: boolean; json: string; divergent: number } {
+  let d1Parsed: { verseObjects?: unknown[] };
+  let masterParsed: { verseObjects?: unknown[] };
+  try {
+    d1Parsed = JSON.parse(d1Json) as { verseObjects?: unknown[] };
+    masterParsed = JSON.parse(masterJson) as { verseObjects?: unknown[] };
+  } catch {
+    return { changed: false, json: d1Json, divergent: 0 };
+  }
+  const report = reconcileSourceAttrsFromMaster(d1Parsed.verseObjects ?? [], masterParsed.verseObjects ?? []);
+  const changed = report.reconciled.length > 0;
+  return { changed, json: changed ? JSON.stringify(d1Parsed) : d1Json, divergent: report.divergent.length };
+}
+
 // Per-verse upsert over already-parsed verses (keys off each verse's own
 // chapter, so it works across a whole chunk range). Batched: ONE read of the
 // current rows for these verses' chapters, an in-memory diff, then ONE atomic
@@ -871,6 +910,10 @@ async function healIncomingReplacementChars(
 // UPDATE, so a translator edit landing between the read and the batch matches
 // 0 rows — no clobber. On a batch error we fall back to the isolated per-row
 // path so one bad verse can't sink the whole chapter.
+// An EDITED verse (updated_by != null) is NOT overwritten, but its source-owned
+// `\zaln-s` attributes (x-content/x-lemma/x-morph) are reconciled from master in
+// a separate version-CAS batch (see reconcileEditedVerseSourceAttrs) so a curated
+// original-language fix isn't reverted by re-exporting stale source bytes.
 // DO NOT revert this to a per-row loop: that regression silently reintroduced
 // the subrequest cap once (PR #180 batched it → a refactor un-batched it → PR
 // #195 re-batched). See the nightly-sync-subrequest-cap memory.
@@ -919,6 +962,9 @@ async function applyVerseRows(
   //    into counts once the batch commits (so a fallback doesn't double-count).
   const stmts = [];
   const writes: VerseExtract[] = []; // candidates, for the per-row fallback
+  // Edited verses whose source-owned alignment attrs were reconciled from master
+  // (target text + grouping unchanged). Written in a separate version-CAS batch.
+  const sourceReconciles: Array<{ v: VerseExtract; mergedJson: string; oldVersion: number; plainText: string | null }> = [];
   let inserted = 0;
   let updated = 0;
   for (const v of verses) {
@@ -945,7 +991,26 @@ async function applyVerseRows(
       continue;
     }
     if (ex.updated_by != null) {
-      counts.skipped_edited++;
+      // Edited verse: the translator owns the target text + grouping, so we
+      // never overwrite the verse. BUT the original-language source attributes
+      // on its `\zaln-s` milestones (x-content/x-lemma/x-morph) are SOURCE-owned,
+      // not translator-owned — reconcile just those from master so a curated
+      // source fix (e.g. the NUM 20–22 combining-mark correction) isn't reverted
+      // when the nightly export re-renders this verse. Staged into a separate
+      // version-CAS batch below; if nothing reconciled it stays a plain edited
+      // skip. (verses analogue of the TWL-PSA / Hebrew-NFC clobber class.)
+      const rec = reconcileEditedVerseSourceAttrs(ex.content_json, v.contentJson);
+      if (rec.divergent > 0) {
+        counts.source_attr_divergent += rec.divergent;
+        console.warn("reimport: source-attr divergence on edited verse couldn't be uniquely reconciled from master", {
+          book, bibleVersion, chapter: v.chapter, verse: v.verse, divergent: rec.divergent,
+        });
+      }
+      if (rec.changed) {
+        sourceReconciles.push({ v, mergedJson: rec.json, oldVersion: ex.version, plainText: ex.plain_text });
+      } else {
+        counts.skipped_edited++;
+      }
       continue;
     }
     if (
@@ -983,23 +1048,72 @@ async function applyVerseRows(
     );
   }
 
-  if (stmts.length === 0) return counts;
-
-  // 3. One atomic batch for all writes + their audit rows. On failure fall back
-  //    to the isolated per-row path so a single bad verse can't sink the chapter.
-  try {
-    await env.DB.batch(stmts);
-    counts.inserted += inserted;
-    counts.updated += updated;
-  } catch (e) {
-    console.error("reimport verse batch failed; falling back per-row", {
-      book,
-      bibleVersion,
-      chapters,
-      error: e instanceof Error ? e.message : String(e),
-    });
-    addCounts(counts, await applyVerseRowsPerRow(env, book, bibleVersion, writes, userId));
+  // 3. One atomic batch for all pristine writes + their audit rows. On failure
+  //    fall back to the isolated per-row path so one bad verse can't sink the
+  //    chapter. (Edited-verse source-attr reconciles run in their own batch below
+  //    — they're version-CAS-guarded, not updated_by-guarded, so they can't share
+  //    this path's pristine semantics.)
+  if (stmts.length > 0) {
+    try {
+      await env.DB.batch(stmts);
+      counts.inserted += inserted;
+      counts.updated += updated;
+    } catch (e) {
+      console.error("reimport verse batch failed; falling back per-row", {
+        book,
+        bibleVersion,
+        chapters,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      addCounts(counts, await applyVerseRowsPerRow(env, book, bibleVersion, writes, userId));
+    }
   }
+
+  // 4. Reconcile source-owned alignment attrs on edited verses. Separate batch:
+  //    the UPDATE is guarded on version-CAS (`AND version = oldVersion`) but
+  //    intentionally NOT on `updated_by IS NULL` — the verse IS edited; only its
+  //    source spelling syncs, and updated_by is left untouched so the row stays
+  //    translator-owned. A translator edit landing between the read and the batch
+  //    bumps version → matches 0 rows → counted skipped_edited (no clobber).
+  //    Audited only when the UPDATE actually applied (meta.changes > 0).
+  for (let i = 0; i < sourceReconciles.length; i += WRITE_BATCH) {
+    const slice = sourceReconciles.slice(i, i + WRITE_BATCH);
+    try {
+      const results = await env.DB.batch(
+        slice.map((u) =>
+          env.DB.prepare(
+            `UPDATE verses
+                SET content_json = ?1, version = version + 1, updated_at = ?2
+              WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
+                AND version = ?7`,
+          ).bind(u.mergedJson, now, book, u.v.chapter, u.v.verse, bibleVersion, u.oldVersion),
+        ),
+      );
+      const logs: D1PreparedStatement[] = [];
+      slice.forEach((u, j) => {
+        if ((results[j]?.meta.changes ?? 0) > 0) {
+          counts.source_attr_reconciled++;
+          console.warn("reimport: reconciled source-owned \\zaln attrs on edited verse from master", {
+            book, bibleVersion, chapter: u.v.chapter, verse: u.v.verse,
+          });
+          logs.push(
+            logEditStmt(
+              env, "verse",
+              `${book}/${u.v.chapter}/${u.v.verse}/${bibleVersion}`,
+              book, userId, u.oldVersion, u.oldVersion + 1, "update",
+              { plain_text: u.plainText, content: u.mergedJson },
+            ),
+          );
+        } else {
+          counts.skipped_edited++;
+        }
+      });
+      if (logs.length) await env.DB.batch(logs);
+    } catch (e) {
+      counts.errors.push(`verse source-attr reconcile batch: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   return counts;
 }
 

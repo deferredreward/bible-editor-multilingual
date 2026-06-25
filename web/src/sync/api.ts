@@ -701,6 +701,10 @@ export interface ReimportCounts {
   skipped_edited: number;
   skipped_locked: number;
   skipped_noop: number;
+  // Edited verses whose source-owned `\zaln-s` attrs (x-content/x-lemma/x-morph)
+  // were reconciled from master (translator's target text + grouping preserved).
+  // Optional: the server always sends it, but an older/cached response may omit it.
+  source_attr_reconciled?: number;
   dcs_404: number;
   errors: string[];
 }

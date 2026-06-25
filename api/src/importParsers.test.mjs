@@ -19,6 +19,7 @@ import {
   makeVerseSortOrder,
   collectSourceWords,
   healReplacementChars,
+  reconcileSourceAttrsFromMaster,
   hasReplacementChar,
   normalizeNoteWhitespace,
   findSuspiciousDoubleSpaces,
@@ -662,6 +663,130 @@ const zaln = (attrs, targetText) => ({
   const got = collectSourceWords(vo);
   assert(got.length === 2, `collectSourceWords found both \\w (incl. nested)`);
   assert(got[0].strong === "H1" && got[0].text === "אב", `nested source word collected with strong`);
+}
+
+// --- reconcileSourceAttrsFromMaster: source-owned \zaln attrs on edited verses
+//
+// The NUM 20–22 incident: a curated combining-mark fix to en_ult's x-content /
+// x-lemma (reordered into UHB-legacy consonant-dagesh-vowel order) was reverted
+// by the nightly export because the verses were updated_by != null, so the
+// pre-export reimport skipped them and the export re-rendered D1's stale bytes.
+// This reconcile pulls the source-owned attrs (NOT the translator's target text /
+// grouping) down from master so the fix survives. Conservative + structure-
+// preserving — mirrors healReplacementChars' discipline.
+//
+// A `\zaln-s` milestone carrying x-content / x-lemma / x-morph + the source
+// occurrence keys, wrapping one target `\w`.
+const zalnMs = (attrs, targetText) => ({
+  tag: "zaln",
+  type: "milestone",
+  occurrence: "1",
+  occurrences: "1",
+  ...attrs,
+  children: [{ text: targetText, tag: "w", type: "word", occurrence: "1", occurrences: "1" }],
+  endTag: "zaln-e\\*",
+});
+
+{
+  // The NUM case, codepoint-exact. Master holds the UHB-legacy order
+  // (consonant-dagesh-vowel); D1 reverted to NFC (consonant-vowel-dagesh) AND the
+  // translator edited the English target. Reconcile must adopt master's source
+  // spelling on x-content + x-lemma while leaving the edited English in place.
+  const legacy = cp(0x05d1, 0x05bc, 0x05b8); // ב + dagesh + qamats  (master fix)
+  const nfc = cp(0x05d1, 0x05b8, 0x05bc); // ב + qamats + dagesh  (D1, reverted)
+  const legacyLemma = cp(0x05d1, 0x05bc, 0x05b8, 0x05df);
+  const nfcLemma = cp(0x05d1, 0x05b8, 0x05bc, 0x05df);
+  const d1 = [zalnMs({ strong: "H1", content: nfc, lemma: nfcLemma, morph: "He,Ncmsa" }, "in the land EDITED")];
+  const master = [zalnMs({ strong: "H1", content: legacy, lemma: legacyLemma, morph: "He,Ncmsa" }, "in the land")];
+  const before = structuredClone(d1);
+  const report = reconcileSourceAttrsFromMaster(d1, master);
+  assert(report.reconciled.length === 2, `NUM: x-content + x-lemma reconciled (got ${report.reconciled.length})`);
+  assert(report.divergent.length === 0, `NUM: no divergence`);
+  assert(d1[0].content === legacy, `NUM: x-content adopts master's UHB-legacy combining-mark order`);
+  assert(d1[0].lemma === legacyLemma, `NUM: x-lemma adopts master's order`);
+  assert(d1[0].children[0].text === "in the land EDITED", `translator's edited English target preserved`);
+  // Structure preservation: copy only the reconciled attrs onto the pre-clone and
+  // the trees must be byte-identical — proving nothing else (target/grouping)
+  // moved, so nothing can unalign.
+  before[0].content = d1[0].content;
+  before[0].lemma = d1[0].lemma;
+  assert(JSON.stringify(before) === JSON.stringify(d1), `NUM: only source attrs changed (no unalignment)`);
+}
+
+{
+  // Already in sync: no-op, byte-identical.
+  const v = [zalnMs({ strong: "H1", content: cp(0x05d1, 0x05bc, 0x05b8), lemma: "x", morph: "m" }, "word")];
+  const master = structuredClone(v);
+  const before = JSON.stringify(v);
+  const report = reconcileSourceAttrsFromMaster(v, master);
+  assert(report.reconciled.length === 0 && report.divergent.length === 0, `in-sync verse: no-op`);
+  assert(JSON.stringify(v) === before, `in-sync verse: byte-identical`);
+}
+
+{
+  // Re-pointed source (master changed x-strong) is OUT OF SCOPE: strong is the
+  // match key, so a milestone master re-pointed to a different strong simply
+  // doesn't match and is left untouched (never guessed).
+  const d1 = [zalnMs({ strong: "H1", content: "aaa", lemma: "", morph: "" }, "w")];
+  const master = [zalnMs({ strong: "H2", content: "bbb", lemma: "", morph: "" }, "w")];
+  const report = reconcileSourceAttrsFromMaster(d1, master);
+  assert(report.reconciled.length === 0 && report.divergent.length === 0, `re-pointed strong: no match`);
+  assert(d1[0].content === "aaa", `re-pointed milestone untouched (strong is identity key)`);
+}
+
+{
+  // Occurrence keys keep two same-Strong source words distinct: each reconciles
+  // to ITS OWN master match, no cross-contamination.
+  const d1 = [
+    zalnMs({ strong: "H7", occurrence: "1", occurrences: "2", content: "old1", lemma: "", morph: "" }, "a"),
+    zalnMs({ strong: "H7", occurrence: "2", occurrences: "2", content: "old2", lemma: "", morph: "" }, "b"),
+  ];
+  const master = [
+    zalnMs({ strong: "H7", occurrence: "1", occurrences: "2", content: "new1", lemma: "", morph: "" }, "a"),
+    zalnMs({ strong: "H7", occurrence: "2", occurrences: "2", content: "new2", lemma: "", morph: "" }, "b"),
+  ];
+  const report = reconcileSourceAttrsFromMaster(d1, master);
+  assert(report.reconciled.length === 2, `both occurrences reconciled independently`);
+  assert(d1[0].content === "new1" && d1[1].content === "new2", `occurrence key prevents cross-contamination`);
+}
+
+{
+  // Ambiguous master key (same strong|occ|occs with CONFLICTING x-content —
+  // malformed/AI data) is NEVER guessed: left as-is and flagged divergent.
+  const d1 = [zalnMs({ strong: "H9", content: "x", lemma: "", morph: "" }, "w")];
+  const master = [
+    zalnMs({ strong: "H9", content: "a", lemma: "", morph: "" }, "w1"),
+    zalnMs({ strong: "H9", content: "b", lemma: "", morph: "" }, "w2"),
+  ];
+  const report = reconcileSourceAttrsFromMaster(d1, master);
+  assert(report.reconciled.length === 0, `ambiguous master key: nothing applied`);
+  assert(report.divergent.some((d) => d.attr === "content"), `ambiguous divergence is flagged, not silent`);
+  assert(d1[0].content === "x", `ambiguous content left untouched`);
+}
+
+{
+  // Nested compound alignment (one English phrase → two Hebrew words): BOTH
+  // milestone levels reconcile, and the target word nested under them survives.
+  const inner = (strong, content, txt) => ({
+    tag: "zaln", type: "milestone", strong, occurrence: "1", occurrences: "1",
+    content, lemma: "", morph: "",
+    children: [{ tag: "w", type: "word", text: txt, occurrence: "1", occurrences: "1" }],
+    endTag: "zaln-e\\*",
+  });
+  const d1 = [{
+    tag: "zaln", type: "milestone", strong: "H1", occurrence: "1", occurrences: "1",
+    content: "o1", lemma: "", morph: "",
+    children: [inner("H2", "i1", "x")], endTag: "zaln-e\\*",
+  }];
+  const master = [{
+    tag: "zaln", type: "milestone", strong: "H1", occurrence: "1", occurrences: "1",
+    content: "O1", lemma: "", morph: "",
+    children: [inner("H2", "I1", "x")], endTag: "zaln-e\\*",
+  }];
+  const report = reconcileSourceAttrsFromMaster(d1, master);
+  assert(report.reconciled.length === 2, `nested compound: both milestone levels reconciled`);
+  assert(d1[0].content === "O1" && d1[0].children[0].content === "I1", `outer + inner source attrs adopted`);
+  assert(d1[0].children[0].children[0].text === "x", `target word under nested milestones preserved`);
 }
 
 // --- normalizeNoteWhitespace: collapse bp-assistant double spaces ------------
