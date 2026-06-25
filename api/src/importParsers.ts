@@ -417,6 +417,127 @@ export function healReplacementChars(
   return report;
 }
 
+// ─── Reconcile source-owned `\zaln-s` attributes from master ─────────────────
+//
+// The `\zaln-s` milestone carries original-language (UHB/UGNT) attributes —
+// x-content (the Hebrew/Greek surface form), x-lemma, x-morph, x-strong. These
+// are copied from the source at alignment time and are SOURCE-owned: the
+// translator owns the target `\w` words inside the milestone and the grouping,
+// NOT the spelling/pointing/morphology of the original-language word. So a
+// curated fix to the source spelling on master (e.g. "Fixing unicode in Numbers
+// 20–22" — combining marks reordered into UHB-legacy order in x-lemma/x-content)
+// must propagate down to D1 even on a verse a translator has edited; otherwise
+// the nightly export re-renders D1's stale source bytes back onto master and
+// silently REVERTS the fix (the freshness gate can't catch it — its watermark is
+// per-file but the reimport's skip is per-verse, so the watermark advances past
+// the un-synced edited verse). This is the verse analogue of the TWL-PSA /
+// Hebrew-NFC clobber class.
+//
+// Conservative, structure-preserving, never-guess — same discipline as
+// healReplacementChars:
+//   - Match a target milestone to master ONLY by source identity:
+//     strong | occurrence | occurrences. That key is stable across a translator
+//     edit (the source word is the same Hebrew) and across regrouping, so it
+//     survives an edited target; it does NOT rely on position.
+//   - x-strong is the match KEY, so a matched milestone already agrees on strong
+//     (a milestone master re-pointed to a different strong simply won't match and
+//     is left alone — re-pointing is a different, out-of-scope class).
+//   - Adopt master's value for content/lemma/morph ONLY when master carries a
+//     SINGLE distinct value for that (key, attr). If master is ambiguous (the same
+//     source key appears with conflicting values — malformed/AI data) and the
+//     target disagrees, leave it as-is and REPORT it (divergent) rather than guess.
+//   - Target words + grouping + every other node are untouched, so nothing can
+//     unalign. Mutates `targetVerseObjects` in place (only existing string attrs
+//     on existing milestone nodes are reassigned), mirroring healReplacementChars.
+// No-op (identity, empty report) on a verse whose source attrs already match
+// master — the steady-state case.
+
+// Source-owned milestone attributes copied from master (x-strong is the match
+// key, so it's excluded from the value copy — a matched milestone agrees on it).
+const SOURCE_OWNED_MILESTONE_ATTRS = ["content", "lemma", "morph"] as const;
+
+// Source-word identity of a `\zaln-s` milestone: strong | occurrence |
+// occurrences. null when strong is absent (un-keyable — never matched).
+function milestoneSourceKey(o: Record<string, unknown>): string | null {
+  const strong = o["strong"];
+  if (typeof strong !== "string" || strong === "") return null;
+  return `${strong}|${String(o["occurrence"] ?? "")}|${String(o["occurrences"] ?? "")}`;
+}
+
+export interface SourceAttrReconcileReport {
+  // (key, attr) pairs whose target value was updated to match master.
+  reconciled: Array<{ key: string; attr: string; from: string; to: string }>;
+  // (key, attr) pairs where master diverges from the target but the master value
+  // was AMBIGUOUS (>1 distinct value for that key) — left as-is, surfaced so the
+  // residual potential clobber is visible rather than silent.
+  divergent: Array<{ key: string; attr: string }>;
+}
+
+export function reconcileSourceAttrsFromMaster(
+  targetVerseObjects: unknown[],
+  masterVerseObjects: unknown[],
+): SourceAttrReconcileReport {
+  const report: SourceAttrReconcileReport = { reconciled: [], divergent: [] };
+  if (!Array.isArray(targetVerseObjects) || !Array.isArray(masterVerseObjects)) return report;
+
+  // master: key → attr → set of distinct values seen on master for that key.
+  const masterByKey = new Map<string, Map<string, Set<string>>>();
+  const collectMaster = (nodes: unknown[]): void => {
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
+      const o = node as Record<string, unknown>;
+      if (o["type"] === "milestone" && o["tag"] === "zaln") {
+        const key = milestoneSourceKey(o);
+        if (key !== null) {
+          let attrs = masterByKey.get(key);
+          if (!attrs) masterByKey.set(key, (attrs = new Map()));
+          for (const a of SOURCE_OWNED_MILESTONE_ATTRS) {
+            const val = o[a];
+            if (typeof val !== "string") continue;
+            let set = attrs.get(a);
+            if (!set) attrs.set(a, (set = new Set()));
+            set.add(val);
+          }
+        }
+      }
+      if (Array.isArray(o["children"])) collectMaster(o["children"] as unknown[]);
+    }
+  };
+  collectMaster(masterVerseObjects);
+
+  const applyTarget = (nodes: unknown[]): void => {
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
+      const o = node as Record<string, unknown>;
+      if (o["type"] === "milestone" && o["tag"] === "zaln") {
+        const key = milestoneSourceKey(o);
+        const attrs = key !== null ? masterByKey.get(key) : undefined;
+        if (key !== null && attrs) {
+          for (const a of SOURCE_OWNED_MILESTONE_ATTRS) {
+            const set = attrs.get(a);
+            if (!set || set.size === 0) continue;
+            const cur = typeof o[a] === "string" ? (o[a] as string) : "";
+            if (set.size > 1) {
+              // Master ambiguous for this key — never guess. Only flag when the
+              // target actually disagrees with every master candidate.
+              if (!set.has(cur)) report.divergent.push({ key, attr: a });
+              continue;
+            }
+            const only = [...set][0];
+            if (only !== cur) {
+              report.reconciled.push({ key, attr: a, from: cur, to: only });
+              o[a] = only;
+            }
+          }
+        }
+      }
+      if (Array.isArray(o["children"])) applyTarget(o["children"] as unknown[]);
+    }
+  };
+  applyTarget(targetVerseObjects);
+  return report;
+}
+
 // Split AI-glued `\w` tokens and drop their fragments to unaligned. No-op when
 // nothing is glued — clean verses (and Hebrew / Greek source text, which has
 // no Latin boundary punctuation) pass through untouched, no occurrence churn.
