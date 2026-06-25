@@ -14,6 +14,23 @@
 
 ## Last run
 
+2026-06-25 · **great-shamir (cont.)** — **ALL 4 TWL phases shipped → [PR #267](https://github.com/deferredreward/bible-editor/pull/267)**
+(branch `claude/great-shamir-8b15f8`, NOT merged/deployed). **Phase 1:** migration `0032_tw_articles` +
+`scripts/import-tw.mjs` (one en_tw master.zip → 953 articles; mirrors import-lexicon, no zip dep) + `/api/catalogs`
+canonical list. **Phase 2:** ported matcher `api/src/twlMatcher.ts` (buildTermTrie/scanVerseMatches + term-map
+extraction; +twlMatcher.test.mjs 15 asserts), route `GET /api/twl-suggestions/:book/:ch/:v` (api/src/twlSuggest.ts),
+client resolver `web/src/lib/twlResolve.ts` (English span→{orig_words,occurrence,confident}; +test 8 asserts),
+`TwlSuggestions.tsx` pick-to-add UI under the active-verse Words list. **Browser-verified ZEC 1:3:** suggestion
+"Yahweh of Armies"→kt/yahwehofhosts (distinct from linked kt/yahweh), Add created row orig_words "יְהוָה צְבָאוֹת"
+occ1 + keyterm tag confidently. **Codex review (manual + PR-open hook) → 3 fixes committed (662170ab):**
+(a) existing-link exclusion moved CLIENT-side keyed on resolved (tw_link,orig_words,occurrence) — server can't map
+OL↔GL occurrence so a server count mis-identified/duplicated; route now returns all matches + Shell
+`isTwlSuggestionExcluded` filters; (b) disambiguation Tags now follow the CHOSEN article's category; (c) low-confidence
+picker pre-seed reads resolved orig_words directly, not the stale (pre-insert) data snapshot. typecheck + api/web tests
++ build all green. **DEPLOY NOTE after merge:** apply migration 0032 to prod + run import-tw.mjs → load import-tw.sql
+to prod D1 (until seeded, catalog falls back to usage-derived links and suggestions are empty). Memory:
+[[project_twl_generation_into_app]].
+
 2026-06-25 · **great-shamir** — **Bringing Rich's TWL generation into the app (Beth/Rich Zulip ask).** Deep
 feasibility + Codex review + approved plan (`C:\Users\benja\.claude\plans\immutable-snuggling-snowflake.md`,
 full 4-phase build, port Rich's matcher core). **Phases 0a + 0b SHIPPED IN-BRANCH + browser-verified** (own
@@ -425,25 +442,13 @@ Not yet PR'd.
 
 ## In progress
 
-- **great-shamir** (2026-06-25) — **TWL generation into the app**, plan
-  `C:\Users\benja\.claude\plans\immutable-snuggling-snowflake.md` (approved, full build). **Phases 0a+0b DONE**
-  (WordsTable occurrence + English gloss; QuoteBuilderPopper generalized to Words — see Last run; branch
-  `claude/great-shamir-8b15f8`, NOT committed). **REMAINING — Phase 1 (en_tw data layer):** migration
-  `0032_tw_articles` (id `kt/god`, category, title, testament, tw_link, last_synced) + `scripts/import-tw.mjs`
-  (fetch `git.door43.org/unfoldingWord/en_tw/archive/master.zip` — ONE 12MB fetch — unzip, parse
-  `bible/{kt,names,other}/*.md` first `# Heading`→title, emit SQL; mirror `import-lexicon.mjs`; **DEP DECISION
-  PENDING**: fflate vs zero-dep tar/zlib — fflate leaks into junctioned node_modules, prefer zero-dep tarball +
-  Node `zlib.gunzipSync` + minimal ustar reader) + extend `/api/catalogs` to read canonical titles/links with
-  usage-derived fallback. **Phase 2 (suggestions):** port `buildTermTrie`/`scanVerseMatches` (self-contained,
-  zero imports) from node-twl-generator → `api/src/twlMatcher.ts` (+fixture test vs Rich's lib; preserve
-  variant gen + God/falsegod cap rule); route `GET /api/twl-suggestions/:book/:ch/:v` (trie from tw_articles,
-  testament-filtered via NT_BOOKS, exclude existing verse links); `web/src/lib/twlResolve.ts` English-span→
-  `{orig_words,occurrence,confident}` via collectTargetTokens+buildQuoteFromSelection (+test; **the crux** —
-  best-effort, fall back to opening the picker pre-seeded when not confident); Suggestions section under Words
-  (pick-to-add, disambiguation dropdown, create via `createRow("twl")` to respect chapter locks). TWLs are
-  single-verse: suggestions scope to the active ULT verse; only a UST bridge widens (label per-verse). **AI is
-  OUT of scope** (user). Dev env ready: junctioned `api/.wrangler`→main, `.dev.vars` copied; serve via
-  `wrangler dev --port <free> --assets "<abs worktree>/web/dist"` from api/, mint dev-auth in console.
+- **great-shamir** (2026-06-25) — **TWL generation into the app — ALL 4 PHASES DONE, [PR #267](https://github.com/deferredreward/bible-editor/pull/267) open.**
+  Plan `C:\Users\benja\.claude\plans\immutable-snuggling-snowflake.md`. Commits: 38f36748 (0a/0b), bec5cf1d (1),
+  3fbbffe0 (2), 662170ab (Codex fixes). Browser-verified; typecheck/api+web tests/build green; 2 Codex passes
+  cleared. **AWAITING:** human review → merge → **prod deploy steps** (migration 0032 + import-tw.mjs → load
+  import-tw.sql to prod D1; until seeded, suggestions are empty + catalog falls back to usage-derived links). Full
+  detail in Last run + memory [[project_twl_generation_into_app]]. Dev env left set up: junctioned
+  `api/.wrangler`→main, `.dev.vars` copied (both gitignored).
 
 - **inspiring-faraday** (2026-06-23) — **Adapt 2 Kings 18-20 TN → Isaiah 36-39** (parallel-passage note
   migration; plan at `C:\Users\benja\.claude\plans\quirky-finding-meerkat.md`, approved; reviewed twice by
