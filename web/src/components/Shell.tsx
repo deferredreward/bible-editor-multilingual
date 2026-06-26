@@ -990,7 +990,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // original-language identity, which the server can't derive from the English
   // text without the alignment. The tw_link is intentionally ignored: once a word
   // carries any TWL we don't suggest a second article for it. Single words match
-  // by shared source token (tolerant of aligner-folded particles); multi-word
+  // by source key (occurrence-anchored, tolerant of aligner-folded particles), so
+  // occurrence 2 still gets suggested when only occurrence 1 is linked; multi-word
   // phrases are kept unless the identical phrase quote is already linked.
   const isTwlSuggestionExcluded = useCallback(
     (s: TwlSuggestion): boolean => {
@@ -1003,12 +1004,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           ?.verseObjects;
         return Array.isArray(vo) ? vo : undefined;
       };
-      const resolved = resolveSpanToSource(
-        grab("ULT"),
-        grab("UHB") ?? grab("UGNT"),
-        s.matchedText,
-        s.glOccurrence,
-      );
+      const uhb = grab("UHB") ?? grab("UGNT");
+      const resolved = resolveSpanToSource(grab("ULT"), uhb, s.matchedText, s.glOccurrence);
       // Couldn't resolve to OL — conservatively drop only an exact tw_link repeat.
       if (!resolved) return rows.some((r) => r.tw_link === s.twLink);
       // A multi-word phrase (e.g. "Yahweh of Armies") is its own lexical unit:
@@ -1018,13 +1015,19 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         const key = `${nfc(resolved.orig_words)}|${resolved.occurrence}`;
         return rows.some((r) => `${nfc(r.orig_words ?? "")}|${r.occurrence ?? 1}` === key);
       }
-      // Single word: once the word carries any TWL we don't suggest a second
-      // article for it (regardless of article or occurrence). Compare by shared
-      // source token, split on whitespace + maqqef, so a particle the aligner
-      // folds into the quote ("אֶת־יִשְׂרָאֵל" vs the stored "יִשְׂרָאֵל") still matches.
-      const tokenize = (q: string) => nfc(q).split(/[\s־]+/).filter(Boolean);
-      const sugTokens = new Set(tokenize(resolved.orig_words));
-      return rows.some((r) => tokenize(r.orig_words ?? "").some((t) => sugTokens.has(t)));
+      // Single word: once THIS occurrence of the word carries any TWL we don't
+      // suggest a second article for it (regardless of article). Compare by source
+      // KEY (position/occurrence-anchored) rather than the quote string: the key
+      // survives a particle the aligner folds into the quote ("אֶת־יִשְׂרָאֵל" vs the
+      // stored "יִשְׂרָאֵל"), while still distinguishing occurrence 2 from occurrence 1.
+      const sugKeys = selectionFromQuote(uhb, resolved.orig_words, resolved.occurrence);
+      if (sugKeys.size === 0) return false;
+      return rows.some((r) => {
+        for (const k of selectionFromQuote(uhb, r.orig_words, r.occurrence ?? 1)) {
+          if (sugKeys.has(k)) return true;
+        }
+        return false;
+      });
     },
     [data, activeVerse, verseIndexByVersion],
   );
