@@ -523,6 +523,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         data.twl.some((r) => r.verse === 0)),
     [data],
   );
+  // Does the intro tile actually have Words (TWL) rows? The tw lane is otherwise
+  // "always applicable", but verse 0 outside the Psalms usually has none, so the
+  // rail should show a "nothing to check" dash there rather than a checkbox.
+  const introHasTwl = useMemo(() => !!data && data.twl.some((r) => r.verse === 0), [data]);
 
   // tileSet runs verseHasUnalignedWork (a full alignment parse) for EVERY
   // verse, so it must not recompute when only a TN/TQ/TWL row changed. Keying
@@ -572,9 +576,19 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       if (ustVO && verseHasUnalignedWork(ustVO, sourceVO)) return true;
       return false;
     };
+    const introHasScripture = versesWithSomething.has(0);
     const buildLanes = (verse: number): VerseTileLane[] =>
       CHECK_LANES.map((lane) => {
-        const applicable = laneApplicable(lane, versesWithTn.has(verse), versesWithTq.has(verse));
+        // text/tw are "always applicable" for real verses, but the intro tile
+        // (verse 0) only has them when intro scripture / TWL rows actually exist.
+        const applicable =
+          verse === 0
+            ? lane === "text"
+              ? introHasScripture
+              : lane === "tw"
+                ? introHasTwl
+                : laneApplicable(lane, versesWithTn.has(0), versesWithTq.has(0))
+            : laneApplicable(lane, versesWithTn.has(verse), versesWithTq.has(verse));
         const checkers = laneIndex.get(laneKey(verse, lane));
         const shade: LaneShade = applicable ? shadeFromCheckers(checkers, meUserId) : "open";
         const title = `${LANE_LABELS[lane]} — ${applicable ? laneAttribution(checkers, meUserId) : "nothing to check"}`;
@@ -583,13 +597,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     // Chapter-front USFM content (Psalm \d superscriptions, leading \p before \v 1)
     // is stored as verse 0 in the verses table. Surface the intro tile when any of
     // those exist even if no TN/TQ/TWL row is attached to verse 0.
-    const introHasScripture = versesWithSomething.has(0);
     const tiles: VerseTile[] = [];
     if (introHasResource || introHasScripture) tiles.push({ verse: 0, has: false, lanes: buildLanes(0) });
     const verseNums = [...versesWithSomething].filter((v) => v > 0).sort((a, b) => a - b);
     for (const v of verseNums) tiles.push({ verse: v, has: hasUnalignedFor(v), lanes: buildLanes(v) });
     return tiles;
-  }, [versesForTiles, laneIndex, versesWithTn, versesWithTq, meUserId, introHasResource]);
+  }, [versesForTiles, laneIndex, versesWithTn, versesWithTq, meUserId, introHasResource, introHasTwl]);
 
   // Toggle MY checkoff stamp on a (verse, lane): optimistic + outbox (offline-safe).
   const toggleLane = useCallback(
