@@ -18,3 +18,19 @@
 export function nfc(s: string): string {
   return s.normalize("NFC");
 }
+
+// Consonant-only fold for TWL deny-list matching. NFC, then drop pointing
+// (combining marks), the maqaf (U+05BE), the word-joiner (U+2060 / U+200D),
+// and inter-word whitespace — collapsing a quote to its bare consonant string.
+//
+// The two filter tables (twl_unlinked_words, twl_deleted_rows) store
+// vowel-stripped Hebrew that keeps the U+2060 prefix-joiner and spaces. But a
+// quote freshly resolved in the browser comes back from buildQuoteFromSelection
+// with maqaf/space separators (never U+2060), so `ל⁠בן` in the table would
+// arrive as `ל בן` and miss. Folding both sides to consonants makes the compare
+// separator- and pointing-insensitive. Equality stays full-string (`בן` never
+// matches `לבן`); the only cost is that two different multi-word quotes whose
+// consonants concatenate identically would collide — acceptable for a deny-list.
+export function twlFilterKey(s: string): string {
+  return s.normalize("NFC").replace(/[\p{Mn}־⁠‍\s]/gu, "");
+}

@@ -42,10 +42,14 @@ interface Props {
   // by Shell against the live rows). Applied after fetch so adds/deletes reflect
   // without a server round-trip.
   isExcluded?: (suggestion: TwlSuggestion) => boolean;
+  // Article ids blocked by the unlinked deny-list for this suggestion's resolved
+  // quote. Blocked ids are pruned from the picker; a suggestion whose every
+  // article is blocked is dropped entirely.
+  blockedArticleIds?: (suggestion: TwlSuggestion) => Set<string>;
   locked?: boolean;
 }
 
-function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExcluded, locked = false }: Props) {
+function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExcluded, blockedArticleIds, locked = false }: Props) {
   const [suggestions, setSuggestions] = useState<TwlSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -90,9 +94,20 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
   }, [book, chapter, verse]);
 
   const keyOf = (s: TwlSuggestion) => `${s.matchedText}|${s.glOccurrence}`;
-  // Filter out already-linked suggestions on each render — isExcluded closes over
-  // the live verse rows, so adding/deleting a link updates the list immediately.
-  const visible = isExcluded ? suggestions.filter((s) => !isExcluded(s)) : suggestions;
+  // Filter on each render — isExcluded / blockedArticleIds close over the live
+  // verse rows + deny-lists, so adding/deleting a link or loading filters
+  // updates the list immediately. Two passes: drop already-linked suggestions
+  // (isExcluded) and deleted-here ones, then prune unlinked-blocked articles
+  // from each survivor's picker, dropping any whose every article is blocked.
+  const visible = suggestions
+    .filter((s) => !(isExcluded?.(s) ?? false))
+    .map((s) => {
+      const blocked = blockedArticleIds?.(s);
+      const allowed =
+        blocked && blocked.size > 0 ? s.disambiguation.filter((id) => !blocked.has(id)) : s.disambiguation;
+      return { s, allowed };
+    })
+    .filter(({ allowed }) => allowed.length > 0);
 
   return (
     <Box sx={{ mt: 1.5 }}>
@@ -130,10 +145,17 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
         </Typography>
       ) : (
         <Stack spacing={0.5}>
-          {visible.map((s) => {
+          {visible.map(({ s, allowed }) => {
             const k = keyOf(s);
-            const selected = chosen[k] ?? s.articleId;
-            const ambiguous = s.disambiguation.length > 1;
+            // Keep `selected` within the allowed set: honor the user's pick if
+            // still allowed, else the primary if allowed, else the first survivor.
+            const selected =
+              chosen[k] && allowed.includes(chosen[k])
+                ? chosen[k]
+                : allowed.includes(s.articleId)
+                  ? s.articleId
+                  : allowed[0];
+            const ambiguous = allowed.length > 1;
             const isRejected = !!rejected[k];
             return (
               <Box
@@ -180,7 +202,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
                     variant="standard"
                     sx={{ fontSize: 11, maxWidth: 150, "& .MuiSelect-select": { py: 0.25 } }}
                   >
-                    {s.disambiguation.map((id) => (
+                    {allowed.map((id) => (
                       <MenuItem key={id} value={id} sx={{ fontSize: 11 }}>
                         {twShort(id)}
                       </MenuItem>

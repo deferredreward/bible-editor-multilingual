@@ -20,6 +20,7 @@ import type { UseBookReturn } from "../hooks/useBook";
 import { useBookLint } from "../hooks/useBookLint";
 import { useLexicon } from "../hooks/useLexicon";
 import { useAiDrafts } from "../hooks/useAiDrafts";
+import { useTwlFilters } from "../hooks/useTwlFilters";
 import { outbox } from "../sync/outbox";
 import { api } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion } from "../sync/api";
@@ -214,6 +215,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // indicator. Keyed on book, so it fetches once per book change — never on
   // chapter/verse navigation within a book.
   const bookLint = useBookLint(book, true);
+  // TWL suggestion deny-lists (unlinked word+article pairs + this book's deleted
+  // reference+quotes). Keyed on book, fetched once per book change. Drives the
+  // deleted-here exclusion + unlinked article-pruning for per-verse suggestions.
+  const twlFilters = useTwlFilters(book);
   // The lint report is otherwise fetched once per book, so a translator who
   // fixes a flagged note (e.g. unbalanced brackets around an Alternate
   // translation) would keep seeing the stale count until a reload. Refetch when
@@ -997,8 +1002,6 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     (s: TwlSuggestion): boolean => {
       if (!data) return false;
       const verse = activeVerse;
-      const rows = data.twl.filter((r) => r.verse === verse && r.deleted_at == null);
-      if (rows.length === 0) return false;
       const grab = (bv: string): unknown[] | undefined => {
         const vo = (verseIndexByVersion[bv]?.[verse]?.content as { verseObjects?: unknown[] } | null)
           ?.verseObjects;
@@ -1006,6 +1009,14 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       };
       const uhb = grab("UHB") ?? grab("UGNT");
       const resolved = resolveSpanToSource(grab("ULT"), uhb, s.matchedText, s.glOccurrence);
+      // Deleted deny-list: this reference + quote was deleted upstream (any
+      // article — the table is article-agnostic). Applies regardless of whether
+      // the verse currently carries any links, so it runs before the rows check.
+      if (resolved && twlFilters.isDeletedHere(`${chapter}:${verse}`, resolved.orig_words)) {
+        return true;
+      }
+      const rows = data.twl.filter((r) => r.verse === verse && r.deleted_at == null);
+      if (rows.length === 0) return false;
       // Couldn't resolve to OL — conservatively drop only an exact tw_link repeat.
       if (!resolved) return rows.some((r) => r.tw_link === s.twLink);
       // A multi-word phrase (e.g. "Yahweh of Armies") is its own lexical unit:
@@ -1029,7 +1040,37 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         return false;
       });
     },
-    [data, activeVerse, verseIndexByVersion],
+    [data, activeVerse, verseIndexByVersion, chapter, twlFilters],
+  );
+
+  // Which of a suggestion's candidate articles the unlinked deny-list blocks for
+  // its resolved OL quote. Returned to TwlSuggestions, which prunes them from the
+  // picker (and drops the suggestion when all are blocked). The deny-list is
+  // (word, article), so only the matching article is removed — e.g. kt/sonofgod
+  // for a Hebrew "son" word, while kt/son survives. Unresolvable → block nothing.
+  const twlBlockedArticleIds = useCallback(
+    (s: TwlSuggestion): Set<string> => {
+      const blocked = new Set<string>();
+      if (!data) return blocked;
+      const verse = activeVerse;
+      const grab = (bv: string): unknown[] | undefined => {
+        const vo = (verseIndexByVersion[bv]?.[verse]?.content as { verseObjects?: unknown[] } | null)
+          ?.verseObjects;
+        return Array.isArray(vo) ? vo : undefined;
+      };
+      const resolved = resolveSpanToSource(
+        grab("ULT"),
+        grab("UHB") ?? grab("UGNT"),
+        s.matchedText,
+        s.glOccurrence,
+      );
+      if (!resolved) return blocked;
+      for (const id of s.disambiguation) {
+        if (twlFilters.isUnlinked(resolved.orig_words, `rc://*/tw/dict/bible/${id}`)) blocked.add(id);
+      }
+      return blocked;
+    },
+    [data, activeVerse, verseIndexByVersion, twlFilters],
   );
 
   // Routes any verse / version / aligner-target change through the dirty
@@ -2352,6 +2393,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onStartWordQuoteBuild={(wordId) => startQuoteBuild({ kind: "twl", id: wordId })}
           onAddTwlSuggestion={handleAddTwlSuggestion}
           isTwlSuggestionExcluded={isTwlSuggestionExcluded}
+          twlBlockedArticleIds={twlBlockedArticleIds}
           panelMode={panelMode}
           onSetPanelMode={handleSetPanelMode}
           alignmentProps={alignmentTabProps}
