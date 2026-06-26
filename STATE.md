@@ -14,6 +14,34 @@
 
 ## Last run
 
+2026-06-26 · **crazy-bhabha** — **TWL suggestion deny-lists integrated (read-only consumption).** Two
+upstream-exported tables now suppress re-suggestions translators already rejected: **twl_unlinked_words** (182;
+word+article never linked, anywhere — encodes "son of god isn't in the OT" per-word) and **twl_deleted_rows**
+(3765 distinct; reference+quote deleted, must not return at that ref — **article-agnostic**, no twLink col).
+**Shipped (branch `claude/crazy-bhabha-374793`, rebased on main @98646b21, PR open):** migration
+`0033_twl_filters.sql`; importer `scripts/import-twl-filters.mjs` (reads gz/plain CSVs from ~/Downloads →
+batched INSERT OR IGNORE; book uppercased); route `GET /api/twl-filters/:book` (`api/src/twlFilters.ts`, global
+unlinked + book-scoped deleted, COUNT+MAX(rowid) cache like getTrie); hook `web/src/hooks/useTwlFilters.ts` (SWR
+keyed by book, builds folded lookup Sets); wired in Shell — deleted filter folds into `isTwlSuggestionExcluded`
+(restructured so it fires even with 0 existing links, BEFORE the rows.length===0 early-return; preserves main's
+occurrence-anchored single-word + multi-word phrase logic from #270), unlinked filter is **article-level
+pruning** via new `twlBlockedArticleIds`→`TwlSuggestions.blockedArticleIds` (drops only the blocked article from
+the picker, hides the suggestion only when ALL its articles are blocked — kt/son survives when kt/sonofgod is
+blocked). **Normalization crux:** compare on a consonant-only fold `twlFilterKey` (hebrew.ts) = NFC + strip
+`[\p{Mn}־⁠‍\s]` (pointing, maqaf, U+2060/U+200D joiner, whitespace), applied to BOTH stored value and resolved
+quote — because buildQuoteFromSelection reconstructs separators as maqaf/space, never U+2060, so `ל⁠בן` would
+arrive as `ל בן`. **Fold proven decisively:** over all 3982 rows `twlFilterKey(pointed)===twlFilterKey(normalized)`
+(and the U+2060-vs-space prefix case both → `לבן`). **Verified:** typecheck (api+web) green post-rebase; importer
+counts 182/3765; migration+import applied to LOCAL dev D1; `/api/twl-filters/{GEN,ZEC}` return correct
+global+book-scoped JSON; browser confirmed the hook fetches `/api/twl-filters/ZEC` on load + Suggestions UI
+renders. Couldn't click-through pruning: this worktree's local D1 has NO seeded scripture/tw_articles
+(chapters/ZEC empty), so no real suggestions generate locally. **DEPLOY NOTE:** apply migration 0033 to prod +
+`node scripts/import-twl-filters.mjs` → load `scripts/out/import-twl-filters.sql` to prod D1. Re-run the importer
+whenever the upstream tables change (snapshot — script DELETEs both tables first). **Write-back (verse/book/
+testament) wanted by team but shape undecided — deferred;** proposal in plan file (verse→deleted POST,
+word+article→unlinked POST, testament via unused `tw_articles.testament`). Plan:
+`C:\Users\benja\.claude\plans\soft-hopping-torvalds.md`.
+
 2026-06-25 · **great-shamir (cont.)** — **ALL 4 TWL phases shipped → [PR #267](https://github.com/deferredreward/bible-editor/pull/267)**
 (branch `claude/great-shamir-8b15f8`, NOT merged/deployed). **Phase 1:** migration `0032_tw_articles` +
 `scripts/import-tw.mjs` (one en_tw master.zip → 953 articles; mirrors import-lexicon, no zip dep) + `/api/catalogs`

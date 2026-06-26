@@ -672,6 +672,14 @@ export interface TwlSuggestion {
   disambiguation: string[];
 }
 
+// TWL suggestion deny-lists from GET /api/twl-filters/:book. Mirrors
+// api/src/twlFilters.ts. `unlinked` is global (word+article never linked);
+// `deleted` is this book's deleted reference+quote pairs (article-agnostic).
+export interface TwlFiltersResponse {
+  unlinked: { normOrigWords: string; twLink: string }[];
+  deleted: { reference: string; normOrigWords: string }[];
+}
+
 // One curated note template for a support reference. `type` is the variant
 // label from the sheet ("generic", "plural", …); empty string is the default
 // unnamed variant.
@@ -972,6 +980,12 @@ export const api = {
       `/api/twl-suggestions/${encodeURIComponent(book)}/${chapter}/${verse}`,
       { signal },
     ),
+
+  // TWL suggestion deny-lists for a book (global unlinked word+article pairs +
+  // this book's deleted reference+quotes). Fetched once per book change by
+  // useTwlFilters; the client folds + compares against resolved OL quotes.
+  getTwlFilters: (book: string, signal?: AbortSignal) =>
+    request<TwlFiltersResponse>(`/api/twl-filters/${encodeURIComponent(book)}`, { signal }),
 
   getNoteTemplates: () => request<NoteTemplatesResponse>(`/api/note-templates`),
 
