@@ -985,12 +985,14 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     [data, activeVerse, verseIndexByVersion, book, chapter],
   );
 
-  // Whether a per-verse suggestion is already linked on the active verse. Done
+  // Whether a per-verse suggestion is already covered on the active verse. Done
   // client-side (not on the suggest route) because the match is by RESOLVED
-  // original-language identity (tw_link, orig_words, occurrence): the existing
-  // TWL row stores the OL occurrence, which the server can't derive from the
-  // English-text occurrence without the alignment. Unresolvable suggestions fall
-  // back to a conservative "tw_link already present" check.
+  // original-language identity, which the server can't derive from the English
+  // text without the alignment. The tw_link is intentionally ignored: once a word
+  // carries any TWL we don't suggest a second article for it. Single words match
+  // by source key (occurrence-anchored, tolerant of aligner-folded particles), so
+  // occurrence 2 still gets suggested when only occurrence 1 is linked; multi-word
+  // phrases are kept unless the identical phrase quote is already linked.
   const isTwlSuggestionExcluded = useCallback(
     (s: TwlSuggestion): boolean => {
       if (!data) return false;
@@ -1002,19 +1004,30 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           ?.verseObjects;
         return Array.isArray(vo) ? vo : undefined;
       };
-      const resolved = resolveSpanToSource(
-        grab("ULT"),
-        grab("UHB") ?? grab("UGNT"),
-        s.matchedText,
-        s.glOccurrence,
-      );
-      if (resolved) {
-        const key = `${s.twLink}|${nfc(resolved.orig_words)}|${resolved.occurrence}`;
-        return rows.some(
-          (r) => `${r.tw_link}|${nfc(r.orig_words ?? "")}|${r.occurrence ?? 1}` === key,
-        );
+      const uhb = grab("UHB") ?? grab("UGNT");
+      const resolved = resolveSpanToSource(grab("ULT"), uhb, s.matchedText, s.glOccurrence);
+      // Couldn't resolve to OL — conservatively drop only an exact tw_link repeat.
+      if (!resolved) return rows.some((r) => r.tw_link === s.twLink);
+      // A multi-word phrase (e.g. "Yahweh of Armies") is its own lexical unit:
+      // suggest it even when a component word is already tagged. Only drop it when
+      // the identical phrase quote is already linked.
+      if (/\s/.test(s.matchedText.trim())) {
+        const key = `${nfc(resolved.orig_words)}|${resolved.occurrence}`;
+        return rows.some((r) => `${nfc(r.orig_words ?? "")}|${r.occurrence ?? 1}` === key);
       }
-      return rows.some((r) => r.tw_link === s.twLink);
+      // Single word: once THIS occurrence of the word carries any TWL we don't
+      // suggest a second article for it (regardless of article). Compare by source
+      // KEY (position/occurrence-anchored) rather than the quote string: the key
+      // survives a particle the aligner folds into the quote ("אֶת־יִשְׂרָאֵל" vs the
+      // stored "יִשְׂרָאֵל"), while still distinguishing occurrence 2 from occurrence 1.
+      const sugKeys = selectionFromQuote(uhb, resolved.orig_words, resolved.occurrence);
+      if (sugKeys.size === 0) return false;
+      return rows.some((r) => {
+        for (const k of selectionFromQuote(uhb, r.orig_words, r.occurrence ?? 1)) {
+          if (sugKeys.has(k)) return true;
+        }
+        return false;
+      });
     },
     [data, activeVerse, verseIndexByVersion],
   );
