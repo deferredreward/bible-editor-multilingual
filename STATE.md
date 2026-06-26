@@ -4,8 +4,8 @@
 > before you finish. It holds **where the work is** — what just happened, what's mid-flight,
 > what's blocked on a human, and the durable lessons that aren't in the code.
 >
-> Pair it with the standing spec: [`CLAUDE.md`](../CLAUDE.md) (how to work here) and
-> [`docs/plan.md`](../docs/plan.md) / [`docs/handoff.md`](../docs/handoff.md) (where the project is going).
+> Pair it with the standing spec: [`CLAUDE.md`](CLAUDE.md) (how to work here) and
+> [`docs/plan.md`](docs/plan.md) / [`docs/handoff.md`](docs/handoff.md) (where the project is going).
 > **State tells you where you are; the spec tells you where to go.**
 >
 > Many worktrees edit this file in parallel. Keep the dated sections (**Completed**,
