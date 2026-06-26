@@ -587,10 +587,10 @@ function twShort(link: string | null): string {
   return m ? m[1] : link;
 }
 
-// rc://*/tw/dict/bible/kt/god → Door43 preview article URL.
+// rc://*/tw/dict/bible/kt/god → Door43 raw markdown article URL.
 function twArticleUrl(link: string | null): string {
   if (!link) return "";
   const m = link.match(/\/bible\/([^/]+)\/([^/]+)$/);
   if (!m) return "";
-  return `https://preview.door43.org/u/unfoldingWord/en_tw/master#${m[1]}--${m[2]}`;
+  return `https://git.door43.org/unfoldingWord/en_tw/src/branch/master/bible/${m[1]}/${m[2]}.md`;
 }

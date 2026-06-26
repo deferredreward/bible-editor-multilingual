@@ -31,11 +31,11 @@ function twShort(idOrLink: string): string {
   return m ? m[1] : idOrLink;
 }
 
-// "kt/god" or "rc://*/tw/dict/bible/kt/god" → Door43 preview article URL.
+// "kt/god" or "rc://*/tw/dict/bible/kt/god" → Door43 raw markdown article URL.
 function twArticleUrl(articleId: string): string {
   const m = articleId.match(/\/bible\/([^/]+)\/([^/]+)$/) ?? articleId.match(/^([^/]+)\/([^/]+)$/);
   if (!m) return "";
-  return `https://preview.door43.org/u/unfoldingWord/en_tw/master#${m[1]}--${m[2]}`;
+  return `https://git.door43.org/unfoldingWord/en_tw/src/branch/master/bible/${m[1]}/${m[2]}.md`;
 }
 
 interface Props {
