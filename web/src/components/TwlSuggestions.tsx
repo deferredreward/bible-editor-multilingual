@@ -70,7 +70,6 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
       .then((r) => {
         setSuggestions(r.suggestions);
         setChosen({});
-        setRejected({});
       })
       .catch((e) => {
         if (ctrl.signal.aborted) return;
@@ -82,6 +81,13 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
       });
     return () => ctrl.abort();
   }, [book, chapter, verse, refreshKey, reloadNonce]);
+
+  // Clear rejections only when the verse itself changes — NOT on refreshKey
+  // (which ticks whenever a link is added/deleted on this verse). Otherwise a
+  // normal "reject A, add B" flow would refetch and un-reject A.
+  useEffect(() => {
+    setRejected({});
+  }, [book, chapter, verse]);
 
   const keyOf = (s: TwlSuggestion) => `${s.matchedText}|${s.glOccurrence}`;
   // Filter out already-linked suggestions on each render — isExcluded closes over
