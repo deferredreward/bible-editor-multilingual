@@ -4,6 +4,7 @@
 // column in stacked, columns, and book modes — these versions are
 // read-only, so we don't have to maintain a contentEditable cursor.
 
+import { useState } from "react";
 import { Tooltip, Box } from "@mui/material";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import type { SourceWord } from "../lib/alignment";
@@ -11,6 +12,7 @@ import type { HighlightKey } from "../lib/highlight";
 import type { TwlRow } from "../sync/api";
 import { roleLineSx, wordHighlightStyles } from "../lib/highlightStyles";
 import { SourceTooltipBody } from "./SourceTooltipBody";
+import { PinnedLexBox } from "./PinnedLexBox";
 import { buildTwHintMap, twHintFromMap } from "./UhbStrip";
 
 interface Props {
@@ -78,43 +80,19 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
           occurrences: String(o["occurrences"] ?? "1"),
           content: text,
         };
-        const wordSpan = (
-          <Box
-            component="span"
-            sx={(theme) => {
-              const mode = theme.palette.mode;
-              const hl = wordHighlightStyles(mode);
-              // Find hits own the token (orange) and suppress both the yellow
-              // note fill and the reorder stoplight lines, matching the <mark>
-              // render path's find precedence.
-              const roleSx =
-                !isFindHit && !isActiveFind ? roleLineSx(mode, isPrev, isNext) : undefined;
-              return {
-                cursor: "help",
-                ...(isActiveFind
-                  ? hl.findActive
-                  : isFindHit
-                    ? hl.find
-                    : isHighlighted
-                      ? hl.hl
-                      : {}),
-                ...(roleSx ?? {}),
-              };
-            }}
-          >
-            {text}
-          </Box>
-        );
         items.push(
-          <Tooltip
+          <HebrewWord
             key={`w${items.length}`}
-            title={<SourceTooltipBody source={src} lex={lexiconMap.get(strong) ?? null} twHint={twHints ? twHintFromMap(twHints, text) : null} />}
-            enterDelay={0}
-            enterNextDelay={0}
-            slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
-          >
-            {wordSpan}
-          </Tooltip>,
+            text={text}
+            src={src}
+            lex={lexiconMap.get(strong) ?? null}
+            twHint={twHints ? twHintFromMap(twHints, text) : null}
+            isFindHit={isFindHit}
+            isActiveFind={isActiveFind}
+            isHighlighted={isHighlighted}
+            isPrev={isPrev}
+            isNext={isNext}
+          />,
         );
       } else if (o["type"] === "milestone") {
         walk((o["children"] as unknown[] | undefined) ?? []);
@@ -123,6 +101,83 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
   };
   walk(verseObjects);
   return <>{items}</>;
+}
+
+// One \w source token: hover shows the lexical Tooltip; double-click pins the
+// same lexical info into an interactive Popover so its text (lemma, gloss,
+// definition) can be selected and copied — the hover Tooltip is
+// pointerEvents:none and can't be. Carried in its own component so the pin
+// state is hooks-legal (HebrewLine builds tokens in a loop).
+function HebrewWord({
+  text,
+  src,
+  lex,
+  twHint,
+  isFindHit,
+  isActiveFind,
+  isHighlighted,
+  isPrev,
+  isNext,
+}: {
+  text: string;
+  src: SourceWord;
+  lex: LexiconEntry | null;
+  twHint: string | null;
+  isFindHit: boolean;
+  isActiveFind: boolean;
+  isHighlighted: boolean;
+  isPrev: boolean;
+  isNext: boolean;
+}) {
+  const [pinAnchor, setPinAnchor] = useState<HTMLElement | null>(null);
+  return (
+    <>
+      <Tooltip
+        title={
+          pinAnchor ? "" : <SourceTooltipBody source={src} lex={lex} twHint={twHint} pinHint />
+        }
+        enterDelay={0}
+        enterNextDelay={0}
+        slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
+      >
+        <Box
+          component="span"
+          onDoubleClick={(e) => setPinAnchor(e.currentTarget)}
+          sx={(theme) => {
+            const mode = theme.palette.mode;
+            const hl = wordHighlightStyles(mode);
+            // Find hits own the token (orange) and suppress both the yellow
+            // note fill and the reorder stoplight lines, matching the <mark>
+            // render path's find precedence.
+            const roleSx =
+              !isFindHit && !isActiveFind ? roleLineSx(mode, isPrev, isNext) : undefined;
+            return {
+              cursor: "help",
+              ...(isActiveFind
+                ? hl.findActive
+                : isFindHit
+                  ? hl.find
+                  : isHighlighted
+                    ? hl.hl
+                    : {}),
+              ...(roleSx ?? {}),
+            };
+          }}
+        >
+          {text}
+        </Box>
+      </Tooltip>
+      {pinAnchor && (
+        <PinnedLexBox
+          anchorEl={pinAnchor}
+          source={src}
+          lex={lex}
+          twHint={twHint}
+          onClose={() => setPinAnchor(null)}
+        />
+      )}
+    </>
+  );
 }
 
 // Collect every \w token's raw Strong's from a verseObjects tree. Used by

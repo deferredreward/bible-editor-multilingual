@@ -4,7 +4,8 @@
 // attributes when the UHAL/UGL row is missing a gloss/definition; says so
 // explicitly when we have no entry at all.
 
-import { Box, Divider } from "@mui/material";
+import { useEffect, useState } from "react";
+import { Box, Divider, Fade } from "@mui/material";
 import type { SourceWord } from "../lib/alignment";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import { decodeMorph, morphemeText } from "../lib/morph";
@@ -13,6 +14,38 @@ interface Props {
   source: SourceWord;
   lex: LexiconEntry | null;
   twHint?: string | null;
+  // When set, a faint "double-click to pin" affordance fades in at the bottom
+  // after the tooltip has been hovered ~1.5s — discoverability without clutter.
+  // Only the hover Tooltip passes this; the pinned box (already pinned) omits it.
+  pinHint?: boolean;
+}
+
+// Fades in after a dwell so it doesn't compete with the lexical content the
+// instant the tooltip opens. Remounts (and resets its timer) on each new hover
+// because the Tooltip rebuilds its title content per word.
+function PinHint() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setShow(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <Fade in={show} timeout={400} unmountOnExit>
+      <Box
+        sx={{
+          mt: 0.75,
+          pt: 0.5,
+          borderTop: "1px solid rgba(255,255,255,0.12)",
+          fontSize: 10.5,
+          textAlign: "center",
+          fontStyle: "italic",
+          opacity: 0.6,
+        }}
+      >
+        double-click to pin
+      </Box>
+    </Fade>
+  );
 }
 
 // UHAL/UGL `definition` ships as a single text blob with inline "Meaning:",
@@ -41,7 +74,7 @@ function parseDefinition(raw: string | null | undefined): Array<{ label: string;
   return out;
 }
 
-export function SourceTooltipBody({ source, lex, twHint }: Props) {
+export function SourceTooltipBody({ source, lex, twHint, pinHint }: Props) {
   const lemma = lex?.lemma || source.lemma || "—";
   const pos = lex?.part_of_speech || source.morph || "—";
   const sections = parseDefinition(lex?.definition);
@@ -194,6 +227,8 @@ export function SourceTooltipBody({ source, lex, twHint }: Props) {
           </Box>
         </>
       )}
+
+      {pinHint && <PinHint />}
     </Box>
   );
 }
