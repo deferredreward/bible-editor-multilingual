@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Box, Typography, Stack, IconButton, Tooltip } from "@mui/material";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -8,6 +8,7 @@ import type { LexiconEntry } from "../hooks/useLexicon";
 import { type HighlightCtx, hoverShadow } from "../lib/highlightTypes";
 import { nfc } from "../lib/hebrew";
 import { SourceTooltipBody } from "./SourceTooltipBody";
+import { PinnedLexBox } from "./PinnedLexBox";
 
 // ─── UHB source strip ────────────────────────────────────────────────
 // The verse's Hebrew/Greek source text, rendered as hover-aware tokens. Lifted
@@ -192,32 +193,50 @@ function SourceVerseToken({
 }) {
   const tone = hctx.hebrewHighlight(pos);
   const showInfo = hctx.showSourceInfo;
+  // Double-click pins the lexical info into an interactive Popover so its text
+  // (lemma, gloss, definition) can be selected and copied — the hover Tooltip
+  // is pointerEvents:none and can't be. anchorEl is the word's own element.
+  const [pinAnchor, setPinAnchor] = useState<HTMLElement | null>(null);
   return (
-    <Tooltip
-      title={showInfo ? <SourceTooltipBody source={source} lex={lex} twHint={twHint} /> : ""}
-      enterDelay={0}
-      enterNextDelay={0}
-      disableHoverListener={!showInfo}
-      disableFocusListener={!showInfo}
-      disableTouchListener={!showInfo}
-      slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
-    >
-      <Box
-        component="span"
-        onMouseEnter={() => hctx.onHebrewEnter(pos)}
-        onMouseLeave={hctx.onLeave}
-        sx={{
-          cursor: "help",
-          display: "inline",
-          borderRadius: 0.5,
-          px: tone ? 0.25 : 0,
-          boxShadow: hoverShadow(tone, hctx.themeMode),
-          transition: "box-shadow 0.12s",
-        }}
+    <>
+      <Tooltip
+        title={showInfo && !pinAnchor ? <SourceTooltipBody source={source} lex={lex} twHint={twHint} pinHint /> : ""}
+        enterDelay={0}
+        enterNextDelay={0}
+        disableHoverListener={!showInfo}
+        disableFocusListener={!showInfo}
+        disableTouchListener={!showInfo}
+        slotProps={{ popper: { sx: { pointerEvents: "none" } } }}
       >
-        {text}
-      </Box>
-    </Tooltip>
+        <Box
+          component="span"
+          onMouseEnter={() => hctx.onHebrewEnter(pos)}
+          onMouseLeave={hctx.onLeave}
+          onDoubleClick={(e) => {
+            if (showInfo) setPinAnchor(e.currentTarget);
+          }}
+          sx={{
+            cursor: "help",
+            display: "inline",
+            borderRadius: 0.5,
+            px: tone ? 0.25 : 0,
+            boxShadow: hoverShadow(tone, hctx.themeMode),
+            transition: "box-shadow 0.12s",
+          }}
+        >
+          {text}
+        </Box>
+      </Tooltip>
+      {pinAnchor && (
+        <PinnedLexBox
+          anchorEl={pinAnchor}
+          source={source}
+          lex={lex}
+          twHint={twHint}
+          onClose={() => setPinAnchor(null)}
+        />
+      )}
+    </>
   );
 }
 
