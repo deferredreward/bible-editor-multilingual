@@ -164,7 +164,7 @@ interface Props {
   isTwlSuggestionExcluded?: (suggestion: TwlSuggestion) => boolean;
   // Article ids the unlinked deny-list blocks for a suggestion's resolved quote
   // — pruned from its picker; the whole suggestion hides when all are blocked.
-  twlBlockedArticleIds?: (suggestion: TwlSuggestion) => Set<string>;
+  twlBlockedArticleIds?: (suggestion: TwlSuggestion, candidateIds?: string[]) => Set<string>;
   // Whether the TWL deny-lists have settled (loaded or failed). Suggestions hold
   // off rendering until then so a blocked link can't show before filters arrive.
   twlFiltersReady?: boolean;

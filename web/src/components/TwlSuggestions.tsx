@@ -53,7 +53,7 @@ interface Props {
   // Article ids blocked by the unlinked deny-list for this suggestion's resolved
   // quote. Blocked ids are pruned from the picker; a suggestion whose every
   // article is blocked is dropped entirely.
-  blockedArticleIds?: (suggestion: TwlSuggestion) => Set<string>;
+  blockedArticleIds?: (suggestion: TwlSuggestion, candidateIds?: string[]) => Set<string>;
   // Whether the deny-lists have settled (loaded or failed). The list holds off
   // rendering until then so a blocked suggestion can't show — or be added —
   // before isExcluded / blockedArticleIds have real data. Defaults to true so a
@@ -147,7 +147,9 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
       const merged = family.length
         ? [...s.disambiguation, ...family.filter((id) => !s.disambiguation.includes(id))]
         : s.disambiguation;
-      const blocked = blockedArticleIds?.(s);
+      // Block over the merged candidate set, so a family sibling on the unlinked
+      // deny-list is pruned just like a server-disambiguation one.
+      const blocked = blockedArticleIds?.(s, merged);
       const allowed = blocked && blocked.size > 0 ? merged.filter((id) => !blocked.has(id)) : merged;
       return { s, allowed };
     })
