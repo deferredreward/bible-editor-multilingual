@@ -5,7 +5,7 @@ import UndoIcon from "@mui/icons-material/Undo";
 import CheckIcon from "@mui/icons-material/Check";
 import type { TwlRow, VerseDto } from "../sync/api";
 import { LANE_FILL, type TextLaneCheck } from "../lib/laneChecks";
-import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
+import { highlightsFor, paragraphClass, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
 import { extractTrailingMarkers, stripTrailingMarkers, splitSectionHeaders, type SectionHeader } from "../lib/usfm";
 import { SectionHeaderBand } from "./SectionHeaderBand";
@@ -310,6 +310,26 @@ function findPreviousVerse(
   return null;
 }
 
+// The active/editable verse renders its OWN verseObjects (so the
+// contentEditable text matches the save diff), which drops the paragraph
+// marker drifted from the previous verse — and with it the visual line break
+// that introduces the verse. Map that drifted marker to the same wrapper class
+// the inactive (display) path uses, so we can put it directly on the editable
+// span and get the break/indent back from CSS without touching the text. Use
+// the marker closest to the verse (last in document order); skip `\b`/`\ts`
+// (spacer/divider blocks that would clip or restyle the content span) — a bare
+// block break is enough there.
+function leadingBreakClass(markers: unknown[] | null | undefined): string {
+  if (!Array.isArray(markers)) return "";
+  for (let i = markers.length - 1; i >= 0; i--) {
+    const tag = (markers[i] as { tag?: unknown } | null)?.tag;
+    if (typeof tag !== "string" || tag === "ts") continue;
+    const { wrapper, isBlank } = paragraphClass(tag);
+    return isBlank ? "be-line" : wrapper;
+  }
+  return "";
+}
+
 function VerseSpan({
   book,
   chapter,
@@ -544,6 +564,14 @@ function VerseSpan({
     if (spanRef) spanRef.current = node;
   };
 
+  // When this is the active/editable verse, the editable render drops the
+  // paragraph marker drifted from the previous verse. Put that marker's wrapper
+  // class on the contentEditable span itself so the line break / poetry indent
+  // that introduces the verse is restored from CSS — the span's text is
+  // untouched, so the save diff stays correct.
+  const leadingClass =
+    isActive && !readOnly ? leadingBreakClass(precedingMarkers) : "";
+
   // Text-lane check state for this verse (when wired). The tinted underline on
   // the verse marker keeps the checked state visible even with controls hidden.
   const textShade = textCheck ? textCheck.shade(verseNum) : "open";
@@ -715,7 +743,7 @@ function VerseSpan({
           outline: "none",
           background: "transparent",
         }}
-        className="be-verse-span"
+        className={leadingClass ? `be-verse-span ${leadingClass}` : "be-verse-span"}
       />
       )}
     </span>

@@ -577,7 +577,7 @@ function escapeHtml(s: string): string {
 // CSS class for a paragraph / poetry / blank marker. Returns a pair of
 // classes (one structural, one tag-specific) so the layout stylesheet
 // can attach indents per q-level or special spacing per p-variant.
-function paragraphClass(tag: string): { wrapper: string; isBlank: boolean } {
+export function paragraphClass(tag: string): { wrapper: string; isBlank: boolean } {
   if (tag === "b") return { wrapper: "be-blank", isBlank: true };
   if (tag === "ts") return { wrapper: "be-ts", isBlank: false };
   if (tag === "q" || tag === "q1") return { wrapper: "be-q be-q-1", isBlank: false };

@@ -66,25 +66,31 @@ function paragraphLayoutSx(mode: Mode) {
   const tokenBorder = mode === "dark" ? "rgba(49, 173, 227, 0.55)" : "rgba(1, 66, 99, 0.45)";
   const tokenText = mode === "dark" ? "#7fd1f0" : "#014263"; // Inspire/Ocean
   return {
-    "& div.be-line": { display: "block" },
-    "& div.be-para": { display: "block", marginTop: "0.6em" },
-    "& div.be-q": { display: "block", textIndent: 0 },
-    "& div.be-q-1": { paddingLeft: "1.25em" },
-    "& div.be-q-2": { paddingLeft: "2.5em" },
-    "& div.be-q-3": { paddingLeft: "3.75em" },
-    "& div.be-q-4": { paddingLeft: "5em" },
+    // `.be-*` (not `div.be-*`) so these also apply when the wrapper class is
+    // put directly on the active verse's `be-verse-span` (a <span>) in columns
+    // mode — that's how the leading paragraph break drifted from the previous
+    // verse is restored on the active/editable verse without changing the
+    // contentEditable's text. `be-blank`/`be-ts` stay div-only: they're
+    // standalone spacer/divider blocks and must never style a content span.
+    "& .be-line": { display: "block" },
+    "& .be-para": { display: "block", marginTop: "0.6em" },
+    "& .be-q": { display: "block", textIndent: 0 },
+    "& .be-q-1": { paddingLeft: "1.25em" },
+    "& .be-q-2": { paddingLeft: "2.5em" },
+    "& .be-q-3": { paddingLeft: "3.75em" },
+    "& .be-q-4": { paddingLeft: "5em" },
     "& div.be-blank": {
       display: "block",
       height: "0.6em",
       lineHeight: "0.6em",
       pointerEvents: "none",
     },
-    "& div.be-pi-1": { paddingLeft: "1em" },
-    "& div.be-pi-2": { paddingLeft: "2em" },
-    "& div.be-pi-3": { paddingLeft: "3em" },
-    "& div.be-pc": { textAlign: "center" },
-    "& div.be-mi": { paddingLeft: "1em" },
-    "& div.be-nb": { marginTop: 0 },
+    "& .be-pi-1": { paddingLeft: "1em" },
+    "& .be-pi-2": { paddingLeft: "2em" },
+    "& .be-pi-3": { paddingLeft: "3em" },
+    "& .be-pc": { textAlign: "center" },
+    "& .be-mi": { paddingLeft: "1em" },
+    "& .be-nb": { marginTop: 0 },
     "& span.be-d": {
       fontStyle: "italic",
       fontSize: "0.95em",
