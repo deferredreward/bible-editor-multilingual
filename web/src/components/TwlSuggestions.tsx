@@ -168,14 +168,17 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
     })
     .filter(({ allowed }) => allowed.length > 0);
 
-  // Treat "filters not yet settled" as a loading state: until then we can't tell
-  // which suggestions are blocked, so showing the list would flash addable links
-  // the deny-list will remove a moment later.
-  const showLoading = loading || !filtersReady;
-  // Only blank the body on the FIRST load (nothing to show yet). A same-verse
-  // refetch keeps the current list rendered — see locRef above — so adding a
-  // link shrinks the list by one row instead of collapsing the whole box.
-  const showInitialLoading = showLoading && suggestions.length === 0;
+  // Blank the body when EITHER:
+  //  - the deny-list filters haven't settled — we can't tell which suggestions
+  //    are blocked yet, so rendering would flash addable links the deny-list is
+  //    about to remove (and let them be clicked before it arrives); or
+  //  - it's a first load with nothing to show yet.
+  // A same-verse refetch (loading, filters already settled, list non-empty —
+  // e.g. adding a link ticks refreshKey) keeps the current list rendered, so it
+  // shrinks by one row in place instead of collapsing and re-expanding the box.
+  // Crucially this only holds the list visible when the blank reason is
+  // `loading`, never when it's `!filtersReady`.
+  const showBlank = !filtersReady || (loading && suggestions.length === 0);
 
   if (paused && !peeked) {
     return (
@@ -213,7 +216,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
           Suggestions
         </Typography>
         <Chip
-          label={showInitialLoading ? "…" : visible.length}
+          label={showBlank ? "…" : visible.length}
           size="small"
           variant="outlined"
           sx={{ height: 16, fontFamily: "monospace", fontSize: 10 }}
@@ -232,7 +235,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
         <Typography variant="caption" color="error" sx={{ pl: 1 }}>
           couldn&rsquo;t load suggestions
         </Typography>
-      ) : showInitialLoading ? null : visible.length === 0 ? (
+      ) : showBlank ? null : visible.length === 0 ? (
         <Typography variant="caption" color="text.disabled" sx={{ pl: 1, fontStyle: "italic" }}>
           no new links suggested for this verse
         </Typography>
