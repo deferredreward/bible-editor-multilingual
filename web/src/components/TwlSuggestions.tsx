@@ -24,12 +24,18 @@ import BlockIcon from "@mui/icons-material/Block";
 import ReplayIcon from "@mui/icons-material/Replay";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { api, type TwlSuggestion } from "../sync/api";
+import { useCatalogs } from "../hooks/useCatalogs";
 import { TwArticleDialog } from "./TwArticleDialog";
 
 // rc://*/tw/dict/bible/names/moab → names/moab; bare id passes through.
 function twShort(idOrLink: string): string {
   const m = idOrLink.match(/\/bible\/([^/]+\/[^/]+)$/);
   return m ? m[1] : idOrLink;
+}
+
+// Short id (kt/call-speakloudly) → full link, for catalog group lookups.
+function twLinkOf(id: string): string {
+  return id.startsWith("rc://") ? id : `rc://*/tw/dict/bible/${id}`;
 }
 
 interface Props {
@@ -47,7 +53,7 @@ interface Props {
   // Article ids blocked by the unlinked deny-list for this suggestion's resolved
   // quote. Blocked ids are pruned from the picker; a suggestion whose every
   // article is blocked is dropped entirely.
-  blockedArticleIds?: (suggestion: TwlSuggestion) => Set<string>;
+  blockedArticleIds?: (suggestion: TwlSuggestion, candidateIds?: string[]) => Set<string>;
   // Whether the deny-lists have settled (loaded or failed). The list holds off
   // rendering until then so a blocked suggestion can't show — or be added —
   // before isExcluded / blockedArticleIds have real data. Defaults to true so a
@@ -78,6 +84,19 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
   const [reloadNonce, setReloadNonce] = useState(0);
   // TW article shown in the in-app popup (null = closed).
   const [articleId, setArticleId] = useState<string | null>(null);
+  const catalogs = useCatalogs();
+
+  // The full sibling family for an article (kt/call-* ), as short ids — the same
+  // global groups the committed-row badge uses. The matcher's per-match
+  // disambiguation can collapse to one article when a specific phrase matched
+  // ("Call out" → only kt/call-speakloudly); we still offer the family so the
+  // editor can switch, consistent with the badge. Returns [] when not grouped.
+  const familyOf = (id: string): string[] => {
+    const idx = catalogs.disambiguationIndex?.[twLinkOf(id)];
+    if (idx == null) return [];
+    const group = catalogs.disambiguationGroups?.[idx];
+    return group ? group.map((o) => twShort(o.link)) : [];
+  };
 
   useEffect(() => {
     // Skip the scan entirely while paused (and not peeking) — the whole point
@@ -122,9 +141,16 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
   const visible = suggestions
     .filter((s) => !(isExcluded?.(s) ?? false))
     .map((s) => {
-      const blocked = blockedArticleIds?.(s);
-      const allowed =
-        blocked && blocked.size > 0 ? s.disambiguation.filter((id) => !blocked.has(id)) : s.disambiguation;
+      // Union the per-match disambiguation with the article's global family so a
+      // confidently-resolved single match still exposes its siblings.
+      const family = familyOf(s.articleId);
+      const merged = family.length
+        ? [...s.disambiguation, ...family.filter((id) => !s.disambiguation.includes(id))]
+        : s.disambiguation;
+      // Block over the merged candidate set, so a family sibling on the unlinked
+      // deny-list is pruned just like a server-disambiguation one.
+      const blocked = blockedArticleIds?.(s, merged);
+      const allowed = blocked && blocked.size > 0 ? merged.filter((id) => !blocked.has(id)) : merged;
       return { s, allowed };
     })
     .filter(({ allowed }) => allowed.length > 0);

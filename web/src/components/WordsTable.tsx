@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Alert, Box, InputAdornment, Paper, Snackbar, TextField, IconButton, Typography, Tooltip } from "@mui/material";
+import { Alert, Box, Chip, InputAdornment, ListItemText, Menu, MenuItem, Paper, Snackbar, TextField, IconButton, Typography, Tooltip } from "@mui/material";
+import AltRouteIcon from "@mui/icons-material/AltRoute";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
@@ -361,6 +362,17 @@ const WordRow = memo(function WordRow({
   const savedRef = useRef({ quote: row.orig_words ?? "", twLink: row.tw_link, occurrence: row.occurrence ?? 1 });
   const catalogs = useCatalogs();
 
+  // Sibling articles for the current link (e.g. kt/call-* ), if it had any.
+  // Drives the "this word has alternatives" badge + scoped picker.
+  const disambig = useMemo(() => {
+    if (!twLink) return null;
+    const idx = catalogs.disambiguationIndex?.[twLink];
+    if (idx == null) return null;
+    const group = catalogs.disambiguationGroups?.[idx];
+    return group && group.length > 1 ? group : null;
+  }, [twLink, catalogs.disambiguationIndex, catalogs.disambiguationGroups]);
+  const [disambigAnchor, setDisambigAnchor] = useState<HTMLElement | null>(null);
+
   useEffect(() => setQuote(row.orig_words ?? ""), [row.id, row.version, row.orig_words]);
   useEffect(() => setTwLink(row.tw_link), [row.id, row.version, row.tw_link]);
   useEffect(() => setOccurrence(row.occurrence ?? 1), [row.id, row.version, row.occurrence]);
@@ -633,6 +645,48 @@ const WordRow = memo(function WordRow({
           placeholder="names/, kt/, other/, …"
           onChange={(next) => setTwLink(next)}
         />
+        {disambig && (
+          <>
+            <Tooltip
+              title={`This word has ${disambig.length} Translation Words articles — click to choose the right one`}
+            >
+              <Chip
+                size="small"
+                icon={<AltRouteIcon sx={{ fontSize: 13 }} />}
+                label={disambig.length}
+                color="warning"
+                variant="outlined"
+                onClick={(e) => setDisambigAnchor(e.currentTarget)}
+                sx={{ height: 20, cursor: "pointer", flexShrink: 0, "& .MuiChip-label": { px: 0.5, fontSize: 11 } }}
+              />
+            </Tooltip>
+            <Menu
+              anchorEl={disambigAnchor}
+              open={!!disambigAnchor}
+              onClose={() => setDisambigAnchor(null)}
+              MenuListProps={{ dense: true }}
+            >
+              {disambig.map((opt) => (
+                <MenuItem
+                  key={opt.link}
+                  selected={opt.link === twLink}
+                  onClick={() => {
+                    setTwLink(opt.link);
+                    setDisambigAnchor(null);
+                  }}
+                  sx={{ maxWidth: 360 }}
+                >
+                  <ListItemText
+                    primary={twShort(opt.link)}
+                    secondary={opt.title || undefined}
+                    primaryTypographyProps={{ fontFamily: "monospace", fontSize: 12 }}
+                    secondaryTypographyProps={{ fontSize: 11, sx: { whiteSpace: "normal" } }}
+                  />
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
+        )}
         {twLink && (
           <Tooltip title="read article">
             <IconButton

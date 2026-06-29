@@ -1205,7 +1205,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // (word, article), so only the matching article is removed — e.g. kt/sonofgod
   // for a Hebrew "son" word, while kt/son survives. Unresolvable → block nothing.
   const twlBlockedArticleIds = useCallback(
-    (s: TwlSuggestion): Set<string> => {
+    (s: TwlSuggestion, candidateIds?: string[]): Set<string> => {
       const blocked = new Set<string>();
       if (!data) return blocked;
       const verse = activeVerse;
@@ -1221,7 +1221,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         s.glOccurrence,
       );
       if (!resolved) return blocked;
-      for (const id of s.disambiguation) {
+      // Check the full candidate set the picker will show (server disambiguation
+      // plus any global-family siblings the UI merged in), not just
+      // s.disambiguation — otherwise a family sibling on the unlinked deny-list
+      // would slip past the block and be addable.
+      for (const id of candidateIds ?? s.disambiguation) {
         if (twlFilters.isUnlinked(resolved.orig_words, `rc://*/tw/dict/bible/${id}`)) blocked.add(id);
       }
       return blocked;

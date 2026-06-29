@@ -680,9 +680,21 @@ export interface VerseHistory {
   versions: VerseHistoryEntry[];
 }
 
+// One sibling article in a disambiguation group: the full tw_link + its
+// human heading (the synonym line that tells the alternatives apart).
+export interface DisambiguationOption {
+  link: string;
+  title: string;
+}
+
 export interface Catalogs {
   supportReferences: string[];
   twLinks: string[];
+  // Articles that share a word with at least one sibling, grouped. `Index`
+  // maps a committed tw_link to its group in `Groups`. Optional so a cached
+  // pre-feature payload still validates.
+  disambiguationGroups?: DisambiguationOption[][];
+  disambiguationIndex?: Record<string, number>;
 }
 
 // One per-verse TWL suggestion from GET /api/twl-suggestions/:book/:ch/:v.
