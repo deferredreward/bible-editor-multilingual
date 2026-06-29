@@ -1,7 +1,60 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
+import { buildTermMapFromArticles, type TwArticleLite } from "./twlMatcher";
 
 export const catalogs = new Hono<{ Bindings: Env }>();
+
+const TW_LINK_PREFIX = "rc://*/tw/dict/bible/";
+
+// First heading line, minus the leading "# " — the synonym list a translator
+// reads to tell sibling articles apart (e.g. "call (speak), called, calling").
+function cleanTitle(title: string | null): string {
+  return (title ?? "").split("\n")[0].replace(/^#+\s*/, "").trim();
+}
+
+// A word like "call" maps to several articles (kt/call-speakloudly,
+// kt/call-toname, kt/call-tosummon). The TWL suggestions panel already surfaces
+// this set when ADDING a link; this rebuilds it for COMMITTED links so the
+// Words panel can flag a link that had alternatives and let the editor switch
+// among them without retyping. Detection mirrors the matcher: two articles are
+// siblings if they share any normalized heading term (direct, not transitive,
+// so unrelated families don't chain together).
+function buildDisambiguation(articles: TwArticleLite[]) {
+  const termMap = buildTermMapFromArticles(articles);
+  const titleById = new Map(articles.map((a) => [a.id, cleanTitle(a.title)]));
+  const linkOf = (id: string) => `${TW_LINK_PREFIX}${id}`;
+
+  // article id -> set of sibling ids (including itself).
+  const siblings = new Map<string, Set<string>>();
+  for (const ids of Object.values(termMap)) {
+    if (ids.length < 2) continue;
+    for (const id of ids) {
+      let set = siblings.get(id);
+      if (!set) siblings.set(id, (set = new Set()));
+      for (const other of ids) set.add(other);
+    }
+  }
+
+  // Dedupe identical sibling-sets into shared groups; index maps each link to
+  // its group. Skip pathologically large families (a too-generic term) so the
+  // picker stays usable.
+  const groups: { link: string; title: string }[][] = [];
+  const index: Record<string, number> = {};
+  const keyToIdx = new Map<string, number>();
+  for (const [id, set] of siblings) {
+    if (set.size < 2 || set.size > 12) continue;
+    const memberIds = [...set].sort();
+    const key = memberIds.join("|");
+    let idx = keyToIdx.get(key);
+    if (idx === undefined) {
+      idx = groups.length;
+      keyToIdx.set(key, idx);
+      groups.push(memberIds.map((mid) => ({ link: linkOf(mid), title: titleById.get(mid) ?? "" })));
+    }
+    index[linkOf(id)] = idx;
+  }
+  return { groups, index };
+}
 
 // Support references still bootstrap from existing tn_rows usage (a future
 // enhancement is to pull the canonical list from en_ta). TW links now prefer
@@ -18,10 +71,11 @@ catalogs.get("/", async (c) => {
      LIMIT 500`,
   ).all<{ value: string; n: number }>();
 
-  // Canonical en_tw articles (empty until the first import).
+  // Canonical en_tw articles (empty until the first import). id + title also
+  // feed the disambiguation groups below.
   const canonical = await c.env.DB.prepare(
-    `SELECT tw_link AS value FROM tw_articles ORDER BY id`,
-  ).all<{ value: string }>();
+    `SELECT id, title, tw_link AS value FROM tw_articles ORDER BY id`,
+  ).all<{ id: string; title: string; value: string }>();
 
   // Usage-derived links (most-used first) — covers the pre-import case and any
   // link a row carries that the canonical catalog doesn't (legacy / custom).
@@ -50,8 +104,14 @@ catalogs.get("/", async (c) => {
     }
   }
 
+  const disambiguation = buildDisambiguation(
+    canonical.results.map((r) => ({ id: r.id, title: r.title })),
+  );
+
   return c.json({
     supportReferences: supportRefs.results.map((r) => r.value),
     twLinks,
+    disambiguationGroups: disambiguation.groups,
+    disambiguationIndex: disambiguation.index,
   });
 });

@@ -12,7 +12,12 @@ function readPersisted(): Catalogs | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<Catalogs>;
     if (!Array.isArray(parsed.supportReferences) || !Array.isArray(parsed.twLinks)) return null;
-    return { supportReferences: parsed.supportReferences, twLinks: parsed.twLinks };
+    return {
+      supportReferences: parsed.supportReferences,
+      twLinks: parsed.twLinks,
+      disambiguationGroups: parsed.disambiguationGroups,
+      disambiguationIndex: parsed.disambiguationIndex,
+    };
   } catch {
     return null;
   }
