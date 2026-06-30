@@ -72,13 +72,23 @@ if (snapshotPath) {
     console.log(`AMO ${row.chapter}:${row.verse} v${row.version} → reformed ${r.reformed}, skipped ${r.skipped}: ${r.notes.join("; ")}`);
     if (emitSql) {
       const newJson = JSON.stringify({ ...parsed, verseObjects: r.newVerseObjects }).replace(/'/g, "''");
+      const where = `book='AMO' AND bible_version='UST' AND chapter=${row.chapter} AND verse=${row.verse}`;
+      const rowKey = `AMO/${row.chapter}/${row.verse}/UST`;
+      const payload = JSON.stringify({ reformed: r.reformed, source: "reform-glued-alignment" }).replace(/'/g, "''");
+      // Optimistic-lock the write on the snapshot version, so a row edited between
+      // the prod READ and apply is never clobbered (mirrors scripts/heal-align-1ch-num.mjs).
       sqlLines.push(
-        `UPDATE verses SET content_json='${newJson}', version=version+1, updated_by=2 ` +
-        `WHERE book='AMO' AND bible_version='UST' AND chapter=${row.chapter} AND verse=${row.verse} AND version=${row.version};`,
+        `UPDATE verses SET content_json='${newJson}', version=version+1, updated_at=unixepoch(), updated_by=2 ` +
+        `WHERE ${where} AND version=${row.version};`,
       );
+      // Audit row fires only if OUR update landed: the row is now at version+1 AND
+      // carries exactly the reformed content we wrote (a concurrent edit that also
+      // reached version+1 would not match content_json → no orphan audit row).
+      // Full edit_log shape (payload_json, book, user_id, prev/new_version, source).
       sqlLines.push(
-        `INSERT INTO edit_log (kind, row_key, action, source, payload, created_at) VALUES ` +
-        `('verse','AMO/${row.chapter}/${row.verse}/UST','update','reform-glued-alignment','{}', strftime('%Y-%m-%dT%H:%M:%fZ','now'));`,
+        `INSERT INTO edit_log (kind,row_key,book,user_id,prev_version,new_version,action,payload_json,source,created_at) ` +
+        `SELECT 'verse','${rowKey}','AMO',2,${row.version},${row.version + 1},'update','${payload}','reform-glued-alignment',unixepoch() ` +
+        `WHERE EXISTS (SELECT 1 FROM verses WHERE ${where} AND version=${row.version + 1} AND content_json='${newJson}');`,
       );
     }
   }
