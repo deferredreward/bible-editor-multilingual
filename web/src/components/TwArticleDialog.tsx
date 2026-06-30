@@ -138,6 +138,13 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
               "& a": { color: "primary.main" },
             }}
           >
+            {/* `markdown` is untrusted: fetched over CORS from an external,
+                unauthenticated Door43 repo. This render is XSS-safe ONLY because
+                there is no `rehype-raw`/`allowDangerousHtml` (embedded raw HTML
+                stays inert) and `mdLink` drops non-http(s) link schemes. Do NOT
+                add rehype-raw or skipHtml:false here without a sanitizer
+                (e.g. rehype-sanitize) — doing so turns a Door43 compromise into
+                stored XSS in the editor. */}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{ a: mdLink(dcsUrl) }}
