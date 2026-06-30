@@ -38,7 +38,7 @@ a stale/partial render past them. **Shrink-guard tension resolved:** the guard i
 (default 'error'). **Design doc: [`docs/export-rebase-fix.md`](docs/export-rebase-fix.md).** Tests: 4 new
 blocks in `export.test.mjs` (happy/403-forbidden/404-gone/409-race). `npm run typecheck` (both) + full api
 suite green. **MERGED ([PR #295](https://github.com/deferredreward/bible-editor/pull/295), main `6b9e0052`) +
-DEPLOYED to prod (worker version `aece4e88`).** `DCS_TOKEN` secret set on prod (admin PAT, `repository: Read
+DEPLOYED to prod** (worker version churns with every redeploy/secret-put, so not pinned here). `DCS_TOKEN` secret set on prod (admin PAT, `repository: Read
 and Write`) — recovery is now ARMED; fires on the next 05:30 UTC export only when a `-be-` PR is genuinely in
 conflict (else silent no-op). **Remaining follow-ups:** (1) re-confirm the `PATCH /git/refs` bug still
 reproduces on door43 (if fixed, prefer repairing `resetExportBranchToMaster` over delete+recreate); (2)
