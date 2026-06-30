@@ -143,9 +143,17 @@ app.post("/api/auth/logout", authLogout);
 app.put("/api/users/me/location", requireAuth, updateLastLocation);
 
 // Dev-only: mint a JWT against a known/created users.id. Gated by
-// DEV_AUTH_ENABLED so it can't be left on in prod.
+// DEV_AUTH_ENABLED so it can't be left on in prod, AND restricted to
+// localhost so a plain `wrangler deploy` (which lands on the public
+// `bible-editor-api-dev` *.workers.dev worker with DEV_AUTH_ENABLED=true)
+// can't be used by anyone on the internet to mint an admin token. Local
+// `wrangler dev` serves on 127.0.0.1/localhost and is unaffected.
 app.post("/api/auth/dev", async (c) => {
   if (c.env.DEV_AUTH_ENABLED !== "true") {
+    return c.json({ error: "disabled" }, 404);
+  }
+  const host = new URL(c.req.url).hostname;
+  if (host !== "localhost" && host !== "127.0.0.1") {
     return c.json({ error: "disabled" }, 404);
   }
   let body: { username?: string } = {};
