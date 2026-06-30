@@ -37,12 +37,13 @@ a stale/partial render past them. **Shrink-guard tension resolved:** the guard i
 + `export_conflict:*` (error) alerts surface the resolution. Generalized `writeAlert` to take a severity
 (default 'error'). **Design doc: [`docs/export-rebase-fix.md`](docs/export-rebase-fix.md).** Tests: 4 new
 blocks in `export.test.mjs` (happy/403-forbidden/404-gone/409-race). `npm run typecheck` (both) + full api
-suite green. **REQUIRED HUMAN FOLLOW-UP (did NOT self-serve, per task):** (1) `wrangler secret put DCS_TOKEN
---env production` (admin PAT) or add branch-delete scope to the service token — recovery is inert until then;
-(2) re-confirm the `PATCH /git/refs` bug still reproduces (if door43 fixed it, prefer fixing
-`resetExportBranchToMaster` over delete+recreate); (3) PR-number churns on rebuild. Branch
-`claude/friendly-tharp-972fa9`, NOT merged/deployed. (memory: [[project_export_branch_no_rebase_drift]],
-[[project_export_service_token_no_delete]])
+suite green. **MERGED ([PR #295](https://github.com/deferredreward/bible-editor/pull/295), main `6b9e0052`) +
+DEPLOYED to prod (worker version `aece4e88`).** `DCS_TOKEN` secret set on prod (admin PAT, `repository: Read
+and Write`) — recovery is now ARMED; fires on the next 05:30 UTC export only when a `-be-` PR is genuinely in
+conflict (else silent no-op). **Remaining follow-ups:** (1) re-confirm the `PATCH /git/refs` bug still
+reproduces on door43 (if fixed, prefer repairing `resetExportBranchToMaster` over delete+recreate); (2)
+PR-number churns on rebuild (expected for bot PRs). (memory:
+[[project_export_branch_no_rebase_drift]], [[project_export_service_token_no_delete]])
 
 2026-06-29 · **loving-snyder** — **Reorder-arrow focus made visible (Words + Notes).** Perry-style feel report: in Words, clicking an up/down arrow moves the row a full pitch and a *different* word's arrow lands under the stationary cursor → a second click hits the wrong word; Notes "felt" fine. **Browser-measured the truth (3×, incl. scrolled): both panels behave IDENTICALLY** — after a move a different item's arrow is under the cursor; Notes only feels better because its ~290px card pitch makes the jump obvious vs Words' ~94px. **Also found: keyboard focus ALREADY follows the moved item** (React preserves the keyed DOM node, so Enter/Space repeats) — it's just invisible (mouse click → no `:focus-visible` ring). A stationary "arrow stays under cursor" is **impossible for a short list that fits the pane** (no scroll room) — confirmed with the user. **Shipped (chosen fix = make focus-follow discoverable):** after an arrow reorder, re-assert `.focus()` on the moved item's same-direction arrow (falls back to the opposite arrow when it disables at an edge) + flash a 1.6s self-clearing ring (`#31ADE3`, boxShadow). `WordsTable.tsx` (table-level `pendingFocusRef`+`recentMove` state, `useLayoutEffect`, `data-reorder-arrow` attrs, `flashArrow` prop on WordRow), `NoteCard.tsx` (`flashArrow` prop + comparator + attrs), `ResourceColumn.tsx` (note-side orchestration via existing `scrollBodyRef`). typecheck green; **browser-verified live on ZEC 8:6** — focus on moved arrow + ring confirmed for both Words and Notes; all shuffled test data restored. **UX note to relay to users: press Enter/Space to keep nudging the same item** (re-clicking the same screen spot still hits the wrong row — unavoidable for short lists).
 
