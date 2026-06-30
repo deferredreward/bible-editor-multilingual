@@ -500,6 +500,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                   if (recovered) {
                     prNumber = recovered.prNumber;
                     prReason = recovered.prReason;
+                    // Record the FRESH rebuilt commit, not the stale one from the
+                    // (now deleted) conflicted branch — otherwise the snapshot's
+                    // commit_sha is wrong and contributorsFor's `commit_sha IS
+                    // NOT NULL` cutoff can't advance.
+                    if (recovered.commitSha) dcsCommitSha = recovered.commitSha;
                   }
                 }
               }
@@ -725,7 +730,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     filename: string,
     content: string,
     message: string,
-  ): Promise<{ prNumber: number | null; prReason: string } | null> {
+  ): Promise<{ prNumber: number | null; prReason: string; commitSha: string | null } | null> {
     const adminToken = this.env.DCS_TOKEN;
     if (!adminToken) {
       await this.recordPrConflictAlert(book, resource, repo, branch, "no_admin_token");
@@ -747,7 +752,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // we know it differs from master — that's what conflicted) → one commit,
       // child of master. The delete auto-closed the old PR, so ensureDcsPr mints
       // a fresh one whose diff is exactly the D1 delta.
-      await commitToDcs(dcsCfg, filename, content, message, { forceBranch: true });
+      const recommit = await commitToDcs(dcsCfg, filename, content, message, { forceBranch: true });
       const pr = await ensureDcsPr(
         dcsCfg,
         `bible-editor: ${book} ${resource} → master`,
@@ -757,7 +762,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           `master (not in D1) are intentionally dropped — D1 is authoritative.`,
       );
       await this.recordBranchRebuiltAlert(book, resource, repo, branch, pr.number);
-      return { prNumber: pr.number, prReason: `rebuilt:${pr.reason}` };
+      return { prNumber: pr.number, prReason: `rebuilt:${pr.reason}`, commitSha: recommit.commitSha || null };
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       console.error("export conflict-recovery failed", { book, resource, repo, branch, error: detail });
