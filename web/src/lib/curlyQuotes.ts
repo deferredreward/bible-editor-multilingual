@@ -108,9 +108,8 @@ function handleBeforeInput(e: Event) {
       const text = (startContainer as Text).data;
       if (text[startOffset - 1] !== "." || text[startOffset - 2] !== ".") return;
       ev.preventDefault();
-      const editRange = document.createRange();
+      const editRange = range.cloneRange();
       editRange.setStart(startContainer, startOffset - 2);
-      editRange.setEnd(startContainer, startOffset);
       sel.removeAllRanges();
       sel.addRange(editRange);
       document.execCommand("insertText", false, ELLIPSIS);
