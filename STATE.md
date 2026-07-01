@@ -14,6 +14,33 @@
 
 ## Last run
 
+2026-07-01 · **fervent-greider** — **Dug into 3 overnight nightly-export alerts (07-01 06:02); 2 glue
+alerts HEALED + re-exported, 1 shrink alert handed back to the translator (Benjamin).** Prod deployed
+`c981376` (built 06-30 21:47) has #298 reform + #300 glue-guard + #301 target-ambiguity LIVE.
+Corpus-wide `scan-glued-alignment.mjs --remote` found the ENTIRE prod glue footprint = **6 milestones**
+(PSA ULT 5 + AMO UST 1), nothing hidden.
+- **`export_glued:PSA` (ULT 78:54, 78:66) — NEW (ULT, first surfaced; PSA never in prior scans).** 5
+  TRAILING-maqqef single-word tokens (אֶל־, הַר־, וַ⁠יַּךְ־×3), both verses `updated_by=null` (pristine →
+  master glued too). Reform off UHB: 5/5 reform to unique 1-word runs, 0 skipped, plain preserved.
+- **`export_glued:AMO` (UST 3:12) — a DEPLOY RACE, not a reconcile bug.** edit_log: backfill reformed it
+  21:23 (user 2), **user 36 re-saved a glued alignment at 21:40 — 7 min before the reform-capable SPA
+  deployed (21:47)**. `בְדַל−אֹ֑זֶן` (U+2212) → 2 words. Master still glued.
+- **HEAL (user-approved):** emitted version-guarded UPDATE + edit_log (`source=reform-glued-alignment`,
+  `updated_by=2`) off the ONE `reformGluedMilestones` using D1's own UHB (scratchpad `emit-reform.mjs`).
+  PSA 78:54 v1→v2, 78:66 v1→v2, AMO 3:12 v8→v9. **Post-apply corpus scan = 0 glued.** Re-exported both:
+  **en_ult PR #6383 (PSA-be), en_ust PR #4204 (AMO-be)**, `dcsChanged:true`, no new alert. The #300/#301
+  guards PROVED durable — AMO ust pre-export reconcile logged `source_attr_reconciled=0,
+  source_attr_divergent=2` (master's glue REFUSED adoption, reform survives, render → master).
+  (memory: [[project_maqqef_glued_alignment_reform]])
+- **`export_align_shrink:ZEC:ust` (9:2 "also") — NOT corruption, handed to the translator.** 9:2 UST was
+  RE-TRANSLATED + re-lineated ("Hamath also is a nearby city, …") with leading words left bare; master
+  holds the older text with "also" aligned. Guard word-matched the shared "also" → conservative
+  false-positive vs a legit rewrite. **Benjamin IS the ZEC translator** (stuck at 9:1, finishing 9:2
+  today); he'll align it and that night's export self-clears. He's OK with ZEC a day behind. NOT a
+  heal-from-master. (memory: [[project_zec9_poetry_lineation]])
+**PRs #6383/#4204 merge to master via the nightly validate-and-merge (06:00 UTC) or by hand.** Only prod
+D1 writes + 2 export PRs this session; no code change (guards already shipped).
+
 2026-06-30 · **reconcile-target-ambiguity** — **Close the LAST maqqef-reform durability gap (AMO 3:1).**
 After #300 deployed I re-ran the AMO-UST backfill: **D1 held this time (0 glued, 3:1 correctly split
 את+הדבר).** But found a residual #300 didn't cover: AMO 3:1's reform yields TWO `d:H1697|1|1`
