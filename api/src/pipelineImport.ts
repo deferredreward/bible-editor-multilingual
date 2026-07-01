@@ -47,6 +47,10 @@ export interface ImportResult {
   byKind: { tn: number; tq: number; verse: number };
   skipped: string[];           // human-readable reasons (one per output entry skipped)
   applied?: ApplyResult;
+  // True when a concurrent poll already owns this import (the CAS claim was
+  // lost). The caller MUST NOT finalize the job on this result — the owning
+  // poll writes output_json when it completes. See pollPipelineJob.
+  claimLost?: boolean;
 }
 
 // Classify a single output[] entry into the resource kind we know how to
@@ -229,11 +233,15 @@ export async function importJobOutput(
     .run();
   if ((claim.meta.changes ?? 0) === 0) {
     // Another poll already owns the import — do nothing rather than run a
-    // second, interleaving delete/insert pass.
+    // second, interleaving delete/insert pass. Flag claimLost so the caller
+    // does NOT finalize the job: the owning poll may still be mid-apply, and
+    // writing output_json here would mark the import complete prematurely
+    // (and, if the owner then fails, suppress the retry).
     return {
       inserted: 0,
       byKind: { tn: 0, tq: 0, verse: 0 },
       skipped: ["import already claimed by a concurrent poll"],
+      claimLost: true,
     };
   }
   try {
@@ -581,22 +589,27 @@ async function deleteUnkeptTns(
   // trashed) suppresses the AI's re-proposal of it, so it stays trashed.
   // Sweeping it instead would delete it and let the re-insert RESURRECT it
   // un-trashed against the user's intent.
-  // Verse-scope the sweep to verses this job actually produced proposals for
-  // (`pending_imports` for the job). The chapter-wide sweep assumed the result
-  // covers every verse it requested; when it doesn't — a partial result, or a
-  // concurrent apply that already consumed some proposals — deleting across the
-  // whole chapter wipes notes for verses the new run never re-supplies. Bounding
-  // the delete to supplied verses means a verse missing from the result keeps
-  // its existing notes (mildly stale) instead of being emptied. Defense-in-depth
-  // alongside the single-applier claim in importJobOutput.
+  // Scope the sweep to the (chapter, verse) pairs this job actually produced
+  // proposals for (`pending_imports` for the job). The chapter-wide sweep
+  // assumed the result covers every verse it requested; when it doesn't — a
+  // partial result, or a concurrent apply that already consumed some proposals
+  // — deleting across the whole chapter wipes notes for verses the new run
+  // never re-supplies. Bounding the delete to supplied verses means a verse
+  // missing from the result keeps its existing notes (mildly stale) instead of
+  // being emptied. Match on BOTH chapter and verse: a job may span multiple
+  // chapters (endChapter > startChapter is a valid range), and scoping by verse
+  // number alone would let a proposal for ch2:v1 make ch1:v1 eligible for
+  // deletion. Defense-in-depth alongside the single-applier claim in
+  // importJobOutput.
   const targets = await env.DB.prepare(
     `SELECT id, version FROM tn_rows t
       WHERE book = ?1 AND chapter BETWEEN ?2 AND ?3
         AND deleted_at IS NULL AND trashed_at IS NULL
         AND preserve = 0 AND hint = 0
-        AND verse IN (
-          SELECT DISTINCT verse FROM pending_imports
-            WHERE job_id = ?5 AND kind = 'tn'
+        AND EXISTS (
+          SELECT 1 FROM pending_imports pi
+            WHERE pi.job_id = ?5 AND pi.kind = 'tn'
+              AND pi.chapter = t.chapter AND pi.verse = t.verse
         )
         AND (
           updated_by IS NULL
