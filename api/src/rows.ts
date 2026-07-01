@@ -64,6 +64,41 @@ function bookClause(paramN: number): string {
   return ` AND book = ?${paramN}`;
 }
 
+// Re-select a row after a write, carrying the same derived `latest_source`
+// column chapters.ts computes on read (tn/tq only — twl has no AI chip). A
+// plain `SELECT *` omits it, and the client REPLACES its whole cached row
+// with whatever this endpoint returns (both the direct PATCH response and
+// the row.upserted WS broadcast) rather than merging — so returning a row
+// without this column wiped out an accurate "AI" chip on every write,
+// including non-versioning ones like a reorder's sort_order-only patch,
+// where the true latest_source (edit_log is untouched) hadn't changed at
+// all. Computing it here keeps the response honest either way: unchanged
+// across a reorder, correctly cleared to NULL after a real content edit.
+async function selectRowWithLatestSource(
+  env: Env,
+  kind: RowKind,
+  id: string,
+  book: string,
+): Promise<Record<string, unknown> | null> {
+  if (kind === "twl") {
+    return env.DB.prepare(`SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`)
+      .bind(id, book)
+      .first();
+  }
+  return env.DB.prepare(
+    `SELECT t.*, (
+       SELECT source FROM edit_log
+        WHERE kind = ?3 AND row_key = t.id
+          AND (book = t.book OR book IS NULL)
+        ORDER BY id DESC LIMIT 1
+     ) AS latest_source
+        FROM ${KIND_TO_TABLE[kind]} t
+       WHERE t.id = ?1${bookClause(2)}`,
+  )
+    .bind(id, book, kind)
+    .first();
+}
+
 // Reuse the Hono request lifecycle to pull "expected version" off the
 // If-Match header. We accept a bare integer ("If-Match: 7") for simplicity.
 function parseIfMatch(header: string | undefined): number | null {
@@ -503,19 +538,18 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
 
   // Pull the current row once — used for the lock-scope lookup, the no-op
   // short-circuit, and to disambiguate 404 vs 409 if the UPDATE later misses.
-  const current = await c.env.DB.prepare(
-    `SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
-  )
-    .bind(id, book)
-    .first<
-      Record<string, unknown> & {
+  // Carries latest_source (see selectRowWithLatestSource) because a true
+  // no-op PATCH returns this object as-is below — it must reflect the row's
+  // real AI-provenance chip, not silently drop it.
+  const current = (await selectRowWithLatestSource(c.env, kind, id, book)) as
+    | (Record<string, unknown> & {
         version: number;
         deleted_at: number | null;
         book: string;
         chapter: number;
         restored_from_version: number | null;
-      }
-    >();
+      })
+    | null;
   if (!current || current.deleted_at) return c.json({ error: "not_found" }, 404);
 
   // Enforce the OL-quote occurrence invariant at the source. Only fires when
@@ -578,11 +612,7 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
           .bind(now, id, expected, book)
           .run();
         if (res.meta.changes) {
-          const fresh = await c.env.DB.prepare(
-            `SELECT * FROM tn_rows WHERE id = ?1${bookClause(2)}`,
-          )
-            .bind(id, book)
-            .first();
+          const fresh = await selectRowWithLatestSource(c.env, kind, id, book);
           return c.json(fresh ?? current);
         }
         // Row moved or was deleted between the SELECT and this UPDATE — surface
@@ -630,11 +660,7 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
       if (!fresh || fresh.deleted_at) return c.json({ error: "not_found" }, 404);
       return c.json({ error: "version_mismatch", current: fresh }, 409);
     }
-    const updated = await c.env.DB.prepare(
-      `SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
-    )
-      .bind(id, book)
-      .first();
+    const updated = await selectRowWithLatestSource(c.env, kind, id, book);
     if (updated) {
       const row = updated as unknown as TnRow | TqRow | TwlRow;
       c.executionCtx.waitUntil(
@@ -711,11 +737,7 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     return c.json({ error: "version_mismatch", current: fresh }, 409);
   }
 
-  const updated = await c.env.DB.prepare(
-    `SELECT * FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
-  )
-    .bind(id, book)
-    .first();
+  const updated = await selectRowWithLatestSource(c.env, kind, id, book);
   if (updated) {
     const row = updated as unknown as TnRow | TqRow | TwlRow;
     c.executionCtx.waitUntil(
