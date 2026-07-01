@@ -120,7 +120,7 @@ export function SideBySideAligner({
   const [hoverLink, setHoverLink] = useState<boolean>(readHoverLink);
   // Hebrew lexicon tooltip on hover — default on; turn off to see only what's
   // aligned (the highlight bridge) without the popup covering the panels.
-  const [lexInfo, setLexInfo] = useState(true);
+  const [lexInfo, setLexInfo] = useState(false);
   // Per-side panel dirty state, mirrored locally so we can lock that side's
   // reading line while alignment drags are pending. A ReadingLine blur saves
   // text → upstream swaps the verse prop → AlignmentPanel's reset effect
