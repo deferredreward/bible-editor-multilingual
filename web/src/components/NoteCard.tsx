@@ -453,17 +453,24 @@ function NoteCardInner({
   // Re-sync from the server-confirmed row, but only when no session is in
   // progress. While a session is open, the local fields are the source of
   // truth (a server response landing mid-session would otherwise clobber
-  // the user's unsaved edits).
+  // the user's unsaved edits). Also skip a field that stashEdit() has an
+  // un-flushed pick for (pendingRef) even with no session open — a stash
+  // survives a deactivate, and an unrelated version bump elsewhere (e.g.
+  // an AI-suggest save landing after the user wandered off) must not stamp
+  // that pending pick back to the server's stale value.
   useEffect(() => {
     if (sessionSnapshotRef.current !== null) return;
+    if ("quote" in pendingRef.current) return;
     setQuote(tsvToDisplay(row.quote));
   }, [row.id, row.version, row.quote]);
   useEffect(() => {
     if (sessionSnapshotRef.current !== null) return;
+    if ("note" in pendingRef.current) return;
     setNote(tsvToDisplay(row.note));
   }, [row.id, row.version, row.note]);
   useEffect(() => {
     if (sessionSnapshotRef.current !== null) return;
+    if ("support_reference" in pendingRef.current) return;
     setSupportRef(row.support_reference);
   }, [row.id, row.version, row.support_reference]);
 

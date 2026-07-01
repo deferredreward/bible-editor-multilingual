@@ -2404,7 +2404,14 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             aiDrafts.start(aiRow, built.request, {
               getIsVisible: (id) => visibleRowIdsRef.current.has(id),
               onSuccess: (r, res) => {
-                const patch = { quote: res.quote, note: res.note };
+                // Carry the support_reference the request was built from
+                // along with this save. It may still be unsaved on the
+                // server (e.g. picked on a brand-new note right before
+                // hitting Suggest) — without this, this PATCH's own version
+                // bump can make NoteCard's resync effect stamp the pending
+                // pick back to the server's stale/null value before the
+                // user gets a chance to save it themselves.
+                const patch = { quote: res.quote, note: res.note, support_reference: r.support_reference };
                 // Re-running the suggestion on an already-drafted note can
                 // return a quote+note identical to what's stored; skip the
                 // save so we don't bump the row version with a no-op (mirror
