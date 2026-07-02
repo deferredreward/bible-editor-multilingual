@@ -1,6 +1,6 @@
 import type { Env } from "./index";
 import type { CheckLane } from "./types";
-import { broadcastChapter } from "./wsEvents";
+import { broadcastChapter } from "./wsEvents.ts";
 
 // "Edits reopen the checkoff": when a verse's underlying content advances, the
 // affected lane's sign-off (verse_lane_checks) should reopen so checkers re-see
@@ -20,6 +20,23 @@ import { broadcastChapter } from "./wsEvents";
 // this the editing tab — and every other open tab — would keep showing the
 // now-stale check (and, for 'tw', keep TWL suggestions paused) until a reload.
 // The empty-set event drives the same client reconcile path as a toggle.
+// Which lanes a verse content-save reopens. A content edit always reopens the
+// 'text' lane (the verse text changed, so the text sign-off is stale). A ULT
+// edit ALSO reopens 'tw' (Words/TWL) — but only when a `\w` word actually
+// changed. TWL sign-off tracks the aligned words, so a punctuation-only edit (a
+// comma, a moved `{…}` implied-word brace, whitespace) leaves every word in
+// place and must NOT clear the Words checkoff. `wordSequenceUnchanged` from
+// analyzeAlignmentDelta is exactly "no `\w` text added/removed/changed", so it
+// is the right gate: a comma keeps Words checked; a genuine word edit trickles
+// down and reopens it. UST edits never touch 'tw'.
+export function lanesToReopenOnVerseEdit(
+  bibleVersion: string,
+  wordSequenceUnchanged: boolean,
+): CheckLane[] {
+  if (bibleVersion === "ULT" && !wordSequenceUnchanged) return ["text", "tw"];
+  return ["text"];
+}
+
 export async function reopenLaneChecks(
   env: Env,
   book: string,

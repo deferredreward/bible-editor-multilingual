@@ -18,8 +18,7 @@ import {
   type AlignmentIntent,
 } from "./alignmentDelta.ts";
 import { buildVerseHistory, type VerseHistoryLogRow } from "./verseHistory.ts";
-import { reopenLaneChecks } from "./laneReopen.ts";
-import type { CheckLane } from "./types";
+import { lanesToReopenOnVerseEdit, reopenLaneChecks } from "./laneReopen.ts";
 
 // Verse content can carry malformed/missing `\w` occurrence data — colliding
 // `(text, occurrence)` pairs from a bad import or AI alignment (ULT/UST), or no
@@ -373,11 +372,11 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
         verse: verseDto,
       }),
     );
-    // Edits reopen the checkoff: a content version bump reopens the 'text'
-    // lane. A ULT edit additionally reopens 'tw' — the Words/TWL suggestions
-    // are derived from ULT text. Best-effort and non-blocking (the write
-    // already landed above); see reopenLaneChecks.
-    const lanes: CheckLane[] = bibleVersion === "ULT" ? ["text", "tw"] : ["text"];
+    // Edits reopen the checkoff. 'text' always reopens; 'tw' reopens only for a
+    // ULT edit that actually changed a word (not a comma / moved brace /
+    // whitespace) — see lanesToReopenOnVerseEdit. Best-effort and non-blocking
+    // (the write already landed above); see reopenLaneChecks.
+    const lanes = lanesToReopenOnVerseEdit(bibleVersion, delta.wordSequenceUnchanged);
     c.executionCtx.waitUntil(
       reopenLaneChecks(c.env, updated.book, updated.chapter, updated.verse, lanes),
     );
