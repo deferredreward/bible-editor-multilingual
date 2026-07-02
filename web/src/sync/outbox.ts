@@ -19,6 +19,7 @@ import {
   type CheckLane,
 } from "./api";
 import { backoffMs } from "./backoff";
+import { classifyRowPatchConflict } from "./rowConflict";
 
 const DB_NAME = "bible-editor-outbox";
 const DB_VERSION = 1;
@@ -38,12 +39,13 @@ const STORE = "ops";
 // connection or session comes back (see reviveMaxAttemptsFailed).
 const MAX_ATTEMPTS = 20;
 
-// sort_order is a transient, last-write-wins field (see api/src/rows.ts —
-// "transient fields like sort_order"). A version mismatch on a reorder-only
-// patch should never surface a conflict prompt; we silently re-arm against the
-// server's current version and retry. This cap stops a pathological loop if
-// another writer is bumping the same row faster than we can land — beyond it,
-// fall through to the normal conflict flow.
+// Cap on silent re-arm-and-retry after a 409 that we judged spurious — either a
+// reorder-only patch (sort_order is transient last-write-wins, see api/src/rows.ts
+// "transient fields like sort_order") or a content patch that doesn't genuinely
+// conflict with the server's current row (see classifyRowPatchConflict). Neither
+// should surface a conflict prompt. This cap stops a pathological loop if another
+// writer is bumping the same row faster than we can land — beyond it, fall through
+// to the normal conflict flow.
 const MAX_CONFLICT_AUTOHEAL = 5;
 
 // recoverInFlight only re-arms in_flight ops at least this stale. A live
@@ -115,6 +117,12 @@ export interface OutboxOp {
   // The server stores it on the new edit_log entry + the row's column so
   // the UI can label the chip v{N} even though row.version is now N+1.
   restoredFromVersion?: number;
+  // The row's values for the patched fields at the moment we enqueued (the
+  // version we branched from). On a 409 this lets us tell a spurious conflict
+  // (the server changed a *different* field, or already has our value) from a
+  // genuine one (the server changed a field we're also editing). Only set for
+  // row patches; absent for verse/status/lane ops and pre-baseline records.
+  baseline?: Record<string, unknown>;
 }
 
 type Subscriber = (ops: OutboxOp[]) => void;
@@ -233,7 +241,7 @@ export const outbox = {
     id: string,
     expectedVersion: number,
     patch: Record<string, unknown>,
-    opts: { restoredFromVersion?: number; book: string },
+    opts: { restoredFromVersion?: number; book: string; baseline?: Record<string, unknown> },
   ): Promise<OutboxOp> {
     if (isReadOnly()) {
       return noopOp({ kind: "row", rowKind, id, book: opts.book }, "patch", patch);
@@ -251,6 +259,7 @@ export const outbox = {
       ...(opts.restoredFromVersion !== undefined
         ? { restoredFromVersion: opts.restoredFromVersion }
         : {}),
+      ...(opts.baseline !== undefined ? { baseline: opts.baseline } : {}),
     };
     await (await db()).put(STORE, op);
     void notify();
@@ -815,21 +824,41 @@ async function drainPass() {
       } else if (result.kind === "conflict") {
         const serverVersion = (result.current as { version?: unknown } | null | undefined)
           ?.version;
-        if (
+        // Two classes of 409 auto-heal against the server's version instead of
+        // prompting: (1) a reorder-only patch (sort_order is last-write-wins,
+        // positional metadata), and (2) a content patch whose change doesn't
+        // genuinely conflict with the server's current row — the version
+        // advanced for an unrelated reason (another field/tab, a bit-toggle, a
+        // reimport) or our edit already landed. Only true conflicts (the server
+        // changed a field we're also editing, to a different value) prompt.
+        const sortOrderOnly =
           next.target.kind === "row" &&
           next.action === "patch" &&
-          isSortOrderOnlyPatch(next.patch) &&
+          isSortOrderOnlyPatch(next.patch);
+        const nonConflictingContent =
+          next.target.kind === "row" &&
+          next.action === "patch" &&
+          !sortOrderOnly &&
+          classifyRowPatchConflict(
+            next.patch,
+            next.baseline,
+            result.current as Record<string, unknown>,
+          ) === "auto_heal";
+        if (
+          (sortOrderOnly || nonConflictingContent) &&
           typeof serverVersion === "number" &&
           (next.conflictRetries ?? 0) < MAX_CONFLICT_AUTOHEAL
         ) {
-          // Reorder-only mismatch — re-arm against the server's version and
-          // retry silently rather than surfacing a conflict. Don't block the
-          // target: it stays drainable so this pass picks it straight back up.
+          // Spurious mismatch — re-arm against the server's version and retry
+          // silently rather than surfacing a conflict. Don't block the target:
+          // it stays drainable so this pass picks it straight back up. On retry
+          // the PATCH only rewrites our own fields, so an unrelated concurrent
+          // change on the same row is preserved (field-level merge).
           next.status = "pending";
           next.expectedVersion = serverVersion;
           next.conflictRetries = (next.conflictRetries ?? 0) + 1;
           next.conflictCurrent = undefined;
-          next.lastError = "sort_order_autoheal";
+          next.lastError = sortOrderOnly ? "sort_order_autoheal" : "nonconflict_autoheal";
           await (await db()).put(STORE, next);
         } else {
           next.status = "conflict";
