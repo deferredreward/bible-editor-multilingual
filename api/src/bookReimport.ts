@@ -48,6 +48,7 @@ import { activePipelineForChapter } from "./chapterLock";
 import { coerceRowId } from "./rowId";
 import { planTnContentDedup } from "./tnDedup";
 import { isCatastrophicTsvShrink } from "./shrinkGuard";
+import { classifyReimportRow } from "./reimportClassify";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -505,15 +506,30 @@ async function applyTsvRows(
       }
       continue;
     }
-    // No-op when the comparable signature AND the sort_order both match (mirrors
-    // the fields the old per-row UPDATE compared). Skips version churn / useless
-    // edit_log rows that would invalidate every connected client's If-Match.
+    // Classify content vs sort_order independently. A divergent sort_order on a
+    // content-identical tn/twl row that already carries an order is a local
+    // in-app reorder (rows.ts writes sort_order via a non-versioning fast path);
+    // order flows app→master via the nightly export, so we must NOT adopt
+    // master's file order and revert it — the HOS 11 TN / HOS 12 TWL
+    // reorder-revert bug. That preservation is SCOPED: tq has no in-app reorder
+    // (master owns its order), and a NULL sort_order has no order to preserve
+    // (it must still be repaired to file order). Both fall through to the normal
+    // adopt-from-master path. See classifyReimportRow for the full rationale.
+    const contentMatches =
+      tsvRowSignature(kind, storedTsvRowToParsed(kind, cur)) === tsvRowSignature(kind, row);
     const sortMatches = (cur.sort_order == null ? null : Number(cur.sort_order)) === sortOrder;
-    if (sortMatches && tsvRowSignature(kind, storedTsvRowToParsed(kind, cur)) === tsvRowSignature(kind, row)) {
+    const preserveLocalOrder = (kind === "tn" || kind === "twl") && cur.sort_order != null;
+    const fate = classifyReimportRow(
+      contentMatches,
+      sortMatches,
+      isPristineTsv(kind, cur),
+      preserveLocalOrder,
+    );
+    if (fate === "noop") {
       counts.skipped_noop++;
       continue;
     }
-    if (!isPristineTsv(kind, cur)) {
+    if (fate === "edited") {
       counts.skipped_edited++;
       continue;
     }

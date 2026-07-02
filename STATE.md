@@ -44,6 +44,38 @@ green; new list query verified against prod (no col ambiguity; surfaces JER 33 r
 Prod queue check: only non-terminal job was JER 33 itself (running, Grant_Ailie) — nothing queued behind
 it. **NOT committed / not deployed** — awaiting user.
 
+2026-07-02 · **epic-pasteur** — **Beth Oakes "search & destroy": tiny-ULT-edit side effects (HOS).**
+Three reported symptoms, all diagnosed; two fixed on branch `claude/epic-pasteur-cacd48`, third handed
+off as a task chip. **(A) Board checkboxes clear on a comma/brace ULT edit — FIXED.** Root cause:
+`verses.ts` reopened `["text","tw"]` on EVERY ULT edit (unconditional `reopenLaneChecks` delete). Fix:
+new pure `lanesToReopenOnVerseEdit(bibleVersion, wordSequenceUnchanged)` in `api/src/laneReopen.ts` — a
+ULT edit reopens `tw` (Words) ONLY when `!delta.wordSequenceUnchanged` (a real `\w` change); a
+comma/`{…}`-brace/whitespace edit reopens only `text`, matching the user's rule ("only text clears unless
+a twl-linked word was edited"). Test `api/src/laneReopen.test.mjs`. **(B) Manually-reordered TWL
+("Words") links revert/scramble — FIXED (same class as [[project_hos11_note_reorder_revert]], now the TWL
+analog).** NOT the alignment engine (repro: 10 real HOS comma/brace edits all preserved `\zaln`
+losslessly via `relayoutUnchangedWords`) and NOT suggestions (user confirmed the approved top-section
+reverts). ROOT CAUSE = the nightly DCS→D1 pre-export sync: a reorder writes only `sort_order` (rows.ts
+fast path, no version/`updated_by` bump) so the row stays pristine; `applyTsvRows` treated
+"content-matches-but-sort_order-differs" as a pristine change and overwrote sort_order back to master
+file order (`makeVerseSortOrder`). Fix: new pure
+`classifyReimportRow(contentMatches, sortMatches, pristine, preserveLocalOrder)` in
+`api/src/reimportClassify.ts` — a content-identical row `noop`s (preserving D1's sort_order) ONLY when
+`preserveLocalOrder` = kind∈{tn,twl} AND `cur.sort_order != null` (SCOPED per Codex P2: tq has no in-app
+reorder so master owns its order; a NULL sort_order must still be repaired to file order). Order flows
+app→master via export, so D1 owns tn/twl order; converges next export, no TSV churn. Wired into
+`bookReimport.ts:~517`; test `api/src/reimportClassify.test.mjs`. Prod
+read (user-authorized, read-only) confirmed HOS 12:11 twl now at clean file-order 100..600 (reverted
+state); mixed `updated_by` (35 vs null) ⇒ partial revert = "out of order". **NO data repair possible:**
+the reorder fast path writes no `edit_log`, so Beth's intended order is unrecoverable — she must re-do
+the reorder AFTER this deploys (fix prevents FUTURE reverts only). **(C) 409 "conflict" on almost every
+TQ add — DEFERRED to a task chip (`task_d74c9cd6`).** Separate version-tracking race on freshly-created
+TQ rows (unconfirmed; content-patch 409 needs a manual click vs sort_order auto-heal). typecheck (both
+workspaces) + full api test suite green. Shipped in [PR #314](https://github.com/unfoldingWord/bible-editor/pull/314)
+(2 commits: fix + Codex-P2 scoping); rebased onto main. **NOT merged / deployed** — deploy `--env
+production` before the next nightly to arm the fixes. (memory: [[project_hos_twl_reorder_revert_reimport]],
+[[project_ult_edit_reopens_words_lane]])
+
 2026-07-01 · **youthful-cannon** — **Doubled-source alignment defect: detector + import/serialize dedup
 + prod repair of 5 UST verses.** Reported: ULT aligner JER 31:33 showed Hebrew doubled `אֶת אֶת בֵּית`.
 DISTINCT from the maqqef glue class — this stamps a SPURIOUS extra `\zaln-s` so one compound wraps the
