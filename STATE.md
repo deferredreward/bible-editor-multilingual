@@ -14,6 +14,20 @@
 
 ## Last run
 
+2026-07-02 · **sweet-yonath** — **REF-edit verse-desync fix + HOS 12 TQ prod repair.** Editing a
+row's REF field wrote `ref_raw` but left the `chapter`/`verse` integer columns stale, so the row
+rendered its new ref while staying grouped/sorted under its old verse (grouping runs off chapter/verse,
+not ref_raw). Confirmed in prod: HOS 12 TQ `v3xj` (Beth's "Where did Jacob flee?") held
+`chapter=12, verse=11, ref_raw='12:12'` → showed "12:12" under the v11 header. **Fix** (`api/src/rows.ts`
+PATCH handler): when a patch carries a string `ref_raw`, re-derive chapter/verse via the shared
+`refParts` (ranges collapse to leading verse, matching import), filling only fields the client omitted so
+the tn change-reference move (sends `verse` explicitly) stays authoritative. tq REF-edit only ever sent
+`ref_raw` (TqPatch has no verse) — exact repro path. Verse bridges preserved (leading verse groups,
+full range displays). Applies tn/tq/twl. Typecheck + importParsers tests (incl. refParts range-collapse)
+green. **PROD DATA repair applied (user-authorized):** version-guarded UPDATE `v3xj` verse 11→12
+(version bump + edit_log source=manual-repair); `v3xj` + AI's `y6mp` now both group under v12 —
+duplicate pair **left intact for a human dedup decision**. [PR #315](https://github.com/unfoldingWord/bible-editor/pull/315) opened; NOT merged/deployed.
+
 2026-07-02 · **main** — **Shared pipeline queue visibility.** Request: everyone should see the
 whole AI pipeline queue (active run + waiting jobs), but editing (cancel) stays owner-only and
 finished items (done/failed/cancelled) stay owner-only — another user's run vanishes from your view

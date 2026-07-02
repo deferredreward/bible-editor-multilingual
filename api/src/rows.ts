@@ -7,6 +7,7 @@ import { activePipelineForChapter, lockedResponseBody } from "./chapterLock";
 import { broadcastChapter } from "./wsEvents";
 import { newRowId } from "./rowId";
 import { reopenLaneChecks } from "./laneReopen";
+import { refParts } from "./importParsers";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -566,6 +567,26 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     const effOcc = "occurrence" in p ? p.occurrence : current.occurrence;
     if (typeof effQuote === "string" && hasOrigLang(effQuote) && (effOcc == null || effOcc === 0)) {
       p.occurrence = 1;
+      fields = Object.keys(patch);
+    }
+  }
+
+  // A ref_raw edit (retyping the REF field) must re-derive the `verse` integer
+  // column — grouping and the read/export sort key run off chapter/verse, not
+  // ref_raw. Without this the row renders its new ref while staying grouped
+  // under its old verse (HOS 12 TQ v3xj). refParts collapses a range to its
+  // leading verse ("12:11-12" -> [12, 11]), matching the import parser, so a
+  // legitimate verse bridge keeps its leading verse for grouping while ref_raw
+  // still carries the full range for display. Scope this to SAME-CHAPTER edits
+  // only: cross-chapter moves aren't supported by the surrounding machinery
+  // (the lock check, WS broadcast, and client caches below are all keyed to
+  // one chapter), so never write a changed `chapter` here — a cross-chapter
+  // ref just passes through untouched, exactly as before. The tn "change
+  // reference" move sends `verse` explicitly; leave that authoritative.
+  if (typeof p.ref_raw === "string" && !("verse" in p)) {
+    const [ch, vs] = refParts(p.ref_raw);
+    if (ch === current.chapter && vs !== current.verse) {
+      p.verse = vs;
       fields = Object.keys(patch);
     }
   }
