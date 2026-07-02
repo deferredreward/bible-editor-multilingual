@@ -7,6 +7,7 @@ import { activePipelineForChapter, lockedResponseBody } from "./chapterLock";
 import { broadcastChapter } from "./wsEvents";
 import { newRowId } from "./rowId";
 import { reopenLaneChecks } from "./laneReopen";
+import { refParts } from "./importParsers";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -530,6 +531,22 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     return c.json({ error: "invalid_body", details: parsed.error.format() }, 400);
   }
   const patch = parsed.data;
+
+  // A ref_raw edit (retyping the REF field) must re-derive the chapter/verse
+  // integer columns — grouping and the read/export sort key run off those, not
+  // ref_raw. Without this the row renders its new ref while staying grouped
+  // under its old verse (HOS 12 TQ v3xj). refParts collapses a range to its
+  // leading verse ("12:11-12" -> [12, 11]), matching the import parser, so a
+  // legitimate verse bridge keeps its leading verse for grouping while ref_raw
+  // still carries the full range for display. The tn "change reference" move
+  // sends verse explicitly; leave that authoritative and only fill what the
+  // client omitted.
+  if (typeof (patch as Record<string, unknown>).ref_raw === "string") {
+    const pp = patch as Record<string, unknown>;
+    const [ch, vs] = refParts(pp.ref_raw as string);
+    if (!("chapter" in pp)) pp.chapter = ch;
+    if (!("verse" in pp)) pp.verse = vs;
+  }
 
   let fields = Object.keys(patch);
   if (fields.length === 0) {
