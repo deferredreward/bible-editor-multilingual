@@ -14,6 +14,34 @@
 
 ## Last run
 
+2026-07-02 · **elated-dhawan** — **TQ "conflict on almost every edit" (Beth Oakes, Symptom C): auto-heal
+spurious content 409s.** Separate from the two fixes on `epic-pasteur-cacd48` (Board-reopen + TWL
+reorder). **Root cause (verified live, seeded ZEC, two-tab repro):** the created row's version IS
+correctly threaded — `applyLocalRowInsert` stores the server's v1, `onOutboxResult` adopts the new
+version on each 200, `threadVersionToSiblings` covers rapid same-row cascades, and WS `onUpsert` keeps
+other tabs current. I could **not** reproduce a single-tab 409 across many create+edit / rapid-edit
+cycles; each PATCH bumps version by exactly 1 (no phantom server writer — `reopenLaneChecks` only
+touches `verse_lane_checks`). A content 409 only fires when the row's version advances from a concurrent
+writer the acting client hasn't yet observed (second tab/device, or a background writer, **within the
+WS-propagation window** — on fast localhost WS the heal wins the race; on slower networks it loses more
+often). The real defect: the outbox surfaced a **user-facing conflict prompt for EVERY content 409, even
+spurious ones** that don't actually conflict — matching Beth's "resolves by just clicking on it" (the
+resolution is trivially correct = non-conflicting). Only `sort_order`-only patches auto-healed.
+**Fix (web only):** new pure module `web/src/sync/rowConflict.ts` `classifyRowPatchConflict(patch,
+baseline, serverRow)` — auto-heal iff EVERY patched field is non-conflicting: server already == our value
+(idempotent) OR server == our pre-edit baseline (server never touched it). Any patched field the server
+moved to a value different from both → genuine conflict → prompt (unchanged). `OutboxOp` gains
+`baseline?`; `outbox.enqueueRow` accepts it; `Shell.enqueueRow` captures it from the pre-patch cached row.
+`drainPass` conflict branch generalized: `sortOrderOnly || nonConflictingContent` auto-heals (re-arm to
+server version, retry; the retry PATCHes only our fields → field-level merge preserves the concurrent
+change), bounded by the existing `MAX_CONFLICT_AUTOHEAL=5`. **Verified LIVE** (own wrangler :8799 on the
+worktree bundle, WS closed to force staleness): OOB change to a *different* field → save 409 (If-Match 7)
+→ **auto-heal retry If-Match 8 → 200**, no conflict chip, op cleared, the OOB response change **preserved**
+(field-level merge). OOB change to the *same* field to a different value → save 409 → **"1 conflict" chip**,
+op held (genuine conflict path intact). Regression: `web/src/sync/rowConflict.test.mjs` (10 cases,
+registered in `web/package.json`). `npm run typecheck` (both) + `npm --workspace web run test` green.
+**NOT committed / no PR — awaiting user.** (memory: [[project_tq_spurious_conflict_autoheal]])
+
 2026-07-02 · **sweet-yonath** — **REF-edit verse-desync fix + HOS 12 TQ prod repair.** Editing a
 row's REF field wrote `ref_raw` but left the `chapter`/`verse` integer columns stale, so the row
 rendered its new ref while staying grouped/sorted under its old verse (grouping runs off chapter/verse,

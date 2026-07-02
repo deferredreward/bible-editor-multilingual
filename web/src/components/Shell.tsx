@@ -1925,8 +1925,17 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       restored_from_version:
         opts?.restoredFromVersion !== undefined ? opts.restoredFromVersion : null,
     } as Partial<TnRow & TqRow & TwlRow>;
+    // Capture the pre-edit baseline (the row's current value for each patched
+    // field) BEFORE the optimistic apply, so a later 409 can distinguish a
+    // spurious conflict (server changed a different field / already has our
+    // value) from a genuine one and auto-heal the former (see
+    // classifyRowPatchConflict). Read from `row`, which still holds the version
+    // we branched from — applyLocalRowPatch produces a new cached object.
+    const rowRecord = row as unknown as Record<string, unknown>;
+    const baseline: Record<string, unknown> = {};
+    for (const field of Object.keys(patch)) baseline[field] = rowRecord[field];
     applyLocalRowPatch(kind, row.id, localPatch);
-    void outbox.enqueueRow(kind, row.id, row.version, patch as Record<string, unknown>, { ...opts, book: row.book });
+    void outbox.enqueueRow(kind, row.id, row.version, patch as Record<string, unknown>, { ...opts, book: row.book, baseline });
   };
 
   // Draft-write path. Every keystroke in a verse-text cell calls this; it
