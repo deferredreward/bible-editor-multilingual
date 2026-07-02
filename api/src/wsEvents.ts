@@ -34,7 +34,12 @@ export type WsEvent =
   // for the lane so receiving tabs replace the whole lane in one shot. The
   // single-verse event broadcasts one (verse, lane); broadcasting that per
   // verse here would be a fanout storm, so the bulk path sends one event.
-  | { type: "lane_check.bulk"; book: string; chapter: number; lane: CheckLane; checks: VerseLaneCheck[] };
+  | { type: "lane_check.bulk"; book: string; chapter: number; lane: CheckLane; checks: VerseLaneCheck[] }
+  // An AI pipeline just wrote rows into this chapter (out of the HTTP path, so
+  // no row.upserted events fired). This is a coalesced *hint* — one per changed
+  // chapter, not one per row — telling open tabs their row list is stale. The
+  // client prompts the user to save and refresh rather than refetching silently.
+  | { type: "chapter.pipeline_applied"; book: string; chapter: number; pipeline_type: string };
 
 export async function broadcastChapter(
   env: Env,

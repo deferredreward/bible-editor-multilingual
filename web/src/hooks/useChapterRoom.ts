@@ -24,6 +24,9 @@ interface WireEvent {
   check?: LaneCheckState;
   lane?: CheckLane;
   checks?: VerseLaneCheck[];
+  book?: string;
+  chapter?: number;
+  pipeline_type?: string;
 }
 
 export interface UseChapterRoomHandlers {
@@ -33,6 +36,9 @@ export interface UseChapterRoomHandlers {
   onVerseStatusUpdate: (status: VerseStatus) => void;
   onLaneCheckUpdate: (check: LaneCheckState) => void;
   onLaneCheckBulkUpdate: (lane: CheckLane, checks: VerseLaneCheck[]) => void;
+  // An AI pipeline wrote rows into this chapter out of band — the row list is
+  // stale. Optional: tabs that don't care (or aren't this chapter) can ignore it.
+  onPipelineApplied?: (book: string, chapter: number, pipelineType: string) => void;
 }
 
 export function useChapterRoom(
@@ -72,6 +78,15 @@ export function useChapterRoom(
         }
         if (ev.type === "lane_check.bulk" && ev.lane && Array.isArray(ev.checks)) {
           handlersRef.current.onLaneCheckBulkUpdate(ev.lane, ev.checks);
+          return;
+        }
+        if (
+          ev.type === "chapter.pipeline_applied" &&
+          typeof ev.book === "string" &&
+          typeof ev.chapter === "number" &&
+          typeof ev.pipeline_type === "string"
+        ) {
+          handlersRef.current.onPipelineApplied?.(ev.book, ev.chapter, ev.pipeline_type);
           return;
         }
       },

@@ -195,6 +195,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+  // The "save & refresh" prompt helper is defined further down (it depends on
+  // toast state declared after this hook), so the WS handler reaches it through
+  // a ref, mirroring dataRef above.
+  const promptRefreshRef = useRef<(pipelineType: string) => void>(() => {});
   useChapterRoom(book, chapter, {
     onUpsert: (kind, row) => {
       const list = dataRef.current?.[kind] as Array<TnRow | TqRow | TwlRow> | undefined;
@@ -233,6 +237,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     },
     onLaneCheckBulkUpdate: (lane, checks) => {
       replaceLaneChecksForLane(lane, checks);
+    },
+    onPipelineApplied: (_book, _chapter, pipelineType) => {
+      // This socket only carries events for the chapter in view, so any hint
+      // that arrives is for the open chapter — offer a refresh. Covers
+      // collaborators too (their tab gets no pipeline-completion event).
+      promptRefreshRef.current(pipelineType);
     },
   });
   // Book-level DCS-validation summary for the topbar "issues to clean up"
@@ -381,29 +391,64 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
-  const [pipelineToast, setPipelineToast] = useState<{ id: number; text: string; kind: "success" | "error" | "info" } | null>(null);
+  const [pipelineToast, setPipelineToast] = useState<
+    { id: number; text: string; kind: "success" | "error" | "info"; action?: { label: string; onClick: () => void } } | null
+  >(null);
   const pipelineToastIdRef = useRef(0);
-  const pushPipelineToast = useCallback((text: string, kind: "success" | "error" | "info" = "info") => {
-    pipelineToastIdRef.current += 1;
-    setPipelineToast({ id: pipelineToastIdRef.current, text, kind });
-  }, []);
+  const pushPipelineToast = useCallback(
+    (text: string, kind: "success" | "error" | "info" = "info", action?: { label: string; onClick: () => void }) => {
+      pipelineToastIdRef.current += 1;
+      setPipelineToast({ id: pipelineToastIdRef.current, text, kind, action });
+    },
+    [],
+  );
   useEffect(() => {
     if (!pipelineToast) return;
+    // Actionable toasts (e.g. "save & refresh") stay put until the user acts or
+    // dismisses — auto-expiring them would hide the affordance mid-decision.
+    if (pipelineToast.action) return;
     const id = pipelineToast.id;
     const t = setTimeout(() => {
       setPipelineToast((cur) => (cur && cur.id === id ? null : cur));
     }, 8000);
     return () => clearTimeout(t);
   }, [pipelineToast]);
-  useEffect(() =>
-    pipelineStore.onComplete((job, prev) => {
-      const where = `${job.book} ${job.start_chapter}`;
-      if (job.state === "done") {
-        pushPipelineToast(`AI ${job.pipeline_type} applied to ${where}.`, "success");
-      } else if (job.state === "failed" && prev !== "failed") {
-        pushPipelineToast(`AI ${job.pipeline_type} failed for ${where}: ${job.error_kind ?? "error"}`, "error");
-      }
-    }), [pushPipelineToast]);
+
+  // A pipeline just wrote new rows into the chapter the user is looking at. The
+  // rows landed out of band (no per-row broadcast), so offer an explicit refresh
+  // rather than refetching silently — the copy tells them to save first so an
+  // in-progress edit is never lost. Shared by the requester's completion event
+  // and the WS hint (which also reaches collaborators with the chapter open).
+  const promptChapterRefresh = useCallback(
+    (pipelineType: string) => {
+      pushPipelineToast(
+        `New AI ${pipelineType} are ready for this chapter. Save your work, then refresh.`,
+        "info",
+        { label: "Refresh", onClick: () => void refetch() },
+      );
+    },
+    [pushPipelineToast, refetch],
+  );
+  useEffect(() => {
+    promptRefreshRef.current = promptChapterRefresh;
+  }, [promptChapterRefresh]);
+
+  useEffect(
+    () =>
+      pipelineStore.onComplete((job, prev) => {
+        const where = `${job.book} ${job.start_chapter}`;
+        if (job.state === "done") {
+          // Viewing the chapter this job wrote? Offer refresh instead of a plain
+          // "applied" toast, since its new rows aren't in the open list yet.
+          const inView = job.book === book && chapter >= job.start_chapter && chapter <= job.end_chapter;
+          if (inView) promptChapterRefresh(job.pipeline_type);
+          else pushPipelineToast(`AI ${job.pipeline_type} applied to ${where}.`, "success");
+        } else if (job.state === "failed" && prev !== "failed") {
+          pushPipelineToast(`AI ${job.pipeline_type} failed for ${where}: ${job.error_kind ?? "error"}`, "error");
+        }
+      }),
+    [pushPipelineToast, promptChapterRefresh, book, chapter],
+  );
 
   // Surface a toast when the outbox drops an op because the chapter was
   // locked. The user's edit was rejected by the server (409 chapter_locked)

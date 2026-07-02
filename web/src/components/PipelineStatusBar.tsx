@@ -184,6 +184,10 @@ interface ToastMsg {
   id: number;
   text: string;
   kind: "success" | "error" | "info";
+  // Optional inline button (e.g. "Save & refresh" after an AI apply lands new
+  // rows in the open chapter). When present, the toast stays until dismissed or
+  // the action is taken rather than auto-expiring.
+  action?: { label: string; onClick: () => void };
 }
 
 interface Props {
@@ -329,7 +333,25 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
         onClose={(_, reason) => reason !== "clickaway" && onToastClear?.()}
       >
         {toast ? (
-          <Alert severity={toast.kind} variant="filled" onClose={onToastClear}>
+          <Alert
+            severity={toast.kind}
+            variant="filled"
+            onClose={onToastClear}
+            action={
+              toast.action ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    toast.action?.onClick();
+                    onToastClear?.();
+                  }}
+                >
+                  {toast.action.label}
+                </Button>
+              ) : undefined
+            }
+          >
             {toast.text}
           </Alert>
         ) : undefined}
