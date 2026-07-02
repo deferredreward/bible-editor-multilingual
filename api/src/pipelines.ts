@@ -1189,11 +1189,27 @@ pipelines.get("/", requireEditor, async (c) => {
 
   const snap = await queueSnapshot(c.env);
   const jobs = (rs.results ?? []).map((row) => {
-    if (row.state === "queued") {
-      const pos = snap.positions.get(row.job_id);
-      return { ...row, queue_position: pos?.position ?? null, queue_ahead: pos?.ahead ?? null };
+    // Another user's row rides the shared-queue clause. Strip the internal
+    // fields the UI never renders for a foreign job (session key, the bot's
+    // upstream id, produced output, error detail) so the shared queue only
+    // discloses display metadata — book/chapter/type/state/who — not the
+    // operational innards of someone else's run.
+    const sanitized =
+      row.user_id !== userId
+        ? {
+            ...row,
+            session_key: "",
+            upstream_job_id: null,
+            output_json: null,
+            error_kind: null,
+            error_message: null,
+          }
+        : row;
+    if (sanitized.state === "queued") {
+      const pos = snap.positions.get(sanitized.job_id);
+      return { ...sanitized, queue_position: pos?.position ?? null, queue_ahead: pos?.ahead ?? null };
     }
-    return row;
+    return sanitized;
   });
 
   return c.json({
