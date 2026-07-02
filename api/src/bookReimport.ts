@@ -506,17 +506,25 @@ async function applyTsvRows(
       }
       continue;
     }
-    // No-op when the comparable content signature matches — regardless of
-    // sort_order. A divergent sort_order on a content-identical row is a local
-    // in-app reorder (rows.ts writes sort_order via a non-versioning fast path),
-    // and order flows app→master via the nightly export. Adopting master's file
-    // order here would revert that reorder — the HOS 11 TN / HOS 12 TWL
-    // reorder-revert bug. So content-identical rows keep their D1 sort_order and
-    // the next export pushes it to master (converges, no churn). See
-    // classifyReimportRow for the full rationale.
+    // Classify content vs sort_order independently. A divergent sort_order on a
+    // content-identical tn/twl row that already carries an order is a local
+    // in-app reorder (rows.ts writes sort_order via a non-versioning fast path);
+    // order flows app→master via the nightly export, so we must NOT adopt
+    // master's file order and revert it — the HOS 11 TN / HOS 12 TWL
+    // reorder-revert bug. That preservation is SCOPED: tq has no in-app reorder
+    // (master owns its order), and a NULL sort_order has no order to preserve
+    // (it must still be repaired to file order). Both fall through to the normal
+    // adopt-from-master path. See classifyReimportRow for the full rationale.
     const contentMatches =
       tsvRowSignature(kind, storedTsvRowToParsed(kind, cur)) === tsvRowSignature(kind, row);
-    const fate = classifyReimportRow(contentMatches, isPristineTsv(kind, cur));
+    const sortMatches = (cur.sort_order == null ? null : Number(cur.sort_order)) === sortOrder;
+    const preserveLocalOrder = (kind === "tn" || kind === "twl") && cur.sort_order != null;
+    const fate = classifyReimportRow(
+      contentMatches,
+      sortMatches,
+      isPristineTsv(kind, cur),
+      preserveLocalOrder,
+    );
     if (fate === "noop") {
       counts.skipped_noop++;
       continue;

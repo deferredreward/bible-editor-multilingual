@@ -4,12 +4,14 @@
 //
 // Not a test framework; failures exit non-zero. Mirrors sortOrder.test.mjs.
 //
-// Regression: a TWL/TN reorder writes only sort_order (no version/updated_by
+// Regression: a TN/TWL reorder writes only sort_order (no version/updated_by
 // bump), so the row stays pristine. The reimport used to treat "content matches
 // but sort_order differs" as a pristine change and overwrite sort_order back to
 // master file order — reverting the user's reorder (HOS 11 TN / HOS 12 TWL,
-// reported by Beth Oakes). A content-identical row must now be a no-op so its
-// local order survives and the next export pushes it to master.
+// reported by Beth Oakes). A content-identical tn/twl row that owns its order
+// must be a no-op so its local order survives and the next export pushes it to
+// master. But the preservation is SCOPED: tq (no in-app reorder) and NULL-sort
+// rows must still adopt master file order.
 
 import { classifyReimportRow } from "./reimportClassify.ts";
 
@@ -23,18 +25,41 @@ function eq(actual, expected, msg) {
   }
 }
 
+// args: (contentMatches, sortMatches, pristine, preserveLocalOrder)
 console.log("\n[classifyReimportRow]");
 
-// THE FIX: content identical → no-op, so the row's local sort_order is
-// preserved. This must hold whether or not the row is pristine — a reorder
-// leaves it pristine, but a content-identical human-edited row must also keep
-// its order (we never clobber order on a content match).
-eq(classifyReimportRow(true, true), "noop", "content matches + pristine → noop (preserve reorder)");
-eq(classifyReimportRow(true, false), "noop", "content matches + edited → noop (preserve order)");
+// Steady state: content AND order match → no-op (both pristine and edited).
+eq(classifyReimportRow(true, true, true, true), "noop", "content+sort match → noop");
+eq(classifyReimportRow(true, true, false, false), "noop", "content+sort match (edited) → noop");
+
+// THE FIX: content matches, sort differs, row owns its order (tn/twl, non-null)
+// → no-op, preserving the local reorder instead of reverting to file order.
+eq(
+  classifyReimportRow(true, false, true, true),
+  "noop",
+  "tn/twl reorder (content match, sort differs, preserve) → noop (preserve)",
+);
+
+// SCOPING (Codex P2): content matches, sort differs, but master owns the order
+// (tq, or a NULL sort_order) → adopt master file order when pristine…
+eq(
+  classifyReimportRow(true, false, true, false),
+  "update",
+  "tq / null-sort (content match, sort differs, no preserve) → update (adopt master order)",
+);
+// …and never clobber a human-edited row even to adopt order.
+eq(
+  classifyReimportRow(true, false, false, false),
+  "edited",
+  "edited row, sort differs, no preserve → skip (never clobber)",
+);
 
 // Content drifted from master.
-eq(classifyReimportRow(false, true), "update", "content differs + pristine → update from master");
-eq(classifyReimportRow(false, false), "edited", "content differs + edited → skip (never clobber human edit)");
+eq(classifyReimportRow(false, false, true, false), "update", "content differs + pristine → update");
+eq(classifyReimportRow(false, false, false, false), "edited", "content differs + edited → skip");
+// A content change on a would-be-preserve row still updates (preserve only
+// covers order, not content).
+eq(classifyReimportRow(false, false, true, true), "update", "content differs + pristine + preserve → update");
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
