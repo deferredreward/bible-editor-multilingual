@@ -28,6 +28,15 @@ import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 import BlockIcon from "@mui/icons-material/Block";
 import type { PipelineJobRow, PipelineState } from "../sync/api";
 import { pipelineStore } from "../sync/pipelineStore";
+import { currentPipelineUserId } from "../sync/pipelineSession";
+
+// A job requested by another user. The shared queue shows everyone's active /
+// queued runs, but only the owner can cancel one, and its requester is
+// attributed in the row. Nothing is foreign until the user id is bound.
+function isForeign(job: PipelineJobRow): boolean {
+  const me = currentPipelineUserId();
+  return me != null && job.user_id !== me;
+}
 
 const TYPE_LABEL: Record<PipelineJobRow["pipeline_type"], string> = {
   generate: "Generate ULT + UST",
@@ -222,6 +231,13 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
 
   const hasAnything = active.length + queued.length + doneRecent.length + failed.length > 0;
 
+  // The user's own in-flight work, used to gate dismissal: another user's run
+  // being active shouldn't stop you from clearing your own finished items.
+  const ownActive = active.filter((j) => !isForeign(j));
+  const ownQueued = queued.filter((j) => !isForeign(j));
+  const canDismissResolved =
+    ownActive.length === 0 && ownQueued.length === 0 && doneRecent.length + failed.length > 0;
+
   // Global queue context (the single running job, possibly another user's),
   // refreshed by the store on load/visibility. Drives the "running ahead" note
   // shown when the user has something waiting in line.
@@ -295,7 +311,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
             // both be marked as seen. Running / queued states still need user
             // attention, so no delete icon there.
             onDelete={
-              active.length === 0 && queued.length === 0 && doneRecent.length + failed.length > 0
+              canDismissResolved
                 ? () => {
                     pipelineStore.dismissResolved();
                     setAnchorEl(null);
@@ -374,6 +390,11 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                         : ""}
                       {` · updated ${relativeTime(job.updated_at)}`}
                     </Typography>
+                    {isForeign(job) && (
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
+                        requested by {job.started_by_username ?? "another user"}
+                      </Typography>
+                    )}
                     {parentId && (
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
                         Step 2 of 2 · after {shortJobId(parentId)}
@@ -390,7 +411,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                       </Typography>
                     )}
                   </Box>
-                  {job.state === "queued" && (
+                  {job.state === "queued" && !isForeign(job) && (
                     <Tooltip title="Remove from the queue (only possible before it starts)">
                       <span>
                         <Button
@@ -437,7 +458,9 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
               onClick={async () => {
                 setRefreshing(true);
                 try {
-                  await Promise.all(jobs.map((j) => pipelineStore.refresh(j.job_id)));
+                  // Reconcile the whole shared queue (own + others' jobs);
+                  // per-id refresh can't touch other users' runs.
+                  await pipelineStore.reload();
                 } finally {
                   setRefreshing(false);
                 }
@@ -445,7 +468,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
             >
               {refreshing ? "Refreshing…" : "Refresh"}
             </Button>
-            {doneRecent.length + failed.length > 0 && active.length === 0 && queued.length === 0 && (
+            {canDismissResolved && (
               <Button
                 size="small"
                 color="inherit"

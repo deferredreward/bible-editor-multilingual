@@ -14,6 +14,22 @@
 
 ## Last run
 
+2026-07-02 · **main** — **Shared pipeline queue visibility.** Request: everyone should see the
+whole AI pipeline queue (active run + waiting jobs), but editing (cancel) stays owner-only and
+finished items (done/failed/cancelled) stay owner-only — another user's run vanishes from your view
+when it finishes. **API** (`api/src/pipelines.ts` list route, default branch): now returns all jobs in
+active+queued states (`["queued", ...ACTIVE_STATES]`) for every user via `LEFT JOIN users` exposing
+`started_by_username`; own-terminal/unnotified clause unchanged (toast path intact). Cancel + `:jobId`
+status routes already 403 on non-owned jobs — untouched. **Store** (`pipelineStore.ts`): `isForeign()`
+helper; `pollOne` skips foreign (per-id endpoint 403s); 2-min tick + visibilitychange now call
+`loadFromServer` (whole-queue reconcile) instead of `pollTick`; `loadFromServer` prunes foreign jobs
+that dropped out of the list; `findActive` filters to own (keeps PipelineMenu conflict UX unchanged);
+new `reload()` for the panel's Refresh. **UI** (`PipelineStatusBar.tsx`): cancel only when `!isForeign`,
+"requested by X" line on foreign rows, dismiss/dismiss-all gated on *own* in-flight work. Typecheck
+green; new list query verified against prod (no col ambiguity; surfaces JER 33 run as `Grant_Ailie`).
+Prod queue check: only non-terminal job was JER 33 itself (running, Grant_Ailie) — nothing queued behind
+it. **NOT committed / not deployed** — awaiting user.
+
 2026-07-01 · **youthful-cannon** — **Doubled-source alignment defect: detector + import/serialize dedup
 + prod repair of 5 UST verses.** Reported: ULT aligner JER 31:33 showed Hebrew doubled `אֶת אֶת בֵּית`.
 DISTINCT from the maqqef glue class — this stamps a SPURIOUS extra `\zaln-s` so one compound wraps the

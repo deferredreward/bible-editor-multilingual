@@ -1143,20 +1143,34 @@ pipelines.get("/", requireEditor, async (c) => {
             last_polled_at, notified_user_at`;
 
   if (stateList === null) {
-    // Default: non-terminal OR unnotified terminal. Keeps the "running set"
-    // small (capped 100) while still surfacing any completed-while-away job
-    // exactly once.
+    // Default: the live queue is visible to everyone (active + waiting jobs,
+    // regardless of owner) so the whole team can see what's running and lined
+    // up. Terminal jobs (done/failed/cancelled) stay owner-scoped — a finished
+    // run only shows for the person who requested it, which also drives the
+    // "completed while you were away" toast via the unnotified-terminal clause.
+    // Capped 100. Columns are table-qualified (j.) because of the users JOIN.
+    const jCols = columns
+      .split(",")
+      .map((s) => `j.${s.trim()}`)
+      .join(", ");
     const nonTerminal = Array.from(NON_TERMINAL_STATES);
-    const placeholders = nonTerminal.map((_, i) => `?${i + 2}`).join(",");
+    const ntPlace = nonTerminal.map((_, i) => `?${i + 2}`).join(",");
+    // Active + queued: the shared, everyone-can-see set.
+    const queueVisible = ["queued", ...ACTIVE_STATES];
+    const qvPlace = queueVisible
+      .map((_, i) => `?${i + 2 + nonTerminal.length}`)
+      .join(",");
     rs = await c.env.DB.prepare(
-      `SELECT ${columns}
-         FROM pipeline_jobs
-        WHERE user_id = ?1
-          AND (state IN (${placeholders}) OR notified_user_at IS NULL)
-        ORDER BY updated_at DESC
+      `SELECT ${jCols}, u.dcs_username AS started_by_username
+         FROM pipeline_jobs j
+         LEFT JOIN users u ON u.id = j.user_id
+        WHERE (j.user_id = ?1
+                 AND (j.state IN (${ntPlace}) OR j.notified_user_at IS NULL))
+           OR j.state IN (${qvPlace})
+        ORDER BY j.updated_at DESC
         LIMIT 100`,
     )
-      .bind(userId, ...nonTerminal)
+      .bind(userId, ...nonTerminal, ...queueVisible)
       .all<PipelineRowSelect>();
   } else if (stateList.length === 0) {
     return c.json({ jobs: [], queue: { activeJob: null, queuedCount: 0 } });
@@ -1209,6 +1223,9 @@ interface PipelineRowSelect {
   updated_at: number;
   last_polled_at: number | null;
   notified_user_at: number | null;
+  // Present only on the default (shared-queue) list where we JOIN users, so the
+  // UI can attribute another user's run. Absent on the explicit-state branch.
+  started_by_username?: string | null;
 }
 
 // POST /api/pipelines/:jobId/cancel  — withdraw a job that hasn't reached the
