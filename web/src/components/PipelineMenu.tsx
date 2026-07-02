@@ -35,6 +35,7 @@ import type {
   PipelineType,
 } from "../sync/api";
 import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipelineStore";
+import { currentPipelineUserId } from "../sync/pipelineSession";
 import { parseChapterRange } from "../lib/refParser";
 
 interface Props {
@@ -201,7 +202,11 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
 
   // "In progress" for the chapter = queued/dispatching/running/paused. A
   // failed or cancelled job covering the chapter must NOT disable the menu —
-  // the translator re-triggers from here.
+  // the translator re-triggers from here. Only the current user's own runs
+  // disable the menu; another user's run must fall through to Start so the
+  // server's enriched 409 surfaces the "Already running" conflict dialog
+  // (the shared-queue list now includes foreign jobs, so filter them out).
+  const me = currentPipelineUserId();
   const runningType = (type: PipelineType): PipelineJob | undefined =>
     activeJobs.find(
       (j) =>
@@ -211,7 +216,8 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         j.end_chapter >= chapter &&
         j.state !== "done" &&
         j.state !== "failed" &&
-        j.state !== "cancelled",
+        j.state !== "cancelled" &&
+        (me == null || j.user_id === me),
     );
 
   const close = () => setAnchorEl(null);

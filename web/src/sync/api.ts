@@ -981,6 +981,12 @@ export interface PipelineJobRow {
    * user hasn't yet been told about — those drive the toast.
    */
   notified_user_at: number | null;
+  /**
+   * DCS username of whoever requested the run. Populated on the shared-queue
+   * list for jobs that aren't the current user's, so the chip can attribute
+   * them ("requested by X"). Undefined/null on the current user's own rows.
+   */
+  started_by_username?: string | null;
 }
 
 // Global queue context returned alongside GET /api/pipelines so the chip can

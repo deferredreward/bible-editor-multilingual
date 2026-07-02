@@ -97,6 +97,15 @@ let initStarted = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let visibilityBound = false;
 
+// A job belongs to another user. Foreign jobs are visible (shared queue) but
+// read-only: we can't poll their per-job status endpoint (it 403s on non-owned
+// jobs), can't cancel them, and they refresh only via the list. When the user
+// id isn't bound yet we treat nothing as foreign so we don't skip our own work.
+function isForeign(job: PipelineJob): boolean {
+  const me = currentPipelineUserId();
+  return me != null && job.user_id !== me;
+}
+
 function snapshot(): PipelineJob[] {
   return Array.from(jobs.values()).sort((a, b) => b.updated_at - a.updated_at);
 }
@@ -166,6 +175,10 @@ function mergeAndNotify(jobId: string, next: PipelineJob) {
 }
 
 async function pollOne(jobId: string) {
+  // Another user's job — the per-job status endpoint 403s on it. Foreign jobs
+  // are kept current by loadFromServer (the shared-queue list) instead.
+  const existing = jobs.get(jobId);
+  if (existing && isForeign(existing)) return;
   try {
     const status = await api.pipelineStatus(jobId);
     const prev = jobs.get(jobId);
@@ -191,11 +204,14 @@ async function pollTick() {
 function ensurePolling() {
   if (pollTimer) return;
   if (typeof window === "undefined") return;
-  pollTimer = setInterval(() => void pollTick(), POLL_INTERVAL_MS);
+  // Reconcile the whole shared queue each tick (not just own polling jobs) so
+  // other users' active/queued runs stay fresh and drop off once they finish.
+  // loadFromServer polls our own jobs for rich progress at the end.
+  pollTimer = setInterval(() => void loadFromServer(), POLL_INTERVAL_MS);
   if (!visibilityBound) {
     visibilityBound = true;
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) void pollTick();
+      if (!document.hidden) void loadFromServer();
     });
   }
 }
@@ -228,6 +244,14 @@ async function loadFromServer() {
         unannounced.push(row);
       }
       jobs.set(row.job_id, row);
+    }
+    // Prune foreign jobs that fell out of the shared queue — another user's run
+    // that finished (or was cancelled) is terminal and owner-scoped, so it no
+    // longer comes back in the list and should vanish from our view. Own jobs
+    // are never pruned here: they persist for the completion toast / dismiss.
+    const seen = new Set(res.jobs.map((r) => r.job_id));
+    for (const [id, j] of jobs) {
+      if (isForeign(j) && !seen.has(id)) jobs.delete(id);
     }
     notify();
 
@@ -315,7 +339,10 @@ export const pipelineStore = {
         j.book === book &&
         j.start_chapter <= chapter &&
         j.end_chapter >= chapter &&
-        NON_TERMINAL_STATES.has(j.state)
+        NON_TERMINAL_STATES.has(j.state) &&
+        // Only our own runs gate the menu; another user's run surfaces through
+        // the server's conflict dialog on start, not by disabling the menu.
+        !isForeign(j)
       ) {
         return j;
       }
@@ -352,6 +379,7 @@ export const pipelineStore = {
       updated_at: now,
       last_polled_at: null,
       notified_user_at: null,
+      started_by_username: null,
     };
     jobs.set(res.jobId, jobs.get(res.jobId) ?? seeded);
     notify();
@@ -393,6 +421,13 @@ export const pipelineStore = {
 
   async refresh(jobId: string) {
     await pollOne(jobId);
+  },
+
+  // Reconcile the whole shared queue from the server (own jobs + everyone's
+  // active/queued runs). Used by the panel's manual Refresh, which must also
+  // pick up other users' jobs — those can't be polled per-id.
+  async reload() {
+    await loadFromServer();
   },
 
   // Mark a single terminal job as seen — drop it from the chip and remember
