@@ -359,6 +359,9 @@ export interface ApplyResult {
   tqCreated: number;
   tqUpdated: number;
   verseUpdated: number;
+  // Distinct chapters that actually received a write, so the caller can fan out
+  // one "chapter is stale" hint per changed chapter (not one per row).
+  affectedChapters: number[];
 }
 
 interface PendingImportRow {
@@ -416,12 +419,20 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     tqCreated: 0,
     tqUpdated: 0,
     verseUpdated: 0,
+    affectedChapters: [],
   };
+
+  // Chapters that saw an actual write — populated at each mutation point below
+  // and returned so the caller can hint open tabs once per changed chapter.
+  const affected = new Set<number>();
 
   // TN delete phase: only fires when this job produced TN proposals AND
   // there are unkept TNs in scope. Idempotent — re-running finds none left.
   if (tnProposals.length > 0) {
     result.tnDeleted = await deleteUnkeptTns(env, job, userId);
+    // A delete mutates whatever chapters this job re-proposed TN for; those are
+    // exactly the chapters carried by tnProposals.
+    if (result.tnDeleted > 0) for (const p of tnProposals) affected.add(p.chapter);
   }
 
   // Content-dedup claim set (defense-in-depth, layered ON TOP of the AI-aware
@@ -489,6 +500,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     const expanded = await applyTnHintExpansionIfMatch(env, p, job, userId);
     if (expanded) {
       claimedTnKeys.add(contentKey);
+      affected.add(p.chapter);
       result.tnHintExpanded += 1;
       continue;
     }
@@ -514,6 +526,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     const sortOrder = (tnCounters.get(k) ?? tnBases.get(k) ?? 0) + 100;
     tnCounters.set(k, sortOrder);
     await applyTnInsert(env, p, userId, sortOrder);
+    affected.add(p.chapter);
     result.tnCreated += 1;
   }
 
@@ -522,15 +535,18 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     const sortOrder = (tqCounters.get(k) ?? 0) + 100;
     tqCounters.set(k, sortOrder);
     const action = await applyTqUpsert(env, p, userId, sortOrder);
+    affected.add(p.chapter);
     if (action === "created") result.tqCreated += 1;
     else result.tqUpdated += 1;
   }
 
   for (const p of verseProposals) {
     await applyVerseUpdate(env, p, userId);
+    affected.add(p.chapter);
     result.verseUpdated += 1;
   }
 
+  result.affectedChapters = [...affected].sort((a, b) => a - b);
   return result;
 }
 

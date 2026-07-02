@@ -20,6 +20,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
+import { broadcastChapter } from "./wsEvents";
 
 export const pipelines = new Hono<{
   Bindings: Env;
@@ -428,6 +429,9 @@ async function pollPipelineJob(
     data.output.length > 0;
   let importFailed = false;
   let importErrMessage: string | null = null;
+  // Chapters this apply actually wrote to — used below to hint open tabs once
+  // the finalize commit lands. Empty unless a successful import populated it.
+  let appliedChapters: number[] = [];
   if (shouldImport && data.output) {
     try {
       const importResult = await importJobOutput(
@@ -451,6 +455,7 @@ async function pollPipelineJob(
         // and the next poll (or this client's next tick) sees the result.
         return { kind: "ok", text, status: upstream.status, state: data.state ?? "running" };
       }
+      appliedChapters = importResult.applied?.affectedChapters ?? [];
     } catch (err) {
       importFailed = true;
       importErrMessage = err instanceof Error ? err.message : String(err);
@@ -527,6 +532,23 @@ async function pollPipelineJob(
       text,
     )
     .run();
+
+  // The apply wrote rows outside the HTTP path, so no per-row row.upserted
+  // events fired — open tabs on these chapters are now silently stale. Send one
+  // coalesced hint per changed chapter (not per row) so a whole-book apply stays
+  // cheap against the subrequest budget. The client shows a "save & refresh"
+  // prompt rather than refetching silently, so an in-progress edit is never
+  // clobbered. Best-effort: broadcastChapter swallows its own errors.
+  if (!importFailed) {
+    for (const ch of appliedChapters) {
+      await broadcastChapter(env, job.book, ch, {
+        type: "chapter.pipeline_applied",
+        book: job.book,
+        chapter: ch,
+        pipeline_type: job.pipeline_type,
+      });
+    }
+  }
 
   // Gate followups on !importFailed: the chain assumes the parent's rows
   // are in D1 (e.g. the next step's prompt builder reads them). Without
