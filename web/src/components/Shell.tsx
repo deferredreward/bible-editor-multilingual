@@ -1269,13 +1269,21 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     const uhb = grab("UHB") ?? grab("UGNT");
     const rows = data.twl.filter((r) => r.verse === verse && r.deleted_at == null);
     if (rows.length === 0) return map;
-    // Resolve each suggestion once to its source-key set + candidate ids.
+    // Resolve each suggestion once to its source-key set + candidate ids, and
+    // reapply the same deny-lists the Suggestions panel uses — otherwise a word
+    // deleted-here, or a (word, article) pair a translator specifically
+    // unlinked, would resurface as a "suggested" alternative on the row.
     const sugs = verseTwlSuggestions
       .map((s) => {
         const resolved = resolveSpanToSource(ult, uhb, s.matchedText, s.glOccurrence);
         if (!resolved) return null;
+        if (twlFilters.isDeletedHere(`${chapter}:${verse}`, resolved.orig_words)) return null;
         const keys = selectionFromQuote(uhb, resolved.orig_words, resolved.occurrence);
-        return keys.size > 0 ? { keys, ids: s.disambiguation } : null;
+        if (keys.size === 0) return null;
+        const ids = s.disambiguation.filter(
+          (id) => !twlFilters.isUnlinked(resolved.orig_words, `rc://*/tw/dict/bible/${id}`),
+        );
+        return ids.length > 0 ? { keys, ids } : null;
       })
       .filter((x): x is { keys: Set<string>; ids: string[] } => x != null);
     for (const r of rows) {
@@ -1295,7 +1303,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       if (ids.size > 0) map.set(r.id, [...ids]);
     }
     return map;
-  }, [data, activeVerse, verseIndexByVersion, verseTwlSuggestions]);
+  }, [data, activeVerse, verseIndexByVersion, verseTwlSuggestions, twlFilters, chapter]);
 
   // Which of a suggestion's candidate articles the unlinked deny-list blocks for
   // its resolved OL quote. Returned to TwlSuggestions, which prunes them from the
