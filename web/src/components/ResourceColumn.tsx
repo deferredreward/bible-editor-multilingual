@@ -162,6 +162,12 @@ interface Props {
   onAddTwlSuggestion?: (suggestion: TwlSuggestion, chosenArticleId: string) => void;
   // Drop suggestions already linked on the active verse (resolved-OL identity).
   isTwlSuggestionExcluded?: (suggestion: TwlSuggestion) => boolean;
+  // Report the raw (pre-exclusion) suggestion list up to Shell so it can merge
+  // the matcher's candidates onto committed rows (twlRowAlternatives).
+  onTwlSuggestions?: (suggestions: TwlSuggestion[]) => void;
+  // Extra TW article ids the matcher proposes for a committed row's source word,
+  // keyed by row id — merged into that row's disambiguation badge.
+  twlRowAlternatives?: Map<string, string[]>;
   // Article ids the unlinked deny-list blocks for a suggestion's resolved quote
   // — pruned from its picker; the whole suggestion hides when all are blocked.
   twlBlockedArticleIds?: (suggestion: TwlSuggestion, candidateIds?: string[]) => Set<string>;
@@ -293,6 +299,8 @@ export function ResourceColumn({
   onStartWordQuoteBuild,
   onAddTwlSuggestion,
   isTwlSuggestionExcluded,
+  onTwlSuggestions,
+  twlRowAlternatives,
   twlBlockedArticleIds,
   twlFiltersReady,
   quoteBuildAppliedTo,
@@ -777,6 +785,7 @@ export function ResourceColumn({
                       locked={locked}
                       onTranslateQuote={onWordTranslateQuote}
                       onWordGloss={onWordGloss}
+                      suggestionAlternatives={twlRowAlternatives}
                       activeQuoteBuildId={quoteBuildActiveWordId}
                       quoteBuildSelectionCount={quoteBuildSelectionCount}
                       onStartQuoteBuild={onStartWordQuoteBuild}
@@ -795,6 +804,7 @@ export function ResourceColumn({
                 locked={locked}
                 onTranslateQuote={onWordTranslateQuote}
                 onWordGloss={onWordGloss}
+                suggestionAlternatives={twlRowAlternatives}
                 activeQuoteBuildId={quoteBuildActiveWordId}
                 quoteBuildSelectionCount={quoteBuildSelectionCount}
                 onStartQuoteBuild={onStartWordQuoteBuild}
@@ -829,6 +839,7 @@ export function ResourceColumn({
                   refreshKey={twlForVerse.map((r) => `${r.tw_link ?? ""}|${r.orig_words ?? ""}|${r.occurrence ?? 1}`).join("~")}
                   onAdd={onAddTwlSuggestion}
                   isExcluded={isTwlSuggestionExcluded}
+                  onSuggestions={onTwlSuggestions}
                   blockedArticleIds={twlBlockedArticleIds}
                   filtersReady={twlFiltersReady}
                   locked={locked}

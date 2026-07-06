@@ -50,6 +50,9 @@ interface Props {
   // by Shell against the live rows). Applied after fetch so adds/deletes reflect
   // without a server round-trip.
   isExcluded?: (suggestion: TwlSuggestion) => boolean;
+  // Report the raw (pre-exclusion) suggestion list up so the parent can merge the
+  // matcher's candidates onto committed rows. Emits [] on unmount / verse change.
+  onSuggestions?: (suggestions: TwlSuggestion[]) => void;
   // Article ids blocked by the unlinked deny-list for this suggestion's resolved
   // quote. Blocked ids are pruned from the picker; a suggestion whose every
   // article is blocked is dropped entirely.
@@ -66,7 +69,7 @@ interface Props {
   paused?: boolean;
 }
 
-function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExcluded, blockedArticleIds, filtersReady = true, locked = false, paused = false }: Props) {
+function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExcluded, onSuggestions, blockedArticleIds, filtersReady = true, locked = false, paused = false }: Props) {
   const [peeked, setPeeked] = useState(false);
   // Re-collapse when the verse changes or the lane is re-checked.
   useEffect(() => {
@@ -144,6 +147,14 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
   useEffect(() => {
     setRejected({});
   }, [book, chapter, verse]);
+
+  // Report the raw list up (for committed-row alternative merging) whenever it
+  // changes, and clear it on unmount so a stale list can't linger after the
+  // panel hides (e.g. switching to the pinned multi-verse view).
+  useEffect(() => {
+    onSuggestions?.(suggestions);
+  }, [suggestions, onSuggestions]);
+  useEffect(() => () => onSuggestions?.([]), [onSuggestions]);
 
   const keyOf = (s: TwlSuggestion) => `${s.matchedText}|${s.glOccurrence}`;
   // Filter on each render — isExcluded / blockedArticleIds close over the live

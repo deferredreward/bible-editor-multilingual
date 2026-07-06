@@ -107,9 +107,14 @@ interface Props {
   activeQuoteBuildId?: string | null;
   quoteBuildSelectionCount?: number;
   onStartQuoteBuild?: (id: string) => void;
+  // Extra TW article ids the per-verse matcher proposes for a row's source word,
+  // keyed by row id — merged into that row's disambiguation badge so a wrong
+  // link can reach a morphologically-correct alternative (e.g. other/lover for
+  // "lovers"). A stable useMemo ref from Shell, so the memo below can compare it.
+  suggestionAlternatives?: Map<string, string[]>;
 }
 
-function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder, locked = false, onTranslateQuote, onWordGloss, activeQuoteBuildId = null, quoteBuildSelectionCount = 0, onStartQuoteBuild }: Props) {
+function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder, locked = false, onTranslateQuote, onWordGloss, activeQuoteBuildId = null, quoteBuildSelectionCount = 0, onStartQuoteBuild, suggestionAlternatives }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<
     { targetId: string; position: WordDropPosition } | null
@@ -260,6 +265,7 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
               quoteBuildSelectionCount={r.id === activeQuoteBuildId ? quoteBuildSelectionCount : 0}
               onStartQuoteBuild={onStartQuoteBuild ? () => onStartQuoteBuild(r.id) : undefined}
               onOpenArticle={setArticleId}
+              suggestionAltIds={(suggestionAlternatives?.get(r.id) ?? []).join(",")}
             />
             {showAfter && <RowDropIndicator />}
           </Box>
@@ -281,7 +287,8 @@ export const WordsTable = memo(
     a.activeId === b.activeId &&
     a.locked === b.locked &&
     a.activeQuoteBuildId === b.activeQuoteBuildId &&
-    a.quoteBuildSelectionCount === b.quoteBuildSelectionCount,
+    a.quoteBuildSelectionCount === b.quoteBuildSelectionCount &&
+    a.suggestionAlternatives === b.suggestionAlternatives,
 );
 
 function RowDropIndicator() {
@@ -319,6 +326,7 @@ const WordRow = memo(function WordRow({
   onStartQuoteBuild,
   onOpenArticle,
   flashArrow,
+  suggestionAltIds = "",
 }: {
   row: TwlRow;
   active: boolean;
@@ -345,6 +353,9 @@ const WordRow = memo(function WordRow({
   onStartQuoteBuild?: () => void;
   // Open the TW article popup for this row's link (handled at the table level).
   onOpenArticle: (articleId: string) => void;
+  // Comma-joined short article ids the matcher proposes for this row's source
+  // word, merged into the disambiguation badge. "" when none.
+  suggestionAltIds?: string;
 }) {
   const [quote, setQuote] = useState(row.orig_words ?? "");
   const [twLink, setTwLink] = useState<string | null>(row.tw_link);
@@ -358,15 +369,35 @@ const WordRow = memo(function WordRow({
   const savedRef = useRef({ quote: row.orig_words ?? "", twLink: row.tw_link, occurrence: row.occurrence ?? 1 });
   const catalogs = useCatalogs();
 
-  // Sibling articles for the current link (e.g. kt/call-* ), if it had any.
+  // Alternative articles for the current link, from two sources unioned by link:
+  //  1. Heading-synonym siblings of the current link (e.g. kt/call-* ) — the
+  //     variant-blind global groups built from article titles.
+  //  2. The per-verse matcher's candidates for this row's source word — surfaces
+  //     morphologically-correct articles the heading grouping can't reach (e.g.
+  //     other/lover for "lovers" on a row wrongly linked to kt/love).
   // Drives the "this word has alternatives" badge + scoped picker.
   const disambig = useMemo(() => {
-    if (!twLink) return null;
-    const idx = catalogs.disambiguationIndex?.[twLink];
-    if (idx == null) return null;
-    const group = catalogs.disambiguationGroups?.[idx];
-    return group && group.length > 1 ? group : null;
-  }, [twLink, catalogs.disambiguationIndex, catalogs.disambiguationGroups]);
+    const byLink = new Map<string, { link: string; title: string }>();
+    if (twLink) {
+      const idx = catalogs.disambiguationIndex?.[twLink];
+      if (idx != null) {
+        const group = catalogs.disambiguationGroups?.[idx];
+        if (group) for (const o of group) byLink.set(o.link, o);
+      }
+    }
+    for (const id of suggestionAltIds ? suggestionAltIds.split(",") : []) {
+      if (!id) continue;
+      const link = `rc://*/tw/dict/bible/${id}`;
+      if (!byLink.has(link)) byLink.set(link, { link, title: "" });
+    }
+    // Ensure the current link is an option (shown selected) even when it only
+    // came in via suggestions and has no heading group.
+    if (byLink.size > 0 && twLink && !byLink.has(twLink)) {
+      byLink.set(twLink, { link: twLink, title: "" });
+    }
+    const list = [...byLink.values()];
+    return list.length > 1 ? list : null;
+  }, [twLink, catalogs.disambiguationIndex, catalogs.disambiguationGroups, suggestionAltIds]);
   const [disambigAnchor, setDisambigAnchor] = useState<HTMLElement | null>(null);
 
   useEffect(() => setQuote(row.orig_words ?? ""), [row.id, row.version, row.orig_words]);
@@ -755,7 +786,8 @@ const WordRow = memo(function WordRow({
   !!a.onMoveDown === !!b.onMoveDown &&
   a.gloss === b.gloss &&
   a.quoteBuildMode === b.quoteBuildMode &&
-  a.quoteBuildSelectionCount === b.quoteBuildSelectionCount);
+  a.quoteBuildSelectionCount === b.quoteBuildSelectionCount &&
+  a.suggestionAltIds === b.suggestionAltIds);
 
 function twShort(link: string | null): string {
   if (!link) return "—";
