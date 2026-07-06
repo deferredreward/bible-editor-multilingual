@@ -1244,6 +1244,67 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     [data, activeVerse, verseIndexByVersion, chapter, twlFilters],
   );
 
+  // Raw per-verse TWL suggestions for the active verse, reported up from the
+  // Suggestions panel (before its exclusion filter). Used to merge the matcher's
+  // candidate articles back onto committed rows — see twlRowAlternatives.
+  const [verseTwlSuggestions, setVerseTwlSuggestions] = useState<TwlSuggestion[]>([]);
+
+  // Extra TW articles the per-verse matcher would propose for a committed row's
+  // source word(s), keyed by row id. The committed-row disambiguation badge
+  // otherwise only offers heading-synonym siblings of the current link (built
+  // from article titles, variant-blind), so a wrong link like kt/love on
+  // "lovers" can't reach the morphologically-correct other/lover. Matching the
+  // matcher's suggestions back onto the row by source-key surfaces it. Values are
+  // short article ids (e.g. "other/lover").
+  const twlRowAlternatives = useMemo<Map<string, string[]>>(() => {
+    const map = new Map<string, string[]>();
+    if (!data || verseTwlSuggestions.length === 0) return map;
+    const verse = activeVerse;
+    const grab = (bv: string): unknown[] | undefined => {
+      const vo = (verseIndexByVersion[bv]?.[verse]?.content as { verseObjects?: unknown[] } | null)
+        ?.verseObjects;
+      return Array.isArray(vo) ? vo : undefined;
+    };
+    const ult = grab("ULT");
+    const uhb = grab("UHB") ?? grab("UGNT");
+    const rows = data.twl.filter((r) => r.verse === verse && r.deleted_at == null);
+    if (rows.length === 0) return map;
+    // Resolve each suggestion once to its source-key set + candidate ids, and
+    // reapply the same deny-lists the Suggestions panel uses — otherwise a word
+    // deleted-here, or a (word, article) pair a translator specifically
+    // unlinked, would resurface as a "suggested" alternative on the row.
+    const sugs = verseTwlSuggestions
+      .map((s) => {
+        const resolved = resolveSpanToSource(ult, uhb, s.matchedText, s.glOccurrence);
+        if (!resolved) return null;
+        if (twlFilters.isDeletedHere(`${chapter}:${verse}`, resolved.orig_words)) return null;
+        const keys = selectionFromQuote(uhb, resolved.orig_words, resolved.occurrence);
+        if (keys.size === 0) return null;
+        const ids = s.disambiguation.filter(
+          (id) => !twlFilters.isUnlinked(resolved.orig_words, `rc://*/tw/dict/bible/${id}`),
+        );
+        return ids.length > 0 ? { keys, ids } : null;
+      })
+      .filter((x): x is { keys: Set<string>; ids: string[] } => x != null);
+    for (const r of rows) {
+      const rowKeys = selectionFromQuote(uhb, r.orig_words, r.occurrence ?? 1);
+      if (rowKeys.size === 0) continue;
+      const ids = new Set<string>();
+      for (const s of sugs) {
+        let overlap = false;
+        for (const k of s.keys) {
+          if (rowKeys.has(k)) {
+            overlap = true;
+            break;
+          }
+        }
+        if (overlap) for (const id of s.ids) ids.add(id);
+      }
+      if (ids.size > 0) map.set(r.id, [...ids]);
+    }
+    return map;
+  }, [data, activeVerse, verseIndexByVersion, verseTwlSuggestions, twlFilters, chapter]);
+
   // Which of a suggestion's candidate articles the unlinked deny-list blocks for
   // its resolved OL quote. Returned to TwlSuggestions, which prunes them from the
   // picker (and drops the suggestion when all are blocked). The deny-list is
@@ -2671,6 +2732,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onStartWordQuoteBuild={(wordId) => startQuoteBuild({ kind: "twl", id: wordId })}
           onAddTwlSuggestion={handleAddTwlSuggestion}
           isTwlSuggestionExcluded={isTwlSuggestionExcluded}
+          onTwlSuggestions={setVerseTwlSuggestions}
+          twlRowAlternatives={twlRowAlternatives}
           twlBlockedArticleIds={twlBlockedArticleIds}
           twlFiltersReady={twlFilters.settled}
           panelMode={panelMode}
