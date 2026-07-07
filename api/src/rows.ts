@@ -772,11 +772,18 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     // version bumped. Best-effort and non-blocking; see reopenLaneChecks.
     const lane = KIND_TO_REOPEN_LANE[kind];
     if (lane) {
-      // Reopen the lane on every verse a bridged ref covers (not just the
-      // leading verse), matching where the note now renders. Singletons → one.
-      const verses = coveredVersesFromRef(row.ref_raw, row.verse);
+      // Reopen the lane on every verse the note covers NOW and every verse it
+      // covered BEFORE this edit — a narrowed span ("1:2-3" → "1:2") or a verse
+      // move must clear the lane on verses it no longer renders under, not just
+      // the ones it lands on. `current` is the pre-edit row. Singletons → one.
+      const verses = new Set<number>([
+        ...coveredVersesFromRef(row.ref_raw, row.verse),
+        ...coveredVersesFromRef(current.ref_raw as string | null, current.verse as number),
+      ]);
       c.executionCtx.waitUntil(
-        Promise.all(verses.map((v) => reopenLaneChecks(c.env, row.book, row.chapter, v, [lane]))),
+        Promise.all(
+          [...verses].map((v) => reopenLaneChecks(c.env, row.book, row.chapter, v, [lane])),
+        ),
       );
     }
   }
