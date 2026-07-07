@@ -65,13 +65,18 @@ const responsiveGridSx = {
   // beneath (starting under the quote column) so it never stretches the row
   // and pushes the grip / action icons off-center.
   alignItems: "center",
-  gridTemplateColumns: "28px 1fr 1.2fr 28px 28px 28px",
+  // minmax(0, …) on the flexible tracks: a bare `fr` track has a min-content
+  // floor, so the TW-article chip's long unbreakable monospace label (e.g.
+  // `other/generation-lifetime`) would refuse to shrink and overflow into the
+  // save/undo/delete cells. minmax(0, …) lets the track collapse so the chip
+  // ellipsis-truncates instead.
+  gridTemplateColumns: "28px minmax(0, 1fr) minmax(0, 1.2fr) 28px 28px 28px",
   gridTemplateAreas: [
     '"grip quote twarticle save undo delete"',
     '". gloss gloss gloss gloss gloss"',
   ].join(" "),
   [`@container (max-width: ${NARROW_BP_PX}px)`]: {
-    gridTemplateColumns: "28px 1fr 28px 28px 28px",
+    gridTemplateColumns: "28px minmax(0, 1fr) 28px 28px 28px",
     gridTemplateAreas: [
       '"grip quote quote quote quote"',
       '"grip twarticle save undo delete"',
