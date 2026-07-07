@@ -993,6 +993,45 @@ export function refParts(refRaw: string | null | undefined): [number, number] {
   return [chNum, vsNum];
 }
 
+// Same-chapter verse numbers a tn/tq ref_raw covers. Server-side twin of
+// web/src/lib/verseRange.ts `noteCoveredVerses` — keep the two in sync. Expands
+// contiguous ranges ("1:2-3"), unions comma segments ("1:2,4"), always includes
+// the leading verse, and skips intro/front/cross-chapter/malformed segments.
+// The expansion is bounded (a malformed range can't blow up the loop). Used to
+// reopen checkoff lanes on every verse a bridged note renders under, mirroring
+// the display filter.
+const COVERED_VERSES_CAP = 400;
+export function coveredVersesFromRef(
+  refRaw: string | null | undefined,
+  leadingVerse: number,
+): number[] {
+  const covered = new Set<number>([leadingVerse]);
+  if (refRaw) {
+    const colon = refRaw.indexOf(":");
+    const versePart = colon >= 0 ? refRaw.slice(colon + 1) : refRaw;
+    for (const rawSeg of versePart.split(",")) {
+      const seg = rawSeg.trim();
+      if (!seg || seg.includes(":") || !/\d/.test(seg)) continue;
+      const dash = seg.indexOf("-");
+      if (dash < 0) {
+        const n = parseInt(seg, 10);
+        if (Number.isFinite(n)) covered.add(n);
+        continue;
+      }
+      const a = parseInt(seg.slice(0, dash), 10);
+      const b = parseInt(seg.slice(dash + 1), 10);
+      if (!Number.isFinite(a)) continue;
+      if (!Number.isFinite(b) || b < a) {
+        covered.add(a);
+        continue;
+      }
+      const end = Math.min(b, a + COVERED_VERSES_CAP);
+      for (let v = a; v <= end; v++) covered.add(v);
+    }
+  }
+  return [...covered].sort((x, y) => x - y);
+}
+
 // Allocator for the canonical sort_order scheme: a per-verse ordinal, where
 // sort_order = (1-based position within a chapter:verse) * 100, assigned in
 // DCS file order. Call the returned fn once per row in file order.

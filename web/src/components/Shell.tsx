@@ -45,7 +45,7 @@ import {
   guardBlocksSave,
   type AlignmentIntent,
 } from "../lib/alignmentDelta";
-import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../lib/verseRange";
+import { buildVerseIndex, concatSourceRange, formatVerseLabel, noteCoveredVerses } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { findSourceForTargetText, extractTargetSelectionText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
@@ -614,14 +614,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   );
   // Which verses actually have notes / questions — drives "nothing to check"
   // (N/A) vs an unchecked lane.
+  // Add every verse a row covers, not just its leading verse, so a bridged note
+  // ("1:2-3") makes the Notes/Questions checkoff lane applicable on each verse
+  // it renders under — matching noteOverlapsRange in ResourceColumn. Singletons
+  // contribute one verse, the common case.
   const versesWithTn = useMemo(() => {
     const s = new Set<number>();
-    for (const r of tnRowsForTiles ?? []) s.add(r.verse);
+    for (const r of tnRowsForTiles ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
     return s;
   }, [tnRowsForTiles]);
   const versesWithTq = useMemo(() => {
     const s = new Set<number>();
-    for (const r of tqRowsForTiles ?? []) s.add(r.verse);
+    for (const r of tqRowsForTiles ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
     return s;
   }, [tqRowsForTiles]);
   const tileSet = useMemo<VerseTile[]>(() => {
@@ -2641,17 +2645,27 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             }
           }}
           verseOptions={verseNumbers}
-          onNoteChangeVerse={(id, verse) => {
-            // Retarget a note to another verse in this chapter. Read the live
-            // row (dataRef, not the render closure) so a rapid move carries the
-            // current version. Recompute ref_raw + a fresh sort_order (end of
-            // the target verse) so the note lands in order there; enqueueRow
-            // applies it optimistically (re-bucketing the card) and PATCHes.
+          onNoteChangeVerse={(id, verse, verseEnd) => {
+            // Retarget a note to another verse in this chapter, or extend it to
+            // span a range (verseEnd > verse => ref_raw "chapter:start-end").
+            // Read the live row (dataRef, not the render closure) so a rapid
+            // move carries the current version. Recompute ref_raw + a fresh
+            // sort_order (end of the leading verse) so the note lands in order
+            // there; enqueueRow applies it optimistically and PATCHes. `verse`
+            // is sent explicitly, which rows.ts treats as authoritative — so a
+            // range ref_raw keeps this leading verse for grouping.
             const tn = dataRef.current?.tn ?? [];
             const row = tn.find((r) => r.id === id);
-            if (!row || row.verse === verse) return;
+            if (!row) return;
+            const isRange = verseEnd != null && verseEnd > verse;
+            const ref_raw =
+              verse === 0
+                ? `${chapter}:intro`
+                : isRange
+                  ? `${chapter}:${verse}-${verseEnd}`
+                  : `${chapter}:${verse}`;
+            if (row.verse === verse && row.ref_raw === ref_raw) return;
             const sort_order = pickSortOrder(sortedForVerse(tn, verse), null, "after");
-            const ref_raw = verse === 0 ? `${chapter}:intro` : `${chapter}:${verse}`;
             enqueueRow("tn", row, { verse, ref_raw, sort_order });
             // Follow the note to its new verse: the resource column only renders
             // notes in displayVerseRange, so without this the moved card vanishes

@@ -16,6 +16,7 @@ import {
   stripOrphanAlignmentMarkers,
   parseTsv,
   refParts,
+  coveredVersesFromRef,
   makeVerseSortOrder,
   collectSourceWords,
   healReplacementChars,
@@ -145,6 +146,19 @@ function assert(cond, msg) {
   assert(JSON.stringify(refParts("1:intro")) === JSON.stringify([1, 0]), "refParts 1:intro");
   assert(JSON.stringify(refParts("1:1-3")) === JSON.stringify([1, 1]), "refParts 1:1-3");
   assert(JSON.stringify(refParts(null)) === JSON.stringify([0, 0]), "refParts null");
+}
+
+// --- coveredVersesFromRef (server twin of web noteCoveredVerses) ---
+{
+  const cv = (ref, lead) => JSON.stringify(coveredVersesFromRef(ref, lead));
+  assert(cv("1:2", 2) === "[2]", "coveredVersesFromRef singleton");
+  assert(cv("1:2-3", 2) === "[2,3]", "coveredVersesFromRef bridge 2-3");
+  assert(cv("1:2,4", 2) === "[2,4]", "coveredVersesFromRef comma list");
+  assert(cv("1:2-3,5", 2) === "[2,3,5]", "coveredVersesFromRef range+comma");
+  assert(cv("1:2-2:3", 2) === "[2]", "coveredVersesFromRef cross-chapter → leading only");
+  assert(cv(null, 5) === "[5]", "coveredVersesFromRef null → leading");
+  // Malformed huge range is bounded (no runaway loop).
+  assert(coveredVersesFromRef("1:1-1000000000", 1).length <= 402, "coveredVersesFromRef bounds huge range");
 }
 
 // --- normalizeWordPunctuation: strip leading/trailing punct off `\w` text ---

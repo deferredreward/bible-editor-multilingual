@@ -9,6 +9,7 @@ import { WordsTable, type WordDropPosition } from "./WordsTable";
 import { TwlSuggestions } from "./TwlSuggestions";
 import { QuestionsTable } from "./QuestionsTable";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
+import { noteOverlapsRange } from "../lib/verseRange";
 import CheckIcon from "@mui/icons-material/Check";
 import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
 
@@ -102,7 +103,7 @@ interface Props {
   // Verse numbers in the loaded chapter, offered in each note's reference
   // picker; onNoteChangeVerse retargets a note to a different verse.
   verseOptions: number[];
-  onNoteChangeVerse: (id: string, verse: number) => void;
+  onNoteChangeVerse: (id: string, verse: number, verseEnd?: number) => void;
   // Report the moved note's candidate neighbours so Shell can paint the
   // active-verse stoplight. Fired live as a drag hovers each slot (sticky =
   // false; cleared on drop), and once after an arrow move (sticky = true,
@@ -344,16 +345,19 @@ export function ResourceColumn({
   // groupByVerse orders the buckets by verse ascending; within a verse each
   // resource sorts by sort_order (the per-verse ordinal assigned in TSV file
   // order at import). Singletons (the common case) reduce to the prior behavior.
+  // Notes/questions filter on their ref_raw span (noteOverlapsRange), not just
+  // the leading `verse`, so a bridged note ("1:2-3") shows on every verse it
+  // covers — not only its leading verse. Singletons reduce to the old test.
   const tnForVerse = useMemo(
     () =>
-      groupByVerse(tn.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd)).flatMap(
+      groupByVerse(tn.filter((r) => noteOverlapsRange(r, rangeStart, rangeEnd))).flatMap(
         ([, rows]) => sortBySortOrder(rows),
       ),
     [tn, rangeStart, rangeEnd],
   );
   const tqForVerse = useMemo(
     () =>
-      groupByVerse(tq.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd)).flatMap(
+      groupByVerse(tq.filter((r) => noteOverlapsRange(r, rangeStart, rangeEnd))).flatMap(
         ([, rows]) => sortBySortOrder(rows),
       ),
     [tq, rangeStart, rangeEnd],
@@ -936,7 +940,7 @@ export function ResourceColumn({
           onRestore={() => onNoteRestore(r.id)}
           onInsertAfter={() => onNoteInsertAfter(r.id)}
           verseOptions={verseOptions}
-          onChangeVerse={(v) => onNoteChangeVerse(r.id, v)}
+          onChangeVerse={(v, vEnd) => onNoteChangeVerse(r.id, v, vEnd)}
           onFocus={() => onNoteFocus(r)}
           onGripDragStart={() => setDragId(r.id)}
           onMoveUp={

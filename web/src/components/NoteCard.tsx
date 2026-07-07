@@ -19,6 +19,8 @@ import {
   Menu,
   MenuItem,
   ListItemText,
+  ListSubheader,
+  Divider,
 } from "@mui/material";
 import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
 import LightbulbOutlinedIcon from "@mui/icons-material/LightbulbOutlined";
@@ -97,7 +99,9 @@ interface Props {
   // can be retargeted to a different verse ("change reference"). Absent/empty
   // => the ref shows as a static label with no picker.
   verseOptions?: number[];
-  onChangeVerse?: (verse: number) => void;
+  // Retarget the note. A single verse moves it; a second `verseEnd > verse`
+  // makes the reference a bridge ("chapter:verse-verseEnd").
+  onChangeVerse?: (verse: number, verseEnd?: number) => void;
   // Hovering the reorder controls (grip / up / down) previews this note's
   // current slot in the scripture stoplight without moving it: fires true on
   // enter, false on leave.
@@ -364,8 +368,11 @@ function NoteCardInner({
   // the body staged for the "replace existing note?" confirm dialog.
   const [templateMenuAnchor, setTemplateMenuAnchor] = useState<HTMLElement | null>(null);
   const [templateConfirmBody, setTemplateConfirmBody] = useState<string | null>(null);
-  // Reference (verse) picker anchor — opened from the ref_raw label.
+  // Reference (verse) picker anchor — opened from the ref_raw label. `refSpanMode`
+  // swaps the menu from the single-verse list into the "extend through" picker
+  // that turns the reference into a bridge; reset whenever the menu closes.
   const [refMenuAnchor, setRefMenuAnchor] = useState<HTMLElement | null>(null);
+  const [refSpanMode, setRefSpanMode] = useState(false);
 
   // Baseline of the last server-confirmed content. stashEdit() optimistically
   // re-spreads row.{quote,note,support_reference} on every keystroke (so a
@@ -1516,21 +1523,66 @@ function NoteCardInner({
       <Menu
         anchorEl={refMenuAnchor}
         open={Boolean(refMenuAnchor)}
-        onClose={() => setRefMenuAnchor(null)}
+        onClose={() => {
+          setRefMenuAnchor(null);
+          setRefSpanMode(false);
+        }}
         slotProps={{ paper: { sx: { maxHeight: 320 } } }}
       >
-        {(verseOptions ?? []).map((v) => (
-          <MenuItem
-            key={v}
-            selected={v === row.verse}
-            onClick={() => {
-              setRefMenuAnchor(null);
-              if (v !== row.verse) onChangeVerse?.(v);
-            }}
-          >
-            {v === 0 ? "intro" : `v${v}`}
-          </MenuItem>
-        ))}
+        {refSpanMode
+          ? [
+              <ListSubheader key="hdr" sx={{ lineHeight: 2, bgcolor: "transparent" }}>
+                {`Extend v${row.verse} through:`}
+              </ListSubheader>,
+              ...(verseOptions ?? [])
+                .filter((v) => v > row.verse)
+                .map((v) => (
+                  <MenuItem
+                    key={v}
+                    onClick={() => {
+                      setRefMenuAnchor(null);
+                      setRefSpanMode(false);
+                      onChangeVerse?.(row.verse, v);
+                    }}
+                  >
+                    {`v${row.verse}–${v}`}
+                  </MenuItem>
+                )),
+              <Divider key="div" />,
+              <MenuItem key="back" onClick={() => setRefSpanMode(false)}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  ← Back
+                </Typography>
+              </MenuItem>,
+            ]
+          : [
+              ...(verseOptions ?? []).map((v) => (
+                <MenuItem
+                  key={v}
+                  selected={v === row.verse}
+                  onClick={() => {
+                    setRefMenuAnchor(null);
+                    // A bare verse always collapses a bridge to a singleton;
+                    // pass no end so ref_raw becomes "chapter:verse".
+                    if (v !== row.verse || (row.ref_raw ?? "").includes("-")) onChangeVerse?.(v);
+                  }}
+                >
+                  {v === 0 ? "intro" : `v${v}`}
+                </MenuItem>
+              )),
+              // Span affordance stays out of the single-verse flow: one extra
+              // tap, only offered when a later verse exists to bridge to.
+              ...(row.verse !== 0 && (verseOptions ?? []).some((v) => v > row.verse)
+                ? [
+                    <Divider key="div" />,
+                    <MenuItem key="span" onClick={() => setRefSpanMode(true)}>
+                      <Typography variant="body2" sx={{ color: "primary.main" }}>
+                        Span multiple verses…
+                      </Typography>
+                    </MenuItem>,
+                  ]
+                : []),
+            ]}
       </Menu>
       <Menu
         anchorEl={templateMenuAnchor}
