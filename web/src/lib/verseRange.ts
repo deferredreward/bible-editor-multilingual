@@ -56,41 +56,52 @@ export function buildVerseIndex(
   return out;
 }
 
-// A note/question row's verse span, parsed from `ref_raw`. Unlike scripture
-// rows (which carry `verse_end`), tn/tq rows store only a leading `verse`
-// integer plus the raw reference string, so a bridge like "1:2-3" lives only
-// in `ref_raw`. The leading `verse` is authoritative for the start (rows.ts
-// re-derives it from ref_raw on save); the end comes from a same-chapter range
-// suffix. Anything singleton, malformed, cross-chapter, or with end <= start
-// collapses to `[verse, verse]` — so the common single-verse note is a no-op.
-export function noteSpan(row: { verse: number; ref_raw?: string | null }): VerseSpan {
-  const start = row.verse;
+// The same-chapter verse numbers a note/question `ref_raw` covers. Unlike
+// scripture rows (which carry `verse_end`), tn/tq rows store only a leading
+// `verse` integer plus the raw reference string, so a bridge like "1:2-3" — or
+// a discontinuous list like "1:2,4" — lives only in `ref_raw`. The leading
+// `verse` is authoritative and always included (rows.ts re-derives it from
+// ref_raw on save). Contiguous ranges expand to every verse; comma segments are
+// unioned; "intro"/"front", cross-chapter ("3:2"), and malformed segments are
+// skipped. Returns a sorted, unique list — `[verse]` for the common singleton.
+export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null }): number[] {
+  const covered = new Set<number>([row.verse]);
   const ref = row.ref_raw;
-  if (!ref) return [start, start];
-  const colon = ref.indexOf(":");
-  const versePart = colon >= 0 ? ref.slice(colon + 1) : ref;
-  const dash = versePart.indexOf("-");
-  if (dash < 0) return [start, start];
-  const endRaw = versePart.slice(dash + 1);
-  // Cross-chapter end ("2:5-3:2") isn't supported by the surrounding machinery
-  // (locks, WS broadcast, and caches are keyed to one chapter) — treat as a
-  // singleton rather than spanning chapters.
-  if (endRaw.includes(":")) return [start, start];
-  const end = parseInt(endRaw, 10);
-  if (!Number.isFinite(end) || end <= start) return [start, start];
-  return [start, end];
+  if (ref) {
+    const colon = ref.indexOf(":");
+    const versePart = colon >= 0 ? ref.slice(colon + 1) : ref;
+    for (const rawSeg of versePart.split(",")) {
+      const seg = rawSeg.trim();
+      // Skip empty, "intro"/"front" (no digit), and cross-chapter ("3:2")
+      // segments — locks/WS/caches are all keyed to a single chapter.
+      if (!seg || seg.includes(":") || !/\d/.test(seg)) continue;
+      const dash = seg.indexOf("-");
+      if (dash < 0) {
+        const n = parseInt(seg, 10);
+        if (Number.isFinite(n)) covered.add(n);
+        continue;
+      }
+      const a = parseInt(seg.slice(0, dash), 10);
+      const b = parseInt(seg.slice(dash + 1), 10);
+      if (!Number.isFinite(a)) continue;
+      if (!Number.isFinite(b) || b < a) {
+        covered.add(a);
+        continue;
+      }
+      for (let v = a; v <= b; v++) covered.add(v);
+    }
+  }
+  return [...covered].sort((x, y) => x - y);
 }
 
-// True when a note/question row (by its ref_raw span) overlaps the inclusive
-// display window [rangeStart, rangeEnd]. Reduces to `verse in [start,end]` for
-// singletons.
+// True when a note/question row covers any verse in the inclusive display
+// window [rangeStart, rangeEnd]. Reduces to `verse in [start,end]` for singletons.
 export function noteOverlapsRange(
   row: { verse: number; ref_raw?: string | null },
   rangeStart: number,
   rangeEnd: number,
 ): boolean {
-  const [s, e] = noteSpan(row);
-  return s <= rangeEnd && e >= rangeStart;
+  return noteCoveredVerses(row).some((v) => v >= rangeStart && v <= rangeEnd);
 }
 
 // True when this integer verse is the *start* of a range (or a singleton).

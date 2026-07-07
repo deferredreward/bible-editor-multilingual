@@ -9,7 +9,7 @@ import {
   isFirstOfRange,
   rangeSize,
   concatSourceRange,
-  noteSpan,
+  noteCoveredVerses,
   noteOverlapsRange,
 } from "./verseRange.ts";
 
@@ -119,19 +119,23 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(vos.length === 3, `partial combined has 3 verseObjects (got ${vos.length})`);
 }
 
-// --- noteSpan (tn/tq bridge references, parsed from ref_raw) ---
+// --- noteCoveredVerses (tn/tq references, parsed from ref_raw) ---
 {
-  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2" })) === "[2,2]", "singleton ref → [2,2]");
-  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2-3" })) === "[2,3]", "bridge 1:2-3 → [2,3]");
-  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2-5" })) === "[2,5]", "bridge 1:2-5 → [2,5]");
+  const cv = (verse, ref_raw) => JSON.stringify(noteCoveredVerses({ verse, ref_raw }));
+  assert(cv(2, "1:2") === "[2]", "singleton ref → [2]");
+  assert(cv(2, "1:2-3") === "[2,3]", "bridge 1:2-3 → [2,3]");
+  assert(cv(2, "1:2-5") === "[2,3,4,5]", "bridge 1:2-5 expands → [2,3,4,5]");
   // Leading verse is authoritative for the start even if ref_raw drifts.
-  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "2-4" })) === "[2,4]", "colon-less range → [2,4]");
-  // Cross-chapter end not supported → singleton at the leading verse.
-  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2-2:3" })) === "[2,2]", "cross-chapter end → singleton");
-  // end <= start / malformed / missing → singleton.
-  assert(JSON.stringify(noteSpan({ verse: 3, ref_raw: "1:3-2" })) === "[3,3]", "descending range → singleton");
-  assert(JSON.stringify(noteSpan({ verse: 5, ref_raw: null })) === "[5,5]", "null ref → singleton");
-  assert(JSON.stringify(noteSpan({ verse: 0, ref_raw: "1:intro" })) === "[0,0]", "intro ref → [0,0]");
+  assert(cv(2, "2-4") === "[2,3,4]", "colon-less range → [2,3,4]");
+  // Comma-separated (discontinuous) references union each segment.
+  assert(cv(2, "1:2,4") === "[2,4]", "comma list 1:2,4 → [2,4]");
+  assert(cv(2, "1:2-3,5") === "[2,3,5]", "range+comma 1:2-3,5 → [2,3,5]");
+  // Cross-chapter segment not supported → skipped, leading verse remains.
+  assert(cv(2, "1:2-2:3") === "[2]", "cross-chapter end → leading only");
+  // Descending / malformed range → leading verse only.
+  assert(cv(3, "1:3-2") === "[3]", "descending range → leading only");
+  assert(cv(5, null) === "[5]", "null ref → [5]");
+  assert(cv(0, "1:intro") === "[0]", "intro ref → [0]");
 }
 
 // --- noteOverlapsRange ---
@@ -141,6 +145,10 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(noteOverlapsRange(bridge, 3, 3), "bridge 2-3 shows on verse 3");
   assert(!noteOverlapsRange(bridge, 4, 4), "bridge 2-3 hidden on verse 4");
   assert(!noteOverlapsRange(bridge, 1, 1), "bridge 2-3 hidden on verse 1");
+  // Discontinuous ref shows on its listed verses but not the gap between them.
+  const gap = { verse: 2, ref_raw: "1:2,4" };
+  assert(noteOverlapsRange(gap, 4, 4), "gap ref 2,4 shows on verse 4");
+  assert(!noteOverlapsRange(gap, 3, 3), "gap ref 2,4 hidden on verse 3");
   const single = { verse: 5, ref_raw: "1:5" };
   assert(noteOverlapsRange(single, 5, 5), "singleton shows on its verse");
   assert(!noteOverlapsRange(single, 6, 6), "singleton hidden elsewhere");

@@ -45,7 +45,7 @@ import {
   guardBlocksSave,
   type AlignmentIntent,
 } from "../lib/alignmentDelta";
-import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../lib/verseRange";
+import { buildVerseIndex, concatSourceRange, formatVerseLabel, noteCoveredVerses } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { findSourceForTargetText, extractTargetSelectionText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
@@ -614,14 +614,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   );
   // Which verses actually have notes / questions — drives "nothing to check"
   // (N/A) vs an unchecked lane.
+  // Add every verse a row covers, not just its leading verse, so a bridged note
+  // ("1:2-3") makes the Notes/Questions checkoff lane applicable on each verse
+  // it renders under — matching noteOverlapsRange in ResourceColumn. Singletons
+  // contribute one verse, the common case.
   const versesWithTn = useMemo(() => {
     const s = new Set<number>();
-    for (const r of tnRowsForTiles ?? []) s.add(r.verse);
+    for (const r of tnRowsForTiles ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
     return s;
   }, [tnRowsForTiles]);
   const versesWithTq = useMemo(() => {
     const s = new Set<number>();
-    for (const r of tqRowsForTiles ?? []) s.add(r.verse);
+    for (const r of tqRowsForTiles ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
     return s;
   }, [tqRowsForTiles]);
   const tileSet = useMemo<VerseTile[]>(() => {
