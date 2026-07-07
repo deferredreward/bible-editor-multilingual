@@ -49,7 +49,10 @@ export function CatalogPicker({
         variant={variant}
         color={color}
         onClick={() => setOpen(true)}
-        sx={{ cursor: "pointer", fontFamily: "monospace", fontSize: 11, height: 22 }}
+        // minWidth: 0 + maxWidth so the chip shrinks inside a constrained
+        // grid/flex cell and ellipsis-truncates the label instead of pushing
+        // neighbouring controls (e.g. the save button) off the row.
+        sx={{ cursor: "pointer", fontFamily: "monospace", fontSize: 11, height: 22, minWidth: 0, maxWidth: "100%" }}
       />
     );
   }
