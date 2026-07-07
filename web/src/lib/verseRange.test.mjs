@@ -136,6 +136,8 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(cv(3, "1:3-2") === "[3]", "descending range → leading only");
   assert(cv(5, null) === "[5]", "null ref → [5]");
   assert(cv(0, "1:intro") === "[0]", "intro ref → [0]");
+  // Malformed huge range from free-text input is bounded (no runaway loop).
+  assert(noteCoveredVerses({ verse: 1, ref_raw: "1:1-1000000000" }).length <= 402, "huge range is bounded");
 }
 
 // --- noteOverlapsRange ---

@@ -7,7 +7,7 @@ import { activePipelineForChapter, lockedResponseBody } from "./chapterLock";
 import { broadcastChapter } from "./wsEvents";
 import { newRowId } from "./rowId";
 import { reopenLaneChecks } from "./laneReopen";
-import { refParts } from "./importParsers";
+import { refParts, coveredVersesFromRef } from "./importParsers";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -306,8 +306,11 @@ rows.post("/:kind", requireEditor, async (c) => {
     );
     const lane = KIND_TO_REOPEN_LANE[kind];
     if (lane) {
+      // Reopen the lane on every verse a bridged ref covers (not just the
+      // leading verse), matching where the note now renders. Singletons → one.
+      const verses = coveredVersesFromRef(row.ref_raw, row.verse);
       c.executionCtx.waitUntil(
-        reopenLaneChecks(c.env, row.book, row.chapter, row.verse, [lane]),
+        Promise.all(verses.map((v) => reopenLaneChecks(c.env, row.book, row.chapter, v, [lane]))),
       );
     }
   }
@@ -769,8 +772,11 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
     // version bumped. Best-effort and non-blocking; see reopenLaneChecks.
     const lane = KIND_TO_REOPEN_LANE[kind];
     if (lane) {
+      // Reopen the lane on every verse a bridged ref covers (not just the
+      // leading verse), matching where the note now renders. Singletons → one.
+      const verses = coveredVersesFromRef(row.ref_raw, row.verse);
       c.executionCtx.waitUntil(
-        reopenLaneChecks(c.env, row.book, row.chapter, row.verse, [lane]),
+        Promise.all(verses.map((v) => reopenLaneChecks(c.env, row.book, row.chapter, v, [lane]))),
       );
     }
   }
@@ -793,10 +799,10 @@ rows.delete("/:kind/:id", requireEditor, async (c) => {
   // The auto-apply step is responsible for removing un-kept TNs; manual
   // deletion mid-run would race with it.
   const scope = await c.env.DB.prepare(
-    `SELECT book, chapter, verse FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
+    `SELECT book, chapter, verse, ref_raw FROM ${KIND_TO_TABLE[kind]} WHERE id = ?1${bookClause(2)}`,
   )
     .bind(id, book)
-    .first<{ book: string; chapter: number; verse: number }>();
+    .first<{ book: string; chapter: number; verse: number; ref_raw: string | null }>();
   if (scope) {
     const lock = await activePipelineForChapter(c.env, scope.book, scope.chapter);
     if (lock) return c.json(lockedResponseBody(lock), 409);
@@ -848,8 +854,11 @@ rows.delete("/:kind/:id", requireEditor, async (c) => {
     // Best-effort and non-blocking; see reopenLaneChecks.
     const lane = KIND_TO_REOPEN_LANE[kind];
     if (lane) {
+      // Reopen on every verse the deleted note covered, matching where it
+      // rendered (a bridged "1:2-3" was checkable on verses 2 and 3).
+      const verses = coveredVersesFromRef(scope.ref_raw, scope.verse);
       c.executionCtx.waitUntil(
-        reopenLaneChecks(c.env, scope.book, scope.chapter, scope.verse, [lane]),
+        Promise.all(verses.map((v) => reopenLaneChecks(c.env, scope.book, scope.chapter, v, [lane]))),
       );
     }
   }

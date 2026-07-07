@@ -64,6 +64,8 @@ export function buildVerseIndex(
 // ref_raw on save). Contiguous ranges expand to every verse; comma segments are
 // unioned; "intro"/"front", cross-chapter ("3:2"), and malformed segments are
 // skipped. Returns a sorted, unique list — `[verse]` for the common singleton.
+const NOTE_SPAN_CAP = 400;
+
 export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null }): number[] {
   const covered = new Set<number>([row.verse]);
   const ref = row.ref_raw;
@@ -88,7 +90,12 @@ export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null 
         covered.add(a);
         continue;
       }
-      for (let v = a; v <= b; v++) covered.add(v);
+      // Bound expansion so a malformed free-text ref (e.g. "1:1-1000000000"
+      // typed into the TQ reference field) can't build a huge Set and hang the
+      // render/checkoff pass. NOTE_SPAN_CAP sits well above the largest real
+      // chapter (~176 verses).
+      const end = Math.min(b, a + NOTE_SPAN_CAP);
+      for (let v = a; v <= end; v++) covered.add(v);
     }
   }
   return [...covered].sort((x, y) => x - y);
