@@ -56,6 +56,43 @@ export function buildVerseIndex(
   return out;
 }
 
+// A note/question row's verse span, parsed from `ref_raw`. Unlike scripture
+// rows (which carry `verse_end`), tn/tq rows store only a leading `verse`
+// integer plus the raw reference string, so a bridge like "1:2-3" lives only
+// in `ref_raw`. The leading `verse` is authoritative for the start (rows.ts
+// re-derives it from ref_raw on save); the end comes from a same-chapter range
+// suffix. Anything singleton, malformed, cross-chapter, or with end <= start
+// collapses to `[verse, verse]` — so the common single-verse note is a no-op.
+export function noteSpan(row: { verse: number; ref_raw?: string | null }): VerseSpan {
+  const start = row.verse;
+  const ref = row.ref_raw;
+  if (!ref) return [start, start];
+  const colon = ref.indexOf(":");
+  const versePart = colon >= 0 ? ref.slice(colon + 1) : ref;
+  const dash = versePart.indexOf("-");
+  if (dash < 0) return [start, start];
+  const endRaw = versePart.slice(dash + 1);
+  // Cross-chapter end ("2:5-3:2") isn't supported by the surrounding machinery
+  // (locks, WS broadcast, and caches are keyed to one chapter) — treat as a
+  // singleton rather than spanning chapters.
+  if (endRaw.includes(":")) return [start, start];
+  const end = parseInt(endRaw, 10);
+  if (!Number.isFinite(end) || end <= start) return [start, start];
+  return [start, end];
+}
+
+// True when a note/question row (by its ref_raw span) overlaps the inclusive
+// display window [rangeStart, rangeEnd]. Reduces to `verse in [start,end]` for
+// singletons.
+export function noteOverlapsRange(
+  row: { verse: number; ref_raw?: string | null },
+  rangeStart: number,
+  rangeEnd: number,
+): boolean {
+  const [s, e] = noteSpan(row);
+  return s <= rangeEnd && e >= rangeStart;
+}
+
 // True when this integer verse is the *start* of a range (or a singleton).
 // Renderers use this to avoid double-rendering verses 7,8,9 under a UST 6-9
 // block: only the cell at v=6 paints the card; subsequent verses skip.

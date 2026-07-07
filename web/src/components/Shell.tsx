@@ -2641,17 +2641,27 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             }
           }}
           verseOptions={verseNumbers}
-          onNoteChangeVerse={(id, verse) => {
-            // Retarget a note to another verse in this chapter. Read the live
-            // row (dataRef, not the render closure) so a rapid move carries the
-            // current version. Recompute ref_raw + a fresh sort_order (end of
-            // the target verse) so the note lands in order there; enqueueRow
-            // applies it optimistically (re-bucketing the card) and PATCHes.
+          onNoteChangeVerse={(id, verse, verseEnd) => {
+            // Retarget a note to another verse in this chapter, or extend it to
+            // span a range (verseEnd > verse => ref_raw "chapter:start-end").
+            // Read the live row (dataRef, not the render closure) so a rapid
+            // move carries the current version. Recompute ref_raw + a fresh
+            // sort_order (end of the leading verse) so the note lands in order
+            // there; enqueueRow applies it optimistically and PATCHes. `verse`
+            // is sent explicitly, which rows.ts treats as authoritative — so a
+            // range ref_raw keeps this leading verse for grouping.
             const tn = dataRef.current?.tn ?? [];
             const row = tn.find((r) => r.id === id);
-            if (!row || row.verse === verse) return;
+            if (!row) return;
+            const isRange = verseEnd != null && verseEnd > verse;
+            const ref_raw =
+              verse === 0
+                ? `${chapter}:intro`
+                : isRange
+                  ? `${chapter}:${verse}-${verseEnd}`
+                  : `${chapter}:${verse}`;
+            if (row.verse === verse && row.ref_raw === ref_raw) return;
             const sort_order = pickSortOrder(sortedForVerse(tn, verse), null, "after");
-            const ref_raw = verse === 0 ? `${chapter}:intro` : `${chapter}:${verse}`;
             enqueueRow("tn", row, { verse, ref_raw, sort_order });
             // Follow the note to its new verse: the resource column only renders
             // notes in displayVerseRange, so without this the moved card vanishes

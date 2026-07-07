@@ -9,6 +9,8 @@ import {
   isFirstOfRange,
   rangeSize,
   concatSourceRange,
+  noteSpan,
+  noteOverlapsRange,
 } from "./verseRange.ts";
 
 let failed = 0;
@@ -115,6 +117,33 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   const vos = combined.content.verseObjects;
   // 1 from v6 + 1 sep + 1 from v9 = 3
   assert(vos.length === 3, `partial combined has 3 verseObjects (got ${vos.length})`);
+}
+
+// --- noteSpan (tn/tq bridge references, parsed from ref_raw) ---
+{
+  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2" })) === "[2,2]", "singleton ref → [2,2]");
+  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2-3" })) === "[2,3]", "bridge 1:2-3 → [2,3]");
+  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2-5" })) === "[2,5]", "bridge 1:2-5 → [2,5]");
+  // Leading verse is authoritative for the start even if ref_raw drifts.
+  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "2-4" })) === "[2,4]", "colon-less range → [2,4]");
+  // Cross-chapter end not supported → singleton at the leading verse.
+  assert(JSON.stringify(noteSpan({ verse: 2, ref_raw: "1:2-2:3" })) === "[2,2]", "cross-chapter end → singleton");
+  // end <= start / malformed / missing → singleton.
+  assert(JSON.stringify(noteSpan({ verse: 3, ref_raw: "1:3-2" })) === "[3,3]", "descending range → singleton");
+  assert(JSON.stringify(noteSpan({ verse: 5, ref_raw: null })) === "[5,5]", "null ref → singleton");
+  assert(JSON.stringify(noteSpan({ verse: 0, ref_raw: "1:intro" })) === "[0,0]", "intro ref → [0,0]");
+}
+
+// --- noteOverlapsRange ---
+{
+  const bridge = { verse: 2, ref_raw: "1:2-3" };
+  assert(noteOverlapsRange(bridge, 2, 2), "bridge 2-3 shows on verse 2");
+  assert(noteOverlapsRange(bridge, 3, 3), "bridge 2-3 shows on verse 3");
+  assert(!noteOverlapsRange(bridge, 4, 4), "bridge 2-3 hidden on verse 4");
+  assert(!noteOverlapsRange(bridge, 1, 1), "bridge 2-3 hidden on verse 1");
+  const single = { verse: 5, ref_raw: "1:5" };
+  assert(noteOverlapsRange(single, 5, 5), "singleton shows on its verse");
+  assert(!noteOverlapsRange(single, 6, 6), "singleton hidden elsewhere");
 }
 
 if (failed) {
