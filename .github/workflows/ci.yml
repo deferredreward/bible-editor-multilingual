@@ -1,0 +1,42 @@
+name: CI
+
+# Runs on every PR and on pushes to main. Fast, deterministic checks only:
+# typecheck + web unit tests (the alignment/replace regression suites) + build.
+# The Playwright e2e suite is intentionally NOT gated here yet — it spins up
+# Vite + Wrangler and is slower/flakier; add it once it proves stable in CI.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same PR cancels the older in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # tsc --noEmit across both api/ and web/ workspaces.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Alignment / replace / morph / conflict regression suites — the real
+      # safety net for the edit engine (see CLAUDE.md).
+      - name: Web unit tests
+        run: npm --workspace web run test
+
+      # api typecheck + web vite build -> web/dist. Catches bundling breaks.
+      - name: Build
+        run: npm run build
