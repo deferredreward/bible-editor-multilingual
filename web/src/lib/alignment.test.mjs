@@ -16,6 +16,7 @@ import {
   alignmentPlainText,
   verseHasUnalignedWork,
   mergeGroups,
+  mergeGroupsToGroups,
   moveSource,
   moveSourceToGroups,
   clearGroup,
@@ -2800,6 +2801,138 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
       afterCards[0].source.filter((s) => s.strong === "d:H8655").length === 1,
     "the fused card renders כִּי once and teraphim once (Hebrew not doubled on screen)",
   );
+}
+
+// ─── Case: whole-card merge onto/from a collapsed over-count card (ZEC 10:2) ─
+// The bottom-grip whole-card drag (handleMergeGroups) had the same latent bug
+// handleSourceDrop did: mergeGroups touched only the survivor's/eaten's carried
+// id, so if either card is a position-fused over-count (teraphim = one physical
+// token stamped occ 1/2 + 2/2, fused by mergeSamePositionGroups into ONE card),
+// a fused SURVIVOR split apart (its siblings lost the shared position sequence)
+// and a fused EATEN only half-left (siblings stayed put). mergeGroupsToGroups
+// resolves both cards to all their state groups so the merge stays one card.
+{
+  console.log("\n[Case] whole-card merge onto/from a collapsed over-count card (ZEC 10:2 כִּי + teraphim)");
+  const ki = "כִּי";
+  const teraphim = "הַתְּרָפִים";
+  // כִּי aligned to "For" (a normal single-group card); teraphim aligned twice
+  // (over-count occ 1/2 + 2/2) → one fused card of 6 English words.
+  const target = String.raw`\id ZEC
+\c 10
+\v 2 \zaln-s |x-strong="H3588a" x-lemma="כִּי" x-occurrence="1" x-occurrences="1" x-content="${ki}"\*\w For|x-occurrence="1" x-occurrences="1"\w*\zaln-e\* \zaln-s |x-strong="d:H8655" x-lemma="תְּרָפִים" x-occurrence="1" x-occurrences="2" x-content="${teraphim}"\*\w The|x-occurrence="1" x-occurrences="1"\w* \w household|x-occurrence="1" x-occurrences="1"\w* \w idols|x-occurrence="1" x-occurrences="1"\w*\zaln-e\* \zaln-s |x-strong="d:H8655" x-lemma="תְּרָפִים" x-occurrence="2" x-occurrences="2" x-content="${teraphim}"\*\w that|x-occurrence="1" x-occurrences="1"\w* \w people|x-occurrence="1" x-occurrences="1"\w* \w consult|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+`;
+  const source = String.raw`\id ZEC
+\c 10
+\v 2 \w ${ki}|x-strong="H3588a" x-occurrence="1"\w* \w ${teraphim}|x-strong="d:H8655" x-occurrence="1"\w*
+`;
+  const tvo = usfm.toJSON(target).chapters["10"]["2"].verseObjects;
+  const svo = usfm.toJSON(source).chapters["10"]["2"].verseObjects;
+  const state = parseAlignment(tvo, svo);
+
+  const posByContent = new Map();
+  svo.forEach((n, i) => {
+    if (n && n.type === "word" && n.tag === "w") posByContent.set(n.text.normalize("NFC"), i);
+  });
+  const sourcePos = (s) => posByContent.get((s.content ?? "").normalize("NFC")) ?? -1;
+  const posKey = (g) => {
+    if (g.source.length === 0) return null;
+    const ps = g.source.map(sourcePos);
+    return ps.some((p) => p < 0) ? null : ps.join(".");
+  };
+  const displayOf = (st) => {
+    const sortPos = (g) => {
+      if (g.source.length === 0) return Number.MAX_SAFE_INTEGER;
+      const p = sourcePos(g.source[0]);
+      return p >= 0 ? p : Number.MAX_SAFE_INTEGER;
+    };
+    const sorted = [...st.groups].sort((a, b) => sortPos(a) - sortPos(b));
+    return mergeSamePositionGroups(
+      mergeAdjacentSameSource(stripCompoundOverlaps(sorted)),
+      posKey,
+    );
+  };
+  // Resolve a display card back to all its fused state-group ids, exactly as
+  // AlignmentPanel.groupsForCard does (sourceKey OR position).
+  const groupsForCard = (st, card) => {
+    const key = sourceKey(card);
+    const cardPosKey = posKey(card);
+    return [
+      card.id,
+      ...st.groups
+        .filter(
+          (g) =>
+            g.id !== card.id &&
+            (sourceKey(g) === key || (cardPosKey !== null && posKey(g) === cardPosKey)),
+        )
+        .map((g) => g.id),
+    ];
+  };
+  const teraphimCardIn = (st) =>
+    displayOf(st).find((g) => g.source.some((s) => s.strong === "d:H8655"));
+  const kiCardIn = (st) =>
+    displayOf(st).find((g) => g.source.some((s) => s.strong === "H3588a"));
+
+  // Precondition: teraphim renders as ONE fused 6-word card standing for two
+  // state groups; כִּי is its own single-group card.
+  const teraphimCard = teraphimCardIn(state);
+  const kiCard = kiCardIn(state);
+  assert(teraphimCard.targets.length === 6, `precondition: teraphim is one fused 6-word card (got ${teraphimCard.targets.length})`);
+  const teraphimIds = groupsForCard(state, teraphimCard);
+  const kiIds = groupsForCard(state, kiCard);
+  assert(teraphimIds.length === 2, `teraphim card collapses two state groups (got ${teraphimIds.length})`);
+  assert(kiIds.length === 1, `כִּי card is a single state group (got ${kiIds.length})`);
+
+  // ── Direction A: SURVIVOR is the fused card (merge כִּי → teraphim). ──
+  // Regression: the old single-id merge splits the fused survivor back into two.
+  const oldA = mergeGroups(state, teraphimCard.id, kiCard.id, sourcePos);
+  const oldACards = displayOf(oldA).filter((g) => g.source.some((s) => s.strong === "d:H8655"));
+  assert(oldACards.length === 2, `precondition: mergeGroups SPLITS the fused survivor (the bug) — got ${oldACards.length} teraphim cards`);
+
+  const fixedA = mergeGroupsToGroups(state, teraphimIds, kiIds, sourcePos);
+  const aCards = displayOf(fixedA).filter((g) => g.source.some((s) => s.strong === "d:H8655"));
+  assert(aCards.length === 1, `A: survivor stays ONE card after the merge (got ${aCards.length})`);
+  assert(aCards[0].targets.length === 7, `A: merged card shows all 7 English words (6 + "For") (got ${aCards[0].targets.length})`);
+  assert(
+    aCards[0].source.filter((s) => s.strong === "H3588a").length === 1 &&
+      aCards[0].source.filter((s) => s.strong === "d:H8655").length === 1,
+    "A: merged card renders כִּי once and teraphim once (Hebrew not doubled on screen)",
+  );
+  const aTeraphimGroups = fixedA.sourceGroups.filter((g) => g.source.some((s) => s.strong === "d:H8655"));
+  assert(
+    aTeraphimGroups.length === 2 && aTeraphimGroups.every((g) => g.source.some((s) => s.strong === "H3588a")),
+    "A: both teraphim state groups now carry כִּי (fusion preserved)",
+  );
+  const aKiIds = aTeraphimGroups.map((g) => g.source.find((s) => s.strong === "H3588a").id);
+  assert(aKiIds[0] !== aKiIds[1], `A: the cloned כִּי chip gets a fresh id (got ${JSON.stringify(aKiIds)})`);
+  assert(displayOf(fixedA).some((g) => g.source.some((s) => s.strong === "H3588a")) &&
+    !displayOf(fixedA).some((g) => g.source.length === 1 && g.source[0].strong === "H3588a"),
+    "A: the standalone כִּי card is gone (folded into the fused card)");
+
+  // ── Direction B: EATEN is the fused card (merge teraphim → כִּי). ──
+  // Regression: the old single-id merge leaves a teraphim sibling card behind.
+  const oldB = mergeGroups(state, kiCard.id, teraphimCard.id, sourcePos);
+  const oldBTeraphim = displayOf(oldB).filter(
+    (g) => g.source.length === 1 && g.source[0].strong === "d:H8655",
+  );
+  assert(oldBTeraphim.length === 1, `precondition: mergeGroups leaves a teraphim sibling behind (the bug) — got ${oldBTeraphim.length}`);
+
+  const fixedB = mergeGroupsToGroups(state, kiIds, teraphimIds, sourcePos);
+  const bCards = displayOf(fixedB);
+  const bMerged = bCards.find((g) => g.source.some((s) => s.strong === "H3588a"));
+  assert(
+    bCards.filter((g) => g.source.some((s) => s.strong === "d:H8655")).length === 1,
+    `B: no leftover teraphim card — it fully folds into the survivor (got ${bCards.filter((g) => g.source.some((s) => s.strong === "d:H8655")).length})`,
+  );
+  assert(
+    bMerged.source.filter((s) => s.strong === "d:H8655").length === 1,
+    "B: the eaten fused card contributes teraphim ONCE, not once per fused group",
+  );
+  assert(bMerged.targets.length === 7, `B: merged card shows all 7 English words (got ${bMerged.targets.length})`);
+
+  // No-op guards.
+  assert(mergeGroupsToGroups(state, teraphimIds, teraphimIds, sourcePos) === state, "overlapping id sets are a no-op (same ref)");
+  assert(mergeGroupsToGroups(state, kiIds, [], sourcePos) === state, "empty eaten list is a no-op (same ref)");
+  assert(mergeGroupsToGroups(state, kiIds, ["nope"], sourcePos) === state, "missing eaten id is a no-op (same ref)");
 }
 
 // ─── Case 33: Hebrew object marker (H0853) suggestion rule ──────────────

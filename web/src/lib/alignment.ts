@@ -1585,6 +1585,81 @@ export function mergeGroups(
   return finalize({ ...state, sourceGroups, stream });
 }
 
+// Merge one DISPLAY card (all its `eatenIds` state groups) into another
+// (`survivorIds`). Generalises `mergeGroups` to the case where either card is a
+// position-fused collapse of several state groups — the AI over-count where a
+// token appearing ONCE in the source is stamped occ 1/2 + 2/2 (one milestone
+// per target phrase), which mergeSamePositionGroups renders as a single card.
+// `mergeGroups` touched only the two carried ids, so:
+//   - a fused SURVIVOR split apart: its other groups no longer shared the
+//     survivor's source-position sequence, so mergeSamePositionGroups stopped
+//     fusing them and the hidden siblings popped back out as separate cards;
+//   - a fused EATEN never fully left: only one of its groups was absorbed, the
+//     rest stayed put.
+// Same visible symptom as the ZEC 10:2 duplicate-teraphim source-drop bug that
+// moveSourceToGroups fixed.
+//
+// The eaten card contributes its physical source ONCE — its representative chain
+// is the first eaten group's `source`; the fused siblings are position-
+// duplicates of the same token(s), so unioning them would multiply the Hebrew.
+// That chain is appended to EVERY survivor group so they keep a matching
+// position sequence and stay fused: the first survivor group gets the real
+// words, the rest get fresh-id clones (so each chip stays independently
+// draggable/extractable). Every target aligned to any eaten group re-points to
+// the survivor's carried id (`survivorIds[0]`), and all eaten groups are
+// dropped. Mirrors moveSourceToGroups / handleClearGroup's "one card = N state
+// groups" resolution.
+//
+// `survivorIds[0]` / `eatenIds[0]` are the cards' carried ids; the tails are
+// their fused siblings. No-op when the id sets overlap, either is empty/missing,
+// or the eaten card has no source words. With one id on each side this reduces
+// to `mergeGroups`.
+export function mergeGroupsToGroups(
+  state: AlignmentState,
+  survivorIds: string[],
+  eatenIds: string[],
+  sourcePos?: (s: SourceWord) => number,
+): AlignmentState {
+  if (survivorIds.length === 0 || eatenIds.length === 0) return state;
+  const survivorSet = new Set(survivorIds);
+  const eatenSet = new Set(eatenIds);
+  if (survivorIds.some((id) => eatenSet.has(id))) return state;
+  const survivorGroups = survivorIds
+    .map((id) => state.sourceGroups.find((g) => g.id === id))
+    .filter((g): g is AlignmentGroup => !!g);
+  const eatenLead = state.sourceGroups.find((g) => g.id === eatenIds[0]);
+  if (survivorGroups.length !== survivorIds.length || !eatenLead) return state;
+  const movingChain = eatenLead.source;
+  if (movingChain.length === 0) return state;
+  const survivorCarried = survivorIds[0];
+  let firstAssigned = false;
+  const sourceGroups: AlignmentGroup[] = [];
+  for (const g of state.sourceGroups) {
+    if (eatenSet.has(g.id)) continue; // drop every eaten group
+    if (survivorSet.has(g.id)) {
+      // First survivor group gets the real moved words; siblings get fresh-id
+      // clones so the position sequence still matches across all fused groups.
+      const add = firstAssigned ? movingChain.map((s) => ({ ...s, id: uid() })) : movingChain;
+      firstAssigned = true;
+      const combined = [...g.source, ...add];
+      sourceGroups.push({
+        ...g,
+        source: sourcePos ? canonicalizeSource(combined, sourcePos) : combined,
+      });
+    } else {
+      sourceGroups.push(g);
+    }
+  }
+  const stream = state.stream.map((item) =>
+    item.kind === "word" &&
+    typeof item.alignedTo === "string" &&
+    eatenSet.has(item.alignedTo)
+      ? { ...item, alignedTo: survivorCarried }
+      : item,
+  );
+  return finalize({ ...state, sourceGroups, stream });
+}
+
 // Apply moveTarget for multiple word ids. Used when the user shift-selects
 // chips and drags the bundle onto one destination.
 export function moveTargets(
