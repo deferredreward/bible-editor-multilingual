@@ -30,7 +30,7 @@ import {
   clearGroup,
   extractSource,
   mergeGroups,
-  moveSource,
+  moveSourceToGroups,
   moveTargets,
   parseAlignment,
   serializeAlignment,
@@ -304,8 +304,29 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     };
     const handleSourceDrop = (destGroupId: string, sourceId: string) => {
       if (!state) return;
+      // The drop target is a DISPLAY card, which may have collapsed several
+      // state groups sharing a source position (occ 1/2 + 2/2 over-count → one
+      // physical token, see displayGroups/mergeSamePositionGroups). Add the
+      // word to EVERY group the card fused — by sourceKey OR position, the same
+      // identity handleClearGroup uses — so the card stays one card instead of
+      // splitting the hidden siblings back out (ZEC 10:2 UST duplicate-teraphim).
+      const target = state.groups.find((g) => g.id === destGroupId);
+      if (!target) return;
+      const key = sourceKey(target);
+      const posKey = groupPositionKey(target, sourceIndexMap);
+      const destGroupIds = [
+        destGroupId,
+        ...state.groups
+          .filter(
+            (g) =>
+              g.id !== destGroupId &&
+              (sourceKey(g) === key ||
+                (posKey !== null && groupPositionKey(g, sourceIndexMap) === posKey)),
+          )
+          .map((g) => g.id),
+      ];
       setState(
-        moveSource(state, sourceId, destGroupId, (s) =>
+        moveSourceToGroups(state, sourceId, destGroupIds, (s) =>
           resolveSourcePos(s, sourceIndexMap),
         ),
       );

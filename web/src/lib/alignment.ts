@@ -1468,6 +1468,77 @@ export function moveSource(
   return finalize({ ...state, sourceGroups, stream });
 }
 
+// Move a source word onto a DISPLAY card that collapsed several state groups.
+// One rendered card can fuse multiple `sourceGroups` sharing a source position —
+// the AI over-count where a token appearing ONCE in the UHB is stamped
+// occurrences>1, one milestone per target phrase (occ 1/2 + 2/2), which
+// mergeSamePositionGroups fuses into a single card. Dropping a source chip onto
+// that card must add it to EVERY fused group, or the card visually splits: the
+// touched group gains a word, its position sequence no longer matches its
+// siblings', and mergeSamePositionGroups stops fusing them, so the previously-
+// hidden groups re-appear as separate cards (ZEC 10:2 UST: dropping the unaligned
+// כִּי onto the teraphim card spawned a second teraphim and bumped "that people
+// consult" onto it). The first group receives the moved word; the rest receive
+// clones with fresh ids so every chip stays independently draggable/extractable.
+// Mirrors AlignmentPanel.handleClearGroup, which clears all fused groups by the
+// same identity. `destGroupIds[0]` is the card's carried id (targets from a
+// collapsed origin re-point there); the tail are its fused siblings.
+export function moveSourceToGroups(
+  state: AlignmentState,
+  sourceId: string,
+  destGroupIds: string[],
+  sourcePos?: (s: SourceWord) => number,
+): AlignmentState {
+  if (destGroupIds.length <= 1) {
+    return moveSource(state, sourceId, destGroupIds[0], sourcePos);
+  }
+  let moving: SourceWord | null = null;
+  let fromGroupId: string | null = null;
+  for (const g of state.sourceGroups) {
+    const found = g.source.find((s) => s.id === sourceId);
+    if (found) {
+      moving = found;
+      fromGroupId = g.id;
+      break;
+    }
+  }
+  const destSet = new Set(destGroupIds);
+  if (!moving || !fromGroupId || destSet.has(fromGroupId)) return state;
+  let collapsed = false;
+  let firstAssigned = false;
+  const sourceGroups: AlignmentGroup[] = [];
+  for (const g of state.sourceGroups) {
+    if (g.id === fromGroupId) {
+      const remaining = g.source.filter((s) => s.id !== sourceId);
+      if (remaining.length === 0) {
+        collapsed = true;
+        continue;
+      }
+      sourceGroups.push({ ...g, source: remaining });
+    } else if (destSet.has(g.id)) {
+      // First fused group gets the real word; siblings get a fresh-id clone so
+      // each chip is independently draggable and extractable.
+      const add = firstAssigned ? { ...moving, id: uid() } : moving;
+      firstAssigned = true;
+      const combined = [...g.source, add];
+      sourceGroups.push({
+        ...g,
+        source: sourcePos ? canonicalizeSource(combined, sourcePos) : combined,
+      });
+    } else {
+      sourceGroups.push(g);
+    }
+  }
+  const stream = collapsed
+    ? state.stream.map((item) =>
+        item.kind === "word" && item.alignedTo === fromGroupId
+          ? { ...item, alignedTo: destGroupIds[0] }
+          : item,
+      )
+    : state.stream;
+  return finalize({ ...state, sourceGroups, stream });
+}
+
 // Merge an entire alignment group (`eatenId`) into `survivorId`: the eaten
 // group's source words are appended to the survivor's source chain (making it
 // compound), and every target word aligned to the eaten group re-points to the
