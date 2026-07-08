@@ -14,6 +14,27 @@
 
 ## Last run
 
+2026-07-08 · **suspicious-vaughan** — **Fixed the whole-card-merge sibling of the duplicate-Hebrew bug**
+(stacked on `alignment-panel-duplicate-word`, which is itself NOT yet PR'd). `handleMergeGroups` (bottom-grip
+whole-card drag) had the same latent defect `handleSourceDrop` just got fixed for: it called
+`mergeGroups(state, survivor, eaten)` with only each card's **carried** id, so when either card was a
+position-fused over-count (teraphim = one physical token stamped occ 1/2 + 2/2, fused by
+`mergeSamePositionGroups` into one card) the merge broke fusion — a fused **survivor** split back into two
+cards (siblings lost the shared position sequence), a fused **eaten** only half-left (siblings stayed put).
+**Fix (web only):** new lib `mergeGroupsToGroups(state, survivorIds[], eatenIds[], sourcePos)` — generalises
+`mergeGroups` to resolve BOTH cards to all their state groups; the eaten card contributes its representative
+source chain ONCE (first eaten group's `source`; fused siblings are position-dupes), appended to EVERY
+survivor group (first real, rest fresh-id clones) so survivor fusion is preserved, and ALL eaten groups'
+targets re-point to the survivor's carried id + all eaten groups drop. `AlignmentPanel.handleMergeGroups`
+resolves each display card via a new `groupsForCard` closure (sourceKey OR position — the exact identity
+`handleClearGroup`/`handleSourceDrop` use). With one id per side it reduces to `mergeGroups`. Regression:
+`alignment.test.mjs` "whole-card merge onto/from a collapsed over-count card (ZEC 10:2)" — both directions
+(survivor-fused, eaten-fused) plus preconditions proving the old `mergeGroups` splits the survivor / leaves
+an eaten sibling behind, plus no-op guards. `npm --workspace web run test` + `npm run typecheck` green.
+**Not** browser-verified live (native HTML5 drag-drop merge on a specific over-count verse is unreliable to
+automate) — verified at unit + wiring level, the component change mirroring the prod-proven
+`handleClearGroup`/`handleSourceDrop` resolution. (memory: [[project_alignment_panel_duplicate_source_drop]])
+
 2026-07-08 · **alignment-panel-duplicate-word** — **Side-by-side aligner: dropping an unaligned source
 chip onto a position-fused card spawned a duplicate Hebrew word.** Repro ZEC 10:2 UST: teraphim
 (הַתְּרָפִים, appears ONCE in UHB) is aligned as two milestones (over-count occ 1/2 → "The household

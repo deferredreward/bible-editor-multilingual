@@ -29,7 +29,7 @@ import {
   clearAll,
   clearGroup,
   extractSource,
-  mergeGroups,
+  mergeGroupsToGroups,
   moveSourceToGroups,
   moveTargets,
   parseAlignment,
@@ -335,9 +335,35 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       if (!state) return;
       setState(extractSource(state, sourceId));
     };
+    // Resolve a DISPLAY card id back to EVERY state group it collapsed — by
+    // sourceKey OR source position, the same identity handleClearGroup /
+    // handleSourceDrop use. A card fuses groups by source identity
+    // (mergeAdjacentSameSource) AND by position (mergeSamePositionGroups → the
+    // occ 1/2 + 2/2 over-count), so the carried id alone under-counts it. The
+    // carried id stays first so it leads the returned list.
+    const groupsForCard = (cardId: string): string[] => {
+      if (!state) return [cardId];
+      const target = state.groups.find((g) => g.id === cardId);
+      if (!target) return [cardId];
+      const key = sourceKey(target);
+      const posKey = groupPositionKey(target, sourceIndexMap);
+      return [
+        cardId,
+        ...state.groups
+          .filter(
+            (g) =>
+              g.id !== cardId &&
+              (sourceKey(g) === key ||
+                (posKey !== null && groupPositionKey(g, sourceIndexMap) === posKey)),
+          )
+          .map((g) => g.id),
+      ];
+    };
     // Merge a whole card (the dragged group) into the card it was dropped on.
     // survivor = the earlier-positioned of the two, so the combined Hebrew
-    // chain reads in verse order regardless of drag direction.
+    // chain reads in verse order regardless of drag direction. Each side may be
+    // a position-fused card standing for several state groups (see
+    // mergeGroupsToGroups), so resolve both to all their underlying groups.
     const handleMergeGroups = (dropTargetId: string, draggedId: string) => {
       if (!state || dropTargetId === draggedId) return;
       const order = displayGroups.map((g) => g.id);
@@ -347,8 +373,11 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
         ti !== -1 && di !== -1 && di < ti
           ? [draggedId, dropTargetId]
           : [dropTargetId, draggedId];
-      const next = mergeGroups(state, survivor, eaten, (s) =>
-        resolveSourcePos(s, sourceIndexMap),
+      const next = mergeGroupsToGroups(
+        state,
+        groupsForCard(survivor),
+        groupsForCard(eaten),
+        (s) => resolveSourcePos(s, sourceIndexMap),
       );
       if (next === state) return;
       setMergeUndo(state);
