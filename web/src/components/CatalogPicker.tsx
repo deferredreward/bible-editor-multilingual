@@ -72,7 +72,9 @@ export function CatalogPicker({
       open
       freeSolo={freeSolo}
       autoFocus
-      value={value ?? ""}
+      // null (not "") is MUI's canonical "no selection": with freeSolo off an
+      // empty-string value isn't in `options` and triggers a console warning.
+      value={value ?? null}
       options={effectiveOptions}
       PopperComponent={FixedWidthPopper}
       size="small"
