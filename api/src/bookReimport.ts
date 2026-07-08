@@ -562,6 +562,16 @@ async function applyTsvRows(
       kind,
     });
     const aiOnly = reimportable && cur.updated_by != null;
+    // Reorder interaction (by design, not a gap): a pure reorder writes only
+    // sort_order via the rows.ts fast path — no version bump, no edit_log — so a
+    // reordered AI row stays "AI-only". That's intended: reorder is transient
+    // last-write-wins (rows.ts), and a HUMAN content edit is NOT transient — it
+    // takes the versioning PATCH path, which logs a source=NULL edit_log row,
+    // flipping isReimportableRow false (never re-seeded). For a content-IDENTICAL
+    // reordered AI row, `contentMatches && preserveLocalOrder → noop` fires below
+    // BEFORE the aiOnly re-seed, so the reorder is preserved (the reorder-revert
+    // fix). Only a reordered AI row whose CONTENT also drifted on master takes
+    // master wholesale (content + file order) — the re-seed we want.
     const fate = classifyReimportRow(contentMatches, sortMatches, reimportable, preserveLocalOrder, aiOnly);
     if (fate === "noop") {
       counts.skipped_noop++;
