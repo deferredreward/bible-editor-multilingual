@@ -568,7 +568,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
             maxHeight: 64,
             overflowY: "auto",
             fontFamily: '"Times New Roman", "Cardo", serif',
-            fontSize: 15,
+            fontSize: `calc(15px * var(--be-reading-scale, 1))`,
             lineHeight: 1.5,
             color: locked ? "text.disabled" : "text.primary",
             outline: "none",
