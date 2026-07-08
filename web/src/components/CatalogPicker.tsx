@@ -9,6 +9,9 @@ interface Props {
   size?: "small" | "medium";
   color?: "primary" | "default";
   variant?: "filled" | "outlined";
+  // When false, the editor can only pick a value from `options` (no free text).
+  // Defaults to true so callers keep the freeSolo behaviour unless they opt out.
+  freeSolo?: boolean;
   onChange: (value: string | null) => void;
 }
 
@@ -29,10 +32,17 @@ export function CatalogPicker({
   size = "small",
   color = "default",
   variant = "outlined",
+  freeSolo = true,
   onChange,
 }: Props) {
   const [open, setOpen] = useState(false);
   const shown = display ? display(value) : (value ?? "—");
+  // With freeSolo off, MUI requires the current value to be one of the options
+  // or it warns and drops it. Inject a legacy off-list value so the row's
+  // existing selection still shows (and can be re-picked) without widening the
+  // catalog for everyone.
+  const effectiveOptions =
+    freeSolo || !value || options.includes(value) ? options : [value, ...options];
   const inputRef = useRef<HTMLInputElement | null>(null);
   // Pressing × inside MUI's Autocomplete fires onChange(clear) AND can
   // synchronously trigger onClose(blur) as the button activation
@@ -58,12 +68,12 @@ export function CatalogPicker({
   }
 
   return (
-    <Autocomplete<string, false, false, true>
+    <Autocomplete<string, false, false, boolean>
       open
-      freeSolo
+      freeSolo={freeSolo}
       autoFocus
       value={value ?? ""}
-      options={options}
+      options={effectiveOptions}
       PopperComponent={FixedWidthPopper}
       size="small"
       filterOptions={(opts, state) => {

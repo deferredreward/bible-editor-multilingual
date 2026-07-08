@@ -998,6 +998,7 @@ function NoteCardInner({
           <CatalogPicker
             value={supportRef}
             options={catalogs.supportReferences}
+            freeSolo={false}
             display={(v) => (v ? shortSupport(v) : "+ support ref")}
             placeholder="figs-, translate-, writing-, …"
             color="primary"
