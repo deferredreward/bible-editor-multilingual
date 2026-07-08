@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
 import { buildTermMapFromArticles, type TwArticleLite } from "./twlMatcher";
+import { TA_SUPPORT_REFERENCES } from "./taSupportReferences";
 
 export const catalogs = new Hono<{ Bindings: Env }>();
 
@@ -56,21 +57,12 @@ function buildDisambiguation(articles: TwArticleLite[]) {
   return { groups, index };
 }
 
-// Support references still bootstrap from existing tn_rows usage (a future
-// enhancement is to pull the canonical list from en_ta). TW links now prefer
+// Support references are served from the curated canonical TA list
+// (taSupportReferences.ts) — the notes picker restricts to these. TW links prefer
 // the canonical en_tw catalog (tw_articles, migration 0032 + scripts/import-tw.mjs)
 // and fall back to / union with usage-derived links so nothing regresses before
 // the first import and any in-use-but-not-canonical link still autocompletes.
 catalogs.get("/", async (c) => {
-  const supportRefs = await c.env.DB.prepare(
-    `SELECT support_reference AS value, COUNT(*) AS n
-     FROM tn_rows
-     WHERE support_reference IS NOT NULL AND deleted_at IS NULL
-     GROUP BY support_reference
-     ORDER BY n DESC
-     LIMIT 500`,
-  ).all<{ value: string; n: number }>();
-
   // Canonical en_tw articles (empty until the first import). id + title also
   // feed the disambiguation groups below.
   const canonical = await c.env.DB.prepare(
@@ -109,7 +101,7 @@ catalogs.get("/", async (c) => {
   );
 
   return c.json({
-    supportReferences: supportRefs.results.map((r) => r.value),
+    supportReferences: TA_SUPPORT_REFERENCES,
     twLinks,
     disambiguationGroups: disambiguation.groups,
     disambiguationIndex: disambiguation.index,
