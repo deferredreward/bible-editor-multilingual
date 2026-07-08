@@ -1365,7 +1365,7 @@ function NoteCardInner({
             }}
             inputProps={{
               style: {
-                fontSize: 15,
+                fontSize: `calc(15px * var(--be-reading-scale, 1))`,
                 lineHeight: 1.55,
                 fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
               },
