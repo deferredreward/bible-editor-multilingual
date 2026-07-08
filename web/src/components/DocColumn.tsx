@@ -180,7 +180,7 @@ export function DocColumn({
           px: 1.5,
           py: 1,
           lineHeight: 1.7,
-          fontSize: rtl ? 21 : 15,
+          fontSize: `calc(${rtl ? 21 : 15}px * var(--be-reading-scale, 1))`,
           fontFamily: rtl
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',

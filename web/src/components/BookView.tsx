@@ -1043,7 +1043,7 @@ const VerseCell = memo(function VerseCell({
         style={{
           outline: "none",
           background: "transparent",
-          fontSize: rtl ? 19 : 14.5,
+          fontSize: `calc(${rtl ? 19 : 14.5}px * var(--be-reading-scale, 1))`,
           fontFamily: rtl
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',

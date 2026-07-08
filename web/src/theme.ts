@@ -213,3 +213,31 @@ export const ThemeModeContext = createContext<ThemeModeContextValue>({
   mode: "light",
   toggle: () => {},
 });
+
+// Reading-text font scale. Multiplies the base pixel sizes of the ULT/UST
+// scripture editors and the note bodies via the `--be-reading-scale` CSS
+// custom property, so changing it re-sizes the reading content live without
+// re-rendering the (heavy, memoized) scripture components. Chrome/toolbars
+// keep their fixed sizing.
+export const FONT_SCALE_MIN = 0.8;
+export const FONT_SCALE_MAX = 1.6;
+export const FONT_SCALE_STEP = 0.1;
+export const FONT_SCALE_DEFAULT = 1;
+
+export function clampFontScale(n: number): number {
+  if (!Number.isFinite(n)) return FONT_SCALE_DEFAULT;
+  const clamped = Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, n));
+  // Snap to the step grid, then fix to 2 decimals so we store a clean "1.2"
+  // rather than a float-drift value like 1.2000000000000002.
+  return parseFloat((Math.round(clamped / FONT_SCALE_STEP) * FONT_SCALE_STEP).toFixed(2));
+}
+
+export interface FontScaleContextValue {
+  scale: number;
+  setScale: (n: number) => void;
+}
+
+export const FontScaleContext = createContext<FontScaleContextValue>({
+  scale: FONT_SCALE_DEFAULT,
+  setScale: () => {},
+});
