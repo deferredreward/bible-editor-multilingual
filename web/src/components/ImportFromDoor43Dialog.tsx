@@ -79,6 +79,7 @@ function summarize(res: ReimportResponse): string {
   const t = res.totals;
   const parts: string[] = [];
   if (t.updated) parts.push(`${t.updated} updated`);
+  if (t.reimported_ai) parts.push(`${t.reimported_ai} refreshed (AI-generated)`);
   if (t.inserted) parts.push(`${t.inserted} inserted`);
   if (t.skipped_edited) parts.push(`${t.skipped_edited} skipped (already edited)`);
   if (t.skipped_locked) parts.push(`${t.skipped_locked} skipped (AI pipeline running)`);
