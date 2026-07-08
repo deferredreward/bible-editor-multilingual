@@ -1628,16 +1628,23 @@ export async function changedTsvChapters(
   return changed;
 }
 
-// Soft-delete pristine rows that master no longer carries, so the nightly
+// Soft-delete rows no HUMAN owns that master no longer carries, so the nightly
 // export can't resurrect an out-of-band deletion. Mirrors pipelineImport.ts
 // deleteUnkeptTns and the app's DELETE handler shape (rows.ts): set
-// deleted_at, bump version, audit a 'delete'. Conservative on every axis:
-// only chapters the incoming file covers AND the diff gate flagged as changed
-// (a deletion always flags its chapter), only rows passing the pristine
-// predicate (kept on the UPDATE itself so an edit landing after the SELECT
-// skips the row), and never under an active pipeline lock. The id comparison
-// is against the WHOLE file's id set so a row the update path just moved to
-// another chapter isn't mistaken for removed.
+// deleted_at, bump version, audit a 'delete'. "No human owns it" spans both
+// pristine (updated_by IS NULL) AND AI-only rows (updated_by set but the latest
+// content edit_log source is ai_pipeline) — the same isReimportableRow rule the
+// apply path uses, so a row the AI wrote and master later dropped is pruned
+// instead of lingering and re-exporting (the apply/prune consistency the
+// reimported_ai fix would otherwise miss). Conservative on every axis: only
+// chapters the incoming file covers AND the diff gate flagged as changed (a
+// deletion always flags its chapter), never under an active pipeline lock, and
+// the WRITE re-asserts version-CAS + the deleted/trashed/preserve/hint
+// protections (NOT updated_by IS NULL — an AI-only row carries the starter's id,
+// exactly as deleteUnkeptTns notes) so a human edit landing after the SELECT
+// bumps version → 0 rows → skipped. updated_by → NULL reclaims the tombstone to
+// reimport-owned. The id comparison is against the WHOLE file's id set so a row
+// the update path just moved to another chapter isn't mistaken for removed.
 async function softDeleteRemovedTsvRows(
   env: Env,
   book: string,
@@ -1656,10 +1663,19 @@ async function softDeleteRemovedTsvRows(
   // Defensive: an empty or garbled file must never sweep a book clean.
   if (incomingIds.size === 0) return { deleted: 0, skippedLocked: 0 };
 
-  const pristine =
+  // SELECT filters the human-owned protections that are stable columns
+  // (deleted/trashed/preserve/hint) but NOT updated_by — an AI-only row carries
+  // the starter's id yet is still prunable. latest_source separates AI-only from
+  // a human edit (isReimportableRow decides). The WRITE guard below re-asserts
+  // the same protections + version-CAS (deleteUnkeptTns pattern).
+  const selectProtections =
     kind === "tn"
-      ? `updated_by IS NULL AND deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
-      : `updated_by IS NULL AND deleted_at IS NULL`;
+      ? `deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
+      : `deleted_at IS NULL`;
+  const writeGuard =
+    kind === "tn"
+      ? `deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0 AND version = ?4`
+      : `deleted_at IS NULL AND version = ?4`;
   const now = Math.floor(Date.now() / 1000);
   let deleted = 0;
   let skippedLocked = 0;
@@ -1670,18 +1686,39 @@ async function softDeleteRemovedTsvRows(
       continue;
     }
     const rs = await env.DB.prepare(
-      `SELECT id, version FROM ${kind}_rows WHERE book = ?1 AND chapter = ?2 AND ${pristine}`,
+      `SELECT id, version, updated_by,
+              (SELECT source FROM edit_log
+                 WHERE kind = ?3 AND row_key = ${kind}_rows.id
+                   AND (book = ?1 OR book IS NULL)
+                   AND action IN ('create', 'update')
+                 ORDER BY id DESC LIMIT 1) AS latest_source
+         FROM ${kind}_rows WHERE book = ?1 AND chapter = ?2 AND ${selectProtections}`,
     )
-      .bind(book, ch)
-      .all<{ id: string; version: number }>();
-    const targets = (rs.results ?? []).filter((r) => !incomingIds.has(r.id));
+      .bind(book, ch, kind)
+      .all<{ id: string; version: number; updated_by: number | null; latest_source: string | null }>();
+    const targets = (rs.results ?? []).filter(
+      (r) =>
+        !incomingIds.has(r.id) &&
+        isReimportableRow({
+          updated_by: r.updated_by,
+          latestSource: r.latest_source ?? null,
+          deleted_at: null,
+          trashed_at: null,
+          preserve: 0,
+          hint: 0,
+          kind,
+        }),
+    );
     for (const t of targets) {
+      // updated_by → NULL reclaims the tombstone to reimport-owned; version-CAS
+      // (?4) + the re-asserted protections abort if a human touched the row
+      // between the SELECT and here (bumps version → 0 rows changed).
       const upd = await env.DB.prepare(
         `UPDATE ${kind}_rows
-            SET deleted_at = ?1, version = version + 1, updated_at = ?1
-          WHERE id = ?2 AND book = ?3 AND ${pristine}`,
+            SET deleted_at = ?1, updated_by = NULL, version = version + 1, updated_at = ?1
+          WHERE id = ?2 AND book = ?3 AND ${writeGuard}`,
       )
-        .bind(now, t.id, book)
+        .bind(now, t.id, book, t.version)
         .run();
       if (!upd.meta.changes) continue;
       deleted++;
