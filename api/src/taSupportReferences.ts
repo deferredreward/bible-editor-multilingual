@@ -1,10 +1,14 @@
-// Canonical list of valid translationAcademy support-reference article IDs for
+// Canonical list of valid translationAcademy support-reference links for
 // translationNotes. Served by GET /api/catalogs as `supportReferences` and used
-// to restrict the SupportReference picker in the notes UI (NoteCard). Bare IDs,
-// matching the format stored in tn_rows.support_reference / the tN TSV
-// SupportReference column. Curated list (source: the uW TA translate manual);
-// update here when the canonical set changes.
-export const TA_SUPPORT_REFERENCES: string[] = [
+// to restrict the SupportReference picker in the notes UI (NoteCard).
+//
+// Full `rc://*/ta/man/translate/<id>` links — this is the format stored in
+// tn_rows.support_reference and the tN TSV SupportReference column, and the only
+// form the export lint (SUPPORT_REFERENCE_RE in lint.ts) accepts. The notes UI
+// shortens these to the bare id for display via shortSupport(). Curated list
+// (source: the uW TA translate manual); update TA_SUPPORT_REFERENCE_IDS below
+// when the canonical set changes.
+const TA_SUPPORT_REFERENCE_IDS: string[] = [
   "figs-123person",
   "figs-abstractnouns",
   "figs-activepassive",
@@ -98,3 +102,9 @@ export const TA_SUPPORT_REFERENCES: string[] = [
   "translate-alternativereadings",
   "writing-foreground",
 ];
+
+const TA_LINK_PREFIX = "rc://*/ta/man/translate/";
+
+export const TA_SUPPORT_REFERENCES: string[] = TA_SUPPORT_REFERENCE_IDS.map(
+  (id) => `${TA_LINK_PREFIX}${id}`,
+);
