@@ -4,22 +4,31 @@
 // module is the maintenance lane: pull fresh content from DCS for selected
 // chapters / resources without clobbering rows a translator has edited.
 //
-// Don't-clobber rule (canonical): a row is "safe to overwrite" iff it has
-// never been touched by a human. The signal is the same predicate the AI
-// pipeline sweep uses in pipelineImport.ts deleteUnkeptTns:
-//   tn:  updated_by IS NULL AND deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0
-//   tq:  updated_by IS NULL AND deleted_at IS NULL
-//   twl: updated_by IS NULL AND deleted_at IS NULL
-// (trashed_at: a note pending deletion is never overwritten/resurrected by a
-// reimport — it's promoted to a deleted_at tombstone by the nightly job.)
-// For verses (which don't have preserve/hint) we use updated_by IS NULL.
-// Edited rows are SKIPPED, not merged or warned about.
+// Don't-clobber rule (canonical): a row is "safe to overwrite" iff no HUMAN
+// owns it. Two admissible cases (see isReimportableRow in reimportClassify.ts):
+//   1. pristine — never touched at all (updated_by IS NULL), plus the human-owned
+//      protections clear:
+//        tn:  deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0
+//        tq:  deleted_at IS NULL
+//        twl: deleted_at IS NULL
+//      (trashed_at: a note pending deletion is never overwritten/resurrected by a
+//      reimport — it's promoted to a deleted_at tombstone by the nightly job.)
+//   2. AI-only — the AI pipeline wrote the row (so updated_by is the pipeline
+//      starter's id) but no human has edited it since: the latest content-bearing
+//      edit_log entry is source='ai_pipeline'. This is the same signal the AI
+//      pipeline sweep uses in pipelineImport.ts deleteUnkeptTns. An AI-only row is
+//      re-seeded from master exactly like a pristine one AND reclaimed to
+//      master-owned (updated_by → NULL), counted as `reimported_ai` (NOT the
+//      misleading `skipped_edited`). Its write is guarded by version-CAS + the
+//      same protection re-assertion so a human edit landing mid-import can't be
+//      clobbered (a human PATCH bumps version and writes a null/manual-source
+//      edit_log row, so the row stops being AI-only).
+// A genuinely human-edited row (latest edit_log source null/manual) is SKIPPED,
+// not merged or warned about.
 //
-// v1 limitation: a verse that the AI pipeline wrote (sets updated_by to the
-// pipeline-starter's id) is treated as "edited" and skipped here. A future
-// pass could distinguish "AI-touched, never human-touched" by inspecting
-// edit_log.source, but the simple predicate is enough for the transition
-// use case this module was built for.
+// This distinction closes the recurring "N skipped (already edited)" mislabel on
+// every AI-touched book: before, updated_by != null alone marked a row edited, so
+// AI-generated rows no human had touched were never re-seeded from master.
 //
 // Concurrency:
 //   - book_import_locks is reused (per-book serialization). A second caller
@@ -48,7 +57,7 @@ import { activePipelineForChapter } from "./chapterLock";
 import { coerceRowId } from "./rowId";
 import { planTnContentDedup } from "./tnDedup";
 import { isCatastrophicTsvShrink } from "./shrinkGuard";
-import { classifyReimportRow } from "./reimportClassify";
+import { classifyReimportRow, isReimportableRow } from "./reimportClassify";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -71,6 +80,12 @@ const WRITE_BATCH = 90;
 
 export interface ReimportCounts {
   updated: number;
+  // AI-only rows (written by the AI pipeline, never human-edited) that were
+  // overwritten from master and reclaimed to master-owned (updated_by → NULL).
+  // Tracked separately from `updated` (pristine rows) so the summary can say
+  // "N refreshed (AI-generated)" instead of the old, misleading "N skipped
+  // (already edited)". See isReimportableRow / the header don't-clobber rule.
+  reimported_ai: number;
   inserted: number;
   // Pristine rows soft-deleted because master no longer carries their id. Only
   // the TSV resources populate this (verses are never row-deleted on reimport).
@@ -111,6 +126,7 @@ const REIMPORT_SOURCE = "dcs_reimport";
 function zeroCounts(): ReimportCounts {
   return {
     updated: 0,
+    reimported_ai: 0,
     inserted: 0,
     deleted: 0,
     skipped_edited: 0,
@@ -127,6 +143,7 @@ function zeroCounts(): ReimportCounts {
 
 function addCounts(into: ReimportCounts, from: ReimportCounts): void {
   into.updated += from.updated;
+  into.reimported_ai += from.reimported_ai;
   into.inserted += from.inserted;
   into.deleted += from.deleted;
   into.skipped_edited += from.skipped_edited;
@@ -432,12 +449,21 @@ async function applyTsvRows(
   const ids = incoming.map((r) => r.id);
   for (let i = 0; i < ids.length; i += WRITE_BATCH) {
     const slice = ids.slice(i, i + WRITE_BATCH);
-    const inClause = slice.map((_, j) => `?${j + 2}`).join(", ");
+    // ?1 = book, ?2 = kind (edit_log.kind = the resource name), ids from ?3.
+    const inClause = slice.map((_, j) => `?${j + 3}`).join(", ");
+    // latest_source: source of the latest content-bearing edit_log entry, so we
+    // can tell an AI-only row (updated_by set, latest source = ai_pipeline) apart
+    // from a human edit. Mirrors the deleteUnkeptTns correlated subquery.
     const rs = await env.DB.prepare(
-      `SELECT id, ${TSV_STORED_COLS[kind]}, sort_order, ${pristineCols}
+      `SELECT id, ${TSV_STORED_COLS[kind]}, sort_order, ${pristineCols},
+              (SELECT source FROM edit_log
+                 WHERE kind = ?2 AND row_key = ${kind}_rows.id
+                   AND (book = ?1 OR book IS NULL)
+                   AND action IN ('create', 'update')
+                 ORDER BY id DESC LIMIT 1) AS latest_source
          FROM ${kind}_rows WHERE book = ?1 AND id IN (${inClause})`,
     )
-      .bind(book, ...slice)
+      .bind(book, kind, ...slice)
       .all<Record<string, unknown>>();
     for (const row of rs.results) existing.set(String(row.id), row);
   }
@@ -460,6 +486,11 @@ async function applyTsvRows(
   // resurrections are batched.
   const nextSort = makeVerseSortOrder();
   const updates: Array<{ row: ParsedTsvRow; sortOrder: number; oldVersion: number }> = [];
+  // AI-only rows to re-seed from master AND reclaim to master-owned (updated_by
+  // → NULL). Written under a relaxed guard (version-CAS + protection re-assert)
+  // in their own batch so the pristine UPDATE's `updated_by IS NULL` guard stays
+  // untouched. Counted `reimported_ai`.
+  const aiReseeds: Array<{ row: ParsedTsvRow; sortOrder: number; oldVersion: number }> = [];
   const resurrects: Array<{ row: ParsedTsvRow; sortOrder: number; oldVersion: number }> = [];
   for (let i = 0; i < incoming.length; i++) {
     const row = incoming[i];
@@ -519,18 +550,39 @@ async function applyTsvRows(
       tsvRowSignature(kind, storedTsvRowToParsed(kind, cur)) === tsvRowSignature(kind, row);
     const sortMatches = (cur.sort_order == null ? null : Number(cur.sort_order)) === sortOrder;
     const preserveLocalOrder = (kind === "tn" || kind === "twl") && cur.sort_order != null;
-    const fate = classifyReimportRow(
-      contentMatches,
-      sortMatches,
-      isPristineTsv(kind, cur),
-      preserveLocalOrder,
-    );
+    // "reimportable" spans pristine AND AI-only (see isReimportableRow); aiOnly
+    // is the AI-only sub-case (updated_by set but latest edit_log source is AI).
+    const reimportable = isReimportableRow({
+      updated_by: cur.updated_by as number | null,
+      latestSource: (cur.latest_source as string | null) ?? null,
+      deleted_at: cur.deleted_at as number | null,
+      trashed_at: cur.trashed_at as number | null,
+      preserve: cur.preserve as number | null,
+      hint: cur.hint as number | null,
+      kind,
+    });
+    const aiOnly = reimportable && cur.updated_by != null;
+    // Reorder interaction (by design, not a gap): a pure reorder writes only
+    // sort_order via the rows.ts fast path — no version bump, no edit_log — so a
+    // reordered AI row stays "AI-only". That's intended: reorder is transient
+    // last-write-wins (rows.ts), and a HUMAN content edit is NOT transient — it
+    // takes the versioning PATCH path, which logs a source=NULL edit_log row,
+    // flipping isReimportableRow false (never re-seeded). For a content-IDENTICAL
+    // reordered AI row, `contentMatches && preserveLocalOrder → noop` fires below
+    // BEFORE the aiOnly re-seed, so the reorder is preserved (the reorder-revert
+    // fix). Only a reordered AI row whose CONTENT also drifted on master takes
+    // master wholesale (content + file order) — the re-seed we want.
+    const fate = classifyReimportRow(contentMatches, sortMatches, reimportable, preserveLocalOrder, aiOnly);
     if (fate === "noop") {
       counts.skipped_noop++;
       continue;
     }
     if (fate === "edited") {
       counts.skipped_edited++;
+      continue;
+    }
+    if (fate === "update_ai") {
+      aiReseeds.push({ row, sortOrder, oldVersion: Number(cur.version) });
       continue;
     }
     updates.push({ row, sortOrder, oldVersion: Number(cur.version) });
@@ -558,6 +610,34 @@ async function applyTsvRows(
       if (logs.length) await env.DB.batch(logs);
     } catch (e) {
       counts.errors.push(`${kind} update batch: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Batch the AI-only re-seeds (overwrite from master + reclaim to master-owned).
+  // Relaxed guard vs the pristine UPDATE: no `updated_by IS NULL` (the row IS
+  // AI-owned), but version-CAS (`AND version = oldVersion`) PLUS re-asserted
+  // protections (deleted_at/trashed_at/preserve/hint) still fire — a human edit
+  // landing between the read and the batch bumps version → 0 rows changed →
+  // counted skipped_edited, never clobbered. `updated_by = NULL` in the SET
+  // returns the row to master-owned. Audited as 'update'.
+  for (let i = 0; i < aiReseeds.length; i += WRITE_BATCH) {
+    const slice = aiReseeds.slice(i, i + WRITE_BATCH);
+    try {
+      const results = await env.DB.batch(
+        slice.map((u) => buildTsvUpdateStmt(env, book, kind, u.row, u.sortOrder, u.oldVersion, now, false, true)),
+      );
+      const logs: D1PreparedStatement[] = [];
+      slice.forEach((u, j) => {
+        if ((results[j]?.meta.changes ?? 0) > 0) {
+          counts.reimported_ai++;
+          logs.push(logEditStmt(env, kind, u.row.id, book, userId, u.oldVersion, u.oldVersion + 1, "update", u.row));
+        } else {
+          counts.skipped_edited++;
+        }
+      });
+      if (logs.length) await env.DB.batch(logs);
+    } catch (e) {
+      counts.errors.push(`${kind} ai-reseed batch: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -739,8 +819,12 @@ async function tsvFetchLooksTruncated(
 // updated_by stays NULL so future re-imports still see the row as overwritable.
 // `resurrect` flips the deleted_at guard: a normal pristine UPDATE requires a
 // LIVE row (deleted_at IS NULL); a resurrection requires a TOMBSTONE
-// (deleted_at IS NOT NULL) and clears it in the SET. Bound-param positions are
-// identical in both modes (the `deleted_at = NULL` clause carries no param), so
+// (deleted_at IS NOT NULL) and clears it in the SET. `reseedAi` (mutually
+// exclusive with resurrect) is the AI-only re-seed: it DROPS the
+// `updated_by IS NULL` guard (the row is AI-owned) and sets `updated_by = NULL`
+// to reclaim it to master-owned — safety now rests on the version-CAS + the
+// retained deleted_at/trashed_at/preserve/hint re-assertions. Bound-param
+// positions are identical in all modes (the `= NULL` clauses carry no param), so
 // the .bind() lists below are unchanged.
 function buildTsvUpdateStmt(
   env: Env,
@@ -751,18 +835,21 @@ function buildTsvUpdateStmt(
   oldVersion: number,
   now: number,
   resurrect = false,
+  reseedAi = false,
 ): D1PreparedStatement {
   const deletedGuard = resurrect ? "deleted_at IS NOT NULL" : "deleted_at IS NULL";
+  const ownerGuard = reseedAi ? "" : "updated_by IS NULL AND ";
   const pristine =
     kind === "tn"
-      ? `updated_by IS NULL AND ${deletedGuard} AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
-      : `updated_by IS NULL AND ${deletedGuard}`;
+      ? `${ownerGuard}${deletedGuard} AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
+      : `${ownerGuard}${deletedGuard}`;
   const clearDeleted = resurrect ? "deleted_at = NULL, " : "";
+  const clearOwner = reseedAi ? "updated_by = NULL, " : "";
   const newVersion = oldVersion + 1;
   if (kind === "tn") {
     return env.DB.prepare(
       `UPDATE tn_rows
-          SET ${clearDeleted}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
+          SET ${clearDeleted}${clearOwner}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
               support_reference = ?5, quote = ?6, occurrence = ?7, note = ?8,
               sort_order = ?9, version = ?10, updated_at = ?11
         WHERE id = ?12 AND book = ?13 AND ${pristine} AND version = ?14`,
@@ -775,7 +862,7 @@ function buildTsvUpdateStmt(
   if (kind === "tq") {
     return env.DB.prepare(
       `UPDATE tq_rows
-          SET ${clearDeleted}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
+          SET ${clearDeleted}${clearOwner}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
               quote = ?5, occurrence = ?6, question = ?7, response = ?8,
               sort_order = ?9, version = ?10, updated_at = ?11
         WHERE id = ?12 AND book = ?13 AND ${pristine} AND version = ?14`,
@@ -787,7 +874,7 @@ function buildTsvUpdateStmt(
   }
   return env.DB.prepare(
     `UPDATE twl_rows
-        SET ${clearDeleted}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
+        SET ${clearDeleted}${clearOwner}ref_raw = ?1, chapter = ?2, verse = ?3, tags = ?4,
             orig_words = ?5, occurrence = ?6, tw_link = ?7,
             sort_order = ?8, version = ?9, updated_at = ?10
       WHERE id = ?11 AND book = ?12 AND ${pristine} AND version = ?13`,
@@ -955,7 +1042,13 @@ async function applyVerseRows(
   const chapters = [...new Set(verses.map((v) => v.chapter))];
   const chPlaceholders = chapters.map((_, i) => `?${i + 3}`).join(", ");
   const existingRs = await env.DB.prepare(
-    `SELECT chapter, verse, content_json, plain_text, verse_end, version, updated_by
+    `SELECT chapter, verse, content_json, plain_text, verse_end, version, updated_by,
+            (SELECT source FROM edit_log
+               WHERE kind = 'verse'
+                 AND row_key = ?1 || '/' || chapter || '/' || verse || '/' || ?2
+                 AND (book = ?1 OR book IS NULL)
+                 AND action IN ('create', 'update')
+               ORDER BY id DESC LIMIT 1) AS latest_source
        FROM verses
       WHERE book = ?1 AND bible_version = ?2 AND chapter IN (${chPlaceholders})`,
   )
@@ -968,6 +1061,7 @@ async function applyVerseRows(
       verse_end: number | null;
       version: number;
       updated_by: number | null;
+      latest_source: string | null;
     }>();
   const existing = new Map<string, (typeof existingRs.results)[number]>();
   for (const r of existingRs.results) existing.set(`${r.chapter}:${r.verse}`, r);
@@ -981,6 +1075,11 @@ async function applyVerseRows(
   // Edited verses whose source-owned alignment attrs were reconciled from master
   // (target text + grouping unchanged). Written in a separate version-CAS batch.
   const sourceReconciles: Array<{ v: VerseExtract; mergedJson: string; oldVersion: number; plainText: string | null }> = [];
+  // AI-only verses (updated_by set but written by the AI pipeline, never
+  // human-edited) to re-seed fully from master + reclaim to master-owned. Written
+  // in a version-CAS batch below (the main batch's UPDATE guards on
+  // `updated_by IS NULL`, which an AI-only verse fails). Counted `reimported_ai`.
+  const aiReseeds: Array<{ v: VerseExtract; oldVersion: number }> = [];
   let inserted = 0;
   let updated = 0;
   for (const v of verses) {
@@ -1007,14 +1106,37 @@ async function applyVerseRows(
       continue;
     }
     if (ex.updated_by != null) {
-      // Edited verse: the translator owns the target text + grouping, so we
-      // never overwrite the verse. BUT the original-language source attributes
-      // on its `\zaln-s` milestones (x-content/x-lemma/x-morph) are SOURCE-owned,
-      // not translator-owned — reconcile just those from master so a curated
-      // source fix (e.g. the NUM 20–22 combining-mark correction) isn't reverted
-      // when the nightly export re-renders this verse. Staged into a separate
-      // version-CAS batch below; if nothing reconciled it stays a plain edited
-      // skip. (verses analogue of the TWL-PSA / Hebrew-NFC clobber class.)
+      // updated_by is set — but by WHOM? An AI-only verse (the AI pipeline wrote
+      // it, no human has edited it since: latest content edit_log source is
+      // ai_pipeline) is NOT translator-owned, so re-seed it fully from master and
+      // reclaim it to master-owned (updated_by → NULL) — the fix for AI-generated
+      // verses being wrongly reported "skipped (already edited)".
+      const aiOnly = isReimportableRow({
+        updated_by: ex.updated_by,
+        latestSource: ex.latest_source ?? null,
+        deleted_at: null,
+        kind: "verse",
+      });
+      if (aiOnly) {
+        if (
+          ex.content_json === v.contentJson &&
+          (ex.plain_text ?? null) === (v.plainText ?? null) &&
+          (ex.verse_end ?? null) === (v.verseEnd ?? null)
+        ) {
+          counts.skipped_noop++;
+        } else {
+          aiReseeds.push({ v, oldVersion: ex.version });
+        }
+        continue;
+      }
+      // Genuinely human-edited verse: the translator owns the target text +
+      // grouping, so we never overwrite the verse. BUT the original-language
+      // source attributes on its `\zaln-s` milestones (x-content/x-lemma/x-morph)
+      // are SOURCE-owned, not translator-owned — reconcile just those from master
+      // so a curated source fix (e.g. the NUM 20–22 combining-mark correction)
+      // isn't reverted when the nightly export re-renders this verse. Staged into
+      // a separate version-CAS batch below; if nothing reconciled it stays a plain
+      // edited skip. (verses analogue of the TWL-PSA / Hebrew-NFC clobber class.)
       const rec = reconcileEditedVerseSourceAttrs(ex.content_json, v.contentJson);
       if (rec.divergent > 0) {
         counts.source_attr_divergent += rec.divergent;
@@ -1130,6 +1252,48 @@ async function applyVerseRows(
     }
   }
 
+  // 5. Re-seed AI-only verses from master + reclaim to master-owned. Separate
+  //    batch: version-CAS-guarded (`AND version = oldVersion`), NOT
+  //    `updated_by IS NULL` — the verse IS AI-owned, and we set `updated_by = NULL`
+  //    to return it to master-owned. A human edit landing between the read and the
+  //    batch bumps version → 0 rows → counted skipped_edited (no clobber). Audited
+  //    only when the UPDATE actually applied.
+  for (let i = 0; i < aiReseeds.length; i += WRITE_BATCH) {
+    const slice = aiReseeds.slice(i, i + WRITE_BATCH);
+    try {
+      const results = await env.DB.batch(
+        slice.map((u) =>
+          env.DB.prepare(
+            `UPDATE verses
+                SET content_json = ?1, plain_text = ?2, verse_end = ?3,
+                    updated_by = NULL, version = version + 1, updated_at = ?4
+              WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
+                AND version = ?9`,
+          ).bind(u.v.contentJson, u.v.plainText, u.v.verseEnd, now, book, u.v.chapter, u.v.verse, bibleVersion, u.oldVersion),
+        ),
+      );
+      const logs: D1PreparedStatement[] = [];
+      slice.forEach((u, j) => {
+        if ((results[j]?.meta.changes ?? 0) > 0) {
+          counts.reimported_ai++;
+          logs.push(
+            logEditStmt(
+              env, "verse",
+              `${book}/${u.v.chapter}/${u.v.verse}/${bibleVersion}`,
+              book, userId, u.oldVersion, u.oldVersion + 1, "update",
+              { plain_text: u.v.plainText, content: u.v.contentJson },
+            ),
+          );
+        } else {
+          counts.skipped_edited++;
+        }
+      });
+      if (logs.length) await env.DB.batch(logs);
+    } catch (e) {
+      counts.errors.push(`verse ai-reseed batch: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   return counts;
 }
 
@@ -1170,14 +1334,28 @@ async function applyVerseRowsPerRow(
       // Exists locally — SELECT first so we can short-circuit on byte-equal
       // content. content_json is produced by extractVersesForRange in both
       // directions (bootstrap + reimport), so byte-compare is stable for
-      // pristine rows. updated_by IS NULL is the pristine signal here.
+      // pristine rows. version/updated_by/latest_source drive the pristine vs
+      // AI-only vs human-edited classification (mirrors the batched path).
       const existing = await env.DB.prepare(
-        `SELECT content_json, plain_text, verse_end
+        `SELECT content_json, plain_text, verse_end, version, updated_by,
+                (SELECT source FROM edit_log
+                   WHERE kind = 'verse'
+                     AND row_key = ?1 || '/' || ?2 || '/' || ?3 || '/' || ?4
+                     AND (book = ?1 OR book IS NULL)
+                     AND action IN ('create', 'update')
+                   ORDER BY id DESC LIMIT 1) AS latest_source
            FROM verses
           WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
       )
         .bind(book, v.chapter, v.verse, bibleVersion)
-        .first<{ content_json: string; plain_text: string | null; verse_end: number | null }>();
+        .first<{
+          content_json: string;
+          plain_text: string | null;
+          verse_end: number | null;
+          version: number;
+          updated_by: number | null;
+          latest_source: string | null;
+        }>();
       if (
         existing &&
         existing.content_json === v.contentJson &&
@@ -1185,6 +1363,43 @@ async function applyVerseRowsPerRow(
         (existing.verse_end ?? null) === (v.verseEnd ?? null)
       ) {
         counts.skipped_noop++;
+        continue;
+      }
+      // AI-only verse (updated_by set, latest content edit_log source is AI):
+      // re-seed from master + reclaim to master-owned via a version-CAS UPDATE
+      // (no `updated_by IS NULL` guard). A human edit landing first bumps version
+      // → 0 rows → skipped_edited. Human-edited verses fall through to the
+      // pristine UPDATE below, whose `updated_by IS NULL` guard skips them.
+      const aiOnly =
+        existing != null &&
+        existing.updated_by != null &&
+        isReimportableRow({
+          updated_by: existing.updated_by,
+          latestSource: existing.latest_source ?? null,
+          deleted_at: null,
+          kind: "verse",
+        });
+      if (aiOnly) {
+        const upd = await env.DB.prepare(
+          `UPDATE verses
+              SET content_json = ?1, plain_text = ?2, verse_end = ?3,
+                  updated_by = NULL, version = version + 1, updated_at = ?4
+            WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
+              AND version = ?9`,
+        )
+          .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, existing!.version)
+          .run();
+        if ((upd.meta.changes ?? 0) > 0) {
+          counts.reimported_ai++;
+          await logEdit(
+            env, "verse",
+            `${book}/${v.chapter}/${v.verse}/${bibleVersion}`,
+            book, userId, existing!.version, existing!.version + 1, "update",
+            { plain_text: v.plainText, content: v.contentJson },
+          );
+        } else {
+          counts.skipped_edited++;
+        }
         continue;
       }
       const upd = await env.DB.prepare(
@@ -1423,16 +1638,23 @@ export async function changedTsvChapters(
   return changed;
 }
 
-// Soft-delete pristine rows that master no longer carries, so the nightly
+// Soft-delete rows no HUMAN owns that master no longer carries, so the nightly
 // export can't resurrect an out-of-band deletion. Mirrors pipelineImport.ts
 // deleteUnkeptTns and the app's DELETE handler shape (rows.ts): set
-// deleted_at, bump version, audit a 'delete'. Conservative on every axis:
-// only chapters the incoming file covers AND the diff gate flagged as changed
-// (a deletion always flags its chapter), only rows passing the pristine
-// predicate (kept on the UPDATE itself so an edit landing after the SELECT
-// skips the row), and never under an active pipeline lock. The id comparison
-// is against the WHOLE file's id set so a row the update path just moved to
-// another chapter isn't mistaken for removed.
+// deleted_at, bump version, audit a 'delete'. "No human owns it" spans both
+// pristine (updated_by IS NULL) AND AI-only rows (updated_by set but the latest
+// content edit_log source is ai_pipeline) — the same isReimportableRow rule the
+// apply path uses, so a row the AI wrote and master later dropped is pruned
+// instead of lingering and re-exporting (the apply/prune consistency the
+// reimported_ai fix would otherwise miss). Conservative on every axis: only
+// chapters the incoming file covers AND the diff gate flagged as changed (a
+// deletion always flags its chapter), never under an active pipeline lock, and
+// the WRITE re-asserts version-CAS + the deleted/trashed/preserve/hint
+// protections (NOT updated_by IS NULL — an AI-only row carries the starter's id,
+// exactly as deleteUnkeptTns notes) so a human edit landing after the SELECT
+// bumps version → 0 rows → skipped. updated_by → NULL reclaims the tombstone to
+// reimport-owned. The id comparison is against the WHOLE file's id set so a row
+// the update path just moved to another chapter isn't mistaken for removed.
 async function softDeleteRemovedTsvRows(
   env: Env,
   book: string,
@@ -1451,10 +1673,19 @@ async function softDeleteRemovedTsvRows(
   // Defensive: an empty or garbled file must never sweep a book clean.
   if (incomingIds.size === 0) return { deleted: 0, skippedLocked: 0 };
 
-  const pristine =
+  // SELECT filters the human-owned protections that are stable columns
+  // (deleted/trashed/preserve/hint) but NOT updated_by — an AI-only row carries
+  // the starter's id yet is still prunable. latest_source separates AI-only from
+  // a human edit (isReimportableRow decides). The WRITE guard below re-asserts
+  // the same protections + version-CAS (deleteUnkeptTns pattern).
+  const selectProtections =
     kind === "tn"
-      ? `updated_by IS NULL AND deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
-      : `updated_by IS NULL AND deleted_at IS NULL`;
+      ? `deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0`
+      : `deleted_at IS NULL`;
+  const writeGuard =
+    kind === "tn"
+      ? `deleted_at IS NULL AND trashed_at IS NULL AND preserve = 0 AND hint = 0 AND version = ?4`
+      : `deleted_at IS NULL AND version = ?4`;
   const now = Math.floor(Date.now() / 1000);
   let deleted = 0;
   let skippedLocked = 0;
@@ -1465,18 +1696,39 @@ async function softDeleteRemovedTsvRows(
       continue;
     }
     const rs = await env.DB.prepare(
-      `SELECT id, version FROM ${kind}_rows WHERE book = ?1 AND chapter = ?2 AND ${pristine}`,
+      `SELECT id, version, updated_by,
+              (SELECT source FROM edit_log
+                 WHERE kind = ?3 AND row_key = ${kind}_rows.id
+                   AND (book = ?1 OR book IS NULL)
+                   AND action IN ('create', 'update')
+                 ORDER BY id DESC LIMIT 1) AS latest_source
+         FROM ${kind}_rows WHERE book = ?1 AND chapter = ?2 AND ${selectProtections}`,
     )
-      .bind(book, ch)
-      .all<{ id: string; version: number }>();
-    const targets = (rs.results ?? []).filter((r) => !incomingIds.has(r.id));
+      .bind(book, ch, kind)
+      .all<{ id: string; version: number; updated_by: number | null; latest_source: string | null }>();
+    const targets = (rs.results ?? []).filter(
+      (r) =>
+        !incomingIds.has(r.id) &&
+        isReimportableRow({
+          updated_by: r.updated_by,
+          latestSource: r.latest_source ?? null,
+          deleted_at: null,
+          trashed_at: null,
+          preserve: 0,
+          hint: 0,
+          kind,
+        }),
+    );
     for (const t of targets) {
+      // updated_by → NULL reclaims the tombstone to reimport-owned; version-CAS
+      // (?4) + the re-asserted protections abort if a human touched the row
+      // between the SELECT and here (bumps version → 0 rows changed).
       const upd = await env.DB.prepare(
         `UPDATE ${kind}_rows
-            SET deleted_at = ?1, version = version + 1, updated_at = ?1
-          WHERE id = ?2 AND book = ?3 AND ${pristine}`,
+            SET deleted_at = ?1, updated_by = NULL, version = version + 1, updated_at = ?1
+          WHERE id = ?2 AND book = ?3 AND ${writeGuard}`,
       )
-        .bind(now, t.id, book)
+        .bind(now, t.id, book, t.version)
         .run();
       if (!upd.meta.changes) continue;
       deleted++;

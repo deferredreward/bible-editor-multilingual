@@ -14,6 +14,25 @@
 
 ## Last run
 
+2026-07-08 · **sweet-yonath** — **ZEC 10 imported from master + fixed the recurring "Import from Door43
+falsely reports edits after AI runs" bug.** Two deliverables. **(1) DATA (prod, applied):** ZEC 10 ULT was
+AI-flattened to prose in D1 while master carried proper `\q2 \q1` poetry lineation. Verified with the repo's
+own `extractVersesForRange` that **word tokens + every `\zaln` attr are byte-identical** master↔D1 (align-diffs
+0); only `\q` markers + adjacent whitespace differ. Applied 13 CAS-guarded verse UPDATEs (guard `version=X AND
+updated_by=2`) → master content, `updated_by 2→NULL` (master-owned), `edit_log source=dcs_reimport` full-snapshot
+(revertible). tn/tq/twl/UST for ZEC 10 already byte-matched master (0 diffs) — untouched. ZEC 10 tn has **1
+genuinely human-edited row** (source null) that also already matched master. **(2) CODE ([PR #323](https://github.com/unfoldingWord/bible-editor/pull/323), NOT merged/deployed):**
+root cause = reimport's pristine test (`bookReimport.ts` `isPristineTsv` ~657 + verse `updated_by != null` ~1009)
+gated only on `updated_by`, but the AI pipeline stamps `updated_by`=starter id on every write → AI-only rows
+looked human-edited → `skipped_edited` → "N skipped (already edited)". Fix: a row is overwritable iff no HUMAN
+owns it = `updated_by IS NULL` OR latest content `edit_log.source='ai_pipeline'` (same signal as
+`deleteUnkeptTns`). New pure `isReimportableRow` + `update_ai` fate (`reimportClassify.ts`); AI-only rows re-seed
+from master + reclaim to master-owned (`updated_by→NULL`) under version-CAS + re-asserted protections; new
+`reimported_ai` counter → UI shows "N refreshed (AI-generated)". Covers tn/tq/twl + verses + per-row fallback.
+Human-edited rows still never clobbered. typecheck + api/web tests green; **runtime-verified E2E on local D1**
+(AI-only reverts+reclaims → reimported_ai; human-edited untouched → skipped_edited; pristine → updated; second
+reimport = no-op ⇒ byte-exact master reseed). (memory: [[project_reimport_ai_only_false_edited]])
+
 2026-07-02 · **elated-dhawan** — **TQ "conflict on almost every edit" (Beth Oakes, Symptom C): auto-heal
 spurious content 409s.** Separate from the two fixes on `epic-pasteur-cacd48` (Board-reopen + TWL
 reorder). **Root cause (verified live, seeded ZEC, two-tab repro):** the created row's version IS

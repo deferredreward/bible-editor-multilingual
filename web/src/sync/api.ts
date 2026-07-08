@@ -741,6 +741,11 @@ export type ReimportResource = "ult" | "ust" | "tn" | "tq" | "twl";
 
 export interface ReimportCounts {
   updated: number;
+  // AI-generated rows (written by the AI pipeline, never human-edited) that were
+  // refreshed from master and returned to master-owned. Tracked apart from
+  // `updated` so the UI reports them as refreshed, not "skipped (already edited)".
+  // Optional: the server always sends it, but an older/cached response may omit it.
+  reimported_ai?: number;
   inserted: number;
   skipped_edited: number;
   skipped_locked: number;
