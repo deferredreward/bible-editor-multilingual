@@ -14,6 +14,27 @@
 
 ## Last run
 
+2026-07-08 · **alignment-panel-duplicate-word** — **Side-by-side aligner: dropping an unaligned source
+chip onto a position-fused card spawned a duplicate Hebrew word.** Repro ZEC 10:2 UST: teraphim
+(הַתְּרָפִים, appears ONCE in UHB) is aligned as two milestones (over-count occ 1/2 → "The household
+idols", 2/2 → "that people consult"); `displayGroups`/`mergeSamePositionGroups` fuses them into ONE card.
+Dragging the unaligned כִּי onto it called `moveSource(state, sourceId, cardId)` with only the card's
+carried id → כִּי landed in the FIRST group alone → its position sequence `[כִּי, teraphim]` no longer
+matched the second group's `[teraphim]` → fusion broke → a SECOND teraphim card popped out carrying "that
+people consult" (exactly the reported "2nd version of the Hebrew word, bumped 'that people consult' onto
+it"). **Fix (web only, NOT yet PR'd):** new lib `moveSourceToGroups` (mirrors the collapse/re-point of
+`moveSource` but adds the moved word to EVERY fused group — first gets the real word, siblings get
+fresh-id clones so each chip stays independently draggable). `handleSourceDrop` now resolves the display
+card back to all state groups it collapsed by **sourceKey OR position** — the exact identity
+`handleClearGroup` already uses for the clear button (the precedent for "one card = N state groups").
+Both fused groups gain כִּי → same position sequence → card re-fuses → stays one card, Hebrew rendered
+once. Regression: `alignment.test.mjs` "source drop onto a collapsed over-count card keeps it fused
+(ZEC 10:2)" reproduces the split (old `moveSource` → 2 teraphim cards) and proves the fix (1 card, 6
+targets, כִּי once). typecheck + web tests + web build green. **Not** browser-verified live (native
+HTML5 drag-drop is unreliable to automate; no dev server was up) — verified at unit + wiring level, the
+component change being a line-for-line mirror of the prod-proven `handleClearGroup`.
+(memory: [[project_alignment_panel_duplicate_source_drop]])
+
 2026-07-08 · **sweet-yonath** — **ZEC 10 imported from master + fixed the recurring "Import from Door43
 falsely reports edits after AI runs" bug.** Two deliverables. **(1) DATA (prod, applied):** ZEC 10 ULT was
 AI-flattened to prose in D1 while master carried proper `\q2 \q1` poetry lineation. Verified with the repo's

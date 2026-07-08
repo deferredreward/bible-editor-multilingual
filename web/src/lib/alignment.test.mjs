@@ -17,6 +17,7 @@ import {
   verseHasUnalignedWork,
   mergeGroups,
   moveSource,
+  moveSourceToGroups,
   clearGroup,
   stripCompoundOverlaps,
   mergeAdjacentSameSource,
@@ -2684,6 +2685,120 @@ function roundtripVerseUsfm(rawUsfm, sourceVO = null) {
   assert(
     mOrder[0] === "H0853" && mOrder[1] === "H6440",
     `mergeGroups canonicalizes even with later-card survivor (got [${mOrder.join(", ")}])`,
+  );
+}
+
+// ─── Case: dropping a source chip onto a collapsed over-count card (ZEC 10:2) ─
+// ZEC 10:2 UST aligns the once-occurring teraphim as TWO milestones (occ 1/2 →
+// "The household idols", 2/2 → "that people consult"); mergeSamePositionGroups
+// fuses them into ONE display card. Dragging the unaligned כִּי onto that card
+// used to call moveSource with only the card's carried id, so כִּי landed in the
+// first group alone — its position sequence [כִּי, teraphim] no longer matched the
+// second group's [teraphim], the fusion broke, and a SECOND teraphim card popped
+// out carrying "that people consult" (the reported bug). moveSourceToGroups adds
+// כִּי to EVERY fused group so the card stays one card.
+{
+  console.log("\n[Case] source drop onto a collapsed over-count card keeps it fused (ZEC 10:2 כִּי + teraphim)");
+  const ki = "כִּי";
+  const teraphim = "הַתְּרָפִים";
+  // teraphim aligned twice (over-count occ 1/2 + 2/2); כִּי unaligned in source.
+  const target = String.raw`\id ZEC
+\c 10
+\v 2 \zaln-s |x-strong="d:H8655" x-lemma="תְּרָפִים" x-occurrence="1" x-occurrences="2" x-content="${teraphim}"\*\w The|x-occurrence="1" x-occurrences="1"\w* \w household|x-occurrence="1" x-occurrences="1"\w* \w idols|x-occurrence="1" x-occurrences="1"\w*\zaln-e\* \zaln-s |x-strong="d:H8655" x-lemma="תְּרָפִים" x-occurrence="2" x-occurrences="2" x-content="${teraphim}"\*\w that|x-occurrence="1" x-occurrences="1"\w* \w people|x-occurrence="1" x-occurrences="1"\w* \w consult|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+`;
+  const source = String.raw`\id ZEC
+\c 10
+\v 2 \w ${ki}|x-strong="H3588a" x-occurrence="1"\w* \w ${teraphim}|x-strong="d:H8655" x-occurrence="1"\w*
+`;
+  const tvo = usfm.toJSON(target).chapters["10"]["2"].verseObjects;
+  const svo = usfm.toJSON(source).chapters["10"]["2"].verseObjects;
+  const state = parseAlignment(tvo, svo);
+
+  const posByContent = new Map();
+  svo.forEach((n, i) => {
+    if (n && n.type === "word" && n.tag === "w") posByContent.set(n.text.normalize("NFC"), i);
+  });
+  const sourcePos = (s) => posByContent.get((s.content ?? "").normalize("NFC")) ?? -1;
+  const posKey = (g) => {
+    if (g.source.length === 0) return null;
+    const ps = g.source.map(sourcePos);
+    return ps.some((p) => p < 0) ? null : ps.join(".");
+  };
+  // Mirror AlignmentPanel.displayGroups: sort by first source position, then the
+  // three display collapses.
+  const displayOf = (st) => {
+    const sortPos = (g) => {
+      if (g.source.length === 0) return Number.MAX_SAFE_INTEGER;
+      const p = sourcePos(g.source[0]);
+      return p >= 0 ? p : Number.MAX_SAFE_INTEGER;
+    };
+    const sorted = [...st.groups].sort((a, b) => sortPos(a) - sortPos(b));
+    return mergeSamePositionGroups(
+      mergeAdjacentSameSource(stripCompoundOverlaps(sorted)),
+      posKey,
+    );
+  };
+
+  // Precondition: the two teraphim groups fuse to ONE card showing all 6 words.
+  const before = displayOf(state);
+  const card = before.find((g) => g.source.some((s) => s.strong === "d:H8655"));
+  assert(
+    card.targets.length === 6,
+    `precondition: the two teraphim milestones render as one 6-word card (got ${card.targets.length})`,
+  );
+  const kiGroup = state.groups.find((g) => g.source.some((s) => s.strong === "H3588a"));
+  const kiId = kiGroup.source.find((s) => s.strong === "H3588a").id;
+
+  // Resolve the fused set exactly as handleSourceDrop does (sourceKey OR pos).
+  const key = sourceKey(card);
+  const cardPosKey = posKey(card);
+  const destGroupIds = [
+    card.id,
+    ...state.groups
+      .filter(
+        (g) =>
+          g.id !== card.id &&
+          (sourceKey(g) === key || (cardPosKey !== null && posKey(g) === cardPosKey)),
+      )
+      .map((g) => g.id),
+  ];
+  assert(destGroupIds.length === 2, `card collapses two state groups (got ${destGroupIds.length})`);
+
+  // Regression: the OLD single-group path splits the card back into two.
+  const oldWay = moveSource(state, kiId, card.id, sourcePos);
+  const oldTeraphimCards = displayOf(oldWay).filter((g) =>
+    g.source.some((s) => s.strong === "d:H8655"),
+  );
+  assert(
+    oldTeraphimCards.length === 2,
+    `precondition: moveSource onto one group SPLITS the card (the bug) — got ${oldTeraphimCards.length} teraphim cards`,
+  );
+
+  // Fix: add כִּי to every fused group; the card stays fused.
+  const fixed = moveSourceToGroups(state, kiId, destGroupIds, sourcePos);
+  const teraphimGroups = fixed.sourceGroups.filter((g) =>
+    g.source.some((s) => s.strong === "d:H8655"),
+  );
+  assert(
+    teraphimGroups.length === 2 &&
+      teraphimGroups.every((g) => g.source.some((s) => s.strong === "H3588a")),
+    "both teraphim groups now carry כִּי",
+  );
+  const kiIds = teraphimGroups.map((g) => g.source.find((s) => s.strong === "H3588a").id);
+  assert(
+    kiIds[0] !== kiIds[1],
+    `the cloned כִּי chip gets a fresh id so both stay independently draggable (got ${JSON.stringify(kiIds)})`,
+  );
+  const afterCards = displayOf(fixed).filter((g) => g.source.some((s) => s.strong === "d:H8655"));
+  assert(afterCards.length === 1, `the card stays ONE card after the drop (got ${afterCards.length})`);
+  assert(
+    afterCards[0].targets.length === 6,
+    `the fused card still shows all 6 English words (got ${afterCards[0].targets.length})`,
+  );
+  assert(
+    afterCards[0].source.filter((s) => s.strong === "H3588a").length === 1 &&
+      afterCards[0].source.filter((s) => s.strong === "d:H8655").length === 1,
+    "the fused card renders כִּי once and teraphim once (Hebrew not doubled on screen)",
   );
 }
 
