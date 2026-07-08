@@ -277,7 +277,7 @@ function NoteBodyReadView({
         border: "1px solid",
         borderColor: "divider",
         borderRadius: 1,
-        fontSize: 15,
+        fontSize: `calc(15px * var(--be-reading-scale, 1))`,
         lineHeight: 1.55,
         fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
         "&:hover": { borderColor: "text.primary" },
@@ -1365,7 +1365,7 @@ function NoteCardInner({
             }}
             inputProps={{
               style: {
-                fontSize: 15,
+                fontSize: `calc(15px * var(--be-reading-scale, 1))`,
                 lineHeight: 1.55,
                 fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
               },

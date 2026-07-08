@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Stack,
   Typography,
@@ -13,7 +13,12 @@ import {
   Snackbar,
   Alert,
   CircularProgress,
+  Popover,
+  Button,
 } from "@mui/material";
+import FormatSizeIcon from "@mui/icons-material/FormatSize";
+import RemoveIcon from "@mui/icons-material/Remove";
+import AddIcon from "@mui/icons-material/Add";
 import NavigateBeforeIcon from "@mui/icons-material/NavigateBefore";
 import NavigateNextIcon from "@mui/icons-material/NavigateNext";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
@@ -27,7 +32,93 @@ import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
 import { parseReference } from "../lib/referenceParser";
-import { ThemeModeContext } from "../theme";
+import {
+  ThemeModeContext,
+  FontScaleContext,
+  FONT_SCALE_MIN,
+  FONT_SCALE_MAX,
+  FONT_SCALE_STEP,
+  FONT_SCALE_DEFAULT,
+} from "../theme";
+
+// Compact "Aa" control for the reading-text font scale. Lives beside the
+// theme toggle; opens a small popover with −/＋ and a reset. Scales the ULT/UST
+// editors and note bodies via the `--be-reading-scale` CSS var.
+function FontSizeControl() {
+  const { scale, setScale } = useContext(FontScaleContext);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const pct = Math.round(scale * 100);
+
+  return (
+    <>
+      <Tooltip title="reading text size">
+        <IconButton
+          ref={anchorRef}
+          size="small"
+          onClick={() => setOpen(true)}
+          aria-label="adjust reading text size"
+        >
+          <FormatSizeIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Popover
+        open={open}
+        anchorEl={anchorRef.current}
+        onClose={() => setOpen(false)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        transformOrigin={{ vertical: "top", horizontal: "center" }}
+      >
+        <Box sx={{ px: 1.5, py: 1, minWidth: 200 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.75 }}>
+            Reading text size
+          </Typography>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Tooltip title="smaller">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => setScale(scale - FONT_SCALE_STEP)}
+                  disabled={scale <= FONT_SCALE_MIN + 1e-6}
+                  aria-label="decrease reading text size"
+                >
+                  <RemoveIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Typography
+              variant="body2"
+              sx={{ flex: 1, textAlign: "center", fontVariantNumeric: "tabular-nums" }}
+            >
+              {pct}%
+            </Typography>
+            <Tooltip title="larger">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => setScale(scale + FONT_SCALE_STEP)}
+                  disabled={scale >= FONT_SCALE_MAX - 1e-6}
+                  aria-label="increase reading text size"
+                >
+                  <AddIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          <Button
+            size="small"
+            fullWidth
+            onClick={() => setScale(FONT_SCALE_DEFAULT)}
+            disabled={Math.abs(scale - FONT_SCALE_DEFAULT) < 1e-6}
+            sx={{ mt: 0.75, textTransform: "none" }}
+          >
+            Reset to 100%
+          </Button>
+        </Box>
+      </Popover>
+    </>
+  );
+}
 
 interface Props {
   book: string;
@@ -351,6 +442,7 @@ export function TopBar({
       {lintIndicator}
       <VersionIndicator />
       <SyncStatusBar onNavigate={onNavigate} />
+      <FontSizeControl />
       <Tooltip title={mode === "dark" ? "switch to light mode" : "switch to dark mode"}>
         <IconButton size="small" onClick={toggle} aria-label="toggle color mode">
           {mode === "dark" ? <Brightness7Icon fontSize="small" /> : <Brightness4Icon fontSize="small" />}
