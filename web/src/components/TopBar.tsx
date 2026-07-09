@@ -130,6 +130,7 @@ interface Props {
   lintIndicator?: ReactNode;
   railCollapsed?: boolean;
   onToggleRail?: () => void;
+  onRequestReload?: () => void;
 }
 
 export function TopBar({
@@ -142,6 +143,7 @@ export function TopBar({
   lintIndicator,
   railCollapsed,
   onToggleRail,
+  onRequestReload,
 }: Props) {
   const [books, setBooks] = useState<BookListEntry[]>([]);
   const [summary, setSummary] = useState<BookSummary | null>(null);
@@ -440,7 +442,7 @@ export function TopBar({
         </Box>
       )}
       {lintIndicator}
-      <VersionIndicator />
+      <VersionIndicator onRequestReload={onRequestReload} />
       <SyncStatusBar onNavigate={onNavigate} />
       <FontSizeControl />
       <Tooltip title={mode === "dark" ? "switch to light mode" : "switch to dark mode"}>
