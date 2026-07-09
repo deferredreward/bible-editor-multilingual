@@ -35,8 +35,17 @@ worktree bundle, seeded ZEC): copy button → clean HTML+plain with `<sup>` numb
 Chapter/Whole-book, UHB excluded, ULT/UST×aligned/plain; ULT-aligned chapter = valid USFM w/ `\zaln`+`\w`;
 ULT-plain = no `\zaln`/`\w`, markers intact. Fixed a copy bug found in-browser: usfm-js parks `\n` in text nodes →
 collapse `\s+` (not just `[ \t]+`) so only structural markers break lines. typecheck+web test+build green.
-Whole-book scope not live-clicked (fires N fetches) — same `buildUsfmFromVerses` path, covered by the multi-chapter
-unit case. **NOT committed / no PR — awaiting user.** (memory: [[project_chapter_copy_and_usfm_export]])
+Whole-book scope live-verified (ZEC-ULT.usfm, 14 chapters, single header block).
+**[PR #328](https://github.com/unfoldingWord/bible-editor/pull/328) opened; NOT merged/deployed.**
+**Pre-merge review done** (code-review --fix + Codex): fixed → verse-0 chapter-front matter was dropped from copy
+(now kept, no number); clipboard fallback null-deref guarded; whole-book export errors now surfaced (Snackbar) +
+bounded to 6 concurrent fetches; DocColumn redundant dedup removed; **Codex-found marker-leading verse bug**
+(a verse whose objects start with `\p`/`\q` stranded its number on the prior line → defer number to first content);
+**ported `normalizeUsfmFormatting` into `web/src/lib/usfmFormat.ts`** (verbatim mirror of api) so downloads get the
+DCS Check-8 line layout (was raw usfm-js). Refuted: range-row dup in export path (ChapterPayload keyed by lead verse
++ verseKey-object collapse) and compound-word gluing (same space-node reliance as extractPlainText). Codex re-review
+round 3 blocked — **OpenAI workspace out of credits** (external), so the final confirming pass couldn't run.
+(memory: [[project_chapter_copy_and_usfm_export]])
 
 2026-07-08 · **suspicious-vaughan** — **Fixed the whole-card-merge sibling of the duplicate-Hebrew bug**
 (stacked on `alignment-panel-duplicate-word`, which is itself NOT yet PR'd). `handleMergeGroups` (bottom-grip
