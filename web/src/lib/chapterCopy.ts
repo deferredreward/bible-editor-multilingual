@@ -88,19 +88,24 @@ function chapterLines(verses: VerseDto[]): Line[] {
         : v.verse_end != null && v.verse_end > v.verse
           ? `${v.verse}-${v.verse_end}`
           : String(v.verse);
+    const flushLabel = (): void => {
+      if (pendingLabel === null) return;
+      if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
+      cur.text += `${NUM_OPEN}${pendingLabel}${NUM_CLOSE} `;
+      pendingLabel = null;
+    };
     const emitContent = (s: string): void => {
       if (s === "") return;
-      if (pendingLabel !== null && /\S/.test(s)) {
-        if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
-        cur.text += `${NUM_OPEN}${pendingLabel}${NUM_CLOSE} `;
-        pendingLabel = null;
-      }
+      if (/\S/.test(s)) flushLabel();
       cur.text += s;
     };
     for (const node of vos) {
       if (!node || typeof node !== "object") continue;
       const o = node as Record<string, unknown>;
       if (isInFlowMarker(o) && !isCharacterWrapper(o)) {
+        // `\ts\*` is a translator chunk divider, invisible in reading — it must
+        // not insert a paragraph break into the copied text.
+        if (o["tag"] === "ts") continue;
         const ind = markerIndent(String(o["tag"] ?? ""));
         if (ind === null) {
           flush();
@@ -118,10 +123,7 @@ function chapterLines(verses: VerseDto[]): Line[] {
       emitContent(parts.join(""));
     }
     // A verse with no textual content at all still surfaces its number.
-    if (pendingLabel !== null) {
-      if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
-      cur.text += `${NUM_OPEN}${pendingLabel}${NUM_CLOSE} `;
-    }
+    flushLabel();
   }
   flush();
   // Collapse ALL whitespace (incl. the \n usfm-js parks in text nodes) to single

@@ -179,6 +179,19 @@ const aligned = [
   assert(text.includes("the man"), "poetry continuation line kept");
 }
 
+// ── chapterCopy: \ts\* chunk marker doesn't break the line ────────────────────
+{
+  const v1 = mkVerse(1, [
+    { type: "word", tag: "w", text: "Before" },
+    { type: "text", text: " " },
+    { tag: "ts", content: "\\*" },
+    { type: "word", tag: "w", text: "after" },
+  ]);
+  const { text } = buildChapterClipboard("ZEC", 1, [{ version: "ULT", verses: [v1] }]);
+  assert(/1\s+Before after/.test(text), "\\ts\\* chunk marker does not insert a paragraph break");
+  assert(text.split("\n").filter((l) => l.trim()).length === 2, "one heading + one verse line (no \\ts split)");
+}
+
 if (failed) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);

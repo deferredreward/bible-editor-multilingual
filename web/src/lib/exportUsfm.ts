@@ -72,9 +72,12 @@ function stripAlignmentNodes(nodes: unknown[]): unknown[] {
       if (Array.isArray(o["children"])) out.push(...stripAlignmentNodes(o["children"] as unknown[]));
       continue;
     }
-    // Word → bare text. Drops strong/lemma/morph/occurrence attrs.
+    // Word → bare text. Drops strong/lemma/morph/occurrence attrs. A normal `\w`
+    // always carries string text; a malformed one with children instead is still
+    // preserved by recursing rather than silently dropped.
     if (o["type"] === "word" && o["tag"] === "w") {
       if (typeof o["text"] === "string") out.push({ type: "text", text: o["text"] });
+      else if (Array.isArray(o["children"])) out.push(...stripAlignmentNodes(o["children"] as unknown[]));
       continue;
     }
     // Anything else: keep, recursing into children.

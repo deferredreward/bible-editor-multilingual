@@ -56,10 +56,18 @@ function download(filename: string, contents: string): void {
 async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let aborted = false;
   async function worker(): Promise<void> {
-    while (next < items.length) {
+    // Stop pulling new work once any task has failed — otherwise the sibling
+    // workers keep fetching the rest of the book after the export already failed.
+    while (next < items.length && !aborted) {
       const i = next++;
-      results[i] = await task(items[i]);
+      try {
+        results[i] = await task(items[i]);
+      } catch (e) {
+        aborted = true;
+        throw e;
+      }
     }
   }
   const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
@@ -81,11 +89,11 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
   async function versesFor(scope: Scope, version: string): Promise<VerseDto[]> {
     if (scope === "chapter") return chapterVersesFor(version);
     const summary = await api.getBookSummary(book);
-    const payloads = await mapLimit(
-      summary.chapters,
-      FETCH_CONCURRENCY,
-      (c) => api.getChapter(book, c.chapter),
-    );
+    // The summary can list chapter 0 (book-intro notes live there), but the
+    // verses table has no chapter-0 scripture, so skip it — no verse rows to
+    // fetch and it would never contribute to the export.
+    const chapters = summary.chapters.filter((c) => c.chapter > 0);
+    const payloads = await mapLimit(chapters, FETCH_CONCURRENCY, (c) => api.getChapter(book, c.chapter));
     const out: VerseDto[] = [];
     for (const p of payloads) {
       const byVerse = p.verses[version];
