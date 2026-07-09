@@ -152,6 +152,29 @@ const aligned = [
   assert(!/<sup>0<\/sup>/.test(html), "verse-0 front matter carries no verse number");
 }
 
+// ── chapterCopy: verse whose objects START with a marker keeps its number ─────
+// Regression for the "standalone verse-number paragraph" bug: a verse leading
+// with \p then \q1 must not strand the number on the previous line.
+{
+  const v1 = mkVerse(1, [
+    { type: "paragraph", tag: "p" },
+    { type: "word", tag: "w", text: "Blessed" },
+    { type: "text", text: " " },
+    { type: "word", tag: "w", text: "is" },
+    { type: "quote", tag: "q1" },
+    { type: "word", tag: "w", text: "the" },
+    { type: "text", text: " " },
+    { type: "word", tag: "w", text: "man" },
+  ]);
+  const { html, text } = buildChapterClipboard("PSA", 1, [{ version: "ULT", verses: [v1] }]);
+  // The verse number must sit on the same line as "Blessed", never alone.
+  assert(/1\s+Blessed is/.test(text), "verse number stays with paragraph-leading body (text)");
+  assert(!/^\s*1\s*$/m.test(text), "no standalone verse-number line (text)");
+  assert(/<sup>1<\/sup> Blessed is/.test(html), "verse number superscript precedes body (html)");
+  assert(!/<p[^>]*><sup>1<\/sup><\/p>/.test(html), "no standalone verse-number paragraph (html)");
+  assert(text.includes("the man"), "poetry continuation line kept");
+}
+
 if (failed) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);

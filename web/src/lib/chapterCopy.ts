@@ -78,11 +78,25 @@ function chapterLines(verses: VerseDto[]): Line[] {
   for (const v of sorted) {
     const content = v.content as { verseObjects?: unknown[] } | null;
     const vos = Array.isArray(content?.verseObjects) ? content!.verseObjects : [];
-    if (v.verse !== 0) {
-      const label = v.verse_end != null && v.verse_end > v.verse ? `${v.verse}-${v.verse_end}` : String(v.verse);
-      if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
-      cur.text += `${NUM_OPEN}${label}${NUM_CLOSE} `;
-    }
+    // Defer the verse number until the verse's first real (non-whitespace)
+    // content: a verse whose own objects START with an in-flow marker (`\p`/`\q`)
+    // would otherwise strand the number on the previous line, then break to a new
+    // line for the body. Emitting on first content keeps the number with its text.
+    let pendingLabel: string | null =
+      v.verse === 0
+        ? null
+        : v.verse_end != null && v.verse_end > v.verse
+          ? `${v.verse}-${v.verse_end}`
+          : String(v.verse);
+    const emitContent = (s: string): void => {
+      if (s === "") return;
+      if (pendingLabel !== null && /\S/.test(s)) {
+        if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
+        cur.text += `${NUM_OPEN}${pendingLabel}${NUM_CLOSE} `;
+        pendingLabel = null;
+      }
+      cur.text += s;
+    };
     for (const node of vos) {
       if (!node || typeof node !== "object") continue;
       const o = node as Record<string, unknown>;
@@ -95,13 +109,18 @@ function chapterLines(verses: VerseDto[]): Line[] {
           flush();
           cur.indent = ind;
         }
-        // Leading punctuation usfm-js parked on the marker node.
-        if (typeof o["text"] === "string") cur.text += o["text"] as string;
+        // Leading punctuation usfm-js parked on the marker node (real content).
+        if (typeof o["text"] === "string") emitContent(o["text"] as string);
         continue;
       }
       const parts: string[] = [];
       collectText([o], parts);
-      cur.text += parts.join("");
+      emitContent(parts.join(""));
+    }
+    // A verse with no textual content at all still surfaces its number.
+    if (pendingLabel !== null) {
+      if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
+      cur.text += `${NUM_OPEN}${pendingLabel}${NUM_CLOSE} `;
     }
   }
   flush();
