@@ -87,6 +87,10 @@ const aligned = [
     { aligned: true },
   );
   assert(usfm.includes("\\c 1") && usfm.includes("\\c 2"), "multi-chapter export emits both \\c markers");
+  // DCS normalizer applied: \c sits on its own line, with a blank line before a
+  // non-leading chapter.
+  assert(/\n\\c 2\n/.test(usfm), "normalizer puts \\c 2 on its own line");
+  assert(/\n\n\\c 2\n/.test(usfm), "normalizer adds a blank line before \\c 2");
 }
 
 // ── chapterCopy: superscript verse numbers + poetry lines ─────────────────────

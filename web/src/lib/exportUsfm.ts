@@ -5,19 +5,16 @@
 //                so the output is plain scripture with paragraph/poetry markers
 //                preserved but no alignment structure.
 //
-// This mirrors the server's api/src/export.ts `buildUsfm` chapter-assembly and
-// header synthesis. We keep it client-only (no export API endpoint) — usfm-js is
-// already bundled (web/package.json) and every verse's content_json is already in
-// hand via useChapter / api.getChapter.
-//
-// NOTE: the server's buildUsfm ends with normalizeUsfmFormatting() (the DCS
-// Check-8 line-layout reflow in api/src/usfmFormat.ts) — this client renderer
-// does NOT (that module lives in the api workspace and can't be imported here).
-// So the download is valid USFM with the same content/alignment, but its line
-// layout is usfm-js's raw output, not byte-identical to the nightly DCS snapshot.
+// This mirrors the server's api/src/export.ts `buildUsfm` chapter-assembly,
+// header synthesis, AND its final normalizeUsfmFormatting() reflow (mirrored into
+// web/src/lib/usfmFormat.ts), so a downloaded file matches the DCS-valid line
+// layout the nightly export produces. We keep it client-only (no export API
+// endpoint) — usfm-js is already bundled (web/package.json) and every verse's
+// content_json is already in hand via useChapter / api.getChapter.
 
 import usfm from "usfm-js";
 import type { VerseDto } from "../sync/api.ts";
+import { normalizeUsfmFormatting } from "./usfmFormat.ts";
 
 // Mirror of buildUsfm's target-occurrence heal (api/src/export.ts). Renumbers
 // target `\w` occurrence/occurrences from document position so a stale stored
@@ -137,6 +134,11 @@ export function buildUsfmFromVerses(
     }
     const ch = String(v.chapter);
     if (!chapters[ch]) chapters[ch] = {};
+    // Keyed by verseKey, so if a range row (verse_end > verse) is passed more than
+    // once — the caller may hand us a component-expanded index keyed under every
+    // verse in the span — the duplicates collapse to the same "N-M" key rather
+    // than emitting twice. (ChapterPayload.verses is keyed by lead verse, so in
+    // practice each row arrives once; this makes the function order/dup-safe.)
     const verseKey =
       v.verse === 0
         ? "front"
@@ -147,7 +149,17 @@ export function buildUsfmFromVerses(
   }
 
   const headers = synthesizeHeaders(book, bibleVersion);
-  return usfm.toUSFM({ headers, chapters } as unknown as { chapters: Record<string, unknown> }, {
+  const rendered = usfm.toUSFM({ headers, chapters } as unknown as { chapters: Record<string, unknown> }, {
     forcedNewLines: true,
   });
+  // normalizeUsfmFormatting's blank-line pass treats everything up to the first
+  // blank line as header (so it doesn't wedge blanks between \id/\h/\toc). Real
+  // DCS headers end with a blank line before the body; our synthesized ones don't,
+  // so insert that separator before the first \c — otherwise the whole file reads
+  // as "header" and the body reflow is skipped. Idempotent (skips if already blank).
+  const withHeaderBreak = rendered.replace(/([^\n])\n(\\c\s+\d+)/, "$1\n\n$2");
+  // Reflow to the DCS Check-8 line layout (blank lines, own-line markers, one \v
+  // per line, \ts* repair) so the download matches the nightly export. Inert
+  // whitespace/marker moves only — alignment untouched. See usfmFormat.ts.
+  return normalizeUsfmFormatting(withHeaderBreak);
 }
