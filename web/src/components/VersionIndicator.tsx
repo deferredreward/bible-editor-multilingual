@@ -42,7 +42,7 @@ export function VersionIndicator({ onRequestReload }: Props = {}) {
           size="small"
           variant="outlined"
           clickable
-          onClick={() => (onRequestReload ?? (() => window.location.reload()))()}
+          onClick={onRequestReload ?? (() => window.location.reload())}
           sx={updateAccentSx}
         />
       </Tooltip>
