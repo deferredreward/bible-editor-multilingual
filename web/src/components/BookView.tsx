@@ -15,6 +15,8 @@ import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
 import CheckIcon from "@mui/icons-material/Check";
 import type { TwlRow, VerseDto } from "../sync/api";
+import { type ChapterCopyBlock } from "../lib/chapterCopy";
+import { CopyChapterButton } from "./CopyChapterButton";
 import { LANE_FILL, type TextLaneCheck } from "../lib/laneChecks";
 import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
@@ -472,14 +474,30 @@ const ChapterBlock = memo(function ChapterBlock({
           borderRadius: 0.5,
           borderBottom: "1px solid",
           borderColor: "primary.main",
+          display: "flex",
+          alignItems: "center",
         }}
       >
         <Typography
           variant="subtitle2"
-          sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700, letterSpacing: 0.5 }}
+          sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700, letterSpacing: 0.5, flex: 1 }}
         >
           {book} {chapter === 0 ? "front" : `chapter ${chapter}`}
         </Typography>
+        {chapter !== 0 && (
+          <CopyChapterButton
+            book={book}
+            chapter={chapter}
+            blocks={() => {
+              const blocks: ChapterCopyBlock[] = [];
+              for (const v of enabledVersions) {
+                const byVerse = data.verses[v];
+                if (byVerse) blocks.push({ version: v, verses: Object.values(byVerse) });
+              }
+              return blocks;
+            }}
+          />
+        )}
       </Box>
       {verseNums.map((v) => {
         const isActive = chapter === activeChapter && v === activeVerse;
