@@ -99,6 +99,95 @@ function origLangOccurrence(quote: string | null, occurrence: number | null): nu
   return occurrence;
 }
 
+// Sequence TWLs by position of Hebrew word in aligned ULT
+function normalizeWordText(s: string | null | undefined): string {
+  if (s == null) return "";
+  return s.toLowerCase().trim().replace(/[\s\p{P}\p{S}]+/gu, " ");
+}
+
+function buildUltSequenceMap(verse: VerseRow | null | undefined): Map<string, number> {
+  const sequenceMap = new Map<string, number>();
+  if (!verse) return sequenceMap;
+
+  const parsed = parseVerseContentJson(verse);
+  const verseObjects = parsed && typeof parsed === "object"
+    ? (parsed as { verseObjects?: unknown[] }).verseObjects
+    : null;
+
+  if (!Array.isArray(verseObjects)) return sequenceMap;
+
+  let englishIndex = 0;
+  const occurrenceMap = new Map<string, number>();
+
+  type Alignment = {
+    content: string;
+  };
+
+  const alignmentStack: Alignment[] = [];
+
+  const walk = (nodes: unknown[]): void => {
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
+      const o = node as Record<string, unknown>;
+
+      // Beginning of an alignment milestone
+      if (
+        o["type"] === "milestone" &&
+        o["tag"] === "zaln" &&
+        typeof o["content"] === "string"
+      ) {
+        alignmentStack.push({
+          content: normalizeWordText(o["content"] as string),
+        });
+      }
+
+      // English word
+      if (o["type"] === "word" && o["tag"] === "w") {
+        if (alignmentStack.length > 0) {
+          const current = alignmentStack[alignmentStack.length - 1];
+
+          const occurrence =
+            (occurrenceMap.get(current.content) ?? 0) + 1;
+          occurrenceMap.set(current.content, occurrence);
+
+          sequenceMap.set(
+            `${current.content}#${occurrence}`,
+            englishIndex,
+          );
+        }
+
+        englishIndex++;
+      }
+
+      const children = o["children"];
+      if (Array.isArray(children)) {
+        walk(children);
+      }
+
+      // End of an alignment milestone
+      if (
+        o["type"] === "milestoneEnd" &&
+        o["tag"] === "zaln"
+      ) {
+        alignmentStack.pop();
+      }
+    }
+  };
+
+  walk(verseObjects);
+
+  return sequenceMap;
+}
+
+function twlSortPosition(
+  row: TwlRow,
+  sequenceMap: Map<string, number>,
+): number | null {
+  const key =
+    `${normalizeWordText(row.orig_words)}#${row.occurrence}`;
+  return sequenceMap.get(key) ?? null;
+}
+
 export function buildTnTsv(rows: TnRow[]): string {
   const body = sortRowsByReference(rows).map((r) =>
     tsvLine([r.ref_raw, r.id, r.tags, r.support_reference, r.quote, origLangOccurrence(r.quote, r.occurrence), normalizeNoteText(r.note)]),
@@ -113,10 +202,90 @@ export function buildTqTsv(rows: TqRow[]): string {
   return [TQ_HEADERS.join("\t"), ...body].join("\n") + "\n";
 }
 
-export function buildTwlTsv(rows: TwlRow[]): string {
-  const body = sortRowsByReference(rows).map((r) =>
-    tsvLine([r.ref_raw, r.id, r.tags, r.orig_words, origLangOccurrence(r.orig_words, r.occurrence), r.tw_link]),
-  );
+export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): string {
+  const referenceOrdered = sortRowsByReference(rows);
+
+  const versePositions = new Map<string, number>();
+  const verseRows = new Map<string, Array<{ row: TwlRow; originalIndex: number }>>();
+
+  // Group rows by verse
+  for (const [originalIndex, row] of referenceOrdered.entries()) {
+    const key = `${row.chapter}:${row.verse}`;
+    const bucket = verseRows.get(key) ?? [];
+    bucket.push({ row, originalIndex });
+    verseRows.set(key, bucket);
+  }
+
+  // Compute the desired order within each verse
+  for (const bucket of verseRows.values()) {
+    const verse =
+      input?.verses.find(
+        (v) =>
+          v.bible_version === "ULT" &&
+          v.chapter === bucket[0].row.chapter &&
+          v.verse === bucket[0].row.verse,
+      ) ?? null;
+
+    const sequenceMap = buildUltSequenceMap(verse);
+
+    bucket.sort((a, b) => {
+      const aPos = twlSortPosition(a.row, sequenceMap);
+      const bPos = twlSortPosition(b.row, sequenceMap);
+
+      if (aPos != null && bPos != null && aPos !== bPos) {
+        return aPos - bPos;
+      }
+
+      if (aPos != null && bPos == null) return -1;
+      if (aPos == null && bPos != null) return 1;
+
+      if (
+        (a.row.sort_order ?? Number.POSITIVE_INFINITY) !==
+        (b.row.sort_order ?? Number.POSITIVE_INFINITY)
+      ) {
+        return (
+          (a.row.sort_order ?? Number.POSITIVE_INFINITY) -
+          (b.row.sort_order ?? Number.POSITIVE_INFINITY)
+        );
+      }
+
+      return a.originalIndex - b.originalIndex;
+    });
+
+    bucket.forEach(({ row }, index) => {
+      versePositions.set(row.id, index);
+    });
+  }
+
+  const body = referenceOrdered
+    .map((row, originalIndex) => ({ row, originalIndex }))
+    .sort((a, b) => {
+      const sameVerse =
+        a.row.chapter === b.row.chapter &&
+        a.row.verse === b.row.verse;
+
+      if (sameVerse) {
+        const aPos = versePositions.get(a.row.id) ?? a.originalIndex;
+        const bPos = versePositions.get(b.row.id) ?? b.originalIndex;
+
+        if (aPos !== bPos) {
+          return aPos - bPos;
+        }
+      }
+
+      return a.originalIndex - b.originalIndex;
+    })
+    .map(({ row }) =>
+      tsvLine([
+        row.ref_raw,
+        row.id,
+        row.tags,
+        row.orig_words,
+        origLangOccurrence(row.orig_words, row.occurrence),
+        row.tw_link,
+      ]),
+    );
+
   return [TWL_HEADERS.join("\t"), ...body].join("\n") + "\n";
 }
 
