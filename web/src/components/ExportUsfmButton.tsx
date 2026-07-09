@@ -6,12 +6,14 @@
 
 import { useState } from "react";
 import {
+  Alert,
   CircularProgress,
   Divider,
   IconButton,
   ListSubheader,
   Menu,
   MenuItem,
+  Snackbar,
   Tooltip,
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -33,6 +35,10 @@ type Scope = "chapter" | "book";
 // upstream, read-only resources, not translation output the user edits here.
 const SOURCE_VERSIONS = new Set(["UHB", "UGNT"]);
 
+// Cap on concurrent chapter fetches for a whole-book export so a large book
+// (e.g. Psalms, 150 chapters) doesn't dispatch every request in one burst.
+const FETCH_CONCURRENCY = 6;
+
 function download(filename: string, contents: string): void {
   const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -45,9 +51,26 @@ function download(filename: string, contents: string): void {
   URL.revokeObjectURL(url);
 }
 
+// Run `task` over `items` with a bounded number in flight at once, preserving
+// input order in the results.
+async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await task(items[i]);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVersesFor }: Props) {
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const open = Boolean(anchor);
 
   // Exclude original-language source texts (Hebrew/Greek) from export.
@@ -58,8 +81,10 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
   async function versesFor(scope: Scope, version: string): Promise<VerseDto[]> {
     if (scope === "chapter") return chapterVersesFor(version);
     const summary = await api.getBookSummary(book);
-    const payloads = await Promise.all(
-      summary.chapters.map((c) => api.getChapter(book, c.chapter)),
+    const payloads = await mapLimit(
+      summary.chapters,
+      FETCH_CONCURRENCY,
+      (c) => api.getChapter(book, c.chapter),
     );
     const out: VerseDto[] = [];
     for (const p of payloads) {
@@ -70,10 +95,14 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
   }
 
   async function handleExport(scope: Scope, version: string, aligned: boolean): Promise<void> {
+    close();
     setBusy(true);
     try {
       const verses = await versesFor(scope, version);
-      if (verses.length === 0) return;
+      if (verses.length === 0) {
+        setError(`No ${version} text to export for ${scope === "chapter" ? `${book} ${chapter}` : book}.`);
+        return;
+      }
       const usfm = buildUsfmFromVerses(book, version, verses, { aligned });
       const suffix = aligned ? "" : "-unaligned";
       const name =
@@ -81,9 +110,10 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
           ? `${book}-${version}-${chapter}${suffix}.usfm`
           : `${book}-${version}${suffix}.usfm`;
       download(name, usfm);
+    } catch (e) {
+      setError(`USFM export failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
-      close();
     }
   }
 
@@ -112,10 +142,10 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
               {label}
             </ListSubheader>,
             ...exportableVersions.flatMap((v) => [
-              <MenuItem key={`${scope}-${v}-a`} onClick={() => handleExport(scope, v, true)}>
+              <MenuItem key={`${scope}-${v}-a`} onClick={() => void handleExport(scope, v, true)}>
                 {v} — aligned
               </MenuItem>,
-              <MenuItem key={`${scope}-${v}-u`} onClick={() => handleExport(scope, v, false)}>
+              <MenuItem key={`${scope}-${v}-u`} onClick={() => void handleExport(scope, v, false)}>
                 {v} — plain text (no alignment)
               </MenuItem>,
             ]),
@@ -124,6 +154,16 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
           return items;
         })}
       </Menu>
+      <Snackbar
+        open={error !== null}
+        autoHideDuration={6000}
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="error" onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      </Snackbar>
     </>
   );
 }

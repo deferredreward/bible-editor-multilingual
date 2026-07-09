@@ -6,10 +6,15 @@
 //                preserved but no alignment structure.
 //
 // This mirrors the server's api/src/export.ts `buildUsfm` chapter-assembly and
-// header synthesis so a downloaded file matches the nightly export shape. We
-// keep it client-only (no export API endpoint) — usfm-js is already bundled
-// (web/package.json) and every verse's content_json is already in hand via
-// useChapter / api.getChapter.
+// header synthesis. We keep it client-only (no export API endpoint) — usfm-js is
+// already bundled (web/package.json) and every verse's content_json is already in
+// hand via useChapter / api.getChapter.
+//
+// NOTE: the server's buildUsfm ends with normalizeUsfmFormatting() (the DCS
+// Check-8 line-layout reflow in api/src/usfmFormat.ts) — this client renderer
+// does NOT (that module lives in the api workspace and can't be imported here).
+// So the download is valid USFM with the same content/alignment, but its line
+// layout is usfm-js's raw output, not byte-identical to the nightly DCS snapshot.
 
 import usfm from "usfm-js";
 import type { VerseDto } from "../sync/api.ts";

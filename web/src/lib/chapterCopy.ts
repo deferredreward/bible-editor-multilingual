@@ -65,10 +65,12 @@ function chapterLines(verses: VerseDto[]): Line[] {
   };
 
   // Dedupe by leading verse: a multi-verse range row is keyed under every verse
-  // in its span by the caller, so the same DTO can arrive multiple times.
+  // in its span by the caller, so the same DTO can arrive multiple times. Verse 0
+  // is the chapter-front pseudo-verse (Psalm superscription `\d`, chapter-leading
+  // `\s1`) — real scripture, so it is KEPT (rendered without a verse number),
+  // matching the USFM export's `front` handling.
   const byVerse = new Map<number, VerseDto>();
   for (const v of verses) {
-    if (v.verse === 0) continue;
     if (!byVerse.has(v.verse)) byVerse.set(v.verse, v);
   }
   const sorted = [...byVerse.values()].sort((a, b) => a.verse - b.verse);
@@ -76,9 +78,11 @@ function chapterLines(verses: VerseDto[]): Line[] {
   for (const v of sorted) {
     const content = v.content as { verseObjects?: unknown[] } | null;
     const vos = Array.isArray(content?.verseObjects) ? content!.verseObjects : [];
-    const label = v.verse_end != null && v.verse_end > v.verse ? `${v.verse}-${v.verse_end}` : String(v.verse);
-    if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
-    cur.text += `${NUM_OPEN}${label}${NUM_CLOSE} `;
+    if (v.verse !== 0) {
+      const label = v.verse_end != null && v.verse_end > v.verse ? `${v.verse}-${v.verse_end}` : String(v.verse);
+      if (cur.text && !cur.text.endsWith(" ")) cur.text += " ";
+      cur.text += `${NUM_OPEN}${label}${NUM_CLOSE} `;
+    }
     for (const node of vos) {
       if (!node || typeof node !== "object") continue;
       const o = node as Record<string, unknown>;
@@ -176,5 +180,8 @@ export async function copyChapterToClipboard(
   } catch {
     // fall through to plain text
   }
-  await navigator.clipboard.writeText(text);
+  // Guard the fallback too: `navigator.clipboard` is undefined in a non-secure
+  // (plain-HTTP) context, so the optional chaining above skips it — dereferencing
+  // it unconditionally here would throw a TypeError instead of degrading quietly.
+  await navigator.clipboard?.writeText(text);
 }

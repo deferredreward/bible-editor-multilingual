@@ -120,6 +120,38 @@ const aligned = [
   assert(text.includes("6-7"), "range row shows hyphenated label");
 }
 
+// ── exportUsfm: compound alignment (multiple \w in one \zaln) doesn't glue ─────
+{
+  const compound = [
+    {
+      type: "milestone", tag: "zaln", strong: "H1", occurrence: "1", occurrences: "1",
+      content: "בְּרֵאשִׁית", endTag: "zaln-e\\*",
+      children: [
+        { type: "word", tag: "w", text: "In", occurrence: "1", occurrences: "1" },
+        { type: "text", text: " " },
+        { type: "word", tag: "w", text: "the", occurrence: "1", occurrences: "1" },
+        { type: "text", text: " " },
+        { type: "word", tag: "w", text: "beginning", occurrence: "1", occurrences: "1" },
+      ],
+    },
+  ];
+  const usfm = buildUsfmFromVerses("GEN", "ULT", [mkVerse(1, compound)], { aligned: false });
+  assert(usfm.includes("In the beginning"), "unaligned compound alignment stays space-separated (no glued words)");
+  const { text } = buildChapterClipboard("GEN", 1, [{ version: "ULT", verses: [mkVerse(1, compound)] }]);
+  assert(text.includes("In the beginning"), "clipboard compound alignment stays space-separated");
+}
+
+// ── chapterCopy: verse 0 (chapter-front, e.g. Psalm superscription) kept ──────
+{
+  const v0 = mkVerse(0, [{ type: "word", tag: "w", text: "A" }, { type: "text", text: " " }, { type: "word", tag: "w", text: "Psalm" }]);
+  const v1 = mkVerse(1, [{ type: "word", tag: "w", text: "Blessed" }]);
+  const { html, text } = buildChapterClipboard("PSA", 1, [{ version: "ULT", verses: [v0, v1] }]);
+  assert(text.includes("A Psalm"), "clipboard keeps verse-0 front matter (Psalm superscription)");
+  assert(text.includes("Blessed"), "clipboard keeps verse 1 after front matter");
+  assert(html.includes("<sup>1</sup>"), "verse 1 still numbered after front matter");
+  assert(!/<sup>0<\/sup>/.test(html), "verse-0 front matter carries no verse number");
+}
+
 if (failed) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);

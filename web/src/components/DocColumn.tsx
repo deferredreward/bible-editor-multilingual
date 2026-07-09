@@ -136,14 +136,11 @@ export function DocColumn({
   }, [activeVerse, scrollNonce]);
 
   const handleCopyChapter = async (): Promise<void> => {
-    // versesByVerseNum maps every verse in a range to the same DTO; dedupe by
-    // the DTO's leading verse so range rows aren't copied twice.
-    const seen = new Map<number, VerseDto>();
-    for (const dto of Object.values(versesByVerseNum)) {
-      if (dto) seen.set(dto.verse, dto);
-    }
+    // versesByVerseNum maps every verse in a range to the same DTO; copyChapter
+    // (chapterLines) dedupes by leading verse, so pass the raw values — matching
+    // the BookView caller.
     await copyChapterToClipboard(book, chapter, [
-      { version: bibleVersion, verses: [...seen.values()] },
+      { version: bibleVersion, verses: Object.values(versesByVerseNum).filter(Boolean) },
     ]);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
