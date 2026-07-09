@@ -14,7 +14,9 @@ import { Box, Stack, Typography, IconButton, Tooltip, CircularProgress } from "@
 import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
 import CheckIcon from "@mui/icons-material/Check";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import type { TwlRow, VerseDto } from "../sync/api";
+import { copyChapterToClipboard, type ChapterCopyBlock } from "../lib/chapterCopy";
 import { LANE_FILL, type TextLaneCheck } from "../lib/laneChecks";
 import type { ChapterState } from "../hooks/useBook";
 import { highlightsFor, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
@@ -378,6 +380,7 @@ const ChapterBlock = memo(function ChapterBlock({
   // Sentinel observed by IntersectionObserver — fires loadChapter when the
   // chapter is near (within ~one viewport of) the visible area.
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
   const isUnloaded = state.kind === "unloaded";
   useEffect(() => {
     if (!isUnloaded) return;
@@ -472,14 +475,40 @@ const ChapterBlock = memo(function ChapterBlock({
           borderRadius: 0.5,
           borderBottom: "1px solid",
           borderColor: "primary.main",
+          display: "flex",
+          alignItems: "center",
         }}
       >
         <Typography
           variant="subtitle2"
-          sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700, letterSpacing: 0.5 }}
+          sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700, letterSpacing: 0.5, flex: 1 }}
         >
           {book} {chapter === 0 ? "front" : `chapter ${chapter}`}
         </Typography>
+        {chapter !== 0 && (
+          <Tooltip title={copied ? "Copied!" : "Copy chapter (for Word)"}>
+            <IconButton
+              size="small"
+              aria-label="copy chapter"
+              onClick={async () => {
+                const blocks: ChapterCopyBlock[] = [];
+                for (const v of enabledVersions) {
+                  const byVerse = data.verses[v];
+                  if (byVerse) blocks.push({ version: v, verses: Object.values(byVerse) });
+                }
+                await copyChapterToClipboard(book, chapter, blocks);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? (
+                <CheckIcon fontSize="small" color="success" />
+              ) : (
+                <ContentCopyIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
       {verseNums.map((v) => {
         const isActive = chapter === activeChapter && v === activeVerse;

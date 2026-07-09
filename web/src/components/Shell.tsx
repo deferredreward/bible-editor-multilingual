@@ -61,6 +61,7 @@ import {
   type ReadingLineHandle,
 } from "./SideBySideAligner";
 import { TopBar } from "./TopBar";
+import { ExportUsfmButton } from "./ExportUsfmButton";
 import { BookLintIndicator } from "./BookLintIndicator";
 import { LogosSyncToggle } from "./LogosSyncToggle";
 import { PipelineMenu } from "./PipelineMenu";
@@ -2231,6 +2232,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             flagCount={bookLint.flagCount}
             escalateCount={bookLint.escalateCount}
             onGoToIssue={goToLintIssue}
+          />
+        }
+        exportMenu={
+          <ExportUsfmButton
+            book={book}
+            chapter={chapter}
+            enabledVersions={displayedVersions}
+            chapterVersesFor={(version) =>
+              data ? Object.values(data.verses[version] ?? {}) : []
+            }
           />
         }
         railCollapsed={railCollapsed}

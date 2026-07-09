@@ -128,6 +128,7 @@ interface Props {
   pipelineStatus?: ReactNode;
   logosSyncToggle?: ReactNode;
   lintIndicator?: ReactNode;
+  exportMenu?: ReactNode;
   railCollapsed?: boolean;
   onToggleRail?: () => void;
 }
@@ -140,6 +141,7 @@ export function TopBar({
   pipelineStatus,
   logosSyncToggle,
   lintIndicator,
+  exportMenu,
   railCollapsed,
   onToggleRail,
 }: Props) {
@@ -442,6 +444,7 @@ export function TopBar({
       {lintIndicator}
       <VersionIndicator />
       <SyncStatusBar onNavigate={onNavigate} />
+      {exportMenu}
       <FontSizeControl />
       <Tooltip title={mode === "dark" ? "switch to light mode" : "switch to dark mode"}>
         <IconButton size="small" onClick={toggle} aria-label="toggle color mode">

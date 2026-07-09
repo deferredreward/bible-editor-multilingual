@@ -14,6 +14,30 @@
 
 ## Last run
 
+2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
+Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
+builds `{html,text}` for a chapter (verse numbers → `<sup>`, poetry `\q` lines broken + indented per level,
+paragraphs separated, alignment stripped) and writes both `text/html`+`text/plain` via `ClipboardItem` (falls back to
+`writeText`). A copy `IconButton` (aria-label "copy chapter") sits in the `DocColumn` header (columns mode — per
+version) and each `BookView` chapter heading (book mode — all enabled versions, version-labeled). Native drag-select
+already worked; this is the one-click affordance. **(2) Download USFM:** new `web/src/lib/exportUsfm.ts`
+(`buildUsfmFromVerses`) renders chapter or whole-book USFM client-side via bundled `usfm-js`, mirroring the server's
+`buildUsfm` (chapter grouping, `front`/`N-M` keys, `recomputeTargetOccurrences` for ULT/UST, `synthesizeHeaders`).
+**aligned** = verseObjects verbatim; **unaligned** = new `stripAlignmentNodes` unwraps `\zaln` milestones + flattens
+`\w`→bare text while keeping `\p`/`\q`. New `ExportUsfmButton` (Download icon) in TopBar right cluster, threaded via a
+new `exportMenu` slot prop (`TopBar.tsx`) from `Shell.tsx` (`chapterVersesFor` from useChapter `data`; book scope
+fetches every chapter via `api.getChapter`). Menu = {Chapter N, Whole book} × enabled versions × {aligned, plain}.
+**Per user: no Hebrew export** — `ExportUsfmButton` filters out source versions `UHB`/`UGNT` (`SOURCE_VERSIONS`);
+copy is unaffected. Added `web/src/usfm-js.d.ts` (type shim, mirrors api's). Tests: `web/src/lib/exportCopy.test.mjs`
+(20 assertions, wired into web `test` script) — aligned keeps milestones, unaligned strips + preserves markers,
+multi-chapter grouping, clipboard superscript/indent/no-markup/range-dedup. **Verified LIVE** (own wrangler :8788 on
+worktree bundle, seeded ZEC): copy button → clean HTML+plain with `<sup>` numbers on real ZEC 1; download menu shows
+Chapter/Whole-book, UHB excluded, ULT/UST×aligned/plain; ULT-aligned chapter = valid USFM w/ `\zaln`+`\w`;
+ULT-plain = no `\zaln`/`\w`, markers intact. Fixed a copy bug found in-browser: usfm-js parks `\n` in text nodes →
+collapse `\s+` (not just `[ \t]+`) so only structural markers break lines. typecheck+web test+build green.
+Whole-book scope not live-clicked (fires N fetches) — same `buildUsfmFromVerses` path, covered by the multi-chapter
+unit case. **NOT committed / no PR — awaiting user.** (memory: [[project_chapter_copy_and_usfm_export]])
+
 2026-07-08 · **suspicious-vaughan** — **Fixed the whole-card-merge sibling of the duplicate-Hebrew bug**
 (stacked on `alignment-panel-duplicate-word`, which is itself NOT yet PR'd). `handleMergeGroups` (bottom-grip
 whole-card drag) had the same latent defect `handleSourceDrop` just got fixed for: it called

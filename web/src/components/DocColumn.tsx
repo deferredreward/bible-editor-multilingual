@@ -3,7 +3,9 @@ import { Box, Stack, Typography, IconButton, Tooltip } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
 import CheckIcon from "@mui/icons-material/Check";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import type { TwlRow, VerseDto } from "../sync/api";
+import { copyChapterToClipboard } from "../lib/chapterCopy";
 import { LANE_FILL, type TextLaneCheck } from "../lib/laneChecks";
 import { highlightsFor, paragraphClass, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
@@ -127,10 +129,25 @@ export function DocColumn({
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLSpanElement | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeVerse, scrollNonce]);
+
+  const handleCopyChapter = async (): Promise<void> => {
+    // versesByVerseNum maps every verse in a range to the same DTO; dedupe by
+    // the DTO's leading verse so range rows aren't copied twice.
+    const seen = new Map<number, VerseDto>();
+    for (const dto of Object.values(versesByVerseNum)) {
+      if (dto) seen.set(dto.verse, dto);
+    }
+    await copyChapterToClipboard(book, chapter, [
+      { version: bibleVersion, verses: [...seen.values()] },
+    ]);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <Box
@@ -172,6 +189,15 @@ export function DocColumn({
         >
           {bibleVersion} · {readOnly ? "read-only" : "editing"}
         </Typography>
+        <Tooltip title={copied ? "Copied!" : "Copy chapter (for Word)"}>
+          <IconButton size="small" onClick={handleCopyChapter} aria-label="copy chapter">
+            {copied ? (
+              <CheckIcon fontSize="small" color="success" />
+            ) : (
+              <ContentCopyIcon fontSize="small" />
+            )}
+          </IconButton>
+        </Tooltip>
       </Stack>
       <Box
         sx={(theme) => ({
