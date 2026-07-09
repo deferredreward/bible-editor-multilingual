@@ -6,6 +6,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -43,6 +44,7 @@ import {
   type SourceWord,
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
+import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
 import { lostAlignedWords } from "../lib/alignmentDelta";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
 import { useAlignmentSuggestions } from "../hooks/useAlignmentSuggestions";
@@ -208,20 +210,32 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     ref,
   ) {
     const [historyOpen, setHistoryOpen] = useState(false);
+    // Extracted so the crash-draft hydration effect re-parses against the same
+    // source tree computedInitial uses (parse needs the UHB/UGNT to re-anchor
+    // milestones).
+    const sourceVerseObjects = useMemo<unknown[] | null>(() => {
+      return sourceVerse?.content &&
+        Array.isArray((sourceVerse.content as { verseObjects?: unknown[] }).verseObjects)
+        ? (sourceVerse.content as { verseObjects: unknown[] }).verseObjects
+        : null;
+    }, [sourceVerse]);
     const computedInitial = useMemo<AlignmentState | null>(() => {
       if (!verse?.content) return null;
       const verseObjects = (verse.content as { verseObjects?: unknown[] }).verseObjects;
       if (!Array.isArray(verseObjects)) return null;
-      const sourceVerseObjects =
-        sourceVerse?.content &&
-        Array.isArray((sourceVerse.content as { verseObjects?: unknown[] }).verseObjects)
-          ? (sourceVerse.content as { verseObjects: unknown[] }).verseObjects
-          : null;
       return parseAlignment(verseObjects, sourceVerseObjects);
-    }, [verse, sourceVerse]);
+    }, [verse, sourceVerseObjects]);
 
     const [initial, setInitial] = useState<AlignmentState | null>(computedInitial);
     const [state, setState] = useState<AlignmentState | null>(computedInitial);
+    // Latest committed `state`, mirrored for the async crash-draft hydration:
+    // the IDB read resolves after the panel has rendered, and the user may have
+    // already dragged in that window — the hydration guards on this ref so a
+    // restore never clobbers a fresh edit (see the reset/hydration effect).
+    const stateRef = useRef(state);
+    useEffect(() => {
+      stateRef.current = state;
+    });
     const [selectedUnaligned, setSelectedUnaligned] = useState<Set<string>>(new Set());
     const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
     const [showOnlyUnaligned, setShowOnlyUnaligned] = useState(false);
@@ -243,6 +257,10 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     // state from just before the last merge.
     const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
     const [mergeUndo, setMergeUndo] = useState<AlignmentState | null>(null);
+    // Set true when this mount restored a crash-saved draft (see the hydration
+    // effect) so the user gets a non-blocking "restored unsaved alignment"
+    // notice. Cleared on the next verse reset.
+    const [restored, setRestored] = useState(false);
 
     const toggleHideUhbStrip = () => {
       setHideUhbStrip((cur) => {
@@ -272,8 +290,24 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     };
 
     // Sync to upstream verse changes (find/replace, version swap, etc.).
-    // Local drag state is dropped — matches the previous dialog and keeps
-    // serialize round-trip safe.
+    // In-memory drag state is dropped from React state here; but if a
+    // crash-saved draft exists for this verse it is re-hydrated below, so an
+    // unsaved edit survives a reload/crash (and a normal navigation-away that
+    // wasn't saved or discarded) rather than being silently lost.
+    //
+    // On the SAME dependency, attempt to restore a crash-saved alignment draft
+    // (Fix C — a browser crash can't be caught by the beforeunload guard, so
+    // in-progress drags are persisted per-change to alignmentDrafts). The reset
+    // above runs synchronously to computedInitial; the draft load is async, so
+    // its setState resolves AFTER and wins — that is deliberate. Three guards:
+    // (1) the draft's version must still match the current base (otherwise the
+    // base changed under it — another tab's save, a reimport — and applying it
+    // would clobber newer content; a mismatched draft is discarded); (2) the
+    // user must not have started editing in the async-read window (stateRef
+    // still === computedInitial) so a restore never overwrites a fresh drag;
+    // (3) the `cancelled` flag drops a resolution whose verse changed again.
+    // `initial` stays computedInitial so the restored state reads as dirty
+    // (state !== initial) and can be saved or reset.
     useEffect(() => {
       setInitial(computedInitial);
       setState(computedInitial);
@@ -281,7 +315,30 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       setSelectionAnchor(null);
       setMergeUndo(null);
       setDraggingGroupId(null);
-    }, [computedInitial]);
+      setRestored(false);
+
+      if (!computedInitial || !verse) return;
+      const key = alignmentDraftKey(book, chapter, verseNum, bibleVersion);
+      const baseVersion = verse.version;
+      let cancelled = false;
+      void alignmentDrafts.get(key).then((rec) => {
+        if (cancelled || !rec) return;
+        if (rec.expectedVersion !== baseVersion) {
+          void alignmentDrafts.clear(key);
+          return;
+        }
+        // The user dragged during the async read — keep their edit; the persist
+        // effect will overwrite the draft with it. Don't restore over it.
+        if (stateRef.current !== computedInitial) return;
+        const vo = (rec.content as { verseObjects?: unknown[] }).verseObjects;
+        if (!Array.isArray(vo)) return;
+        setState(parseAlignment(vo, sourceVerseObjects));
+        setRestored(true);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [computedInitial, verse, book, chapter, verseNum, bibleVersion, sourceVerseObjects]);
 
     // Dismissals are per (verse, version) and only for this session — reset when
     // the user navigates to a different verse / edits a different bible, but NOT
@@ -295,6 +352,23 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     useEffect(() => {
       onDirtyChange?.(dirty);
     }, [dirty, onDirtyChange]);
+
+    // Fix C — persist in-progress drags to IndexedDB so a browser crash (which
+    // beforeunload can't intercept) doesn't lose them. Debounced so a burst of
+    // drags coalesces into one write. Only writes while dirty; a non-dirty
+    // state means the panel is at baseline or was just reset, and the draft is
+    // cleared explicitly on save/reset (never here) so navigating INTO a verse
+    // that has a persisted draft doesn't wipe it before hydration reads it.
+    useEffect(() => {
+      if (!dirty || !state || !verse) return;
+      const key = alignmentDraftKey(book, chapter, verseNum, bibleVersion);
+      const baseVersion = verse.version;
+      const t = setTimeout(() => {
+        const content = { verseObjects: serializeAlignment(state) };
+        void alignmentDrafts.set(key, content, baseVersion);
+      }, 400);
+      return () => clearTimeout(t);
+    }, [state, dirty, verse, book, chapter, verseNum, bibleVersion]);
 
     const handleTargetsDrop = (dest: string, wordIds: string[]) => {
       if (!state || wordIds.length === 0) return;
@@ -738,7 +812,11 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       setState(initial);
       setSelectedUnaligned(new Set());
       setSelectionAnchor(null);
-    }, [initial]);
+      setRestored(false);
+      // Explicit discard of unsaved work — drop the crash-draft too so it can't
+      // rehydrate on reopen.
+      void alignmentDrafts.clear(alignmentDraftKey(book, chapter, verseNum, bibleVersion));
+    }, [initial, book, chapter, verseNum, bibleVersion]);
     const handleClearAll = () => {
       if (!state) return;
       setState(clearAll(state));
@@ -767,6 +845,11 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
         // chapter cache eventually round-trips the new content, computedInitial
         // recomputes and the useEffect resets state to it (idempotent).
         setInitial(state);
+        setRestored(false);
+        // The alignment is now queued in the outbox; drop the crash-draft
+        // immediately. onOutboxResult also clears it when the PATCH lands
+        // (belt-and-suspenders in alignmentDrafts.ts).
+        void alignmentDrafts.clear(alignmentDraftKey(book, chapter, verseNum, bibleVersion));
         afterCommit?.();
       };
       // Warn before unaligning a previously-aligned word. On "Cancel" the parent
@@ -779,7 +862,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       }
       commit();
       return true;
-    }, [state, verse, onSave, onConfirmUnalign]);
+    }, [state, verse, onSave, onConfirmUnalign, book, chapter, verseNum, bibleVersion]);
 
     useImperativeHandle(
       ref,
@@ -914,6 +997,13 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
                   UNDO
                 </Button>
               }
+            />
+            <Snackbar
+              open={restored}
+              autoHideDuration={6000}
+              onClose={() => setRestored(false)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+              message="restored unsaved alignment"
             />
           </>
         )}

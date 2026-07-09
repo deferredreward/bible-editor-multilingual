@@ -3245,6 +3245,69 @@ const srcWordContents = (st) => st.groups.flatMap((g) => g.source).map((s) => ({
   assert(dropDuplicateSourceMilestones(tvo2) === tvo2, `genuine repetition is left untouched (same ref)`);
 }
 
+// ─── Case: crash-draft round-trip (Fix C persistence) ──────────────────
+// AlignmentPanel persists in-progress drags to IndexedDB by storing
+// serializeAlignment(state) as `{ verseObjects }`, then hydrates by
+// re-parsing that content. The persistence is only safe if that store→
+// hydrate→save cycle produces byte-identical content to the drag→save it
+// stands in for — i.e. serialize is idempotent through a parse. Assert that
+// for both a pristine and a mid-edit (dirty) state.
+{
+  console.log("\n[Case] crash-draft persistence round-trip (serialize↔parse stable)");
+  const deepEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  // A representative multi-word verse with a compound (of the LORD → H3068)
+  // so both single and compound groups exercise the round-trip.
+  const target = String.raw`\id PSA
+\c 3
+\v 11 \zaln-s |x-strong="H1697"\*\w Word|x-occurrence="1" x-occurrences="1"\w*\zaln-e\* \zaln-s |x-strong="H3068"\*\w of|x-occurrence="1" x-occurrences="1"\w* \w the|x-occurrence="1" x-occurrences="1"\w* \w LORD|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+`;
+  const { json, ch, v, verseObjects } = parseSingleVerse(target);
+  const source = usfm.toJSON(String.raw`\id PSA
+\c 3
+\v 11 \w דָּבָר|x-strong="H1697" x-occurrence="1"\w* \w יְהוָה|x-strong="H3068" x-occurrence="1"\w*
+`).chapters["3"]["11"].verseObjects;
+
+  // (a) pristine: parse → serialize → re-parse → serialize is stable.
+  const state0 = parseAlignment(verseObjects, source);
+  const stored0 = serializeAlignment(state0); // what the draft persists
+  const hydrated0 = parseAlignment(stored0, source); // what reopening restores
+  const resaved0 = serializeAlignment(hydrated0); // what saving the restored state emits
+  assert(
+    deepEqual(stored0, resaved0),
+    "pristine state: hydrate→save equals the persisted content (round-trip stable)",
+  );
+
+  // (b) dirty: simulate an in-progress drag (unalign a group into the word
+  // bank) — the exact kind of unsaved work a crash would otherwise lose.
+  const grpWithTargets = state0.groups.find((g) => g.targets.length > 0);
+  assert(!!grpWithTargets, "found an aligned group to unalign for the dirty case");
+  const dirty = clearGroup(state0, grpWithTargets.id);
+  assert(dirty !== state0, "clearGroup produced a distinct (dirty) state");
+  const storedD = serializeAlignment(dirty); // persisted mid-edit
+  const hydratedD = parseAlignment(storedD, source); // restored on reopen
+  const resavedD = serializeAlignment(hydratedD); // emitted on save
+  assert(
+    deepEqual(storedD, resavedD),
+    "dirty state: hydrate→save equals the persisted content (round-trip stable)",
+  );
+  // And the restored dirty content differs from the pristine baseline — the
+  // unsaved work actually survives the round-trip rather than snapping back.
+  assert(
+    !deepEqual(stored0, storedD),
+    "restored dirty content preserves the unalign (differs from pristine)",
+  );
+
+  // Keep `json`/`ch`/`v` referenced so this block mirrors roundtripVerseUsfm's
+  // shape if extended later; assert the stored content re-serializes into a
+  // valid verse envelope.
+  json.chapters[ch][v].verseObjects = resavedD;
+  assert(
+    Array.isArray(json.chapters[ch][v].verseObjects),
+    "re-serialized content slots back into the verse envelope",
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
