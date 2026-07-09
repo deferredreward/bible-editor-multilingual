@@ -593,7 +593,22 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TwlRow>();
-      return { content: rs.results.length === 0 ? "" : buildTwlTsv(rs.results), rowCount: rs.results.length };
+      const ultVerses = await db
+        .prepare(
+          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2
+           ORDER BY chapter, verse`,
+        )
+        .bind(book, "ULT")
+        .all<VerseRow>();
+      return {
+        content: rs.results.length === 0 ? "" : buildTwlTsv(rs.results, {
+          book,
+          bibleVersion: "ULT",
+          headers: null,
+          verses: ultVerses.results,
+        }),
+        rowCount: rs.results.length,
+      };
     }
     // ult / ust
     const bibleVersion = resource.toUpperCase();
