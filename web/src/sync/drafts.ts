@@ -68,6 +68,20 @@ function db() {
 
 const subscribers = new Set<Subscriber>();
 
+// Synchronous mirror of "a draft was written this session and not yet cleared".
+// The subscription-driven signal (useUnsavedGuard's hasDrafts) only updates
+// after an async listAll()+notify round-trip, which lags the set() call — a
+// reload in that window (before the IndexedDB write even commits) would slip
+// past the unsaved-work guard. set()/clear() keep this Set in lockstep
+// synchronously so beforeunload can read a live answer. It only covers drafts
+// touched THIS session; prior-session persisted drafts are covered by the async
+// subscription (and survive the reload regardless, so a missed prompt there is
+// not data loss).
+const pendingKeys = new Set<string>();
+export function hasUnsavedDrafts(): boolean {
+  return pendingKeys.size > 0;
+}
+
 async function listAll(): Promise<DraftRecord[]> {
   const all = (await (await db()).getAll(STORE)) as DraftRecord[];
   all.sort((a, b) => a.updatedAt - b.updatedAt);
@@ -111,6 +125,9 @@ export const drafts = {
     meta: DraftMeta,
   ): Promise<void> {
     if (isReadOnly()) return;
+    // Mark dirty synchronously — before the async put — so the unload guard
+    // sees it during the commit window (see pendingKeys).
+    pendingKeys.add(key);
     const rec: DraftRecord = {
       key,
       payload,
@@ -140,6 +157,8 @@ export const drafts = {
       return undefined;
     }
     const migrated: DraftRecord = { ...legacy, key };
+    pendingKeys.delete(legacyKey);
+    pendingKeys.add(key);
     await idb.put(STORE, migrated);
     await idb.delete(STORE, legacyKey);
     void notify();
@@ -147,6 +166,7 @@ export const drafts = {
   },
 
   async clear(key: string): Promise<void> {
+    pendingKeys.delete(key);
     await (await db()).delete(STORE, key);
     void notify();
   },

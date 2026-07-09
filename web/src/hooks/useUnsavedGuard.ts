@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { drafts } from "../sync/drafts";
+import { drafts, hasUnsavedDrafts } from "../sync/drafts";
 
 // Warn before a full-page unload (reload — including the "App update available"
 // chip's programmatic reload — tab close, or external navigation) when unsaved
@@ -18,6 +18,12 @@ import { drafts } from "../sync/drafts";
 // spec only lets us ask the browser to show its generic "Leave site? Changes
 // you made may not be saved" confirm. That prompt is the guard; the user
 // cancels, saves through the normal UI, then reloads.
+//
+// Two draft signals, both needed: the async `hasDrafts` subscription catches
+// drafts persisted in a PRIOR session (present in IndexedDB before any set()
+// this session), while the synchronous hasUnsavedDrafts() catches a draft the
+// current session just wrote but whose subscription round-trip hasn't landed —
+// the exact commit-window a quick reload would otherwise slip through.
 export function useUnsavedGuard(panelDirty: boolean): void {
   const [hasDrafts, setHasDrafts] = useState(false);
   useEffect(() => drafts.subscribe((all) => setHasDrafts(all.length > 0)), []);
@@ -29,7 +35,7 @@ export function useUnsavedGuard(panelDirty: boolean): void {
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (!activeRef.current) return;
+      if (!activeRef.current && !hasUnsavedDrafts()) return;
       e.preventDefault();
       // Legacy Chrome requires returnValue to be set for the prompt to show.
       e.returnValue = "";
