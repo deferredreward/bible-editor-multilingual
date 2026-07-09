@@ -929,6 +929,16 @@ Not yet PR'd.
 
 ## In progress
 
+- **dreamy-leakey** (2026-07-09) — **Fix C: crash-safe persistence of in-progress alignment work — [PR #330](https://github.com/unfoldingWord/bible-editor/pull/330) open.**
+  Closes the hole PR #329's beforeunload guard can't: a CRASH loses AlignmentPanel drags (React-state-only until save).
+  New dedicated IndexedDB store `web/src/sync/alignmentDrafts.ts` (DB `bible-editor-alignment-drafts`, key
+  `book:ch:v:bibleVersion`) that AlignmentPanel writes per-drag (400ms debounce) + hydrates on reopen — version-gated
+  (stale drafts discarded), stateRef-guarded (never clobbers a fresh in-window edit), cancelled-flag for verse change;
+  cleared on save/reset/discard + onOutboxResult. Covers SideBySideAligner per-panel. Round-trip unit test +
+  browser-verified ZEC 10:2 (drag→reload→restore→save 200→draft cleared; stale-version rejected). typecheck/build/web
+  tests green. `/code-review medium --fix` done (fixed a hydration-clobber race + a misleading comment). **Codex passes
+  BLOCKED: workspace out of credits.** Detail in memory [[project_verse_edit_loss_unload_no_guard]].
+
 - **great-shamir** (2026-06-25) — **TWL generation into the app — ALL 4 PHASES DONE, [PR #267](https://github.com/deferredreward/bible-editor/pull/267) open.**
   Plan `C:\Users\benja\.claude\plans\immutable-snuggling-snowflake.md`. Commits: 38f36748 (0a/0b), bec5cf1d (1),
   3fbbffe0 (2), 662170ab (Codex fixes). Browser-verified; typecheck/api+web tests/build green; 2 Codex passes
