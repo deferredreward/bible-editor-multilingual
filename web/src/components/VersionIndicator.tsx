@@ -23,7 +23,14 @@ function formatBuiltAt(iso: string): string {
   return d.toLocaleString();
 }
 
-export function VersionIndicator() {
+interface Props {
+  // Save-aware reload. When there's unsaved in-memory work (alignment drags),
+  // Shell flushes it to the durable outbox before reloading so the version-bump
+  // refresh can't silently drop it. Falls back to a plain reload when absent.
+  onRequestReload?: () => void;
+}
+
+export function VersionIndicator({ onRequestReload }: Props = {}) {
   const { current, updateAvailable } = useAppVersion();
 
   if (updateAvailable) {
@@ -35,7 +42,7 @@ export function VersionIndicator() {
           size="small"
           variant="outlined"
           clickable
-          onClick={() => window.location.reload()}
+          onClick={onRequestReload ?? (() => window.location.reload())}
           sx={updateAccentSx}
         />
       </Tooltip>
