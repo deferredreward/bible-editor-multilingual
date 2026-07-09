@@ -26,7 +26,12 @@ import { drafts, hasUnsavedDrafts } from "../sync/drafts";
 // the exact commit-window a quick reload would otherwise slip through.
 export function useUnsavedGuard(panelDirty: boolean): void {
   const [hasDrafts, setHasDrafts] = useState(false);
-  useEffect(() => drafts.subscribe((all) => setHasDrafts(all.length > 0)), []);
+  useEffect(() => {
+    // drafts.subscribe returns its own unsubscribe fn; hand it back as the
+    // effect cleanup so the subscription is torn down on unmount (no leak).
+    const unsubscribe = drafts.subscribe((all) => setHasDrafts(all.length > 0));
+    return unsubscribe;
+  }, []);
 
   // Read through a ref so the listener can stay installed once (stable identity)
   // and always see the latest dirtiness without re-adding on every change.
