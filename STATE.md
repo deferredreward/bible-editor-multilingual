@@ -39,8 +39,16 @@ host so run e2e with `BE_BASE_URL=http://localhost:5174`).
   ai_draft/validated→edited via a literal CASE. **Verified:** validate endpoint live-tested (value=1→validated, 0→edited, version unchanged).
 - **(Phase 0, part B) translate apply path** [commit 3fad7ca]: `'translate'` in PIPELINE_TYPES + `applyTranslateTnRow` — UPDATEs target rows by
   rowId, stamps ai_draft, leaves structural columns byte-identical, CAS-guarded, never deletes/inserts (returns early before the English
-  delete-sweep). **Verified at SQL+typecheck+regression level** (English apply path provably unchanged; translate UPDATE exercised against local
-  D1). **NOT end-to-end yet** — see gaps below.
+  delete-sweep).
+- **(Phase 0, part C — COMPLETE, end-to-end) translate start-side + stub** [commit ce422db]: built to bp-assistant's AS-BUILT contract, not the
+  original spec. The bp-assistant side implemented `translate` (bp-bot branches `feat/translate-pipeline` + `feat/translate-tn-skill`, dry-ran
+  Obadiah→Arabic on real en_tn, Quote byte-identical) with **3 deviations** recorded in `C:\...\bp-bot\translate-pipeline\{DECISION,PLAN}.md`:
+  (1) **source fetched by-reference (`sourceRef`), NOT inline rows** — so the editor start gathers NOTHING from D1; (2) no id minting; (3)
+  targetLang in run identity. Editor side: `buildTranslateOptions` derives targetLang/targetOrg/sourceRef/contextRef/delivery(branch)/model/
+  direction from the active project config; `TranslateOptions` schema for client overrides; English-root project → 400 `not_a_gl_project`.
+  `scripts/translate-stub-server.mjs` mirrors the contract for local testing. **Verified END-TO-END** (start→dispatch→poll→import→apply): ZEC 1
+  under ar-bsoj config → all 59 rows `ai_draft`, notes marked, **Quote column byte-identical** (Hebrew untouched), rowId round-trip matched real
+  published IDs; guard rejects English root; 10/10 e2e green. Contract fully documented in parent-folder INTEGRATION.md §0.
 
 **Designs written (docs/design/):** `tw-ta-translation-modules.md` (Phase 4), `gl-publisher.md` (Phase 3 — RC manifests, tc-ready topic,
 acceptance = language appears in tC3 GL dropdown), `gl-aligned-bibles-strategy.md` (Phase 6 glt/gst). Cross-effort integration notes for the
@@ -48,11 +56,11 @@ bp-assistant `translate` pipeline live in the PARENT folder's `INTEGRATION.md` (
 contract for parallel dev). No bp-bot planning doc existed at `C:\...\bp-bot` as of this session.
 
 **Open gaps / next (precise handoff):**
-1. **Phase 0 finish (start-assembly + stub):** POST /start with `pipelineType:'translate'` must gather the chapter's tn_rows from D1 into the
-   `rows[]` payload (mirror the hints injection at `pipelines.ts:817-848`), resolve targetLang/org/contextRef from projectConfig, and send
-   upstream. Build `scripts/translate-stub-server.mjs` (contract in INTEGRATION.md §4) + point `PIPELINE_API_BASE` at it to test start→poll→apply
-   end-to-end. The apply path is DORMANT until this lands (nothing creates a translate job), which is why it's risk-free to ship now.
-2. **Phase 2 (translate-mode UX) — NOT STARTED:** the mockup's note-card review flow. Build on the now-existing `translation_state` + validate
+1. **Phase 0 — DONE end-to-end** (commit ce422db, see part C above). Remaining is bp-assistant increment-2, NOT editor-blocking: the
+   `translate-report.json` sidecar isn't in the status `output[]` yet, so `draft_meta_json` won't populate from a real run until it is (editor
+   tolerates its absence); `existingTarget` revise-mode; GL scripture panes; real-bot output[] rawUrl wiring (the stub proves the editor path).
+   Also: the deterministic QA checks (PIPELINE-SPEC §5) run bot-side in the as-built pipeline; the editor does NOT re-run them on apply yet.
+2. **Phase 2 (translate-mode UX) — NOT STARTED (suggested-task chip spawned):** the mockup's note-card review flow. Build on the now-existing `translation_state` + validate
    endpoint: NoteCard expand/collapse by state (English source pinned above editable GL draft; Approve→validate→collapse), a "Translate chapter"
    PipelineMenu action (pipelineType:'translate'), provenance chips, language-memory chip, TEMPLATE dropdown already exists. Do NOT half-build;
    it's a large frontend piece. Entry points from the exploration report: `NoteCard.tsx` local state ~:342, `PipelineMenu.tsx` OPTIONS ~:63,
