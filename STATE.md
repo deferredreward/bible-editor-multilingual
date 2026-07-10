@@ -57,10 +57,16 @@ contract for parallel dev). No bp-bot planning doc existed at `C:\...\bp-bot` as
    PipelineMenu action (pipelineType:'translate'), provenance chips, language-memory chip, TEMPLATE dropdown already exists. Do NOT half-build;
    it's a large frontend piece. Entry points from the exploration report: `NoteCard.tsx` local state ~:342, `PipelineMenu.tsx` OPTIONS ~:63,
    `useAiDrafts`, `pipelineStore.start`.
-3. **Phase 5 broader string sweep:** infra + TopBar committed; a sub-agent swarm externalized 8 more component files (Import/Export dialogs,
-   Questions/Words tables, Timeline/SectionHeader rails, Sync/Version bars) but a JSON-authoring pass merges the ~120 keys into en/ar locale files
-   (in flight at session end — verify no orphan keys + web test green before committing, else `git checkout` those 8 files to keep the tree
-   consistent). Shell.tsx + PipelineMenu still un-swept.
+3. **Phase 5 broader string sweep — NOW COMPLETE** [commits 1362a60 + 6dbcd42]: 13 components externalized to i18next (Import/Export dialogs,
+   Questions/Words tables, Timeline/SectionHeader rails, Sync/Version bars, **Shell, ScriptureColumn, ResourceColumn, PipelineMenu,
+   PipelineStatusBar**) + TopBar. ~250 keys total across 11 namespaces in en.json + full MSA ar.json (Arabic plural categories on count-bearing
+   keys). **Verified:** strict orphan check (catches indirect const-map keys, not just `t("literal")`) = 0 EN orphans / 0 AR missing across all
+   web/src; web typecheck + tests green; 10/10 e2e; in-browser scan of both en (LTR) and ar (RTL) = zero raw-key leaks in visible text or
+   title/aria/placeholder attrs. Remaining un-localized: module-scope helpers that can't call the hook (`formatRelative`, `stateLabel`,
+   `relativeTime`, `LANE_LABELS` in lib/laneChecks) — relative-time + lane-label strings stay English; a `Trans`-component or Intl pass is the
+   follow-up. **LESSON (cost me a broken commit): `git add web/` while background i18n sub-agents were still writing files swept 5 half-done
+   components into the commit with unauthored keys. Always run the STRICT orphan check (scratchpad/orphan-strict.mjs pattern: match every
+   `"ns.key"` literal, not just `t("...")`, and never skip a wholly-missing namespace) before `git add` on any i18n change.**
 
 **Lessons (this session):** the config layer proves the "role-coded bible_version + one-D1-per-project" tenancy model works with zero data
 migration. Sub-agents that split string-externalization from locale-JSON authoring leave a BROKEN tree (components render raw key strings) —
