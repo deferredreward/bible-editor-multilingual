@@ -4,6 +4,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
 import CheckIcon from "@mui/icons-material/Check";
 import type { TwlRow, VerseDto } from "../sync/api";
+import { CopyChapterButton } from "./CopyChapterButton";
 import { LANE_FILL, type TextLaneCheck } from "../lib/laneChecks";
 import { highlightsFor, paragraphClass, renderEditableHTML, renderHighlightedHTML, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { markHighlightSx } from "../lib/highlightStyles";
@@ -172,6 +173,15 @@ export function DocColumn({
         >
           {bibleVersion} · {readOnly ? "read-only" : "editing"}
         </Typography>
+        <CopyChapterButton
+          book={book}
+          chapter={chapter}
+          // versesByVerseNum maps every verse in a range to the same DTO; chapterCopy
+          // dedupes by leading verse, so pass the raw values.
+          blocks={() => [
+            { version: bibleVersion, verses: Object.values(versesByVerseNum).filter(Boolean) },
+          ]}
+        />
       </Stack>
       <Box
         sx={(theme) => ({

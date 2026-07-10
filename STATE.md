@@ -14,6 +14,39 @@
 
 ## Last run
 
+2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
+Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
+builds `{html,text}` for a chapter (verse numbers → `<sup>`, poetry `\q` lines broken + indented per level,
+paragraphs separated, alignment stripped) and writes both `text/html`+`text/plain` via `ClipboardItem` (falls back to
+`writeText`). A copy `IconButton` (aria-label "copy chapter") sits in the `DocColumn` header (columns mode — per
+version) and each `BookView` chapter heading (book mode — all enabled versions, version-labeled). Native drag-select
+already worked; this is the one-click affordance. **(2) Download USFM:** new `web/src/lib/exportUsfm.ts`
+(`buildUsfmFromVerses`) renders chapter or whole-book USFM client-side via bundled `usfm-js`, mirroring the server's
+`buildUsfm` (chapter grouping, `front`/`N-M` keys, `recomputeTargetOccurrences` for ULT/UST, `synthesizeHeaders`).
+**aligned** = verseObjects verbatim; **unaligned** = new `stripAlignmentNodes` unwraps `\zaln` milestones + flattens
+`\w`→bare text while keeping `\p`/`\q`. New `ExportUsfmButton` (Download icon) in TopBar right cluster, threaded via a
+new `exportMenu` slot prop (`TopBar.tsx`) from `Shell.tsx` (`chapterVersesFor` from useChapter `data`; book scope
+fetches every chapter via `api.getChapter`). Menu = {Chapter N, Whole book} × enabled versions × {aligned, plain}.
+**Per user: no Hebrew export** — `ExportUsfmButton` filters out source versions `UHB`/`UGNT` (`SOURCE_VERSIONS`);
+copy is unaffected. Added `web/src/usfm-js.d.ts` (type shim, mirrors api's). Tests: `web/src/lib/exportCopy.test.mjs`
+(20 assertions, wired into web `test` script) — aligned keeps milestones, unaligned strips + preserves markers,
+multi-chapter grouping, clipboard superscript/indent/no-markup/range-dedup. **Verified LIVE** (own wrangler :8788 on
+worktree bundle, seeded ZEC): copy button → clean HTML+plain with `<sup>` numbers on real ZEC 1; download menu shows
+Chapter/Whole-book, UHB excluded, ULT/UST×aligned/plain; ULT-aligned chapter = valid USFM w/ `\zaln`+`\w`;
+ULT-plain = no `\zaln`/`\w`, markers intact. Fixed a copy bug found in-browser: usfm-js parks `\n` in text nodes →
+collapse `\s+` (not just `[ \t]+`) so only structural markers break lines. typecheck+web test+build green.
+Whole-book scope live-verified (ZEC-ULT.usfm, 14 chapters, single header block).
+**[PR #328](https://github.com/unfoldingWord/bible-editor/pull/328) opened; NOT merged/deployed.**
+**Pre-merge review done** (code-review --fix + Codex): fixed → verse-0 chapter-front matter was dropped from copy
+(now kept, no number); clipboard fallback null-deref guarded; whole-book export errors now surfaced (Snackbar) +
+bounded to 6 concurrent fetches; DocColumn redundant dedup removed; **Codex-found marker-leading verse bug**
+(a verse whose objects start with `\p`/`\q` stranded its number on the prior line → defer number to first content);
+**ported `normalizeUsfmFormatting` into `web/src/lib/usfmFormat.ts`** (verbatim mirror of api) so downloads get the
+DCS Check-8 line layout (was raw usfm-js). Refuted: range-row dup in export path (ChapterPayload keyed by lead verse
++ verseKey-object collapse) and compound-word gluing (same space-node reliance as extractPlainText). Codex re-review
+round 3 blocked — **OpenAI workspace out of credits** (external), so the final confirming pass couldn't run.
+(memory: [[project_chapter_copy_and_usfm_export]])
+
 2026-07-08 · **suspicious-vaughan** — **Fixed the whole-card-merge sibling of the duplicate-Hebrew bug**
 (stacked on `alignment-panel-duplicate-word`, which is itself NOT yet PR'd). `handleMergeGroups` (bottom-grip
 whole-card drag) had the same latent defect `handleSourceDrop` just got fixed for: it called
@@ -895,6 +928,16 @@ cleanly on nav with no stuck gate, back/forward + deep-link land correctly. type
 Not yet PR'd.
 
 ## In progress
+
+- **dreamy-leakey** (2026-07-09) — **Fix C: crash-safe persistence of in-progress alignment work — [PR #330](https://github.com/unfoldingWord/bible-editor/pull/330) open.**
+  Closes the hole PR #329's beforeunload guard can't: a CRASH loses AlignmentPanel drags (React-state-only until save).
+  New dedicated IndexedDB store `web/src/sync/alignmentDrafts.ts` (DB `bible-editor-alignment-drafts`, key
+  `book:ch:v:bibleVersion`) that AlignmentPanel writes per-drag (400ms debounce) + hydrates on reopen — version-gated
+  (stale drafts discarded), stateRef-guarded (never clobbers a fresh in-window edit), cancelled-flag for verse change;
+  cleared on save/reset/discard + onOutboxResult. Covers SideBySideAligner per-panel. Round-trip unit test +
+  browser-verified ZEC 10:2 (drag→reload→restore→save 200→draft cleared; stale-version rejected). typecheck/build/web
+  tests green. `/code-review medium --fix` done (fixed a hydration-clobber race + a misleading comment). **Codex passes
+  BLOCKED: workspace out of credits.** Detail in memory [[project_verse_edit_loss_unload_no_guard]].
 
 - **great-shamir** (2026-06-25) — **TWL generation into the app — ALL 4 PHASES DONE, [PR #267](https://github.com/deferredreward/bible-editor/pull/267) open.**
   Plan `C:\Users\benja\.claude\plans\immutable-snuggling-snowflake.md`. Commits: 38f36748 (0a/0b), bec5cf1d (1),

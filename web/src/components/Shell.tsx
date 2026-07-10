@@ -22,6 +22,7 @@ import { useBookLint } from "../hooks/useBookLint";
 import { useLexicon } from "../hooks/useLexicon";
 import { useAiDrafts } from "../hooks/useAiDrafts";
 import { useTwlFilters } from "../hooks/useTwlFilters";
+import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox } from "../sync/outbox";
 import { api, CHECK_LANES } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion } from "../sync/api";
@@ -61,6 +62,7 @@ import {
   type ReadingLineHandle,
 } from "./SideBySideAligner";
 import { TopBar } from "./TopBar";
+import { ExportUsfmButton } from "./ExportUsfmButton";
 import { BookLintIndicator } from "./BookLintIndicator";
 import { LogosSyncToggle } from "./LogosSyncToggle";
 import { PipelineMenu } from "./PipelineMenu";
@@ -1559,6 +1561,29 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // prompt) — shared by close + verse nav.
   const dualDirty =
     dualLeftDirty || dualRightDirty || dualLeftReadingDirty || dualRightReadingDirty;
+  // Guard full-page unloads (reload / tab close / external nav) against losing
+  // unsaved work — the paths that bypass the in-app dirty gate below. Covers
+  // in-memory alignment + reading dirtiness here plus unsaved drafts internally.
+  useUnsavedGuard(alignmentDirty || dualDirty);
+
+  // Save-aware reload for the "App update available" chip. A bare reload would
+  // drop unsaved in-memory alignment drags (they only reach the durable outbox
+  // on save). If the single alignment panel is dirty, save first, then wait for
+  // the enqueue to commit to IndexedDB — outbox.list() opens a readonly tx that
+  // IndexedDB serializes AFTER the save's write, so its resolution means the op
+  // is durably queued (it survives the reload and drains after) — before
+  // tearing the page down. Text/note/row drafts already persist across reload;
+  // the beforeunload guard covers the other unload paths.
+  const reloadForUpdate = useCallback(() => {
+    const reload = () => window.location.reload();
+    if (panelMode === "alignment" && alignmentDirty && alignmentPanelRef.current) {
+      alignmentPanelRef.current.save(() => {
+        void outbox.list().then(reload);
+      });
+    } else {
+      reload();
+    }
+  }, [panelMode, alignmentDirty]);
   const requestDualAction = useCallback(
     (run: () => void) => {
       if (dualDirty) setPendingDualAction({ run });
@@ -2207,6 +2232,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             onNavigate?.(b, c, v);
           });
         }}
+        onRequestReload={reloadForUpdate}
         pipelineMenu={
           <PipelineMenu
             book={book}
@@ -2231,6 +2257,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             flagCount={bookLint.flagCount}
             escalateCount={bookLint.escalateCount}
             onGoToIssue={goToLintIssue}
+          />
+        }
+        exportMenu={
+          <ExportUsfmButton
+            book={book}
+            chapter={chapter}
+            enabledVersions={displayedVersions}
+            chapterVersesFor={(version) =>
+              data ? Object.values(data.verses[version] ?? {}) : []
+            }
           />
         }
         railCollapsed={railCollapsed}
