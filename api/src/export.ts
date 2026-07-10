@@ -102,7 +102,7 @@ function origLangOccurrence(quote: string | null, occurrence: number | null): nu
 // Sequence TWLs by position of Hebrew word in aligned ULT
 function normalizeWordText(s: string | null | undefined): string {
   if (s == null) return "";
-  return s.toLowerCase().trim().replace(/[\s\p{P}\p{S}]+/gu, " ");
+  return s.normalize("NFC").toLowerCase().trim().replace(/[\s\p{P}\p{S}]+/gu, " ");
 }
 
 function buildUltSequenceMap(verse: VerseRow | null | undefined): Map<string, number> {
