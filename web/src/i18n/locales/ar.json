@@ -59,7 +59,14 @@
     "approveCollapses": "اعتمد للطي",
     "publish": "النشر إلى Door43",
     "targetLanguage": "اللغة الهدف",
-    "sourceLanguage": "اللغة المصدر"
+    "sourceLanguage": "اللغة المصدر",
+    "descTranslate": "ترجمة ملاحظات هذا الأصحاح آليًا من لغة المصدر.",
+    "showSource": "عرض المصدر",
+    "collapse": "طيّ",
+    "unapprove": "إلغاء الاعتماد",
+    "reRun": "إعادة الترجمة",
+    "whyDraft": "راجِع مقابل النص المصدر ثم اعتمِد.",
+    "languageMemoryTip": "تنمو الأمثلة المعتمدة والمصطلحات كلما اعتمد الفريق — وهي السياق الذي تُبنى عليه كل مسودة لاحقة."
   },
   "export": {
     "noText": "لا يوجد نص {{version}} لتصديره من أجل {{target}}.",
@@ -286,6 +293,8 @@
     "couldntUpdateHint": "تعذّر تحديث التلميح: {{message}}",
     "couldntDeleteNote": "تعذّر حذف الملاحظة: {{message}}",
     "couldntRestoreNote": "تعذّر استعادة الملاحظة: {{message}}",
+    "couldntApproveNote": "تعذّر اعتماد الملاحظة: {{message}}",
+    "couldntTranslateNote": "تعذّر بدء الترجمة: {{message}}",
     "cantPreserveAlignment": "لا يمكن لهذا التعديل الحفاظ على محاذاة الكلمات التي لم تغيّرها، لذا لم يُحفظ ({{ref}} {{bibleVersion}}{{affected}}). يُرجى تدوين هذه الآية ({{ref}}) ليقدّم مسؤولك مراجعة لإصلاح الخطأ، أو أعد المحاذاة في لوحة المحاذاة.",
     "affectedSuffix": "؛ المتأثرة: {{sample}}",
     "failedToLoad": "فشل تحميل {{book}} {{chapter}}: {{error}}",

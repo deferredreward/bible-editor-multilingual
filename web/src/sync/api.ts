@@ -38,6 +38,19 @@ export interface TnRow {
    * edit/keep. Computed at read time from edit_log, not stored on the row.
    */
   latest_source?: string | null;
+  /**
+   * Translation-mode state machine (migration 0037; returned via `SELECT t.*`).
+   * NULL for the English root project and for any row the translate pipeline
+   * never touched, so the English workflow is unaffected. 'ai_draft' = the
+   * translate pipeline just applied an AI translation; 'edited' = a human
+   * changed the draft (set server-side on a content PATCH of a non-NULL row);
+   * 'validated' = a human approved it (POST /tn/:id/validate).
+   */
+  translation_state?: "ai_draft" | "edited" | "validated" | null;
+  /** Hash of the EN source row the draft was made from (source-drift detection). */
+  source_row_hash?: string | null;
+  /** translate-report.json entry for this row (confidence/terms); NULL when the bot ships no sidecar. */
+  draft_meta_json?: string | null;
 }
 
 export interface TqRow {
@@ -800,7 +813,25 @@ export interface TnQuickResponse {
 // Types mirror the bp-assistant client-side contract; both sides change
 // together if the contract is revised.
 
-export type PipelineType = "generate" | "notes" | "tqs";
+export type PipelineType = "generate" | "notes" | "tqs" | "translate";
+
+// Translate-pipeline overrides (only meaningful when pipelineType ===
+// 'translate'). The server derives the full option set from the active project
+// config (buildTranslateOptions) and folds these in; all optional. rowIds
+// scopes a single-note / subset translate (INTEGRATION.md §0).
+export interface TranslateRequestOptions {
+  model?: "sonnet" | "opus";
+  delivery?: "path" | "branch";
+  branchOnly?: boolean;
+  direction?: "ltr" | "rtl";
+  rowIds?: string[];
+  verseStart?: number;
+  verseEnd?: number;
+  targetLang?: string;
+  targetOrg?: string;
+  sourceRef?: string;
+  contextRef?: string;
+}
 
 export type PipelineState =
   // queued: accepted by us, not yet sent to the bot (cancellable).
@@ -863,6 +894,12 @@ export interface PipelineStartRequest {
   endChapter?: number;
   sessionKey: string;
   options?: PipelineRequestOptions;
+  /**
+   * Translate-pipeline overrides (only meaningful when pipelineType ===
+   * 'translate'; ignored otherwise). The server builds the full option set
+   * from the active project config and folds these in.
+   */
+  translate?: TranslateRequestOptions;
   /**
    * Optional second pipeline to fire on the parent's done-transition. Used
    * to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
@@ -1002,6 +1039,47 @@ export interface PipelineQueueSummary {
   queuedCount: number;
 }
 
+// Per-project source configuration (api/src/projectConfig.ts). Drives UI
+// labels, direction, the language-pair switcher, and — via translationSource —
+// whether translation-mode UI is shown at all. The English root project has
+// translationSource === null.
+export interface GlBiblePane {
+  repo: string;
+  version: string;
+  title: string;
+}
+export interface ProjectConfig {
+  preset: string;
+  org: string;
+  exportOrg: string;
+  languageCode: string;
+  languageName: string;
+  languageTitle: string;
+  direction: "ltr" | "rtl";
+  repos: Record<string, string>;
+  litLabel: string;
+  simLabel: string;
+  glBibles: GlBiblePane[];
+  translationSource: {
+    org: string;
+    languageCode: string;
+    repos: Record<string, string>;
+  } | null;
+  reposVerified: boolean;
+}
+export interface ProjectConfigResponse {
+  config: ProjectConfig;
+  presets: Array<{
+    preset: string;
+    org: string;
+    languageCode: string;
+    languageName: string;
+    languageTitle: string;
+    direction: "ltr" | "rtl";
+    reposVerified: boolean;
+  }>;
+}
+
 export const api = {
   getBookSummary: (book: string, signal?: AbortSignal) =>
     request<BookSummary>(`/api/chapters/${encodeURIComponent(book)}`, { signal }),
@@ -1035,6 +1113,11 @@ export const api = {
     request<TwlFiltersResponse>(`/api/twl-filters/${encodeURIComponent(book)}`, { signal }),
 
   getNoteTemplates: () => request<NoteTemplatesResponse>(`/api/note-templates`),
+
+  // Active per-project source config (org/language/direction/labels +
+  // translationSource). Readable by any authenticated user; drives the
+  // translation-mode UI gate. Fetched once per session by useProjectConfig.
+  getProjectConfig: () => request<ProjectConfigResponse>(`/api/project-config`),
 
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 
@@ -1154,6 +1237,17 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value }),
+    }),
+
+  // Translation-mode "Approve" action. value=true → translation_state
+  // 'validated'; value=false → 'edited' (un-approve). Lock-exempt, non-version-
+  // bumping, mirrors setPreserveNote. Returns the updated row so the caller can
+  // refresh local state (the collapsed/green treatment keys off the new state).
+  validateNote: (id: string, book: string, value: boolean) =>
+    request<TnRow>(`/api/rows/tn/${encodeURIComponent(id)}/validate?book=${encodeURIComponent(book)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value ? 1 : 0 }),
     }),
 
   // Move a note to the visible "trash" state (the delete button). Returns the
