@@ -43,6 +43,7 @@ const TYPE_LABEL: Record<PipelineJobRow["pipeline_type"], string> = {
   generate: "pipeline.generateUltUst",
   notes: "pipeline.translationNotes",
   tqs: "pipeline.translationQuestions",
+  translate: "translation.translateChapter",
 };
 
 // Coarse stage milestones reported via current.skill. For generate, the
@@ -54,6 +55,9 @@ const STAGES: Record<PipelineJobRow["pipeline_type"], string[]> = {
   generate: ["initial-pipeline", "align-all-parallel", "door43-push"],
   notes: ["tn-writer", "parallel-batch", "repo-insert"],
   tqs: ["tq-writer", "repo-insert"],
+  // translate skill milestones aren't finalized upstream (INTEGRATION.md §5);
+  // unknown skills fall through and the bar still shows "running".
+  translate: ["tn-translate", "repo-insert"],
 };
 
 const STAGE_LABEL: Record<string, string> = {

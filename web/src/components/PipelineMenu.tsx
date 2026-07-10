@@ -38,6 +38,7 @@ import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipeline
 import { currentPipelineUserId } from "../sync/pipelineSession";
 import { parseChapterRange } from "../lib/refParser";
 import { useTranslation } from "react-i18next";
+import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 
 interface Props {
   book: string;
@@ -84,6 +85,17 @@ const OPTIONS: PipelineOption[] = [
     approxDuration: "pipeline.durationNotesTqs",
   },
 ];
+
+// Only offered in gateway-language projects (translationSource != null). Drafts
+// the whole chapter's tN from the published source repo (server derives all
+// options from project config via buildTranslateOptions).
+const TRANSLATE_OPTION: PipelineOption = {
+  key: "translate",
+  type: "translate",
+  label: "translation.translateChapter",
+  description: "translation.descTranslate",
+  approxDuration: "pipeline.durationNotesTqs",
+};
 
 // Internal 4-checkbox state for the generate dialog. Maps to the wire shape
 // (contract §3) at submit time via buildGenerateOptions. The contract's align
@@ -170,6 +182,7 @@ const TYPE_LABEL: Record<PipelineType, string> = {
   generate: "pipeline.generateUltUst",
   notes: "pipeline.translationNotes",
   tqs: "pipeline.translationQuestions",
+  translate: "translation.translateChapter",
 };
 
 function relativeMinutes(seconds: number): string {
@@ -181,6 +194,14 @@ function relativeMinutes(seconds: number): string {
 
 export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
+  // Gateway-language projects also offer "Translate chapter" (drafts the whole
+  // chapter's tN). The English root project (translationSource == null) sees
+  // exactly the original three options.
+  const visibleOptions = useMemo(
+    () => (isTranslationProject(projectConfig) ? [...OPTIONS, TRANSLATE_OPTION] : OPTIONS),
+    [projectConfig],
+  );
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [confirm, setConfirm] = useState<PipelineOption | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -320,7 +341,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         {t("pipeline.aiButton")}
       </Button>
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={close}>
-        {OPTIONS.map((opt) => {
+        {visibleOptions.map((opt) => {
           const running = runningType(opt.type);
           return (
             <MenuItem

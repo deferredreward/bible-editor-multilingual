@@ -1,6 +1,6 @@
 import { Fragment, type Ref, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip, LinearProgress } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import PushPinIcon from "@mui/icons-material/PushPin";
 import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
@@ -12,7 +12,10 @@ import { QuestionsTable } from "./QuestionsTable";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import CheckIcon from "@mui/icons-material/Check";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
+import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import { useSourceNotes } from "../hooks/useSourceNotes";
 
 export type PanelMode = "resources" | "alignment" | "search";
 
@@ -142,6 +145,13 @@ interface Props {
   // Toggle the TN's hint bit ("queue as AI-pipeline directive"). Threaded
   // through to NoteCard.
   onSetNoteHint?: (id: string, value: boolean) => void;
+  // ── Translation mode (gateway-language projects) ── Approve/un-approve a
+  // draft (validate value 1/0) and single-note Translate. Absent in the English
+  // root project.
+  onNoteApprove?: (id: string, value: boolean) => void;
+  onNoteTranslate?: (id: string) => void;
+  // Rows with an in-flight single-note / chapter translate run (spinner).
+  translatingNoteIds?: Set<string>;
   // Translate English in a note's quote field to source-language text using
   // ULT alignment. Returns null when no alignment match is found.
   onNoteTranslateQuote?: (row: TnRow, english: string) => string | null;
@@ -291,6 +301,9 @@ export function ResourceColumn({
   locked = false,
   onSetNotePreserve,
   onSetNoteHint,
+  onNoteApprove,
+  onNoteTranslate,
+  translatingNoteIds,
   onNoteTranslateQuote,
   onWordTranslateQuote,
   onWordGloss,
@@ -313,6 +326,38 @@ export function ResourceColumn({
   checkoff,
 }: Props) {
   const { t } = useTranslation();
+  // Translation mode: only gateway-language projects (translationSource != null)
+  // show state-based cards, the source pane, and Approve/Translate affordances.
+  // The English root project sees the unchanged card.
+  const projectConfig = useProjectConfig();
+  const translationMode = isTranslationProject(projectConfig);
+  const sourceProjection = useMemo(
+    () =>
+      projectConfig?.translationSource
+        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tn }
+        : null,
+    [projectConfig],
+  );
+  // Published source-language tN for this book, indexed by row id (matched
+  // byte-identically to each draft). Empty in the English root project.
+  const sourceNotes = useSourceNotes(translationMode ? book : null, sourceProjection);
+  // Chapter-scoped translation progress. `examples` (validated count) doubles
+  // as the language-memory chip's example count — the honest, in-view figure
+  // until the context-repo feedback loop lands a global tally. Terms are not
+  // tracked yet (stub 0). Draft ids feed "Approve all".
+  const tnStats = useMemo(() => {
+    if (!translationMode) return { total: 0, validated: 0, draftIds: [] as string[] };
+    let total = 0;
+    let validated = 0;
+    const draftIds: string[] = [];
+    for (const r of tn) {
+      if (r.trashed_at != null) continue;
+      total++;
+      if (r.translation_state === "validated") validated++;
+      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
+    }
+    return { total, validated, draftIds };
+  }, [tn, translationMode]);
   const [pinned, setPinned] = useState<Pinned>(() => loadPinned());
   const togglePinned = (k: PinKey) => {
     const next = { ...pinned, [k]: !pinned[k] };
@@ -734,6 +779,64 @@ export function ResourceColumn({
               lane="tn"
               checkoff={checkoff}
             />
+            {translationMode && (
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{
+                  px: 0.5,
+                  py: 0.75,
+                  mb: 0.5,
+                  flexWrap: "wrap",
+                  rowGap: 0.75,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Chip
+                  size="small"
+                  color="secondary"
+                  variant="outlined"
+                  icon={<AutoAwesomeIcon sx={{ fontSize: "13px !important" }} />}
+                  label={t("translation.translationMode")}
+                  sx={{ height: 22, fontSize: 11, fontWeight: 600 }}
+                />
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 120, flex: 1 }}>
+                  <LinearProgress
+                    variant="determinate"
+                    color="success"
+                    value={tnStats.total ? (tnStats.validated / tnStats.total) * 100 : 0}
+                    sx={{ flex: 1, height: 6, borderRadius: 99, minWidth: 60 }}
+                  />
+                  <Typography variant="caption" sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+                    {tnStats.validated} / {tnStats.total}
+                  </Typography>
+                </Box>
+                <Tooltip title={t("translation.languageMemoryTip")}>
+                  <Typography variant="caption" sx={{ color: "text.disabled", whiteSpace: "nowrap" }}>
+                    🧠 {t("translation.languageMemory")}: {tnStats.validated} {t("translation.examples")} · 0{" "}
+                    {t("translation.terms")}
+                  </Typography>
+                </Tooltip>
+                <Box sx={{ flex: 1 }} />
+                {onNoteApprove && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="success"
+                    startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
+                    disabled={tnStats.draftIds.length === 0}
+                    onClick={() => {
+                      for (const id of tnStats.draftIds) onNoteApprove(id, true);
+                    }}
+                    sx={{ minWidth: 0, fontSize: 11 }}
+                  >
+                    {t("common.approveAll")} ({tnStats.draftIds.length})
+                  </Button>
+                )}
+              </Stack>
+            )}
             {tnGroups ? (
               tnGroups.length === 0 ? (
                 <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
@@ -1019,6 +1122,12 @@ export function ResourceColumn({
             quoteBuildAppliedTo?.noteId === r.id ? quoteBuildAppliedTo.nonce : null
           }
           onStartQuoteBuild={onStartQuoteBuild ? () => onStartQuoteBuild(r.id) : undefined}
+          translationMode={translationMode}
+          sourceNote={translationMode ? (sourceNotes.get(r.id) ?? null) : null}
+          onApprove={onNoteApprove ? () => onNoteApprove(r.id, true) : undefined}
+          onUnapprove={onNoteApprove ? () => onNoteApprove(r.id, false) : undefined}
+          onTranslate={onNoteTranslate ? () => onNoteTranslate(r.id) : undefined}
+          isTranslating={translatingNoteIds?.has(r.id) ?? false}
         />
         {showAfter && <DropIndicator />}
       </Fragment>
