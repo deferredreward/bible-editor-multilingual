@@ -45,6 +45,17 @@ export interface TnRow {
   review_kind: string | null;
   review_reason: string | null;
   /**
+   * Translation-mode state machine (multilingual; PIPELINE-SPEC §4.1).
+   * NULL for the English root project and any row untouched by the translate
+   * pipeline. 'ai_draft' → the translate pipeline applied an AI translation;
+   * 'edited' → a human changed the draft; 'validated' → a human approved it.
+   */
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  /** Hash of the EN source row the draft was made from (source-drift detection). */
+  source_row_hash: string | null;
+  /** translate-report.json entry for this row (confidence/fallback/terms); NULL if no sidecar. */
+  draft_meta_json: string | null;
+  /**
    * Source label from the row's most recent edit_log entry. 'ai_pipeline'
    * when the last write came from the AI auto-apply step (which means the
    * chip should show); NULL after any subsequent human edit/keep wipes it.
