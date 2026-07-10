@@ -434,6 +434,26 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
   // and returned so the caller can hint open tabs once per changed chapter.
   const affected = new Set<number>();
 
+  // Translate pipeline (multilingual): a wholly separate apply path. It UPDATEs
+  // existing target rows by rowId, never deletes, never inserts — so it skips
+  // the entire English delete-sweep/insert machinery below. tN only for the
+  // pilot; tq/verse translate output is deferred (PIPELINE-SPEC §2.1). Returns
+  // early so a translate job can never trip deleteUnkeptTns.
+  if (job.pipelineType === "translate") {
+    for (const p of tnProposals) {
+      const outcome = await applyTranslateTnRow(env, p, job, userId);
+      if (outcome === "drafted") {
+        affected.add(p.chapter);
+        result.tnHintExpanded += 1; // reuses the "updated in place" counter
+      }
+      // no_match: the id isn't a live target row (or a concurrent human edit
+      // won the CAS) — the proposal is left unresolved rather than inserted,
+      // preserving the row-identity guarantee. Surfaced via pending_imports.
+    }
+    result.affectedChapters = [...affected].sort((a, b) => a - b);
+    return result;
+  }
+
   // TN delete phase: only fires when this job produced TN proposals AND
   // there are unkept TNs in scope. Idempotent — re-running finds none left.
   if (tnProposals.length > 0) {
@@ -721,6 +741,92 @@ const HINT_EXPANSION_SOURCE = "hint_expansion";
 // caller should fall through to applyTnInsert. Scoped to the job's chapter
 // range so an id collision outside that range (vanishingly rare with 4-char
 // random ids, but possible) doesn't accidentally clobber an unrelated row.
+// Translate-pipeline apply (multilingual; PIPELINE-SPEC §2.1). The translate
+// output is exactly one target row per input row, keyed by the same rowId, with
+// only the Note translated — Reference/ID/SupportReference/Quote/Occurrence are
+// copied through byte-identical, so we UPDATE the note (and tags, if localized)
+// of the EXISTING target row and leave the structural columns alone. This is
+// the opposite of English note generation (which deletes+inserts the full note
+// set): a translate run NEVER deletes rows and NEVER mints new ids — it can
+// only fill in a translation for a row that already exists (imported from the
+// source project). A proposal whose id has no matching row is skipped (surfaced
+// in result, not inserted — inventing a row would break the row-identity
+// guarantee the whole contract rests on). Stamps translation_state='ai_draft'
+// and writes edit_log source='ai_pipeline' so the review UI shows the AI chip.
+async function applyTranslateTnRow(
+  env: Env,
+  p: PendingImportRow,
+  job: ImportContext,
+  userId: number,
+): Promise<"drafted" | "no_match"> {
+  const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
+  const proposedId = typeof payload.id === "string" ? payload.id : null;
+  if (!proposedId) return "no_match";
+
+  const target = await env.DB.prepare(
+    `SELECT id, version FROM tn_rows
+      WHERE id = ?1 AND deleted_at IS NULL
+        AND book = ?2 AND chapter BETWEEN ?3 AND ?4`,
+  )
+    .bind(proposedId, job.book, job.startChapter, job.endChapter)
+    .first<{ id: string; version: number }>();
+  if (!target) return "no_match";
+
+  const now = Math.floor(Date.now() / 1000);
+  const newVersion = target.version + 1;
+  const note = (payload.note as string | null | undefined) ?? null;
+  const tags = (payload.tags as string | null | undefined) ?? null;
+  const srcHash = (payload.source_row_hash as string | null | undefined) ?? null;
+  const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+
+  const res = await env.DB.batch([
+    env.DB
+      .prepare(
+        // Only the translated Note (+ optional localized Tags) and the
+        // translation bookkeeping change; quote/occurrence/support_reference/
+        // ref_raw are the untranslatable structural columns and are left
+        // untouched. CAS-guarded on version so a translator editing the row
+        // between poll and apply isn't clobbered (lost CAS → skipped, the
+        // draft is simply not applied over a fresh human edit). book-scoped.
+        `UPDATE tn_rows
+            SET note = ?1,
+                tags = COALESCE(?2, tags),
+                translation_state = 'ai_draft',
+                source_row_hash = ?3,
+                draft_meta_json = ?4,
+                version = version + 1,
+                updated_at = ?5,
+                updated_by = ?6
+          WHERE id = ?7 AND book = ?8 AND deleted_at IS NULL AND version = ?9`,
+      )
+      .bind(note, tags, srcHash, draftMeta, now, userId, target.id, job.book, target.version),
+    env.DB
+      .prepare(
+        // Audit gated on the CAS having won (post-update fingerprint present).
+        // source='ai_pipeline' → the row-level AI chip shows for review.
+        `INSERT INTO edit_log
+           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
+         SELECT 'tn', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
+          WHERE EXISTS (
+            SELECT 1 FROM tn_rows
+             WHERE id = ?1 AND book = ?2 AND version = ?5 AND updated_at = ?8
+          )`,
+      )
+      .bind(target.id, job.book, userId, target.version, newVersion, JSON.stringify(payload), AI_SOURCE, now),
+    env.DB
+      .prepare(
+        `UPDATE pending_imports
+            SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1 AND EXISTS (
+            SELECT 1 FROM tn_rows
+             WHERE id = ?3 AND book = ?4 AND version = ?5 AND updated_at = ?6
+          )`,
+      )
+      .bind(p.id, userId, target.id, job.book, newVersion, now),
+  ]);
+  return (res[0]?.meta?.changes ?? 0) > 0 ? "drafted" : "no_match";
+}
+
 async function applyTnHintExpansionIfMatch(
   env: Env,
   p: PendingImportRow,

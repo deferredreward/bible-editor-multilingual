@@ -30,7 +30,7 @@ export const pipelines = new Hono<{
 
 const DEFAULT_BASE = "https://uw-bt-bot.fly.dev";
 
-const PIPELINE_TYPES = ["generate", "notes", "tqs"] as const;
+const PIPELINE_TYPES = ["generate", "notes", "tqs", "translate"] as const;
 type PipelineType = (typeof PIPELINE_TYPES)[number];
 
 // States that occupy the single bot slot. While any job is in one of these,
