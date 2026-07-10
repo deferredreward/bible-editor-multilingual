@@ -202,7 +202,12 @@ export function buildTqTsv(rows: TqRow[]): string {
   return [TQ_HEADERS.join("\t"), ...body].join("\n") + "\n";
 }
 
-export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): string {
+export interface TwlTsvResult {
+  tsv: string;
+  sortOrderUpdates: Array<{ id: string; sort_order: number }>;
+}
+
+export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): TwlTsvResult {
   const referenceOrdered = sortRowsByReference(rows);
 
   const versePositions = new Map<string, number>();
@@ -257,6 +262,32 @@ export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): string {
     });
   }
 
+  // Track sort_order updates: only rows in verses where reordering happened
+  const sortOrderUpdates: Array<{ id: string; sort_order: number }> = [];
+  for (const bucket of verseRows.values()) {
+    // Check if this verse's rows were reordered from their stored sort_order
+    let verseReordered = false;
+    for (let i = 0; i < bucket.length; i++) {
+      const computedPos = i;
+      const storedPos = bucket[i].row.sort_order ?? Number.POSITIVE_INFINITY;
+      if (computedPos !== storedPos) {
+        verseReordered = true;
+        break;
+      }
+    }
+
+    // If reordered, record updates for all rows in this verse that differ
+    if (verseReordered) {
+      for (let i = 0; i < bucket.length; i++) {
+        const row = bucket[i].row;
+        const storedPos = row.sort_order ?? Number.POSITIVE_INFINITY;
+        if (i !== storedPos) {
+          sortOrderUpdates.push({ id: row.id, sort_order: i });
+        }
+      }
+    }
+  }
+
   const body = referenceOrdered
     .map((row, originalIndex) => ({ row, originalIndex }))
     .sort((a, b) => {
@@ -286,7 +317,10 @@ export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): string {
       ]),
     );
 
-  return [TWL_HEADERS.join("\t"), ...body].join("\n") + "\n";
+  return {
+    tsv: [TWL_HEADERS.join("\t"), ...body].join("\n") + "\n",
+    sortOrderUpdates,
+  };
 }
 
 // ── Export shrink guard (truncation backstop) ───────────────────────────────
