@@ -20,6 +20,7 @@ import {
   type VerseExtract,
 } from "./importParsers";
 import { NT_BOOKS } from "./dcsSources";
+import type { ProjectConfig } from "./projectConfig";
 import { newRowId, isValidRowId } from "./rowId";
 import { tnContentKey } from "./tnDedup";
 import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim";
@@ -41,6 +42,7 @@ interface ImportContext {
   book: string;
   startChapter: number;
   endChapter: number;
+  cfg: ProjectConfig;
 }
 
 export interface ImportResult {
@@ -63,11 +65,17 @@ type Classification =
   | { kind: "tq"; format: "tsv" }
   | { kind: "unknown" };
 
-function classify(entry: OutputEntry): Classification {
+function classify(entry: OutputEntry, cfg: ProjectConfig): Classification {
   const repo = (entry.repo ?? "").toLowerCase();
   // Trailing match — repo strings look like "unfoldingWord/en_ult" or sometimes
   // just "en_ult"; either way the last path segment is what we want.
   const tail = repo.split("/").pop() ?? "";
+  // Project-configured repo names first (e.g. ar_tn under a GL config), then
+  // the en_* names as a legacy fallback so pre-config jobs keep classifying.
+  if (tail.endsWith(cfg.repos.lit.toLowerCase())) return { kind: "verse", bibleVersion: "ULT", format: "usfm" };
+  if (tail.endsWith(cfg.repos.sim.toLowerCase())) return { kind: "verse", bibleVersion: "UST", format: "usfm" };
+  if (tail.endsWith(cfg.repos.tn.toLowerCase())) return { kind: "tn", format: "tsv" };
+  if (tail.endsWith(cfg.repos.tq.toLowerCase())) return { kind: "tq", format: "tsv" };
   if (tail.endsWith("en_ult")) return { kind: "verse", bibleVersion: "ULT", format: "usfm" };
   if (tail.endsWith("en_ust")) return { kind: "verse", bibleVersion: "UST", format: "usfm" };
   if (tail.endsWith("en_tn")) return { kind: "tn", format: "tsv" };
@@ -156,7 +164,7 @@ async function parseOutputEntry(
   entry: OutputEntry,
 ): Promise<{ staged: StagedRow[]; skipReason?: string }> {
   if (!entry.rawUrl) return { staged: [], skipReason: "missing rawUrl" };
-  const cls = classify(entry);
+  const cls = classify(entry, ctx.cfg);
   if (cls.kind === "unknown") {
     return { staged: [], skipReason: `unrecognized repo: ${entry.repo ?? "(none)"}` };
   }

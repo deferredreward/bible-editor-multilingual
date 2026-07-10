@@ -32,13 +32,19 @@ import {
   recreateExportBranchFromMaster,
   updateDcsPrBranch,
   usfmAlignmentShrinkRefused,
-  RESOURCE_TARGETS,
+  resourceTargetsFor,
   type Resource,
 } from "./export";
 
 // Banner target for export PR failures — same maintainer the post-export
 // validator alerts (see postExport.ts ValidatorConfig.alertTargetUsername).
 const EXPORT_ALERT_USERNAME = "deferredreward";
+
+// DCS web URL of the org exports land on — for alert links.
+async function exportOwnerUrl(env: Env): Promise<string> {
+  const cfg = await getProjectConfig(env);
+  return `${env.DCS_BASE_URL}/${env.DCS_EXPORT_OWNER ?? cfg.exportOrg}`;
+}
 
 // Legacy export branch, superseded by per-(book,resource) contributor branches.
 // Pruned best-effort on each export so it doesn't linger; safe to delete since
@@ -47,6 +53,7 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
+import { getProjectConfig } from "./projectConfig.ts";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 import { lintUsfmVerses } from "./lint";
 
@@ -253,7 +260,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         return false;
       }
       const more = offenders.length > 6 ? `, +${offenders.length - 6} more` : "";
-      await this.writeAlert(source, makeMsg(offenders.length, offenders.slice(0, 6).join(", ") + more), `${this.env.DCS_BASE_URL}/unfoldingWord`);
+      await this.writeAlert(source, makeMsg(offenders.length, offenders.slice(0, 6).join(", ") + more), await exportOwnerUrl(this.env));
       return true;
     };
     for (const book of books) {
@@ -321,7 +328,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     // R2 is the local-only backup. Writing here first means a failed DCS
     // commit still leaves a recoverable artifact.
-    const target = RESOURCE_TARGETS[resource];
+    const projectCfg = await getProjectConfig(this.env);
+    const target = resourceTargetsFor(projectCfg)[resource];
     const filename = target.path(book);
     const r2Key = `exports/${instanceId}/${book}/${resource}/${filename}`;
     await this.env.BLOBS.put(r2Key, built.content, {
@@ -427,7 +435,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
     } else {
-      const owner = this.env.DCS_EXPORT_OWNER ?? "unfoldingWord";
+      const owner = this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg;
       const dcsCfg = {
         baseUrl: this.env.DCS_BASE_URL,
         token: this.env.DCS_SERVICE_TOKEN!,
@@ -831,13 +839,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     book: string,
     resource: Resource,
   ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
-    const file = dcsResourceFile(book, resource as ReimportResource);
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     // Unknown book/resource → no file to compare; don't block (shouldn't happen
     // for the five real resources).
     if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
-    const watermark = await storedResourceSha(this.env, book, resource);
+    const watermark = await storedResourceSha(this.env, book, resource, cfg.org);
     if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
-    const masterSha = await fileCommitSha(this.env, file.repo, file.path);
+    const masterSha = await fileCommitSha(this.env, cfg.org, file.repo, file.path);
     if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
     if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
     return { ok: false, detail: "master_ahead", masterSha, watermark };
@@ -856,7 +865,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `Benjamin — nightly export skipped ${book} ${resource.toUpperCase()} to avoid reverting master ` +
       `(D1 is behind: master ${(masterSha ?? "unknown").slice(0, 8)} vs synced ${(watermark ?? "none").slice(0, 8)}). ` +
       `The pre-export sync didn't catch up; re-run the sync for ${book}, then re-export.`;
-    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/unfoldingWord`);
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
   // Fetch master's current TSV row count and decide whether this render would
@@ -869,9 +878,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     resource: Resource,
     renderedRows: number,
   ): Promise<{ ok: boolean; detail: string; masterRows: number | null }> {
-    const file = dcsResourceFile(book, resource as ReimportResource);
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const raw = await fetchText(dcsRawUrl(this.env, file.repo, file.path));
+    const raw = await fetchText(dcsRawUrl(this.env, cfg.org, file.repo, file.path));
     if (raw == null) return { ok: false, detail: "master_unreadable", masterRows: null };
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
     const masterRows = Math.max(0, raw.split(/\r?\n/).filter((l) => l.length > 0).length - 1);
@@ -891,9 +901,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     resource: Resource,
     renderedUsfm: string,
   ): Promise<{ ok: boolean; detail: string }> {
-    const file = dcsResourceFile(book, resource as ReimportResource);
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
-    const masterUsfm = await fetchText(dcsRawUrl(this.env, file.repo, file.path));
+    const masterUsfm = await fetchText(dcsRawUrl(this.env, cfg.org, file.repo, file.path));
     if (masterUsfm == null) return { ok: false, detail: "master_unreadable" };
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);
     if (result.refused) {
@@ -924,7 +935,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `Benjamin fix this — nightly export BLOCKED ${book} ${resource.toUpperCase()}: the render would drop \\zaln ` +
       `word alignment on verses whose text is UNCHANGED (${detail}). This is the 1CH 4:21 / NUM 24 collateral ` +
       `de-alignment signature — refusing to ship it to master. Re-align the affected verse(s) in the editor, then re-export.`;
-    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/unfoldingWord`);
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
   // Banner alert when the shrink guard blocks an export to avoid mass-deleting
@@ -943,7 +954,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `but master has ${masterRows ?? "?"} (${detail}). This looks like an incomplete D1 load (truncated fetch), ` +
       `not a real deletion — refusing to shrink master. Re-sync ${book} ${resource.toUpperCase()} from master, ` +
       `verify the row count, then re-export.`;
-    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/unfoldingWord`);
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
   // Banner alert when the pre-export sync for a book failed outright (e.g. the
@@ -954,7 +965,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const message =
       `Benjamin — nightly pre-export sync failed for ${book}: ${detail.slice(0, 160)}. ` +
       `Any book left behind master is skipped by the freshness gate (not reverted); re-sync ${book} and re-export.`;
-    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/unfoldingWord`);
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
   // Replace-undismissed alert writer shared by the export-side alerts. Best
@@ -995,7 +1006,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   ): Promise<void> {
     const source = `export_pr:${repo}`;
     const message = `Benjamin fix this — nightly export couldn't ensure a PR for ${book} ${resource} (\`${branch}\` on ${repo}): ${detail.slice(0, 160)}`;
-    const linkUrl = `${this.env.DCS_BASE_URL}/${this.env.DCS_EXPORT_OWNER ?? "unfoldingWord"}/${repo}/pulls`;
+    const linkUrl = `${await exportOwnerUrl(this.env)}/${repo}/pulls`;
     try {
       await this.env.DB.prepare(
         `DELETE FROM system_alerts
@@ -1032,7 +1043,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `is in merge conflict with master and could NOT be auto-rebuilt (${detail}). Reconcile by hand ` +
       `(merge master, \`git checkout --ours\` the file = D1's render, push), or provision DCS_TOKEN so the ` +
       `export can rebuild the branch automatically.`;
-    const linkUrl = `${this.env.DCS_BASE_URL}/${this.env.DCS_EXPORT_OWNER ?? "unfoldingWord"}/${repo}/pulls`;
+    const linkUrl = `${await exportOwnerUrl(this.env)}/${repo}/pulls`;
     await this.writeAlert(source, message, linkUrl, "error");
   }
 
@@ -1053,7 +1064,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `Heads up — nightly export rebuilt \`${branch}\` (${book} ${resource.toUpperCase()} on ${repo}) onto ` +
       `current master to clear a merge conflict; D1's render is authoritative. Eyeball PR ${prRef} to confirm ` +
       `any master-only rows dropped were intended.`;
-    const linkUrl = `${this.env.DCS_BASE_URL}/${this.env.DCS_EXPORT_OWNER ?? "unfoldingWord"}/${repo}/pulls`;
+    const linkUrl = `${await exportOwnerUrl(this.env)}/${repo}/pulls`;
     await this.writeAlert(source, message, linkUrl, "warning");
   }
 }

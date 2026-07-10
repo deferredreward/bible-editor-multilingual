@@ -3,6 +3,7 @@
 // this module just turns rows into bytes and posts bytes to DCS.
 
 import usfm from "usfm-js";
+import { PRESETS, DEFAULT_PRESET, type ProjectConfig } from "./projectConfig.ts";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 import { parseVerseContentJson } from "./contentJson.ts";
 import { analyzeAlignmentDelta } from "./alignmentDelta.ts";
@@ -588,9 +589,10 @@ function synthesizeHeaders(book: string, bibleVersion: string): unknown[] {
 }
 
 // ── Resource → repo + path conventions ───────────────────────────────────────
-// unfoldingWord splits each resource into its own repo. The exporter assumes
-// the same convention; if a deploy ever needs different repo names, the names
-// can be overridden via env (see exportWorkflow.ts).
+// Each resource lives in its own repo under the project's org. Repo names
+// come from the per-project config (projectConfig.ts); the path formulas are
+// the DCS convention shared by every org. `bibleVersion` stays role-coded
+// ULT/UST — the internal verses labels — regardless of project language.
 
 export interface ResourceTarget {
   repo: string;
@@ -598,13 +600,20 @@ export interface ResourceTarget {
   bibleVersion?: string;
 }
 
-export const RESOURCE_TARGETS: Record<Resource, ResourceTarget> = {
-  tn:  { repo: "en_tn",  path: (b) => `tn_${b}.tsv` },
-  tq:  { repo: "en_tq",  path: (b) => `tq_${b}.tsv` },
-  twl: { repo: "en_twl", path: (b) => `twl_${b}.tsv` },
-  ult: { repo: "en_ult", path: usfmFilename, bibleVersion: "ULT" },
-  ust: { repo: "en_ust", path: usfmFilename, bibleVersion: "UST" },
-};
+export function resourceTargetsFor(cfg: ProjectConfig): Record<Resource, ResourceTarget> {
+  return {
+    tn:  { repo: cfg.repos.tn,  path: (b) => `tn_${b}.tsv` },
+    tq:  { repo: cfg.repos.tq,  path: (b) => `tq_${b}.tsv` },
+    twl: { repo: cfg.repos.twl, path: (b) => `twl_${b}.tsv` },
+    ult: { repo: cfg.repos.lit, path: usfmFilename, bibleVersion: "ULT" },
+    ust: { repo: cfg.repos.sim, path: usfmFilename, bibleVersion: "UST" },
+  };
+}
+
+// Back-compat constant: the default preset's targets (the pre-refactor
+// hardcoded en_* mapping, byte-identical).
+export const RESOURCE_TARGETS: Record<Resource, ResourceTarget> =
+  resourceTargetsFor(PRESETS[DEFAULT_PRESET]);
 
 // ── Gitea contents API ───────────────────────────────────────────────────────
 

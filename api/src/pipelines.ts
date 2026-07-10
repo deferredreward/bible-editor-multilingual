@@ -20,6 +20,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
+import { getProjectConfig } from "./projectConfig.ts";
 import { broadcastChapter } from "./wsEvents";
 
 export const pipelines = new Hono<{
@@ -434,6 +435,7 @@ async function pollPipelineJob(
   let appliedChapters: number[] = [];
   if (shouldImport && data.output) {
     try {
+      const cfg = await getProjectConfig(env);
       const importResult = await importJobOutput(
         env,
         {
@@ -442,6 +444,7 @@ async function pollPipelineJob(
           book: job.book,
           startChapter: job.start_chapter,
           endChapter: job.end_chapter,
+          cfg,
         },
         data.output,
       );

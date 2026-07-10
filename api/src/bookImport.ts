@@ -20,6 +20,7 @@ import {
 } from "./importParsers";
 import { requireAuth, requireEditor, currentUserId } from "./auth";
 import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText } from "./dcsSources";
+import { getProjectConfig } from "./projectConfig.ts";
 import { reimportBookFromDcs, recordResourceSync, type Resource } from "./bookReimport";
 import { lintTnRows, lintUsfmVerses } from "./lint";
 import type { TnRow, VerseRow } from "./types";
@@ -220,7 +221,8 @@ async function importBookFromDcs(
   _num: string,
   userId: number,
 ): Promise<ImportCounts> {
-  const urls = dcsUrls(env, book);
+  const cfg = await getProjectConfig(env);
+  const urls = dcsUrls(env, cfg, book);
   if (!urls) throw new Error(`unknown book: ${book}`);
   const origVersion = urls.origVersion;
 
@@ -302,10 +304,10 @@ async function importBookFromDcs(
   // nightly reimports that resource.
   for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
     if (!counts.fetched[resource]) continue;
-    const file = dcsResourceFile(book, resource);
+    const file = dcsResourceFile(cfg, book, resource);
     if (!file) continue;
-    const sha = await fileCommitSha(env, file.repo, file.path);
-    if (sha) await recordResourceSync(env, book, resource, sha, "import");
+    const sha = await fileCommitSha(env, cfg.org, file.repo, file.path);
+    if (sha) await recordResourceSync(env, book, resource, sha, "import", cfg.org);
   }
 
   return counts;
