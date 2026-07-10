@@ -14,6 +14,58 @@
 
 ## Last run
 
+2026-07-10 · **multilingual branch (fork `deferredreward/bible-editor`)** — **Multilingual book-package production: Phases 5/1/0 built + 4/3/6 designed.**
+Working from the strategy assets in the parent folder (FEASIBILITY.md, PIPELINE-SPEC.md, translation-mode-mockup.html). Fork cloned into
+`bible-editor-multilingual/bible-editor`; all work on branch `multilingual`; NOT pushed/PR'd. Baseline green before starting (15 api + web
+unit files, 10 Playwright e2e — needed `api/.dev.vars` with a `JWT_SIGNING_KEY` for the e2e dev-auth mint, and Vite relocates to :5174 on this
+host so run e2e with `BE_BASE_URL=http://localhost:5174`).
+
+**Committed, verified:**
+- **(Phase 5, infra) i18next + RTL chrome** [commit 2918f87]: `web/src/i18n/` (index.ts + locales en full / ar full / es·ru·id stubs falling
+  back to en), `UiLangContext`, persisted `be:uiLang`, `document.dir`/`lang` set pre-paint. Dual emotion caches (stylis-plugin-rtl) +
+  direction-aware `makeTheme(mode, dir)` mirror the WHOLE chrome RTL. TopBar fully externalized + a language-switcher menu. **Verified in-browser
+  (chrome-devtools MCP):** switching to العربية flips `dir=rtl`, MUI direction, and persists. Baseline e2e still 10/10.
+- **(Phase 1) Per-project config layer** [commit 236c0ac]: `api/src/projectConfig.ts` + migration `0036_project_config.sql` replace the hardcoded
+  `unfoldingWord/en_*` mapping. Presets en-unfoldingword (default, byte-identical old behavior), ar-bsoj, id-gl, es-419-gl, ru-gl (verified vs
+  live Door43 org listings). **bible_version stays role-coded** (ULT/UST/UHB/UGNT) → zero data migration, data-loss guards operate on unchanged
+  keys. Watermarks (`book_resource_syncs`) org-stamped; a config org-switch treats mismatched watermarks as absent (fail-open). Threaded through
+  dcsSources/bookImport/bookReimport/export/exportWorkflow/pipelineImport. Admin route `GET|PUT /api/project-config` (PUT admin+CSRF).
+  **Verified:** typecheck, 15 api unit files, migration applies, GET/PUT live-tested (switch to ar-bsoj + reset), 10/10 e2e.
+  *NOTE: a config agent from a prior (compacted) session authored most of this; I re-verified it and fixed 3 incomplete handoff bits
+  (missing ProjectConfig import, un-updated pollPipelineJob caller, `.ts` extensions on 5 value imports for the node strip-types runner).*
+- **(Phase 0, part A) tN translation-state machine** [commit 22efd26]: migration `0037` adds `translation_state`
+  (NULL|ai_draft|edited|validated) + `source_row_hash` + `draft_meta_json` to tn_rows (all NULL for the English project → English workflow
+  untouched). `POST /api/rows/tn/:id/validate` (models /preserve: lock-exempt, non-version-bumping, edit_log source=NULL). Content PATCH demotes
+  ai_draft/validated→edited via a literal CASE. **Verified:** validate endpoint live-tested (value=1→validated, 0→edited, version unchanged).
+- **(Phase 0, part B) translate apply path** [commit 3fad7ca]: `'translate'` in PIPELINE_TYPES + `applyTranslateTnRow` — UPDATEs target rows by
+  rowId, stamps ai_draft, leaves structural columns byte-identical, CAS-guarded, never deletes/inserts (returns early before the English
+  delete-sweep). **Verified at SQL+typecheck+regression level** (English apply path provably unchanged; translate UPDATE exercised against local
+  D1). **NOT end-to-end yet** — see gaps below.
+
+**Designs written (docs/design/):** `tw-ta-translation-modules.md` (Phase 4), `gl-publisher.md` (Phase 3 — RC manifests, tc-ready topic,
+acceptance = language appears in tC3 GL dropdown), `gl-aligned-bibles-strategy.md` (Phase 6 glt/gst). Cross-effort integration notes for the
+bp-assistant `translate` pipeline live in the PARENT folder's `INTEGRATION.md` (editor-side verification of the StartBody contract + a stub
+contract for parallel dev). No bp-bot planning doc existed at `C:\...\bp-bot` as of this session.
+
+**Open gaps / next (precise handoff):**
+1. **Phase 0 finish (start-assembly + stub):** POST /start with `pipelineType:'translate'` must gather the chapter's tn_rows from D1 into the
+   `rows[]` payload (mirror the hints injection at `pipelines.ts:817-848`), resolve targetLang/org/contextRef from projectConfig, and send
+   upstream. Build `scripts/translate-stub-server.mjs` (contract in INTEGRATION.md §4) + point `PIPELINE_API_BASE` at it to test start→poll→apply
+   end-to-end. The apply path is DORMANT until this lands (nothing creates a translate job), which is why it's risk-free to ship now.
+2. **Phase 2 (translate-mode UX) — NOT STARTED:** the mockup's note-card review flow. Build on the now-existing `translation_state` + validate
+   endpoint: NoteCard expand/collapse by state (English source pinned above editable GL draft; Approve→validate→collapse), a "Translate chapter"
+   PipelineMenu action (pipelineType:'translate'), provenance chips, language-memory chip, TEMPLATE dropdown already exists. Do NOT half-build;
+   it's a large frontend piece. Entry points from the exploration report: `NoteCard.tsx` local state ~:342, `PipelineMenu.tsx` OPTIONS ~:63,
+   `useAiDrafts`, `pipelineStore.start`.
+3. **Phase 5 broader string sweep:** infra + TopBar committed; a sub-agent swarm externalized 8 more component files (Import/Export dialogs,
+   Questions/Words tables, Timeline/SectionHeader rails, Sync/Version bars) but a JSON-authoring pass merges the ~120 keys into en/ar locale files
+   (in flight at session end — verify no orphan keys + web test green before committing, else `git checkout` those 8 files to keep the tree
+   consistent). Shell.tsx + PipelineMenu still un-swept.
+
+**Lessons (this session):** the config layer proves the "role-coded bible_version + one-D1-per-project" tenancy model works with zero data
+migration. Sub-agents that split string-externalization from locale-JSON authoring leave a BROKEN tree (components render raw key strings) —
+keep the `t()` swap and its en/ar key in the SAME agent's scope, or gate on a zero-orphan-key check before committing.
+
 2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
 Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
 builds `{html,text}` for a chapter (verse numbers → `<sup>`, poetry `\q` lines broken + indented per level,
