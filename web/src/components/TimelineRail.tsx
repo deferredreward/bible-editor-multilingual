@@ -1,5 +1,6 @@
 import { Box, Tooltip } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
+import { useTranslation } from "react-i18next";
 import type { CheckLane } from "../sync/api";
 import { LANE_FILL, LANE_LABELS, type LaneShade } from "../lib/laneChecks";
 
@@ -113,6 +114,7 @@ interface Props {
 }
 
 export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = false, enabledLanes, onSelect, onToggleLane, onHideLane }: Props) {
+  const { t: translate } = useTranslation();
   const laneOrder = enabledLanes;
   const gridTemplate = `30px repeat(${laneOrder.length}, 1fr)`;
   return (
@@ -145,10 +147,10 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = 
       >
         <span />
         {laneOrder.map((l) => (
-          <Tooltip key={l} title={`Hide ${LANE_LABELS[l]} — re-enable from Board`} placement="top">
+          <Tooltip key={l} title={translate("rail.hideLaneTooltip", { lane: LANE_LABELS[l] })} placement="top">
             <Box
               role="button"
-              aria-label={`Hide ${LANE_LABELS[l]} lane`}
+              aria-label={translate("rail.hideLaneAriaLabel", { lane: LANE_LABELS[l] })}
               onClick={() => onHideLane(l)}
               sx={{
                 textAlign: "center",
@@ -195,7 +197,7 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = 
             }}
           >
             <Tooltip
-              title={t.verse === 0 ? `${book} ${chapter} introduction` : `${book} ${chapter}:${t.verse}`}
+              title={t.verse === 0 ? translate("rail.verseIntroTooltip", { book, chapter }) : `${book} ${chapter}:${t.verse}`}
               placement="right"
             >
               <Box
@@ -214,8 +216,8 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = 
                 {t.verse === 0 ? "i" : showChapter ? `${chapter}:${t.verse}` : t.verse}
                 {t.has && !active && (
                   <Box
-                    aria-label="unaligned words remain"
-                    title="unaligned words remain"
+                    aria-label={translate("rail.unalignedWordsRemain")}
+                    title={translate("rail.unalignedWordsRemain")}
                     sx={{
                       position: "absolute",
                       right: -2,

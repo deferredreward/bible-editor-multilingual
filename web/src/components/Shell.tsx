@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Box,
   Typography,
@@ -170,6 +171,7 @@ interface Props {
 }
 
 export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, onLogout, meUserId = null }: Props) {
+  const { t } = useTranslation();
   const {
     status,
     data,
@@ -424,12 +426,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const promptChapterRefresh = useCallback(
     (pipelineType: string) => {
       pushPipelineToast(
-        `New AI ${pipelineType} are ready for this chapter. Save your work, then refresh.`,
+        t("shell.aiReady", { pipelineType }),
         "info",
-        { label: "Refresh", onClick: () => void refetch() },
+        { label: t("shell.refresh"), onClick: () => void refetch() },
       );
     },
-    [pushPipelineToast, refetch],
+    [pushPipelineToast, refetch, t],
   );
   useEffect(() => {
     promptRefreshRef.current = promptChapterRefresh;
@@ -444,12 +446,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           // "applied" toast, since its new rows aren't in the open list yet.
           const inView = job.book === book && chapter >= job.start_chapter && chapter <= job.end_chapter;
           if (inView) promptChapterRefresh(job.pipeline_type);
-          else pushPipelineToast(`AI ${job.pipeline_type} applied to ${where}.`, "success");
+          else pushPipelineToast(t("shell.aiApplied", { pipelineType: job.pipeline_type, where }), "success");
         } else if (job.state === "failed" && prev !== "failed") {
-          pushPipelineToast(`AI ${job.pipeline_type} failed for ${where}: ${job.error_kind ?? "error"}`, "error");
+          pushPipelineToast(t("shell.aiFailed", { pipelineType: job.pipeline_type, where, error: job.error_kind ?? t("shell.error") }), "error");
         }
       }),
-    [pushPipelineToast, promptChapterRefresh, book, chapter],
+    [pushPipelineToast, promptChapterRefresh, book, chapter, t],
   );
 
   // Surface a toast when the outbox drops an op because the chapter was
@@ -460,12 +462,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       onOutboxResult((_op, result) => {
         if (result.kind === "locked") {
           pushPipelineToast(
-            "Edit dropped — the AI run for this chapter is mid-flight. Try again after it finishes.",
+            t("shell.editDroppedLocked"),
             "error",
           );
         }
       }),
-    [pushPipelineToast],
+    [pushPipelineToast, t],
   );
 
   // Derive the chapter lock from active pipeline jobs. Any non-terminal job
@@ -504,10 +506,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "unknown error";
-        pushPipelineToast(`Couldn't update Preserve: ${msg}`, "error");
+        pushPipelineToast(t("shell.couldntUpdatePreserve", { message: msg }), "error");
       }
     },
-    [applyLocalRowPatch, pushPipelineToast],
+    [applyLocalRowPatch, pushPipelineToast, t],
   );
 
   const handleSetNoteHint = useCallback(
@@ -523,10 +525,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         // 400) over the bare "HTTP 400" the ApiError carries as its message.
         const serverMsg = (e as { body?: { message?: string } } | null)?.body?.message;
         const msg = (typeof serverMsg === "string" && serverMsg) || (e instanceof Error ? e.message : "unknown error");
-        pushPipelineToast(`Couldn't update Hint: ${msg}`, "error");
+        pushPipelineToast(t("shell.couldntUpdateHint", { message: msg }), "error");
       }
     },
-    [applyLocalRowPatch, pushPipelineToast],
+    [applyLocalRowPatch, pushPipelineToast, t],
   );
 
   // The note delete button. Trash is a reversible, visible soft-delete (the
@@ -548,10 +550,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       } catch (e) {
         applyLocalRowPatch("tn", id, { trashed_at: null });
         const msg = e instanceof Error ? e.message : "unknown error";
-        pushPipelineToast(`Couldn't delete note: ${msg}`, "error");
+        pushPipelineToast(t("shell.couldntDeleteNote", { message: msg }), "error");
       }
     },
-    [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast, scheduleLintRefetch],
+    [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast, scheduleLintRefetch, t],
   );
 
   const handleRestoreNote = useCallback(
@@ -566,10 +568,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       } catch (e) {
         applyLocalRowPatch("tn", id, { trashed_at: Math.floor(Date.now() / 1000) });
         const msg = e instanceof Error ? e.message : "unknown error";
-        pushPipelineToast(`Couldn't restore note: ${msg}`, "error");
+        pushPipelineToast(t("shell.couldntRestoreNote", { message: msg }), "error");
       }
     },
-    [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast, scheduleLintRefetch],
+    [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast, scheduleLintRefetch, t],
   );
 
   // Async AI-draft lifecycle. State outlives any single NoteCard so the
@@ -667,7 +669,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             : laneApplicable(lane, versesWithTn.has(verse), versesWithTq.has(verse));
         const checkers = laneIndex.get(laneKey(verse, lane));
         const shade: LaneShade = applicable ? shadeFromCheckers(checkers, meUserId) : "open";
-        const title = `${LANE_LABELS[lane]} — ${applicable ? laneAttribution(checkers, meUserId) : "nothing to check"}`;
+        const title = `${LANE_LABELS[lane]} — ${applicable ? laneAttribution(checkers, meUserId) : t("shell.nothingToCheck")}`;
         return { lane, shade, applicable, title };
       });
     // Chapter-front USFM content (Psalm \d superscriptions, leading \p before \v 1)
@@ -678,7 +680,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     const verseNums = [...versesWithSomething].filter((v) => v > 0).sort((a, b) => a - b);
     for (const v of verseNums) tiles.push({ verse: v, has: hasUnalignedFor(v), lanes: buildLanes(v) });
     return tiles;
-  }, [versesForTiles, laneIndex, versesWithTn, versesWithTq, meUserId, introHasResource, introHasTwl]);
+  }, [versesForTiles, laneIndex, versesWithTn, versesWithTq, meUserId, introHasResource, introHasTwl, t]);
 
   // Toggle MY checkoff stamp on a (verse, lane): optimistic + outbox (offline-safe).
   const toggleLane = useCallback(
@@ -1732,8 +1734,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       // keystroke draft to preserve, and find/replace-all can touch many verses
       // at once — a single shared confirm dialog would clobber across them.
       const sample = lost.slice(0, 3).join(", ");
+      const ref = `${book} ${chapterNum}:${verseNum}`;
       pushPipelineToast(
-        `This edit can't preserve word alignment on words you didn't change, so it wasn't saved (${book} ${chapterNum}:${verseNum} ${bibleVersion}${sample ? `; affected: ${sample}` : ""}). Please note this verse (${book} ${chapterNum}:${verseNum}) for your admin to file a bug-fix review, or re-align in the alignment panel.`,
+        t("shell.cantPreserveAlignment", {
+          ref,
+          bibleVersion,
+          affected: sample ? t("shell.affectedSuffix", { sample }) : "",
+        }),
         "error",
       );
       return false;
@@ -1747,7 +1754,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       { content, plain_text: plainText, alignment_intent: intent },
     );
     return true;
-  }, [book, pushPipelineToast]);
+  }, [book, pushPipelineToast, t]);
 
   // Compute the alignment panel's props from the current chapter cache.
   // Memoized so identity stays stable when the chapter hasn't changed under
@@ -1987,12 +1994,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         />
         <Box sx={{ p: 4, display: "flex", alignItems: "center", gap: 2 }}>
           {status === "error" ? (
-            <Alert severity="error">failed to load {book} {chapter}: {error}</Alert>
+            <Alert severity="error">{t("shell.failedToLoad", { book, chapter, error })}</Alert>
           ) : (
             <>
               <CircularProgress size={20} />
               <Typography variant="body2">
-                {status === "retrying" ? `reconnecting… (attempt ${retryAttempts})` : `loading ${book} ${chapter}…`}
+                {status === "retrying" ? t("shell.reconnecting", { attempt: retryAttempts }) : t("shell.loadingChapter", { book, chapter })}
               </Typography>
             </>
           )}
@@ -2101,7 +2108,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     const newlyUnaligned = afterUnaligned - beforeUnaligned;
     if (newlyUnaligned > 0) {
       pushPipelineToast(
-        `This edit left ${newlyUnaligned} word${newlyUnaligned > 1 ? "s" : ""} unaligned in ${book} ${chapterNum}:${verseNum} ${bibleVersion} — re-align in the Alignment panel.`,
+        t("shell.editLeftUnaligned", {
+          count: newlyUnaligned,
+          ref: `${book} ${chapterNum}:${verseNum}`,
+          bibleVersion,
+        }),
         "info",
       );
     }
@@ -2284,16 +2295,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             "& .MuiAlert-message": { width: "100%" },
           }}
         >
-          AI {chapterLock.pipelineType} run in progress for {book} {chapter} —
-          started {formatRelative(chapterLock.startedAt)}. Editing is locked
-          for this chapter. You can still mark notes to keep before the new
-          set lands.
+          {t("shell.chapterLockBanner", {
+            pipelineType: chapterLock.pipelineType,
+            book,
+            chapter,
+            started: formatRelative(chapterLock.startedAt),
+          })}
         </Alert>
       )}
       <Box ref={splitContainerRef} sx={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {!railCollapsed && (
           <Box sx={{ width: railWidth, flexShrink: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <Tooltip title="Chapter checkoff board" placement="right">
+            <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
               <Button
                 size="small"
                 startIcon={<GridViewIcon sx={{ fontSize: 16 }} />}
@@ -2311,7 +2324,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
                   color: "text.secondary",
                 }}
               >
-                Board
+                {t("shell.board")}
               </Button>
             </Tooltip>
             <TimelineRail
@@ -2336,7 +2349,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
                 p: 0.5,
               }}
             >
-              <Tooltip title="Sign out" placement="right">
+              <Tooltip title={t("shell.signOut")} placement="right">
                 <IconButton
                   size="small"
                   onClick={onLogout}
@@ -2807,37 +2820,38 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       />
       <Dialog open={!!pendingBulk} onClose={() => setPendingBulk(null)}>
         <DialogTitle>
-          {pendingBulk?.checked ? "Check" : "Clear"} all {pendingBulk ? LANE_LABELS[pendingBulk.lane] : ""} for this chapter?
+          {pendingBulk?.checked
+            ? t("shell.bulkCheckTitle", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "" })
+            : t("shell.bulkClearTitle", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "" })}
         </DialogTitle>
         <DialogContent>
           <DialogContentText>
             {pendingBulk?.checked
-              ? `This marks ${pendingBulk ? LANE_LABELS[pendingBulk.lane] : ""} as checked by you for all ${pendingBulk?.verses.length ?? 0} applicable verses in ${book} ${chapter}.`
-              : `This removes your ${pendingBulk ? LANE_LABELS[pendingBulk.lane] : ""} checks from all ${pendingBulk?.verses.length ?? 0} applicable verses in ${book} ${chapter}.`}
+              ? t("shell.bulkCheckBody", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "", verseCount: pendingBulk?.verses.length ?? 0, ref: `${book} ${chapter}` })
+              : t("shell.bulkClearBody", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "", verseCount: pendingBulk?.verses.length ?? 0, ref: `${book} ${chapter}` })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPendingBulk(null)}>Cancel</Button>
+          <Button onClick={() => setPendingBulk(null)}>{t("shell.cancel")}</Button>
           <Button variant="contained" color={pendingBulk?.checked ? "primary" : "error"} onClick={confirmBulk}>
-            {pendingBulk?.checked ? "Check all" : "Clear all"}
+            {pendingBulk?.checked ? t("shell.checkAll") : t("shell.clearAll")}
           </Button>
         </DialogActions>
       </Dialog>
       <Dialog open={!!pendingNav} onClose={dismissPendingNav}>
-        <DialogTitle>Unsaved alignment changes</DialogTitle>
+        <DialogTitle>{t("shell.unsavedAlignmentChanges")}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            You have unsaved changes in the alignment editor. Save them before switching
-            verses, discard them, or cancel to stay here.
+            {t("shell.unsavedAlignmentBody")}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={dismissPendingNav}>Cancel</Button>
+          <Button onClick={dismissPendingNav}>{t("shell.cancel")}</Button>
           <Button color="error" onClick={() => resolvePendingNav("discard")}>
-            Discard
+            {t("shell.discard")}
           </Button>
           <Button variant="contained" onClick={() => resolvePendingNav("save")}>
-            Save
+            {t("shell.save")}
           </Button>
         </DialogActions>
       </Dialog>
@@ -2867,27 +2881,28 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       <Dialog open={!!pendingAlignmentLoss} onClose={() => setPendingAlignmentLoss(null)}>
         <DialogTitle>
           {pendingAlignmentLoss && pendingAlignmentLoss.lostWords.length === 1
-            ? "A word will be unaligned"
-            : "Words will be unaligned"}
+            ? t("shell.aWordWillBeUnaligned")
+            : t("shell.wordsWillBeUnaligned")}
         </DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Saving will leave{" "}
-            {pendingAlignmentLoss?.lostWords.length === 1 ? "this word" : "these words"} with no
-            source link in {pendingAlignmentLoss?.ref}:{" "}
+            {t("shell.alignLossIntro", {
+              phrase: pendingAlignmentLoss?.lostWords.length === 1 ? t("shell.thisWord") : t("shell.theseWords"),
+              ref: pendingAlignmentLoss?.ref ?? "",
+            })}
             <Box component="span" sx={{ fontWeight: 700 }}>
               {pendingAlignmentLoss?.lostWords.slice(0, 8).join(", ")}
               {pendingAlignmentLoss && pendingAlignmentLoss.lostWords.length > 8
-                ? ` (+${pendingAlignmentLoss.lostWords.length - 8} more)`
+                ? t("shell.plusMore", { n: pendingAlignmentLoss.lostWords.length - 8 })
                 : ""}
             </Box>
-            . That's fine if you meant to re-align — but if it's accidental it will block the
-            nightly export to master until the {pendingAlignmentLoss?.lostWords.length === 1 ? "word is" : "words are"}{" "}
-            aligned again. Save anyway, or cancel to keep editing.
+            {t("shell.alignLossOutro", {
+              state: pendingAlignmentLoss?.lostWords.length === 1 ? t("shell.wordIs") : t("shell.wordsAre"),
+            })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPendingAlignmentLoss(null)}>Cancel</Button>
+          <Button onClick={() => setPendingAlignmentLoss(null)}>{t("shell.cancel")}</Button>
           <Button
             color="error"
             variant="contained"
@@ -2900,25 +2915,24 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
               commit?.();
             }}
           >
-            Save anyway
+            {t("shell.saveAnyway")}
           </Button>
         </DialogActions>
       </Dialog>
       <Dialog open={!!pendingDualAction} onClose={() => setPendingDualAction(null)}>
-        <DialogTitle>Unsaved changes</DialogTitle>
+        <DialogTitle>{t("shell.unsavedChanges")}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            You have unsaved changes in the side-by-side aligner (alignment edits or reading text).
-            Save them, discard them, or cancel to keep editing.
+            {t("shell.unsavedDualBody")}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPendingDualAction(null)}>Cancel</Button>
+          <Button onClick={() => setPendingDualAction(null)}>{t("shell.cancel")}</Button>
           <Button color="error" onClick={() => resolveDualAction("discard")}>
-            Discard
+            {t("shell.discard")}
           </Button>
           <Button variant="contained" onClick={() => resolveDualAction("save")}>
-            Save
+            {t("shell.save")}
           </Button>
         </DialogActions>
       </Dialog>

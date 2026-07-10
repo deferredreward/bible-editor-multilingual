@@ -7,6 +7,7 @@
 
 import { Chip, Stack, Tooltip, Typography } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import { useTranslation } from "react-i18next";
 import { useAppVersion } from "../hooks/useAppVersion";
 
 // Kindle warning accent (#E59D33 from CLAUDE.md brand palette), matching the
@@ -31,14 +32,15 @@ interface Props {
 }
 
 export function VersionIndicator({ onRequestReload }: Props = {}) {
+  const { t } = useTranslation();
   const { current, updateAvailable } = useAppVersion();
 
   if (updateAvailable) {
     return (
-      <Tooltip title="A newer version is deployed. Click to reload and get the latest fixes.">
+      <Tooltip title={t("sync.updateAvailableTooltip")}>
         <Chip
           icon={<RefreshIcon />}
-          label="App update available — refresh"
+          label={t("sync.updateAvailable")}
           size="small"
           variant="outlined"
           clickable
@@ -55,13 +57,13 @@ export function VersionIndicator({ onRequestReload }: Props = {}) {
   const tooltip = (
     <Stack spacing={0.25}>
       <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
-        build {current.commit}
+        {t("sync.buildSha", { commit: current.commit })}
       </Typography>
       <Typography variant="caption" color="text.secondary">
         {formatBuiltAt(current.builtAt)}
       </Typography>
       <Typography variant="caption" color="text.secondary">
-        You're on the latest version you've loaded.
+        {t("sync.onLatestVersion")}
       </Typography>
     </Stack>
   );

@@ -17,6 +17,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
+import { useTranslation } from "react-i18next";
 import { api, type VerseDto } from "../sync/api";
 import { buildUsfmFromVerses } from "../lib/exportUsfm";
 
@@ -76,6 +77,7 @@ async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Prom
 }
 
 export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVersesFor }: Props) {
+  const { t } = useTranslation();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +110,7 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
     try {
       const verses = await versesFor(scope, version);
       if (verses.length === 0) {
-        setError(`No ${version} text to export for ${scope === "chapter" ? `${book} ${chapter}` : book}.`);
+        setError(t("export.noText", { version, target: scope === "chapter" ? `${book} ${chapter}` : book }));
         return;
       }
       const usfm = buildUsfmFromVerses(book, version, verses, { aligned });
@@ -119,20 +121,20 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
           : `${book}-${version}${suffix}.usfm`;
       download(name, usfm);
     } catch (e) {
-      setError(`USFM export failed: ${e instanceof Error ? e.message : String(e)}`);
+      setError(t("export.exportFailed", { message: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }
   }
 
   const scopes: Array<{ scope: Scope; label: string }> = [
-    { scope: "chapter", label: `Chapter ${chapter}` },
-    { scope: "book", label: `Whole book (${book})` },
+    { scope: "chapter", label: t("export.chapterScope", { chapter }) },
+    { scope: "book", label: t("export.wholeBook", { book }) },
   ];
 
   return (
     <>
-      <Tooltip title="Download USFM">
+      <Tooltip title={t("export.downloadUsfm")}>
         <span>
           <IconButton
             size="small"
@@ -151,10 +153,10 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
             </ListSubheader>,
             ...exportableVersions.flatMap((v) => [
               <MenuItem key={`${scope}-${v}-a`} onClick={() => void handleExport(scope, v, true)}>
-                {v} — aligned
+                {t("export.aligned", { version: v })}
               </MenuItem>,
               <MenuItem key={`${scope}-${v}-u`} onClick={() => void handleExport(scope, v, false)}>
-                {v} — plain text (no alignment)
+                {t("export.plainText", { version: v })}
               </MenuItem>,
             ]),
           ];

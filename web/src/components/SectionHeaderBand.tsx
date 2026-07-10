@@ -15,6 +15,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import CheckIcon from "@mui/icons-material/Check";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   tag: string;
@@ -33,6 +34,7 @@ const LEVEL_OPTIONS = [
 ];
 
 export function SectionHeaderBand({ tag, text, editable, onChange }: Props) {
+  const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(text);
   const [draftTag, setDraftTag] = useState(tag);
@@ -120,7 +122,7 @@ export function SectionHeaderBand({ tag, text, editable, onChange }: Props) {
         >
           {text}
         </Box>
-        <Tooltip title="save (enter)">
+        <Tooltip title={t("rail.saveEnter")}>
           <IconButton
             size="small"
             onClick={() => {
@@ -132,7 +134,7 @@ export function SectionHeaderBand({ tag, text, editable, onChange }: Props) {
             <CheckIcon sx={{ fontSize: 14 }} />
           </IconButton>
         </Tooltip>
-        <Tooltip title="cancel (esc)">
+        <Tooltip title={t("rail.cancelEsc")}>
           <IconButton
             size="small"
             onClick={() => {
@@ -145,7 +147,7 @@ export function SectionHeaderBand({ tag, text, editable, onChange }: Props) {
             <CloseIcon sx={{ fontSize: 14 }} />
           </IconButton>
         </Tooltip>
-        <Tooltip title="delete section header">
+        <Tooltip title={t("rail.deleteSectionHeader")}>
           <IconButton
             size="small"
             onClick={() => {
@@ -197,7 +199,7 @@ export function SectionHeaderBand({ tag, text, editable, onChange }: Props) {
         {text}
       </Typography>
       {editable && (
-        <Tooltip title="edit section header">
+        <Tooltip title={t("rail.editSectionHeader")}>
           <IconButton
             size="small"
             onClick={() => setEditing(true)}

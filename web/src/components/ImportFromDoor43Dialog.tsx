@@ -22,6 +22,7 @@ import {
 } from "@mui/material";
 import { ApiError, api, type ReimportResource, type ReimportResponse } from "../sync/api";
 import { parseChapterRange } from "../lib/refParser";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   open: boolean;
@@ -98,6 +99,7 @@ export function ImportFromDoor43Dialog({
   onMessage,
   onImported,
 }: Props) {
+  const { t } = useTranslation();
   const [opts, setOpts] = useState<ResourceState>(() => loadOpts());
   const [refInput, setRefInput] = useState<string>(String(currentChapter));
   const [submitting, setSubmitting] = useState(false);
@@ -140,18 +142,18 @@ export function ImportFromDoor43Dialog({
       if (e instanceof ApiError) {
         const body = e.body as { error?: string; detail?: string } | undefined;
         if (e.status === 404) {
-          onMessage?.(`Cannot re-import: ${refParsed.range.book} hasn't been imported yet. Open the book once first.`);
+          onMessage?.(t("importDialog.notImportedYet", { book: refParsed.range.book }));
         } else if (e.status === 409) {
-          onMessage?.(`Another import is already running for ${refParsed.range.book}. Try again shortly.`);
+          onMessage?.(t("importDialog.alreadyRunning", { book: refParsed.range.book }));
         } else if (e.status === 401) {
-          onMessage?.("Sign in to import from Door43.");
+          onMessage?.(t("importDialog.signIn"));
         } else if (e.status === 422) {
-          onMessage?.(`Invalid request: ${body?.detail ?? body?.error ?? "check chapter/resource input"}`);
+          onMessage?.(t("importDialog.invalidRequest", { detail: body?.detail ?? body?.error ?? t("importDialog.checkInput") }));
         } else {
-          onMessage?.(`Import failed: ${body?.error ?? e.message}`);
+          onMessage?.(t("importDialog.importFailed", { message: body?.error ?? e.message }));
         }
       } else {
-        onMessage?.("Import failed. Check your connection and try again.");
+        onMessage?.(t("importDialog.importFailedGeneric"));
       }
     } finally {
       setSubmitting(false);
@@ -160,17 +162,13 @@ export function ImportFromDoor43Dialog({
 
   return (
     <Dialog open={open} onClose={() => !submitting && onClose()} maxWidth="sm" fullWidth>
-      <DialogTitle>Import from Door43</DialogTitle>
+      <DialogTitle>{t("importDialog.title")}</DialogTitle>
       <DialogContent>
-        <DialogContentText>
-          Pulls fresh ULT / UST / TN / TQ / TWL content for the selected chapters
-          straight from Door43. Rows already edited by translators are skipped —
-          this is a safe re-seed, not an overwrite.
-        </DialogContentText>
+        <DialogContentText>{t("importDialog.description")}</DialogContentText>
         <Box sx={{ mt: 2, display: "flex", alignItems: "flex-start", gap: 1.5 }}>
           <Typography sx={{ pt: 1, fontWeight: 500 }}>{book}</Typography>
           <TextField
-            label="Chapter or range"
+            label={t("importDialog.chapterOrRange")}
             value={refInput}
             onChange={(e) => setRefInput(e.target.value.replace(/[^\d-]/g, ""))}
             disabled={submitting}
@@ -182,15 +180,15 @@ export function ImportFromDoor43Dialog({
             helperText={
               refParsed.ok
                 ? refParsed.range.startChapter === refParsed.range.endChapter
-                  ? `Imports ${refParsed.range.book} ${refParsed.range.startChapter}.`
-                  : `Imports ${refParsed.range.book} ${refParsed.range.startChapter}-${refParsed.range.endChapter}.`
+                  ? t("importDialog.importsChapter", { book: refParsed.range.book, chapter: refParsed.range.startChapter })
+                  : t("importDialog.importsRange", { book: refParsed.range.book, startChapter: refParsed.range.startChapter, endChapter: refParsed.range.endChapter })
                 : refParsed.error
             }
           />
         </Box>
         <Box sx={{ mt: 2 }}>
           <DialogContentText sx={{ mb: 1, fontSize: "0.875rem" }}>
-            What to import:
+            {t("importDialog.whatToImport")}
           </DialogContentText>
           <FormGroup>
             <FormControlLabel
@@ -201,7 +199,7 @@ export function ImportFromDoor43Dialog({
                   disabled={submitting}
                 />
               }
-              label="ULT (literal text)"
+              label={t("importDialog.ultLabel")}
             />
             <FormControlLabel
               control={
@@ -211,7 +209,7 @@ export function ImportFromDoor43Dialog({
                   disabled={submitting}
                 />
               }
-              label="UST (simplified text)"
+              label={t("importDialog.ustLabel")}
             />
             <FormControlLabel
               control={
@@ -221,7 +219,7 @@ export function ImportFromDoor43Dialog({
                   disabled={submitting}
                 />
               }
-              label="Translation notes (TN)"
+              label={t("importDialog.tnLabel")}
             />
             <FormControlLabel
               control={
@@ -231,7 +229,7 @@ export function ImportFromDoor43Dialog({
                   disabled={submitting}
                 />
               }
-              label="Translation questions (TQ)"
+              label={t("importDialog.tqLabel")}
             />
             <FormControlLabel
               control={
@@ -241,19 +239,19 @@ export function ImportFromDoor43Dialog({
                   disabled={submitting}
                 />
               }
-              label="Translation word links (TWL)"
+              label={t("importDialog.twlLabel")}
             />
           </FormGroup>
           {nothingSelected ? (
             <DialogContentText sx={{ mt: 1, fontSize: "0.8125rem", color: "warning.main" }}>
-              Select at least one resource to import.
+              {t("importDialog.selectAtLeastOne")}
             </DialogContentText>
           ) : null}
         </Box>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={submitting}>
-          Cancel
+          {t("importDialog.cancel")}
         </Button>
         <Button
           onClick={submit}
@@ -261,7 +259,7 @@ export function ImportFromDoor43Dialog({
           disabled={!canSubmit}
           startIcon={submitting ? <CircularProgress size={14} /> : undefined}
         >
-          Import
+          {t("importDialog.import")}
         </Button>
       </DialogActions>
     </Dialog>

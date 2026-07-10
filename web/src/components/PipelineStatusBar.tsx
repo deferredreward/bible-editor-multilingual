@@ -29,6 +29,7 @@ import BlockIcon from "@mui/icons-material/Block";
 import type { PipelineJobRow, PipelineState } from "../sync/api";
 import { pipelineStore } from "../sync/pipelineStore";
 import { currentPipelineUserId } from "../sync/pipelineSession";
+import { useTranslation } from "react-i18next";
 
 // A job requested by another user. The shared queue shows everyone's active /
 // queued runs, but only the owner can cancel one, and its requester is
@@ -39,9 +40,9 @@ function isForeign(job: PipelineJobRow): boolean {
 }
 
 const TYPE_LABEL: Record<PipelineJobRow["pipeline_type"], string> = {
-  generate: "Generate ULT + UST",
-  notes: "Translation notes",
-  tqs: "Translation questions",
+  generate: "pipeline.generateUltUst",
+  notes: "pipeline.translationNotes",
+  tqs: "pipeline.translationQuestions",
 };
 
 // Coarse stage milestones reported via current.skill. For generate, the
@@ -56,13 +57,13 @@ const STAGES: Record<PipelineJobRow["pipeline_type"], string[]> = {
 };
 
 const STAGE_LABEL: Record<string, string> = {
-  "initial-pipeline": "Draft",
-  "align-all-parallel": "Align",
-  "door43-push": "Push",
-  "tn-writer": "Draft",
-  "parallel-batch": "Batch",
-  "tq-writer": "Draft",
-  "repo-insert": "Push",
+  "initial-pipeline": "pipeline.stageDraft",
+  "align-all-parallel": "pipeline.stageAlign",
+  "door43-push": "pipeline.stagePush",
+  "tn-writer": "pipeline.stageDraft",
+  "parallel-batch": "pipeline.stageBatch",
+  "tq-writer": "pipeline.stageDraft",
+  "repo-insert": "pipeline.stagePush",
 };
 
 function StageBar({
@@ -74,6 +75,7 @@ function StageBar({
   currentSkill: string | null;
   state: PipelineState;
 }) {
+  const { t } = useTranslation();
   const stages = STAGES[pipelineType];
   if (!stages || stages.length === 0) return null;
   const currentIdx = currentSkill ? stages.indexOf(currentSkill) : -1;
@@ -118,7 +120,7 @@ function StageBar({
                 fontWeight: isCurrent ? 600 : 400,
               }}
             >
-              {STAGE_LABEL[skill] ?? skill}
+              {STAGE_LABEL[skill] ? t(STAGE_LABEL[skill]) : skill}
             </Typography>
             {i < stages.length - 1 && (
               <Box
@@ -196,6 +198,7 @@ interface Props {
 }
 
 export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
+  const { t } = useTranslation();
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -290,14 +293,14 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
             icon={<AutoAwesomeIcon />}
             label={
               active.length > 0
-                ? `${active.length} pipeline${active.length === 1 ? "" : "s"} running${
-                    queued.length > 0 ? ` · ${queued.length} queued` : ""
+                ? `${t("pipeline.pipelinesRunning", { count: active.length })}${
+                    queued.length > 0 ? ` · ${t("pipeline.queuedCount", { n: queued.length })}` : ""
                   }`
                 : queued.length > 0
-                  ? `${queued.length} queued`
+                  ? t("pipeline.queuedCount", { n: queued.length })
                   : failed.length > 0
-                    ? `${failed.length} failed`
-                    : "AI ready to review"
+                    ? t("pipeline.failedCount", { n: failed.length })
+                    : t("pipeline.aiReadyToReview")
             }
             size="small"
             variant="outlined"
@@ -365,7 +368,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
       >
         <Box sx={{ p: 1.5, minWidth: 320, maxWidth: 420 }}>
           <Typography variant="caption" color="text.secondary">
-            AI pipelines
+            {t("pipeline.aiPipelines")}
           </Typography>
           {queued.length > 0 && queueSummary?.activeJob && (
             <Typography
@@ -374,9 +377,9 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
               display="block"
               sx={{ mt: 0.5, fontStyle: "italic" }}
             >
-              Only one runs at a time. Running now:{" "}
-              {queueSummary.activeJob.started_by_username ?? "someone"} ·{" "}
-              {TYPE_LABEL[queueSummary.activeJob.pipeline_type]}{" "}
+              {t("pipeline.onlyOneRuns")}{" "}
+              {queueSummary.activeJob.started_by_username ?? t("pipeline.someone")} ·{" "}
+              {t(TYPE_LABEL[queueSummary.activeJob.pipeline_type])}{" "}
               {queueSummary.activeJob.book} {queueSummary.activeJob.start_chapter}
               {` (${relativeTime(queueSummary.activeJob.updated_at)})`}
             </Typography>
@@ -384,7 +387,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
           <Stack spacing={1} sx={{ mt: 1 }}>
             {jobs.length === 0 && (
               <Typography variant="body2" color="text.secondary">
-                No pipelines running.
+                {t("pipeline.noPipelinesRunning")}
               </Typography>
             )}
             {jobs.map((job, i) => {
@@ -399,13 +402,13 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                   </Box>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                      {TYPE_LABEL[job.pipeline_type]} — {job.book} {job.start_chapter}
+                      {t(TYPE_LABEL[job.pipeline_type])} — {job.book} {job.start_chapter}
                       {job.end_chapter !== job.start_chapter ? `–${job.end_chapter}` : ""}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" display="block">
                       {stateLabel(job.state)}
                       {job.state === "queued" && job.queue_position
-                        ? ` · #${job.queue_position} in line`
+                        ? t("pipeline.queuePositionInLine", { position: job.queue_position })
                         : ""}
                       {job.current_skill && !STAGES[job.pipeline_type]?.includes(job.current_skill)
                         ? ` · ${job.current_skill}`
@@ -414,17 +417,17 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                     </Typography>
                     {isForeign(job) && (
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
-                        requested by {job.started_by_username ?? "another user"}
+                        {t("pipeline.requestedBy", { user: job.started_by_username ?? t("pipeline.anotherUser") })}
                       </Typography>
                     )}
                     {parentId && (
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
-                        Step 2 of 2 · after {shortJobId(parentId)}
+                        {t("pipeline.step2After", { id: shortJobId(parentId) })}
                       </Typography>
                     )}
                     {childId && (
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>
-                        Step 1 of 2 · follow-up {shortJobId(childId)}
+                        {t("pipeline.step1FollowUp", { id: shortJobId(childId) })}
                       </Typography>
                     )}
                     {job.error_message && (
@@ -434,7 +437,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                     )}
                   </Box>
                   {job.state === "queued" && !isForeign(job) && (
-                    <Tooltip title="Remove from the queue (only possible before it starts)">
+                    <Tooltip title={t("pipeline.removeFromQueueTooltip")}>
                       <span>
                         <Button
                           size="small"
@@ -443,15 +446,15 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                           disabled={cancelling === job.job_id}
                           startIcon={cancelling === job.job_id ? <CircularProgress size={12} /> : undefined}
                         >
-                          Cancel
+                          {t("pipeline.cancel")}
                         </Button>
                       </span>
                     </Tooltip>
                   )}
                   {(job.state === "failed" || job.state === "cancelled") && (
-                    <Tooltip title="Mark as seen — hides this run from the list">
+                    <Tooltip title={t("pipeline.markAsSeenTooltip")}>
                       <Button size="small" color="inherit" onClick={() => pipelineStore.dismiss(job.job_id)}>
-                        Dismiss
+                        {t("pipeline.dismiss")}
                       </Button>
                     </Tooltip>
                   )}
@@ -465,7 +468,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                 )}
                 {job.state === "done" && (
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 3, mt: 0.5 }} display="block">
-                    AI output applied to {job.book} {job.start_chapter}.
+                    {t("pipeline.aiOutputApplied", { book: job.book, chapter: job.start_chapter })}
                   </Typography>
                 )}
               </Box>
@@ -488,7 +491,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                 }
               }}
             >
-              {refreshing ? "Refreshing…" : "Refresh"}
+              {refreshing ? t("pipeline.refreshing") : t("pipeline.refresh")}
             </Button>
             {canDismissResolved && (
               <Button
@@ -499,7 +502,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
                   setAnchorEl(null);
                 }}
               >
-                Dismiss all
+                {t("pipeline.dismissAll")}
               </Button>
             )}
           </Stack>
