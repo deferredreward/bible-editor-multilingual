@@ -315,6 +315,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       };
     }
 
+    // Apply TWL sort order updates computed during export. Persist the sequence
+    // so future operations use the optimal ordering from the ULT alignment.
+    if (built.sortOrderUpdates.length > 0) {
+      await this.applyTwlSortOrderUpdates(book, built.sortOrderUpdates);
+    }
+
     // Book-specific branch named for this resource's human contributors.
     const contributors = await this.contributorsFor(book, resource);
     const branch = buildExportBranch(book, contributors);
@@ -559,7 +565,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     };
   }
 
-  private async buildResource(book: string, resource: Resource): Promise<{ content: string; rowCount: number }> {
+  private async buildResource(
+    book: string,
+    resource: Resource,
+  ): Promise<{ content: string; rowCount: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
     const db = this.env.DB;
     if (resource === "tn") {
       // trashed_at IS NULL excludes notes pending deletion. The nightly cron
@@ -573,7 +582,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TnRow>();
-      return { content: rs.results.length === 0 ? "" : buildTnTsv(rs.results), rowCount: rs.results.length };
+      return { content: rs.results.length === 0 ? "" : buildTnTsv(rs.results), rowCount: rs.results.length, sortOrderUpdates: [] };
     }
     if (resource === "tq") {
       const rs = await db
@@ -583,7 +592,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TqRow>();
-      return { content: rs.results.length === 0 ? "" : buildTqTsv(rs.results), rowCount: rs.results.length };
+      return { content: rs.results.length === 0 ? "" : buildTqTsv(rs.results), rowCount: rs.results.length, sortOrderUpdates: [] };
     }
     if (resource === "twl") {
       const rs = await db
@@ -600,14 +609,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book, "ULT")
         .all<VerseRow>();
+      if (rs.results.length === 0) {
+        return { content: "", rowCount: 0, sortOrderUpdates: [] };
+      }
+      const result = buildTwlTsv(rs.results, {
+        book,
+        bibleVersion: "ULT",
+        headers: null,
+        verses: ultVerses.results,
+      });
       return {
-        content: rs.results.length === 0 ? "" : buildTwlTsv(rs.results, {
-          book,
-          bibleVersion: "ULT",
-          headers: null,
-          verses: ultVerses.results,
-        }),
+        content: result.tsv,
         rowCount: rs.results.length,
+        sortOrderUpdates: result.sortOrderUpdates,
       };
     }
     // ult / ust
@@ -619,7 +633,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       )
       .bind(book, bibleVersion)
       .all<VerseRow>();
-    if (rs.results.length === 0) return { content: "", rowCount: 0 };
+    if (rs.results.length === 0) return { content: "", rowCount: 0, sortOrderUpdates: [] };
     const headersRow = await db
       .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2`)
       .bind(book, bibleVersion)
@@ -636,6 +650,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return {
       content: buildUsfm({ book, bibleVersion, headers, verses: rs.results }),
       rowCount: rs.results.length,
+      sortOrderUpdates: [],
     };
   }
 
@@ -680,6 +695,38 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       : this.env.DB.prepare(sql).bind(resource, book);
     const rs = await stmt.all<{ username: string; first_at: number }>();
     return rs.results.map((r) => r.username);
+  }
+
+  // Apply TWL sort order updates computed during export. Updates only rows in
+  // verses where reordering happened, preserving the alignment-based sequence
+  // in the database for future operations. This is idempotent: multiple calls
+  // with the same updates produce the same result.
+  private async applyTwlSortOrderUpdates(
+    book: string,
+    updates: Array<{ id: string; sort_order: number }>,
+  ): Promise<void> {
+    if (updates.length === 0) return;
+    const db = this.env.DB;
+    // Batch update all rows at once. Each row's sort_order is set to its
+    // computed position, and version is incremented for audit.
+    const updateSql = updates
+      .map((_, i) => `WHEN '${updates[i].id}' THEN ${updates[i].sort_order}`)
+      .join(" ");
+    const idList = updates.map((u) => `'${u.id}'`).join(", ");
+    const sql = `
+      UPDATE twl_rows
+      SET sort_order = CASE id ${updateSql} END,
+          version = version + 1
+      WHERE id IN (${idList})
+    `;
+    try {
+      await db.exec(sql);
+    } catch (e) {
+      console.error("applyTwlSortOrderUpdates failed", { book, updateCount: updates.length, error: e });
+      // Non-fatal: a sort order update failure doesn't block the export.
+      // The export proceeds with the TSV already rendered in the correct order;
+      // future operations just won't have the updated sort_order in D1.
+    }
   }
 
   // Delete branches this export's branch replaces. Sources:
