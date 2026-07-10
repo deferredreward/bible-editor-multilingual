@@ -197,8 +197,23 @@ const darkTheme = createTheme({
   components: scrollbarComponents("#1F242C", "#3F4956", "#5C6A78"),
 });
 
-export function makeTheme(mode: ThemeMode): Theme {
-  return mode === "dark" ? darkTheme : lightTheme;
+export type ThemeDirection = "ltr" | "rtl";
+
+// Direction variants are derived lazily from the base light/dark themes and
+// cached — makeTheme is called from a useMemo on every mode/dir change and
+// must return referentially stable objects or the whole MUI tree re-styles.
+const directionThemeCache = new Map<string, Theme>();
+
+export function makeTheme(mode: ThemeMode, direction: ThemeDirection = "ltr"): Theme {
+  const base = mode === "dark" ? darkTheme : lightTheme;
+  if (direction === "ltr") return base;
+  const key = `${mode}:${direction}`;
+  let themed = directionThemeCache.get(key);
+  if (!themed) {
+    themed = createTheme(base, { direction });
+    directionThemeCache.set(key, themed);
+  }
+  return themed;
 }
 
 // Kept for back-compat with any existing import sites.

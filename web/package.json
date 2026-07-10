@@ -11,6 +11,7 @@
     "test": "node --experimental-strip-types --no-warnings src/lib/alignment.test.mjs && node --experimental-strip-types --no-warnings src/lib/alignmentDelta.test.mjs && node --experimental-strip-types --no-warnings src/lib/morph.test.mjs && node --experimental-strip-types --no-warnings src/lib/replace.test.mjs && node --experimental-strip-types --no-warnings src/lib/sourceOccurrences.test.mjs && node --experimental-strip-types --no-warnings src/lib/wordDiff.test.mjs && node --experimental-strip-types --no-warnings src/lib/twlResolve.test.mjs && node --experimental-strip-types --no-warnings src/lib/verseRange.test.mjs && node --experimental-strip-types --no-warnings src/sync/rowConflict.test.mjs && node --experimental-strip-types --no-warnings src/lib/exportCopy.test.mjs"
   },
   "dependencies": {
+    "@emotion/cache": "^11.14.0",
     "@emotion/react": "^11.13.0",
     "@emotion/styled": "^11.13.0",
     "@mui/icons-material": "^6.5.0",
@@ -18,17 +19,22 @@
     "@mui/styled-engine": "^6.5.0",
     "@mui/styles": "^6.5.0",
     "core-js": "^3.38.0",
+    "i18next": "^26.3.6",
     "idb": "^8.0.0",
     "prop-types": "^15.8.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "react-i18next": "^17.0.9",
     "react-markdown": "^9.0.1",
     "react-redux": "^7.2.9",
-    "remark-gfm": "^4.0.0"
+    "remark-gfm": "^4.0.0",
+    "stylis": "^4.2.0",
+    "stylis-plugin-rtl": "^2.1.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
+    "@types/stylis": "^4.2.7",
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "^5.5.0",
     "usfm-js": "^3.5.0",
