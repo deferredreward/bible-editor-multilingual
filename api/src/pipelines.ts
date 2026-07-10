@@ -92,6 +92,30 @@ const ChainStep = z
   })
   .strict();
 
+// Client-supplied translate overrides (all optional — the server derives the
+// full option set from the active project config; these only override defaults).
+// Kept SEPARATE from PipelineOptions (which is .strict() and generate/notes-
+// shaped) so the two schemas don't collide; the server transforms this into the
+// bot's `options` shape (bp-bot/translate-pipeline/PLAN.md §1). Single-note /
+// verse-scope selection (rowIds / verseStart / verseEnd) rides here too.
+const TranslateOptions = z
+  .object({
+    model: z.enum(["sonnet", "opus"]).optional(),
+    delivery: z.enum(["path", "branch"]).optional(),
+    branchOnly: z.boolean().optional(),
+    direction: z.enum(["ltr", "rtl"]).optional(),
+    // Precise subset selection → bot switches to update-by-ID merge.
+    rowIds: z.array(z.string().min(1).max(16)).min(1).max(50).optional(),
+    verseStart: z.number().int().positive().optional(),
+    verseEnd: z.number().int().positive().optional(),
+    // Advanced overrides — normally derived from project config.
+    targetLang: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/).optional(),
+    targetOrg: z.string().min(1).max(64).optional(),
+    sourceRef: z.string().min(3).max(200).optional(),
+    contextRef: z.string().min(3).max(200).optional(),
+  })
+  .strict();
+
 const StartBody = z
   .object({
     pipelineType: z.enum(PIPELINE_TYPES),
@@ -100,6 +124,10 @@ const StartBody = z
     endChapter: z.number().int().positive().optional(),
     sessionKey: z.string().min(1).max(120).regex(/^[A-Za-z0-9_\-/]+$/),
     options: PipelineOptions.optional(),
+    // Translate-pipeline overrides (only meaningful when pipelineType ===
+    // 'translate'; ignored otherwise). The server builds the full option set
+    // from project config and folds these in.
+    translate: TranslateOptions.optional(),
     // Optional second pipeline to fire on the parent's done-transition. Used
     // to express asymmetric ULT/UST alignment (e.g. ULT aligned + UST text-
     // only) since the upstream contract can't carry asymmetric flags in one
@@ -154,6 +182,56 @@ interface StatusResponse {
 
 function upstreamBase(env: Env): string {
   return env.PIPELINE_API_BASE || DEFAULT_BASE;
+}
+
+// Build the bp-assistant `translate` options from the active project config,
+// folding in any client overrides. Contract: bp-bot/translate-pipeline/PLAN.md
+// §1 — the bot fetches the source rows BY REFERENCE (sourceRef), so nothing is
+// gathered from D1 here (unlike the notes-hints path). Returns null if the
+// project has no translationSource (the English root project can't be a
+// translate TARGET) — the caller turns that into a 400.
+type TranslateClientOptions = {
+  model?: "sonnet" | "opus";
+  delivery?: "path" | "branch";
+  branchOnly?: boolean;
+  direction?: "ltr" | "rtl";
+  rowIds?: string[];
+  verseStart?: number;
+  verseEnd?: number;
+  targetLang?: string;
+  targetOrg?: string;
+  sourceRef?: string;
+  contextRef?: string;
+};
+
+function buildTranslateOptions(
+  cfg: import("./projectConfig.ts").ProjectConfig,
+  overrides: TranslateClientOptions | undefined,
+): Record<string, unknown> | null {
+  const src = cfg.translationSource;
+  if (!src) return null; // not a gateway-language project → can't translate INTO it
+  const o = overrides ?? {};
+  const targetLang = o.targetLang ?? cfg.languageCode;
+  const targetOrg = o.targetOrg ?? cfg.exportOrg;
+  // Source is the published EN tN repo pinned to master by default; a caller
+  // can pin an exact SHA for reproducibility (the bot echoes the resolved SHA).
+  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos.tn}@master`;
+  const contextRef = o.contextRef ?? `${cfg.org}/translation-context@master`;
+  return {
+    targetLang,
+    targetOrg,
+    sourceRef,
+    contextRef,
+    // Review branch, no auto-merge — the editor consumes the DCS branch and
+    // applies it as ai_draft rows (PLAN.md §1 delivery: branch, branchOnly).
+    delivery: o.delivery ?? "branch",
+    branchOnly: o.branchOnly ?? true,
+    model: o.model ?? "opus",
+    direction: o.direction ?? cfg.direction,
+    ...(o.rowIds ? { rowIds: o.rowIds } : {}),
+    ...(o.verseStart != null ? { verseStart: o.verseStart } : {}),
+    ...(o.verseEnd != null ? { verseEnd: o.verseEnd } : {}),
+  };
 }
 
 async function resolveUsernameFromDb(env: Env, userId: number): Promise<string | null> {
@@ -818,7 +896,24 @@ pipelines.post("/start", requireEditor, async (c) => {
   // Wider type for mergedOptions: hints is a server-added field, not part of
   // the client-validated PipelineOptions schema (clients never send it).
   let mergedOptions: Record<string, unknown> | undefined = parsed.data.options;
-  if (parsed.data.pipelineType === "notes") {
+  if (parsed.data.pipelineType === "translate") {
+    // Translate options are server-authoritative, derived from the active
+    // project config (bp-bot/translate-pipeline/PLAN.md §1). The bot fetches
+    // source rows by `sourceRef`, so there's nothing to gather from D1.
+    const cfg = await getProjectConfig(c.env);
+    const translateOptions = buildTranslateOptions(cfg, parsed.data.translate);
+    if (!translateOptions) {
+      return c.json(
+        {
+          error: "not_a_gl_project",
+          message:
+            "Translate is only available for gateway-language projects (this project has no translation source). Switch the project config to a GL preset first.",
+        },
+        400,
+      );
+    }
+    mergedOptions = translateOptions;
+  } else if (parsed.data.pipelineType === "notes") {
     const hintRows = await c.env.DB.prepare(
       `SELECT id, verse, quote, support_reference, note
          FROM tn_rows
