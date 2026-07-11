@@ -268,7 +268,7 @@ export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): TwlTsvResult {
     // Check if this verse's rows were reordered from their stored sort_order
     let verseReordered = false;
     for (let i = 0; i < bucket.length; i++) {
-      const computedPos = i;
+      const computedPos = (i + 1) * 100;
       const storedPos = bucket[i].row.sort_order ?? Number.POSITIVE_INFINITY;
       if (computedPos !== storedPos) {
         verseReordered = true;
@@ -280,9 +280,10 @@ export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): TwlTsvResult {
     if (verseReordered) {
       for (let i = 0; i < bucket.length; i++) {
         const row = bucket[i].row;
+        const computedPos = (i + 1) * 100;
         const storedPos = row.sort_order ?? Number.POSITIVE_INFINITY;
-        if (i !== storedPos) {
-          sortOrderUpdates.push({ id: row.id, sort_order: i });
+        if (computedPos !== storedPos) {
+          sortOrderUpdates.push({ id: row.id, sort_order: computedPos });
         }
       }
     }
