@@ -68,7 +68,7 @@ import { BookLintIndicator } from "./BookLintIndicator";
 import { LogosSyncToggle } from "./LogosSyncToggle";
 import { PipelineMenu } from "./PipelineMenu";
 import { PipelineStatusBar } from "./PipelineStatusBar";
-import { pipelineStore, type PipelineJob } from "../sync/pipelineStore";
+import { pipelineStore, getSessionKey, type PipelineJob } from "../sync/pipelineStore";
 import { onOutboxResult } from "../sync/outbox";
 import { AiCompletionToasts } from "./AiCompletionToasts";
 import { UnsavedToasts } from "./UnsavedToasts";
@@ -441,6 +441,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     () =>
       pipelineStore.onComplete((job, prev) => {
         const where = `${job.book} ${job.start_chapter}`;
+        // A finished translate run clears the per-note spinners it drove.
+        if (job.pipeline_type === "translate") {
+          setTranslatingRowIds((prev) => (prev.size ? new Set() : prev));
+        }
         if (job.state === "done") {
           // Viewing the chapter this job wrote? Offer refresh instead of a plain
           // "applied" toast, since its new rows aren't in the open list yet.
@@ -529,6 +533,52 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       }
     },
     [applyLocalRowPatch, pushPipelineToast, t],
+  );
+
+  // ── Translation mode: Approve (validate) + single-note Translate ──
+  // Approve marks a reviewed draft human-validated (non-version-bumping); the
+  // returned row carries the new translation_state so the card collapses.
+  const handleApproveNote = useCallback(
+    async (id: string, value = true) => {
+      try {
+        const updated = await api.validateNote(id, book, value);
+        applyLocalRowReplacement("tn", updated);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "unknown error";
+        pushPipelineToast(t("shell.couldntApproveNote", { message: msg }), "error");
+      }
+    },
+    [book, applyLocalRowReplacement, pushPipelineToast, t],
+  );
+
+  // Rows with an in-flight single-note translate. Cleared when the chapter's
+  // translate job reaches a terminal state (see the onComplete effect).
+  const [translatingRowIds, setTranslatingRowIds] = useState<Set<string>>(() => new Set());
+
+  const handleTranslateNote = useCallback(
+    async (id: string) => {
+      setTranslatingRowIds((prev) => new Set(prev).add(id));
+      try {
+        await pipelineStore.start({
+          pipelineType: "translate",
+          book,
+          startChapter: chapter,
+          endChapter: chapter,
+          sessionKey: getSessionKey(),
+          translate: { rowIds: [id] },
+        });
+      } catch (e) {
+        setTranslatingRowIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        const body = (e as { body?: { error?: string } } | null)?.body;
+        const msg = body?.error ?? (e instanceof Error ? e.message : "unknown error");
+        pushPipelineToast(t("shell.couldntTranslateNote", { message: msg }), "error");
+      }
+    },
+    [book, chapter, pushPipelineToast, t],
   );
 
   // The note delete button. Trash is a reversible, visible soft-delete (the
@@ -2787,6 +2837,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           locked={Boolean(chapterLock)}
           onSetNotePreserve={handleSetNotePreserve}
           onSetNoteHint={handleSetNoteHint}
+          onNoteApprove={handleApproveNote}
+          onNoteTranslate={handleTranslateNote}
+          translatingNoteIds={translatingRowIds}
           quoteBuildActiveNoteId={quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null}
           quoteBuildActiveWordId={quoteBuildTarget?.kind === "twl" ? quoteBuildTarget.id : null}
           quoteBuildSelectionCount={quoteBuildSelectedKeys.size}

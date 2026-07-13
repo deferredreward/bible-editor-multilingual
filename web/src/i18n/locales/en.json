@@ -59,7 +59,14 @@
     "approveCollapses": "Approve to collapse",
     "publish": "Publish to Door43",
     "targetLanguage": "Target language",
-    "sourcelanguage": "Source language"
+    "sourcelanguage": "Source language",
+    "descTranslate": "AI-translate this chapter's notes from the source language.",
+    "showSource": "show source",
+    "collapse": "collapse",
+    "unapprove": "Un-approve",
+    "reRun": "Re-run AI",
+    "whyDraft": "Review against the source, then approve.",
+    "languageMemoryTip": "Validated examples and terminology grow as the team approves — the context every future draft is prompted with."
   },
   "export": {
     "noText": "No {{version}} text to export for {{target}}.",
@@ -254,6 +261,8 @@
     "couldntUpdateHint": "Couldn't update Hint: {{message}}",
     "couldntDeleteNote": "Couldn't delete note: {{message}}",
     "couldntRestoreNote": "Couldn't restore note: {{message}}",
+    "couldntApproveNote": "Couldn't approve note: {{message}}",
+    "couldntTranslateNote": "Couldn't start translation: {{message}}",
     "cantPreserveAlignment": "This edit can't preserve word alignment on words you didn't change, so it wasn't saved ({{ref}} {{bibleVersion}}{{affected}}). Please note this verse ({{ref}}) for your admin to file a bug-fix review, or re-align in the alignment panel.",
     "affectedSuffix": "; affected: {{sample}}",
     "failedToLoad": "failed to load {{book}} {{chapter}}: {{error}}",

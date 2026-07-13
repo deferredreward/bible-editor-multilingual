@@ -37,7 +37,11 @@ import UndoIcon from "@mui/icons-material/Undo";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
+import CheckIcon from "@mui/icons-material/Check";
+import { alpha } from "@mui/material/styles";
+import { useTranslation } from "react-i18next";
 import type { TnRow } from "../sync/api";
+import type { SourceNote } from "../hooks/useSourceNotes";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { CatalogPicker } from "./CatalogPicker";
@@ -153,6 +157,25 @@ interface Props {
   // quote in the box. Shell applies the quote to row optimistically before
   // bumping this, so the effect just reads the now-current row.quote.
   quoteBuildAppliedAt?: number | null;
+  // ── Translation mode (gateway-language projects only) ──
+  // True when the active project translates FROM a source language (project
+  // config translationSource != null). Off for the English root project, whose
+  // card is byte-for-byte unchanged (all the props below are then absent).
+  translationMode?: boolean;
+  // The published English SOURCE note this row's draft was made from (matched
+  // by row id). Pinned read-only above the editable draft for ai_draft/edited
+  // rows. Null when unavailable (source fetch failed / no matching id).
+  sourceNote?: SourceNote | null;
+  // Approve the current draft → POST validate(1) → row becomes 'validated' and
+  // the card collapses. Absent => the Approve affordance is hidden.
+  onApprove?: () => void;
+  // Un-approve a validated row → validate(0) → back to 'edited'.
+  onUnapprove?: () => void;
+  // Translate THIS note via the translate pipeline (translate.rowIds:[id]).
+  // Offered on untranslated (NULL-state) rows and as "re-run AI" on drafts.
+  onTranslate?: () => void;
+  // This row has an in-flight translate pipeline — show a working affordance.
+  isTranslating?: boolean;
 }
 
 // Notes coming from TSV imports use literal "\n" (two characters) as the
@@ -324,7 +347,14 @@ function NoteCardInner({
   quoteBuildSelectionCount = 0,
   onStartQuoteBuild,
   quoteBuildAppliedAt = null,
+  translationMode = false,
+  sourceNote = null,
+  onApprove,
+  onUnapprove,
+  onTranslate,
+  isTranslating = false,
 }: Props) {
+  const { t } = useTranslation();
   // Two explicit bits drive lock-time behavior now:
   //   - preserve=1: translator marked this row "survive AI runs"
   //   - hint=1:    this row is a stub queued for AI expansion in place
@@ -362,6 +392,25 @@ function NoteCardInner({
     }
   }, [editingBody]);
   const [supportRef, setSupportRef] = useState<string | null>(row.support_reference);
+  // ── Translation mode ── derived state. All inert (null/false) for the
+  // English root project, which never passes translationMode, so the card
+  // below renders exactly as before.
+  const translationState = translationMode ? (row.translation_state ?? null) : null;
+  const isDraftState = translationState === "ai_draft" || translationState === "edited";
+  const isValidated = translationState === "validated";
+  // A GL-project row the translate pipeline never touched AND with no target
+  // text yet — offer the per-note Translate affordance. A NULL-state row that
+  // already carries content (e.g. pre-state-machine imported ar_tn) is treated
+  // as a normal editable card, not forced into the untranslated treatment.
+  const isUntranslated =
+    translationMode && translationState == null && !(row.note && row.note.trim());
+  // Validated cards collapse (green, one-line preview). Local expand is
+  // view-only — editing a re-expanded card auto-demotes it to 'edited'
+  // server-side (rows.ts content PATCH). Re-collapses when it re-validates.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (!isValidated) setExpanded(false);
+  }, [isValidated]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [aiConfirmOpen, setAiConfirmOpen] = useState(false);
   // Template dropdown anchor (only used when a support ref has >1 variant) and
@@ -823,6 +872,23 @@ function NoteCardInner({
   if (note !== rowNoteDisplay) rowDiff.note = note;
   if (supportRef !== savedRef.current.support_reference) rowDiff.support_reference = supportRef;
   const hasRowDiff = Object.keys(rowDiff).length > 0;
+  // A validated card sits collapsed unless the user is actively editing it,
+  // has expanded it for review, or has unsaved edits (which would auto-demote).
+  const collapsedValidated = isValidated && !active && !expanded && !hasRowDiff;
+  // State chip descriptor for the header. null → no chip (English root project,
+  // or a non-null-but-uninteresting case). Colors mirror the mockup: violet for
+  // AI draft, blue for edited, green for validated, neutral for untranslated.
+  const stateChip: { label: string; color: string } | null = !translationMode
+    ? null
+    : translationState === "ai_draft"
+      ? { label: t("translation.stateAiDraft"), color: "warning.main" }
+      : translationState === "edited"
+        ? { label: t("translation.stateEdited"), color: "info.main" }
+        : isValidated
+          ? { label: t("translation.stateApproved"), color: "success.main" }
+          : isUntranslated
+            ? { label: t("translation.stateUntranslated"), color: "text.secondary" }
+            : null;
   const draftKey = rowKey("tn", row.book, row.id);
   useEffect(() => {
     if (readOnly) return;
@@ -898,12 +964,29 @@ function NoteCardInner({
       }}
       sx={{
         my: 1,
-        border: active ? "1.5px solid" : "1px solid",
+        border: active || (translationMode && (isDraftState || isValidated)) ? "1.5px solid" : "1px solid",
         // Trashed cards get a dashed, muted, grayed-out treatment to signal
         // "pending deletion — restorable until tonight".
         borderStyle: trashed ? "dashed" : undefined,
-        borderColor: trashed ? "text.disabled" : active ? "primary.main" : "divider",
-        bgcolor: trashed ? "grey.100" : active ? "primary.50" : "background.paper",
+        // Translation-mode state tint yields to the trashed/active treatments.
+        // ai_draft → warning (Kindle orange, "review me"); validated → success
+        // (teal, "done"). English root project → "divider" (unchanged).
+        borderColor: trashed
+          ? "text.disabled"
+          : active
+            ? "primary.main"
+            : translationState === "ai_draft"
+              ? "warning.light"
+              : isValidated
+                ? "success.main"
+                : "divider",
+        bgcolor: trashed
+          ? "grey.100"
+          : active
+            ? "primary.50"
+            : collapsedValidated
+              ? (theme) => alpha(theme.palette.success.main, 0.09)
+              : "background.paper",
         overflow: "hidden",
         // Opacity applied without a CSS transition on purpose: trash/restore
         // re-render twice in quick succession (optimistic patch, then the
@@ -1032,6 +1115,34 @@ function NoteCardInner({
           <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace" }}>
             {row.ref_raw}
           </Typography>
+        )}
+        {stateChip && (
+          <Chip
+            label={stateChip.label}
+            size="small"
+            variant="outlined"
+            sx={{
+              height: 20,
+              fontSize: 10.5,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              color: stateChip.color,
+              borderColor: stateChip.color,
+            }}
+          />
+        )}
+        {collapsedValidated && (
+          <Button
+            size="small"
+            variant="text"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(true);
+            }}
+            sx={{ minWidth: 0, py: 0, px: 0.75, fontSize: 11, color: "text.secondary" }}
+          >
+            {t("translation.showSource")}
+          </Button>
         )}
         <Box sx={{ flex: 1 }} />
         {/* Right-side action controls grouped into one non-shrinking, non-wrapping
@@ -1175,6 +1286,28 @@ function NoteCardInner({
         </Stack>
       </Stack>
 
+      {collapsedValidated ? (
+        /* Validated → collapsed one-line preview (green). Click to expand for
+           review; editing the expanded card auto-demotes it to 'edited'. */
+        <Box
+          onClick={() => setExpanded(true)}
+          title={t("translation.showSource")}
+          sx={{
+            px: 1.5,
+            py: 1,
+            cursor: "pointer",
+            color: "text.secondary",
+            fontSize: `calc(14px * var(--be-reading-scale, 1))`,
+            fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {tsvToDisplay(row.note) || "—"}
+        </Box>
+      ) : (
+        <>
       {/* ── Quote ── */}
       <Box sx={{ px: 1.5, pt: 0.75, pb: 0.5 }}>
         <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
@@ -1258,6 +1391,53 @@ function NoteCardInner({
         />
       </Box>
 
+      {/* ── English source (translation mode) — pinned read-only above the
+          editable draft. Always LTR (English) even inside an RTL card. ── */}
+      {translationMode && (isDraftState || isUntranslated) && sourceNote && (
+        <Box
+          dir="ltr"
+          sx={{
+            mx: 1.5,
+            mt: 1,
+            borderInlineStart: "3px solid",
+            borderColor: "divider",
+            bgcolor: (theme) => alpha(theme.palette.text.primary, 0.03),
+            borderRadius: 1,
+            px: 1.5,
+            py: 1,
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              mb: 0.5,
+              fontFamily: "monospace",
+              color: "text.disabled",
+              textTransform: "uppercase",
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.09em",
+            }}
+          >
+            {t("translation.sourceLabel")}
+          </Typography>
+          <Box
+            sx={{
+              fontSize: `calc(14px * var(--be-reading-scale, 1))`,
+              lineHeight: 1.55,
+              color: "text.secondary",
+              fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+              whiteSpace: "pre-wrap",
+              overflowWrap: "break-word",
+              textAlign: "left",
+            }}
+          >
+            {sourceNote.note}
+          </Box>
+        </Box>
+      )}
+
       {/* ── Note (hero) ── */}
       <Box sx={{ px: 1.5, pt: 0.75, pb: 0.75 }}>
         <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
@@ -1272,7 +1452,7 @@ function NoteCardInner({
               letterSpacing: "0.12em",
             }}
           >
-            Note
+            {translationMode ? t("translation.draftLabel") : "Note"}
           </Typography>
           <Box sx={{ flex: 1 }} />
           <Tooltip
@@ -1365,15 +1545,99 @@ function NoteCardInner({
               ...(hasRowDiff && note !== rowNoteDisplay ? { "data-dirty": "true" } : {}),
             }}
             inputProps={{
+              // Target-language draft direction: RTL when the draft text is
+              // itself RTL (e.g. Arabic), so an RTL target reads correctly even
+              // when the UI chrome is LTR. English root project passes no
+              // translationMode, so this stays unset (browser default).
+              ...(translationMode && detectQuoteScript(note) === "rtl"
+                ? { dir: "rtl" as const }
+                : {}),
               style: {
                 fontSize: `calc(15px * var(--be-reading-scale, 1))`,
                 lineHeight: 1.55,
                 fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+                ...(translationMode && detectQuoteScript(note) === "rtl"
+                  ? { textAlign: "right" as const }
+                  : {}),
               },
             }}
           />
         )}
       </Box>
+
+      {/* ── Translation-mode action row (Approve / Translate / Re-run) ── */}
+      {translationMode && !readOnly && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ px: 1.5, pb: 1, pt: 0.25, flexWrap: "wrap", rowGap: 0.75 }}
+        >
+          {isDraftState && onApprove && (
+            <Button
+              size="small"
+              variant="contained"
+              color="success"
+              startIcon={<CheckIcon sx={{ fontSize: "16px !important" }} />}
+              onClick={onApprove}
+              sx={{ py: 0.25 }}
+            >
+              {t("common.approve")}
+            </Button>
+          )}
+          {isValidated && expanded && (
+            <>
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => setExpanded(false)}
+                sx={{ py: 0.25, color: "text.secondary" }}
+              >
+                {t("translation.collapse")}
+              </Button>
+              {onUnapprove && (
+                <Button
+                  size="small"
+                  variant="text"
+                  color="warning"
+                  onClick={onUnapprove}
+                  sx={{ py: 0.25 }}
+                >
+                  {t("translation.unapprove")}
+                </Button>
+              )}
+            </>
+          )}
+          {onTranslate && (isUntranslated || isDraftState) && (
+            <Button
+              size="small"
+              variant={isUntranslated ? "contained" : "outlined"}
+              color={isUntranslated ? "secondary" : "inherit"}
+              disabled={isTranslating}
+              startIcon={
+                isTranslating ? (
+                  <CircularProgress size={12} color="inherit" />
+                ) : (
+                  <AutoAwesomeIcon sx={{ fontSize: "16px !important" }} />
+                )
+              }
+              onClick={onTranslate}
+              sx={{ py: 0.25, color: isUntranslated ? undefined : "text.secondary" }}
+            >
+              {isTranslating
+                ? t("translation.translating")
+                : isUntranslated
+                  ? t("common.translate")
+                  : t("translation.reRun")}
+            </Button>
+          )}
+          {isDraftState && (
+            <Typography variant="caption" sx={{ color: "text.disabled" }}>
+              {t("translation.whyDraft")}
+            </Typography>
+          )}
+        </Stack>
+      )}
 
       {/* ── Footer chips ── */}
       <Stack
@@ -1486,6 +1750,8 @@ function NoteCardInner({
           sx={{ fontFamily: "monospace", fontSize: 11, height: 22 }}
         />
       </Stack>
+        </>
+      )}
       {historyOpen && (
         <Suspense fallback={null}>
           <NoteHistoryDialog
@@ -1661,7 +1927,10 @@ function areNotePropsEqual(a: Props, b: Props): boolean {
     a.locked === b.locked &&
     a.quoteBuildMode === b.quoteBuildMode &&
     a.quoteBuildSelectionCount === b.quoteBuildSelectionCount &&
-    (a.flashArrow ?? null) === (b.flashArrow ?? null)
+    (a.flashArrow ?? null) === (b.flashArrow ?? null) &&
+    a.translationMode === b.translationMode &&
+    (a.sourceNote ?? null) === (b.sourceNote ?? null) &&
+    a.isTranslating === b.isTranslating
   );
 }
 
