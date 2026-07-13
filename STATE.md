@@ -90,7 +90,8 @@ staging `tnPayload`; watch the `tnContentKey` dedup interaction) and TWL (not in
 in-app generator). Tests: `api/src/canonizeHebrew.test.mjs` (32 asserts — three tiers, NFC→legacy byte rewrite,
 found-flag consumption, morph-mismatch no-op, recursion, quote separators, ZWJ/BOM/WJ folds, and a
 no-`\uXXXX`-escape-in-data guarantee — 33 asserts). **api typecheck + full api suite green** (EXIT 0).
-Committed + rebased onto main; **PR opened** (branch `claude/canonize-hebrew-workflow-eb48d6`). Not
+Committed + rebased onto main; **[PR #336](https://github.com/unfoldingWord/bible-editor/pull/336) opened**
+(branch `claude/canonize-hebrew-workflow-eb48d6`), NOT merged/deployed. Not
 browser-verified (server-side ingest transform, no UI surface). (memory: [[project_canonize_hebrew_to_uhb]])
 
 2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
