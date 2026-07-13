@@ -27,6 +27,12 @@ import MenuIcon from "@mui/icons-material/Menu";
 import Brightness4Icon from "@mui/icons-material/Brightness4";
 import Brightness7Icon from "@mui/icons-material/Brightness7";
 import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
+import LanguageIcon from "@mui/icons-material/Language";
+import CheckIcon from "@mui/icons-material/Check";
+import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
+import { useTranslation } from "react-i18next";
+import { UI_LANGUAGES } from "../i18n";
+import { UiLangContext } from "../i18n/UiLangContext";
 import { api, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
@@ -45,6 +51,7 @@ import {
 // theme toggle; opens a small popover with −/＋ and a reset. Scales the ULT/UST
 // editors and note bodies via the `--be-reading-scale` CSS var.
 function FontSizeControl() {
+  const { t } = useTranslation();
   const { scale, setScale } = useContext(FontScaleContext);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -52,12 +59,12 @@ function FontSizeControl() {
 
   return (
     <>
-      <Tooltip title="reading text size">
+      <Tooltip title={t("topbar.readingTextSizeTooltip")}>
         <IconButton
           ref={anchorRef}
           size="small"
           onClick={() => setOpen(true)}
-          aria-label="adjust reading text size"
+          aria-label={t("topbar.adjustReadingTextSize")}
         >
           <FormatSizeIcon fontSize="small" />
         </IconButton>
@@ -71,16 +78,16 @@ function FontSizeControl() {
       >
         <Box sx={{ px: 1.5, py: 1, minWidth: 200 }}>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.75 }}>
-            Reading text size
+            {t("topbar.readingTextSize")}
           </Typography>
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Tooltip title="smaller">
+            <Tooltip title={t("topbar.smaller")}>
               <span>
                 <IconButton
                   size="small"
                   onClick={() => setScale(scale - FONT_SCALE_STEP)}
                   disabled={scale <= FONT_SCALE_MIN + 1e-6}
-                  aria-label="decrease reading text size"
+                  aria-label={t("topbar.decreaseReadingTextSize")}
                 >
                   <RemoveIcon fontSize="small" />
                 </IconButton>
@@ -92,13 +99,13 @@ function FontSizeControl() {
             >
               {pct}%
             </Typography>
-            <Tooltip title="larger">
+            <Tooltip title={t("topbar.larger")}>
               <span>
                 <IconButton
                   size="small"
                   onClick={() => setScale(scale + FONT_SCALE_STEP)}
                   disabled={scale >= FONT_SCALE_MAX - 1e-6}
-                  aria-label="increase reading text size"
+                  aria-label={t("topbar.increaseReadingTextSize")}
                 >
                   <AddIcon fontSize="small" />
                 </IconButton>
@@ -112,10 +119,52 @@ function FontSizeControl() {
             disabled={Math.abs(scale - FONT_SCALE_DEFAULT) < 1e-6}
             sx={{ mt: 0.75, textTransform: "none" }}
           >
-            Reset to 100%
+            {t("topbar.resetTo100")}
           </Button>
         </Box>
       </Popover>
+    </>
+  );
+}
+
+// UI-chrome language switcher. Changing the language re-renders every t()
+// string AND flips the whole chrome's direction when the language is RTL
+// (document.dir + MUI theme.direction + the emotion RTL cache — see main.tsx).
+function UiLanguageControl() {
+  const { t } = useTranslation();
+  const { lang, setLang } = useContext(UiLangContext);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Tooltip title={t("topbar.uiLanguage")}>
+        <IconButton
+          ref={anchorRef}
+          size="small"
+          onClick={() => setOpen(true)}
+          aria-label={t("topbar.uiLanguage")}
+        >
+          <LanguageIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Menu open={open} anchorEl={anchorRef.current} onClose={() => setOpen(false)}>
+        {UI_LANGUAGES.map((l) => (
+          <MenuItem
+            key={l.code}
+            selected={l.code === lang}
+            onClick={() => {
+              setLang(l.code);
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon sx={{ visibility: l.code === lang ? "visible" : "hidden" }}>
+              <CheckIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{l.label}</ListItemText>
+          </MenuItem>
+        ))}
+      </Menu>
     </>
   );
 }
@@ -147,6 +196,7 @@ export function TopBar({
   onToggleRail,
   onRequestReload,
 }: Props) {
+  const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
   const [summary, setSummary] = useState<BookSummary | null>(null);
   const [refInput, setRefInput] = useState("");
@@ -181,7 +231,7 @@ export function TopBar({
       onNavigate(code, targetChapter, verse);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setImportError(`Couldn't import ${bookName(code)}: ${msg}`);
+      setImportError(t("topbar.couldntImport", { book: bookName(code), message: msg }));
     } finally {
       setImporting(null);
     }
@@ -237,7 +287,7 @@ export function TopBar({
       }}
     >
       {onToggleRail && (
-        <Tooltip title={railCollapsed ? "show verse list" : "hide verse list"}>
+        <Tooltip title={railCollapsed ? t("topbar.showVerseList") : t("topbar.hideVerseList")}>
           <IconButton size="small" onClick={onToggleRail} sx={{ ml: -0.5 }}>
             {railCollapsed ? <MenuIcon fontSize="small" /> : <MenuOpenIcon fontSize="small" />}
           </IconButton>
@@ -291,7 +341,7 @@ export function TopBar({
                   {bookName(opt)}
                 </Box>
                 {!isImported && (
-                  <Tooltip title="not imported — selecting will fetch from DCS">
+                  <Tooltip title={t("topbar.notImportedHint")}>
                     <CloudDownloadIcon
                       fontSize="inherit"
                       sx={{ ml: 1, color: "text.disabled", fontSize: 14 }}
@@ -322,7 +372,7 @@ export function TopBar({
         />
       </FormControl>
       <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Tooltip title="previous chapter">
+        <Tooltip title={t("topbar.previousChapter")}>
           <span>
             <IconButton
               size="small"
@@ -337,7 +387,7 @@ export function TopBar({
           variant="caption"
           sx={{ fontFamily: "monospace", color: "text.secondary", userSelect: "none" }}
         >
-          ch
+          {t("topbar.chapterAbbrev")}
         </Typography>
         <FormControl size="small">
           <Autocomplete<string, false, true, false>
@@ -348,7 +398,7 @@ export function TopBar({
             onChange={(_, v) => {
               if (v) onNavigate(book, parseInt(v, 10));
             }}
-            getOptionLabel={(opt) => (opt === "0" ? "intro" : opt)}
+            getOptionLabel={(opt) => (opt === "0" ? t("topbar.intro") : opt)}
             filterOptions={(options, state) => {
               const q = state.inputValue.trim();
               if (!q) return options;
@@ -358,7 +408,7 @@ export function TopBar({
             }}
             renderOption={(props, opt) => (
               <li {...props} key={opt} style={{ fontFamily: "monospace" }}>
-                {opt === "0" ? "intro" : opt}
+                {opt === "0" ? t("topbar.intro") : opt}
               </li>
             )}
             renderInput={(params) => (
@@ -373,7 +423,7 @@ export function TopBar({
             sx={{ width: 76 }}
           />
         </FormControl>
-        <Tooltip title="next chapter">
+        <Tooltip title={t("topbar.nextChapter")}>
           <span>
             <IconButton
               size="small"
@@ -387,12 +437,12 @@ export function TopBar({
       </Stack>
       <Box sx={{ display: { xs: "none", md: "block" } }}>
         <Tooltip
-          title={refError ?? "go to: 5 · 5:5 · zec 5:5 · ps 1:4 (Enter)"}
+          title={refError ?? t("topbar.goToRefHint")}
           open={refError ? true : undefined}
         >
           <TextField
             size="small"
-            placeholder="go to ref"
+            placeholder={t("topbar.goToRefPlaceholder")}
             value={refInput}
             onChange={(e) => {
               setRefInput(e.target.value);
@@ -412,7 +462,7 @@ export function TopBar({
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
-                  <Tooltip title="go">
+                  <Tooltip title={t("common.go")}>
                     <span>
                       <IconButton
                         size="small"
@@ -438,7 +488,11 @@ export function TopBar({
       {summary?.chapters && (
         <Box sx={{ display: { xs: "none", lg: "flex" }, alignItems: "center", gap: 1.5 }}>
           <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
-            {summary.chapters.reduce((a, c) => a + c.tn, 0)} notes · {summary.chapters.reduce((a, c) => a + c.twl, 0)} words · {summary.chapters.reduce((a, c) => a + c.tq, 0)} questions
+            {t("topbar.stats", {
+              notes: summary.chapters.reduce((a, c) => a + c.tn, 0),
+              words: summary.chapters.reduce((a, c) => a + c.twl, 0),
+              questions: summary.chapters.reduce((a, c) => a + c.tq, 0),
+            })}
           </Typography>
           <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
         </Box>
@@ -448,8 +502,9 @@ export function TopBar({
       <SyncStatusBar onNavigate={onNavigate} />
       {exportMenu}
       <FontSizeControl />
-      <Tooltip title={mode === "dark" ? "switch to light mode" : "switch to dark mode"}>
-        <IconButton size="small" onClick={toggle} aria-label="toggle color mode">
+      <UiLanguageControl />
+      <Tooltip title={mode === "dark" ? t("topbar.switchToLight") : t("topbar.switchToDark")}>
+        <IconButton size="small" onClick={toggle} aria-label={t("topbar.toggleColorMode")}>
           {mode === "dark" ? <Brightness7Icon fontSize="small" /> : <Brightness4Icon fontSize="small" />}
         </IconButton>
       </Tooltip>
@@ -461,7 +516,7 @@ export function TopBar({
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         <Alert severity="info" icon={<CircularProgress size={16} />}>
-          Importing {importing ? bookName(importing) : ""} from DCS…
+          {t("topbar.importingFromDcs", { book: importing ? bookName(importing) : "" })}
         </Alert>
       </Snackbar>
       <Snackbar

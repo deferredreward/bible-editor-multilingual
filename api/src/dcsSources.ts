@@ -2,8 +2,16 @@
 // the per-chapter re-import (bookReimport.ts) both read the same set of raw
 // USFM / TSV files from git.door43.org — keep the URL shape and book-prefix
 // table in one place so they can't drift.
+//
+// Multilingual: the owner org and repo names are no longer hardcoded to
+// unfoldingWord/en_* — they come from the per-project config
+// (projectConfig.ts). The `lit`/`sim` roles map onto the internal
+// ULT/UST bible_version labels; the ORIGINAL-language repos (hbo_uhb /
+// el-x-koine_ugnt under unfoldingWord) are universal across projects and
+// stay fixed here.
 
 import type { Env } from "./index";
+import type { ProjectConfig } from "./projectConfig";
 
 // Standard unfoldingWord book number prefixes for USFM filenames. Mirror of
 // the BOOK_NUMBERS map in scripts/import-book.mjs and api/src/export.ts.
@@ -39,24 +47,30 @@ export interface DcsUrlSet {
   twl: string;
 }
 
+// The original-language repos are universal: every project aligns to the
+// same UHB/UGNT under the unfoldingWord org, regardless of its own org.
+export const ORIG_OWNER = "unfoldingWord";
+
 // Build the set of DCS raw-content URLs for a given book. `book` is the
 // uppercase 3-char canonical id (e.g. "ZEC", "1CO"). Returns null if the
-// book id isn't in BOOK_NUMBERS (unknown book).
-export function dcsUrls(env: Env, book: string): DcsUrlSet | null {
+// book id isn't in BOOK_NUMBERS (unknown book). Owner + repo names come
+// from the project config (roles lit/sim → internal ULT/UST labels).
+export function dcsUrls(env: Env, cfg: ProjectConfig, book: string): DcsUrlSet | null {
   const num = BOOK_NUMBERS[book];
   if (!num) return null;
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const usfmName = `${num}-${book}.usfm`;
   const isNt = NT_BOOKS.has(book);
   const origRepo = isNt ? "el-x-koine_ugnt" : "hbo_uhb";
+  const org = cfg.org;
   return {
-    ult: `${base}/unfoldingWord/en_ult/raw/branch/master/${usfmName}`,
-    ust: `${base}/unfoldingWord/en_ust/raw/branch/master/${usfmName}`,
-    orig: `${base}/unfoldingWord/${origRepo}/raw/branch/master/${usfmName}`,
+    ult: `${base}/${org}/${cfg.repos.lit}/raw/branch/master/${usfmName}`,
+    ust: `${base}/${org}/${cfg.repos.sim}/raw/branch/master/${usfmName}`,
+    orig: `${base}/${ORIG_OWNER}/${origRepo}/raw/branch/master/${usfmName}`,
     origVersion: isNt ? "UGNT" : "UHB",
-    tn: `${base}/unfoldingWord/en_tn/raw/branch/master/tn_${book}.tsv`,
-    tq: `${base}/unfoldingWord/en_tq/raw/branch/master/tq_${book}.tsv`,
-    twl: `${base}/unfoldingWord/en_twl/raw/branch/master/twl_${book}.tsv`,
+    tn: `${base}/${org}/${cfg.repos.tn}/raw/branch/master/tn_${book}.tsv`,
+    tq: `${base}/${org}/${cfg.repos.tq}/raw/branch/master/tq_${book}.tsv`,
+    twl: `${base}/${org}/${cfg.repos.twl}/raw/branch/master/twl_${book}.tsv`,
   };
 }
 
@@ -123,35 +137,47 @@ export async function fetchText(url: string): Promise<string | null> {
 }
 
 // ── Per-resource repo/path + git-SHA helpers (incremental self-heal reimport) ──
-// The reimport reads the canonical unfoldingWord source on master — the same
-// org dcsUrls() hardcodes. The SHA check below MUST agree with the raw fetch on
+// The reimport reads the project's configured source on master — the same
+// org dcsUrls() resolves. The SHA check below MUST agree with the raw fetch on
 // owner/repo/path/ref, so both derive from this one mapping.
-const DCS_OWNER = "unfoldingWord";
 
 export type ReimportResource = "ult" | "ust" | "tn" | "tq" | "twl";
+
+// Map a reimport resource role to the project's repo name.
+function repoForResource(cfg: ProjectConfig, resource: ReimportResource): string {
+  switch (resource) {
+    case "ult": return cfg.repos.lit;
+    case "ust": return cfg.repos.sim;
+    case "tn":  return cfg.repos.tn;
+    case "tq":  return cfg.repos.tq;
+    case "twl": return cfg.repos.twl;
+  }
+}
 
 // {repo, in-repo path} for a (book, resource). Mirror of dcsUrls()'s shape; null
 // for an unknown book. Keep in sync with dcsUrls — the path formulas are
 // identical (USFM `${num}-${BOOK}.usfm`, TSV `${res}_${BOOK}.tsv`).
 export function dcsResourceFile(
+  cfg: ProjectConfig,
   book: string,
   resource: ReimportResource,
 ): { repo: string; path: string } | null {
   const num = BOOK_NUMBERS[book];
   if (!num) return null;
+  const repo = repoForResource(cfg, resource);
   switch (resource) {
-    case "ult": return { repo: "en_ult", path: `${num}-${book}.usfm` };
-    case "ust": return { repo: "en_ust", path: `${num}-${book}.usfm` };
-    case "tn":  return { repo: "en_tn",  path: `tn_${book}.tsv` };
-    case "tq":  return { repo: "en_tq",  path: `tq_${book}.tsv` };
-    case "twl": return { repo: "en_twl", path: `twl_${book}.tsv` };
+    case "ult":
+    case "ust":
+      return { repo, path: `${num}-${book}.usfm` };
+    default:
+      return { repo, path: `${resource}_${book}.tsv` };
   }
 }
 
-// Raw master-branch content URL for a repo/path (same shape dcsUrls builds).
-export function dcsRawUrl(env: Env, repo: string, path: string): string {
+// Raw master-branch content URL for an owner/repo/path (same shape dcsUrls builds).
+export function dcsRawUrl(env: Env, owner: string, repo: string, path: string): string {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
-  return `${base}/${DCS_OWNER}/${repo}/raw/branch/master/${path}`;
+  return `${base}/${owner}/${repo}/raw/branch/master/${path}`;
 }
 
 // Latest commit SHA on master that touched `path` in `repo`, or null on
@@ -159,10 +185,10 @@ export function dcsRawUrl(env: Env, repo: string, path: string): string {
 // for the incremental reimport (skip a (book,resource) whose file SHA matches
 // what we last synced). Sends the service token when present so private repos
 // and rate limits are handled the same way the export path is.
-export async function fileCommitSha(env: Env, repo: string, path: string): Promise<string | null> {
+export async function fileCommitSha(env: Env, owner: string, repo: string, path: string): Promise<string | null> {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const url =
-    `${base}/api/v1/repos/${DCS_OWNER}/${encodeURIComponent(repo)}` +
+    `${base}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
     `/commits?sha=master&path=${encodeURIComponent(path)}&limit=1&stat=false&verification=false&files=false`;
   try {
     const headers: Record<string, string> = { Accept: "application/json" };

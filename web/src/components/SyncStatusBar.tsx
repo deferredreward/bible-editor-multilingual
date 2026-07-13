@@ -6,6 +6,7 @@
 // A proper diff/merge UI is docs/plan.md territory and out of scope here.
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Divider, IconButton, ListItemText, Menu, MenuItem, Stack, Tooltip, Typography } from "@mui/material";
 import CloudDoneIcon from "@mui/icons-material/CloudDone";
 import CloudQueueIcon from "@mui/icons-material/CloudQueue";
@@ -54,6 +55,7 @@ interface Props {
 }
 
 export function SyncStatusBar({ onNavigate }: Props = {}) {
+  const { t } = useTranslation();
   const [ops, setOps] = useState<OutboxOp[]>([]);
   useEffect(() => outbox.subscribe(setOps), []);
 
@@ -132,10 +134,10 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
   let inline: ReactNode;
   if (conflicts.length > 0) {
     inline = (
-      <Tooltip title="some edits conflict with the server — resolve below">
+      <Tooltip title={t("sync.conflictsTooltip")}>
         <Chip
           icon={<WarningAmberIcon />}
-          label={`${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}`}
+          label={`${conflicts.length} ${t("sync.conflict", { count: conflicts.length })}`}
           size="small"
           variant="outlined"
           color="warning"
@@ -144,10 +146,10 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     );
   } else if (failed.length > 0) {
     inline = (
-      <Tooltip title="some edits failed permanently — discard below">
+      <Tooltip title={t("sync.failedTooltip")}>
         <Chip
           icon={<ErrorOutlineIcon />}
-          label={`${failed.length} failed`}
+          label={`${failed.length} ${t("sync.failed")}`}
           size="small"
           variant="outlined"
           color="error"
@@ -156,11 +158,11 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     );
   } else if (effectivelyOffline) {
     const offlineLabel = pending > 0
-      ? `${pending} queued — ${online ? "reconnecting…" : "offline"}`
-      : online ? "reconnecting…" : "offline";
+      ? t("sync.queuedStatus", { pending, status: online ? t("sync.reconnecting") : t("sync.offline") })
+      : online ? t("sync.reconnecting") : t("sync.offline");
     const offlineTooltip = pending > 0
-      ? `${pending} edit${pending === 1 ? "" : "s"} queued locally. ${online ? "Trying to reach the server…" : "Will save when back online."}`
-      : online ? "trying to reach the server…" : "you are offline";
+      ? `${t("sync.queuedLocally", { count: pending })} ${online ? t("sync.tryingToReach") : t("sync.willSaveWhenOnline")}`
+      : online ? t("sync.tryingToReachLower") : t("sync.youAreOffline");
     // Kindle warning accent (#E59D33 from CLAUDE.md brand palette) — offline
     // is a transient state, not a failure, so the MUI default error red is
     // wrong tone.
@@ -181,10 +183,10 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     );
   } else if (pending > 0) {
     inline = (
-      <Tooltip title={`saving ${pending} edit${pending === 1 ? "" : "s"} to the cloud…`}>
+      <Tooltip title={t("sync.savingTooltip", { count: pending })}>
         <Chip
           icon={<CloudQueueIcon />}
-          label={`saving ${pending}`}
+          label={`${t("sync.saving")} ${pending}`}
           size="small"
           variant="outlined"
           color="primary"
@@ -193,10 +195,10 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     );
   } else if (draftCount === 0) {
     inline = (
-      <Tooltip title="all your edits are saved to the cloud">
+      <Tooltip title={t("sync.savedTooltip")}>
         <Chip
           icon={<CloudDoneIcon />}
-          label="saved"
+          label={t("sync.saved")}
           size="small"
           variant="outlined"
           color="success"
@@ -230,10 +232,10 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
   let draftsChip: ReactNode = null;
   if (draftCount > 0 && onNavigate) {
     draftsChip = (
-      <Tooltip title="jump to an unsaved edit">
+      <Tooltip title={t("sync.jumpToUnsaved")}>
         <Chip
           icon={<EditNoteIcon />}
-          label={`${draftCount} unsaved`}
+          label={`${draftCount} ${t("sync.unsaved")}`}
           size="small"
           variant="outlined"
           clickable
@@ -246,7 +248,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     const draftsTooltip = (
       <Stack spacing={0.25}>
         <Typography variant="caption" sx={{ fontWeight: 600 }}>
-          {draftCount} unsaved edit{draftCount === 1 ? "" : "s"}:
+          {t("sync.unsavedEditsColon", { count: draftCount })}
         </Typography>
         {draftList.map((d) => (
           <Typography
@@ -263,7 +265,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
       <Tooltip title={draftsTooltip}>
         <Chip
           icon={<EditNoteIcon />}
-          label={`${draftCount} unsaved`}
+          label={`${draftCount} ${t("sync.unsaved")}`}
           size="small"
           variant="outlined"
           sx={draftDirtyColorSx}
@@ -291,7 +293,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
             color="text.secondary"
             sx={{ px: 2, py: 0.5, display: "block" }}
           >
-            {draftCount} unsaved edit{draftCount === 1 ? "" : "s"} — click to jump
+            {t("sync.unsavedEditsClickToJump", { count: draftCount })}
           </Typography>
           {draftList.map((d) => (
             <MenuItem key={d.key} onClick={() => navigateToDraft(d.meta)} dense>
@@ -323,7 +325,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
         >
           <Stack spacing={0.75}>
             {conflicts.length > 0 && (
-              <Tooltip title="version mismatch — retry with current server version (your edit wins)">
+              <Tooltip title={t("sync.resolveConflictTooltip")}>
                 <Button
                   size="small"
                   variant="contained"
@@ -331,7 +333,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
                   startIcon={<WarningAmberIcon />}
                   onClick={resolveAllConflicts}
                 >
-                  resolve {conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}
+                  {t("sync.resolveConflicts", { count: conflicts.length })}
                 </Button>
               </Tooltip>
             )}
@@ -340,9 +342,9 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
               <Stack spacing={0.25}>
                 <Stack direction="row" alignItems="center" justifyContent="space-between">
                   <Typography variant="caption" color="error" sx={{ fontWeight: 600 }}>
-                    {failed.length} failed
+                    {failed.length} {t("sync.failed")}
                   </Typography>
-                  <Tooltip title="discard all failed edits">
+                  <Tooltip title={t("sync.discardAllTooltip")}>
                     <Button
                       size="small"
                       variant="text"
@@ -350,7 +352,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
                       onClick={() => setConfirmDiscardAll(true)}
                       sx={{ minWidth: 0, py: 0, fontSize: 11 }}
                     >
-                      discard all
+                      {t("sync.discardAll")}
                     </Button>
                   </Tooltip>
                 </Stack>
@@ -396,7 +398,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
                         </Typography>
                       )}
                     </Box>
-                    <Tooltip title="retry this edit">
+                    <Tooltip title={t("sync.retryThisEdit")}>
                       <IconButton
                         size="small"
                         color="primary"
@@ -406,7 +408,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
                         <RefreshIcon fontSize="inherit" />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="discard this edit">
+                    <Tooltip title={t("sync.discardThisEdit")}>
                       <IconButton
                         size="small"
                         color="error"
@@ -430,16 +432,15 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
         onClose={() => setConfirmDiscardAll(false)}
       >
         <DialogTitle>
-          Discard {failed.length} failed edit{failed.length === 1 ? "" : "s"}?
+          {t("sync.discardConfirmTitle", { count: failed.length })}
         </DialogTitle>
         <DialogContent>
           <DialogContentText>
-            These edits never reached the server. Discarding deletes them from
-            this device permanently — they cannot be recovered.
+            {t("sync.discardConfirmBody")}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDiscardAll(false)}>cancel</Button>
+          <Button onClick={() => setConfirmDiscardAll(false)}>{t("sync.cancel")}</Button>
           <Button
             color="error"
             variant="contained"
@@ -448,7 +449,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
               setConfirmDiscardAll(false);
             }}
           >
-            discard all
+            {t("sync.discardAll")}
           </Button>
         </DialogActions>
       </Dialog>

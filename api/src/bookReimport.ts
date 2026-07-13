@@ -42,6 +42,7 @@
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
 import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, NT_BOOKS } from "./dcsSources";
+import { getProjectConfig } from "./projectConfig.ts";
 import {
   collectSourceWords,
   extractVersesForRange,
@@ -181,7 +182,8 @@ export async function reimportBookFromDcs(
   userId: number | null,
   _opts: { source: "user" | "cron" },
 ): Promise<ReimportResult> {
-  const urls = dcsUrls(env, book);
+  const cfg = await getProjectConfig(env);
+  const urls = dcsUrls(env, cfg, book);
   if (!urls) throw new Error(`unknown book: ${book}`);
 
   // Re-import is the maintenance lane — book must already be bootstrapped.
@@ -223,7 +225,8 @@ async function runReimport(
   resources: Resource[],
   userId: number | null,
 ): Promise<ReimportResult> {
-  const urls = dcsUrls(env, book)!;
+  const cfg = await getProjectConfig(env);
+  const urls = dcsUrls(env, cfg, book)!;
 
   // Fetch each requested resource once at the book level. ULT/UST/TN/TQ/TWL
   // are whole-book files; chapter filtering happens after parse.
@@ -1516,24 +1519,36 @@ export async function recordResourceSync(
   resource: Resource,
   sha: string,
   origin: "import" | "reimport" | "export",
+  sourceOrg: string,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO book_resource_syncs (book, resource, source_sha, synced_at, origin)
-     VALUES (?1, ?2, ?3, unixepoch(), ?4)
+    `INSERT INTO book_resource_syncs (book, resource, source_sha, synced_at, origin, source_org)
+     VALUES (?1, ?2, ?3, unixepoch(), ?4, ?5)
      ON CONFLICT(book, resource) DO UPDATE SET
        source_sha = excluded.source_sha,
        synced_at = excluded.synced_at,
-       origin = excluded.origin`,
+       origin = excluded.origin,
+       source_org = excluded.source_org`,
   )
-    .bind(book, resource, sha, origin)
+    .bind(book, resource, sha, origin, sourceOrg)
     .run();
 }
 
-export async function storedResourceSha(env: Env, book: string, resource: Resource): Promise<string | null> {
+// A watermark recorded under a DIFFERENT source org describes a different
+// upstream — treat it as absent (fail-open: the reimport refetches, the
+// export freshness gate sees "no watermark"). This is what makes switching a
+// project's org via config safe rather than silently trusting a stale SHA.
+export async function storedResourceSha(
+  env: Env,
+  book: string,
+  resource: Resource,
+  sourceOrg: string,
+): Promise<string | null> {
   const row = await env.DB.prepare(
-    `SELECT source_sha FROM book_resource_syncs WHERE book = ?1 AND resource = ?2`,
+    `SELECT source_sha FROM book_resource_syncs
+      WHERE book = ?1 AND resource = ?2 AND source_org = ?3`,
   )
-    .bind(book, resource)
+    .bind(book, resource, sourceOrg)
     .first<{ source_sha: string | null }>();
   return row?.source_sha ?? null;
 }
@@ -1758,20 +1773,21 @@ async function planAndStageBookResources(
   const maxChapter = maxRow?.m ?? 0;
   if (maxChapter < 1) return { maxChapter, entries: [] };
 
+  const cfg = await getProjectConfig(env);
   const entries: StagedResource[] = [];
   for (const resource of resources) {
-    const file = dcsResourceFile(book, resource);
+    const file = dcsResourceFile(cfg, book, resource);
     if (!file) { entries.push({ resource, changed: false, masterSha: null, r2Key: null }); continue; }
 
-    const masterSha = await fileCommitSha(env, file.repo, file.path);
-    const stored = await storedResourceSha(env, book, resource);
+    const masterSha = await fileCommitSha(env, cfg.org, file.repo, file.path);
+    const stored = await storedResourceSha(env, book, resource, cfg.org);
     // Skip ONLY on a positive SHA match (fail-open: null/unknown → reimport).
     if (masterSha && stored && masterSha === stored) {
       entries.push({ resource, changed: false, masterSha, r2Key: null });
       continue;
     }
 
-    const raw = await fetchText(dcsRawUrl(env, file.repo, file.path));
+    const raw = await fetchText(dcsRawUrl(env, cfg.org, file.repo, file.path));
     if (raw == null) {
       // DCS 404 / fetch error → nothing to import, no watermark.
       entries.push({ resource, changed: false, masterSha: null, r2Key: null });
@@ -1943,9 +1959,10 @@ export async function runChunkedReimport(
 
   // Record fetch-time SHAs for resources that ran (so a later night can skip).
   await step.do(`reimport-sync-${book}`, async () => {
+    const cfg = await getProjectConfig(env);
     let recorded = 0;
     for (const e of changed) {
-      if (e.masterSha) { await recordResourceSync(env, book, e.resource, e.masterSha, "reimport"); recorded++; }
+      if (e.masterSha) { await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", cfg.org); recorded++; }
     }
     return { recorded };
   });

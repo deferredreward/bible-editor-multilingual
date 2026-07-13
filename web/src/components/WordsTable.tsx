@@ -16,6 +16,7 @@ import { useCatalogs } from "../hooks/useCatalogs";
 import { CatalogPicker } from "./CatalogPicker";
 import { TwArticleDialog } from "./TwArticleDialog";
 import { drafts, rowKey, draftDirtyBorderSx } from "../sync/drafts";
+import { useTranslation } from "react-i18next";
 
 export type WordDropPosition = "before" | "after";
 
@@ -120,6 +121,7 @@ interface Props {
 }
 
 function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder, locked = false, onTranslateQuote, onWordGloss, activeQuoteBuildId = null, quoteBuildSelectionCount = 0, onStartQuoteBuild, suggestionAlternatives }: Props) {
+  const { t } = useTranslation();
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<
     { targetId: string; position: WordDropPosition } | null
@@ -167,7 +169,7 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
   if (rows.length === 0) {
     return (
       <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-        no words for this verse
+        {t("words.noWordsForVerse")}
       </Typography>
     );
   }
@@ -200,8 +202,8 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
         }}
       >
         <span />
-        <span>Quote</span>
-        <span>TW article</span>
+        <span>{t("words.quote")}</span>
+        <span>{t("words.twArticle")}</span>
         <span />
         <span />
         <span />
@@ -362,6 +364,7 @@ const WordRow = memo(function WordRow({
   // word, merged into the disambiguation badge. "" when none.
   suggestionAltIds?: string;
 }) {
+  const { t } = useTranslation();
   const [quote, setQuote] = useState(row.orig_words ?? "");
   const [twLink, setTwLink] = useState<string | null>(row.tw_link);
   // Occurrence is hidden in the schema but real (round-trips to the TSV
@@ -524,7 +527,7 @@ const WordRow = memo(function WordRow({
           justifyContent: "center",
         }}
       >
-        <Tooltip title="move up">
+        <Tooltip title={t("words.moveUp")}>
           <span>
             <IconButton
               size="small"
@@ -537,7 +540,7 @@ const WordRow = memo(function WordRow({
             </IconButton>
           </span>
         </Tooltip>
-        <Tooltip title="drag to reorder">
+        <Tooltip title={t("words.dragToReorder")}>
           <Box
             draggable
             onDragStart={(e) => {
@@ -561,7 +564,7 @@ const WordRow = memo(function WordRow({
             <DragIndicatorIcon fontSize="small" />
           </Box>
         </Tooltip>
-        <Tooltip title="move down">
+        <Tooltip title={t("words.moveDown")}>
           <span>
             <IconButton
               size="small"
@@ -589,7 +592,7 @@ const WordRow = memo(function WordRow({
             ...(isDirty ? { "data-dirty": "true" } : {}),
             endAdornment: showTranslateIcon ? (
               <InputAdornment position="end">
-                <Tooltip title="translate to Hebrew/Greek using ULT alignment">
+                <Tooltip title={t("words.translateTooltip")}>
                   <IconButton
                     size="small"
                     onClick={handleTranslateQuote}
@@ -611,7 +614,7 @@ const WordRow = memo(function WordRow({
             },
           }}
         />
-        <Tooltip title="occurrence — which instance of this quote in the verse (usually 1)">
+        <Tooltip title={t("words.occurrenceTooltip")}>
           <TextField
             value={occurrence}
             onChange={(e) => {
@@ -624,7 +627,7 @@ const WordRow = memo(function WordRow({
             sx={{ width: 52, flexShrink: 0, "& .MuiOutlinedInput-root": { height: 34 } }}
             inputProps={{
               min: 1,
-              "aria-label": "occurrence",
+              "aria-label": t("words.occurrenceAriaLabel"),
               style: { fontSize: 13, padding: "0 4px", textAlign: "center" },
             }}
           />
@@ -633,8 +636,8 @@ const WordRow = memo(function WordRow({
           <Tooltip
             title={
               quoteBuildMode
-                ? `picker open · ${quoteBuildSelectionCount} selected — click ULT/UST or Hebrew words`
-                : "build the Hebrew/Greek quote by picking aligned words"
+                ? t("words.pickerOpen", { count: quoteBuildSelectionCount })
+                : t("words.buildQuoteTooltip")
             }
           >
             <IconButton
@@ -652,7 +655,7 @@ const WordRow = memo(function WordRow({
         )}
       </Box>
       {gloss ? (
-        <Tooltip title="ULT words aligned to this quote (read-only)">
+        <Tooltip title={t("words.glossTooltip")}>
           <Typography
             variant="caption"
             sx={{
@@ -673,14 +676,14 @@ const WordRow = memo(function WordRow({
         <CatalogPicker
           value={twLink}
           options={catalogs.twLinks}
-          display={(v) => (v ? twShort(v) : "+ TW article")}
+          display={(v) => (v ? twShort(v) : t("words.addTwArticle"))}
           placeholder="names/, kt/, other/, …"
           onChange={(next) => setTwLink(next)}
         />
         {disambig && (
           <>
             <Tooltip
-              title={`This word has ${disambig.length} Translation Words articles — click to choose the right one`}
+              title={t("words.disambigTooltip", { count: disambig.length })}
             >
               <Chip
                 size="small"
@@ -720,7 +723,7 @@ const WordRow = memo(function WordRow({
           </>
         )}
         {twLink && (
-          <Tooltip title="read article">
+          <Tooltip title={t("words.readArticle")}>
             <IconButton
               size="small"
               onClick={() => onOpenArticle(twLink)}
@@ -731,7 +734,7 @@ const WordRow = memo(function WordRow({
           </Tooltip>
         )}
       </Box>
-      <Tooltip title={isDirty ? "save edits" : "no unsaved edits"}>
+      <Tooltip title={isDirty ? t("words.saveEdits") : t("words.noUnsavedEdits")}>
         <span style={{ gridArea: "save" }}>
           <IconButton
             size="small"
@@ -747,7 +750,7 @@ const WordRow = memo(function WordRow({
           </IconButton>
         </span>
       </Tooltip>
-      <Tooltip title={isDirty ? "undo edits" : ""}>
+      <Tooltip title={isDirty ? t("words.undoEdits") : ""}>
         <span style={{ gridArea: "undo" }}>
           <IconButton
             size="small"
@@ -774,7 +777,7 @@ const WordRow = memo(function WordRow({
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         <Alert severity="warning" onClose={() => setTranslateError(false)} sx={{ width: "100%" }}>
-          No ULT alignment match for &ldquo;{quote}&rdquo; in this verse.
+          {t("words.noAlignmentMatch", { quote })}
         </Alert>
       </Snackbar>
     </Box>

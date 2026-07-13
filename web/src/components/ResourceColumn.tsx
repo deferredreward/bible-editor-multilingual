@@ -1,4 +1,5 @@
 import { Fragment, type Ref, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import PushPinIcon from "@mui/icons-material/PushPin";
@@ -311,6 +312,7 @@ export function ResourceColumn({
   alignmentBadge,
   checkoff,
 }: Props) {
+  const { t } = useTranslation();
   const [pinned, setPinned] = useState<Pinned>(() => loadPinned());
   const togglePinned = (k: PinKey) => {
     const next = { ...pinned, [k]: !pinned[k] };
@@ -632,11 +634,11 @@ export function ResourceColumn({
           variant="subtitle2"
           sx={{ fontSize: 12, color: "text.secondary", mr: 0.5 }}
         >
-          Resources · {activeVerse === 0 ? "i" : activeVerse}
+          {t("shell.resources")} · {activeVerse === 0 ? "i" : activeVerse}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <PanelTab
-          label="Notes"
+          label={t("shell.notes")}
           count={totalTn}
           countSuffix={pinned.notes ? " · ch" : ""}
           active={panelMode === "resources" && resourceTab === "notes"}
@@ -644,7 +646,7 @@ export function ResourceColumn({
           onClick={() => showResource("notes")}
         />
         <PanelTab
-          label="Words"
+          label={t("shell.words")}
           count={totalTwl}
           countSuffix={pinned.words ? " · ch" : ""}
           active={panelMode === "resources" && resourceTab === "words"}
@@ -652,7 +654,7 @@ export function ResourceColumn({
           onClick={() => showResource("words")}
         />
         <PanelTab
-          label="Questions"
+          label={t("shell.questions")}
           count={totalTq}
           countSuffix={pinned.questions ? " · ch" : ""}
           active={panelMode === "resources" && resourceTab === "questions"}
@@ -660,14 +662,14 @@ export function ResourceColumn({
           onClick={() => showResource("questions")}
         />
         <PanelTab
-          label="Alignment"
+          label={t("shell.alignment")}
           countLabel={alignmentBadge}
           active={panelMode === "alignment"}
           accent
           onClick={() => onSetPanelMode?.("alignment")}
         />
         <PanelTab
-          label="Search"
+          label={t("shell.search")}
           active={panelMode === "search"}
           accent={false}
           onClick={() => onSetPanelMode?.("search")}
@@ -705,7 +707,7 @@ export function ResourceColumn({
         ) : (
           <Box sx={{ p: 3 }}>
             <Typography variant="body2" color="text.secondary">
-              Click the link icon on a ULT or UST verse to start aligning.
+              {t("shell.clickLinkToAlign")}
             </Typography>
           </Box>
         )
@@ -722,7 +724,7 @@ export function ResourceColumn({
         {resourceTab === "notes" && (
           <>
             <SectionHead
-              title="Notes"
+              title={t("shell.notes")}
               count={totalTn}
               pinned={pinned.notes}
               onTogglePin={() => togglePinned("notes")}
@@ -735,7 +737,7 @@ export function ResourceColumn({
             {tnGroups ? (
               tnGroups.length === 0 ? (
                 <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  no notes in this chapter
+                  {t("shell.noNotesInChapter")}
                 </Typography>
               ) : (
                 tnGroups.map(([verse, rows]) => (
@@ -747,7 +749,7 @@ export function ResourceColumn({
               )
             ) : tnForVerse.length === 0 ? (
               <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                no notes for this verse
+                {t("shell.noNotesForVerse")}
               </Typography>
             ) : (
               tnForVerse.map((r) => renderNoteCard(r, tnForVerse))
@@ -760,7 +762,7 @@ export function ResourceColumn({
           // (mt:auto) is pushed to the bottom even when the Words list is short.
           <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
             <SectionHead
-              title="Words"
+              title={t("shell.words")}
               count={totalTwl}
               pinned={pinned.words}
               onTogglePin={() => togglePinned("words")}
@@ -773,7 +775,7 @@ export function ResourceColumn({
             {twlGroups ? (
               twlGroups.length === 0 ? (
                 <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  no words in this chapter
+                  {t("shell.noWordsInChapter")}
                 </Typography>
               ) : (
                 twlGroups.map(([verse, rows]) => (
@@ -857,7 +859,7 @@ export function ResourceColumn({
         {resourceTab === "questions" && (
           <>
             <SectionHead
-              title="Questions"
+              title={t("shell.questions")}
               count={totalTq}
               pinned={pinned.questions}
               onTogglePin={() => togglePinned("questions")}
@@ -870,7 +872,7 @@ export function ResourceColumn({
             {tqGroups ? (
               tqGroups.length === 0 ? (
                 <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  no questions in this chapter
+                  {t("shell.noQuestionsInChapter")}
                 </Typography>
               ) : (
                 tqGroups.map(([verse, rows]) => (
@@ -900,7 +902,7 @@ export function ResourceColumn({
         >
           <iframe
             src={SEARCH_IFRAME_URL}
-            title="Search"
+            title={t("shell.search")}
             style={{ width: "100%", height: "100%", border: 0 }}
           />
         </Box>
@@ -1047,6 +1049,7 @@ function VerseGroupHead({
   active: boolean;
   section: PinKey;
 }) {
+  const { t } = useTranslation();
   return (
     <Stack
       direction="row"
@@ -1076,7 +1079,7 @@ function VerseGroupHead({
           letterSpacing: 0.5,
         }}
       >
-        {verse === 0 ? "intro" : `v${verse}`}
+        {verse === 0 ? t("shell.intro") : `v${verse}`}
       </Typography>
     </Stack>
   );
@@ -1103,6 +1106,7 @@ function SectionHead({
   lane?: ResourceLane;
   checkoff?: ResourceCheckoff;
 }) {
+  const { t } = useTranslation();
   const laneApplicable = checkoff && lane ? checkoff.applicable(lane) : false;
   const shade = checkoff && lane && laneApplicable ? checkoff.shade(lane) : "open";
   const fill = shade !== "open" ? LANE_FILL[shade as Exclude<LaneShade, "open">] : null;
@@ -1135,7 +1139,7 @@ function SectionHead({
         sx={{ height: 18, fontFamily: "monospace", fontSize: 10 }}
       />
       <Tooltip
-        title={pinned ? `unpin — show ${title.toLowerCase()} for the active verse only` : `pin — show ${title.toLowerCase()} for every verse in this chapter`}
+        title={pinned ? t("shell.unpinSection", { title: title.toLowerCase() }) : t("shell.pinSection", { title: title.toLowerCase() })}
       >
         <IconButton size="small" onClick={onTogglePin} sx={{ p: 0.25, color: pinned ? "primary.main" : "text.disabled" }}>
           {pinned ? <PushPinIcon fontSize="inherit" sx={{ fontSize: 16 }} /> : <PushPinOutlinedIcon fontSize="inherit" sx={{ fontSize: 16 }} />}
@@ -1143,7 +1147,7 @@ function SectionHead({
       </Tooltip>
       {checkoff && lane && laneApplicable && checkoff.canCheck && !pinned && (
         <Tooltip
-          title={`${title} for this verse — ${checkoff.attribution(lane)} · click to ${shade === "me" || shade === "both" ? "uncheck" : "check"}`}
+          title={t("shell.checkoffVerse", { title, attribution: checkoff.attribution(lane), action: shade === "me" || shade === "both" ? t("shell.uncheck") : t("shell.check") })}
         >
           <Box
             role="checkbox"
@@ -1165,18 +1169,18 @@ function SectionHead({
               borderColor: fill ? "transparent" : "divider",
             }}
           >
-            <CheckIcon sx={{ fontSize: 13 }} /> done
+            <CheckIcon sx={{ fontSize: 13 }} /> {t("shell.done")}
           </Box>
         </Tooltip>
       )}
       {checkoff && lane && laneApplicable && checkoff.canCheck && (
-        <Tooltip title={`check ${title.toLowerCase()} for every applicable verse in this chapter`}>
+        <Tooltip title={t("shell.checkAllChapter", { title: title.toLowerCase() })}>
           <Typography
             variant="caption"
             onClick={() => checkoff.onBulkToggle(lane)}
             sx={{ color: "primary.main", cursor: "pointer", whiteSpace: "nowrap", ml: 0.25 }}
           >
-            all
+            {t("shell.all")}
           </Typography>
         </Tooltip>
       )}
@@ -1190,7 +1194,7 @@ function SectionHead({
           sx={{ minWidth: 0, fontSize: 11 }}
           onClick={onAdd}
         >
-          new
+          {t("shell.new")}
         </Button>
       )}
     </Stack>

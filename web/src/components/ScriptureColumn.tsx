@@ -1,4 +1,5 @@
 import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button, Chip } from "@mui/material";
 import HistoryIcon from "@mui/icons-material/History";
 import { AlignLinkButton } from "./AlignLinkButton";
@@ -162,9 +163,6 @@ const READ_ONLY_VERSIONS = new Set(["UHB", "UGNT"]);
 // doesn't hand InactiveVerseRow a fresh `{}` each render and defeat its memo.
 const EMPTY_COLUMN: Record<number, VerseDto> = {};
 
-const INTRO_TOOLTIP =
-  "Chapter intro — chapter-level translation notes, Psalm superscriptions (\\d), and the paragraph / poetry markers that introduce verse 1.";
-
 const BookView = lazy(() =>
   import("./BookView").then((m) => ({ default: m.BookView })),
 );
@@ -216,6 +214,7 @@ function ScriptureColumnInner({
   locked = false,
   textCheck,
 }: Props) {
+  const { t } = useTranslation();
   const activeRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -385,9 +384,9 @@ function ScriptureColumnInner({
         }}
       >
         <Typography variant="subtitle2" sx={{ mr: 1 }}>
-          Scripture
+          {t("shell.scripture")}
         </Typography>
-        <Tooltip title="verse-by-verse stacked card (default)">
+        <Tooltip title={t("shell.tooltipRows")}>
           <Button
             size="small"
             variant={mode === "stacked" ? "contained" : "outlined"}
@@ -395,10 +394,10 @@ function ScriptureColumnInner({
             onClick={() => onModeChange("stacked")}
             sx={{ textTransform: "none" }}
           >
-            rows
+            {t("shell.rows")}
           </Button>
         </Tooltip>
-        <Tooltip title="parallel-column doc view of the current chapter">
+        <Tooltip title={t("shell.tooltipColumns")}>
           <Button
             size="small"
             variant={mode === "columns" ? "contained" : "outlined"}
@@ -406,10 +405,10 @@ function ScriptureColumnInner({
             onClick={() => onModeChange("columns")}
             sx={{ textTransform: "none" }}
           >
-            {mode === "columns" ? `${enabledVersions.length} col${enabledVersions.length === 1 ? "" : "s"}` : "columns"}
+            {mode === "columns" ? t("shell.colCount", { count: enabledVersions.length }) : t("shell.columns")}
           </Button>
         </Tooltip>
-        <Tooltip title="whole-book scroll across all enabled versions (lazy loads as you scroll)">
+        <Tooltip title={t("shell.tooltipBook")}>
           <Button
             size="small"
             variant={mode === "book" ? "contained" : "outlined"}
@@ -417,14 +416,14 @@ function ScriptureColumnInner({
             onClick={() => onModeChange("book")}
             sx={{ textTransform: "none" }}
           >
-            book
+            {t("shell.book")}
           </Button>
         </Tooltip>
         <Tooltip
           title={
             mode === "book"
-              ? "find / replace across loaded chapters (Ctrl+F)"
-              : "find / replace in this chapter (Ctrl+F)"
+              ? t("shell.tooltipFindBook")
+              : t("shell.tooltipFindChapter")
           }
         >
           <Button
@@ -437,7 +436,7 @@ function ScriptureColumnInner({
             }}
             sx={{ textTransform: "none" }}
           >
-            find
+            {t("shell.find")}
           </Button>
         </Tooltip>
         {(mode === "columns" || mode === "book") && (
@@ -449,7 +448,7 @@ function ScriptureColumnInner({
                 onEnabledVersionsChange(next);
               }
             }}
-            aria-label="visible versions"
+            aria-label={t("shell.visibleVersions")}
           >
             {availableVersions.map((v) => (
               <ToggleButton key={v} value={v} sx={{ px: 1, py: 0.25, textTransform: "none", fontSize: 11 }}>
@@ -459,18 +458,18 @@ function ScriptureColumnInner({
           </ToggleButtonGroup>
         )}
         <Box sx={{ flex: 1 }} />
-        <Tooltip title="scroll the active verse + its resources back into view">
+        <Tooltip title={t("shell.tooltipGoToActive")}>
           <Button
             size="small"
             startIcon={<UndoIcon fontSize="small" />}
             onClick={onRequestScrollToActive}
             sx={{ textTransform: "none" }}
           >
-            go to active
+            {t("shell.goToActive")}
           </Button>
         </Tooltip>
         <Typography variant="caption" color="text.secondary">
-          {book} {chapter}:{activeVerse === 0 ? "intro" : activeVerse}
+          {book} {chapter}:{activeVerse === 0 ? t("shell.intro") : activeVerse}
         </Typography>
       </Stack>
       <Box ref={bodyRef} sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -704,6 +703,7 @@ function StackedBody({
   ) => void;
   locked: boolean;
 }) {
+  const { t } = useTranslation();
   const ult = indexByVersion["ULT"] ?? EMPTY_COLUMN;
   const ust = indexByVersion["UST"] ?? EMPTY_COLUMN;
   const uhb = indexByVersion["UHB"] ?? indexByVersion["UGNT"] ?? {};
@@ -768,13 +768,13 @@ function StackedBody({
               }}
             >
               {v === 0 ? (
-                <Tooltip title={INTRO_TOOLTIP} placement="right">
+                <Tooltip title={t("shell.introTooltip")} placement="right">
                   <Typography
                     component="span"
                     variant="caption"
                     sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700, mr: 1, cursor: "help" }}
                   >
-                    intro
+                    {t("shell.intro")}
                   </Typography>
                 </Tooltip>
               ) : (
@@ -923,6 +923,7 @@ const InactiveVerseRow = memo(
     findActiveMatch: FindMatch | null;
     onSelectVerse: (v: number) => void;
   }) {
+    const { t } = useTranslation();
     const ultV = ult[v];
     const ustV = ust[v];
     // Only render this version's cell when it's the start of its row's span —
@@ -957,7 +958,7 @@ const InactiveVerseRow = memo(
         }}
       >
         {v === 0 ? (
-          <Tooltip title={INTRO_TOOLTIP} placement="right">
+          <Tooltip title={t("shell.introTooltip")} placement="right">
             <Typography
               component="span"
               variant="caption"
@@ -973,7 +974,7 @@ const InactiveVerseRow = memo(
                 width: "fit-content",
               }}
             >
-              intro
+              {t("shell.intro")}
             </Typography>
           </Tooltip>
         ) : (
@@ -1170,6 +1171,7 @@ function ActiveLine({
   lexiconMap?: Map<string, LexiconEntry | null>;
   twl?: TwlRow[];
 }) {
+  const { t } = useTranslation();
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
   const [historyOpen, setHistoryOpen] = useState(false);
   // The version chip + history are editable-ULT/UST only — read-only source
@@ -1377,7 +1379,7 @@ function ActiveLine({
           {VERSION_LABEL[label] ?? label}
         </Typography>
         {showHistory && (
-          <Tooltip title="version history — view or restore an earlier save">
+          <Tooltip title={t("shell.tooltipVersionHistory")}>
             <Chip
               icon={<HistoryIcon sx={{ fontSize: 14 }} />}
               label={`v${version}`}
@@ -1398,14 +1400,14 @@ function ActiveLine({
           <AlignLinkButton
             targetContent={content}
             sourceContent={sourceContent}
-            tooltip={`align ${label}`}
+            tooltip={t("shell.alignLabel", { label })}
             iconSize={22}
             sx={{ p: 0.5 }}
             onClick={onOpenAligner}
           />
         )}
         {editable && !readOnly && onSave && (
-          <Tooltip title={hasDraft ? "save edits" : "no unsaved edits"}>
+          <Tooltip title={hasDraft ? t("shell.saveEdits") : t("shell.noUnsavedEdits")}>
             <span>
               <IconButton
                 size="small"
@@ -1426,7 +1428,7 @@ function ActiveLine({
           </Tooltip>
         )}
         {editable && !readOnly && hasDraft && draftKey && (
-          <Tooltip title="undo edits to this verse">
+          <Tooltip title={t("shell.undoEdits")}>
             <IconButton
               size="small"
               onClick={() => {
@@ -1456,7 +1458,7 @@ function ActiveLine({
           {driftedMarkers.map((m, i) => (
             <Tooltip
               key={`drift-${i}`}
-              title={`from previous verse — edit there`}
+              title={t("shell.fromPreviousVerse")}
               placement="left"
             >
               <Box
@@ -1616,13 +1618,13 @@ function ActiveLine({
 // textContent so the draft fires — the synthetic edit doesn't trigger
 // a normal `input` event.
 const TOOLBAR_MARKERS: Array<{ tag: string; label: string; title: string }> = [
-  { tag: "p", label: "\\p", title: "paragraph" },
-  { tag: "m", label: "\\m", title: "margin paragraph" },
-  { tag: "q1", label: "\\q1", title: "poetry indent 1" },
-  { tag: "q2", label: "\\q2", title: "poetry indent 2" },
-  { tag: "q3", label: "\\q3", title: "poetry indent 3" },
-  { tag: "b", label: "\\b", title: "blank line" },
-  { tag: "ts", label: "\\ts\\*", title: "chunk divider" },
+  { tag: "p", label: "\\p", title: "shell.markerParagraph" },
+  { tag: "m", label: "\\m", title: "shell.markerMarginParagraph" },
+  { tag: "q1", label: "\\q1", title: "shell.markerPoetryIndent1" },
+  { tag: "q2", label: "\\q2", title: "shell.markerPoetryIndent2" },
+  { tag: "q3", label: "\\q3", title: "shell.markerPoetryIndent3" },
+  { tag: "b", label: "\\b", title: "shell.markerBlankLine" },
+  { tag: "ts", label: "\\ts\\*", title: "shell.markerChunkDivider" },
 ];
 
 function ParagraphToolbar({
@@ -1632,6 +1634,7 @@ function ParagraphToolbar({
   elRef: React.RefObject<HTMLDivElement | null>;
   onEditPlain?: (plain: string) => void;
 }) {
+  const { t } = useTranslation();
   const insert = useCallback(
     (tag: string) => {
       const el = elRef.current;
@@ -1673,7 +1676,7 @@ function ParagraphToolbar({
   return (
     <Stack direction="row" spacing={0.25} sx={{ mb: 0.5, flexWrap: "wrap" }}>
       {TOOLBAR_MARKERS.map((m) => (
-        <Tooltip key={m.tag} title={m.title}>
+        <Tooltip key={m.tag} title={t(m.title)}>
           <Button
             size="small"
             variant="outlined"

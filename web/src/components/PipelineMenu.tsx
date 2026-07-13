@@ -37,6 +37,7 @@ import type {
 import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipelineStore";
 import { currentPipelineUserId } from "../sync/pipelineSession";
 import { parseChapterRange } from "../lib/refParser";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   book: string;
@@ -64,23 +65,23 @@ const OPTIONS: PipelineOption[] = [
   {
     key: "generate",
     type: "generate",
-    label: "Generate ULT + UST",
-    description: "Aligned literal + simplified text and a draft issues list for the chapter.",
-    approxDuration: "~60–100 min",
+    label: "pipeline.generateUltUst",
+    description: "pipeline.descGenerate",
+    approxDuration: "pipeline.durationGenerate",
   },
   {
     key: "notes",
     type: "notes",
-    label: "Write translation notes",
-    description: "Translation notes (tn) for every verse in the chapter.",
-    approxDuration: "~30–60 min",
+    label: "pipeline.writeTranslationNotes",
+    description: "pipeline.descNotes",
+    approxDuration: "pipeline.durationNotesTqs",
   },
   {
     key: "tqs",
     type: "tqs",
-    label: "Write translation questions",
-    description: "Translation questions (tq) aligned to the current ULT/UST.",
-    approxDuration: "~30–60 min",
+    label: "pipeline.writeTranslationQuestions",
+    description: "pipeline.descTqs",
+    approxDuration: "pipeline.durationNotesTqs",
   },
 ];
 
@@ -166,9 +167,9 @@ function buildGenerateWire(g: GenUiState): GenerateWireShape {
 }
 
 const TYPE_LABEL: Record<PipelineType, string> = {
-  generate: "Generate ULT + UST",
-  notes: "Translation notes",
-  tqs: "Translation questions",
+  generate: "pipeline.generateUltUst",
+  notes: "pipeline.translationNotes",
+  tqs: "pipeline.translationQuestions",
 };
 
 function relativeMinutes(seconds: number): string {
@@ -179,6 +180,7 @@ function relativeMinutes(seconds: number): string {
 }
 
 export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
+  const { t } = useTranslation();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [confirm, setConfirm] = useState<PipelineOption | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -262,19 +264,19 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         // line. Surface the position instead of "Started".
         if (chapters.length === 1 && lastRes?.status === "queued") {
           const posText = lastRes.queuePosition
-            ? ` — #${lastRes.queuePosition} in line`
-            : " — waiting in line";
-          onMessage?.(`Queued: ${confirm.label} for ${rangeLabel}${posText}`);
+            ? t("pipeline.posInLine", { position: lastRes.queuePosition })
+            : t("pipeline.posWaiting");
+          onMessage?.(t("pipeline.queuedToast", { label: t(confirm.label), range: rangeLabel, pos: posText }));
         } else {
           const suffix =
             chapters.length > 1
-              ? ` (${startedCount} runs)`
+              ? t("pipeline.runsSuffix", { n: startedCount })
               : isMacro
-                ? ` (${1 + (confirm.followUpChain?.length ?? 0)} runs)`
+                ? t("pipeline.runsSuffix", { n: 1 + (confirm.followUpChain?.length ?? 0) })
                 : wire.followUpOptions
-                  ? " (2 runs)"
+                  ? t("pipeline.runsSuffix", { n: 2 })
                   : "";
-          onMessage?.(`Started: ${confirm.label} for ${rangeLabel}${suffix}`);
+          onMessage?.(t("pipeline.startedToast", { label: t(confirm.label), range: rangeLabel, suffix }));
         }
       }
       // already_running: pipelineStore emits a focus event that opens the
@@ -291,16 +293,16 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
           } else {
             // Conflict with a job started outside the editor (e.g. Zulip).
             // We have no metadata to show — fall back to the bare toast.
-            onMessage?.(`Another translator already started this pipeline (job ${body.jobId ?? "unknown"}).`);
+            onMessage?.(t("pipeline.anotherTranslatorStarted", { jobId: body.jobId ?? t("pipeline.unknown") }));
             setConfirm(null);
           }
         } else if (e.status === 401) {
-          onMessage?.("Sign in to start a pipeline.");
+          onMessage?.(t("pipeline.signInToStart"));
         } else {
-          onMessage?.(`Could not start: ${body?.error ?? e.message}`);
+          onMessage?.(t("pipeline.couldNotStart", { error: body?.error ?? e.message }));
         }
       } else {
-        onMessage?.("Could not start the pipeline. Check your connection and try again.");
+        onMessage?.(t("pipeline.couldNotStartGeneric"));
       }
     } finally {
       setSubmitting(false);
@@ -315,7 +317,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         startIcon={<AutoAwesomeIcon fontSize="small" />}
         onClick={(e) => setAnchorEl(e.currentTarget)}
       >
-        AI
+        {t("pipeline.aiButton")}
       </Button>
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={close}>
         {OPTIONS.map((opt) => {
@@ -330,11 +332,11 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
               }}
             >
               <ListItemText
-                primary={opt.label}
+                primary={t(opt.label)}
                 secondary={
                   running
-                    ? `Already running (${running.state})`
-                    : `${opt.description} ${opt.approxDuration}`
+                    ? t("pipeline.alreadyRunningState", { state: running.state })
+                    : `${t(opt.description)} ${t(opt.approxDuration)}`
                 }
               />
             </MenuItem>
@@ -349,8 +351,8 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         >
           <CloudDownloadIcon fontSize="small" sx={{ mr: 1, color: "text.secondary" }} />
           <ListItemText
-            primary="Import from Door43"
-            secondary="Pull ULT/UST/TN/TQ/TWL — won't clobber local edits."
+            primary={t("pipeline.importFromDoor43")}
+            secondary={t("pipeline.importFromDoor43Desc")}
           />
         </MenuItem>
       </Menu>
@@ -363,17 +365,17 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         onImported={onImported}
       />
       <Dialog open={Boolean(confirm)} onClose={() => !submitting && setConfirm(null)}>
-        <DialogTitle>Start AI pipeline</DialogTitle>
+        <DialogTitle>{t("pipeline.startAiPipeline")}</DialogTitle>
         <DialogContent>
           <DialogContentText>
             {confirm
-              ? `Run ${confirm.label}? ${confirm.approxDuration} per chapter — you can keep working in other chapters while it runs.`
+              ? t("pipeline.confirmRun", { label: t(confirm.label), duration: t(confirm.approxDuration) })
               : ""}
           </DialogContentText>
           <Box sx={{ mt: 2, display: "flex", alignItems: "flex-start", gap: 1.5 }}>
             <Typography sx={{ pt: 1, fontWeight: 500 }}>{book}</Typography>
             <TextField
-              label="Chapter or range"
+              label={t("pipeline.chapterOrRange")}
               value={refInput}
               onChange={(e) => setRefInput(e.target.value.replace(/[^\d-]/g, ""))}
               disabled={submitting}
@@ -385,8 +387,13 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
               helperText={
                 refParsed.ok
                   ? refParsed.range.startChapter === refParsed.range.endChapter
-                    ? `Runs once for ${refParsed.range.book} ${refParsed.range.startChapter}.`
-                    : `Runs ${refParsed.range.endChapter - refParsed.range.startChapter + 1} times across ${refParsed.range.book} ${refParsed.range.startChapter}-${refParsed.range.endChapter}.`
+                    ? t("pipeline.runsOnce", { book: refParsed.range.book, chapter: refParsed.range.startChapter })
+                    : t("pipeline.runsMultiple", {
+                        n: refParsed.range.endChapter - refParsed.range.startChapter + 1,
+                        book: refParsed.range.book,
+                        start: refParsed.range.startChapter,
+                        end: refParsed.range.endChapter,
+                      })
                   : refParsed.error
               }
             />
@@ -394,7 +401,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
           {confirm?.type === "generate" && !confirm.followUpChain ? (
             <Box sx={{ mt: 2 }}>
               <DialogContentText sx={{ mb: 1, fontSize: "0.875rem" }}>
-                What to generate:
+                {t("pipeline.whatToGenerate")}
               </DialogContentText>
               <FormGroup>
                 <FormControlLabel
@@ -405,7 +412,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
                       disabled={submitting}
                     />
                   }
-                  label="ULT (literal text)"
+                  label={t("pipeline.ultLiteralText")}
                 />
                 <FormControlLabel
                   control={
@@ -415,7 +422,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
                       disabled={submitting || !genOpts.ult}
                     />
                   }
-                  label="ULT alignment"
+                  label={t("pipeline.ultAlignment")}
                   sx={{ ml: 3 }}
                 />
                 <FormControlLabel
@@ -426,7 +433,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
                       disabled={submitting}
                     />
                   }
-                  label="UST (simplified text)"
+                  label={t("pipeline.ustSimplifiedText")}
                 />
                 <FormControlLabel
                   control={
@@ -436,18 +443,18 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
                       disabled={submitting || !genOpts.ust}
                     />
                   }
-                  label="UST alignment"
+                  label={t("pipeline.ustAlignment")}
                   sx={{ ml: 3 }}
                 />
               </FormGroup>
               {genOpts.ult && genOpts.ust && genOpts.ultAlignment !== genOpts.ustAlignment ? (
                 <DialogContentText sx={{ mt: 1, fontSize: "0.75rem", fontStyle: "italic" }}>
-                  Asymmetric alignment: runs as two pipelines back-to-back (ULT first).
+                  {t("pipeline.asymmetricAlignment")}
                 </DialogContentText>
               ) : null}
               {genNothingSelected ? (
                 <DialogContentText sx={{ mt: 1, fontSize: "0.8125rem", color: "warning.main" }}>
-                  Select at least one of ULT or UST.
+                  {t("pipeline.selectAtLeastOne")}
                 </DialogContentText>
               ) : null}
             </Box>
@@ -455,7 +462,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirm(null)} disabled={submitting}>
-            Cancel
+            {t("pipeline.cancel")}
           </Button>
           <Button
             onClick={start}
@@ -469,20 +476,20 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
             }
             startIcon={submitting ? <CircularProgress size={14} /> : undefined}
           >
-            Start
+            {t("pipeline.start")}
           </Button>
         </DialogActions>
       </Dialog>
       <Dialog open={Boolean(conflict)} onClose={() => setConflict(null)}>
-        <DialogTitle>Already running</DialogTitle>
+        <DialogTitle>{t("pipeline.alreadyRunning")}</DialogTitle>
         <DialogContent>
           {conflict && (
             <>
               <DialogContentText>
                 {conflict.started_by_username
-                  ? `${conflict.started_by_username} started `
-                  : "Someone already started "}
-                <strong>{TYPE_LABEL[conflict.pipeline_type]}</strong> for{" "}
+                  ? t("pipeline.userStarted", { user: conflict.started_by_username })
+                  : t("pipeline.someoneStarted")}
+                <strong>{t(TYPE_LABEL[conflict.pipeline_type])}</strong> for{" "}
                 <strong>
                   {conflict.book} {conflict.start_chapter}
                   {conflict.end_chapter !== conflict.start_chapter
@@ -492,20 +499,18 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
                 {relativeMinutes(conflict.created_at)} ago.
               </DialogContentText>
               <DialogContentText sx={{ mt: 1, fontSize: "0.875rem" }}>
-                State: <strong>{conflict.state}</strong>
+                {t("pipeline.stateColon")}<strong>{conflict.state}</strong>
                 {conflict.current_skill ? ` · ${conflict.current_skill}` : ""}
                 {` · updated ${relativeMinutes(conflict.updated_at)} ago`}
               </DialogContentText>
               <DialogContentText sx={{ mt: 1, fontSize: "0.8125rem", fontStyle: "italic" }}>
-                This chapter is locked while the pipeline runs. You can keep
-                editing other chapters; the AI output will overwrite this one
-                when it completes.
+                {t("pipeline.chapterLockedNote")}
               </DialogContentText>
             </>
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConflict(null)}>Close</Button>
+          <Button onClick={() => setConflict(null)}>{t("pipeline.close")}</Button>
         </DialogActions>
       </Dialog>
     </>
