@@ -443,11 +443,22 @@ export async function dispatchNext(env: Env): Promise<void> {
     }
   }
 
+  // Article translate jobs (tw/ta) are scoped by options.articleId/articleUrl,
+  // NOT book/chapter — the editor stores a sentinel book ("TW"/"TA") + hashed
+  // chapter only for its own dedup/scope bookkeeping. That sentinel is an
+  // editor-internal detail and must NOT leak upstream: the bot's article
+  // contract takes no book/chapter, so omit them for article jobs.
+  const optResourceType =
+    options && typeof options === "object" && "resourceType" in options
+      ? (options as { resourceType?: unknown }).resourceType
+      : undefined;
+  const isArticleJob =
+    job.pipeline_type === "translate" && (optResourceType === "tw" || optResourceType === "ta");
   const upstreamBody = {
     pipelineType: job.pipeline_type,
-    book: job.book,
-    startChapter: job.start_chapter,
-    endChapter: job.end_chapter,
+    ...(isArticleJob
+      ? {}
+      : { book: job.book, startChapter: job.start_chapter, endChapter: job.end_chapter }),
     username,
     sessionKey: job.session_key,
     ...(options ? { options } : {}),
