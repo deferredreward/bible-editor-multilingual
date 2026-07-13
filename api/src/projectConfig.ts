@@ -32,7 +32,7 @@
 
 import type { Env } from "./index";
 
-export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl";
+export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl" | "tw" | "ta";
 
 export interface GlBiblePane {
   /** DCS repo under the project org, e.g. "ar_avd" */
@@ -81,6 +81,7 @@ export interface ProjectConfig {
 
 const EN_REPOS: Record<ResourceKey, string> = {
   lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl",
+  tw: "en_tw", ta: "en_ta",
 };
 
 const UW_SOURCE = { org: "unfoldingWord", languageCode: "en", repos: EN_REPOS };
@@ -112,7 +113,7 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Arabic",
     languageTitle: "العربية",
     direction: "rtl",
-    repos: { lit: "ar_glt", sim: "ar_gst", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl" },
+    repos: { lit: "ar_glt", sim: "ar_gst", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
     litLabel: "GLT",
     simLabel: "GST",
     glBibles: [
@@ -131,7 +132,7 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Indonesian",
     languageTitle: "Bahasa Indonesia",
     direction: "ltr",
-    repos: { lit: "id_glt", sim: "id_gst", tn: "id_tn", tq: "id_tq", twl: "id_twl" },
+    repos: { lit: "id_glt", sim: "id_gst", tn: "id_tn", tq: "id_tq", twl: "id_twl", tw: "id_tw", ta: "id_ta" },
     litLabel: "GLT",
     simLabel: "GST",
     glBibles: [],
@@ -152,6 +153,7 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: {
       lit: "es-419_glt", sim: "es-419_gst",
       tn: "es-419_tn", tq: "es-419_tq", twl: "es-419_twl",
+      tw: "es-419_tw", ta: "es-419_ta",
     },
     litLabel: "GLT",
     simLabel: "GST",
@@ -169,7 +171,7 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Russian",
     languageTitle: "Русский",
     direction: "ltr",
-    repos: { lit: "ru_glt", sim: "ru_gst", tn: "ru_tn", tq: "ru_tq", twl: "ru_twl" },
+    repos: { lit: "ru_glt", sim: "ru_gst", tn: "ru_tn", tq: "ru_tq", twl: "ru_twl", tw: "ru_tw", ta: "ru_ta" },
     litLabel: "GLT",
     simLabel: "GST",
     glBibles: [],

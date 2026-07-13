@@ -824,9 +824,14 @@ export type PipelineType = "generate" | "notes" | "tqs" | "translate";
 // config (buildTranslateOptions) and folds these in; all optional. rowIds
 // scopes a single-note / subset translate (INTEGRATION.md §0).
 export interface TranslateRequestOptions {
-  // Which row-keyed TSV resource to translate ('tn' default | 'tq'). The server
-  // picks the matching source repo and passes it to the bot.
-  resourceType?: "tn" | "tq";
+  // Which resource to translate. Row-keyed TSV: 'tn' (default) | 'tq' (book +
+  // startChapter scope). Markdown article: 'tw' | 'ta' (articleId/articleUrl
+  // scope, no book/chapter). The server picks the matching source repo.
+  resourceType?: "tn" | "tq" | "tw" | "ta";
+  // Article selector (tw|ta only) — exactly one. articleId is a name
+  // ('kt/god', 'translate/figs-aside'); articleUrl a git.door43.org URL.
+  articleId?: string;
+  articleUrl?: string;
   model?: "sonnet" | "opus";
   delivery?: "path" | "branch";
   branchOnly?: boolean;
@@ -838,6 +843,38 @@ export interface TranslateRequestOptions {
   targetOrg?: string;
   sourceRef?: string;
   contextRef?: string;
+}
+
+// tW / tA markdown article file (article_units). Keyed by (resource, path).
+export interface ArticleUnit {
+  resource: "tw" | "ta";
+  path: string;
+  article_id: string;
+  part: "body" | "title" | "sub-title";
+  source_md: string;
+  source_sha: string | null;
+  target_md: string | null;
+  translation_state?: "ai_draft" | "edited" | "validated" | null;
+  draft_meta_json?: string | null;
+  version: number;
+  updated_by: number | null;
+  updated_at: number;
+  deleted_at: number | null;
+  latest_source?: string | null;
+}
+
+// Lightweight rail item (source_md/target_md excluded server-side for weight).
+export interface ArticleUnitMeta {
+  resource: "tw" | "ta";
+  path: string;
+  article_id: string;
+  part: "body" | "title" | "sub-title";
+  source_sha: string | null;
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  version: number;
+  updated_at: number;
+  has_target: 0 | 1;
+  latest_source?: string | null;
 }
 
 export type PipelineState =
@@ -896,8 +933,11 @@ export interface PipelineChainStep {
 
 export interface PipelineStartRequest {
   pipelineType: PipelineType;
-  book: string;
-  startChapter: number;
+  // Optional for article translate jobs (tw/ta), which are scoped by
+  // translate.articleId, not book/chapter. Row-keyed jobs (generate/notes/
+  // tqs and tn/tq translate) still pass both.
+  book?: string;
+  startChapter?: number;
   endChapter?: number;
   sessionKey: string;
   options?: PipelineRequestOptions;
@@ -1261,6 +1301,32 @@ export const api = {
   // validateNote. value=true → 'validated'; value=false → 'edited'.
   validateQuestion: (id: string, book: string, value: boolean) =>
     request<TqRow>(`/api/rows/tq/${encodeURIComponent(id)}/validate?book=${encodeURIComponent(book)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value ? 1 : 0 }),
+    }),
+
+  // ── tW / tA articles ──
+  // Rail list (metadata only; source_md/target_md excluded server-side).
+  getArticles: (resource: "tw" | "ta") =>
+    request<{ resource: string; units: ArticleUnitMeta[] }>(`/api/articles/${resource}`),
+
+  // Full unit (source_md + target_md) for the editor.
+  getArticle: (resource: "tw" | "ta", path: string) =>
+    request<ArticleUnit>(`/api/articles/${resource}/unit?path=${encodeURIComponent(path)}`),
+
+  // Save the translation. If-Match version CAS (409 on mismatch). Editing an
+  // ai_draft/validated unit demotes it to 'edited' server-side.
+  patchArticle: (resource: "tw" | "ta", path: string, expectedVersion: number, targetMd: string) =>
+    request<ArticleUnit>(`/api/articles/${resource}/unit?path=${encodeURIComponent(path)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+      body: JSON.stringify({ target_md: targetMd }),
+    }),
+
+  // "Approve" — value=true → 'validated'; value=false → 'edited'. Non-version-bumping.
+  validateArticle: (resource: "tw" | "ta", path: string, value: boolean) =>
+    request<ArticleUnit>(`/api/articles/${resource}/unit/validate?path=${encodeURIComponent(path)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: value ? 1 : 0 }),

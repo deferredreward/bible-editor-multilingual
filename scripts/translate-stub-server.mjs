@@ -99,6 +99,43 @@ async function fetchSourceTsv(sourceRef, book, resource) {
   return await r.text();
 }
 
+// tw|ta articleId → repo-relative .md path (matches the bot's conventions).
+function articlePath(resource, articleId) {
+  let id = articleId;
+  if (resource === "tw") {
+    if (!id.startsWith("bible/")) id = `bible/${id}`;
+    return id.endsWith(".md") ? id : `${id}.md`;
+  }
+  // ta: a folder → the body file (01.md); the stub does one file per run.
+  return id.endsWith(".md") ? id : `${id}/01.md`;
+}
+
+// Fetch a source article's markdown by articleId (via sourceRef repo) or by a
+// direct git.door43.org articleUrl. Returns { path, md }.
+async function fetchArticle(sourceRef, resource, articleId, articleUrl) {
+  if (articleUrl) {
+    const raw = articleUrl.replace("/src/", "/raw/");
+    const r = await fetch(raw);
+    if (!r.ok) throw new Error(`article fetch ${raw} → ${r.status}`);
+    const after = raw.split(/\/raw\/(?:branch|commit|tag)\/[^/]+\//)[1];
+    return { path: after ?? articlePath(resource, articleId ?? "unknown"), md: await r.text() };
+  }
+  const [orgRepo, ref = "master"] = sourceRef.split("@");
+  const [org, repo] = orgRepo.split("/");
+  const path = articlePath(resource, articleId);
+  const url = `${DCS_RAW}/${org}/${repo}/raw/branch/${ref}/${path}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`article fetch ${url} → ${r.status}`);
+  return { path, md: await r.text() };
+}
+
+// Mark an article "translated": prefix the FIRST heading's text with the marker,
+// preserving heading structure, rc:// links and everything else byte-identical
+// (mirrors the article checks' preservation guarantees).
+function markArticle(md) {
+  return md.replace(/^(#+[ \t]+)(.+)$/m, (_, h, t) => `${h}${MARKER}${t}`);
+}
+
 function send(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { "Content-Type": "application/json" });
@@ -126,9 +163,11 @@ const server = http.createServer(async (req, res) => {
       const startChapter = body.startChapter ?? 1;
       const endChapter = body.endChapter ?? startChapter;
       const options = body.options ?? {};
-      const resource = options.resourceType === "tq" ? "tq" : "tn";
+      const resource = ["tq", "tw", "ta"].includes(options.resourceType) ? options.resourceType : "tn";
+      const isArticle = resource === "tw" || resource === "ta";
+      const scopeLabel = isArticle ? (options.articleId ?? options.articleUrl) : `${body.book} ${startChapter}-${endChapter}`;
       console.log(
-        `[stub] start ${resource} ${body.book} ${startChapter}-${endChapter} → ${options.targetOrg}/${options.targetLang}` +
+        `[stub] start ${resource} ${scopeLabel} → ${options.targetOrg}/${options.targetLang}` +
           ` src=${options.sourceRef} ctx=${options.contextRef} delivery=${options.delivery}`,
       );
       const job = {
@@ -137,8 +176,10 @@ const server = http.createServer(async (req, res) => {
         endChapter,
         options,
         resource,
+        isArticle,
         createdAt: Date.now(),
         tsv: null,
+        article: null, // { path, md } for tw/ta
         error: FORCE_FAIL ? "forced_failure (--fail)" : null,
       };
       jobs.set(jobId, job);
@@ -147,20 +188,30 @@ const server = http.createServer(async (req, res) => {
       if (!FORCE_FAIL) {
         (async () => {
           try {
-            const tsv = FIXTURE
-              ? readFileSync(FIXTURE, "utf8")
-              : markChapterRange(
-                  await fetchSourceTsv(
-                    options.sourceRef ?? `unfoldingWord/en_${resource}@master`,
-                    body.book,
+            if (isArticle) {
+              const { path, md } = await fetchArticle(
+                options.sourceRef ?? `unfoldingWord/en_${resource}@master`,
+                resource,
+                options.articleId,
+                options.articleUrl,
+              );
+              job.article = { path, md: markArticle(md) };
+              console.log(`[stub] ${jobId} ready (article ${path}, ${job.article.md.length} chars)`);
+            } else {
+              job.tsv = FIXTURE
+                ? readFileSync(FIXTURE, "utf8")
+                : markChapterRange(
+                    await fetchSourceTsv(
+                      options.sourceRef ?? `unfoldingWord/en_${resource}@master`,
+                      body.book,
+                      resource,
+                    ),
+                    startChapter,
+                    endChapter,
                     resource,
-                  ),
-                  startChapter,
-                  endChapter,
-                  resource,
-                );
-            job.tsv = tsv;
-            console.log(`[stub] ${jobId} ready (${tsv.split(/\r?\n/).length} lines)`);
+                  );
+              console.log(`[stub] ${jobId} ready (${job.tsv.split(/\r?\n/).length} lines)`);
+            }
           } catch (e) {
             job.error = String(e && e.message ? e.message : e);
             console.log(`[stub] ${jobId} FAILED: ${job.error}`);
@@ -194,21 +245,41 @@ const server = http.createServer(async (req, res) => {
         current: { chapter: job.startChapter, skill: `translate-${resource}`, status: "failed", startedAt: base.createdAt, error: job.error },
       });
     }
-    // Simulate work: 'running' until DELAY_MS has elapsed AND the tsv is ready.
+    // Simulate work: 'running' until DELAY_MS has elapsed AND the output is ready.
+    const ready = job.isArticle ? !!job.article : !!job.tsv;
     const elapsed = Date.now() - job.createdAt;
-    if (elapsed < DELAY_MS || !job.tsv) {
+    if (elapsed < DELAY_MS || !ready) {
       return send(res, 200, {
         ...base,
         state: "running",
         current: { chapter: job.startChapter, skill: `translate-${resource}`, status: "translating", startedAt: base.createdAt },
       });
     }
-    // done — output[] points at the branch TSV this stub serves. repo tail
-    // is {targetLang}_{resource} so the editor's classify() routes it to the
-    // matching kind (tn|tq).
+    // done — output[] points at the branch file this stub serves. repo tail is
+    // {targetLang}_{resource} so the editor's classify() routes it to the
+    // matching kind (tn|tq → row apply; tw|ta → article apply by path).
     const targetOrg = job.options.targetOrg ?? "gl";
     const targetLang = job.options.targetLang ?? "xx";
     const repo = `${targetOrg}/${targetLang}_${resource}`;
+    if (job.isArticle) {
+      const branch = `AI-translate-${targetLang}-${resource}-${encodeURIComponent(job.options.articleId ?? "art")}`;
+      return send(res, 200, {
+        ...base,
+        state: "done",
+        output: [
+          {
+            type: resource, // real bot uses 'article'; editor classifies by repo tail, not type
+            repo,
+            branch,
+            path: job.article.path, // repo-relative markdown path = the round-trip id
+            rawUrl: `http://127.0.0.1:${PORT}/stub/article/${encodeURIComponent(jobId)}.md`,
+            prNumber: 0,
+            mergedAt: "",
+            commitSha: "stubsha",
+          },
+        ],
+      });
+    }
     const branch = `AI-translate-${targetLang}-${job.book}-${job.startChapter}`;
     const rawUrl = `http://127.0.0.1:${PORT}/stub/${resource}/${encodeURIComponent(jobId)}.tsv`;
     return send(res, 200, {
@@ -227,6 +298,20 @@ const server = http.createServer(async (req, res) => {
         },
       ],
     });
+  }
+
+  // --- serve the produced article markdown (the rawUrl target the editor fetches) ---
+  const mArticle = url.pathname.match(/^\/stub\/article\/([^/]+)\.md$/);
+  if (req.method === "GET" && mArticle) {
+    const jobId = decodeURIComponent(mArticle[1]);
+    const job = jobs.get(jobId);
+    if (!job || !job.article) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      return res.end("not ready");
+    }
+    const buf = Buffer.from(job.article.md, "utf8");
+    res.writeHead(200, { "Content-Type": "text/markdown", "Content-Length": buf.length });
+    return res.end(buf);
   }
 
   // --- serve the produced TSV (the rawUrl target the editor fetches) ---

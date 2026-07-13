@@ -114,6 +114,26 @@ export interface TwlRow {
   deleted_at: number | null;
 }
 
+// tW / tA translatable markdown article file (article_units, migration 0039).
+// Keyed by (resource, path). See docs/design/tw-ta-translation-modules.md.
+export interface ArticleUnit {
+  resource: "tw" | "ta";
+  path: string;              // repo-relative markdown path (the round-trip id)
+  article_id: string;        // grouping key: 'kt/god', 'translate/figs-aside'
+  part: "body" | "title" | "sub-title";
+  source_md: string;         // English source markdown
+  source_sha: string | null;
+  target_md: string | null;  // the translation (NULL = not started)
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  draft_meta_json: string | null;
+  version: number;
+  updated_by: number | null;
+  updated_at: number;
+  deleted_at: number | null;
+  /** See TnRow.latest_source (computed at read time from edit_log). */
+  latest_source?: string | null;
+}
+
 export interface VerseRow {
   book: string;
   chapter: number;

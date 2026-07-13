@@ -103,9 +103,14 @@ const TranslateOptions = z
     // Which row-keyed TSV resource to translate. Defaults to 'tn' (the pilot);
     // 'tq' translates translationQuestions. The server picks the matching source
     // repo (src.repos[resourceType]) and passes resourceType through to the bot,
-    // which selects the TSV parser + target repo. Article resources (tw/ta) ride
-    // a separate 'articles' envelope, not this row-keyed path.
-    resourceType: z.enum(["tn", "tq"]).optional(),
+    // which selects the TSV parser + target repo. Row-keyed TSV resources are
+    // tn|tq; article resources (tw|ta) use articleId/articleUrl instead of a
+    // book/chapter scope (bp-assistant articles envelope, INTEGRATION.md §7).
+    resourceType: z.enum(["tn", "tq", "tw", "ta"]).optional(),
+    // Article selector (tw|ta only) — exactly one. articleId is a name
+    // ('kt/god', 'translate/figs-aside'); articleUrl is a git.door43.org URL.
+    articleId: z.string().min(1).max(200).optional(),
+    articleUrl: z.string().url().max(400).optional(),
     model: z.enum(["sonnet", "opus"]).optional(),
     delivery: z.enum(["path", "branch"]).optional(),
     branchOnly: z.boolean().optional(),
@@ -125,8 +130,10 @@ const TranslateOptions = z
 const StartBody = z
   .object({
     pipelineType: z.enum(PIPELINE_TYPES),
-    book: z.string().min(1).max(8),
-    startChapter: z.number().int().positive(),
+    // Required for every pipeline EXCEPT an article translate (tw|ta), which is
+    // scoped by translate.articleId/articleUrl instead. Enforced in the handler.
+    book: z.string().min(1).max(8).optional(),
+    startChapter: z.number().int().positive().optional(),
     endChapter: z.number().int().positive().optional(),
     sessionKey: z.string().min(1).max(120).regex(/^[A-Za-z0-9_\-/]+$/),
     options: PipelineOptions.optional(),
@@ -197,7 +204,9 @@ function upstreamBase(env: Env): string {
 // project has no translationSource (the English root project can't be a
 // translate TARGET) — the caller turns that into a 400.
 type TranslateClientOptions = {
-  resourceType?: "tn" | "tq";
+  resourceType?: "tn" | "tq" | "tw" | "ta";
+  articleId?: string;
+  articleUrl?: string;
   model?: "sonnet" | "opus";
   delivery?: "path" | "branch";
   branchOnly?: boolean;
@@ -241,7 +250,19 @@ function buildTranslateOptions(
     ...(o.rowIds ? { rowIds: o.rowIds } : {}),
     ...(o.verseStart != null ? { verseStart: o.verseStart } : {}),
     ...(o.verseEnd != null ? { verseEnd: o.verseEnd } : {}),
+    // Article selector (tw|ta) — passed through to the bot's articles envelope.
+    ...(o.articleId ? { articleId: o.articleId } : {}),
+    ...(o.articleUrl ? { articleUrl: o.articleUrl } : {}),
   };
+}
+
+// Article translate jobs carry no book/chapter; they reuse the pipeline_jobs
+// scope columns via a stable per-article sentinel so dedup keys per article
+// (two different articles don't collide) while fitting the int chapter column.
+function articleScopeHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return (h % 99999) + 1;
 }
 
 async function resolveUsernameFromDb(env: Env, userId: number): Promise<string | null> {
@@ -842,9 +863,36 @@ pipelines.post("/start", requireEditor, async (c) => {
   const username = await resolveUsername(c, userId);
   if (!username) return c.json({ error: "username_missing" }, 400);
 
-  const startChapter = parsed.data.startChapter;
-  const endChapter = parsed.data.endChapter ?? startChapter;
-  const book = parsed.data.book.toUpperCase();
+  // Article translate (tw|ta) is scoped by article, not book/chapter. It reuses
+  // the pipeline_jobs scope columns via a per-article sentinel so all the
+  // dispatch/poll/apply plumbing works unchanged; the real selector rides in
+  // options.articleId/articleUrl.
+  const t = parsed.data.translate;
+  const rt = t?.resourceType;
+  const isArticleResource = rt === "tw" || rt === "ta";
+  const articleKey = t?.articleId ?? t?.articleUrl;
+  const isArticleTranslate =
+    parsed.data.pipelineType === "translate" && isArticleResource;
+  if (isArticleTranslate && !articleKey) {
+    return c.json(
+      { error: "article_selector_required", message: "tw/ta translate requires translate.articleId or translate.articleUrl" },
+      400,
+    );
+  }
+  let book: string;
+  let startChapter: number;
+  let endChapter: number;
+  if (isArticleTranslate) {
+    book = (rt as string).toUpperCase(); // "TW" | "TA" (scope tag)
+    startChapter = endChapter = articleScopeHash(articleKey!);
+  } else {
+    if (!parsed.data.book || !parsed.data.startChapter) {
+      return c.json({ error: "book_and_start_chapter_required" }, 400);
+    }
+    startChapter = parsed.data.startChapter;
+    endChapter = parsed.data.endChapter ?? startChapter;
+    book = parsed.data.book.toUpperCase();
+  }
 
   // De-dup against our own queue/active set before enqueueing (replaces
   // relying on the bot's same-scope 409, which can't see our queue). Same
