@@ -15,6 +15,9 @@
 //
 // This preservation is SCOPED (see caller): only tn/twl (the resources with an
 // in-app reorder gesture) whose row already carries a non-null sort_order.
+// (twl caveat: this only preserves the row through the reimport row loop —
+// canonical ULT-position order is (re)asserted afterwards by the twl canonical
+// post-pass in bookReimport.runReimport, which owns twl sort_order.)
 //   - tq has NO in-app reorder (its PATCH schema has no sort_order; the fast
 //     path can't fire for it), so master file order stays authoritative — a
 //     master-side reorder must still sync in.

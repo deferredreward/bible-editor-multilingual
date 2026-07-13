@@ -58,6 +58,9 @@ import { coerceRowId } from "./rowId";
 import { planTnContentDedup } from "./tnDedup";
 import { isCatastrophicTsvShrink } from "./shrinkGuard";
 import { classifyReimportRow, isReimportableRow } from "./reimportClassify";
+import { computeTwlSortOrderUpdates } from "./twlCanonicalOrder";
+import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
+import type { TwlRow, VerseRow } from "./types";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -111,6 +114,12 @@ export interface ReimportCounts {
   // reconciled (master ambiguous for the source key). Left as-is, logged so the
   // residual potential clobber is visible. Normally zero.
   source_attr_divergent: number;
+  // twl rows whose sort_order was rewritten by the canonical post-pass to match
+  // the ULT-position ordering (the same order the nightly export computes). Lets
+  // the reimport adopt canonical order back into D1 for content-identical rows
+  // that classifyReimportRow otherwise preserves as a local reorder. Book-level
+  // pass, tallied onto perResource.twl.
+  twl_reordered: number;
   dcs_404: number;
   errors: string[];
 }
@@ -136,6 +145,7 @@ function zeroCounts(): ReimportCounts {
     resurrected: 0,
     source_attr_reconciled: 0,
     source_attr_divergent: 0,
+    twl_reordered: 0,
     dcs_404: 0,
     errors: [],
   };
@@ -153,8 +163,35 @@ function addCounts(into: ReimportCounts, from: ReimportCounts): void {
   into.resurrected += from.resurrected;
   into.source_attr_reconciled += from.source_attr_reconciled;
   into.source_attr_divergent += from.source_attr_divergent;
+  into.twl_reordered += from.twl_reordered;
   into.dcs_404 += from.dcs_404;
   if (from.errors.length) into.errors.push(...from.errors);
+}
+
+// Recompute + persist canonical TWL sort_order for a whole book from the CURRENT
+// ULT alignment — the SAME diff the nightly export computes
+// (computeTwlSortOrderUpdates). TWL order is derived from ULT word position, not
+// preserved: classifyReimportRow deliberately no-ops a content-identical twl row's
+// sort_order (the HOS reorder-revert fix), so canonical order is owned here.
+// Positional metadata only — never touches content/updated_by, never logs edit
+// history; idempotent (empty diff when already canonical). Callers must have ULT
+// verses current in D1 first. Returns the number of rows re-sequenced.
+async function canonicalizeTwlOrder(env: Env, book: string): Promise<number> {
+  const twlRows = await env.DB.prepare(
+    `SELECT * FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+     ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
+  )
+    .bind(book)
+    .all<TwlRow>();
+  const ultVerses = await env.DB.prepare(
+    `SELECT * FROM verses WHERE book = ?1 AND bible_version = 'ULT'
+     ORDER BY chapter, verse`,
+  )
+    .bind(book)
+    .all<VerseRow>();
+  const updates = computeTwlSortOrderUpdates(twlRows.results, ultVerses.results);
+  await applyTwlSortOrderUpdates(env.DB, book, updates);
+  return updates.length;
 }
 
 export class BookNotImportedError extends Error {
@@ -310,6 +347,24 @@ async function runReimport(
       perResource[kind].skipped_locked += res.skippedLocked;
     } catch (e) {
       perResource[kind].errors.push(`${kind} prune: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Canonical TWL order post-pass. classifyReimportRow deliberately PRESERVES a
+  // content-identical twl row's local sort_order (the HOS reorder-revert fix), so
+  // a content-identical-but-misordered file never adopts canonical order through
+  // the row loop. Order is instead owned by this pass: now that D1's ULT verses
+  // are current (all resources applied above), recompute the ULT-position
+  // ordering — the SAME diff the nightly export computes
+  // (computeTwlSortOrderUpdates) — and write it. Reads twl rows + ULT from D1 (no
+  // dependency on twlRaw), so it also runs on a ULT-ONLY import: re-aligning the
+  // ULT changes the canonical order, and D1's twl sort_order must follow. Mirrors
+  // the nightly `twl || ult` gate.
+  if (want.has("twl") || want.has("ult")) {
+    try {
+      perResource.twl.twl_reordered += await canonicalizeTwlOrder(env, book);
+    } catch (e) {
+      perResource.twl.errors.push(`twl canonical order: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -546,6 +601,9 @@ async function applyTsvRows(
     // (master owns its order), and a NULL sort_order has no order to preserve
     // (it must still be repaired to file order). Both fall through to the normal
     // adopt-from-master path. See classifyReimportRow for the full rationale.
+    // NOTE: for twl this only preserves the row through the loop; canonical
+    // (ULT-position) order is (re)asserted afterwards by the twl canonical
+    // post-pass in runReimport, which owns twl sort_order.
     const contentMatches =
       tsvRowSignature(kind, storedTsvRowToParsed(kind, cur)) === tsvRowSignature(kind, row);
     const sortMatches = (cur.sort_order == null ? null : Number(cur.sort_order)) === sortOrder;
@@ -1939,6 +1997,19 @@ export async function runChunkedReimport(
       }
       return res;
     });
+  }
+
+  // Canonical TWL order: recompute the ULT-position ordering for the book now
+  // that this run's ULT + twl changes are applied. The export step canonicalizes
+  // too, but a twl file whose content didn't change is freshness-skipped at
+  // export — so an upstream ULT re-alignment (twl file untouched) would otherwise
+  // never re-sequence twl in D1. Idempotent (empty diff when already canonical);
+  // positional metadata only. Runs only when this night touched twl or ult.
+  if (changed.some((e) => e.resource === "twl" || e.resource === "ult")) {
+    const r = await step.do(`reimport-twlorder-${book}`, async () => ({
+      reordered: await canonicalizeTwlOrder(env, book),
+    }));
+    perResource.twl.twl_reordered += r.reordered;
   }
 
   // Record fetch-time SHAs for resources that ran (so a later night can skip).
