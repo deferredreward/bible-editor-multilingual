@@ -14,6 +14,9 @@
 
 ## Last run
 
+2026-07-13 (cont.) · **feat/ui-localization-wave3** — **Externalized the note-card + aligner surfaces + translated all 13 locales. PR #8 (stacked on #6).**
+User feedback flagged persistent English in the note card + alignment panel across all languages. Root cause: those strings were **never externalized** (hardcoded literals, not `en.json` keys) — NOT translation gaps. Fixed: a subagent externalized ~95 strings in `web/src/components/NoteCard.tsx`, `AlignmentPanel.tsx`, `SideBySideAligner.tsx` into two new namespaces (`noteCard`, `aligner`) via `useTranslation`/`t()` (string-substitution only), added them to `en.json` (now **416 base keys / 12 plural**), and 13 parallel subagents translated the delta into every locale (incl. `ar`, which also needed the new keys). Commit `b640761`. Gates: checker 13/13, typecheck, build, web unit, **e2e 10/10** (clean stack — reset D1 + fresh wrangler), browser-verified es (zero `ns.key` leaks, zero residual English). **ULT/UST/UHB/UGNT display labels deliberately left as runtime version tokens** → filed as **issue #7** (per-project manifest/config naming: GLT/GST, Van Dyke); enabled repo issues to file it. Also spawned task chip `task_9af4e937`. **PR stack: #4 (scheme+W1) ← #6 (W2) ← #8 (W3); merge in that order.** All machine-drafted, native review still owed.
+
 2026-07-13 · **feat/ui-localization (+ feat/ui-localization-wave2)** — **UI-localization scheme + 12 new UI locales shipped in two PRs into `deferredreward:main`.**
 
 **Delivered:**
