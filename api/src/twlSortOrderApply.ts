@@ -11,23 +11,18 @@ export async function applyTwlSortOrderUpdates(
   updates: Array<{ id: string; sort_order: number }>,
 ): Promise<void> {
   if (updates.length === 0) return;
-  // Batch update all rows at once, scoped to `book`. TWL row identity is
-  // (book, id) — the 4-char ids are unique per book, NOT globally (migration
-  // 0015) — so the UPDATE MUST filter on book or it would clobber a same-id row
-  // in another book. All values are BOUND (never interpolated) to keep ids out
-  // of the SQL text.
-  const caseClauses = updates.map(() => "WHEN ? THEN ?").join(" ");
-  const inPlaceholders = updates.map(() => "?").join(", ");
-  const sql =
-    `UPDATE twl_rows ` +
-    `SET sort_order = CASE id ${caseClauses} END, version = version + 1 ` +
-    `WHERE book = ? AND id IN (${inPlaceholders})`;
-  const binds: unknown[] = [];
-  for (const u of updates) binds.push(u.id, u.sort_order); // CASE id WHEN <id> THEN <sort_order>
-  binds.push(book);
-  for (const u of updates) binds.push(u.id); // IN (...)
+  // One UPDATE per row, sent as a single atomic D1 batch (one subrequest). Each
+  // statement binds just 3 values, so this stays well under D1's ~100
+  // bound-parameter-per-statement cap even for a book-level reorder of hundreds
+  // of rows (a single CASE...WHEN over all rows would blow that cap). Scoped to
+  // (book, id): the 4-char ids are unique per book, NOT globally (migration
+  // 0015), so the filter MUST include book or it would clobber a same-id row in
+  // another book. version is bumped for audit; content/updated_by untouched.
+  const stmt = db.prepare(
+    `UPDATE twl_rows SET sort_order = ?1, version = version + 1 WHERE book = ?2 AND id = ?3`,
+  );
   try {
-    await db.prepare(sql).bind(...binds).run();
+    await db.batch(updates.map((u) => stmt.bind(u.sort_order, book, u.id)));
   } catch (e) {
     console.error("applyTwlSortOrderUpdates failed", { book, updateCount: updates.length, error: e });
     // Non-fatal: a sort order update failure doesn't block the caller (export or
