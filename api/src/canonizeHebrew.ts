@@ -144,6 +144,16 @@ function buildShortLookup(words: SourceWord[]): TieredLookup {
 export function canonizeAlignmentSource(verseObjects: unknown[], uhbWords: SourceWord[]): number {
   if (!Array.isArray(verseObjects) || uhbWords.length === 0) return 0;
   const lk = buildFullLookup(uhbWords);
+  // A single source word aligned to NON-CONTIGUOUS target words is emitted as
+  // several `\zaln-s` milestones with identical source attrs — e.g. אָמַר split
+  // around "Moses" in "And Moses said" produces a zaln block before AND after the
+  // "Moses" block, both for the same UHB word (one occurrence). The first
+  // milestone consumes the UHB entry; without a fallback the repeats find nothing
+  // unused left and keep their bad byte order. So remember each resolution keyed
+  // on the milestone's OWN raw source identity (content|occurrence|lemma|morph,
+  // byte-identical across the repeats) and reuse it when the lookup is exhausted.
+  // Mirrors the original's `foundForms` cache.
+  const resolved = new Map<string, { form: string; lemma: string }>();
   let changed = 0;
   const walk = (nodes: unknown[]): void => {
     for (const node of nodes) {
@@ -153,21 +163,28 @@ export function canonizeAlignmentSource(verseObjects: unknown[], uhbWords: Sourc
         const form = o["content"] as string;
         const lemma = typeof o["lemma"] === "string" ? (o["lemma"] as string) : "";
         const morph = typeof o["morph"] === "string" ? (o["morph"] as string) : "";
+        const occurrence = o["occurrence"] == null ? "" : String(o["occurrence"]);
+        const rawKey = form + SEP + occurrence + SEP + lemma + SEP + morph;
+        // Prefer a fresh UHB entry; only when every matching entry is already
+        // consumed fall back to the resolution a prior milestone for THIS same
+        // source word computed — the repeated-discontinuous case above.
         const e =
           firstUnused(lk.exact.get(canonicalHebrew(lemma) + SEP + canonicalHebrew(form) + SEP + morph)) ??
           firstUnused(lk.stripped.get(stripHebrewMarks(lemma) + SEP + stripHebrewMarks(form) + SEP + morph)) ??
           firstUnused(lk.joiner.get(stripHebrewMarks(lemma) + SEP + wordJoinerFold(form) + SEP + morph));
-        if (e) {
-          e.found = true;
+        const adopt = e ? { form: e.form, lemma: e.lemma } : resolved.get(rawKey) ?? null;
+        if (adopt) {
+          if (e) e.found = true;
+          resolved.set(rawKey, adopt);
           let hit = false;
-          if (o["content"] !== e.form) {
-            o["content"] = e.form;
+          if (o["content"] !== adopt.form) {
+            o["content"] = adopt.form;
             hit = true;
           }
           // Only adopt the UHB lemma when the milestone already carries one and
           // it differs — never invent a lemma on a milestone that lacks it.
-          if (lemma !== "" && e.lemma !== "" && o["lemma"] !== e.lemma) {
-            o["lemma"] = e.lemma;
+          if (lemma !== "" && adopt.lemma !== "" && o["lemma"] !== adopt.lemma) {
+            o["lemma"] = adopt.lemma;
             hit = true;
           }
           if (hit) changed += 1;

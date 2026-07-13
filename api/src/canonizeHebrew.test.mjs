@@ -111,6 +111,25 @@ const zaln = (attrs, children = []) => ({ type: "milestone", tag: "zaln", ...att
   );
 }
 
+// 6b. Discontinuous alignment: ONE UHB word (single occurrence) referenced by
+//     TWO milestones (e.g. אָמַר split around "Moses" in "And Moses said"). The
+//     first consumes the lone UHB entry; the SECOND must still be canonized via
+//     the resolution cache — not left with its bad byte order. Regression for the
+//     dropped foundForms fallback.
+{
+  const uhb = [w(LEGACY, LEGACY, "M")]; // ONE entry — the single source occurrence
+  const vo = [
+    zaln({ content: NFC, lemma: NFC, morph: "M", occurrence: "1", occurrences: "1" }),
+    { type: "word", tag: "w", text: "Moses" },
+    zaln({ content: NFC, lemma: NFC, morph: "M", occurrence: "1", occurrences: "1" }),
+  ];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 2, "discontinuous: BOTH milestones for the one source word canonized");
+  assert(vo[0].content === LEGACY, "discontinuous: first milestone canonized");
+  assert(vo[2].content === LEGACY, "discontinuous: SECOND (repeat) milestone canonized, not left with bad bytes");
+  assert(vo[1].text === "Moses", "discontinuous: the intervening target word is untouched");
+}
+
 // 7. Recursion + target words untouched: nested milestones both canonize; the
 //    English `\w` target words in between are never modified.
 {
