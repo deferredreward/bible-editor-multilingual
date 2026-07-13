@@ -14,6 +14,50 @@
 
 ## Last run
 
+2026-07-13 · **recursing-hopper-215961** — **Canonical TWL link ordering across export ↔ reimport ↔ live UX.**
+Reported bug: export sorts TW links by ULT word position (added 07-09/10: `buildUltSequenceMap`/`twlSortPosition`
++ write-back `applyTwlSortOrderUpdates`) but reimport never adopted that order — the older 07-02 HOS
+reorder-preservation (`preserveLocalOrder = kind∈{tn,twl} && sort_order!=null` at `bookReimport.ts:552`) is true for
+EVERY twl row, so a content-identical row `noop`s and DCS/canonical order is dropped. User chose **"canonicalize on
+reimport"** (make D1 twl order a pure function of ULT alignment) + extend to the **live UX** ("always, at all times,
+the right order"): suggestions + approved links canonical too. **Part A (api):** extracted the export's ordering into
+pure `api/src/twlCanonicalOrder.ts` (`normalizeWordText`/`buildUltSequenceMap`/`twlSortPosition`/`orderTwlRows`/
+`computeTwlSortOrderUpdates`); refactored `export.ts buildTwlTsv` to reuse it (behavior-identical, export.test green);
+extracted `api/src/twlSortOrderApply.ts` (shared non-content sort_order writer, version-bump only, no edit_log/
+updated_by); added a `canonicalizeTwlOrder(env,book)` post-pass wired into BOTH reimport paths — `runReimport`
+(user "Import from Door43") AND the nightly `runChunkedReimport` (new `reimport-twlorder-{book}` step, gated on
+twl|ult changed, closes the ULT-realignment-with-unchanged-twl gap the export freshness-skip would miss). New
+`twl_reordered` count threaded through `zeroCounts`/`addCounts`. `classifyReimportRow`/`preserveLocalOrder`
+UNCHANGED (post-pass owns twl order; content-pass noop just avoids content churn) — comments updated. **Part B
+(web):** `web/src/lib/twlCanonicalOrder.ts` = verbatim mirror (takes pre-parsed verseObjects, not a VerseRow);
+`ResourceColumn` `twlForVerse`/`twlGroups` now sort twl via `canonicalTwlOrder(rows, ultVerseObjectsFor(v))` (tn/tq
+stay on `sortBySortOrder`); `Shell.ultVerseObjectsFor` useCallback (stable, keyed on `verseIndexByVersion` → memo
+recomputes only on ULT change — answers Stephen's "don't walk ULT every sort" perf concern with an in-memory,
+version-keyed memo, NOT a persisted sequence table; recommended against the table: cache-invalidation is this repo's
+worst-bug class, compute-on-read is correct-by-construction, benefit unmeasured); `handleAddTwlSuggestion` drops the
+new link into its **canonical slot** (canonicalTwlOrder + pickSortOrder) instead of appending; **`ENABLE_TWL_MANUAL_REORDER
+= false`** kill-switch in `WordsTable.tsx` gently disables the drag grip + up/down arrows (reversible — flip to restore;
+Shell's `onWordReorder`/`reorderSequential` left intact). Tests: `api/src/twlCanonicalOrder.test.mjs` (5) +
+`web/src/lib/twlCanonicalOrder.test.mjs` (parity fixture). **VERIFIED LIVE** (own wrangler :8790 on the worktree
+bundle, seeded ZEC, cookie dev-auth): ZEC 8:3 (8 links) — rendered Words order == computed canonical
+`[g7f8,ndg2,vdtm,usy8,fs5v,mhcq,p534,a7jx]`, which **differs** from stored sort_order (usy8/fs5v the two "Jerusalem"
+tokens correctly swapped by ULT pos 17<18); 0 grips/arrows in Words, Notes reorder intact; 0 console errors;
+approve-into-slot simulated on real data → new צִיּוֹן link gets sort_order 27650 (midpoint vdtm..usy8), lands at the
+right index. typecheck (both) + api tests + web tests + web build all green. **NOT committed / no PR / not deployed.**
+Honesty ledger: did NOT click-through a real suggestion approval (suggestions empty on local D1) — simulated the exact
+Shell logic instead; did NOT run a full reimport DB round-trip (pure logic unit-tested + typechecked). Deploy: plain
+`wrangler deploy --env production` (no migration). Plan: `~/.claude/plans/before-we-finish-planning-golden-rivest.md`.
+**Follow-up A — hover-to-locate:** hovering a Words row's new "show in text" spot (CenterFocusStrongIcon in the vacated
+grip cell) previews where its word is highlighted in scripture, no click. Transient `hoveredWordId` in Shell feeds the
+same `{activeQuote,activeOccurrence}` highlight path and wins while set; threaded Shell→ResourceColumn→WordsTable→WordRow
+(`onWordHoverPreview`/`onHoverPreview`); nav-change effect clears stale. No before/after (that's the tn reorderHighlight).
+User-confirmed live. **Follow-up B — nested-milestone ordering fix (ZEC 3:1 "high priest" sank to end):** root cause was
+`buildUltSequenceMap` recording each English `\w` against only the INNERMOST `\zaln` — so the OUTER word of a nested
+alignment (הַכֹּהֵן wrapping הַגָּדוֹל) got no sequence key and the link resolved null → sank to end. NOT multi-word/U+2060.
+Fix (both mirrors): record `\w` against EVERY stack level (additive; innermost keys/positions unchanged; also fixes the
+export). New `[nested]` regression test in both suites. User-confirmed ZEC 3:1 shows high priest 2nd. All suites +
+typecheck exit 0, web build green. (memory: [[project_twl_canonical_ordering]], [[project_hos_twl_reorder_revert_reimport]])
+
 2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
 Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
 builds `{html,text}` for a chapter (verse numbers → `<sup>`, poetry `\q` lines broken + indented per level,

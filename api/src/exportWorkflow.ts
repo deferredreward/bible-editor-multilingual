@@ -44,6 +44,7 @@ const EXPORT_ALERT_USERNAME = "deferredreward";
 // Pruned best-effort on each export so it doesn't linger; safe to delete since
 // the live-snapshot flow is no longer used (its post-export path is dormant).
 const LEGACY_EXPORT_BRANCH = "live-snapshot";
+import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
@@ -705,28 +706,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     book: string,
     updates: Array<{ id: string; sort_order: number }>,
   ): Promise<void> {
-    if (updates.length === 0) return;
-    const db = this.env.DB;
-    // Batch update all rows at once. Each row's sort_order is set to its
-    // computed position, and version is incremented for audit.
-    const updateSql = updates
-      .map((_, i) => `WHEN '${updates[i].id}' THEN ${updates[i].sort_order}`)
-      .join(" ");
-    const idList = updates.map((u) => `'${u.id}'`).join(", ");
-    const sql = `
-      UPDATE twl_rows
-      SET sort_order = CASE id ${updateSql} END,
-          version = version + 1
-      WHERE id IN (${idList})
-    `;
-    try {
-      await db.exec(sql);
-    } catch (e) {
-      console.error("applyTwlSortOrderUpdates failed", { book, updateCount: updates.length, error: e });
-      // Non-fatal: a sort order update failure doesn't block the export.
-      // The export proceeds with the TSV already rendered in the correct order;
-      // future operations just won't have the updated sort_order in D1.
-    }
+    // Delegates to the shared helper (twlSortOrderApply.ts) so the export and the
+    // reimport canonical post-pass write sort_order identically.
+    await applyTwlSortOrderUpdates(this.env.DB, book, updates);
   }
 
   // Delete branches this export's branch replaces. Sources:
