@@ -56,7 +56,16 @@ User-confirmed live. **Follow-up B — nested-milestone ordering fix (ZEC 3:1 "h
 alignment (הַכֹּהֵן wrapping הַגָּדוֹל) got no sequence key and the link resolved null → sank to end. NOT multi-word/U+2060.
 Fix (both mirrors): record `\w` against EVERY stack level (additive; innermost keys/positions unchanged; also fixes the
 export). New `[nested]` regression test in both suites. User-confirmed ZEC 3:1 shows high priest 2nd. All suites +
-typecheck exit 0, web build green. (memory: [[project_twl_canonical_ordering]], [[project_hos_twl_reorder_revert_reimport]])
+typecheck exit 0, web build green. **[PR #335](https://github.com/unfoldingWord/bible-editor/pull/335) opened + pushed; NOT
+merged/deployed.** **Pre-merge review done** (code-review --fix clean; Codex gpt-5.5 → gpt-5.4-mini, 4 fix rounds →
+round 5 clean): (1) book-scoped `applyTwlSortOrderUpdates` (was `WHERE id IN` only — cross-book clobber, ids per-book-unique
+per migration 0015); (2) rewrote `buildUltSequenceMap` — real ULT nests via `children` with ZERO milestoneEnd, so the old
+walk never popped + counted occurrence per-`\w`; now scopes the stack via children (push/recurse/pop) and counts occurrence
+per SOURCE-instance; (3) canonicalize on ULT-only reimport too (gate `twl || ult`); (4/5) D1 write caps — chunk per-row
+UPDATEs into ≤90-statement `db.batch`es (D1 caps 100 statements/batch AND 100 params/statement; a single CASE...WHEN blew
+params at ~34 rows, one big batch blew statements at >100). Intentionally kept: global manual-reorder disable (user's
+reversible-flag decision). Re-verified live ZEC 3:1 + 8:3 on the rebuilt bundle; all suites + typecheck + web build green.
+Deploy: plain `wrangler deploy --env production` (no migration). (memory: [[project_twl_canonical_ordering]], [[project_hos_twl_reorder_revert_reimport]])
 
 2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
 Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
