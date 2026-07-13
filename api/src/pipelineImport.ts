@@ -17,8 +17,10 @@ import {
   recomputeTargetOccurrences,
   refParts,
   stripOrphanAlignmentMarkers,
+  type SourceWord,
   type VerseExtract,
 } from "./importParsers";
+import { canonizeAlignmentSource } from "./canonizeHebrew";
 import { NT_BOOKS } from "./dcsSources";
 import { newRowId, isValidRowId } from "./rowId";
 import { tnContentKey } from "./tnDedup";
@@ -540,8 +542,17 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     else result.tqUpdated += 1;
   }
 
+  // Preload the book's UHB/UGNT source words once (a single query — cap-safe)
+  // so each verse's alignment canonize + U+FFFD heal read from memory instead
+  // of issuing a per-verse D1 read (a whole-book generate would otherwise blow
+  // the ~1000-subrequest budget). Empty map when there are no verse proposals.
+  const uhbWordsByVerse =
+    verseProposals.length > 0
+      ? await loadUhbSourceWords(env, job)
+      : new Map<number, SourceWord[]>();
+
   for (const p of verseProposals) {
-    await applyVerseUpdate(env, p, userId);
+    await applyVerseUpdate(env, p, userId, uhbWordsByVerse);
     affected.add(p.chapter);
     result.verseUpdated += 1;
   }
@@ -1049,10 +1060,55 @@ async function insertTqAtId(
   ]);
 }
 
+// Load every UHB/UGNT source verse in the job's chapter range in ONE query and
+// index its `\w` source words by verse. Used to canonize alignment source attrs
+// (and heal U+FFFD) against the exact source without a per-verse D1 read.
+async function loadUhbSourceWords(
+  env: Env,
+  job: ImportContext,
+): Promise<Map<number, SourceWord[]>> {
+  const srcVersion = NT_BOOKS.has(job.book) ? "UGNT" : "UHB";
+  const rs = await env.DB.prepare(
+    `SELECT chapter, verse, content_json FROM verses
+      WHERE book = ?1 AND chapter BETWEEN ?2 AND ?3 AND bible_version = ?4`,
+  )
+    .bind(job.book, job.startChapter, job.endChapter, srcVersion)
+    .all<{ chapter: number; verse: number; content_json: string }>();
+  const map = new Map<number, SourceWord[]>();
+  for (const r of rs.results ?? []) {
+    try {
+      const vo = (JSON.parse(r.content_json) as { verseObjects?: unknown[] }).verseObjects ?? [];
+      map.set(r.chapter * 100000 + r.verse, collectSourceWords(vo));
+    } catch {
+      /* skip an unparseable source verse — canonize/heal then no-op for it */
+    }
+  }
+  return map;
+}
+
+// Source words for a target verse, unioned across a verse bridge (verse_end) so
+// a bridged ULT/UST verse can match source words from every verse it spans.
+function sourceWordsForRange(
+  map: Map<number, SourceWord[]>,
+  chapter: number,
+  verse: number,
+  verseEnd: number | null,
+): SourceWord[] {
+  const end = verseEnd != null && verseEnd >= verse ? verseEnd : verse;
+  if (end === verse) return map.get(chapter * 100000 + verse) ?? [];
+  const out: SourceWord[] = [];
+  for (let v = verse; v <= end; v++) {
+    const ws = map.get(chapter * 100000 + v);
+    if (ws) out.push(...ws);
+  }
+  return out;
+}
+
 async function applyVerseUpdate(
   env: Env,
   p: PendingImportRow,
   userId: number,
+  uhbWordsByVerse: Map<number, SourceWord[]>,
 ): Promise<void> {
   const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
   const book = String(payload.book ?? p.book);
@@ -1061,6 +1117,7 @@ async function applyVerseUpdate(
   const verseEndRaw = payload.verse_end;
   const verseEnd =
     typeof verseEndRaw === "number" && Number.isFinite(verseEndRaw) ? verseEndRaw : null;
+  const uhbWords = sourceWordsForRange(uhbWordsByVerse, chapter, verse, verseEnd);
   const bibleVersion = String(payload.bible_version ?? p.bible_version ?? "");
   let contentJson = String(payload.content_json ?? "");
   const plainText = (payload.plain_text as string | null) ?? null;
@@ -1082,6 +1139,12 @@ async function applyVerseUpdate(
         // (the doubled-source defect, e.g. JER 31:33 `אֶת אֶת בֵּית`) before it
         // lands in D1 / exports. No-op on clean output; source text untouched.
         parsed.verseObjects = dropDuplicateSourceMilestones(parsed.verseObjects);
+        // Canonize `\zaln-s` source attrs (x-content / x-lemma) to the exact UHB
+        // bytes — fixing combining-mark order and dropped joiners the AI aligner
+        // emits — so stored + exported Hebrew matches the source and downstream
+        // nfc() compares become no-ops. Structure-preserving; no-op when nothing
+        // matches or the source verse wasn't loaded. See canonizeHebrew.ts.
+        canonizeAlignmentSource(parsed.verseObjects, uhbWords);
         recomputeTargetOccurrences(parsed.verseObjects);
         contentJson = JSON.stringify(parsed);
       }
@@ -1098,17 +1161,9 @@ async function applyVerseUpdate(
   if ((bibleVersion === "ULT" || bibleVersion === "UST") && contentJson.includes("�")) {
     try {
       const parsed = JSON.parse(contentJson) as { verseObjects?: unknown[] };
-      const srcVersion = NT_BOOKS.has(book) ? "UGNT" : "UHB";
-      const src = await env.DB.prepare(
-        `SELECT content_json FROM verses
-          WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
-      )
-        .bind(book, chapter, verse, srcVersion)
-        .first<{ content_json: string }>();
-      const srcWords = src
-        ? collectSourceWords((JSON.parse(src.content_json) as { verseObjects?: unknown[] }).verseObjects ?? [])
-        : [];
-      const report = healReplacementChars(parsed.verseObjects ?? [], srcWords);
+      // Reuse the preloaded source words (same UHB/UGNT verse, now union of the
+      // bridge range) instead of a per-verse read — see loadUhbSourceWords.
+      const report = healReplacementChars(parsed.verseObjects ?? [], uhbWords);
       if (report.repaired.length > 0) contentJson = JSON.stringify(parsed);
       if (report.unrepaired.length > 0) {
         console.warn("pipeline apply: unrepaired U+FFFD in alignment source attrs", {

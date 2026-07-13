@@ -67,6 +67,32 @@ params at ~34 rows, one big batch blew statements at >100). Intentionally kept: 
 reversible-flag decision). Re-verified live ZEC 3:1 + 8:3 on the rebuilt bundle; all suites + typecheck + web build green.
 Deploy: plain `wrangler deploy --env production` (no migration). (memory: [[project_twl_canonical_ordering]], [[project_hos_twl_reorder_revert_reimport]])
 
+2026-07-13 · **suspicious-vaughan** — **Ported Stephen Wunrow's `canonizeHebrew.mjs` into the app + wired
+the ULT/UST alignment path at AI ingest.** New pure module `api/src/canonizeHebrew.ts` keeps Stephen's
+matching ALGORITHM (tiered lookup: exact → vowel-stripped → word-joiner-stripped, stop at first hit; a
+matched UHB word is CONSUMED via a found flag so two same-skeleton-different-pointing tokens map to distinct
+UHB words; unmatched tokens LEFT AS-IS — never guesses) and drops the file/USFM-regex I/O — it works on the
+in-memory shapes we already have. Two exports: **`canonizeAlignmentSource(verseObjects, uhbWords)`** rewrites
+`\zaln-s` `content`/`lemma` to the exact UHB bytes in place (structure-preserving, can't unalign; morph is a
+match key only, never rewritten; returns count changed) and **`canonizeQuote(quote, uhbWords, {strict})`**
+rewrites TN/TWL quote words preserving space/maqaf separators (`strict` = exact-tier only, for verse ranges).
+This is "the upstream fix" `docs/hebrew-normalization.md` names — complementary to, not a replacement for, the
+compare-layer `nfc()` folds. **Wired ULT/UST alignment ONLY, at AI ingest:** `applyVerseUpdate` in
+`pipelineImport.ts`, as a sibling to `stripOrphanAlignmentMarkers`/`dropDuplicateSourceMilestones`/
+`recomputeTargetOccurrences`. UHB is **preloaded once per job** (`loadUhbSourceWords`, a single
+`SELECT … bible_version IN UHB/UGNT` — cap-safe; a per-verse read would blow the ~1000-subrequest budget on a
+whole-book generate) and range-unioned per verse (`sourceWordsForRange`) for bridges; the existing U+FFFD heal
+now reuses that same preloaded map instead of its own per-verse SELECT. **Placement rationale — INGEST not
+export:** canonize where non-UHB Hebrew first enters D1, before it reaches master; at export it would churn vs
+master and `reconcileSourceAttrsFromMaster` could re-adopt master's drifted x-content (the maqqef-reform /
+Hebrew-NFC-clobber durability trap). **Deferred (canonizeQuote ready but NOT wired):** TN quotes (clean home =
+staging `tnPayload`; watch the `tnContentKey` dedup interaction) and TWL (not in the AI pipeline — book import +
+in-app generator). Tests: `api/src/canonizeHebrew.test.mjs` (32 asserts — three tiers, NFC→legacy byte rewrite,
+found-flag consumption, morph-mismatch no-op, recursion, quote separators, ZWJ/BOM/WJ folds, and a
+no-`\uXXXX`-escape-in-data guarantee — 33 asserts). **api typecheck + full api suite green** (EXIT 0).
+Committed + rebased onto main; **PR opened** (branch `claude/canonize-hebrew-workflow-eb48d6`). Not
+browser-verified (server-side ingest transform, no UI surface). (memory: [[project_canonize_hebrew_to_uhb]])
+
 2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
 Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
 builds `{html,text}` for a chapter (verse numbers → `<sup>`, poetry `\q` lines broken + indented per level,

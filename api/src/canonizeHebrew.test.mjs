@@ -1,0 +1,230 @@
+// Unit tests for canonizeHebrew.ts — canonizing resource Hebrew to the exact
+// UHB bytes. Run from api/:
+//   node --experimental-strip-types --no-warnings src/canonizeHebrew.test.mjs
+//
+// Not a test framework; a failed assert exits non-zero.
+
+import { canonizeAlignmentSource, canonizeQuote } from "./canonizeHebrew.ts";
+
+function assert(cond, msg) {
+  if (!cond) {
+    console.error(`FAIL: ${msg}`);
+    process.exit(1);
+  }
+  console.log(`  ok: ${msg}`);
+}
+
+// ── Building blocks ─────────────────────────────────────────────────────────
+// A consonant + dagesh + hiriq. The UHB stores marks in traditional Tanakh
+// order (dagesh, ccc=21, BEFORE the vowel hiriq, ccc=18); NFC reorders to
+// ascending combining class (hiriq before dagesh). The two are byte-distinct
+// but visually identical — exactly the drift canonize repairs.
+const BET = "ב";
+const DAGESH = "ּ";
+const HIRIQ = "ִ";
+const QAMATS = "ָ";
+const WJ = "⁠"; // word joiner
+
+const LEGACY = BET + DAGESH + HIRIQ; // UHB storage order
+const NFC = BET + HIRIQ + DAGESH; // AI / NFC order
+
+// Sanity: the two orders fold together under NFC, and NFC is the canonical form.
+assert(NFC.normalize("NFC") === NFC, "precondition: NFC form is already canonical");
+assert(LEGACY.normalize("NFC") === NFC, "precondition: legacy UHB order folds to the NFC form");
+assert(LEGACY !== NFC, "precondition: legacy and NFC bytes genuinely differ");
+
+const w = (text, lemma, morph) => ({ text, strong: "H1", lemma, morph });
+const zaln = (attrs, children = []) => ({ type: "milestone", tag: "zaln", ...attrs, children });
+
+// ── canonizeAlignmentSource ─────────────────────────────────────────────────
+
+// 1. Exact tier: milestone content/lemma in NFC order → rewritten to UHB legacy
+//    bytes. This is the headline behavior.
+{
+  const uhb = [w(LEGACY, LEGACY, "Ncmsa")];
+  const vo = [zaln({ content: NFC, lemma: NFC, morph: "Ncmsa" })];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 1, "exact: one milestone changed");
+  assert(vo[0].content === LEGACY, "exact: content rewritten to UHB legacy bytes");
+  assert(vo[0].lemma === LEGACY, "exact: lemma rewritten to UHB legacy bytes");
+}
+
+// 2. No-op: milestone already byte-identical to UHB → nothing changes.
+{
+  const uhb = [w(LEGACY, LEGACY, "Ncmsa")];
+  const vo = [zaln({ content: LEGACY, lemma: LEGACY, morph: "Ncmsa" })];
+  const before = JSON.stringify(vo);
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 0, "no-op: already-canonical milestone reports 0 changes");
+  assert(JSON.stringify(vo) === before, "no-op: tree untouched");
+}
+
+// 3. Conservatism: a morph mismatch means NO match at any tier → left as-is.
+{
+  const uhb = [w(LEGACY, LEGACY, "Ncmsa")];
+  const vo = [zaln({ content: NFC, lemma: NFC, morph: "Vqp3ms" })];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 0, "morph mismatch: no change (morph is a match key, never rewritten)");
+  assert(vo[0].content === NFC, "morph mismatch: content preserved unchanged");
+}
+
+// 4. Stripped tier: milestone missing the vowel points still matches on the
+//    consonant skeleton and adopts the fully-pointed UHB form.
+{
+  const dbrBare = "דבר"; // ד ב ר
+  const dbrPointed = "ד" + QAMATS + "ב" + QAMATS + "ר"; // דָבָר
+  const uhb = [w(dbrPointed, dbrPointed, "Ncmsa")];
+  const vo = [zaln({ content: dbrBare, lemma: dbrPointed, morph: "Ncmsa" })];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 1, "stripped: bare-consonant content matched and changed");
+  assert(vo[0].content === dbrPointed, "stripped: adopted the pointed UHB form");
+}
+
+// 5. Word-joiner tier: content differs by BOTH vowels and a dropped U+2060 →
+//    only the loosest tier matches, and it adopts the UHB form (WJ and all).
+{
+  const dbrBare = "דבר";
+  const dbrPointedWj = "ד" + QAMATS + "ב" + QAMATS + "ר" + WJ;
+  const uhb = [w(dbrPointedWj, dbrPointedWj, "Ncmsa")];
+  const vo = [zaln({ content: dbrBare, lemma: dbrPointedWj, morph: "Ncmsa" })];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 1, "word-joiner: bare content matched the pointed+WJ UHB word");
+  assert(vo[0].content === dbrPointedWj, "word-joiner: adopted UHB form including the U+2060");
+}
+
+// 6. Found-flag consumption: two milestones with the same consonant skeleton but
+//    distinct pointing map to two DISTINCT UHB words, not the same one twice.
+{
+  const boA = "בֹא"; // בֹא  (holam)
+  const baA = "ב" + QAMATS + "א"; // בָא  (qamats)
+  const bare = "בא"; // בא
+  const uhb = [w(boA, "L", "M"), w(baA, "L", "M")];
+  const vo = [
+    zaln({ content: bare, lemma: "L", morph: "M" }),
+    zaln({ content: bare, lemma: "L", morph: "M" }),
+  ];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 2, "found-flag: both milestones changed");
+  assert(
+    vo[0].content === boA && vo[1].content === baA,
+    "found-flag: each milestone consumed a distinct UHB word (no double-claim)",
+  );
+}
+
+// 7. Recursion + target words untouched: nested milestones both canonize; the
+//    English `\w` target words in between are never modified.
+{
+  const uhb = [w(LEGACY, LEGACY, "M"), w(LEGACY, LEGACY, "M")];
+  const vo = [
+    zaln({ content: NFC, lemma: NFC, morph: "M" }, [
+      { type: "word", tag: "w", text: "the" },
+      zaln({ content: NFC, lemma: NFC, morph: "M" }, [{ type: "word", tag: "w", text: "house" }]),
+    ]),
+  ];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 2, "recursion: both the outer and nested milestone changed");
+  assert(vo[0].content === LEGACY, "recursion: outer milestone canonized");
+  assert(vo[0].children[1].content === LEGACY, "recursion: nested milestone canonized");
+  assert(vo[0].children[0].text === "the", "recursion: target word 'the' untouched");
+  assert(vo[0].children[1].children[0].text === "house", "recursion: target word 'house' untouched");
+}
+
+// 8. Empty UHB → no-op.
+{
+  const vo = [zaln({ content: NFC, lemma: NFC, morph: "M" })];
+  assert(canonizeAlignmentSource(vo, []) === 0, "empty UHB: returns 0");
+  assert(vo[0].content === NFC, "empty UHB: content untouched");
+}
+
+// ── canonizeQuote ───────────────────────────────────────────────────────────
+
+// 9. Multi-word quote: each word canonized, the space separator preserved.
+{
+  const q = NFC + " " + "דבר"; // NFC-order word + bare word
+  const uhb = [w(LEGACY, LEGACY, "M"), w("ד" + QAMATS + "ב" + QAMATS + "ר", "L2", "M")];
+  const out = canonizeQuote(q, uhb);
+  assert(
+    out === LEGACY + " " + "ד" + QAMATS + "ב" + QAMATS + "ר",
+    "quote: both words canonized, space preserved",
+  );
+}
+
+// 10. Maqaf separator preserved.
+{
+  const maqaf = "־";
+  const q = NFC + maqaf + NFC;
+  const uhb = [w(LEGACY, LEGACY, "M"), w(LEGACY, LEGACY, "M")];
+  const out = canonizeQuote(q, uhb);
+  assert(out === LEGACY + maqaf + LEGACY, "quote: maqaf separator preserved between canonized words");
+}
+
+// 11. Found-flag in quotes: repeated skeleton → distinct UHB words.
+{
+  const boA = "בֹא";
+  const baA = "ב" + QAMATS + "א";
+  const bare = "בא";
+  const q = bare + " " + bare;
+  const uhb = [w(boA, "L", "M"), w(baA, "L", "M")];
+  const out = canonizeQuote(q, uhb);
+  assert(out === boA + " " + baA, "quote found-flag: two bare words map to two distinct UHB words");
+}
+
+// 12. strict mode (verse ranges): only the exact tier fires; a bare word that
+//     would need the stripped tier is left untouched.
+{
+  const dbrBare = "דבר";
+  const dbrPointed = "ד" + QAMATS + "ב" + QAMATS + "ר";
+  const uhb = [w(dbrPointed, dbrPointed, "M")];
+  assert(
+    canonizeQuote(dbrBare, uhb, { strict: true }) === dbrBare,
+    "strict: stripped-tier match suppressed for verse ranges",
+  );
+  assert(
+    canonizeQuote(dbrBare, uhb) === dbrPointed,
+    "non-strict: same input DOES match via the stripped tier",
+  );
+}
+
+// 13. Unmatched word left as-is; no throw on empty UHB.
+{
+  const q = NFC;
+  assert(canonizeQuote(q, []) === q, "empty UHB: quote returned unchanged");
+  assert(canonizeQuote(q, [w("שלום", "L", "M")]) === q, "no match: word left as-is");
+}
+
+// 14. Each invisible joiner in the exact-tier fold is exercised independently
+//     (pins the INVISIBLE_JOINERS class members — WJ/U+2060 is already covered
+//     by cases 5 & 13's absence, ZWJ and BOM are pinned here). A quote word that
+//     carries the joiner still matches a clean UHB word and adopts its exact
+//     bytes — only possible if canonicalHebrew() strips that codepoint.
+{
+  const clean = "אב"; // alef bet, no joiner
+  const uhb = [w(clean, clean, "M")];
+  assert(
+    canonizeQuote("א‍ב", uhb) === clean,
+    "ZWJ (U+200D) folded at exact tier → adopts clean UHB bytes",
+  );
+  assert(
+    canonizeQuote("א﻿ב", uhb) === clean,
+    "BOM/ZWNBSP (U+FEFF) folded at exact tier → adopts clean UHB bytes",
+  );
+}
+
+// 15. GUARANTEE: what lands in the data is REAL Hebrew bytes, never a literal
+//     "\uXXXX" escape sequence. Canonize a milestone (whose UHB form even carries
+//     a word joiner), serialize the way applyVerseUpdate does (JSON.stringify),
+//     and assert the output holds the real characters and zero backslash-u.
+{
+  const dbrWj = "ד" + QAMATS + "ב" + QAMATS + "ר" + WJ;
+  const uhb = [w(dbrWj, dbrWj, "M")];
+  // lemma matches the UHB lemma (as real data would); content is bare and gets
+  // canonized up to the pointed+WJ UHB form via the word-joiner tier.
+  const vo = [zaln({ content: "דבר", lemma: dbrWj, morph: "M" })];
+  canonizeAlignmentSource(vo, uhb);
+  const serialized = JSON.stringify(vo);
+  assert(vo[0].content === dbrWj, "guarantee: adopted the real UHB form");
+  assert(serialized.includes(dbrWj), "guarantee: serialized JSON holds the real Hebrew characters");
+  assert(!serialized.includes("\\u"), "guarantee: serialized JSON contains NO \\uXXXX escape sequence");
+}
+
+console.log("canonizeHebrew.test.mjs: all assertions passed");
