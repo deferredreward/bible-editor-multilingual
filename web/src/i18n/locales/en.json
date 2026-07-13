@@ -43,6 +43,8 @@
   "translation": {
     "translationMode": "Translation mode",
     "translateChapter": "Translate chapter",
+    "translateChapterQuestions": "Translate questions",
+    "descTranslateQuestions": "AI-translate this chapter's questions from the source language.",
     "translating": "translating…",
     "notesInChapter": "notes in this chapter",
     "languageMemory": "Language memory",
@@ -192,7 +194,7 @@
     "board": "Board",
     "resources": "Resources",
     "notes": "Notes",
-    "words": "Words",
+    "words": "TWLinks",
     "questions": "Questions",
     "alignment": "Alignment",
     "search": "Search",
