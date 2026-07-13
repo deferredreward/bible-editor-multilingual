@@ -145,6 +145,32 @@ const ids = (rows) => rows.map((r) => r.id);
     `outer resolves before last (got ${JSON.stringify(ordered)})`);
 }
 
+// ─── Occurrence = SOURCE instance, not target-word count ─────────────────────
+// foo aligned to 2 English words, then 'mid', then foo again. A link on the 2nd
+// source occurrence of foo must land AFTER mid — not at the 1st foo's 2nd word.
+{
+  console.log("\n[occurrence-source] repeated word, first aligned to 2 English words");
+  const vo = [
+    {
+      type: "milestone", tag: "zaln", content: "foo",
+      children: [
+        { type: "word", tag: "w", text: "aa" },
+        { type: "word", tag: "w", text: "bb" },
+      ],
+    },
+    { type: "milestone", tag: "zaln", content: "mid", children: [{ type: "word", tag: "w", text: "cc" }] },
+    { type: "milestone", tag: "zaln", content: "foo", children: [{ type: "word", tag: "w", text: "dd" }] },
+  ];
+  const rows = [
+    twl("fooA", "foo", 1, 100),
+    twl("mid", "mid", 1, 200),
+    twl("fooB", "foo", 2, 300),
+  ];
+  const ordered = ids(canonicalTwlOrder(rows, vo));
+  assert(JSON.stringify(ordered) === JSON.stringify(["fooA", "mid", "fooB"]),
+    `foo#2 lands after mid (got ${JSON.stringify(ordered)})`);
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

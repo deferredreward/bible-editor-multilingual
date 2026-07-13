@@ -16,6 +16,15 @@ export function normalizeWordText(s: string | null | undefined): string {
   return s.normalize("NFC").toLowerCase().trim().replace(/[\s\p{P}\p{S}]+/gu, " ");
 }
 
+// A `\zaln` alignment milestone we are currently inside. `occurrence` is the
+// source-instance number of this word in the verse (1-based, reading order);
+// `recorded` guards so we key it to the FIRST English word under it.
+interface AlignmentFrame {
+  content: string;
+  occurrence: number;
+  recorded: boolean;
+}
+
 export function buildUltSequenceMap(
   verseObjects: unknown[] | null | undefined,
 ): Map<string, number> {
@@ -23,45 +32,56 @@ export function buildUltSequenceMap(
   if (!Array.isArray(verseObjects)) return sequenceMap;
 
   let englishIndex = 0;
-  const occurrenceMap = new Map<string, number>();
-  const alignmentStack: Array<{ content: string }> = [];
+  // Per-content source-instance counter — the OCCURRENCE a TWL row keys on
+  // (which source instance), NOT the number of English words it fans out to.
+  const occurrenceCount = new Map<string, number>();
+  const stack: AlignmentFrame[] = [];
 
   const walk = (nodes: unknown[]): void => {
     for (const node of nodes) {
       if (!node || typeof node !== "object") continue;
       const o = node as Record<string, unknown>;
 
-      // Beginning of an alignment milestone
+      // Start of an alignment milestone. usfm-js nests alignment via `children`
+      // (real ULT data carries NO milestoneEnd nodes), so scope the frame to the
+      // children walk: push, recurse, pop. A childless milestone is
+      // sibling-structured — left for a milestoneEnd below.
       if (o["type"] === "milestone" && o["tag"] === "zaln" && typeof o["content"] === "string") {
-        alignmentStack.push({ content: normalizeWordText(o["content"] as string) });
+        const content = normalizeWordText(o["content"] as string);
+        const occurrence = (occurrenceCount.get(content) ?? 0) + 1;
+        occurrenceCount.set(content, occurrence);
+        stack.push({ content, occurrence, recorded: false });
+        const children = o["children"];
+        if (Array.isArray(children)) {
+          walk(children);
+          stack.pop();
+        }
+        continue;
       }
 
-      // English word. Record it against EVERY alignment milestone currently on
-      // the stack, not just the innermost — otherwise a TWL link pointing at an
-      // OUTER word of a NESTED alignment never gets a position and sinks to the
-      // end. Real case: ZEC 3:1 "high priest" = הַכֹּהֵן wrapping הַגָּדוֹל; the
-      // English words sit under the inner הַגָּדוֹל, so only it used to get keys
-      // and the הַכֹּהֵן link resolved to null. Additive: the innermost word's
-      // per-\w occurrence counter is unchanged (always in the loop, incremented
-      // once per \w as before), so existing keys keep their positions; outer
-      // words gain the keys they lacked, mapped to the first English index in
-      // their span.
+      // End of a sibling-structured alignment milestone.
+      if (o["type"] === "milestoneEnd" && o["tag"] === "zaln") {
+        if (stack.length > 0) stack.pop();
+        continue;
+      }
+
+      // English word. Key EVERY enclosing milestone (all nesting levels) to its
+      // FIRST English index — so a TWL link on an OUTER word of a nested
+      // alignment resolves (ZEC 3:1 "high priest" = הַכֹּהֵן wrapping הַגָּדוֹל)
+      // and each source instance owns exactly one position.
       if (o["type"] === "word" && o["tag"] === "w") {
-        for (const entry of alignmentStack) {
-          const occurrence = (occurrenceMap.get(entry.content) ?? 0) + 1;
-          occurrenceMap.set(entry.content, occurrence);
-          sequenceMap.set(`${entry.content}#${occurrence}`, englishIndex);
+        for (const frame of stack) {
+          if (!frame.recorded) {
+            sequenceMap.set(`${frame.content}#${frame.occurrence}`, englishIndex);
+            frame.recorded = true;
+          }
         }
         englishIndex++;
+        continue;
       }
 
       const children = o["children"];
       if (Array.isArray(children)) walk(children);
-
-      // End of an alignment milestone
-      if (o["type"] === "milestoneEnd" && o["tag"] === "zaln") {
-        alignmentStack.pop();
-      }
     }
   };
 

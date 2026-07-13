@@ -208,6 +208,43 @@ function toMap(updates) {
   assert(versePositions.get("last") === 3, "last word → index 3");
 }
 
+// ─── Occurrence = SOURCE instance, not target-word count ─────────────────────
+// A source word aligned to MULTIPLE English words must still own ONE occurrence
+// slot, so a later occurrence of the same word resolves to its own milestone —
+// not to the first milestone's 2nd English word. Regression for the per-\w
+// counter (Codex): foo aligned to 2 English words, then a 'mid' word, then foo
+// again. A link on foo#2 must land AFTER 'mid', not before it.
+{
+  console.log("\n[occurrence-source] repeated word, first aligned to 2 English words");
+  const verseObjects = [
+    {
+      type: "milestone", tag: "zaln", content: "foo", // occurrence 1, spans 2 English words
+      children: [
+        { type: "word", tag: "w", text: "aa" },
+        { type: "word", tag: "w", text: "bb" },
+      ],
+    },
+    { type: "milestone", tag: "zaln", content: "mid", children: [{ type: "word", tag: "w", text: "cc" }] },
+    { type: "milestone", tag: "zaln", content: "foo", children: [{ type: "word", tag: "w", text: "dd" }] }, // occurrence 2
+  ];
+  const verse = {
+    book: "GEN", chapter: 4, verse: 1, verse_end: null, bible_version: "ULT",
+    content_json: JSON.stringify({ verseObjects }), plain_text: null, version: 1, updated_by: null, updated_at: 0,
+  };
+  const rows = [
+    twl("fooA", 4, 1, "foo", 1, 100),
+    twl("mid", 4, 1, "mid", 1, 200),
+    twl("fooB", 4, 1, "foo", 2, 300),
+  ];
+  const { versePositions } = orderTwlRows(rows, [verse]);
+  assert(versePositions.get("fooA") === 0, "foo#1 (first source instance) → index 0");
+  assert(versePositions.get("mid") === 1, "mid → index 1");
+  assert(
+    versePositions.get("fooB") === 2,
+    "foo#2 (SECOND source instance) → index 2, AFTER mid (not the 1st foo's 2nd word)",
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

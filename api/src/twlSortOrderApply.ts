@@ -11,20 +11,23 @@ export async function applyTwlSortOrderUpdates(
   updates: Array<{ id: string; sort_order: number }>,
 ): Promise<void> {
   if (updates.length === 0) return;
-  // Batch update all rows at once. Each row's sort_order is set to its computed
-  // position, and version is incremented for audit.
-  const updateSql = updates
-    .map((_, i) => `WHEN '${updates[i].id}' THEN ${updates[i].sort_order}`)
-    .join(" ");
-  const idList = updates.map((u) => `'${u.id}'`).join(", ");
-  const sql = `
-    UPDATE twl_rows
-    SET sort_order = CASE id ${updateSql} END,
-        version = version + 1
-    WHERE id IN (${idList})
-  `;
+  // Batch update all rows at once, scoped to `book`. TWL row identity is
+  // (book, id) — the 4-char ids are unique per book, NOT globally (migration
+  // 0015) — so the UPDATE MUST filter on book or it would clobber a same-id row
+  // in another book. All values are BOUND (never interpolated) to keep ids out
+  // of the SQL text.
+  const caseClauses = updates.map(() => "WHEN ? THEN ?").join(" ");
+  const inPlaceholders = updates.map(() => "?").join(", ");
+  const sql =
+    `UPDATE twl_rows ` +
+    `SET sort_order = CASE id ${caseClauses} END, version = version + 1 ` +
+    `WHERE book = ? AND id IN (${inPlaceholders})`;
+  const binds: unknown[] = [];
+  for (const u of updates) binds.push(u.id, u.sort_order); // CASE id WHEN <id> THEN <sort_order>
+  binds.push(book);
+  for (const u of updates) binds.push(u.id); // IN (...)
   try {
-    await db.exec(sql);
+    await db.prepare(sql).bind(...binds).run();
   } catch (e) {
     console.error("applyTwlSortOrderUpdates failed", { book, updateCount: updates.length, error: e });
     // Non-fatal: a sort order update failure doesn't block the caller (export or
