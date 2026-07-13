@@ -14,6 +14,24 @@
 
 ## Last run
 
+2026-07-13 · **feat/ui-localization (+ feat/ui-localization-wave2)** — **UI-localization scheme + 12 new UI locales shipped in two PRs into `deferredreward:main`.**
+
+**Delivered:**
+- **Scheme** [commit `7f2d72d`]: `scripts/check-i18n.mjs` — plural-aware completeness checker (per-locale MISSING base keys + missing plural categories, driven by `Intl.PluralRules`, + STALE keys; exits non-zero if any locale incomplete). `docs/i18n.md` — how to add a language + plural table + machine-drafted/needs-native-review caveat. Fixed a pre-existing dead-key casing mismatch: en `translation.sourcelanguage` → `sourceLanguage` (unreferenced in code; value unchanged; now matches ar). Without the fix the checker flagged ar incomplete.
+- **Wave 1** [`7f2d72d`, PR #4 → base `main`]: full 321-key locales **es, fr, hi, id, pt, ru** wired into `web/src/i18n/index.ts` (native labels, dir:ltr; es/ru/id upgraded from stubs).
+- **Wave 2** [`17c9468`, PR #6 → base `feat/ui-localization`, STACKED on #4]: full locales **sw, ne, bn, ur, fa, th**. `ur`+`fa` are **dir:rtl**; sw/ne/bn/th ltr.
+
+**Plural categories (per `Intl.PluralRules`, authoritative):** es/fr/pt one/many/other · ru one/few/many/other · hi/sw/ne/bn/ur/fa one/other · id/th other. **fa & ur are CLDR one/other, NOT the Arabic six-way split** — i18next resolves plurals via Intl.PluralRules, so extra `_zero/_two/_few/_many` for fa/ur would be dead keys. Deviated from the task's literal "Arabic-family" instruction on evidence; documented in `docs/i18n.md` + PR.
+
+**Verified — how:** `node scripts/check-i18n.mjs` = **13/13 complete, exit 0**. `npm run typecheck` (both workspaces), `npm run build`, web unit suite — all green. Playwright concurrency e2e **10/10** for BOTH waves, run on a **clean isolated stack** (own vite on `127.0.0.1:5199` + own wrangler on `:8787` + freshly-reset local D1; `BE_BASE_URL=http://127.0.0.1:5199`). In-browser (chrome-devtools MCP): en/es (ltr), ar/fa/ur (rtl, `document.dir` flips), th (ltr) all localize with placeholders resolved and **zero raw `ns.key` leaks**.
+
+**Lessons / gotchas (this session):**
+- **e2e port cross-talk is real and misleading.** With peer worktrees holding `:5173/:8787/:5174` and `reuseExistingServer:true` + `BE_BASE_URL=:5174`, the suite silently runs against a PEER's server+D1 → broad false failures. Fix: pin your own vite (`--port 5199 --strictPort --host 127.0.0.1`) + your own wrangler, point BE_BASE_URL at your vite. `localhost` vs `127.0.0.1` matters — a peer on `::1:5174` (IPv6) coexists with your `127.0.0.1` bind; use explicit IPv4.
+- **Reused long-lived `wrangler dev` degrades the realtime (s6/s8) e2e tests** as stale Durable-Object/D1 state accumulates (failures grew 4→5 across identical reruns). A fresh wrangler + reset local D1 (`rm -rf api/.wrangler/state/v3/d1` then `db:migrate:local`) → deterministic 10/10. JSON-only i18n changes cannot affect WS fanout.
+- Fresh worktree needs `scripts/worktree-init.ps1` (node_modules junction) before typecheck, and its **local D1 has no tables** until `wrangler d1 migrations apply bible_editor_dev --local`; the e2e global-setup only seeds ZEC, it doesn't migrate.
+
+**Left running / open (for a follow-up session):** background vite (`:5199`) + wrangler (`:8787`) from this worktree may still be up (harmless; free with Stop-Process by port). Both PRs open, unmerged. Do NOT push to unfoldingWord (origin=deferredreward; upstream=unfoldingWord). The 12 locales are **machine-drafted — native review still owed per language** before production-final.
+
 2026-07-10 · **multilingual-phase2 (branch off `multilingual`)** — **Phase 2 (translation-mode review UX) built + verified end-to-end. NOT pushed/PR'd.**
 Built the mockup's note-card review flow on top of the existing `translation_state` machine + validate endpoint + translate pipeline. Two commits on `multilingual-phase2` (`764b6a6` foundation, `6ffb556` UX).
 
