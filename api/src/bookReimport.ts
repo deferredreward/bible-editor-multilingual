@@ -356,9 +356,11 @@ async function runReimport(
   // the row loop. Order is instead owned by this pass: now that D1's ULT verses
   // are current (all resources applied above), recompute the ULT-position
   // ordering — the SAME diff the nightly export computes
-  // (computeTwlSortOrderUpdates) — and write it. Only runs when twl was requested
-  // and actually fetched.
-  if (want.has("twl") && twlRaw) {
+  // (computeTwlSortOrderUpdates) — and write it. Reads twl rows + ULT from D1 (no
+  // dependency on twlRaw), so it also runs on a ULT-ONLY import: re-aligning the
+  // ULT changes the canonical order, and D1's twl sort_order must follow. Mirrors
+  // the nightly `twl || ult` gate.
+  if (want.has("twl") || want.has("ult")) {
     try {
       perResource.twl.twl_reordered += await canonicalizeTwlOrder(env, book);
     } catch (e) {
