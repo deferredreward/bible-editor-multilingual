@@ -3,8 +3,11 @@ import { initReactI18next } from "react-i18next";
 import en from "./locales/en.json";
 import ar from "./locales/ar.json";
 import es from "./locales/es.json";
-import ru from "./locales/ru.json";
+import fr from "./locales/fr.json";
+import hi from "./locales/hi.json";
 import id from "./locales/id.json";
+import pt from "./locales/pt.json";
+import ru from "./locales/ru.json";
 
 // UI languages the chrome can render in. `dir` drives full RTL mirroring:
 // document.dir, the MUI theme direction, and the emotion RTL cache all key
@@ -20,8 +23,11 @@ export const UI_LANGUAGES: UiLanguage[] = [
   { code: "en", label: "English", dir: "ltr" },
   { code: "ar", label: "العربية", dir: "rtl" },
   { code: "es", label: "Español", dir: "ltr" },
-  { code: "ru", label: "Русский", dir: "ltr" },
+  { code: "fr", label: "Français", dir: "ltr" },
+  { code: "hi", label: "हिन्दी", dir: "ltr" },
   { code: "id", label: "Bahasa Indonesia", dir: "ltr" },
+  { code: "pt", label: "Português", dir: "ltr" },
+  { code: "ru", label: "Русский", dir: "ltr" },
 ];
 
 const UI_LANG_KEY = "be:uiLang";
@@ -53,8 +59,11 @@ void i18n.use(initReactI18next).init({
     en: { translation: en },
     ar: { translation: ar },
     es: { translation: es },
-    ru: { translation: ru },
+    fr: { translation: fr },
+    hi: { translation: hi },
     id: { translation: id },
+    pt: { translation: pt },
+    ru: { translation: ru },
   },
   lng: loadInitialUiLang(),
   fallbackLng: "en",
