@@ -21,6 +21,7 @@ import type { Env } from "./index";
 import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
 import { getProjectConfig } from "./projectConfig.ts";
+import { buildTranslateOptions } from "./translateOptions.ts";
 import { broadcastChapter } from "./wsEvents";
 
 export const pipelines = new Hono<{
@@ -195,65 +196,6 @@ interface StatusResponse {
 
 function upstreamBase(env: Env): string {
   return env.PIPELINE_API_BASE || DEFAULT_BASE;
-}
-
-// Build the bp-assistant `translate` options from the active project config,
-// folding in any client overrides. Contract: bp-bot/translate-pipeline/PLAN.md
-// §1 — the bot fetches the source rows BY REFERENCE (sourceRef), so nothing is
-// gathered from D1 here (unlike the notes-hints path). Returns null if the
-// project has no translationSource (the English root project can't be a
-// translate TARGET) — the caller turns that into a 400.
-type TranslateClientOptions = {
-  resourceType?: "tn" | "tq" | "tw" | "ta";
-  articleId?: string;
-  articleUrl?: string;
-  model?: "sonnet" | "opus";
-  delivery?: "path" | "branch";
-  branchOnly?: boolean;
-  direction?: "ltr" | "rtl";
-  rowIds?: string[];
-  verseStart?: number;
-  verseEnd?: number;
-  targetLang?: string;
-  targetOrg?: string;
-  sourceRef?: string;
-  contextRef?: string;
-};
-
-function buildTranslateOptions(
-  cfg: import("./projectConfig.ts").ProjectConfig,
-  overrides: TranslateClientOptions | undefined,
-): Record<string, unknown> | null {
-  const src = cfg.translationSource;
-  if (!src) return null; // not a gateway-language project → can't translate INTO it
-  const o = overrides ?? {};
-  const resourceType = o.resourceType ?? "tn";
-  const targetLang = o.targetLang ?? cfg.languageCode;
-  const targetOrg = o.targetOrg ?? cfg.exportOrg;
-  // Source is the published EN repo for the chosen resource, pinned to master by
-  // default; a caller can pin an exact SHA for reproducibility (the bot echoes
-  // the resolved SHA). resourceType selects which source repo (tn|tq) to read.
-  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos[resourceType]}@master`;
-  const contextRef = o.contextRef ?? `${cfg.org}/translation-context@master`;
-  return {
-    resourceType,
-    targetLang,
-    targetOrg,
-    sourceRef,
-    contextRef,
-    // Review branch, no auto-merge — the editor consumes the DCS branch and
-    // applies it as ai_draft rows (PLAN.md §1 delivery: branch, branchOnly).
-    delivery: o.delivery ?? "branch",
-    branchOnly: o.branchOnly ?? true,
-    model: o.model ?? "opus",
-    direction: o.direction ?? cfg.direction,
-    ...(o.rowIds ? { rowIds: o.rowIds } : {}),
-    ...(o.verseStart != null ? { verseStart: o.verseStart } : {}),
-    ...(o.verseEnd != null ? { verseEnd: o.verseEnd } : {}),
-    // Article selector (tw|ta) — passed through to the bot's articles envelope.
-    ...(o.articleId ? { articleId: o.articleId } : {}),
-    ...(o.articleUrl ? { articleUrl: o.articleUrl } : {}),
-  };
 }
 
 // Article translate jobs carry no book/chapter; they reuse the pipeline_jobs
