@@ -92,22 +92,47 @@ const zaln = (attrs, children = []) => ({ type: "milestone", tag: "zaln", ...att
   assert(vo[0].content === dbrPointedWj, "word-joiner: adopted UHB form including the U+2060");
 }
 
-// 6. Found-flag consumption: two milestones with the same consonant skeleton but
-//    distinct pointing map to two DISTINCT UHB words, not the same one twice.
+// Two same-skeleton source words that differ only by pointing (both fold to the
+// consonant בּ). Each carries a dagesh so its legacy≠NFC byte order gives canonize
+// something to rewrite.
+const W1_LEGACY = BET + DAGESH + HIRIQ; // בִּ (== LEGACY)
+const W1_NFC = BET + HIRIQ + DAGESH;
+const W2_LEGACY = BET + DAGESH + QAMATS; // בָּ
+const W2_NFC = BET + QAMATS + DAGESH;
+
+// 6. Distinct pointing is order-INDEPENDENT: the exact tier keeps pointing, so
+//    two same-skeleton words land in distinct buckets and each milestone
+//    canonizes to ITS OWN UHB word even when target order is REVERSED vs source
+//    order. (The old walk-order scheme would swap them — see case 6c.)
 {
-  const boA = "בֹא"; // בֹא  (holam)
-  const baA = "ב" + QAMATS + "א"; // בָא  (qamats)
-  const bare = "בא"; // בא
-  const uhb = [w(boA, "L", "M"), w(baA, "L", "M")];
+  const uhb = [w(W1_LEGACY, W1_LEGACY, "M"), w(W2_LEGACY, W2_LEGACY, "M")]; // source: occ1=W1, occ2=W2
   const vo = [
-    zaln({ content: bare, lemma: "L", morph: "M" }),
-    zaln({ content: bare, lemma: "L", morph: "M" }),
+    zaln({ content: W2_NFC, lemma: W2_NFC, morph: "M" }), // target reordered: W2 first…
+    zaln({ content: W1_NFC, lemma: W1_NFC, morph: "M" }), // …then W1
   ];
   const n = canonizeAlignmentSource(vo, uhb);
-  assert(n === 2, "found-flag: both milestones changed");
+  assert(n === 2, "distinct pointing: both milestones canonized");
+  assert(vo[0].content === W2_LEGACY, "reordered: W2 milestone → W2 UHB bytes (not swapped)");
+  assert(vo[1].content === W1_LEGACY, "reordered: W1 milestone → W1 UHB bytes (not swapped)");
+}
+
+// 6c. AMBIGUOUS skeleton fails closed (Codex's repro). Two same-skeleton,
+//     different-pointing UHB words; the milestones are BARE (pointing lost) and
+//     in reversed order. We cannot tell which is which, so we write NOTHING —
+//     never the wrong pointing. Before the fix, walk-order consumption assigned
+//     occ 2 the pointing of occ 1 (silent x-content corruption).
+{
+  const uhb = [w(W1_LEGACY, W1_LEGACY, "M"), w(W2_LEGACY, W2_LEGACY, "M")];
+  const bare = BET; // "ב" — strips to the shared skeleton
+  const vo = [
+    zaln({ content: bare, lemma: bare, morph: "M", occurrence: "2" }),
+    zaln({ content: bare, lemma: bare, morph: "M", occurrence: "1" }),
+  ];
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 0, "ambiguous bare skeleton: fail closed, nothing changed");
   assert(
-    vo[0].content === boA && vo[1].content === baA,
-    "found-flag: each milestone consumed a distinct UHB word (no double-claim)",
+    vo[0].content === bare && vo[1].content === bare,
+    "ambiguous: both milestones left untouched (no wrong pointing written)",
   );
 }
 

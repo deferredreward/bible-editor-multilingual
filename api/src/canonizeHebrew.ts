@@ -141,19 +141,33 @@ function buildShortLookup(words: SourceWord[]): TieredLookup {
 // bytes. Mutates `verseObjects` in place (like healReplacementChars) — it only
 // reassigns string attributes on existing milestone nodes, so it can never
 // unalign a word. Returns the number of milestones actually changed (0 = no-op).
+// Adopt a fold bucket's canonical (form, lemma) ONLY when every UHB word matching
+// that fold key is byte-identical. Returns `undefined` when the tier has no
+// match (try the next tier), `null` when the match is AMBIGUOUS (fail closed —
+// leave the milestone untouched), or the value to adopt.
+//
+// Why fail closed: target-alignment order can differ from source order, so a
+// walk-order "take the next unused entry" scheme can hand a milestone the WRONG
+// source word — e.g. a verse with בֹא (occ 1) and בָא (occ 2), both stripping to
+// the skeleton בא, whose English reorders occ 2 before occ 1: consuming by walk
+// order writes occ 1's pointing onto occ 2 (silent corruption of `x-content`).
+// We can't disambiguate two same-skeleton words from a bare surface without
+// trusting occurrence (unreliable here — see project_source_words_no_occurrence),
+// so we don't guess. The EXACT tier keeps pointing, so distinct-pointing words
+// land in distinct buckets and still canonize; only under-pointed surfaces over
+// an ambiguous skeleton fall through to a fail-closed no-op.
+function pickCanonical(bucket: UhbEntry[] | undefined): { form: string; lemma: string } | null | undefined {
+  if (!bucket || bucket.length === 0) return undefined;
+  const first = bucket[0];
+  for (const e of bucket) {
+    if (e.form !== first.form || e.lemma !== first.lemma) return null;
+  }
+  return { form: first.form, lemma: first.lemma };
+}
+
 export function canonizeAlignmentSource(verseObjects: unknown[], uhbWords: SourceWord[]): number {
   if (!Array.isArray(verseObjects) || uhbWords.length === 0) return 0;
   const lk = buildFullLookup(uhbWords);
-  // A single source word aligned to NON-CONTIGUOUS target words is emitted as
-  // several `\zaln-s` milestones with identical source attrs — e.g. אָמַר split
-  // around "Moses" in "And Moses said" produces a zaln block before AND after the
-  // "Moses" block, both for the same UHB word (one occurrence). The first
-  // milestone consumes the UHB entry; without a fallback the repeats find nothing
-  // unused left and keep their bad byte order. So remember each resolution keyed
-  // on the milestone's OWN raw source identity (content|occurrence|lemma|morph,
-  // byte-identical across the repeats) and reuse it when the lookup is exhausted.
-  // Mirrors the original's `foundForms` cache.
-  const resolved = new Map<string, { form: string; lemma: string }>();
   let changed = 0;
   const walk = (nodes: unknown[]): void => {
     for (const node of nodes) {
@@ -163,19 +177,19 @@ export function canonizeAlignmentSource(verseObjects: unknown[], uhbWords: Sourc
         const form = o["content"] as string;
         const lemma = typeof o["lemma"] === "string" ? (o["lemma"] as string) : "";
         const morph = typeof o["morph"] === "string" ? (o["morph"] as string) : "";
-        const occurrence = o["occurrence"] == null ? "" : String(o["occurrence"]);
-        const rawKey = form + SEP + occurrence + SEP + lemma + SEP + morph;
-        // Prefer a fresh UHB entry; only when every matching entry is already
-        // consumed fall back to the resolution a prior milestone for THIS same
-        // source word computed — the repeated-discontinuous case above.
-        const e =
-          firstUnused(lk.exact.get(canonicalHebrew(lemma) + SEP + canonicalHebrew(form) + SEP + morph)) ??
-          firstUnused(lk.stripped.get(stripHebrewMarks(lemma) + SEP + stripHebrewMarks(form) + SEP + morph)) ??
-          firstUnused(lk.joiner.get(stripHebrewMarks(lemma) + SEP + wordJoinerFold(form) + SEP + morph));
-        const adopt = e ? { form: e.form, lemma: e.lemma } : resolved.get(rawKey) ?? null;
+        // Fall through tiers only on "no match" (undefined); an AMBIGUOUS tier
+        // (null) stops the search and fails closed — a looser tier can only be
+        // more ambiguous. Buckets are read statelessly, so a source word aligned
+        // to non-contiguous target words (repeated milestones, e.g. אָמַר split
+        // around "Moses" in "And Moses said") resolves the same for every repeat.
+        let adopt = pickCanonical(lk.exact.get(canonicalHebrew(lemma) + SEP + canonicalHebrew(form) + SEP + morph));
+        if (adopt === undefined) {
+          adopt = pickCanonical(lk.stripped.get(stripHebrewMarks(lemma) + SEP + stripHebrewMarks(form) + SEP + morph));
+        }
+        if (adopt === undefined) {
+          adopt = pickCanonical(lk.joiner.get(stripHebrewMarks(lemma) + SEP + wordJoinerFold(form) + SEP + morph));
+        }
         if (adopt) {
-          if (e) e.found = true;
-          resolved.set(rawKey, adopt);
           let hit = false;
           if (o["content"] !== adopt.form) {
             o["content"] = adopt.form;
