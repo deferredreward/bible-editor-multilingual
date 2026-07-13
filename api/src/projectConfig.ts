@@ -211,7 +211,22 @@ function materialize(preset: string, overridesJson: string | null): ProjectConfi
       ...(o.languageName ? { languageName: o.languageName } : {}),
       ...(o.languageTitle ? { languageTitle: o.languageTitle } : {}),
       ...(o.direction === "ltr" || o.direction === "rtl" ? { direction: o.direction } : {}),
-      ...(o.repos ? { repos: { ...base.repos, ...o.repos } } : {}),
+      // Only merge non-empty repo overrides. An empty/blank repo name would make
+      // classify()'s `tail.endsWith(repo)` match EVERY output entry (endsWith("")
+      // is always true), misclassifying every import — so drop such entries and
+      // keep the preset's repo for that role.
+      ...(o.repos
+        ? {
+            repos: {
+              ...base.repos,
+              ...Object.fromEntries(
+                Object.entries(o.repos).filter(
+                  ([, v]) => typeof v === "string" && v.trim() !== "",
+                ),
+              ),
+            },
+          }
+        : {}),
       ...(o.litLabel ? { litLabel: o.litLabel } : {}),
       ...(o.simLabel ? { simLabel: o.simLabel } : {}),
       ...(Array.isArray(o.glBibles) ? { glBibles: o.glBibles } : {}),
@@ -225,17 +240,20 @@ function materialize(preset: string, overridesJson: string | null): ProjectConfi
 export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
   const now = Date.now();
   if (cached && now - cached.at < CACHE_TTL_MS) return cached.cfg;
-  let cfg: ProjectConfig;
+  let row: ConfigRow | null;
   try {
-    const row = await env.DB
+    row = await env.DB
       .prepare("SELECT preset, overrides_json FROM project_config WHERE id = 1")
       .first<ConfigRow>();
-    cfg = row ? materialize(row.preset, row.overrides_json) : PRESETS[DEFAULT_PRESET];
   } catch {
-    // Table missing (migration not yet applied) or transient D1 error →
-    // default preset preserves the pre-refactor behavior exactly.
-    cfg = PRESETS[DEFAULT_PRESET];
+    // Table missing (migration not yet applied) or transient D1 error. Fall
+    // back to the default preset for THIS request, but do NOT cache it — a
+    // transient error must not pin a GL project to unfoldingWord/en_* for the
+    // whole TTL (that would send import/reimport/export at the wrong org). The
+    // next request retries the read.
+    return PRESETS[DEFAULT_PRESET];
   }
+  const cfg = row ? materialize(row.preset, row.overrides_json) : PRESETS[DEFAULT_PRESET];
   cached = { cfg, at: now };
   return cfg;
 }

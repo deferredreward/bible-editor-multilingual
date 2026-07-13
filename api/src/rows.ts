@@ -941,12 +941,19 @@ async function setTnTranslationState(
 ): Promise<TnRow | null> {
   const now = Math.floor(Date.now() / 1000);
   const action = state === "validated" ? "validate" : "unvalidate";
+  // Only rows that are ALREADY translation drafts (state non-NULL) can be
+  // validated/un-validated. Without this guard a validate on a row the
+  // translate pipeline never touched (translation_state IS NULL — e.g. a
+  // pre-state-machine imported row) would stamp 'validated' and the nightly
+  // context-repo export would then ship it as a validated few-shot example
+  // even though it was never a reviewed AI draft. The audit INSERT carries the
+  // same guard so no edit_log entry is written when nothing changed.
   const [updateRes] = await env.DB.batch([
     env.DB
       .prepare(
         `UPDATE tn_rows
            SET translation_state = ?1, updated_at = ?2
-         WHERE id = ?3 AND deleted_at IS NULL${bookClause(4)}`,
+         WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
     env.DB
@@ -954,7 +961,7 @@ async function setTnTranslationState(
         `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action)
          SELECT 'tn', ?1, book, ?2, version, version, ?3
            FROM tn_rows
-          WHERE id = ?1 AND deleted_at IS NULL${bookClause(4)}`,
+          WHERE id = ?1 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(id, userId ?? null, action, book),
   ]);

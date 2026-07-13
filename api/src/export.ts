@@ -3,7 +3,7 @@
 // this module just turns rows into bytes and posts bytes to DCS.
 
 import usfm from "usfm-js";
-import { PRESETS, DEFAULT_PRESET, type ProjectConfig } from "./projectConfig.ts";
+import type { ProjectConfig } from "./projectConfig.ts";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 import { parseVerseContentJson } from "./contentJson.ts";
 import { analyzeAlignmentDelta } from "./alignmentDelta.ts";
@@ -609,11 +609,6 @@ export function resourceTargetsFor(cfg: ProjectConfig): Record<Resource, Resourc
     ust: { repo: cfg.repos.sim, path: usfmFilename, bibleVersion: "UST" },
   };
 }
-
-// Back-compat constant: the default preset's targets (the pre-refactor
-// hardcoded en_* mapping, byte-identical).
-export const RESOURCE_TARGETS: Record<Resource, ResourceTarget> =
-  resourceTargetsFor(PRESETS[DEFAULT_PRESET]);
 
 // ── Gitea contents API ───────────────────────────────────────────────────────
 
