@@ -14,6 +14,23 @@
 
 ## Last run
 
+2026-07-13 · **feat/wire-live-bp-bot (worktree off main)** — **Wired the editor to the LIVE bp-assistant translate bot; start→poll handshake verified live; shipped the `contextRef` opt-in fix; live-OUTPUT verification blocked on a bp-bot Hebrew NFC bug (tasked upstream).**
+
+The bp-assistant `translate` pipeline went live today (PR unfoldingWord/bp-assistant#203, deployed 15:36 UTC, `uw-bt-bot.fly.dev`). Confirmed the editor speaks the live contract end-to-end and shipped the one wiring fix live runs require. Full cross-effort detail in the parent-folder `INTEGRATION.md` §0.1.
+
+**Built + verified (how):**
+- **`contextRef` opt-in fix** [`api/src/pipelines.ts` + new `api/src/translateOptions.ts`]: `buildTranslateOptions` no longer auto-sends `${org}/translation-context@master`. The live bot FAILS a run ("context pack has no content files") when a caller supplies a contextRef whose repo is empty (bot doc §4); `BSOJ/translation-context` doesn't exist yet, so the old unconditional send broke *every* live run. Now omitted unless a client passes `translate.contextRef` → raw baseline by default; assisted mode opt-in once the context repo exists. Extracted the builder + `TranslateClientOptions` into `translateOptions.ts` (import-light so it's unit-testable without the Hono import chain — same split as `pipelineImportClaim.ts`) + `translateOptions.test.mjs`.
+- **Gates:** `npm run typecheck` green; full **api unit suite** (incl. new translateOptions test) green; **web unit suite** green; **Playwright e2e 9/10 hermetic** (caveat below). All exercise the change except e2e, which is orthogonal to it (concurrency/WS suite, no translate).
+- **LIVE handshake** (real bot + real token, this session): `translate` OBA 1 v1–3, ar/BSOJ, delivery=branch, contextRef omitted → `202 {jobId}`; polled `running`(`translate-tn`) → terminal. Proves auth + `pipelineType:translate` + top-level `verseStart/verseEnd` accepted by the live schema, and that omitting contextRef clears the §4 guard.
+
+**Honesty ledger — NOT verified / blocked:**
+- **Live-OUTPUT byte-checks (Quote byte-identical + rowId round-trip against REAL output) + BSOJ push: NOT done.** The live OBA run `failed` at the bot's own deterministic `passthrough-quote` check on Hebrew quotes that are VISUALLY IDENTICAL before→after (rows sv9x/jdr5/c8w8) — a combining-mark/NFC normalization mismatch INSIDE bp-bot (same class the editor solved via `web/src/lib/hebrew.ts` `nfc()`). The bot produced no output + pushed no branch, so those properties stay STUB-proven only (ZEC 1, 59 rows). BSOJ write-access untested (run died before the push step). **Owner: bp-assistant** — a fix task was spawned into that repo 2026-07-13 (this is NOT the separate in-progress bible-editor-side Hebrew fix).
+- **Editor auto-import → ai_draft from a live run: not exercised** — the live status API returns NO `output[]` for translate (`serializeCheckpoint`), and the pushed branch name carries an unexposed runHash, so the editor can't discover/reconstruct the branch URL. Deferred to bp-bot increment-2 (Benjamin). The editor's `output[].rawUrl` consumer already handles the shape when it lands; no editor change made.
+- **e2e caveat:** plain `npm run test:e2e` here REUSES a peer worktree's dev server (`reuseExistingServer:true`; a peer held :8787/:5174), so it is NOT hermetic — it tests whatever server owns those ports. Ran hermetically instead on isolated ports (vite :5180 → wrangler :8790 via `VITE_API_PROXY`) → **9/10**; the lone failure (`s5-version-mismatch`) is a local-D1 concurrency timing FLAKE — passes 2/2 in isolation. Realtime/WS suite (s6/s8) passes.
+
+**Lesson (parallel-worktree e2e):** with `reuseExistingServer:true`, `npm run test:e2e` silently tests whatever dev server already holds :8787/:5174 — NOT your branch. For a hermetic run while a peer server is up: run `vite --port <free> --strictPort` with `VITE_API_PROXY=http://127.0.0.1:<free-wrangler>` and point `BE_BASE_URL` at the vite port (keep dev-auth auto-mint). Do NOT serve the prod build via `wrangler --assets` for these tests — `import.meta.env.DEV` is false there, so the dev-auth auto-mint is compiled out and the browser can't authenticate (whole suite fails at `gotoVerse`).
+
+
 2026-07-10 · **multilingual-phase2 (branch off `multilingual`)** — **Phase 2 (translation-mode review UX) built + verified end-to-end. NOT pushed/PR'd.**
 Built the mockup's note-card review flow on top of the existing `translation_state` machine + validate endpoint + translate pipeline. Two commits on `multilingual-phase2` (`764b6a6` foundation, `6ffb556` UX).
 
