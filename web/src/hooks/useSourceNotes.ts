@@ -30,14 +30,20 @@ function rawUrl(org: string, repo: string, book: string): string {
 // tN TSV columns: Reference \t ID \t Tags \t SupportReference \t Quote \t Occurrence \t Note
 function parseTsv(text: string): SourceNoteMap {
   const map: SourceNoteMap = new Map();
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  // Strip a leading UTF-8 BOM (Door43 raw files sometimes carry one) — without
+  // this the first column of the header row would be "﻿Reference" and,
+  // worse, the header's id would be "﻿Reference"'s neighbour, so the
+  // content-based header skip below would miss it. Split on \r?\n so CRLF-served
+  // files don't leave a trailing "\r" on the Note column.
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+  for (const line of lines) {
     if (!line) continue;
     const cols = line.split("\t");
     if (cols.length < 7) continue;
     const [reference, id, , supportReference, quote, , note] = cols;
-    if (i === 0 && id === "ID") continue; // header row
+    // Skip the header by CONTENT, not position (a leading blank line would push
+    // it past index 0). Real row IDs are 4-char slugs, never the literal "ID".
+    if (id === "ID") continue;
     if (!id) continue;
     map.set(id, {
       note: (note ?? "").replace(/\\n/g, "\n"),

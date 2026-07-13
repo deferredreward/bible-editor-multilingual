@@ -75,5 +75,9 @@ export function useProjectConfig(): ProjectConfig | null {
 // FROM a source language (English root project → translationSource === null →
 // false, so its UX is byte-for-byte unchanged).
 export function isTranslationProject(cfg: ProjectConfig | null): boolean {
-  return !!cfg && cfg.translationSource !== null;
+  // Loose `!= null` (not `!== null`) so a cached/older-schema config whose
+  // `translationSource` is UNDEFINED (missing field) reads as non-translation
+  // — otherwise `undefined !== null` is true and the English root project would
+  // wrongly enable translation-mode UI on first paint until the fetch converges.
+  return !!cfg && cfg.translationSource != null;
 }
