@@ -436,9 +436,11 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
 
   // Translate pipeline (multilingual): a wholly separate apply path. It UPDATEs
   // existing target rows by rowId, never deletes, never inserts — so it skips
-  // the entire English delete-sweep/insert machinery below. tN only for the
-  // pilot; tq/verse translate output is deferred (PIPELINE-SPEC §2.1). Returns
-  // early so a translate job can never trip deleteUnkeptTns.
+  // the entire English delete-sweep/insert machinery below. A given translate
+  // job produces exactly one row-keyed resource (tn OR tq), so one of these
+  // loops runs and the other is a no-op; article resources (tw/ta) ride the
+  // separate 'articles' path, not here. Returns early so a translate job can
+  // never trip deleteUnkeptTns.
   if (job.pipelineType === "translate") {
     for (const p of tnProposals) {
       const outcome = await applyTranslateTnRow(env, p, job, userId);
@@ -449,6 +451,13 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
       // no_match: the id isn't a live target row (or a concurrent human edit
       // won the CAS) — the proposal is left unresolved rather than inserted,
       // preserving the row-identity guarantee. Surfaced via pending_imports.
+    }
+    for (const p of tqProposals) {
+      const outcome = await applyTranslateTqRow(env, p, job, userId);
+      if (outcome === "drafted") {
+        affected.add(p.chapter);
+        result.tqUpdated += 1; // reuses the "updated in place" counter
+      }
     }
     result.affectedChapters = [...affected].sort((a, b) => a - b);
     return result;
@@ -819,6 +828,87 @@ async function applyTranslateTnRow(
             SET accepted_at = unixepoch(), accepted_by = ?2
           WHERE id = ?1 AND EXISTS (
             SELECT 1 FROM tn_rows
+             WHERE id = ?3 AND book = ?4 AND version = ?5 AND updated_at = ?6
+          )`,
+      )
+      .bind(p.id, userId, target.id, job.book, newVersion, now),
+  ]);
+  return (res[0]?.meta?.changes ?? 0) > 0 ? "drafted" : "no_match";
+}
+
+// Translate-pipeline apply for translationQuestions (multilingual; PIPELINE-SPEC
+// §2.1). The exact tN analogue: one target row per input row, keyed by the same
+// rowId, with only the Question and Response translated — Reference/ID/Tags/
+// Quote/Occurrence are copied through byte-identical, so we UPDATE question and
+// response of the EXISTING target row and leave the structural columns alone. A
+// translate run NEVER deletes rows and NEVER mints new ids — a proposal whose id
+// has no matching row is skipped (surfaced in result, not inserted). Stamps
+// translation_state='ai_draft' and writes edit_log kind='tq' source='ai_pipeline'
+// so the review UI shows the AI chip.
+async function applyTranslateTqRow(
+  env: Env,
+  p: PendingImportRow,
+  job: ImportContext,
+  userId: number,
+): Promise<"drafted" | "no_match"> {
+  const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
+  const proposedId = typeof payload.id === "string" ? payload.id : null;
+  if (!proposedId) return "no_match";
+
+  const target = await env.DB.prepare(
+    `SELECT id, version FROM tq_rows
+      WHERE id = ?1 AND deleted_at IS NULL
+        AND book = ?2 AND chapter BETWEEN ?3 AND ?4`,
+  )
+    .bind(proposedId, job.book, job.startChapter, job.endChapter)
+    .first<{ id: string; version: number }>();
+  if (!target) return "no_match";
+
+  const now = Math.floor(Date.now() / 1000);
+  const newVersion = target.version + 1;
+  const question = (payload.question as string | null | undefined) ?? null;
+  const response = (payload.response as string | null | undefined) ?? null;
+  const srcHash = (payload.source_row_hash as string | null | undefined) ?? null;
+  const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+
+  const res = await env.DB.batch([
+    env.DB
+      .prepare(
+        // Only the translated Question/Response and the translation bookkeeping
+        // change; quote/occurrence/ref_raw/tags are the untranslatable structural
+        // columns and are left untouched. CAS-guarded on version so a translator
+        // editing the row between poll and apply isn't clobbered. book-scoped.
+        `UPDATE tq_rows
+            SET question = ?1,
+                response = ?2,
+                translation_state = 'ai_draft',
+                source_row_hash = ?3,
+                draft_meta_json = ?4,
+                version = version + 1,
+                updated_at = ?5,
+                updated_by = ?6
+          WHERE id = ?7 AND book = ?8 AND deleted_at IS NULL AND version = ?9`,
+      )
+      .bind(question, response, srcHash, draftMeta, now, userId, target.id, job.book, target.version),
+    env.DB
+      .prepare(
+        // Audit gated on the CAS having won (post-update fingerprint present).
+        // source='ai_pipeline' → the row-level AI chip shows for review.
+        `INSERT INTO edit_log
+           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
+         SELECT 'tq', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
+          WHERE EXISTS (
+            SELECT 1 FROM tq_rows
+             WHERE id = ?1 AND book = ?2 AND version = ?5 AND updated_at = ?8
+          )`,
+      )
+      .bind(target.id, job.book, userId, target.version, newVersion, JSON.stringify(payload), AI_SOURCE, now),
+    env.DB
+      .prepare(
+        `UPDATE pending_imports
+            SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1 AND EXISTS (
+            SELECT 1 FROM tq_rows
              WHERE id = ?3 AND book = ?4 AND version = ?5 AND updated_at = ?6
           )`,
       )

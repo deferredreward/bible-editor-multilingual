@@ -48,10 +48,18 @@ function num(n) {
   return `${n}`;
 }
 
-// Slice a 7-col tN TSV to [startCh,endCh] and prefix the Note column with the
-// marker. Header row (Reference\tID\t…\tNote) is kept as-is. Reference is
-// "C:V" or "front:intro"; chapter = the part before the first ":".
-function markChapterRange(tsv, startCh, endCh) {
+// Which TSV columns carry translatable free text, per resource (0-indexed).
+//   tn: Reference ID Tags SupportReference Quote Occurrence Note   → [6]
+//   tq: Reference ID Tags Quote Occurrence Question Response       → [5,6]
+// Structural columns (Reference/ID/Tags/Quote/Occurrence/SupportReference) are
+// left byte-identical, exactly the column-preservation the contract guarantees.
+const TRANSLATABLE_COLS = { tn: [6], tq: [5, 6] };
+
+// Slice a 7-col TSV to [startCh,endCh] and prefix each translatable column with
+// the marker. Header row is kept as-is. Reference is "C:V" or "front:intro";
+// chapter = the part before the first ":".
+function markChapterRange(tsv, startCh, endCh, resource) {
+  const cols7 = TRANSLATABLE_COLS[resource] ?? TRANSLATABLE_COLS.tn;
   const lines = tsv.split(/\r?\n/);
   if (lines.length === 0) return tsv;
   const out = [lines[0]]; // header
@@ -62,16 +70,17 @@ function markChapterRange(tsv, startCh, endCh) {
       continue;
     }
     const cols = line.split("\t");
-    // 7 columns: Reference ID Tags SupportReference Quote Occurrence Note
     const ref = cols[0] ?? "";
     const chStr = ref.split(":")[0];
     const ch = chStr === "front" ? 0 : parseInt(chStr, 10);
     const inRange = Number.isFinite(ch) && ch >= startCh && ch <= endCh;
     if (inRange && cols.length >= 7) {
-      const note = cols[6] ?? "";
-      // Preserve empty notes; only mark non-empty ones (matches "no empty
-      // translations" guarantee — an already-empty source note stays empty).
-      cols[6] = note ? MARKER + note : note;
+      for (const ci of cols7) {
+        const val = cols[ci] ?? "";
+        // Preserve empty cells; only mark non-empty ones (matches "no empty
+        // translations" guarantee — an already-empty source cell stays empty).
+        cols[ci] = val ? MARKER + val : val;
+      }
       out.push(cols.join("\t"));
     } else {
       out.push(line);
@@ -80,11 +89,11 @@ function markChapterRange(tsv, startCh, endCh) {
   return out.join("\n");
 }
 
-async function fetchSourceTsv(sourceRef, book) {
+async function fetchSourceTsv(sourceRef, book, resource) {
   // sourceRef = "org/repo@ref"
   const [orgRepo, ref = "master"] = sourceRef.split("@");
   const [org, repo] = orgRepo.split("/");
-  const url = `${DCS_RAW}/${org}/${repo}/raw/branch/${ref}/tn_${book}.tsv`;
+  const url = `${DCS_RAW}/${org}/${repo}/raw/branch/${ref}/${resource}_${book}.tsv`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`source fetch ${url} → ${r.status}`);
   return await r.text();
@@ -117,8 +126,9 @@ const server = http.createServer(async (req, res) => {
       const startChapter = body.startChapter ?? 1;
       const endChapter = body.endChapter ?? startChapter;
       const options = body.options ?? {};
+      const resource = options.resourceType === "tq" ? "tq" : "tn";
       console.log(
-        `[stub] start ${body.book} ${startChapter}-${endChapter} → ${options.targetOrg}/${options.targetLang}` +
+        `[stub] start ${resource} ${body.book} ${startChapter}-${endChapter} → ${options.targetOrg}/${options.targetLang}` +
           ` src=${options.sourceRef} ctx=${options.contextRef} delivery=${options.delivery}`,
       );
       const job = {
@@ -126,6 +136,7 @@ const server = http.createServer(async (req, res) => {
         startChapter,
         endChapter,
         options,
+        resource,
         createdAt: Date.now(),
         tsv: null,
         error: FORCE_FAIL ? "forced_failure (--fail)" : null,
@@ -139,9 +150,14 @@ const server = http.createServer(async (req, res) => {
             const tsv = FIXTURE
               ? readFileSync(FIXTURE, "utf8")
               : markChapterRange(
-                  await fetchSourceTsv(options.sourceRef ?? `unfoldingWord/en_tn@master`, body.book),
+                  await fetchSourceTsv(
+                    options.sourceRef ?? `unfoldingWord/en_${resource}@master`,
+                    body.book,
+                    resource,
+                  ),
                   startChapter,
                   endChapter,
+                  resource,
                 );
             job.tsv = tsv;
             console.log(`[stub] ${jobId} ready (${tsv.split(/\r?\n/).length} lines)`);
@@ -170,11 +186,12 @@ const server = http.createServer(async (req, res) => {
       updatedAt: new Date(job.createdAt).toISOString(),
       createdAt: new Date(job.createdAt).toISOString(),
     };
+    const resource = job.resource ?? "tn";
     if (job.error) {
       return send(res, 200, {
         ...base,
         state: "failed",
-        current: { chapter: job.startChapter, skill: "translate-tn", status: "failed", startedAt: base.createdAt, error: job.error },
+        current: { chapter: job.startChapter, skill: `translate-${resource}`, status: "failed", startedAt: base.createdAt, error: job.error },
       });
     }
     // Simulate work: 'running' until DELAY_MS has elapsed AND the tsv is ready.
@@ -183,25 +200,26 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, {
         ...base,
         state: "running",
-        current: { chapter: job.startChapter, skill: "translate-tn", status: "translating", startedAt: base.createdAt },
+        current: { chapter: job.startChapter, skill: `translate-${resource}`, status: "translating", startedAt: base.createdAt },
       });
     }
     // done — output[] points at the branch TSV this stub serves. repo tail
-    // is {targetLang}_tn so the editor's classify() routes it to the tn kind.
+    // is {targetLang}_{resource} so the editor's classify() routes it to the
+    // matching kind (tn|tq).
     const targetOrg = job.options.targetOrg ?? "gl";
     const targetLang = job.options.targetLang ?? "xx";
-    const repo = `${targetOrg}/${targetLang}_tn`;
+    const repo = `${targetOrg}/${targetLang}_${resource}`;
     const branch = `AI-translate-${targetLang}-${job.book}-${job.startChapter}`;
-    const rawUrl = `http://127.0.0.1:${PORT}/stub/tn/${encodeURIComponent(jobId)}.tsv`;
+    const rawUrl = `http://127.0.0.1:${PORT}/stub/${resource}/${encodeURIComponent(jobId)}.tsv`;
     return send(res, 200, {
       ...base,
       state: "done",
       output: [
         {
-          type: "tn",
+          type: resource,
           repo,
           branch,
-          path: `tn_${job.book}.tsv`,
+          path: `${resource}_${job.book}.tsv`,
           rawUrl,
           prNumber: 0,
           mergedAt: "",
@@ -212,7 +230,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // --- serve the produced TSV (the rawUrl target the editor fetches) ---
-  const mTsv = url.pathname.match(/^\/stub\/tn\/([^/]+)\.tsv$/);
+  const mTsv = url.pathname.match(/^\/stub\/(?:tn|tq)\/([^/]+)\.tsv$/);
   if (req.method === "GET" && mTsv) {
     const jobId = decodeURIComponent(mTsv[1]);
     const job = jobs.get(jobId);

@@ -100,6 +100,12 @@ const ChainStep = z
 // verse-scope selection (rowIds / verseStart / verseEnd) rides here too.
 const TranslateOptions = z
   .object({
+    // Which row-keyed TSV resource to translate. Defaults to 'tn' (the pilot);
+    // 'tq' translates translationQuestions. The server picks the matching source
+    // repo (src.repos[resourceType]) and passes resourceType through to the bot,
+    // which selects the TSV parser + target repo. Article resources (tw/ta) ride
+    // a separate 'articles' envelope, not this row-keyed path.
+    resourceType: z.enum(["tn", "tq"]).optional(),
     model: z.enum(["sonnet", "opus"]).optional(),
     delivery: z.enum(["path", "branch"]).optional(),
     branchOnly: z.boolean().optional(),
@@ -191,6 +197,7 @@ function upstreamBase(env: Env): string {
 // project has no translationSource (the English root project can't be a
 // translate TARGET) — the caller turns that into a 400.
 type TranslateClientOptions = {
+  resourceType?: "tn" | "tq";
   model?: "sonnet" | "opus";
   delivery?: "path" | "branch";
   branchOnly?: boolean;
@@ -211,13 +218,16 @@ function buildTranslateOptions(
   const src = cfg.translationSource;
   if (!src) return null; // not a gateway-language project → can't translate INTO it
   const o = overrides ?? {};
+  const resourceType = o.resourceType ?? "tn";
   const targetLang = o.targetLang ?? cfg.languageCode;
   const targetOrg = o.targetOrg ?? cfg.exportOrg;
-  // Source is the published EN tN repo pinned to master by default; a caller
-  // can pin an exact SHA for reproducibility (the bot echoes the resolved SHA).
-  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos.tn}@master`;
+  // Source is the published EN repo for the chosen resource, pinned to master by
+  // default; a caller can pin an exact SHA for reproducibility (the bot echoes
+  // the resolved SHA). resourceType selects which source repo (tn|tq) to read.
+  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos[resourceType]}@master`;
   const contextRef = o.contextRef ?? `${cfg.org}/translation-context@master`;
   return {
+    resourceType,
     targetLang,
     targetOrg,
     sourceRef,

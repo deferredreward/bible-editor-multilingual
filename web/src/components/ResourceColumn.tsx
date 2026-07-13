@@ -9,6 +9,7 @@ import { NoteCard, type DropPosition } from "./NoteCard";
 import { WordsTable, type WordDropPosition } from "./WordsTable";
 import { TwlSuggestions } from "./TwlSuggestions";
 import { QuestionsTable } from "./QuestionsTable";
+import { QuestionCard } from "./QuestionCard";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import CheckIcon from "@mui/icons-material/Check";
@@ -16,6 +17,7 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
+import { useSourceQuestions } from "../hooks/useSourceQuestions";
 
 export type PanelMode = "resources" | "alignment" | "search";
 
@@ -152,6 +154,11 @@ interface Props {
   onNoteTranslate?: (id: string) => void;
   // Rows with an in-flight single-note / chapter translate run (spinner).
   translatingNoteIds?: Set<string>;
+  // ── Translation mode, tQ analogues ── Approve/un-approve + single-question
+  // Translate for translationQuestions. Absent in the English root project.
+  onQuestionApprove?: (id: string, value: boolean) => void;
+  onQuestionTranslate?: (id: string) => void;
+  translatingQuestionIds?: Set<string>;
   // Translate English in a note's quote field to source-language text using
   // ULT alignment. Returns null when no alignment match is found.
   onNoteTranslateQuote?: (row: TnRow, english: string) => string | null;
@@ -304,6 +311,9 @@ export function ResourceColumn({
   onNoteApprove,
   onNoteTranslate,
   translatingNoteIds,
+  onQuestionApprove,
+  onQuestionTranslate,
+  translatingQuestionIds,
   onNoteTranslateQuote,
   onWordTranslateQuote,
   onWordGloss,
@@ -358,6 +368,27 @@ export function ResourceColumn({
     }
     return { total, validated, draftIds };
   }, [tn, translationMode]);
+  // tQ analogues of the source projection + stats above.
+  const sourceQuestionProjection = useMemo(
+    () =>
+      projectConfig?.translationSource
+        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tq }
+        : null,
+    [projectConfig],
+  );
+  const sourceQuestions = useSourceQuestions(translationMode ? book : null, sourceQuestionProjection);
+  const tqStats = useMemo(() => {
+    if (!translationMode) return { total: 0, validated: 0, draftIds: [] as string[] };
+    let total = 0;
+    let validated = 0;
+    const draftIds: string[] = [];
+    for (const r of tq) {
+      total++;
+      if (r.translation_state === "validated") validated++;
+      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
+    }
+    return { total, validated, draftIds };
+  }, [tq, translationMode]);
   const [pinned, setPinned] = useState<Pinned>(() => loadPinned());
   const togglePinned = (k: PinKey) => {
     const next = { ...pinned, [k]: !pinned[k] };
@@ -972,6 +1003,58 @@ export function ResourceColumn({
               lane="tq"
               checkoff={checkoff}
             />
+            {translationMode && (
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{
+                  px: 0.5,
+                  py: 0.75,
+                  mb: 0.5,
+                  flexWrap: "wrap",
+                  rowGap: 0.75,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Chip
+                  size="small"
+                  color="secondary"
+                  variant="outlined"
+                  icon={<AutoAwesomeIcon sx={{ fontSize: "13px !important" }} />}
+                  label={t("translation.translationMode")}
+                  sx={{ height: 22, fontSize: 11, fontWeight: 600 }}
+                />
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 120, flex: 1 }}>
+                  <LinearProgress
+                    variant="determinate"
+                    color="success"
+                    value={tqStats.total ? (tqStats.validated / tqStats.total) * 100 : 0}
+                    sx={{ flex: 1, height: 6, borderRadius: 99, minWidth: 60 }}
+                  />
+                  <Typography variant="caption" sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+                    {tqStats.validated} / {tqStats.total}
+                  </Typography>
+                </Box>
+                <Box sx={{ flex: 1 }} />
+                {onQuestionApprove && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="success"
+                    startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
+                    disabled={tqStats.draftIds.length === 0}
+                    onClick={() => {
+                      for (const id of tqStats.draftIds) onQuestionApprove(id, true);
+                    }}
+                    sx={{ minWidth: 0, fontSize: 11 }}
+                  >
+                    {t("common.approveAll")} ({tqStats.draftIds.length})
+                  </Button>
+                )}
+              </Stack>
+            )}
             {tqGroups ? (
               tqGroups.length === 0 ? (
                 <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
@@ -981,9 +1064,21 @@ export function ResourceColumn({
                 tqGroups.map(([verse, rows]) => (
                   <Fragment key={`tq-${verse}`}>
                     <VerseGroupHead verse={verse} active={verse === activeVerse} section="questions" />
-                    <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
+                    {translationMode ? (
+                      rows.map((r) => renderQuestionCard(r))
+                    ) : (
+                      <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
+                    )}
                   </Fragment>
                 ))
+              )
+            ) : translationMode ? (
+              tqForVerse.length === 0 ? (
+                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+                  {t("questions.noQuestionsForVerse")}
+                </Typography>
+              ) : (
+                tqForVerse.map((r) => renderQuestionCard(r))
               )
             ) : (
               <QuestionsTable rows={tqForVerse} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
@@ -1012,6 +1107,23 @@ export function ResourceColumn({
       )}
     </Box>
   );
+
+  function renderQuestionCard(r: TqRow) {
+    return (
+      <QuestionCard
+        key={r.id}
+        row={r}
+        sourceQuestion={sourceQuestions.get(r.id) ?? null}
+        onSave={(p) => onQuestionSave(r.id, p)}
+        onDelete={() => onQuestionDelete(r.id)}
+        onApprove={onQuestionApprove ? () => onQuestionApprove(r.id, true) : undefined}
+        onUnapprove={onQuestionApprove ? () => onQuestionApprove(r.id, false) : undefined}
+        onTranslate={onQuestionTranslate ? () => onQuestionTranslate(r.id) : undefined}
+        isTranslating={translatingQuestionIds?.has(r.id) ?? false}
+        locked={locked}
+      />
+    );
+  }
 
   function renderNoteCard(r: TnRow, peers: TnRow[]) {
     const showBefore =

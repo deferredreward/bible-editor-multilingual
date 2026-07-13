@@ -70,6 +70,10 @@ export interface TqRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /** Translation-mode state machine (multilingual; mirrors TnRow). */
+  translation_state?: "ai_draft" | "edited" | "validated" | null;
+  source_row_hash?: string | null;
+  draft_meta_json?: string | null;
   /** See TnRow.latest_source. */
   latest_source?: string | null;
 }
@@ -820,6 +824,9 @@ export type PipelineType = "generate" | "notes" | "tqs" | "translate";
 // config (buildTranslateOptions) and folds these in; all optional. rowIds
 // scopes a single-note / subset translate (INTEGRATION.md §0).
 export interface TranslateRequestOptions {
+  // Which row-keyed TSV resource to translate ('tn' default | 'tq'). The server
+  // picks the matching source repo and passes it to the bot.
+  resourceType?: "tn" | "tq";
   model?: "sonnet" | "opus";
   delivery?: "path" | "branch";
   branchOnly?: boolean;
@@ -1245,6 +1252,15 @@ export const api = {
   // refresh local state (the collapsed/green treatment keys off the new state).
   validateNote: (id: string, book: string, value: boolean) =>
     request<TnRow>(`/api/rows/tn/${encodeURIComponent(id)}/validate?book=${encodeURIComponent(book)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value ? 1 : 0 }),
+    }),
+
+  // Translation-mode "Approve" for translationQuestions — the tQ analogue of
+  // validateNote. value=true → 'validated'; value=false → 'edited'.
+  validateQuestion: (id: string, book: string, value: boolean) =>
+    request<TqRow>(`/api/rows/tq/${encodeURIComponent(id)}/validate?book=${encodeURIComponent(book)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: value ? 1 : 0 }),

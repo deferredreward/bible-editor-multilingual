@@ -33,6 +33,7 @@ import type {
   PipelineRequestOptions,
   PipelineStartResponse,
   PipelineType,
+  TranslateRequestOptions,
 } from "../sync/api";
 import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipelineStore";
 import { currentPipelineUserId } from "../sync/pipelineSession";
@@ -60,6 +61,12 @@ interface PipelineOption {
    * Currently only used by the "Generate everything" macro.
    */
   followUpChain?: PipelineChainStep[];
+  /**
+   * Translate-pipeline overrides passed through to the start request. Used to
+   * pick the resource (tn default | tq) for a chapter translate. The server
+   * folds these into the config-derived options (buildTranslateOptions).
+   */
+  translate?: TranslateRequestOptions;
 }
 
 const OPTIONS: PipelineOption[] = [
@@ -95,6 +102,18 @@ const TRANSLATE_OPTION: PipelineOption = {
   label: "translation.translateChapter",
   description: "translation.descTranslate",
   approxDuration: "pipeline.durationNotesTqs",
+};
+
+// GL-only: drafts the whole chapter's tQ (translationQuestions) from the
+// published source repo. Carries resourceType so the server reads en_tq and the
+// bot outputs {lang}_tq.
+const TRANSLATE_TQ_OPTION: PipelineOption = {
+  key: "translate-tq",
+  type: "translate",
+  label: "translation.translateChapterQuestions",
+  description: "translation.descTranslateQuestions",
+  approxDuration: "pipeline.durationNotesTqs",
+  translate: { resourceType: "tq" },
 };
 
 // Internal 4-checkbox state for the generate dialog. Maps to the wire shape
@@ -199,7 +218,10 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   // chapter's tN). The English root project (translationSource == null) sees
   // exactly the original three options.
   const visibleOptions = useMemo(
-    () => (isTranslationProject(projectConfig) ? [...OPTIONS, TRANSLATE_OPTION] : OPTIONS),
+    () =>
+      isTranslationProject(projectConfig)
+        ? [...OPTIONS, TRANSLATE_OPTION, TRANSLATE_TQ_OPTION]
+        : OPTIONS,
     [projectConfig],
   );
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -272,6 +294,7 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
           ...(wire.options ? { options: wire.options } : {}),
           ...(wire.followUpOptions ? { followUpOptions: wire.followUpOptions } : {}),
           ...(confirm.followUpChain ? { followUpChain: confirm.followUpChain } : {}),
+          ...(confirm.translate ? { translate: confirm.translate } : {}),
         });
         lastRes = res;
         if (res.status !== "already_running") startedCount++;

@@ -713,6 +713,15 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
       "translation_state = CASE WHEN translation_state IN ('ai_draft','validated') THEN 'edited' ELSE translation_state END",
     );
   }
+  if (kind === "tq") {
+    // Translation-mode: same demotion as tN. A human content edit demotes an AI
+    // draft (or a previously-validated row) to 'edited'. tQ has no review_kind/
+    // review_reason columns, so only the state CASE applies. Literal CASE, no
+    // bind param; NULL (English root) stays NULL so English is untouched.
+    setClauses.push(
+      "translation_state = CASE WHEN translation_state IN ('ai_draft','validated') THEN 'edited' ELSE translation_state END",
+    );
+  }
   const baseParams = fields.length;
   // version bump and metadata go after the patch fields, then the WHERE
   // params (id + expected version + book) tail the bindings.
@@ -969,6 +978,42 @@ async function setTnTranslationState(
   return env.DB.prepare(`SELECT * FROM tn_rows WHERE id = ?1${bookClause(2)}`).bind(id, book).first<TnRow>();
 }
 
+// Set the translation_state on a target-language tQ row — the exact analogue of
+// setTnTranslationState (kind='tq'). State flip, not a content edit: does NOT
+// bump `version` and leaves `updated_by` alone; audit source=NULL (human
+// approval, which also clears the 'ai_pipeline' chip). Guarded on
+// translation_state IS NOT NULL so a row the translate pipeline never touched
+// can't be validated.
+async function setTqTranslationState(
+  env: Env,
+  id: string,
+  book: string,
+  userId: number | null,
+  state: "validated" | "edited" | null,
+): Promise<TqRow | null> {
+  const now = Math.floor(Date.now() / 1000);
+  const action = state === "validated" ? "validate" : "unvalidate";
+  const [updateRes] = await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE tq_rows
+           SET translation_state = ?1, updated_at = ?2
+         WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
+      )
+      .bind(state, now, id, book),
+    env.DB
+      .prepare(
+        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action)
+         SELECT 'tq', ?1, book, ?2, version, version, ?3
+           FROM tq_rows
+          WHERE id = ?1 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
+      )
+      .bind(id, userId ?? null, action, book),
+  ]);
+  if (!updateRes.meta.changes) return null;
+  return env.DB.prepare(`SELECT * FROM tq_rows WHERE id = ?1${bookClause(2)}`).bind(id, book).first<TqRow>();
+}
+
 // Flip the visible "trash" state on a tn row. Like setTnBit (preserve/hint),
 // this does NOT bump `version` — it's a reversible state flip, not a content
 // edit — so in-flight If-Match preconditions on the same row stay valid and no
@@ -1105,6 +1150,33 @@ rows.post("/tn/:id/validate", requireEditor, async (c) => {
   if (!updated) return c.json({ error: "not_found" }, 404);
   c.executionCtx.waitUntil(
     broadcastChapter(c.env, updated.book, updated.chapter, { type: "row.upserted", kind: "tn", row: updated }),
+  );
+  return c.json(updated);
+});
+
+// POST /api/rows/tq/:id/validate — the translationQuestions "Approve" action,
+// the exact analogue of /tn/:id/validate. Body: { value: 0 | 1 | boolean }
+// (1 → validated, 0 → back to edited). Lock-exempt, non-version-bumping.
+rows.post("/tq/:id/validate", requireEditor, async (c) => {
+  const id = c.req.param("id");
+  const book = c.req.query("book");
+  if (!book) return c.json({ error: "book_required" }, 400);
+  const userId = currentUserId(c);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const parsed = TnBitBody.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "validation_failed", issues: parsed.error.issues }, 400);
+  }
+  const nextState = coerceBitValue(parsed.data.value) === 1 ? "validated" : "edited";
+  const updated = await setTqTranslationState(c.env, id, book, userId, nextState);
+  if (!updated) return c.json({ error: "not_found" }, 404);
+  c.executionCtx.waitUntil(
+    broadcastChapter(c.env, updated.book, updated.chapter, { type: "row.upserted", kind: "tq", row: updated }),
   );
   return c.json(updated);
 });

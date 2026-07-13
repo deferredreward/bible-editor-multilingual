@@ -81,6 +81,17 @@ export interface TqRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * Translation-mode state machine (multilingual; PIPELINE-SPEC §4.1). Mirrors
+   * TnRow. NULL for the English root project and any row untouched by the
+   * translate pipeline. 'ai_draft' → the translate pipeline applied an AI
+   * translation; 'edited' → a human changed the draft; 'validated' → approved.
+   */
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  /** Hash of the EN source row the draft was made from (source-drift detection). */
+  source_row_hash: string | null;
+  /** translate-report.json entry for this row (confidence/fallback/terms); NULL if no sidecar. */
+  draft_meta_json: string | null;
   /** See TnRow.latest_source. */
   latest_source?: string | null;
 }
