@@ -36,7 +36,10 @@ type ArticleState = "ai_draft" | "edited" | "validated" | null;
 function aggregateState(states: ArticleState[]): ArticleState {
   if (states.some((s) => s === "ai_draft")) return "ai_draft";
   if (states.some((s) => s === "edited")) return "edited";
-  if (states.length > 0 && states.every((s) => s === "validated")) return "validated";
+  // "validated" once every TRANSLATED part is validated — untranslated (NULL)
+  // parts (e.g. a tA title/sub-title the bot didn't touch) don't block it.
+  const translated = states.filter((s) => s != null);
+  if (translated.length > 0 && translated.every((s) => s === "validated")) return "validated";
   return null;
 }
 
@@ -360,43 +363,44 @@ function ArticleEditor({
 
   const handleSave = useCallback(async () => {
     if (!parts || !anyDirty) return;
+    const dirty = parts.filter(isDirtyPart);
     setSaving(true);
-    try {
-      for (const part of parts) {
-        if (!isDirtyPart(part)) continue;
-        const updated = await api.patchArticle(
-          resource,
-          part.path,
-          part.version,
-          drafts[part.path] ?? "",
-        );
-        applyServerUnit(updated);
-      }
-      onServerChange();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        setConflict(true);
-        bumpReload();
-      } else {
-        setErrorMsg(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setSaving(false);
+    // Save every dirty part concurrently (independent PATCHes). allSettled so a
+    // 409 on one part never aborts the others AND never discards their unsaved
+    // drafts — successes are applied in place; the conflicting part keeps its
+    // local edit and surfaces the reload banner (no silent data loss).
+    const results = await Promise.allSettled(
+      dirty.map((part) => api.patchArticle(resource, part.path, part.version, drafts[part.path] ?? "")),
+    );
+    let conflicted = false;
+    let otherErr: string | null = null;
+    for (const r of results) {
+      if (r.status === "fulfilled") applyServerUnit(r.value);
+      else if (r.reason instanceof ApiError && r.reason.status === 409) conflicted = true;
+      else otherErr = r.reason instanceof Error ? r.reason.message : String(r.reason);
     }
-  }, [parts, anyDirty, isDirtyPart, resource, drafts, applyServerUnit, onServerChange, bumpReload]);
+    if (conflicted) setConflict(true);
+    if (otherErr) setErrorMsg(otherErr);
+    setSaving(false);
+    onServerChange();
+  }, [parts, anyDirty, isDirtyPart, resource, drafts, applyServerUnit, onServerChange]);
 
   const handleValidate = useCallback(
     async (value: boolean) => {
       if (!parts) return;
-      try {
-        for (const part of parts) {
-          const updated = await api.validateArticle(resource, part.path, value);
-          applyServerUnit(updated);
-        }
-        onServerChange();
-      } catch (e) {
-        setErrorMsg(e instanceof Error ? e.message : String(e));
+      // Only parts the pipeline actually translated can be (un)validated — the
+      // server guards on translation_state IS NOT NULL, so validating an
+      // untranslated (NULL) tA part 404s. Skip them; run the rest concurrently.
+      const targets = parts.filter((p) => p.translation_state != null);
+      if (targets.length === 0) return;
+      const results = await Promise.allSettled(
+        targets.map((part) => api.validateArticle(resource, part.path, value)),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled") applyServerUnit(r.value);
+        else setErrorMsg(r.reason instanceof Error ? r.reason.message : String(r.reason));
       }
+      onServerChange();
     },
     [parts, resource, applyServerUnit, onServerChange],
   );

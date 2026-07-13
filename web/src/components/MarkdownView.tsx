@@ -2,7 +2,7 @@
 // translation editor's source + preview panes. Extracted verbatim from
 // TwArticleDialog so the XSS-safety constraint travels with every use.
 
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Box, Link, Typography } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -45,7 +45,9 @@ interface Props {
   dir?: "ltr" | "rtl";
 }
 
-export function MarkdownView({ markdown, baseUrl, dir }: Props) {
+// Memoized: props are value-stable strings, so a parent re-render (e.g. a
+// keystroke in a sibling target editor) skips re-parsing unchanged markdown.
+export const MarkdownView = memo(function MarkdownView({ markdown, baseUrl, dir }: Props) {
   return (
     <Box
       dir={dir}
@@ -73,4 +75,4 @@ export function MarkdownView({ markdown, baseUrl, dir }: Props) {
       </ReactMarkdown>
     </Box>
   );
-}
+});

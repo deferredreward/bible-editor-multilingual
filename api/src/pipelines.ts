@@ -258,11 +258,13 @@ function buildTranslateOptions(
 
 // Article translate jobs carry no book/chapter; they reuse the pipeline_jobs
 // scope columns via a stable per-article sentinel so dedup keys per article
-// (two different articles don't collide) while fitting the int chapter column.
+// while fitting the (64-bit) integer chapter column. The full 32-bit hash keeps
+// collisions between distinct articles astronomically rare (vs a small modulus,
+// which birthday-collides across ~1000 articles and wrongly dedups them).
 function articleScopeHash(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return (h % 99999) + 1;
+  return h + 1; // 1 .. 2^32 (positive; SQLite INTEGER is 64-bit)
 }
 
 async function resolveUsernameFromDb(env: Env, userId: number): Promise<string | null> {
@@ -898,6 +900,13 @@ pipelines.post("/start", requireEditor, async (c) => {
   // relying on the bot's same-scope 409, which can't see our queue). Same
   // user + same scope/type → focus the existing job. Different user → the
   // enriched 409 the menu renders as an "Already running / queued" dialog.
+  // A translate job's identity includes its resourceType (tn|tq|tw|ta): a tN and
+  // a tQ translate of the same chapter share (book, chapter, pipeline_type) but
+  // are different work, so they must NOT dedup against each other. Non-translate
+  // jobs ignore this (bind null → clause is vacuously true). Old translate jobs
+  // predating resourceType default to 'tn' via COALESCE.
+  const dedupResourceType =
+    parsed.data.pipelineType === "translate" ? (rt ?? "tn") : null;
   const dup = await c.env.DB.prepare(
     `SELECT j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
             j.end_chapter, j.state, j.current_skill, j.current_status,
@@ -906,12 +915,13 @@ pipelines.post("/start", requireEditor, async (c) => {
        LEFT JOIN users u ON u.id = j.user_id
       WHERE j.book = ?1 AND j.start_chapter = ?2 AND j.end_chapter = ?3
         AND j.pipeline_type = ?4
+        AND (?5 IS NULL OR COALESCE(json_extract(j.options_json, '$.resourceType'), 'tn') = ?5)
         AND j.state IN ('queued', 'dispatching', 'running',
                         'paused_for_outage', 'paused_for_usage_limit')
       ORDER BY j.created_at ASC
       LIMIT 1`,
   )
-    .bind(book, startChapter, endChapter, parsed.data.pipelineType)
+    .bind(book, startChapter, endChapter, parsed.data.pipelineType, dedupResourceType)
     .first<PublicJobSummary & { user_id: number }>();
   if (dup) {
     if (dup.user_id === userId) {
