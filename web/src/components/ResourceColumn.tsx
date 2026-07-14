@@ -4,7 +4,7 @@ import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip, LinearProgre
 import AddIcon from "@mui/icons-material/Add";
 import PushPinIcon from "@mui/icons-material/PushPin";
 import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
-import type { TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion } from "../sync/api";
+import { api, isReadOnly, type TnRow, type TqRow, type TwlRow, type VerseDto, type TwlSuggestion } from "../sync/api";
 import { NoteCard, type DropPosition } from "./NoteCard";
 import { WordsTable, type WordDropPosition } from "./WordsTable";
 import { TwlSuggestions } from "./TwlSuggestions";
@@ -368,6 +368,23 @@ export function ResourceColumn({
     }
     return { total, validated, draftIds };
   }, [tn, translationMode]);
+  // Live terminology count for the language-memory chip (was hard-coded 0).
+  // Cheap COUNT endpoint; best-effort — a failure leaves it at 0. The route is
+  // editor-only server-side, so skip it for viewers — they'd only get a 403.
+  const [termsCount, setTermsCount] = useState(0);
+  useEffect(() => {
+    if (!translationMode || isReadOnly()) return;
+    let cancelled = false;
+    api
+      .getTermsCount()
+      .then((res) => {
+        if (!cancelled) setTermsCount(res.count);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [translationMode, book]);
   // tQ analogues of the source projection + stats above.
   const sourceQuestionProjection = useMemo(
     () =>
@@ -846,8 +863,8 @@ export function ResourceColumn({
                 </Box>
                 <Tooltip title={t("translation.languageMemoryTip")}>
                   <Typography variant="caption" sx={{ color: "text.disabled", whiteSpace: "nowrap" }}>
-                    🧠 {t("translation.languageMemory")}: {tnStats.validated} {t("translation.examples")} · 0{" "}
-                    {t("translation.terms")}
+                    🧠 {t("translation.languageMemory")}: {tnStats.validated} {t("translation.examples")} ·{" "}
+                    {termsCount} {t("translation.terms")}
                   </Typography>
                 </Tooltip>
                 <Box sx={{ flex: 1 }} />
