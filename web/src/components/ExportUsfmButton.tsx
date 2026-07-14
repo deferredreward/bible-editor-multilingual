@@ -20,6 +20,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 import { useTranslation } from "react-i18next";
 import { api, type VerseDto } from "../sync/api";
 import { buildUsfmFromVerses } from "../lib/exportUsfm";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 
 interface Props {
   book: string;
@@ -78,6 +80,7 @@ async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Prom
 
 export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVersesFor }: Props) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +113,7 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
     try {
       const verses = await versesFor(scope, version);
       if (verses.length === 0) {
-        setError(t("export.noText", { version, target: scope === "chapter" ? `${book} ${chapter}` : book }));
+        setError(t("export.noText", { version: versionLabel(projectConfig, version), target: scope === "chapter" ? `${book} ${chapter}` : book }));
         return;
       }
       const usfm = buildUsfmFromVerses(book, version, verses, { aligned });
@@ -153,10 +156,10 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
             </ListSubheader>,
             ...exportableVersions.flatMap((v) => [
               <MenuItem key={`${scope}-${v}-a`} onClick={() => void handleExport(scope, v, true)}>
-                {t("export.aligned", { version: v })}
+                {t("export.aligned", { version: versionLabel(projectConfig, v) })}
               </MenuItem>,
               <MenuItem key={`${scope}-${v}-u`} onClick={() => void handleExport(scope, v, false)}>
-                {t("export.plainText", { version: v })}
+                {t("export.plainText", { version: versionLabel(projectConfig, v) })}
               </MenuItem>,
             ]),
           ];

@@ -13,6 +13,8 @@ import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import type { ChapterPayload, TnRow, TwlRow, VerseDto } from "../sync/api";
 import { drafts, verseKey } from "../sync/drafts";
 import { DocColumn } from "./DocColumn";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 import type { TextLaneCheck } from "../lib/laneChecks";
 import type { FindMatch } from "./FindReplaceOverlay";
 import { HebrewLine } from "./HebrewLine";
@@ -215,6 +217,7 @@ function ScriptureColumnInner({
   textCheck,
 }: Props) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
   const activeRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -452,7 +455,7 @@ function ScriptureColumnInner({
           >
             {availableVersions.map((v) => (
               <ToggleButton key={v} value={v} sx={{ px: 1, py: 0.25, textTransform: "none", fontSize: 11 }}>
-                {VERSION_LABEL[v] ?? v}
+                {versionLabel(projectConfig, v)}
               </ToggleButton>
             ))}
           </ToggleButtonGroup>
@@ -704,10 +707,16 @@ function StackedBody({
   locked: boolean;
 }) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
   const ult = indexByVersion["ULT"] ?? EMPTY_COLUMN;
   const ust = indexByVersion["UST"] ?? EMPTY_COLUMN;
   const uhb = indexByVersion["UHB"] ?? indexByVersion["UGNT"] ?? {};
+  // Role code (drives `bibleVersion`, highlightsFor, lookups); the display
+  // label is derived from it per project.
   const uhbLabel = isHebrew ? "UHB" : "UGNT";
+  const uhbDisplay = versionLabel(projectConfig, uhbLabel);
+  const ultDisplay = versionLabel(projectConfig, "ULT");
+  const ustDisplay = versionLabel(projectConfig, "UST");
   return (
     <Box
       sx={(theme) => ({
@@ -788,7 +797,7 @@ function StackedBody({
               <ActiveLine
                 book={book}
                 bibleVersion="ULT"
-                label={ultV && isRangeRow(ultV) ? `ULT ${formatVerseLabel(ultV)}` : "ULT"}
+                label={ultV && isRangeRow(ultV) ? `${ultDisplay} ${formatVerseLabel(ultV)}` : ultDisplay}
                 chapter={chapter}
                 verseNum={ultStart}
                 text={ultV?.plain_text ?? ""}
@@ -823,7 +832,7 @@ function StackedBody({
               <ActiveLine
                 book={book}
                 bibleVersion="UST"
-                label={ustV && isRangeRow(ustV) ? `UST ${formatVerseLabel(ustV)}` : "UST"}
+                label={ustV && isRangeRow(ustV) ? `${ustDisplay} ${formatVerseLabel(ustV)}` : ustDisplay}
                 chapter={chapter}
                 verseNum={ustStart}
                 text={ustV?.plain_text ?? ""}
@@ -859,7 +868,7 @@ function StackedBody({
                 <ActiveLine
                   book={book}
                   bibleVersion={uhbLabel}
-                  label={isRangeRow(uhbV) ? `${uhbLabel} ${formatVerseLabel(uhbV)}` : uhbLabel}
+                  label={isRangeRow(uhbV) ? `${uhbDisplay} ${formatVerseLabel(uhbV)}` : uhbDisplay}
                   chapter={chapter}
                   verseNum={uhbStart}
                   text={uhbV.plain_text ?? ""}
@@ -924,6 +933,9 @@ const InactiveVerseRow = memo(
     onSelectVerse: (v: number) => void;
   }) {
     const { t } = useTranslation();
+    const projectConfig = useProjectConfig();
+    const ultDisplay = versionLabel(projectConfig, "ULT");
+    const ustDisplay = versionLabel(projectConfig, "UST");
     const ultV = ult[v];
     const ustV = ust[v];
     // Only render this version's cell when it's the start of its row's span —
@@ -1009,7 +1021,7 @@ const InactiveVerseRow = memo(
                 textAlign: "right",
               }}
             >
-              {isRangeRow(ultV) ? `ULT ${formatVerseLabel(ultV)}` : "ULT"}
+              {isRangeRow(ultV) ? `${ultDisplay} ${formatVerseLabel(ultV)}` : ultDisplay}
             </Typography>
             <Box
               data-find-cell={`${chapter}-${ultV.verse}-ULT`}
@@ -1052,7 +1064,7 @@ const InactiveVerseRow = memo(
                 textAlign: "right",
               }}
             >
-              {isRangeRow(ustV) ? `UST ${formatVerseLabel(ustV)}` : "UST"}
+              {isRangeRow(ustV) ? `${ustDisplay} ${formatVerseLabel(ustV)}` : ustDisplay}
             </Typography>
             <Box
               data-find-cell={`${chapter}-${ustV.verse}-UST`}

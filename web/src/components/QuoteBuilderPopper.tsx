@@ -36,6 +36,8 @@ import type { LexiconEntry } from "../hooks/useLexicon";
 import type { SourceWord } from "../lib/alignment";
 import { isHebrewBook } from "../lib/sourceSearch";
 import { SourceTooltipBody } from "./SourceTooltipBody";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 
 // Which row a shift-click range is anchored in. A range never spans rows.
 type Row = "src" | "ult" | "ust";
@@ -86,7 +88,8 @@ export function QuoteBuilderPopper({
   // (Greek, LTR). Shell hands us whichever exists, so label and direction
   // derive from the book code rather than hardcoding Hebrew.
   const sourceIsHebrew = isHebrewBook(book);
-  const sourceLabel = sourceIsHebrew ? "UHB" : "UGNT";
+  const projectConfig = useProjectConfig();
+  const sourceLabel = versionLabel(projectConfig, sourceIsHebrew ? "UHB" : "UGNT");
 
   // Preview of the would-be quote string. Re-runs cheaply on every toggle
   // since collectUhbWords / matchGroupsAt scan an in-memory tree.
@@ -246,7 +249,7 @@ export function QuoteBuilderPopper({
           </Section>
 
           {/* ULT row */}
-          <Section label="ULT">
+          <Section label={versionLabel(projectConfig, "ULT")}>
             {ultTokens.length === 0 ? (
               <EmptyHint>no ULT alignment for this verse</EmptyHint>
             ) : (
@@ -269,7 +272,7 @@ export function QuoteBuilderPopper({
           </Section>
 
           {/* UST row */}
-          <Section label="UST">
+          <Section label={versionLabel(projectConfig, "UST")}>
             {ustTokens.length === 0 ? (
               <EmptyHint>no UST alignment for this verse</EmptyHint>
             ) : (
