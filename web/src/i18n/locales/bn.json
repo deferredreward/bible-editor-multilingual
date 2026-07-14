@@ -584,6 +584,19 @@
     "applyingProjectMode": "Applying…",
     "projectModeSaved": "Project mode updated for everyone.",
     "projectModeForbidden": "Only an admin can change the project mode.",
-    "projectModeFailed": "Could not update the project mode. Try again."
+    "projectModeFailed": "Could not update the project mode. Try again.",
+    "assistedMode": "Assisted mode",
+    "assistedModeHelp": "When on, translate runs send the team's context pack (brief, terms, validated examples) to the AI.",
+    "assistedModeDisabled": "Export a context pack successfully before enabling assisted mode — an empty pack fails the AI run.",
+    "assistedModeAdminOnly": "Only an admin can change assisted mode or export the context pack.",
+    "assistedModeOn": "Assisted",
+    "assistedModeOff": "Raw baseline",
+    "exportNow": "Export context now",
+    "exportQueued": "Context export queued",
+    "exportStatusNever": "No context export yet",
+    "exportStatusSuccess": "Context pack ready ({{sha}})",
+    "exportStatusOther": "Last export: {{status}}",
+    "feedingAi": "Feeding AI",
+    "notFeedingAi": "Not yet feeding the AI — enable assisted mode after a successful export"
   }
 }

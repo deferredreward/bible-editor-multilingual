@@ -160,7 +160,20 @@
     "applyingProjectMode": "جارٍ التطبيق…",
     "projectModeSaved": "تم تحديث وضع المشروع للجميع.",
     "projectModeForbidden": "يمكن للمسؤول فقط تغيير وضع المشروع.",
-    "projectModeFailed": "تعذّر تحديث وضع المشروع. حاول مرة أخرى."
+    "projectModeFailed": "تعذّر تحديث وضع المشروع. حاول مرة أخرى.",
+    "assistedMode": "الوضع المُساعَد",
+    "assistedModeHelp": "عند التفعيل، تُرسل حزمة السياق (الموجز والمصطلحات والأمثلة المعتمدة) مع كل تشغيل ترجمة للذكاء الاصطناعي.",
+    "assistedModeDisabled": "صدِّر حزمة سياق بنجاح قبل تفعيل الوضع المُساعَد — الحزمة الفارغة تفشل تشغيل الذكاء الاصطناعي.",
+    "assistedModeAdminOnly": "يمكن للمسؤول فقط تغيير الوضع المُساعَد أو تصدير حزمة السياق.",
+    "assistedModeOn": "مُساعَد",
+    "assistedModeOff": "أساسي",
+    "exportNow": "تصدير السياق الآن",
+    "exportQueued": "تم وضع تصدير السياق في قائمة الانتظار",
+    "exportStatusNever": "لا يوجد تصدير سياق بعد",
+    "exportStatusSuccess": "حزمة السياق جاهزة ({{sha}})",
+    "exportStatusOther": "آخر تصدير: {{status}}",
+    "feedingAi": "يُغذي الذكاء الاصطناعي",
+    "notFeedingAi": "لا يغذي الذكاء الاصطناعي بعد — فعِّل الوضع المُساعَد بعد تصدير ناجح"
   },
   "export": {
     "noText": "لا يوجد نص {{version}} لتصديره من أجل {{target}}.",

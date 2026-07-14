@@ -23,6 +23,7 @@ import {
   escapeLikeParam,
   type TermImport,
 } from "./translationMemoryLib.ts";
+import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 
 export const translationMemory = new Hono<{
   Bindings: Env;
@@ -561,4 +562,69 @@ translationMemory.get("/examples", requireEditor, async (c) => {
     return c.json({ resource: "tq", examples: rows.results ?? [] });
   }
   return c.json({ error: "unknown_resource" }, 400);
+});
+
+// GET /export-status — latest context-pack export result for the assisted-mode
+// toggle. Uses the same "latest successful completion" predicate as translate
+// start (status=success + commit_sha + completed_at).
+translationMemory.get("/export-status", requireEditor, async (c) => {
+  const latest = await getLatestSuccessfulContextExport(c.env);
+  if (!latest) {
+    // Also surface the most recent non-success row so the UI can show why the
+    // toggle is disabled (shrink_refused / failed / never run).
+    const last = await c.env.DB.prepare(
+      `SELECT status, completed_at, failure_reason, terms_count, examples_tn, examples_tq,
+              content_files, total_bytes, owner
+         FROM context_export_results
+        ORDER BY id DESC LIMIT 1`,
+    ).first<{
+      status: string;
+      completed_at: number | null;
+      failure_reason: string | null;
+      terms_count: number | null;
+      examples_tn: number | null;
+      examples_tq: number | null;
+      content_files: number | null;
+      total_bytes: number | null;
+      owner: string;
+    }>();
+    if (!last) {
+      return c.json({
+        status: "never",
+        sha: null,
+        completedAt: null,
+        terms: 0,
+        examplesTn: 0,
+        examplesTq: 0,
+        contentFiles: 0,
+        totalBytes: 0,
+        owner: null,
+        failureReason: null,
+      });
+    }
+    return c.json({
+      status: last.status,
+      sha: null,
+      completedAt: last.completed_at,
+      terms: last.terms_count ?? 0,
+      examplesTn: last.examples_tn ?? 0,
+      examplesTq: last.examples_tq ?? 0,
+      contentFiles: last.content_files ?? 0,
+      totalBytes: last.total_bytes ?? 0,
+      owner: last.owner,
+      failureReason: last.failure_reason,
+    });
+  }
+  return c.json({
+    status: "success",
+    sha: latest.sha,
+    completedAt: latest.completedAt,
+    terms: latest.terms,
+    examplesTn: latest.examplesTn,
+    examplesTq: latest.examplesTq,
+    contentFiles: latest.contentFiles,
+    totalBytes: latest.totalBytes,
+    owner: latest.owner,
+    failureReason: null,
+  });
 });

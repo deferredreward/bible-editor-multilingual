@@ -14,10 +14,32 @@
 
 ## Last run
 
-2026-07-14 · **feat/translation-mode-entry** — **Made project mode discoverable and switchable from Preferences (not committed/pushed).**
+2026-07-14 · **feat/translation-mode-entry** — **Made project mode discoverable and switchable from Preferences.**
 - Preferences is now always visible in TopBar; Articles remains translation-project-only. Preferences always exposes the global project preset selector, including in English authoring mode, while translation-memory sections remain GL/editor gated.
-- Admins can switch through the existing preset catalog and admin-protected `PUT /api/project-config`; editors/viewers see the active preset plus a clear admin-only explanation. Successful writes publish through the shared project-config cache so mode-gated UI updates without reload.
+- Admins can switch through the existing preset catalog and admin-protected `PUT /api/project-config`; editors/viewers see the active preset plus a clear admin-only explanation. Successful writes publish through the shared project-config cache so mode-gated UI updates without reload. Preset switches preserve existing overrides (`overrides` omitted ≠ `null`).
 - Added preset/write unit coverage and completed strict locale parity (including the pre-existing `words.showInText` gap). Verified `npm run typecheck`, API/web unit suites, `node scripts/check-i18n.mjs` (13/13), `npm run build`, and local authenticated API + browser smokes. Browser-confirmed: Preferences is visible in English authoring mode, switching to Arabic immediately reveals translation-memory sections and the Articles button, and switching back hides both again; the local test database was restored to English.
+- Rebased/merged onto `origin/main` after PR #16 (`feat/context-repo-export`) landed; kept both ProjectModeControl and AssistedModeControls in Preferences.
+
+2026-07-14 · **feat/context-repo-export (worktree off `main`)** — **D1→`{org}/translation-context` export + assisted-mode toggle built.**
+
+Closes the "Biggest remaining gap" from the Preferences panel (PR #14): the export leg that feeds curated memory to bp-assistant via `contextRef`.
+
+**Contract:** [`docs/CONTEXT-REPO-CONTRACT.md`](docs/CONTEXT-REPO-CONTRACT.md) status → CONFIRMED; pinned parser SHAs for bp-assistant#206 (`f78cce…`) + skills#136 (`6475d5…`). Shared fixtures in `api/test-fixtures/context-pack/`. Gate: `scripts/validate-context-pack.mjs` (runs vendored `vendor/bp-assistant-context-pack.js` — Node-only, never Worker-coupled).
+
+**Built:**
+- Pure renderer [`api/src/contextExport.ts`](api/src/contextExport.ts) + shrink/NFC helpers [`contextExportLib.ts`](api/src/contextExportLib.ts)
+- Batched EN-source fetch [`contextSourceFetch.ts`](api/src/contextSourceFetch.ts) — fail-closed on missing/truncated EN TSV (never publish partial English-source pack)
+- CAS master commit [`contextExportDcs.ts`](api/src/contextExportDcs.ts) — expected-parent + retry
+- Migration `0041_context_export_results.sql` + [`contextExportResults.ts`](api/src/contextExportResults.ts) — single "latest successful completion" predicate for SHA + UI
+- `ExportWorkflow` `contextOnly` mode + §2c full-run phase; `POST /api/exports/run { contextOnly, shrinkOverride }`
+- Assisted injection in `pipelines.ts` via [`assistedContextRef.ts`](api/src/assistedContextRef.ts) — `owner = DCS_EXPORT_OWNER ?? exportOrg` from the export record, never `cfg.exportOrg` alone
+- Preferences header toggle + Export now + Examples "feeding AI" chip; `GET /api/translation-memory/export-status`
+
+**Verified — how:** typecheck (both), `npm --workspace api run test` (incl. new contextExport suite), web build green, fixture packs accepted by real bp-assistant `loadContextPack`.
+
+**Honesty ledger:** live DCS scratch-repo export + assisted translate against deployed #206 not run this session (PRs still OPEN). Validator structural + reader path proven on fixtures. Semantic shrink override path admin-only via `shrinkOverride`.
+
+---
 
 2026-07-13 · **claude/lucid-bartik-17d777 (branch off `main`)** — **Phase B2b: tW/tA article EXPORT built + gated green. PR into `main` (NOT pushed to unfoldingWord; NOT deployed).**
 Completes the one piece PART B2 (PR #5, `feat/twl-and-article-translation`, merged to `main` as `70472bd`) deferred: rendering translated `article_units.target_md` back to the `{lang}_tw` / `{lang}_ta` Door43 repos. Design: `docs/design/tw-ta-translation-modules.md` §5.

@@ -22,6 +22,8 @@ import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
 import { getProjectConfig } from "./projectConfig.ts";
 import { buildTranslateOptions } from "./translateOptions.ts";
+import { applyAssistedContextRef } from "./assistedContextRef.ts";
+import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents";
 
 export const pipelines = new Hono<{
@@ -922,7 +924,7 @@ pipelines.post("/start", requireEditor, async (c) => {
     // project config (bp-bot/translate-pipeline/PLAN.md §1). The bot fetches
     // source rows by `sourceRef`, so there's nothing to gather from D1.
     const cfg = await getProjectConfig(c.env);
-    const translateOptions = buildTranslateOptions(cfg, parsed.data.translate);
+    let translateOptions = buildTranslateOptions(cfg, parsed.data.translate);
     if (!translateOptions) {
       return c.json(
         {
@@ -932,6 +934,22 @@ pipelines.post("/start", requireEditor, async (c) => {
         },
         400,
       );
+    }
+    // Assisted mode: inject contextRef from the latest successful context-pack
+    // export when translation_prefs.assisted_mode=1. Owner comes from the
+    // export result (DCS_EXPORT_OWNER ?? exportOrg at export time), never from
+    // cfg.exportOrg alone. No successful SHA → stay raw baseline (omit).
+    const prefs = await c.env.DB.prepare(
+      `SELECT assisted_mode FROM translation_prefs WHERE id = 1`,
+    ).first<{ assisted_mode: number }>();
+    const latest = await getLatestSuccessfulContextExport(c.env);
+    translateOptions = applyAssistedContextRef(
+      translateOptions,
+      prefs?.assisted_mode === 1,
+      latest,
+    );
+    if (prefs?.assisted_mode === 1 && !latest) {
+      console.warn("assisted_mode on but no successful context export; omitting contextRef");
     }
     mergedOptions = translateOptions;
   } else if (parsed.data.pipelineType === "notes") {
