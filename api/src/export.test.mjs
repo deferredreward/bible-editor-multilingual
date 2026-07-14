@@ -166,7 +166,7 @@ function utf8Base64(s) {
   const second = buildTnTsv([tn("יְהוָֽה", 2)]).split("\n");
   assert(second[1].split("\t")[5] === "2", `Hebrew quote, occurrence 2 left as 2`);
   // TWL OrigWords (always OL) gets the same guard.
-  const twl = buildTwlTsv([{ ref_raw: "7:1", id: "x", tags: null, orig_words: "יְהוָֽה", occurrence: 0, tw_link: "rc://x" }]).split("\n");
+  const twl = buildTwlTsv([{ ref_raw: "7:1", id: "x", tags: null, orig_words: "יְהוָֽה", occurrence: 0, tw_link: "rc://x" }]).tsv.split("\n");
   assert(twl[1].split("\t")[4] === "1", `TWL OrigWords occurrence 0 → 1`);
 }
 

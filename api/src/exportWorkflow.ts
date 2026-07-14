@@ -58,6 +58,7 @@ async function exportOwnerUrl(env: Env): Promise<string> {
 // Pruned best-effort on each export so it doesn't linger; safe to delete since
 // the live-snapshot flow is no longer used (its post-export path is dormant).
 const LEGACY_EXPORT_BRANCH = "live-snapshot";
+import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
@@ -400,6 +401,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         prNumber: null,
         prReason: null,
       };
+    }
+
+    // Apply TWL sort order updates computed during export. Persist the sequence
+    // so future operations use the optimal ordering from the ULT alignment.
+    if (built.sortOrderUpdates.length > 0) {
+      await this.applyTwlSortOrderUpdates(book, built.sortOrderUpdates);
     }
 
     // Book-specific branch named for this resource's human contributors.
@@ -826,7 +833,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
-  private async buildResource(book: string, resource: Resource): Promise<{ content: string; rowCount: number }> {
+  private async buildResource(
+    book: string,
+    resource: Resource,
+  ): Promise<{ content: string; rowCount: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
     const db = this.env.DB;
     if (resource === "tn") {
       // trashed_at IS NULL excludes notes pending deletion. The nightly cron
@@ -840,7 +850,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TnRow>();
-      return { content: rs.results.length === 0 ? "" : buildTnTsv(rs.results), rowCount: rs.results.length };
+      return { content: rs.results.length === 0 ? "" : buildTnTsv(rs.results), rowCount: rs.results.length, sortOrderUpdates: [] };
     }
     if (resource === "tq") {
       const rs = await db
@@ -850,7 +860,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TqRow>();
-      return { content: rs.results.length === 0 ? "" : buildTqTsv(rs.results), rowCount: rs.results.length };
+      return { content: rs.results.length === 0 ? "" : buildTqTsv(rs.results), rowCount: rs.results.length, sortOrderUpdates: [] };
     }
     if (resource === "twl") {
       const rs = await db
@@ -867,14 +877,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book, "ULT")
         .all<VerseRow>();
+      if (rs.results.length === 0) {
+        return { content: "", rowCount: 0, sortOrderUpdates: [] };
+      }
+      const result = buildTwlTsv(rs.results, {
+        book,
+        bibleVersion: "ULT",
+        headers: null,
+        verses: ultVerses.results,
+      });
       return {
-        content: rs.results.length === 0 ? "" : buildTwlTsv(rs.results, {
-          book,
-          bibleVersion: "ULT",
-          headers: null,
-          verses: ultVerses.results,
-        }),
+        content: result.tsv,
         rowCount: rs.results.length,
+        sortOrderUpdates: result.sortOrderUpdates,
       };
     }
     // ult / ust
@@ -886,7 +901,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       )
       .bind(book, bibleVersion)
       .all<VerseRow>();
-    if (rs.results.length === 0) return { content: "", rowCount: 0 };
+    if (rs.results.length === 0) return { content: "", rowCount: 0, sortOrderUpdates: [] };
     const headersRow = await db
       .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2`)
       .bind(book, bibleVersion)
@@ -903,6 +918,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return {
       content: buildUsfm({ book, bibleVersion, headers, verses: rs.results }),
       rowCount: rs.results.length,
+      sortOrderUpdates: [],
     };
   }
 
@@ -947,6 +963,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       : this.env.DB.prepare(sql).bind(resource, book);
     const rs = await stmt.all<{ username: string; first_at: number }>();
     return rs.results.map((r) => r.username);
+  }
+
+  // Apply TWL sort order updates computed during export. Updates only rows in
+  // verses where reordering happened, preserving the alignment-based sequence
+  // in the database for future operations. This is idempotent: multiple calls
+  // with the same updates produce the same result.
+  private async applyTwlSortOrderUpdates(
+    book: string,
+    updates: Array<{ id: string; sort_order: number }>,
+  ): Promise<void> {
+    // Delegates to the shared helper (twlSortOrderApply.ts) so the export and the
+    // reimport canonical post-pass write sort_order identically.
+    await applyTwlSortOrderUpdates(this.env.DB, book, updates);
   }
 
   // Delete branches this export's branch replaces. Sources:

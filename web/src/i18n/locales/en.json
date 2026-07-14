@@ -199,6 +199,7 @@
     "moveUp": "move up",
     "dragToReorder": "drag to reorder",
     "moveDown": "move down",
+    "showInText": "show in text",
     "translateTooltip": "translate to Hebrew/Greek using ULT alignment",
     "occurrenceTooltip": "occurrence — which instance of this quote in the verse (usually 1)",
     "occurrenceAriaLabel": "occurrence",

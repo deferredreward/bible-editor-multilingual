@@ -88,7 +88,7 @@ function render(book, resource) {
   if (resource === "twl") {
     const rows = d1(`SELECT * FROM twl_rows WHERE book='${book}' AND deleted_at IS NULL ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`);
     const verses = d1(`SELECT * FROM verses WHERE book='${book}' AND bible_version='ULT' ORDER BY chapter, verse`);
-    return { content: rows.length === 0 ? "" : buildTwlTsv(rows, { book, bibleVersion: "ULT", headers: null, verses }), rowCount: rows.length };
+    return { content: rows.length === 0 ? "" : buildTwlTsv(rows, { book, bibleVersion: "ULT", headers: null, verses }).tsv, rowCount: rows.length };
   }
   const bibleVersion = resource.toUpperCase();
   const verses = d1(`SELECT * FROM verses WHERE book='${book}' AND bible_version='${bibleVersion}' ORDER BY chapter, verse`);
