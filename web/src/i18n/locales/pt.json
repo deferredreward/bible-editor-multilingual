@@ -66,7 +66,9 @@
     "unapprove": "Cancelar aprovação",
     "reRun": "Executar IA novamente",
     "whyDraft": "Revise em relação à fonte e depois aprove.",
-    "languageMemoryTip": "Os exemplos validados e a terminologia crescem à medida que a equipe aprova — o contexto com que cada rascunho futuro é gerado."
+    "languageMemoryTip": "Os exemplos validados e a terminologia crescem à medida que a equipe aprova — o contexto com que cada rascunho futuro é gerado.",
+    "translateChapterQuestions": "Traduzir perguntas",
+    "descTranslateQuestions": "Traduzir com IA as perguntas deste capítulo a partir da língua de origem."
   },
   "export": {
     "noText": "Nenhum texto {{version}} para exportar para {{target}}.",
@@ -199,7 +201,7 @@
     "board": "Painel",
     "resources": "Recursos",
     "notes": "Notas",
-    "words": "Palavras",
+    "words": "TWLinks",
     "questions": "Perguntas",
     "alignment": "Alinhamento",
     "search": "Buscar",
@@ -480,11 +482,11 @@
   "lanes": {
     "text": "Texto",
     "tn": "Notas",
-    "tw": "Palavras",
+    "tw": "TWLinks",
     "tq": "Perguntas",
     "textShort": "T",
     "tnShort": "N",
-    "twShort": "Pa",
+    "twShort": "TWL",
     "tqShort": "Pe",
     "attrOpen": "aberto",
     "attrYou": "você",
@@ -504,5 +506,22 @@
     "enableBody": "Marcar isto fará o Logos roubar o foco (trazendo sua janela para a frente) toda vez que você mudar de versículo. Tudo bem se você tiver o Logos em um segundo monitor, mas caso contrário use o botão de sincronização quando quiser mover o Logos.",
     "dontShowAgain": "Não mostrar novamente",
     "ok": "OK"
+  },
+  "articles": {
+    "title": "Artigos",
+    "words": "Palavras de tradução",
+    "academy": "Academia de tradução",
+    "glOnly": "A tradução de artigos só está disponível para projetos de língua de porta (GL).",
+    "approved": "{{n}}/{{total}} aprovados",
+    "save": "Salvar",
+    "reloadConflict": "Este artigo mudou no servidor — recarregue.",
+    "noArticles": "Nenhum artigo.",
+    "selectArticle": "Selecione um artigo para traduzir.",
+    "preview": "Visualização",
+    "edit": "Editar",
+    "partTitle": "Título",
+    "partSubTitle": "Subtítulo",
+    "partBody": "Corpo",
+    "backToScripture": "Voltar à Escritura"
   }
 }

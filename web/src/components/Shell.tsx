@@ -440,9 +440,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     () =>
       pipelineStore.onComplete((job, prev) => {
         const where = `${job.book} ${job.start_chapter}`;
-        // A finished translate run clears the per-note spinners it drove.
+        // A finished translate run clears the per-note / per-question spinners
+        // it drove. The single-slot queue runs one translate at a time, so
+        // clearing both sets on any translate completion is safe.
         if (job.pipeline_type === "translate") {
           setTranslatingRowIds((prev) => (prev.size ? new Set() : prev));
+          setTranslatingQuestionIds((prev) => (prev.size ? new Set() : prev));
         }
         if (job.state === "done") {
           // Viewing the chapter this job wrote? Offer refresh instead of a plain
@@ -568,6 +571,48 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         });
       } catch (e) {
         setTranslatingRowIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        const body = (e as { body?: { error?: string } } | null)?.body;
+        const msg = body?.error ?? (e instanceof Error ? e.message : "unknown error");
+        pushPipelineToast(t("shell.couldntTranslateNote", { message: msg }), "error");
+      }
+    },
+    [book, chapter, pushPipelineToast, t],
+  );
+
+  // ── Translation mode: tQ analogues of the tN Approve + Translate handlers ──
+  const handleApproveQuestion = useCallback(
+    async (id: string, value = true) => {
+      try {
+        const updated = await api.validateQuestion(id, book, value);
+        applyLocalRowReplacement("tq", updated);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "unknown error";
+        pushPipelineToast(t("shell.couldntApproveNote", { message: msg }), "error");
+      }
+    },
+    [book, applyLocalRowReplacement, pushPipelineToast, t],
+  );
+
+  const [translatingQuestionIds, setTranslatingQuestionIds] = useState<Set<string>>(() => new Set());
+
+  const handleTranslateQuestion = useCallback(
+    async (id: string) => {
+      setTranslatingQuestionIds((prev) => new Set(prev).add(id));
+      try {
+        await pipelineStore.start({
+          pipelineType: "translate",
+          book,
+          startChapter: chapter,
+          endChapter: chapter,
+          sessionKey: getSessionKey(),
+          translate: { resourceType: "tq", rowIds: [id] },
+        });
+      } catch (e) {
+        setTranslatingQuestionIds((prev) => {
           const next = new Set(prev);
           next.delete(id);
           return next;
@@ -2839,6 +2884,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onNoteApprove={handleApproveNote}
           onNoteTranslate={handleTranslateNote}
           translatingNoteIds={translatingRowIds}
+          onQuestionApprove={handleApproveQuestion}
+          onQuestionTranslate={handleTranslateQuestion}
+          translatingQuestionIds={translatingQuestionIds}
           quoteBuildActiveNoteId={quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null}
           quoteBuildActiveWordId={quoteBuildTarget?.kind === "twl" ? quoteBuildTarget.id : null}
           quoteBuildSelectionCount={quoteBuildSelectedKeys.size}

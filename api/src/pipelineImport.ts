@@ -47,7 +47,7 @@ interface ImportContext {
 
 export interface ImportResult {
   inserted: number;
-  byKind: { tn: number; tq: number; verse: number };
+  byKind: { tn: number; tq: number; verse: number; article: number };
   skipped: string[];           // human-readable reasons (one per output entry skipped)
   applied?: ApplyResult;
   // True when a concurrent poll already owns this import (the CAS claim was
@@ -63,6 +63,7 @@ type Classification =
   | { kind: "verse"; bibleVersion: "ULT" | "UST"; format: "usfm" }
   | { kind: "tn"; format: "tsv" }
   | { kind: "tq"; format: "tsv" }
+  | { kind: "article"; resource: "tw" | "ta"; format: "md" }
   | { kind: "unknown" };
 
 function classify(entry: OutputEntry, cfg: ProjectConfig): Classification {
@@ -76,10 +77,14 @@ function classify(entry: OutputEntry, cfg: ProjectConfig): Classification {
   if (tail.endsWith(cfg.repos.sim.toLowerCase())) return { kind: "verse", bibleVersion: "UST", format: "usfm" };
   if (tail.endsWith(cfg.repos.tn.toLowerCase())) return { kind: "tn", format: "tsv" };
   if (tail.endsWith(cfg.repos.tq.toLowerCase())) return { kind: "tq", format: "tsv" };
+  if (tail.endsWith(cfg.repos.tw.toLowerCase())) return { kind: "article", resource: "tw", format: "md" };
+  if (tail.endsWith(cfg.repos.ta.toLowerCase())) return { kind: "article", resource: "ta", format: "md" };
   if (tail.endsWith("en_ult")) return { kind: "verse", bibleVersion: "ULT", format: "usfm" };
   if (tail.endsWith("en_ust")) return { kind: "verse", bibleVersion: "UST", format: "usfm" };
   if (tail.endsWith("en_tn")) return { kind: "tn", format: "tsv" };
   if (tail.endsWith("en_tq")) return { kind: "tq", format: "tsv" };
+  if (tail.endsWith("en_tw")) return { kind: "article", resource: "tw", format: "md" };
+  if (tail.endsWith("en_ta")) return { kind: "article", resource: "ta", format: "md" };
   return { kind: "unknown" };
 }
 
@@ -92,7 +97,7 @@ async function fetchText(rawUrl: string): Promise<string> {
 }
 
 interface StagedRow {
-  kind: "tn" | "tq" | "verse";
+  kind: "tn" | "tq" | "verse" | "article";
   chapter: number;
   verse: number;
   bibleVersion: string | null;
@@ -172,6 +177,23 @@ async function parseOutputEntry(
   const raw = await fetchText(entry.rawUrl);
   const staged: StagedRow[] = [];
 
+  if (cls.format === "md") {
+    // One article file per output entry. `path` is the repo-relative markdown
+    // path — the round-trip id keyed against article_units (bp-assistant
+    // articles envelope: the in-repo path is the stable identity). No chapter/
+    // verse scope for articles (sentinel 0/0).
+    const path = entry.path ?? "";
+    if (!path) return { staged: [], skipReason: "article output missing path" };
+    staged.push({
+      kind: "article",
+      chapter: 0,
+      verse: 0,
+      bibleVersion: null,
+      payload: { resource: cls.resource, path, target_md: raw },
+    });
+    return { staged };
+  }
+
   if (cls.format === "tsv") {
     const { rows } = parseTsv(raw);
     for (const row of rows) {
@@ -248,7 +270,7 @@ export async function importJobOutput(
     // (and, if the owner then fails, suppress the retry).
     return {
       inserted: 0,
-      byKind: { tn: 0, tq: 0, verse: 0 },
+      byKind: { tn: 0, tq: 0, verse: 0, article: 0 },
       skipped: ["import already claimed by a concurrent poll"],
       claimLost: true,
     };
@@ -289,7 +311,7 @@ async function stageJobOutput(
     .bind(job.jobId)
     .first<{ staged_at: number | null }>();
   if (marker?.staged_at != null) {
-    return { inserted: 0, byKind: { tn: 0, tq: 0, verse: 0 }, skipped: ["already staged"] };
+    return { inserted: 0, byKind: { tn: 0, tq: 0, verse: 0, article: 0 }, skipped: ["already staged"] };
   }
 
   // No complete-staging marker: either this is the first run, or a prior
@@ -322,7 +344,7 @@ async function stageJobOutput(
 
   const CHUNK = 100;
   let inserted = 0;
-  const byKind = { tn: 0, tq: 0, verse: 0 };
+  const byKind = { tn: 0, tq: 0, verse: 0, article: 0 };
   for (let i = 0; i < allStaged.length; i += CHUNK) {
     const chunk = allStaged.slice(i, i + CHUNK);
     await env.DB.batch(
@@ -366,6 +388,8 @@ export interface ApplyResult {
   tnSkippedDup: number;
   tqCreated: number;
   tqUpdated: number;
+  // tw/ta article files updated in place by the translate apply (by path).
+  articleUpdated: number;
   verseUpdated: number;
   // Distinct chapters that actually received a write, so the caller can fan out
   // one "chapter is stale" hint per changed chapter (not one per row).
@@ -374,7 +398,7 @@ export interface ApplyResult {
 
 interface PendingImportRow {
   id: number;
-  kind: "tn" | "tq" | "verse";
+  kind: "tn" | "tq" | "verse" | "article";
   book: string;
   chapter: number;
   verse: number;
@@ -417,6 +441,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
 
   const tnProposals = rows.filter((r) => r.kind === "tn");
   const tqProposals = rows.filter((r) => r.kind === "tq");
+  const articleProposals = rows.filter((r) => r.kind === "article");
   const verseProposals = rows.filter((r) => r.kind === "verse");
 
   const result: ApplyResult = {
@@ -426,6 +451,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     tnSkippedDup: 0,
     tqCreated: 0,
     tqUpdated: 0,
+    articleUpdated: 0,
     verseUpdated: 0,
     affectedChapters: [],
   };
@@ -436,9 +462,11 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
 
   // Translate pipeline (multilingual): a wholly separate apply path. It UPDATEs
   // existing target rows by rowId, never deletes, never inserts — so it skips
-  // the entire English delete-sweep/insert machinery below. tN only for the
-  // pilot; tq/verse translate output is deferred (PIPELINE-SPEC §2.1). Returns
-  // early so a translate job can never trip deleteUnkeptTns.
+  // the entire English delete-sweep/insert machinery below. A given translate
+  // job produces exactly one resource kind (tn OR tq OR tw/ta articles), so
+  // only the matching loop does work. Article apply is keyed by (resource,
+  // path) against article_units. Returns early so a translate job can never
+  // trip deleteUnkeptTns.
   if (job.pipelineType === "translate") {
     for (const p of tnProposals) {
       const outcome = await applyTranslateTnRow(env, p, job, userId);
@@ -449,6 +477,17 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
       // no_match: the id isn't a live target row (or a concurrent human edit
       // won the CAS) — the proposal is left unresolved rather than inserted,
       // preserving the row-identity guarantee. Surfaced via pending_imports.
+    }
+    for (const p of tqProposals) {
+      const outcome = await applyTranslateTqRow(env, p, job, userId);
+      if (outcome === "drafted") {
+        affected.add(p.chapter);
+        result.tqUpdated += 1; // reuses the "updated in place" counter
+      }
+    }
+    for (const p of articleProposals) {
+      const outcome = await applyTranslateArticle(env, p, userId);
+      if (outcome === "drafted") result.articleUpdated += 1;
     }
     result.affectedChapters = [...affected].sort((a, b) => a - b);
     return result;
@@ -823,6 +862,160 @@ async function applyTranslateTnRow(
           )`,
       )
       .bind(p.id, userId, target.id, job.book, newVersion, now),
+  ]);
+  return (res[0]?.meta?.changes ?? 0) > 0 ? "drafted" : "no_match";
+}
+
+// Translate-pipeline apply for translationQuestions (multilingual; PIPELINE-SPEC
+// §2.1). The exact tN analogue: one target row per input row, keyed by the same
+// rowId, with only the Question and Response translated — Reference/ID/Tags/
+// Quote/Occurrence are copied through byte-identical, so we UPDATE question and
+// response of the EXISTING target row and leave the structural columns alone. A
+// translate run NEVER deletes rows and NEVER mints new ids — a proposal whose id
+// has no matching row is skipped (surfaced in result, not inserted). Stamps
+// translation_state='ai_draft' and writes edit_log kind='tq' source='ai_pipeline'
+// so the review UI shows the AI chip.
+async function applyTranslateTqRow(
+  env: Env,
+  p: PendingImportRow,
+  job: ImportContext,
+  userId: number,
+): Promise<"drafted" | "no_match"> {
+  const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
+  const proposedId = typeof payload.id === "string" ? payload.id : null;
+  if (!proposedId) return "no_match";
+
+  const target = await env.DB.prepare(
+    `SELECT id, version FROM tq_rows
+      WHERE id = ?1 AND deleted_at IS NULL
+        AND book = ?2 AND chapter BETWEEN ?3 AND ?4`,
+  )
+    .bind(proposedId, job.book, job.startChapter, job.endChapter)
+    .first<{ id: string; version: number }>();
+  if (!target) return "no_match";
+
+  const now = Math.floor(Date.now() / 1000);
+  const newVersion = target.version + 1;
+  const question = (payload.question as string | null | undefined) ?? null;
+  const response = (payload.response as string | null | undefined) ?? null;
+  const srcHash = (payload.source_row_hash as string | null | undefined) ?? null;
+  const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+
+  const res = await env.DB.batch([
+    env.DB
+      .prepare(
+        // Only the translated Question/Response and the translation bookkeeping
+        // change; quote/occurrence/ref_raw/tags are the untranslatable structural
+        // columns and are left untouched. CAS-guarded on version so a translator
+        // editing the row between poll and apply isn't clobbered. book-scoped.
+        `UPDATE tq_rows
+            SET question = ?1,
+                response = ?2,
+                translation_state = 'ai_draft',
+                source_row_hash = ?3,
+                draft_meta_json = ?4,
+                version = version + 1,
+                updated_at = ?5,
+                updated_by = ?6
+          WHERE id = ?7 AND book = ?8 AND deleted_at IS NULL AND version = ?9`,
+      )
+      .bind(question, response, srcHash, draftMeta, now, userId, target.id, job.book, target.version),
+    env.DB
+      .prepare(
+        // Audit gated on the CAS having won (post-update fingerprint present).
+        // source='ai_pipeline' → the row-level AI chip shows for review.
+        `INSERT INTO edit_log
+           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
+         SELECT 'tq', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
+          WHERE EXISTS (
+            SELECT 1 FROM tq_rows
+             WHERE id = ?1 AND book = ?2 AND version = ?5 AND updated_at = ?8
+          )`,
+      )
+      .bind(target.id, job.book, userId, target.version, newVersion, JSON.stringify(payload), AI_SOURCE, now),
+    env.DB
+      .prepare(
+        `UPDATE pending_imports
+            SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1 AND EXISTS (
+            SELECT 1 FROM tq_rows
+             WHERE id = ?3 AND book = ?4 AND version = ?5 AND updated_at = ?6
+          )`,
+      )
+      .bind(p.id, userId, target.id, job.book, newVersion, now),
+  ]);
+  return (res[0]?.meta?.changes ?? 0) > 0 ? "drafted" : "no_match";
+}
+
+// Translate-pipeline apply for tw/ta markdown articles (multilingual). The
+// article analogue of applyTranslateTqRow: UPDATEs target_md of the EXISTING
+// article_unit keyed by (resource, path), stamps translation_state='ai_draft',
+// CAS-guarded on version, edit_log kind='tw'|'ta' source='ai_pipeline'. Never
+// inserts — a path with no matching unit is skipped (the importer seeds units
+// from source; the bot only translates files that already exist).
+async function applyTranslateArticle(
+  env: Env,
+  p: PendingImportRow,
+  userId: number,
+): Promise<"drafted" | "no_match"> {
+  const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
+  const resource = typeof payload.resource === "string" ? payload.resource : null;
+  const path = typeof payload.path === "string" ? payload.path : null;
+  const targetMd = typeof payload.target_md === "string" ? payload.target_md : null;
+  if (!resource || !path || targetMd == null) return "no_match";
+
+  const target = await env.DB.prepare(
+    `SELECT version FROM article_units
+      WHERE resource = ?1 AND path = ?2 AND deleted_at IS NULL`,
+  )
+    .bind(resource, path)
+    .first<{ version: number }>();
+  if (!target) return "no_match";
+
+  const now = Math.floor(Date.now() / 1000);
+  const newVersion = target.version + 1;
+  const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+
+  const res = await env.DB.batch([
+    env.DB
+      .prepare(
+        // Only target_md + translation bookkeeping change; source_md/source_sha
+        // (the English source, set by the importer) are untouched. CAS-guarded
+        // on version so a human editing the target between poll and apply isn't
+        // clobbered.
+        `UPDATE article_units
+            SET target_md = ?1,
+                translation_state = 'ai_draft',
+                draft_meta_json = ?2,
+                version = version + 1,
+                updated_at = ?3,
+                updated_by = ?4
+          WHERE resource = ?5 AND path = ?6 AND deleted_at IS NULL AND version = ?7`,
+      )
+      .bind(targetMd, draftMeta, now, userId, resource, path, target.version),
+    env.DB
+      .prepare(
+        // edit_log.kind carries the resource (tw|ta); row_key is the path.
+        // Gated on the CAS having won (post-update fingerprint present).
+        `INSERT INTO edit_log
+           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
+         SELECT ?1, ?2, NULL, ?3, ?4, ?5, 'update', ?6, ?7
+          WHERE EXISTS (
+            SELECT 1 FROM article_units
+             WHERE resource = ?1 AND path = ?2 AND version = ?5 AND updated_at = ?8
+          )`,
+      )
+      .bind(resource, path, userId, target.version, newVersion, JSON.stringify(payload), AI_SOURCE, now),
+    env.DB
+      .prepare(
+        `UPDATE pending_imports
+            SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1 AND EXISTS (
+            SELECT 1 FROM article_units
+             WHERE resource = ?3 AND path = ?4 AND version = ?5 AND updated_at = ?6
+          )`,
+      )
+      .bind(p.id, userId, resource, path, newVersion, now),
   ]);
   return (res[0]?.meta?.changes ?? 0) > 0 ? "drafted" : "no_match";
 }

@@ -21,6 +21,7 @@ import type { Env } from "./index";
 import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
 import { getProjectConfig } from "./projectConfig.ts";
+import { buildTranslateOptions } from "./translateOptions.ts";
 import { broadcastChapter } from "./wsEvents";
 
 export const pipelines = new Hono<{
@@ -100,6 +101,17 @@ const ChainStep = z
 // verse-scope selection (rowIds / verseStart / verseEnd) rides here too.
 const TranslateOptions = z
   .object({
+    // Which row-keyed TSV resource to translate. Defaults to 'tn' (the pilot);
+    // 'tq' translates translationQuestions. The server picks the matching source
+    // repo (src.repos[resourceType]) and passes resourceType through to the bot,
+    // which selects the TSV parser + target repo. Row-keyed TSV resources are
+    // tn|tq; article resources (tw|ta) use articleId/articleUrl instead of a
+    // book/chapter scope (bp-assistant articles envelope, INTEGRATION.md §7).
+    resourceType: z.enum(["tn", "tq", "tw", "ta"]).optional(),
+    // Article selector (tw|ta only) — exactly one. articleId is a name
+    // ('kt/god', 'translate/figs-aside'); articleUrl is a git.door43.org URL.
+    articleId: z.string().min(1).max(200).optional(),
+    articleUrl: z.string().url().max(400).optional(),
     model: z.enum(["sonnet", "opus"]).optional(),
     delivery: z.enum(["path", "branch"]).optional(),
     branchOnly: z.boolean().optional(),
@@ -119,8 +131,10 @@ const TranslateOptions = z
 const StartBody = z
   .object({
     pipelineType: z.enum(PIPELINE_TYPES),
-    book: z.string().min(1).max(8),
-    startChapter: z.number().int().positive(),
+    // Required for every pipeline EXCEPT an article translate (tw|ta), which is
+    // scoped by translate.articleId/articleUrl instead. Enforced in the handler.
+    book: z.string().min(1).max(8).optional(),
+    startChapter: z.number().int().positive().optional(),
     endChapter: z.number().int().positive().optional(),
     sessionKey: z.string().min(1).max(120).regex(/^[A-Za-z0-9_\-/]+$/),
     options: PipelineOptions.optional(),
@@ -184,54 +198,15 @@ function upstreamBase(env: Env): string {
   return env.PIPELINE_API_BASE || DEFAULT_BASE;
 }
 
-// Build the bp-assistant `translate` options from the active project config,
-// folding in any client overrides. Contract: bp-bot/translate-pipeline/PLAN.md
-// §1 — the bot fetches the source rows BY REFERENCE (sourceRef), so nothing is
-// gathered from D1 here (unlike the notes-hints path). Returns null if the
-// project has no translationSource (the English root project can't be a
-// translate TARGET) — the caller turns that into a 400.
-type TranslateClientOptions = {
-  model?: "sonnet" | "opus";
-  delivery?: "path" | "branch";
-  branchOnly?: boolean;
-  direction?: "ltr" | "rtl";
-  rowIds?: string[];
-  verseStart?: number;
-  verseEnd?: number;
-  targetLang?: string;
-  targetOrg?: string;
-  sourceRef?: string;
-  contextRef?: string;
-};
-
-function buildTranslateOptions(
-  cfg: import("./projectConfig.ts").ProjectConfig,
-  overrides: TranslateClientOptions | undefined,
-): Record<string, unknown> | null {
-  const src = cfg.translationSource;
-  if (!src) return null; // not a gateway-language project → can't translate INTO it
-  const o = overrides ?? {};
-  const targetLang = o.targetLang ?? cfg.languageCode;
-  const targetOrg = o.targetOrg ?? cfg.exportOrg;
-  // Source is the published EN tN repo pinned to master by default; a caller
-  // can pin an exact SHA for reproducibility (the bot echoes the resolved SHA).
-  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos.tn}@master`;
-  const contextRef = o.contextRef ?? `${cfg.org}/translation-context@master`;
-  return {
-    targetLang,
-    targetOrg,
-    sourceRef,
-    contextRef,
-    // Review branch, no auto-merge — the editor consumes the DCS branch and
-    // applies it as ai_draft rows (PLAN.md §1 delivery: branch, branchOnly).
-    delivery: o.delivery ?? "branch",
-    branchOnly: o.branchOnly ?? true,
-    model: o.model ?? "opus",
-    direction: o.direction ?? cfg.direction,
-    ...(o.rowIds ? { rowIds: o.rowIds } : {}),
-    ...(o.verseStart != null ? { verseStart: o.verseStart } : {}),
-    ...(o.verseEnd != null ? { verseEnd: o.verseEnd } : {}),
-  };
+// Article translate jobs carry no book/chapter; they reuse the pipeline_jobs
+// scope columns via a stable per-article sentinel so dedup keys per article
+// while fitting the (64-bit) integer chapter column. The full 32-bit hash keeps
+// collisions between distinct articles astronomically rare (vs a small modulus,
+// which birthday-collides across ~1000 articles and wrongly dedups them).
+function articleScopeHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h + 1; // 1 .. 2^32 (positive; SQLite INTEGER is 64-bit)
 }
 
 async function resolveUsernameFromDb(env: Env, userId: number): Promise<string | null> {
@@ -410,11 +385,22 @@ export async function dispatchNext(env: Env): Promise<void> {
     }
   }
 
+  // Article translate jobs (tw/ta) are scoped by options.articleId/articleUrl,
+  // NOT book/chapter — the editor stores a sentinel book ("TW"/"TA") + hashed
+  // chapter only for its own dedup/scope bookkeeping. That sentinel is an
+  // editor-internal detail and must NOT leak upstream: the bot's article
+  // contract takes no book/chapter, so omit them for article jobs.
+  const optResourceType =
+    options && typeof options === "object" && "resourceType" in options
+      ? (options as { resourceType?: unknown }).resourceType
+      : undefined;
+  const isArticleJob =
+    job.pipeline_type === "translate" && (optResourceType === "tw" || optResourceType === "ta");
   const upstreamBody = {
     pipelineType: job.pipeline_type,
-    book: job.book,
-    startChapter: job.start_chapter,
-    endChapter: job.end_chapter,
+    ...(isArticleJob
+      ? {}
+      : { book: job.book, startChapter: job.start_chapter, endChapter: job.end_chapter }),
     username,
     sessionKey: job.session_key,
     ...(options ? { options } : {}),
@@ -832,14 +818,48 @@ pipelines.post("/start", requireEditor, async (c) => {
   const username = await resolveUsername(c, userId);
   if (!username) return c.json({ error: "username_missing" }, 400);
 
-  const startChapter = parsed.data.startChapter;
-  const endChapter = parsed.data.endChapter ?? startChapter;
-  const book = parsed.data.book.toUpperCase();
+  // Article translate (tw|ta) is scoped by article, not book/chapter. It reuses
+  // the pipeline_jobs scope columns via a per-article sentinel so all the
+  // dispatch/poll/apply plumbing works unchanged; the real selector rides in
+  // options.articleId/articleUrl.
+  const t = parsed.data.translate;
+  const rt = t?.resourceType;
+  const isArticleResource = rt === "tw" || rt === "ta";
+  const articleKey = t?.articleId ?? t?.articleUrl;
+  const isArticleTranslate =
+    parsed.data.pipelineType === "translate" && isArticleResource;
+  if (isArticleTranslate && !articleKey) {
+    return c.json(
+      { error: "article_selector_required", message: "tw/ta translate requires translate.articleId or translate.articleUrl" },
+      400,
+    );
+  }
+  let book: string;
+  let startChapter: number;
+  let endChapter: number;
+  if (isArticleTranslate) {
+    book = (rt as string).toUpperCase(); // "TW" | "TA" (scope tag)
+    startChapter = endChapter = articleScopeHash(articleKey!);
+  } else {
+    if (!parsed.data.book || !parsed.data.startChapter) {
+      return c.json({ error: "book_and_start_chapter_required" }, 400);
+    }
+    startChapter = parsed.data.startChapter;
+    endChapter = parsed.data.endChapter ?? startChapter;
+    book = parsed.data.book.toUpperCase();
+  }
 
   // De-dup against our own queue/active set before enqueueing (replaces
   // relying on the bot's same-scope 409, which can't see our queue). Same
   // user + same scope/type → focus the existing job. Different user → the
   // enriched 409 the menu renders as an "Already running / queued" dialog.
+  // A translate job's identity includes its resourceType (tn|tq|tw|ta): a tN and
+  // a tQ translate of the same chapter share (book, chapter, pipeline_type) but
+  // are different work, so they must NOT dedup against each other. Non-translate
+  // jobs ignore this (bind null → clause is vacuously true). Old translate jobs
+  // predating resourceType default to 'tn' via COALESCE.
+  const dedupResourceType =
+    parsed.data.pipelineType === "translate" ? (rt ?? "tn") : null;
   const dup = await c.env.DB.prepare(
     `SELECT j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
             j.end_chapter, j.state, j.current_skill, j.current_status,
@@ -848,12 +868,13 @@ pipelines.post("/start", requireEditor, async (c) => {
        LEFT JOIN users u ON u.id = j.user_id
       WHERE j.book = ?1 AND j.start_chapter = ?2 AND j.end_chapter = ?3
         AND j.pipeline_type = ?4
+        AND (?5 IS NULL OR COALESCE(json_extract(j.options_json, '$.resourceType'), 'tn') = ?5)
         AND j.state IN ('queued', 'dispatching', 'running',
                         'paused_for_outage', 'paused_for_usage_limit')
       ORDER BY j.created_at ASC
       LIMIT 1`,
   )
-    .bind(book, startChapter, endChapter, parsed.data.pipelineType)
+    .bind(book, startChapter, endChapter, parsed.data.pipelineType, dedupResourceType)
     .first<PublicJobSummary & { user_id: number }>();
   if (dup) {
     if (dup.user_id === userId) {

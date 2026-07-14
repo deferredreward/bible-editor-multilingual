@@ -66,7 +66,9 @@
     "unapprove": "Ondoa idhini",
     "reRun": "Endesha AI tena",
     "whyDraft": "Kagua dhidi ya chanzo, kisha idhinisha.",
-    "languageMemoryTip": "Mifano na istilahi zilizothibitishwa hukua kadri timu inavyoidhinisha — ndio muktadha ambao kila rasimu ya baadaye hujengwa juu yake."
+    "languageMemoryTip": "Mifano na istilahi zilizothibitishwa hukua kadri timu inavyoidhinisha — ndio muktadha ambao kila rasimu ya baadaye hujengwa juu yake.",
+    "translateChapterQuestions": "Tafsiri maswali",
+    "descTranslateQuestions": "Tafsiri kwa AI maswali ya sura hii kutoka lugha chanzo."
   },
   "export": {
     "noText": "Hakuna maandishi ya {{version}} ya kuhamisha kwa {{target}}.",
@@ -192,7 +194,7 @@
     "board": "Ubao",
     "resources": "Rasilimali",
     "notes": "Maelezo",
-    "words": "Maneno",
+    "words": "TWLinks",
     "questions": "Maswali",
     "alignment": "Upangiliaji",
     "search": "Tafuta",
@@ -468,11 +470,11 @@
   "lanes": {
     "text": "Maandishi",
     "tn": "Maelezo",
-    "tw": "Maneno",
+    "tw": "TWLinks",
     "tq": "Maswali",
     "textShort": "Ma",
     "tnShort": "Me",
-    "twShort": "Mn",
+    "twShort": "TWL",
     "tqShort": "Ms",
     "attrOpen": "wazi",
     "attrYou": "wewe",
@@ -490,5 +492,22 @@
     "enableBody": "Kuchagua hii kutafanya Logos kuchukua umakini (kuleta dirisha lake mbele) kila unapobadilisha mstari. Ni sawa ikiwa una Logos kwenye kifuatiliaji cha pili, vinginevyo tumia kitufe cha usawazishaji tu unapotaka kusogeza Logos.",
     "dontShowAgain": "Usionyeshe tena",
     "ok": "Sawa"
+  },
+  "articles": {
+    "title": "Makala",
+    "words": "Maneno ya Tafsiri",
+    "academy": "Akademia ya Tafsiri",
+    "glOnly": "Tafsiri ya makala inapatikana kwa miradi ya lugha-lango (GL) pekee.",
+    "approved": "{{n}}/{{total}} zimeidhinishwa",
+    "save": "Hifadhi",
+    "reloadConflict": "Makala hii ilibadilika kwenye seva — pakia upya.",
+    "noArticles": "Hakuna makala.",
+    "selectArticle": "Chagua makala ya kutafsiri.",
+    "preview": "Onyesho la awali",
+    "edit": "Hariri",
+    "partTitle": "Kichwa",
+    "partSubTitle": "Kichwa kidogo",
+    "partBody": "Kiini",
+    "backToScripture": "Rudi kwa Maandiko"
   }
 }

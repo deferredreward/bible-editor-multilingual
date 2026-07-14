@@ -81,6 +81,17 @@ export interface TqRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+  /**
+   * Translation-mode state machine (multilingual; PIPELINE-SPEC §4.1). Mirrors
+   * TnRow. NULL for the English root project and any row untouched by the
+   * translate pipeline. 'ai_draft' → the translate pipeline applied an AI
+   * translation; 'edited' → a human changed the draft; 'validated' → approved.
+   */
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  /** Hash of the EN source row the draft was made from (source-drift detection). */
+  source_row_hash: string | null;
+  /** translate-report.json entry for this row (confidence/fallback/terms); NULL if no sidecar. */
+  draft_meta_json: string | null;
   /** See TnRow.latest_source. */
   latest_source?: string | null;
 }
@@ -101,6 +112,26 @@ export interface TwlRow {
   updated_by: number | null;
   updated_at: number;
   deleted_at: number | null;
+}
+
+// tW / tA translatable markdown article file (article_units, migration 0039).
+// Keyed by (resource, path). See docs/design/tw-ta-translation-modules.md.
+export interface ArticleUnit {
+  resource: "tw" | "ta";
+  path: string;              // repo-relative markdown path (the round-trip id)
+  article_id: string;        // grouping key: 'kt/god', 'translate/figs-aside'
+  part: "body" | "title" | "sub-title";
+  source_md: string;         // English source markdown
+  source_sha: string | null;
+  target_md: string | null;  // the translation (NULL = not started)
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  draft_meta_json: string | null;
+  version: number;
+  updated_by: number | null;
+  updated_at: number;
+  deleted_at: number | null;
+  /** See TnRow.latest_source (computed at read time from edit_log). */
+  latest_source?: string | null;
 }
 
 export interface VerseRow {
