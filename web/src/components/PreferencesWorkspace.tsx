@@ -27,6 +27,7 @@ import { useTranslation } from "react-i18next";
 import {
   api,
   ApiError,
+  isReadOnly,
   REGISTERS,
   TERM_STATUSES,
   type Register,
@@ -75,6 +76,20 @@ export function PreferencesWorkspace({ onNavigate, section }: Props) {
         <Typography variant="h6">{t("preferences.title")}</Typography>
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
           {t("preferences.glOnly")}
+        </Typography>
+      </Stack>
+    );
+  }
+
+  // Every translation-memory route is requireEditor server-side (even reads) —
+  // a viewer's GETs would all 403 and render as confusing blank sections, so
+  // show one clear message instead of rendering tabs that can't load.
+  if (isReadOnly()) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }} spacing={1}>
+        <Typography variant="h6">{t("preferences.title")}</Typography>
+        <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
+          {t("preferences.editorOnly")}
         </Typography>
       </Stack>
     );

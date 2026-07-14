@@ -29,6 +29,14 @@ export const translationMemory = new Hono<{
   Variables: { userId?: number; username?: string };
 }>();
 
+// The duplicate-identity pre-checks below (SELECT-then-write) narrow the race
+// window but don't close it — two requests can both pass the pre-check before
+// either writes. This backstop catches the unique index (0040) rejecting the
+// loser and turns it into the same 409 shape, instead of an uncaught 500.
+function isUniqueConstraintError(err: unknown): boolean {
+  return err instanceof Error && /UNIQUE constraint failed/i.test(err.message);
+}
+
 // ---------------------------------------------------------------------------
 // Preferences singleton (brief + instructions + register + assisted flag).
 // ---------------------------------------------------------------------------
@@ -251,24 +259,39 @@ translationMemory.post("/terms", requireEditor, async (c) => {
 
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
-  const res = await c.env.DB.prepare(
-    `INSERT INTO terminology
-       (concept_id, source_term, target_term, status, replacement, comment, tw_link, source_status, version, created_at, updated_at, updated_by)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', 1, ?8, ?8, ?9)`,
-  )
-    .bind(
-      d.concept_id,
-      d.source_term,
-      d.target_term ?? null,
-      status,
-      replacement,
-      d.comment ?? null,
-      d.tw_link ?? null,
-      now,
-      userId ?? null,
+  let id: number | bigint;
+  try {
+    const res = await c.env.DB.prepare(
+      `INSERT INTO terminology
+         (concept_id, source_term, target_term, status, replacement, comment, tw_link, source_status, version, created_at, updated_at, updated_by)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', 1, ?8, ?8, ?9)`,
     )
-    .run();
-  const id = res.meta.last_row_id;
+      .bind(
+        d.concept_id,
+        d.source_term,
+        d.target_term ?? null,
+        status,
+        replacement,
+        d.comment ?? null,
+        d.tw_link ?? null,
+        now,
+        userId ?? null,
+      )
+      .run();
+    id = res.meta.last_row_id;
+  } catch (err) {
+    if (!isUniqueConstraintError(err)) throw err;
+    const current = await c.env.DB.prepare(
+      `SELECT ${TERM_COLS} FROM terminology
+        WHERE deleted_at IS NULL
+          AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?1))
+          AND LOWER(TRIM(source_term)) = LOWER(TRIM(?2))
+          AND status = ?3`,
+    )
+      .bind(d.concept_id, d.source_term, status)
+      .first<TermRow>();
+    return c.json({ error: "duplicate_term", current }, 409);
+  }
   const row = await c.env.DB.prepare(`SELECT ${TERM_COLS} FROM terminology WHERE id = ?1`)
     .bind(id)
     .first<TermRow>();
@@ -322,28 +345,44 @@ translationMemory.patch("/terms/:id", requireEditor, async (c) => {
 
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
-  const res = await c.env.DB.prepare(
-    `UPDATE terminology
-        SET concept_id = ?1, source_term = ?2, target_term = ?3, status = ?4,
-            replacement = ?5, comment = ?6, tw_link = ?7,
-            version = version + 1, updated_at = ?8, updated_by = ?9
-      WHERE id = ?10 AND deleted_at IS NULL AND version = ?11`,
-  )
-    .bind(
-      merged.concept_id,
-      merged.source_term,
-      merged.target_term,
-      merged.status,
-      merged.replacement,
-      merged.comment,
-      merged.tw_link,
-      now,
-      userId ?? null,
-      id,
-      expected,
+  let changed: number;
+  try {
+    const res = await c.env.DB.prepare(
+      `UPDATE terminology
+          SET concept_id = ?1, source_term = ?2, target_term = ?3, status = ?4,
+              replacement = ?5, comment = ?6, tw_link = ?7,
+              version = version + 1, updated_at = ?8, updated_by = ?9
+        WHERE id = ?10 AND deleted_at IS NULL AND version = ?11`,
     )
-    .run();
-  if (!res.meta.changes) {
+      .bind(
+        merged.concept_id,
+        merged.source_term,
+        merged.target_term,
+        merged.status,
+        merged.replacement,
+        merged.comment,
+        merged.tw_link,
+        now,
+        userId ?? null,
+        id,
+        expected,
+      )
+      .run();
+    changed = res.meta.changes;
+  } catch (err) {
+    if (!isUniqueConstraintError(err)) throw err;
+    const current = await c.env.DB.prepare(
+      `SELECT ${TERM_COLS} FROM terminology
+        WHERE deleted_at IS NULL AND id != ?1
+          AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?2))
+          AND LOWER(TRIM(source_term)) = LOWER(TRIM(?3))
+          AND status = ?4`,
+    )
+      .bind(id, merged.concept_id, merged.source_term, merged.status)
+      .first<TermRow>();
+    return c.json({ error: "duplicate_term", current }, 409);
+  }
+  if (!changed) {
     const cur = await c.env.DB.prepare(`SELECT ${TERM_COLS} FROM terminology WHERE id = ?1 AND deleted_at IS NULL`)
       .bind(id)
       .first<TermRow>();
@@ -430,17 +469,31 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
       if (!r.meta.changes) misses.push(chunk[idx]);
     });
   }
+  const insertStmt = (t: TermImport) =>
+    c.env.DB.prepare(
+      `INSERT INTO terminology
+         (concept_id, source_term, target_term, status, replacement, comment, tw_link, source_status, version, created_at, updated_at, updated_by)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'imported', 1, ?8, ?8, ?9)`,
+    ).bind(t.concept_id, t.source_term, t.target_term, t.status, t.replacement, t.comment, t.tw_link, now, userId ?? null);
   for (let i = 0; i < misses.length; i += CHUNK) {
     const chunk = misses.slice(i, i + CHUNK);
-    await c.env.DB.batch(
-      chunk.map((t) =>
-        c.env.DB.prepare(
-          `INSERT INTO terminology
-             (concept_id, source_term, target_term, status, replacement, comment, tw_link, source_status, version, created_at, updated_at, updated_by)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'imported', 1, ?8, ?8, ?9)`,
-        ).bind(t.concept_id, t.source_term, t.target_term, t.status, t.replacement, t.comment, t.tw_link, now, userId ?? null),
-      ),
-    );
+    try {
+      await c.env.DB.batch(chunk.map(insertStmt));
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) throw err;
+      // D1's batch() is all-or-nothing — one row racing a concurrent write
+      // (another create/import landed the same identity first) would
+      // otherwise roll back this whole chunk's inserts. Fall back to
+      // per-row inserts for just this chunk so the rest still land; a row
+      // that lost the race is simply skipped (it already exists).
+      for (const t of chunk) {
+        try {
+          await insertStmt(t).run();
+        } catch (rowErr) {
+          if (!isUniqueConstraintError(rowErr)) throw rowErr;
+        }
+      }
+    }
   }
   return c.json({ dryRun: false, added, updated, parseErrors: errors, total: deduped.length });
 });

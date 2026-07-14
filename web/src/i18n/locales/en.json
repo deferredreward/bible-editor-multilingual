@@ -90,6 +90,7 @@
   "preferences": {
     "title": "Preferences & Memory",
     "glOnly": "This panel governs how the AI translates for a gateway language. It is available in translation projects only.",
+    "editorOnly": "You need editor or admin access to view this panel.",
     "backToScripture": "Back to scripture",
     "section": {
       "brief": "Brief",
