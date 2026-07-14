@@ -7,7 +7,12 @@ import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig.ts";
 import { fetchText, dcsRawUrl } from "./dcsSources.ts";
 import { parseTsv } from "./importParsers.ts";
-import type { EnSourceMaps, ValidatedTnRow, ValidatedTqRow } from "./contextExport.ts";
+import {
+  sourceRowKey,
+  type EnSourceMaps,
+  type ValidatedTnRow,
+  type ValidatedTqRow,
+} from "./contextExport.ts";
 
 export type SourceFetchResult =
   | { ok: true; sources: EnSourceMaps }
@@ -103,12 +108,13 @@ export async function fetchEnSourceMaps(
   for (const r of tnRows) {
     const bookMap = bookCacheTn.get(r.book.toUpperCase());
     const hit = bookMap?.get(r.id);
-    if (hit) sources.tn.set(r.id, hit);
+    // Key by book:id — bare id is only unique within a book TSV.
+    if (hit) sources.tn.set(sourceRowKey(r.book, r.id), hit);
   }
   for (const r of tqRows) {
     const bookMap = bookCacheTq.get(r.book.toUpperCase());
     const hit = bookMap?.get(r.id);
-    if (hit) sources.tq.set(r.id, hit);
+    if (hit) sources.tq.set(sourceRowKey(r.book, r.id), hit);
   }
 
   return { ok: true, sources };

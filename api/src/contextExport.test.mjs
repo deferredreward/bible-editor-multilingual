@@ -10,6 +10,7 @@ import {
   hasMinimumContent,
   buildContextRef,
   contextRepoOwner,
+  sourceRowKey,
 } from "./contextExport.ts";
 import {
   contextShrinkRefused,
@@ -80,7 +81,7 @@ console.log("contextExport — NFC + examples");
     ],
     [],
     {
-      tn: new Map([["abcd", { note: "This is a metaphor.", quote: null }]]),
+      tn: new Map([[sourceRowKey("OBA", "abcd"), { note: "This is a metaphor.", quote: null }]]),
       tq: new Map(),
     },
   );
@@ -93,6 +94,46 @@ console.log("contextExport — NFC + examples");
     { tn: new Map(), tq: new Map() },
   );
   assert(miss.ok === false && miss.reason.includes("missing_en_source"), "missing EN aborts");
+
+  // Collision regression: identical 4-char IDs in two books must not cross-pair.
+  const collision = buildValidatedExamples(
+    [
+      {
+        id: "abcd",
+        book: "OBA",
+        ref_raw: "1:1",
+        support_reference: null,
+        quote: null,
+        note: "oba-target",
+        updated_at: 10,
+      },
+      {
+        id: "abcd",
+        book: "ZEC",
+        ref_raw: "1:1",
+        support_reference: null,
+        quote: null,
+        note: "zec-target",
+        updated_at: 20,
+      },
+    ],
+    [],
+    {
+      tn: new Map([
+        [sourceRowKey("OBA", "abcd"), { note: "OBA English source", quote: null }],
+        [sourceRowKey("ZEC", "abcd"), { note: "ZEC English source", quote: null }],
+      ]),
+      tq: new Map(),
+    },
+  );
+  assert(collision.ok === true, "same id across books resolves");
+  assert(
+    collision.ok &&
+      collision.lines.find((l) => l.book === "OBA")?.source === "OBA English source" &&
+      collision.lines.find((l) => l.book === "ZEC")?.source === "ZEC English source",
+    "book:id key prevents cross-book EN source overwrite",
+  );
+  assert(sourceRowKey("oba", "abcd") === "OBA:abcd", "sourceRowKey uppercases book");
 
   const jsonl = renderValidatedJsonl(ex.ok ? ex.lines : []);
   assert(jsonl.includes('"resource":"tn"'), "jsonl serializes resource");

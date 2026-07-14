@@ -153,6 +153,7 @@
     "assistedMode": "Assisted mode",
     "assistedModeHelp": "When on, translate runs send the team's context pack (brief, terms, validated examples) to the AI.",
     "assistedModeDisabled": "Export a context pack successfully before enabling assisted mode — an empty pack fails the AI run.",
+    "assistedModeAdminOnly": "Only an admin can change assisted mode or export the context pack.",
     "assistedModeOn": "Assisted",
     "assistedModeOff": "Raw baseline",
     "exportNow": "Export context now",

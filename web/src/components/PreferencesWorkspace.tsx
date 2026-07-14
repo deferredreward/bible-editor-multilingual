@@ -29,6 +29,7 @@ import { useTranslation } from "react-i18next";
 import {
   api,
   ApiError,
+  isAdmin,
   isReadOnly,
   REGISTERS,
   TERM_STATUSES,
@@ -183,12 +184,13 @@ function AssistedModeControls() {
   const { status, refetch: refetchStatus } = useContextExportStatus(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const admin = isAdmin();
 
-  const canEnable = status?.status === "success" && !!status.sha;
+  const canEnable = admin && status?.status === "success" && !!status.sha;
   const assistedOn = prefs?.assisted_mode === 1;
 
   const onToggle = async (next: boolean) => {
-    if (!prefs) return;
+    if (!admin || !prefs) return;
     if (next && !canEnable) return;
     setBusy(true);
     try {
@@ -206,6 +208,7 @@ function AssistedModeControls() {
   };
 
   const onExport = async () => {
+    if (!admin) return;
     setBusy(true);
     try {
       await api.runContextExport();
@@ -215,8 +218,9 @@ function AssistedModeControls() {
         await new Promise((r) => setTimeout(r, 1500));
         refetchStatus();
       }
-    } catch {
-      setMsg(t("preferences.actionFailed"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) setMsg(t("preferences.saveForbidden"));
+      else setMsg(t("preferences.actionFailed"));
     } finally {
       setBusy(false);
     }
@@ -229,16 +233,22 @@ function AssistedModeControls() {
         ? t("preferences.exportStatusSuccess", { sha: status.sha.slice(0, 8) })
         : t("preferences.exportStatusOther", { status: status.status });
 
+  const toggleTooltip = !admin
+    ? t("preferences.assistedModeAdminOnly")
+    : canEnable
+      ? t("preferences.assistedModeHelp")
+      : t("preferences.assistedModeDisabled");
+
   return (
     <Stack spacing={0.75}>
-      <Tooltip title={canEnable ? t("preferences.assistedModeHelp") : t("preferences.assistedModeDisabled")}>
+      <Tooltip title={toggleTooltip}>
         <span>
           <FormControlLabel
             control={
               <Switch
                 size="small"
                 checked={assistedOn}
-                disabled={busy || (!canEnable && !assistedOn)}
+                disabled={!admin || busy || (!canEnable && !assistedOn)}
                 onChange={(_, checked) => void onToggle(checked)}
               />
             }
@@ -254,9 +264,24 @@ function AssistedModeControls() {
       <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
         {statusLabel}
       </Typography>
-      <Button size="small" variant="outlined" disabled={busy} onClick={() => void onExport()} sx={{ alignSelf: "flex-start" }}>
-        {t("preferences.exportNow")}
-      </Button>
+      {!admin && (
+        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
+          {t("preferences.assistedModeAdminOnly")}
+        </Typography>
+      )}
+      <Tooltip title={admin ? "" : t("preferences.assistedModeAdminOnly")}>
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!admin || busy}
+            onClick={() => void onExport()}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            {t("preferences.exportNow")}
+          </Button>
+        </span>
+      </Tooltip>
       <Snackbar open={!!msg} autoHideDuration={4000} onClose={() => setMsg(null)} message={msg} />
     </Stack>
   );

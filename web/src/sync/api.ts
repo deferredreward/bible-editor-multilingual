@@ -291,6 +291,17 @@ export function setReadOnly(v: boolean) {
   readOnly = v;
 }
 
+// Admin flag — set when the current JWT carries role='admin'. Admin-only
+// surfaces (assisted-mode toggle, context export, prefs PUT) check this so
+// editors see a clear disabled state instead of a silent 403.
+let adminRole = false;
+export function isAdmin(): boolean {
+  return adminRole;
+}
+export function setIsAdmin(v: boolean) {
+  adminRole = v;
+}
+
 // Surface to the UI that we tried to silently refresh a 401 and it failed.
 // App.tsx subscribes to render a "Session expired — sign in again" banner;
 // the outbox keeps queuing edits in the meantime so nothing is lost.

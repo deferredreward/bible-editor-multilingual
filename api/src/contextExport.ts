@@ -43,7 +43,17 @@ export type ValidatedTqRow = {
   updated_at: number;
 };
 
-/** EN source text already resolved by row id (book-batched upstream). */
+/**
+ * Composite key for EN source maps. tN/tQ row IDs are only unique per book
+ * (migration 0015 composite PK), so keying by bare `id` would let identical
+ * 4-char IDs from different books overwrite each other and pair the wrong
+ * English source into validated.jsonl.
+ */
+export function sourceRowKey(book: string, id: string): string {
+  return `${book.toUpperCase()}:${id}`;
+}
+
+/** EN source text already resolved by book:id (book-batched upstream). */
 export type EnSourceMaps = {
   tn: Map<string, { note: string; quote: string | null }>;
   tq: Map<string, { question: string; response: string }>;
@@ -117,11 +127,12 @@ export function buildValidatedExamples(
 ): { ok: true; lines: JsonlExample[] } | { ok: false; reason: string } {
   const lines: JsonlExample[] = [];
   for (const r of tnRows) {
-    const src = sources.tn.get(r.id);
-    if (!src) return { ok: false, reason: `missing_en_source:tn:${r.id}` };
-    if (!src.note.trim()) return { ok: false, reason: `empty_en_source:tn:${r.id}` };
+    const key = sourceRowKey(r.book, r.id);
+    const src = sources.tn.get(key);
+    if (!src) return { ok: false, reason: `missing_en_source:tn:${key}` };
+    if (!src.note.trim()) return { ok: false, reason: `empty_en_source:tn:${key}` };
     const target = (r.note ?? "").trim();
-    if (!target) return { ok: false, reason: `empty_target:tn:${r.id}` };
+    if (!target) return { ok: false, reason: `empty_target:tn:${key}` };
     lines.push({
       resource: "tn",
       rowId: r.id,
@@ -134,13 +145,14 @@ export function buildValidatedExamples(
     });
   }
   for (const r of tqRows) {
-    const src = sources.tq.get(r.id);
-    if (!src) return { ok: false, reason: `missing_en_source:tq:${r.id}` };
+    const key = sourceRowKey(r.book, r.id);
+    const src = sources.tq.get(key);
+    if (!src) return { ok: false, reason: `missing_en_source:tq:${key}` };
     const srcQ = src.question.trim();
     const srcR = src.response.trim();
-    if (!srcQ && !srcR) return { ok: false, reason: `empty_en_source:tq:${r.id}` };
+    if (!srcQ && !srcR) return { ok: false, reason: `empty_en_source:tq:${key}` };
     const target = `${(r.question ?? "").trim()}\t${(r.response ?? "").trim()}`;
-    if (!target.trim()) return { ok: false, reason: `empty_target:tq:${r.id}` };
+    if (!target.trim()) return { ok: false, reason: `empty_target:tq:${key}` };
     lines.push({
       resource: "tq",
       rowId: r.id,
