@@ -29,8 +29,10 @@ import Brightness7Icon from "@mui/icons-material/Brightness7";
 import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
 import LanguageIcon from "@mui/icons-material/Language";
 import CheckIcon from "@mui/icons-material/Check";
+import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
 import { useTranslation } from "react-i18next";
+import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
 import { api, type BookListEntry, type BookSummary } from "../sync/api";
@@ -204,6 +206,8 @@ export function TopBar({
   const [importing, setImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const { mode, toggle } = useContext(ThemeModeContext);
+  const projectConfig = useProjectConfig();
+  const showArticles = isTranslationProject(projectConfig);
 
   useEffect(() => {
     api.getBooks().then((r) => setBooks(r.books)).catch(() => setBooks([]));
@@ -496,6 +500,22 @@ export function TopBar({
           </Typography>
           <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
         </Box>
+      )}
+      {showArticles && (
+        <Tooltip title={t("articles.title")}>
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            startIcon={<ArticleOutlinedIcon fontSize="small" />}
+            onClick={() => {
+              location.hash = "#/articles/tw";
+            }}
+            sx={{ textTransform: "none", color: "text.secondary" }}
+          >
+            {t("articles.title")}
+          </Button>
+        </Tooltip>
       )}
       {lintIndicator}
       <VersionIndicator onRequestReload={onRequestReload} />

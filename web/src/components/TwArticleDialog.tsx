@@ -13,8 +13,7 @@ import {
   CircularProgress,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { MarkdownView } from "./MarkdownView";
 import { fetchTwArticle, twArticleDcsUrl, twShort } from "../lib/twArticle";
 
 interface Props {
@@ -28,36 +27,6 @@ function titleFromMarkdown(md: string, fallback: string): string {
   return m ? m[1] : fallback;
 }
 
-// Articles link to siblings via relative paths (../kt/god.md) and to other
-// resources via rc:// URIs. Resolve relative paths against the Door43 source
-// page; render non-navigable rc:// references as plain text.
-function mdLink(baseUrl: string) {
-  return function MdLink({ href, children }: { href?: string; children?: React.ReactNode }) {
-    if (!href) return <>{children}</>;
-    let resolved: string | null = null;
-    if (/^https?:\/\//.test(href)) {
-      resolved = href;
-    } else if (/\.md(#.*)?$/.test(href) || href.startsWith("./") || href.startsWith("../")) {
-      try {
-        resolved = new URL(href, baseUrl).href;
-      } catch {
-        resolved = null;
-      }
-    }
-    if (!resolved) {
-      return (
-        <Typography component="span" sx={{ color: "text.secondary" }}>
-          {children}
-        </Typography>
-      );
-    }
-    return (
-      <Link href={resolved} target="_blank" rel="noopener noreferrer">
-        {children}
-      </Link>
-    );
-  };
-}
 
 export function TwArticleDialog({ articleId, onClose }: Props) {
   const [markdown, setMarkdown] = useState<string | null>(null);
@@ -127,31 +96,7 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
             <CircularProgress size={28} />
           </Box>
         ) : (
-          <Box
-            sx={{
-              "& h1": { typography: "h5", mt: 0, mb: 1.5 },
-              "& h2": { typography: "h6", mt: 2.5, mb: 1 },
-              "& h3": { typography: "subtitle1", fontWeight: 600, mt: 2, mb: 0.5 },
-              "& p": { typography: "body1", my: 1 },
-              "& ul, & ol": { pl: 3, my: 1 },
-              "& li": { typography: "body1", my: 0.5 },
-              "& a": { color: "primary.main" },
-            }}
-          >
-            {/* `markdown` is untrusted: fetched over CORS from an external,
-                unauthenticated Door43 repo. This render is XSS-safe ONLY because
-                there is no `rehype-raw`/`allowDangerousHtml` (embedded raw HTML
-                stays inert) and `mdLink` drops non-http(s) link schemes. Do NOT
-                add rehype-raw or skipHtml:false here without a sanitizer
-                (e.g. rehype-sanitize) — doing so turns a Door43 compromise into
-                stored XSS in the editor. */}
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{ a: mdLink(dcsUrl) }}
-            >
-              {markdown}
-            </ReactMarkdown>
-          </Box>
+          <MarkdownView markdown={markdown} baseUrl={dcsUrl ?? undefined} />
         )}
       </DialogContent>
     </Dialog>

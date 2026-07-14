@@ -14,6 +14,23 @@
     "error": "خطأ",
     "go": "اذهب"
   },
+  "articles": {
+    "title": "المقالات",
+    "words": "كلمات الترجمة",
+    "academy": "أكاديمية الترجمة",
+    "glOnly": "ترجمة المقالات متاحة فقط لمشاريع اللغة البوابة.",
+    "approved": "{{n}}/{{total}} معتمدة",
+    "save": "حفظ",
+    "reloadConflict": "تغيّرت هذه المقالة على الخادم — أعد التحميل.",
+    "noArticles": "لا توجد مقالات.",
+    "selectArticle": "اختر مقالة لترجمتها.",
+    "preview": "معاينة",
+    "edit": "تحرير",
+    "partTitle": "العنوان",
+    "partSubTitle": "العنوان الفرعي",
+    "partBody": "المتن",
+    "backToScripture": "العودة إلى النص الكتابي"
+  },
   "topbar": {
     "showVerseList": "إظهار قائمة الآيات",
     "hideVerseList": "إخفاء قائمة الآيات",
@@ -43,6 +60,8 @@
   "translation": {
     "translationMode": "وضع الترجمة",
     "translateChapter": "ترجمة الأصحاح",
+    "translateChapterQuestions": "ترجمة الأسئلة",
+    "descTranslateQuestions": "ترجمة أسئلة هذا الأصحاح آليًا من لغة المصدر.",
     "translating": "جارٍ الترجمة…",
     "notesInChapter": "ملاحظات في هذا الأصحاح",
     "languageMemory": "ذاكرة اللغة",
@@ -220,7 +239,7 @@
     "board": "اللوحة",
     "resources": "الموارد",
     "notes": "ملاحظات",
-    "words": "كلمات",
+    "words": "روابط TW",
     "questions": "أسئلة",
     "alignment": "المحاذاة",
     "search": "بحث",
