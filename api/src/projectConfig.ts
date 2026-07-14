@@ -62,6 +62,14 @@ export interface ProjectConfig {
   /** Display labels for the role-coded lit/sim panes (bible_version stays ULT/UST) */
   litLabel: string;
   simLabel: string;
+  /**
+   * Display labels for the role-coded original-language panes (bible_version
+   * stays UHB/UGNT). The originals are universal (unfoldingWord hbo_uhb /
+   * el-x-koine_ugnt), so these default to "UHB"/"UGNT"; a project may override
+   * to show a native title without changing the role code.
+   */
+  origHebrewLabel: string;
+  origGreekLabel: string;
   /** Additional read-only GL Bible panes (imported on demand; verses keyed by their `version`) */
   glBibles: GlBiblePane[];
   /**
@@ -99,6 +107,8 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: EN_REPOS,
     litLabel: "ULT",
     simLabel: "UST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: null,
     reposVerified: true,
@@ -116,6 +126,8 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: { lit: "ar_glt", sim: "ar_gst", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [
       { repo: "ar_avd", version: "AVD", title: "فانديك" },
       { repo: "ar_nav", version: "NAV", title: "الترجمة العربية المبسطة" },
@@ -135,6 +147,8 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: { lit: "id_glt", sim: "id_gst", tn: "id_tn", tq: "id_tq", twl: "id_twl", tw: "id_tw", ta: "id_ta" },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: true,
@@ -157,6 +171,8 @@ export const PRESETS: Record<string, ProjectConfig> = {
     },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: false,
@@ -174,6 +190,8 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: { lit: "ru_glt", sim: "ru_gst", tn: "ru_tn", tq: "ru_tq", twl: "ru_twl", tw: "ru_tw", ta: "ru_ta" },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: false,
@@ -231,6 +249,8 @@ function materialize(preset: string, overridesJson: string | null): ProjectConfi
         : {}),
       ...(o.litLabel ? { litLabel: o.litLabel } : {}),
       ...(o.simLabel ? { simLabel: o.simLabel } : {}),
+      ...(o.origHebrewLabel ? { origHebrewLabel: o.origHebrewLabel } : {}),
+      ...(o.origGreekLabel ? { origGreekLabel: o.origGreekLabel } : {}),
       ...(Array.isArray(o.glBibles) ? { glBibles: o.glBibles } : {}),
       preset: base.preset,
     };

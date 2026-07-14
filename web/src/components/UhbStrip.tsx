@@ -9,6 +9,8 @@ import { type HighlightCtx, hoverShadow } from "../lib/highlightTypes";
 import { nfc } from "../lib/hebrew";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 import { PinnedLexBox } from "./PinnedLexBox";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 
 // ─── UHB source strip ────────────────────────────────────────────────
 // The verse's Hebrew/Greek source text, rendered as hover-aware tokens. Lifted
@@ -34,6 +36,8 @@ export function UhbStrip({
   hctx: HighlightCtx;
 }) {
   const sourceIsHebrew = sourceLabel === "UHB";
+  const projectConfig = useProjectConfig();
+  const sourceDisplay = versionLabel(projectConfig, sourceLabel);
   return (
     <Box
       sx={{
@@ -58,10 +62,10 @@ export function UhbStrip({
             fontWeight: 600,
           }}
         >
-          {sourceLabel} · source
+          {sourceDisplay} · source
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Tooltip title={hidden ? `show ${sourceLabel} source` : `hide ${sourceLabel} source`}>
+        <Tooltip title={hidden ? `show ${sourceDisplay} source` : `hide ${sourceDisplay} source`}>
           <IconButton size="small" onClick={onToggleHidden} sx={{ p: 0.25, color: "text.disabled" }}>
             {hidden ? (
               <ExpandMoreIcon sx={{ fontSize: 18 }} />
