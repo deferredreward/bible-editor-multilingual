@@ -257,11 +257,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     //     commit retries a small slice. Only for TRANSLATION projects: the
     //     English root translates no articles (all target_md NULL), so there is
     //     nothing to export and we skip the DCS round-trips entirely. Also
-    //     skipped when a manual run narrowed to a single verse resource
-    //     (params.resource set) — that caller didn't ask for articles.
+    //     skipped for any NARROWED manual run: articles are book-independent, so
+    //     a run scoped to one book (params.book — "re-export JON") or one verse
+    //     resource (params.resource) didn't ask for the global tW/tA article
+    //     export and must not fire it. Articles run only on a full-scope run
+    //     (the nightly cron, or a manual run with neither book nor resource).
     const articleResults: ArticleStepResult[] = [];
     const projectCfgForArticles = await getProjectConfig(this.env);
-    if (projectCfgForArticles.translationSource && !params.resource) {
+    if (projectCfgForArticles.translationSource && !params.resource && !params.book) {
       for (const unit of articleStepUnits()) {
         const stepName = `export-article-${unit.resource}-${unit.topDir.replace(/\//g, "-")}`;
         try {
