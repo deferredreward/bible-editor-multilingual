@@ -958,6 +958,29 @@ async function listDcsTree(
   return map;
 }
 
+// Ensure the export branch EXISTS (create from master if absent) WITHOUT
+// resetting an existing one. This is the article path's analogue of
+// resetExportBranchToMaster, and the difference is load-bearing: article PRs do
+// NOT auto-merge (no post-export validator), so the translated files live only
+// on this long-lived unmerged branch — never on master until the publisher
+// merges. Resetting the branch to master each night (as the verse path does)
+// would DISCARD those prior commits, so every run would re-commit all files and
+// never reach the byte-identical no-op. Leaving the existing branch intact lets
+// the tree read below compare against what we actually last committed; the PR
+// is kept mergeable via updateDcsPrBranch (merge master INTO the branch), the
+// door43-compatible rebase, rather than by resetting the ref.
+async function ensureExportBranchExists(config: DcsCommitConfig): Promise<void> {
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const repoBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+  if (await branchExists(repoBase, headers, config.branch)) return;
+  await createBranchFromMaster(repoBase, headers, config.branch);
+  await ensureBranchVisible(repoBase, headers, config.branch);
+}
+
 export interface DcsBatchCommitResult {
   commitSha: string;
   // false when nothing was committed (every rendered file already matched the
@@ -987,11 +1010,13 @@ export async function commitFilesToDcs(
     Accept: "application/json",
   };
 
-  // Re-base the export branch onto current master, creating it if absent
-  // (idempotent across 200/404/409/422). After this the branch mirrors master,
-  // so the tree read below tells us which files already exist (update+sha) vs
-  // are new (create).
-  await resetExportBranchToMaster(config);
+  // Ensure the branch exists (create from master if absent) but DON'T reset it:
+  // article PRs are long-lived and unmerged, so the branch's own tip — not
+  // master — is the baseline the tree read must compare against. See
+  // ensureExportBranchExists. The tree read then tells us which files already
+  // exist on the branch (update+sha) vs are new (create), and lets an unchanged
+  // run skip committing entirely (byte-identical → no-op).
+  await ensureExportBranchExists(config);
   const existing = await listDcsTree(config, config.branch);
 
   type ChangeFile = { operation: "create" | "update"; path: string; content: string; sha?: string };
