@@ -9,7 +9,7 @@ import { parseVerseContentJson } from "./contentJson.ts";
 import { analyzeAlignmentDelta } from "./alignmentDelta.ts";
 import { normalizeUsfmFormatting } from "./usfmFormat.ts";
 import { normalizeNoteText, sortRowsByReference } from "./tsvFormat.ts";
-import { gitBlobSha, type ArticleFile } from "./articleExport.ts";
+import { gitBlobSha, shrinkRefused, type ArticleFile } from "./articleExport.ts";
 
 export type Resource = "tn" | "tq" | "twl" | "ult" | "ust";
 
@@ -305,11 +305,11 @@ export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): string {
 //   masterRows   — rows in the current master file (data rows, header excluded)
 // Floors: ignore tiny books (>25 rows lost) and require >5% shrink so ordinary
 // edits never trip it; PSA lost 2,896 of 7,776 (37%) and trips easily.
+// The threshold itself is the shared `shrinkRefused` policy (in articleExport.ts,
+// the lower module — imported here without a cycle) so the TSV export and the
+// article export can't drift apart on this safety-critical number.
 export function exportTsvShrinkRefused(renderedRows: number, masterRows: number): boolean {
-  if (masterRows <= 0) return false; // nothing on master to protect
-  const lost = masterRows - renderedRows;
-  if (lost <= 25) return false; // small/no shrink (incl. growth) — fine
-  return lost / masterRows > 0.05;
+  return shrinkRefused(renderedRows, masterRows);
 }
 
 // ── Export alignment-shrink guard (ULT/UST verse backstop) ───────────────────
@@ -941,39 +941,21 @@ async function listDcsTree(
     if (!res.ok) throw new Error(`dcs_tree_list_failed: ${res.status} ${await res.text()}`);
     const data = (await res.json()) as {
       tree?: Array<{ path?: string; type?: string; sha?: string }>;
+      truncated?: boolean;
       total_count?: number;
     };
     const entries = data.tree ?? [];
     for (const e of entries) {
       if (e.type === "blob" && e.path && e.sha) map.set(e.path, e.sha);
     }
-    if (entries.length < perPage) break; // last page
+    if (entries.length === 0) break; // no more entries
+    // Last page: this page wasn't capped (`truncated` false) AND wasn't full.
+    // Relying on `entries.length < perPage` alone would stop early if a DCS
+    // deployment clamps per_page below 1000 (then `truncated` stays true and we
+    // keep paging); relying on `truncated` alone can't tell the final short page.
+    if (!data.truncated && entries.length < perPage) break;
   }
   return map;
-}
-
-// Count the .md files already present under `topDir` on the target repo's
-// `ref` (master). Feeds the shrink guard. Returns null when the tree can't be
-// read (non-404 error) so the caller can FAIL CLOSED — an unverifiable target
-// must block rather than let an unchecked render through, mirroring
-// checkTsvShrink's master_unreadable handling. A missing repo/ref → 0 (a fresh
-// GL repo has nothing to protect).
-export async function countDcsMarkdownFilesUnder(
-  config: Omit<DcsCommitConfig, "branch">,
-  ref: string,
-  topDir: string,
-): Promise<number | null> {
-  try {
-    const map = await listDcsTree(config, ref);
-    const prefix = topDir.endsWith("/") ? topDir : `${topDir}/`;
-    let n = 0;
-    for (const p of map.keys()) {
-      if (p.startsWith(prefix) && p.endsWith(".md")) n++;
-    }
-    return n;
-  } catch {
-    return null;
-  }
 }
 
 export interface DcsBatchCommitResult {

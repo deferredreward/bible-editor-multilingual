@@ -86,24 +86,24 @@ export async function renderArticleFiles(
   return { files, count: files.length };
 }
 
-// Shrink-guard analogue of export.ts exportTsvShrinkRefused, on FILE counts
-// instead of TSV row counts. The article carry-over of the twl_PSA clobber
-// backstop: an export whose render drops a large fraction of the files already
-// present on the target is the truncated / partial-D1 signature (a stale or
-// incomplete D1 read), NOT a legitimate single-night edit — so refuse to commit
-// it rather than let it delete previously-exported article files.
+// The single shrink-refusal policy shared by BOTH export paths: the TSV/USFM
+// export (export.ts exportTsvShrinkRefused delegates here) and the article
+// export (the shrink guard in exportWorkflow.ts). It is the backstop against a
+// truncated / partial-D1 read shipping a destructive shrink — the twl_PSA
+// clobber signature: refuse a render that drops a large fraction of what is
+// already on the target (>25 units lost AND a >5% drop; sizeable targets only,
+// so ordinary edits never trip it). Returns true = REFUSE.
 //
-// Thresholds mirror exportTsvShrinkRefused deliberately (kept independent to
-// avoid an export.ts ⇄ articleExport.ts import cycle): protect only sizeable
-// dirs (ignore ≤25 files lost) and require a >5% drop so ordinary edits never
-// trip it. Returns true = REFUSE.
-//   renderedCount — files in the about-to-be-committed render (D1 target_md rows)
-//   existingCount — .md files already under this dir on the target's master
-export function articleExportShrinkRefused(renderedCount: number, existingCount: number): boolean {
-  if (existingCount <= 0) return false; // nothing on the target to protect
-  const lost = existingCount - renderedCount;
+// Lives in this (lower) module so export.ts can import it without a cycle
+// (export.ts already imports gitBlobSha/ArticleFile from here). ONE copy keeps
+// the two export paths' safety threshold from drifting apart.
+//   rendered — units in the about-to-be-committed render (D1 rows / target_md files)
+//   existing — units already on the target (master TSV rows / .md files under the dir)
+export function shrinkRefused(rendered: number, existing: number): boolean {
+  if (existing <= 0) return false; // nothing on the target to protect
+  const lost = existing - rendered;
   if (lost <= 25) return false; // small/no shrink (incl. growth) — fine
-  return lost / existingCount > 0.05;
+  return lost / existing > 0.05;
 }
 
 // git blob sha1, matching DCS/Gitea blob shas: sha1("blob {byteLen}\0{content}").

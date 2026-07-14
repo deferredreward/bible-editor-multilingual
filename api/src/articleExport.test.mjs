@@ -12,7 +12,7 @@ import {
   articleStepUnits,
   topDirLikePrefix,
   articleStepLabel,
-  articleExportShrinkRefused,
+  shrinkRefused,
   gitBlobSha,
 } from "./articleExport.ts";
 
@@ -51,15 +51,15 @@ assert(topDirLikePrefix("translate") === "translate/%", "topDirLikePrefix: ta ma
 assert(articleStepLabel("tw", "bible/kt") === "tw-bible-kt", "articleStepLabel: tw dir → 'tw-bible-kt'");
 assert(articleStepLabel("ta", "translate") === "ta-translate", "articleStepLabel: ta manual → 'ta-translate'");
 
-// --- Shrink guard analogue (mirror of exportTsvShrinkRefused on file counts) ---
-assert(!articleExportShrinkRefused(500, 0), "empty target (existing 0) → never refuse (first export / growth)");
-assert(!articleExportShrinkRefused(500, 480), "growth (500 vs 480) → not a shrink");
-assert(!articleExportShrinkRefused(480, 500), "20-file trim (480 vs 500) → ≤25 lost, allowed");
-assert(!articleExportShrinkRefused(475, 500), "25-file trim (475 vs 500) → exactly 25 lost, allowed (>25 only)");
-assert(articleExportShrinkRefused(470, 500), "30-file drop (470 vs 500, 6%) → refuse (>25 lost AND >5%)");
-assert(articleExportShrinkRefused(0, 500), "truncated-to-zero (0 vs 500) → refuse (the clobber signature)");
-assert(!articleExportShrinkRefused(0, 25), "tiny dir (25 existing) → 25 lost ≤ 25 floor, exempt");
-assert(articleExportShrinkRefused(0, 26), "just above the floor (26 existing) → refuse");
+// --- Shared shrink guard (backs both exportTsvShrinkRefused and the article guard) ---
+assert(!shrinkRefused(500, 0), "empty target (existing 0) → never refuse (first export / growth)");
+assert(!shrinkRefused(500, 480), "growth (500 vs 480) → not a shrink");
+assert(!shrinkRefused(480, 500), "20-file trim (480 vs 500) → ≤25 lost, allowed");
+assert(!shrinkRefused(475, 500), "25-file trim (475 vs 500) → exactly 25 lost, allowed (>25 only)");
+assert(shrinkRefused(470, 500), "30-file drop (470 vs 500, 6%) → refuse (>25 lost AND >5%)");
+assert(shrinkRefused(0, 500), "truncated-to-zero (0 vs 500) → refuse (the clobber signature)");
+assert(!shrinkRefused(0, 25), "tiny dir (25 existing) → 25 lost ≤ 25 floor, exempt");
+assert(shrinkRefused(0, 26), "just above the floor (26 existing) → refuse");
 
 // --- git blob sha matches canonical git hashes ---
 // The empty blob's well-known sha1 (`git hash-object` of an empty file).

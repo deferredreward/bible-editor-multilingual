@@ -26,7 +26,6 @@ import {
   closeDcsPr,
   commitToDcs,
   commitFilesToDcs,
-  countDcsMarkdownFilesUnder,
   deleteDcsBranch,
   ensureDcsPr,
   exportTsvShrinkRefused,
@@ -41,7 +40,7 @@ import {
   articleStepUnits,
   articleStepLabel,
   renderArticleFiles,
-  articleExportShrinkRefused,
+  shrinkRefused,
   type ArticleResource,
 } from "./articleExport.ts";
 
@@ -687,49 +686,51 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let committedCount = 0;
     let prNumber: number | null = null;
     let prError: string | null = null;
+    // The branch reported in the result: null until we either commit to it or
+    // do a dry run (which reports the would-be branch, for parity with the verse
+    // exportOne). A guard skip leaves it null — nothing was committed there.
+    let resultBranch: string | null = null;
 
     const done = (): ArticleStepResult => ({
       label, resource, topDir,
       fileCount: count, committedCount,
-      // null branch when the export was skipped for a guard reason (nothing was
-      // committed to that branch), matching exportOne's stale/shrink returns.
-      branch: dcsSkippedReason && /^(stale_master|shrink_guard|error)/.test(dcsSkippedReason) ? null : branch,
+      branch: resultBranch,
       dcsCommitSha, dcsSkippedReason, prNumber,
     });
 
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
+      resultBranch = branch; // report the would-be branch (matches exportOne's dry return)
       await this.recordSnapshot(label, resource, branch, null, count, dcsSkippedReason, null, null);
       return done();
     }
 
-    // Safety rail — the article carry-over of the verse export's freshness +
-    // shrink guards. There is no article reimport→D1 sync (import-articles.mjs
-    // only ever seeds source_md; nothing writes DCS→D1 for the GL target), and
-    // the target repo has no out-of-band writer (only this export writes it,
-    // via a PR), so the verse path's SHA-watermark "master moved ahead of D1"
-    // staleness cannot occur here. What CAN occur is a truncated / partial D1
-    // read shrinking the export — the twl_PSA clobber signature — so we guard
-    // that: count the .md files already on the target's master under this dir
-    // and REFUSE a render that would drop a large fraction of them. Fail CLOSED
-    // when master can't be read (count == null): an unverifiable target blocks
-    // rather than lets an unchecked render through (mirrors checkTsvShrink).
-    const dcsBase = { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo };
-    const existing = await countDcsMarkdownFilesUnder(dcsBase, "master", topDir);
-    if (existing == null) {
-      await this.recordArticleGuardAlert(label, resource, repo, "master_unreadable");
-      dcsSkippedReason = "stale_master:master_unreadable";
-      await this.recordSnapshot(label, resource, null, null, count, dcsSkippedReason);
-      return done();
-    }
-    if (articleExportShrinkRefused(count, existing)) {
-      await this.recordArticleGuardAlert(label, resource, repo, `shrink_${existing - count}_of_${existing}`);
-      dcsSkippedReason = `shrink_guard:shrink_${existing - count}_of_${existing}`;
+    // Safety rail — the article carry-over of the verse export's shrink guard:
+    // the backstop against a truncated / partial D1 read shipping a destructive
+    // shrink (the twl_PSA clobber signature). Baseline = the file count THIS
+    // export system last successfully committed for this (label, resource),
+    // from export_snapshots — NOT the target repo's current .md count. Two
+    // reasons this is the right baseline: (1) the intent is "don't drop
+    // PREVIOUSLY-EXPORTED files," which our own last export count measures
+    // exactly; (2) a GL target repo may be provisioned by seeding the full
+    // English article set, so its live .md count is NOT what we exported —
+    // comparing against it would false-block every early export (a handful
+    // translated vs ~1,000 English files). The verse path's SHA-watermark
+    // freshness gate has no article analogue: there is no article DCS→D1
+    // reimport loop (import-articles.mjs only seeds source_md) and the target
+    // has no out-of-band writer (only this export writes it, via a PR). First
+    // export (no prior successful snapshot) → nothing to protect → allowed.
+    const prevExported = await this.lastArticleExportCount(label, resource);
+    if (prevExported != null && shrinkRefused(count, prevExported)) {
+      const detail = `shrink_${prevExported - count}_of_${prevExported}`;
+      await this.recordArticleGuardAlert(label, resource, repo, detail);
+      dcsSkippedReason = `shrink_guard:${detail}`;
       await this.recordSnapshot(label, resource, null, null, count, dcsSkippedReason);
       return done();
     }
 
-    const dcsCfg = { ...dcsBase, branch };
+    const dcsCfg = { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo, branch };
+    resultBranch = branch; // committing to it now
     const message = `bible-editor export: ${label} (${count} files) → ${branch} (${instanceId})`;
     const commit = await commitFilesToDcs(dcsCfg, files, message);
     dcsCommitSha = commit.commitSha || null;
@@ -755,7 +756,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         prNumber = pr.number;
         if (pr.number != null) {
           try {
-            const upd = await updateDcsPrBranch(dcsBase, pr.number);
+            const upd = await updateDcsPrBranch(dcsCfg, pr.number);
             if (!upd.ok) {
               console.log("export article PR update-branch skipped", {
                 label, repo, pr: pr.number, status: upd.status, detail: upd.detail,
@@ -778,9 +779,30 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return done();
   }
 
-  // Banner alert when an article export step is blocked by the shrink /
-  // freshness guard (a render that would drop previously-exported files, or an
-  // unreadable target). Same replace-undismissed shape as recordShrinkSkipAlert.
+  // The file count THIS export system last SUCCESSFULLY committed for a
+  // (label, resource) — the shrink guard's baseline. `commit_sha IS NOT NULL`
+  // is the success predicate (same one contributorsFor uses). null when there's
+  // no prior successful export (first run → nothing to protect). Using our own
+  // export history, not the target repo's live file count, is what keeps the
+  // guard from false-blocking when the target was seeded with English articles.
+  private async lastArticleExportCount(
+    label: string,
+    resource: ArticleResource,
+  ): Promise<number | null> {
+    const row = await this.env.DB.prepare(
+      `SELECT rows_exported FROM export_snapshots
+        WHERE book = ?1 AND resource = ?2 AND commit_sha IS NOT NULL
+        ORDER BY committed_at DESC LIMIT 1`,
+    )
+      .bind(label, resource)
+      .first<{ rows_exported: number | null }>();
+    return row?.rows_exported ?? null;
+  }
+
+  // Banner alert when an article export step is blocked by the shrink guard (a
+  // render that would drop a large fraction of the files we last exported — the
+  // truncated/partial-D1 signature). Same replace-undismissed shape as
+  // recordShrinkSkipAlert.
   private async recordArticleGuardAlert(
     label: string,
     resource: ArticleResource,
@@ -790,8 +812,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const source = `export_article_guard:${label}`;
     const message =
       `Benjamin — nightly export BLOCKED ${resource.toUpperCase()} articles (\`${label}\` → ${repo}): ${detail}. ` +
-      `The render would drop a large fraction of the files already on the target (truncated/partial D1 read) or ` +
-      `the target couldn't be read — refusing to shrink it. Re-check the article_units data, then re-export.`;
+      `The render has far fewer files than the last successful export of this set (truncated/partial D1 read) — ` +
+      `refusing to shrink it. Re-check the article_units data, then re-export.`;
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
