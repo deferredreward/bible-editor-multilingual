@@ -28,6 +28,8 @@ import { drafts, verseKey, draftDirtyBorderSx } from "../sync/drafts";
 import type { FindMatch } from "./FindReplaceOverlay";
 import type { FindQuery } from "./ScriptureColumn";
 import { HebrewLine } from "./HebrewLine";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import { formatVerseLabel, isRangeRow } from "../lib/verseRange";
 import {
@@ -129,6 +131,7 @@ export function BookView({
   locked = false,
   textCheck,
 }: Props) {
+  const projectConfig = useProjectConfig();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRowRef = useRef<HTMLDivElement | null>(null);
   // Set on any deliberate scroll-to-active request (navigation or the
@@ -253,7 +256,7 @@ export function BookView({
                 letterSpacing: 0.5,
               }}
             >
-              {v}{isReadOnly ? " (ro)" : ""}
+              {versionLabel(projectConfig, v)}{isReadOnly ? " (ro)" : ""}
             </Typography>
           );
         })}

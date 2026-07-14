@@ -2,7 +2,7 @@ import { Box, Tooltip } from "@mui/material";
 import CheckIcon from "@mui/icons-material/Check";
 import { useTranslation } from "react-i18next";
 import type { CheckLane } from "../sync/api";
-import { LANE_FILL, LANE_LABELS, type LaneShade } from "../lib/laneChecks";
+import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
 
 export interface VerseTileLane {
   lane: CheckLane;
@@ -18,9 +18,6 @@ export interface VerseTile {
   // One entry per lane, in display order (text, tn, tw, tq).
   lanes: VerseTileLane[];
 }
-
-// Single-letter lane glyphs for the rail header.
-const LANE_GLYPH: Record<CheckLane, string> = { text: "T", tn: "N", tw: "W", tq: "Q" };
 
 function LaneCell({
   lane,
@@ -147,10 +144,10 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = 
       >
         <span />
         {laneOrder.map((l) => (
-          <Tooltip key={l} title={translate("rail.hideLaneTooltip", { lane: LANE_LABELS[l] })} placement="top">
+          <Tooltip key={l} title={translate("rail.hideLaneTooltip", { lane: translate(`lanes.${l}`) })} placement="top">
             <Box
               role="button"
-              aria-label={translate("rail.hideLaneAriaLabel", { lane: LANE_LABELS[l] })}
+              aria-label={translate("rail.hideLaneAriaLabel", { lane: translate(`lanes.${l}`) })}
               onClick={() => onHideLane(l)}
               sx={{
                 textAlign: "center",
@@ -171,7 +168,7 @@ export function TimelineRail({ book, chapter, tiles, activeVerse, showChapter = 
                   pb: "1px",
                 }}
               >
-                {LANE_GLYPH[l]}
+                {translate(`lanes.${l}Short`)}
               </Box>
             </Box>
           </Tooltip>

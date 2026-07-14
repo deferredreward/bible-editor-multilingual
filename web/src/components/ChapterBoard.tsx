@@ -12,8 +12,9 @@ import CheckIcon from "@mui/icons-material/Check";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import { useTranslation } from "react-i18next";
 import { CHECK_LANES, type CheckLane } from "../sync/api";
-import { LANE_FILL, LANE_LABELS, type LaneShade } from "../lib/laneChecks";
+import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
 import type { VerseTile, VerseTileLane } from "./TimelineRail";
 
 export interface ChapterBoardProps {
@@ -108,6 +109,7 @@ export function ChapterBoard({
   enabledLanes,
   onToggleLaneVisible,
 }: ChapterBoardProps) {
+  const { t } = useTranslation();
   // Per-lane tally: applicable = cells where the lane applies; done = those with
   // a non-"open" shade (checked by me / others / both). Percent rounds done/applicable.
   const tallies = CHECK_LANES.map((laneKind) => {
@@ -129,9 +131,9 @@ export function ChapterBoard({
         sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pr: 1.5 }}
       >
         <Typography component="span" sx={{ fontSize: 18, fontWeight: 600 }}>
-          Chapter board — {book} {chapter}
+          {t("shell.boardTitle", { book, chapter })}
         </Typography>
-        <IconButton onClick={onClose} aria-label="close" size="small">
+        <IconButton onClick={onClose} aria-label={t("common.close")} size="small">
           <CloseIcon />
         </IconButton>
       </DialogTitle>
@@ -169,12 +171,16 @@ export function ChapterBoard({
                 <Typography
                   sx={{ fontSize: 15, fontWeight: 600, color: shown ? "text.primary" : "text.disabled" }}
                 >
-                  {LANE_LABELS[laneKind]}
+                  {t(`lanes.${laneKind}`)}
                 </Typography>
-                <Tooltip title={shown ? "Hide this lane in the sidebar" : "Show this lane in the sidebar"}>
+                <Tooltip title={shown ? t("shell.hideLaneInSidebar") : t("shell.showLaneInSidebar")}>
                   <Box
                     role="button"
-                    aria-label={`${shown ? "Hide" : "Show"} ${LANE_LABELS[laneKind]} in sidebar`}
+                    aria-label={
+                      shown
+                        ? t("shell.hideLabelInSidebar", { label: t(`lanes.${laneKind}`) })
+                        : t("shell.showLabelInSidebar", { label: t(`lanes.${laneKind}`) })
+                    }
                     aria-pressed={shown}
                     onClick={() => onToggleLaneVisible(laneKind)}
                     sx={{
@@ -192,13 +198,13 @@ export function ChapterBoard({
                     ) : (
                       <VisibilityOffIcon sx={{ fontSize: 14 }} />
                     )}
-                    {shown ? "shown" : "hidden"}
+                    {shown ? t("shell.shown") : t("shell.hidden")}
                   </Box>
                 </Tooltip>
                 {canCheck && (
                   <Box
                     role="button"
-                    aria-label={`Check all ${LANE_LABELS[laneKind]}`}
+                    aria-label={t("shell.checkAllLabel", { label: t(`lanes.${laneKind}`) })}
                     onClick={() => onBulkToggle(laneKind)}
                     sx={{
                       display: "inline-flex",
@@ -211,7 +217,7 @@ export function ChapterBoard({
                     }}
                   >
                     <DoneAllIcon sx={{ fontSize: 14 }} />
-                    all
+                    {t("shell.all")}
                   </Box>
                 )}
               </Box>
@@ -281,11 +287,11 @@ export function ChapterBoard({
             }}
           >
             <Box sx={{ fontSize: 13, fontWeight: 600, color: "text.secondary", pl: 0.5 }}>
-              done
+              {t("shell.done")}
             </Box>
-            {tallies.map((t) => (
+            {tallies.map((tally) => (
               <Box
-                key={t.lane}
+                key={tally.lane}
                 sx={{
                   display: "flex",
                   flexDirection: "column",
@@ -295,10 +301,10 @@ export function ChapterBoard({
                 }}
               >
                 <Typography sx={{ fontSize: 13, color: "text.secondary", whiteSpace: "nowrap" }}>
-                  {t.done}/{t.applicable}
+                  {tally.done}/{tally.applicable}
                 </Typography>
                 <Box
-                  aria-label={`${LANE_LABELS[t.lane]} ${t.percent}% complete`}
+                  aria-label={t("shell.lanePercentComplete", { label: t(`lanes.${tally.lane}`), percent: tally.percent })}
                   sx={{
                     width: "100%",
                     height: 6,
@@ -309,7 +315,7 @@ export function ChapterBoard({
                 >
                   <Box
                     sx={{
-                      width: `${t.percent}%`,
+                      width: `${tally.percent}%`,
                       height: "100%",
                       bgcolor: "#70C9CC",
                       transition: "width 160ms",
