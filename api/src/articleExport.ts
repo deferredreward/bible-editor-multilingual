@@ -69,6 +69,16 @@ export interface ArticleFile {
 // gating on completeness belongs to the future gl-publisher, not here. The
 // English root project translates nothing (all target_md NULL), so this is a
 // natural no-op there.
+//
+// ADDITIVE BY DESIGN (v1): this returns only the files that still render, and
+// the commit path (commitFilesToDcs) only creates/updates — it never deletes.
+// So clearing a target_md back to NULL, soft-deleting an article_unit, or moving
+// an article to another dir removes it from the render but leaves the previously
+// exported .md stale on the long-lived branch until the publisher prunes it.
+// This is intentional: the design defers deletion/release-shaping to the
+// gl-publisher (design §5, "export whatever exists"). The shrink guard's job is
+// therefore to DETECT + alert on a suspicious mass shrink (truncated D1), not to
+// gate a deletion — there is none. Revisit if per-file removal ever moves in scope.
 export async function renderArticleFiles(
   env: Env,
   resource: ArticleResource,
