@@ -38,8 +38,15 @@ import {
   type TermInput,
   type TermStatus,
   type TranslationPrefs,
+  type ProjectConfig,
+  type Role,
 } from "../sync/api";
-import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import {
+  useProjectConfig,
+  useProjectPresets,
+  isTranslationProject,
+  selectProjectPreset,
+} from "../hooks/useProjectConfig";
 import {
   useTranslationPrefs,
   useTerms,
@@ -71,37 +78,14 @@ function statusColor(status: TermStatus): string {
 interface Props {
   onNavigate: (section: Section) => void;
   section: Section;
+  role: Role;
 }
 
-export function PreferencesWorkspace({ onNavigate, section }: Props) {
+export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
-
-  if (!isTranslation) {
-    return (
-      <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }} spacing={1}>
-        <Typography variant="h6">{t("preferences.title")}</Typography>
-        <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
-          {t("preferences.glOnly")}
-        </Typography>
-      </Stack>
-    );
-  }
-
-  // Every translation-memory route is requireEditor server-side (even reads) —
-  // a viewer's GETs would all 403 and render as confusing blank sections, so
-  // show one clear message instead of rendering tabs that can't load.
-  if (isReadOnly()) {
-    return (
-      <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }} spacing={1}>
-        <Typography variant="h6">{t("preferences.title")}</Typography>
-        <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
-          {t("preferences.editorOnly")}
-        </Typography>
-      </Stack>
-    );
-  }
+  const memoryAvailable = isTranslation && !isReadOnly();
 
   return (
     <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
@@ -140,7 +124,7 @@ export function PreferencesWorkspace({ onNavigate, section }: Props) {
           <AssistedModeControls />
         </Stack>
         <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0, py: 0.5 }}>
-          {SECTIONS.map((s) => {
+          {memoryAvailable && SECTIONS.map((s) => {
             const selected = s === section;
             return (
               <Box
@@ -168,12 +152,115 @@ export function PreferencesWorkspace({ onNavigate, section }: Props) {
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
-          {section === "brief" && <BriefSection />}
-          {section === "instructions" && <InstructionsSection />}
-          {section === "terminology" && <TerminologySection direction={cfg?.direction ?? "ltr"} />}
-          {section === "examples" && <ExamplesSection />}
+          <ProjectModeControl cfg={cfg} role={role} />
+          {cfg === null ? null : !isTranslation ? (
+            <Alert severity="info" variant="outlined">
+              {t("preferences.glOnly")}
+            </Alert>
+          ) : !memoryAvailable ? (
+            <Alert severity="info" variant="outlined">
+              {t("preferences.editorOnly")}
+            </Alert>
+          ) : (
+            <>
+              {section === "brief" && <BriefSection />}
+              {section === "instructions" && <InstructionsSection />}
+              {section === "terminology" && <TerminologySection direction={cfg?.direction ?? "ltr"} />}
+              {section === "examples" && <ExamplesSection />}
+            </>
+          )}
         </Box>
       </Box>
+    </Box>
+  );
+}
+
+function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Role }) {
+  const { t } = useTranslation();
+  const presets = useProjectPresets();
+  const [selected, setSelected] = useState(cfg?.preset ?? "");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ severity: "success" | "error" | "info"; text: string } | null>(null);
+  const canChange = role === "admin";
+
+  useEffect(() => {
+    if (cfg?.preset) setSelected(cfg.preset);
+  }, [cfg?.preset]);
+
+  const apply = async () => {
+    if (!cfg || !selected || selected === cfg.preset || !canChange) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      await selectProjectPreset(selected);
+      setMessage({ severity: "success", text: t("preferences.projectModeSaved") });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setMessage({ severity: "error", text: t("preferences.projectModeForbidden") });
+      } else {
+        setMessage({ severity: "error", text: t("preferences.projectModeFailed") });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Box
+      component="section"
+      aria-labelledby="project-mode-heading"
+      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, mb: 3 }}
+    >
+      <Stack spacing={1.5}>
+        <Box>
+          <Typography id="project-mode-heading" variant="h6">
+            {t("preferences.projectModeTitle")}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {t("preferences.projectModeIntro")}
+          </Typography>
+        </Box>
+        {!cfg ? (
+          <CircularProgress size={22} />
+        ) : (
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "flex-start" }}>
+            <TextField
+              select
+              size="small"
+              label={t("preferences.projectModeLabel")}
+              value={selected}
+              onChange={(e) => setSelected(e.target.value)}
+              disabled={!canChange || saving || presets.length === 0}
+              sx={{ minWidth: 320 }}
+              helperText={!canChange ? t("preferences.projectModeForbidden") : undefined}
+            >
+              {presets.map((preset) => (
+                <MenuItem key={preset.preset} value={preset.preset}>
+                  {preset.isTranslation
+                    ? t("preferences.translationPreset", {
+                        language: preset.languageTitle,
+                        org: preset.org,
+                      })
+                    : t("preferences.authoringPreset", {
+                        language: preset.languageTitle,
+                        org: preset.org,
+                      })}
+                  {!preset.reposVerified ? ` · ${t("preferences.presetUnverified")}` : ""}
+                </MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="contained"
+              onClick={apply}
+              disabled={!canChange || saving || !selected || selected === cfg.preset}
+              startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
+            >
+              {saving ? t("preferences.applyingProjectMode") : t("preferences.applyProjectMode")}
+            </Button>
+          </Stack>
+        )}
+        {message && <Alert severity={message.severity}>{message.text}</Alert>}
+      </Stack>
     </Box>
   );
 }

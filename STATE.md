@@ -14,6 +14,12 @@
 
 ## Last run
 
+2026-07-14 · **feat/translation-mode-entry** — **Made project mode discoverable and switchable from Preferences.**
+- Preferences is now always visible in TopBar; Articles remains translation-project-only. Preferences always exposes the global project preset selector, including in English authoring mode, while translation-memory sections remain GL/editor gated.
+- Admins can switch through the existing preset catalog and admin-protected `PUT /api/project-config`; editors/viewers see the active preset plus a clear admin-only explanation. Successful writes publish through the shared project-config cache so mode-gated UI updates without reload. Preset switches preserve existing overrides (`overrides` omitted ≠ `null`).
+- Added preset/write unit coverage and completed strict locale parity (including the pre-existing `words.showInText` gap). Verified `npm run typecheck`, API/web unit suites, `node scripts/check-i18n.mjs` (13/13), `npm run build`, and local authenticated API + browser smokes. Browser-confirmed: Preferences is visible in English authoring mode, switching to Arabic immediately reveals translation-memory sections and the Articles button, and switching back hides both again; the local test database was restored to English.
+- Rebased/merged onto `origin/main` after PR #16 (`feat/context-repo-export`) landed; kept both ProjectModeControl and AssistedModeControls in Preferences.
+
 2026-07-14 · **feat/context-repo-export (worktree off `main`)** — **D1→`{org}/translation-context` export + assisted-mode toggle built.**
 
 Closes the "Biggest remaining gap" from the Preferences panel (PR #14): the export leg that feeds curated memory to bp-assistant via `contextRef`.

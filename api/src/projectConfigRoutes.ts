@@ -30,6 +30,7 @@ projectConfig.get("/", async (c) => {
       languageTitle: p.languageTitle,
       direction: p.direction,
       reposVerified: p.reposVerified,
+      isTranslation: p.translationSource !== null,
     })),
   });
 });
@@ -38,7 +39,9 @@ const PutBody = z.object({
   preset: z.string().min(1),
   // Partial overrides merged over the preset. Loosely typed here; materialize()
   // in projectConfig.ts only honors known keys, so an unknown key is dropped
-  // rather than trusted.
+  // rather than trusted. Three intents (see writeProjectConfig): the field
+  // OMITTED preserves existing overrides, `null` clears them, an object
+  // replaces them. A bare preset switch must not silently erase overrides.
   overrides: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
@@ -57,10 +60,12 @@ projectConfig.put("/", requireAdmin, async (c) => {
     return c.json({ error: "unknown_preset", preset: parsed.data.preset }, 400);
   }
   try {
+    // Preserve `undefined` (field omitted) vs `null` (explicit clear) — do NOT
+    // collapse them with `?? null`, or a preset switch would wipe overrides.
     const cfg = await writeProjectConfig(
       c.env,
       parsed.data.preset,
-      (parsed.data.overrides ?? null) as Record<string, unknown> | null,
+      parsed.data.overrides as Record<string, unknown> | null | undefined,
     );
     return c.json({ config: cfg });
   } catch (e) {
