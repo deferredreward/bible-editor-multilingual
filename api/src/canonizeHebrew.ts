@@ -106,17 +106,21 @@ function emptyLookup(): TieredLookup {
   return { exact: new Map(), stripped: new Map(), joiner: new Map() };
 }
 
-// Alignment milestones carry lemma + morph, so we key on all three (folded) —
-// matching the original's (lemma, form, morph) key. morph is a match key only,
-// never rewritten: a milestone whose morph disagrees with the UHB word simply
-// doesn't match (conservative, by design).
+// Key an alignment milestone to its UHB word by Strong's number + surface form
+// (folded), NOT lemma/morph. This codebase's source identity is Strong-based
+// (see milestoneSourceKey / healReplacementChars in importParsers.ts), and valid
+// `\zaln-s` milestones may omit x-lemma / x-morph while always carrying x-strong
+// + x-content — keying on lemma/morph would silently skip those rows and leave
+// their bad byte order. Strong narrows homographs; the fold tiers + the
+// fail-closed ambiguity guard (pickCanonical) cover the rest. The original's
+// (lemma, form, morph) key was for a file-based script without Strong's to hand.
 function buildFullLookup(words: SourceWord[]): TieredLookup {
   const lk = emptyLookup();
   for (const w of words) {
     const e: UhbEntry = { form: w.text, lemma: w.lemma, found: false };
-    push(lk.exact, canonicalHebrew(w.lemma) + SEP + canonicalHebrew(w.text) + SEP + w.morph, e);
-    push(lk.stripped, stripHebrewMarks(w.lemma) + SEP + stripHebrewMarks(w.text) + SEP + w.morph, e);
-    push(lk.joiner, stripHebrewMarks(w.lemma) + SEP + wordJoinerFold(w.text) + SEP + w.morph, e);
+    push(lk.exact, w.strong + SEP + canonicalHebrew(w.text), e);
+    push(lk.stripped, w.strong + SEP + stripHebrewMarks(w.text), e);
+    push(lk.joiner, w.strong + SEP + wordJoinerFold(w.text), e);
   }
   return lk;
 }
@@ -176,18 +180,18 @@ export function canonizeAlignmentSource(verseObjects: unknown[], uhbWords: Sourc
       if (o["type"] === "milestone" && o["tag"] === "zaln" && typeof o["content"] === "string") {
         const form = o["content"] as string;
         const lemma = typeof o["lemma"] === "string" ? (o["lemma"] as string) : "";
-        const morph = typeof o["morph"] === "string" ? (o["morph"] as string) : "";
+        const strong = typeof o["strong"] === "string" ? (o["strong"] as string) : "";
         // Fall through tiers only on "no match" (undefined); an AMBIGUOUS tier
         // (null) stops the search and fails closed — a looser tier can only be
         // more ambiguous. Buckets are read statelessly, so a source word aligned
         // to non-contiguous target words (repeated milestones, e.g. אָמַר split
         // around "Moses" in "And Moses said") resolves the same for every repeat.
-        let adopt = pickCanonical(lk.exact.get(canonicalHebrew(lemma) + SEP + canonicalHebrew(form) + SEP + morph));
+        let adopt = pickCanonical(lk.exact.get(strong + SEP + canonicalHebrew(form)));
         if (adopt === undefined) {
-          adopt = pickCanonical(lk.stripped.get(stripHebrewMarks(lemma) + SEP + stripHebrewMarks(form) + SEP + morph));
+          adopt = pickCanonical(lk.stripped.get(strong + SEP + stripHebrewMarks(form)));
         }
         if (adopt === undefined) {
-          adopt = pickCanonical(lk.joiner.get(stripHebrewMarks(lemma) + SEP + wordJoinerFold(form) + SEP + morph));
+          adopt = pickCanonical(lk.joiner.get(strong + SEP + wordJoinerFold(form)));
         }
         if (adopt) {
           let hit = false;

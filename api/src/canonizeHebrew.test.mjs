@@ -34,7 +34,8 @@ assert(LEGACY.normalize("NFC") === NFC, "precondition: legacy UHB order folds to
 assert(LEGACY !== NFC, "precondition: legacy and NFC bytes genuinely differ");
 
 const w = (text, lemma, morph) => ({ text, strong: "H1", lemma, morph });
-const zaln = (attrs, children = []) => ({ type: "milestone", tag: "zaln", ...attrs, children });
+// Milestones default to strong "H1" (matching w()); override via attrs.strong.
+const zaln = (attrs, children = []) => ({ type: "milestone", tag: "zaln", strong: "H1", ...attrs, children });
 
 // ── canonizeAlignmentSource ─────────────────────────────────────────────────
 
@@ -59,13 +60,27 @@ const zaln = (attrs, children = []) => ({ type: "milestone", tag: "zaln", ...att
   assert(JSON.stringify(vo) === before, "no-op: tree untouched");
 }
 
-// 3. Conservatism: a morph mismatch means NO match at any tier → left as-is.
+// 3. Conservatism: a STRONG mismatch means NO match → left as-is. Strong's is the
+//    source-identity key (aligned with milestoneSourceKey), so a milestone pointed
+//    at a different Strong's number never adopts another word's bytes.
 {
-  const uhb = [w(LEGACY, LEGACY, "Ncmsa")];
-  const vo = [zaln({ content: NFC, lemma: NFC, morph: "Vqp3ms" })];
+  const uhb = [w(LEGACY, LEGACY, "Ncmsa")]; // strong H1 (from w())
+  const vo = [zaln({ content: NFC, lemma: NFC, morph: "Ncmsa", strong: "H2" })];
   const n = canonizeAlignmentSource(vo, uhb);
-  assert(n === 0, "morph mismatch: no change (morph is a match key, never rewritten)");
-  assert(vo[0].content === NFC, "morph mismatch: content preserved unchanged");
+  assert(n === 0, "strong mismatch: no change (Strong's is the identity key)");
+  assert(vo[0].content === NFC, "strong mismatch: content preserved unchanged");
+}
+
+// 3b. Regression for the gpt-5.4-mini finding: a valid milestone that carries only
+//     x-strong + x-content (no x-lemma / x-morph) must still canonize. Keying on
+//     lemma/morph would have skipped it; keying on strong+content does not.
+{
+  const uhb = [w(LEGACY, LEGACY, "Ncmsa")]; // strong H1
+  const vo = [{ type: "milestone", tag: "zaln", strong: "H1", content: NFC }]; // no lemma, no morph
+  const n = canonizeAlignmentSource(vo, uhb);
+  assert(n === 1, "strong+content-only milestone canonized (lemma/morph absent)");
+  assert(vo[0].content === LEGACY, "strong+content-only: content rewritten to UHB bytes");
+  assert(!("lemma" in vo[0]), "strong+content-only: no lemma invented on a milestone that lacked one");
 }
 
 // 4. Stripped tier: milestone missing the vowel points still matches on the
