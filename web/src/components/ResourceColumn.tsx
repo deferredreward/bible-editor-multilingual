@@ -4,7 +4,7 @@ import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip, LinearProgre
 import AddIcon from "@mui/icons-material/Add";
 import PushPinIcon from "@mui/icons-material/PushPin";
 import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
-import { api, type TnRow, type TqRow, type TwlRow, type VerseDto, type TwlSuggestion } from "../sync/api";
+import { api, isReadOnly, type TnRow, type TqRow, type TwlRow, type VerseDto, type TwlSuggestion } from "../sync/api";
 import { NoteCard, type DropPosition } from "./NoteCard";
 import { WordsTable, type WordDropPosition } from "./WordsTable";
 import { TwlSuggestions } from "./TwlSuggestions";
@@ -369,10 +369,11 @@ export function ResourceColumn({
     return { total, validated, draftIds };
   }, [tn, translationMode]);
   // Live terminology count for the language-memory chip (was hard-coded 0).
-  // Cheap COUNT endpoint; best-effort — a failure leaves it at 0.
+  // Cheap COUNT endpoint; best-effort — a failure leaves it at 0. The route is
+  // editor-only server-side, so skip it for viewers — they'd only get a 403.
   const [termsCount, setTermsCount] = useState(0);
   useEffect(() => {
-    if (!translationMode) return;
+    if (!translationMode || isReadOnly()) return;
     let cancelled = false;
     api
       .getTermsCount()
