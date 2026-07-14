@@ -489,6 +489,15 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
       const outcome = await applyTranslateArticle(env, p, userId);
       if (outcome === "drafted") result.articleUpdated += 1;
     }
+    // Articles have no chapter to hint an open tab with (sentinel 0/0), so an
+    // all-no-match article run would otherwise complete silently — the job goes
+    // 'done', nothing lands, and there is no scripture tab to signal. Surface a
+    // banner alert so "0 applied" is visible rather than silent. Only when there
+    // WERE article proposals but none drafted (every target path missed its
+    // article_units row, or a concurrent human edit won the CAS).
+    if (articleProposals.length > 0 && result.articleUpdated === 0) {
+      await recordArticleNoApplyAlert(env, job, userId, articleProposals.length);
+    }
     result.affectedChapters = [...affected].sort((a, b) => a - b);
     return result;
   }
@@ -1018,6 +1027,43 @@ async function applyTranslateArticle(
       .bind(p.id, userId, resource, path, newVersion, now),
   ]);
   return (res[0]?.meta?.changes ?? 0) > 0 ? "drafted" : "no_match";
+}
+
+// Banner alert (GET /api/alerts/me, rendered top-of-app) when a translate run
+// produced article drafts but applied NONE — every path was a no_match. Keyed
+// by job so the import's retry-once path replaces rather than duplicates it.
+// Best-effort: an alert-write failure must never fail the apply.
+async function recordArticleNoApplyAlert(
+  env: Env,
+  job: ImportContext,
+  userId: number,
+  proposalCount: number,
+): Promise<void> {
+  try {
+    const u = await env.DB.prepare(`SELECT dcs_username FROM users WHERE id = ?1`)
+      .bind(userId)
+      .first<{ dcs_username: string }>();
+    const username = u?.dcs_username;
+    if (!username) return;
+    const source = `translate_articles_no_apply:${job.jobId}`;
+    const message =
+      `Translation run produced ${proposalCount} article draft(s) but applied 0 — every target path was a ` +
+      `no-match (the matching tW/tA article did not exist in this project, or a concurrent human edit won the ` +
+      `version check). Re-import the source articles (scripts/import-articles.mjs) or verify the paths, then re-run.`;
+    await env.DB.prepare(
+      `DELETE FROM system_alerts WHERE username = ?1 AND source = ?2 AND dismissed_at IS NULL`,
+    )
+      .bind(username, source)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO system_alerts (username, severity, source, message, link_url)
+       VALUES (?1, 'warning', ?2, ?3, ?4)`,
+    )
+      .bind(username, source, message, "#/articles")
+      .run();
+  } catch (e) {
+    console.error("article no-apply alert failed", { error: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 async function applyTnHintExpansionIfMatch(

@@ -9,6 +9,7 @@ import { parseVerseContentJson } from "./contentJson.ts";
 import { analyzeAlignmentDelta } from "./alignmentDelta.ts";
 import { normalizeUsfmFormatting } from "./usfmFormat.ts";
 import { normalizeNoteText, sortRowsByReference } from "./tsvFormat.ts";
+import { gitBlobSha, shrinkRefused, type ArticleFile } from "./articleExport.ts";
 
 export type Resource = "tn" | "tq" | "twl" | "ult" | "ust";
 
@@ -304,11 +305,11 @@ export function buildTwlTsv(rows: TwlRow[], input?: UsfmInputs): string {
 //   masterRows   — rows in the current master file (data rows, header excluded)
 // Floors: ignore tiny books (>25 rows lost) and require >5% shrink so ordinary
 // edits never trip it; PSA lost 2,896 of 7,776 (37%) and trips easily.
+// The threshold itself is the shared `shrinkRefused` policy (in articleExport.ts,
+// the lower module — imported here without a cycle) so the TSV export and the
+// article export can't drift apart on this safety-critical number.
 export function exportTsvShrinkRefused(renderedRows: number, masterRows: number): boolean {
-  if (masterRows <= 0) return false; // nothing on master to protect
-  const lost = masterRows - renderedRows;
-  if (lost <= 25) return false; // small/no shrink (incl. growth) — fine
-  return lost / masterRows > 0.05;
+  return shrinkRefused(renderedRows, masterRows);
 }
 
 // ── Export alignment-shrink guard (ULT/UST verse backstop) ───────────────────
@@ -901,6 +902,159 @@ export async function commitToDcs(
     commitSha: data.commit?.sha ?? "",
     changed: true,
     branchTouched: true,
+  };
+}
+
+// ── tW/tA article batch commit (multi-file) ──────────────────────────────────
+// Articles export MANY small markdown files per step, so committing them one at
+// a time (commitToDcs) would blow the subrequest budget and make one commit per
+// file. commitFilesToDcs uses Gitea's ChangeFiles endpoint
+// (POST /repos/{o}/{r}/contents) to write all changed files in ONE commit, and
+// reads the branch tree ONCE to decide create-vs-update and to skip files that
+// are byte-identical to what the branch already holds (so an unchanged nightly
+// re-run is a no-op — the multi-file analogue of commitToDcs's content-match
+// short-circuit). See articleExport.ts for the render + shrink guard.
+
+// List every blob in a repo tree at `ref` as path → git-blob-sha. Recursive +
+// paginated (a tw repo has ~1,000 files). 404 (missing ref / empty repo) → an
+// empty map; any other non-OK status THROWS so a transient failure retries the
+// step (commit) or is caught and treated as "unreadable" (the shrink guard).
+async function listDcsTree(
+  config: Omit<DcsCommitConfig, "branch">,
+  ref: string,
+): Promise<Map<string, string>> {
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    Accept: "application/json",
+  };
+  const treeBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/trees/${encodeURIComponent(ref)}`;
+  const map = new Map<string, string>();
+  const perPage = 1000;
+  let page = 1;
+  // Hard page cap: a runaway paginator must never loop forever.
+  for (; page <= 50; page++) {
+    const res = await fetch(`${treeBase}?recursive=true&per_page=${perPage}&page=${page}`, {
+      method: "GET",
+      headers,
+    });
+    if (res.status === 404) break; // missing ref / empty repo — nothing to list
+    if (!res.ok) throw new Error(`dcs_tree_list_failed: ${res.status} ${await res.text()}`);
+    const data = (await res.json()) as {
+      tree?: Array<{ path?: string; type?: string; sha?: string }>;
+      truncated?: boolean;
+      total_count?: number;
+    };
+    const entries = data.tree ?? [];
+    for (const e of entries) {
+      if (e.type === "blob" && e.path && e.sha) map.set(e.path, e.sha);
+    }
+    if (entries.length === 0) break; // no more entries
+    // Last page: this page wasn't capped (`truncated` false) AND wasn't full.
+    // Relying on `entries.length < perPage` alone would stop early if a DCS
+    // deployment clamps per_page below 1000 (then `truncated` stays true and we
+    // keep paging); relying on `truncated` alone can't tell the final short page.
+    if (!data.truncated && entries.length < perPage) break;
+  }
+  return map;
+}
+
+// Ensure the export branch EXISTS (create from master if absent) WITHOUT
+// resetting an existing one. This is the article path's analogue of
+// resetExportBranchToMaster, and the difference is load-bearing: article PRs do
+// NOT auto-merge (no post-export validator), so the translated files live only
+// on this long-lived unmerged branch — never on master until the publisher
+// merges. Resetting the branch to master each night (as the verse path does)
+// would DISCARD those prior commits, so every run would re-commit all files and
+// never reach the byte-identical no-op. Leaving the existing branch intact lets
+// the tree read below compare against what we actually last committed; the PR
+// is kept mergeable via updateDcsPrBranch (merge master INTO the branch), the
+// door43-compatible rebase, rather than by resetting the ref.
+async function ensureExportBranchExists(config: DcsCommitConfig): Promise<void> {
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const repoBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+  if (await branchExists(repoBase, headers, config.branch)) return;
+  await createBranchFromMaster(repoBase, headers, config.branch);
+  await ensureBranchVisible(repoBase, headers, config.branch);
+}
+
+export interface DcsBatchCommitResult {
+  commitSha: string;
+  // false when nothing was committed (every rendered file already matched the
+  // branch, or `files` was empty).
+  changed: boolean;
+  // false only when `files` was empty — no branch was reset/created. Mirrors
+  // DcsCommitResult.branchTouched so callers skip PR work on empty renders.
+  branchTouched: boolean;
+  committedCount: number;
+}
+
+// Commit a set of files to the export branch in ONE commit. Re-bases the branch
+// onto current master first (same discipline as commitToDcs, so the PR diff is
+// the article delta, not a stale 3-way merge), skips byte-identical files, and
+// writes the remainder via the ChangeFiles batch endpoint.
+export async function commitFilesToDcs(
+  config: DcsCommitConfig,
+  files: ArticleFile[],
+  message: string,
+): Promise<DcsBatchCommitResult> {
+  if (files.length === 0) {
+    return { commitSha: "", changed: false, branchTouched: false, committedCount: 0 };
+  }
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  // Ensure the branch exists (create from master if absent) but DON'T reset it:
+  // article PRs are long-lived and unmerged, so the branch's own tip — not
+  // master — is the baseline the tree read must compare against. See
+  // ensureExportBranchExists. The tree read then tells us which files already
+  // exist on the branch (update+sha) vs are new (create), and lets an unchanged
+  // run skip committing entirely (byte-identical → no-op).
+  await ensureExportBranchExists(config);
+  const existing = await listDcsTree(config, config.branch);
+
+  type ChangeFile = { operation: "create" | "update"; path: string; content: string; sha?: string };
+  const changeFiles: ChangeFile[] = [];
+  for (const f of files) {
+    const blobSha = await gitBlobSha(f.content);
+    const existingSha = existing.get(f.path);
+    if (existingSha && existingSha === blobSha) continue; // unchanged — skip
+    const entry: ChangeFile = {
+      operation: existingSha ? "update" : "create",
+      path: f.path,
+      content: utf8ToBase64(f.content),
+    };
+    if (existingSha) entry.sha = existingSha;
+    changeFiles.push(entry);
+  }
+
+  if (changeFiles.length === 0) {
+    // Branch exists (reset above) but the render matches it byte-for-byte —
+    // nothing to commit. Same as commitToDcs's existing-match short-circuit.
+    return { commitSha: "", changed: false, branchTouched: true, committedCount: 0 };
+  }
+
+  const url = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ branch: config.branch, message, files: changeFiles }),
+  });
+  if (!res.ok) {
+    throw new Error(`dcs_batch_commit_failed: POST ${res.status} ${await res.text()}`);
+  }
+  const data = (await res.json()) as { commit?: { sha?: string } };
+  return {
+    commitSha: data.commit?.sha ?? "",
+    changed: true,
+    branchTouched: true,
+    committedCount: changeFiles.length,
   };
 }
 

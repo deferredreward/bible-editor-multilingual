@@ -25,6 +25,7 @@ import {
   buildUsfm,
   closeDcsPr,
   commitToDcs,
+  commitFilesToDcs,
   deleteDcsBranch,
   ensureDcsPr,
   exportTsvShrinkRefused,
@@ -35,6 +36,13 @@ import {
   resourceTargetsFor,
   type Resource,
 } from "./export";
+import {
+  articleStepUnits,
+  articleStepLabel,
+  renderArticleFiles,
+  shrinkRefused,
+  type ArticleResource,
+} from "./articleExport.ts";
 
 // Banner target for export PR failures — same maintainer the post-export
 // validator alerts (see postExport.ts ValidatorConfig.alertTargetUsername).
@@ -99,11 +107,27 @@ export interface StepResult {
 
 const isResource = (s: string): s is Resource => (ALL_RESOURCES as string[]).includes(s);
 
+// One (resource × top-level dir) article export step's outcome. The article
+// analogue of StepResult — keyed by a `label` (e.g. 'tw-bible-kt') rather than
+// a book, and carrying a file count instead of a row count.
+export interface ArticleStepResult {
+  label: string;
+  resource: ArticleResource;
+  topDir: string;
+  fileCount: number;
+  committedCount: number;
+  branch: string | null;
+  dcsCommitSha: string | null;
+  dcsSkippedReason: string | null;
+  prNumber: number | null;
+}
+
 export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   async run(event: WorkflowEvent<ExportParams>, step: WorkflowStep): Promise<{
     instanceId: string;
     totalSteps: number;
     results: StepResult[];
+    articleResults: ArticleStepResult[];
   }> {
     const params = event.payload ?? {};
     const instanceId = `export-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
@@ -164,7 +188,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // Self-heal mode (08:00 REIMPORT_CRON): D1 is now synced from DCS; there's
     // nothing to render or commit, so stop before the export steps below.
     if (params.reimportOnly) {
-      return { instanceId, totalSteps: 0, results: [] };
+      return { instanceId, totalSteps: 0, results: [], articleResults: [] };
     }
 
     // 2. One step per (book, resource). step.do persists, so a single flaky
@@ -227,6 +251,57 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
     }
 
+    // 2b. tW/tA article export. One step per (resource × top-level dir) —
+    //     tw: bible/{kt,names,other}; ta: {translate,checking,process,intro} —
+    //     mirroring the per-(book × resource) granularity above so a flaky
+    //     commit retries a small slice. Only for TRANSLATION projects: the
+    //     English root translates no articles (all target_md NULL), so there is
+    //     nothing to export and we skip the DCS round-trips entirely. Also
+    //     skipped for any NARROWED manual run: articles are book-independent, so
+    //     a run scoped to one book (params.book — "re-export JON") or one verse
+    //     resource (params.resource) didn't ask for the global tW/tA article
+    //     export and must not fire it. Articles run only on a full-scope run
+    //     (the nightly cron, or a manual run with neither book nor resource).
+    const articleResults: ArticleStepResult[] = [];
+    const projectCfgForArticles = await getProjectConfig(this.env);
+    if (projectCfgForArticles.translationSource && !params.resource && !params.book) {
+      for (const unit of articleStepUnits()) {
+        const stepName = `export-article-${unit.resource}-${unit.topDir.replace(/\//g, "-")}`;
+        try {
+          const result = await step.do(
+            stepName,
+            { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+            async () => this.exportArticleDir(unit.resource, unit.topDir, instanceId, dcsAllowed),
+          );
+          articleResults.push(result);
+        } catch (e) {
+          // Same isolation shape as the verse loop: a single (resource, dir)
+          // failure must not abort the instance or starve the other dirs.
+          const reason = e instanceof Error ? e.message : String(e);
+          const label = articleStepLabel(unit.resource, unit.topDir);
+          console.error("export article step failed", { label, error: reason });
+          try {
+            await step.do(`${stepName}-record-fail`, async () =>
+              this.recordSnapshot(label, unit.resource, null, null, 0, `error:${reason.slice(0, 180)}`),
+            );
+          } catch {
+            /* recording the failure is best-effort; never let it abort the run */
+          }
+          articleResults.push({
+            label,
+            resource: unit.resource,
+            topDir: unit.topDir,
+            fileCount: 0,
+            committedCount: 0,
+            branch: null,
+            dcsCommitSha: null,
+            dcsSkippedReason: `error:${reason.slice(0, 180)}`,
+            prNumber: null,
+          });
+        }
+      }
+    }
+
     // 3. Best-effort escalation of integrity issues the export can't auto-fix.
     //    Footnote (\f/\f*) imbalance is real data corruption a translator must
     //    resolve; surface it as an admin banner. Human-decision content issues
@@ -239,7 +314,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       console.error("export lint-escalate failed", { error: e instanceof Error ? e.message : String(e) });
     }
 
-    return { instanceId, totalSteps: results.length, results };
+    return {
+      instanceId,
+      totalSteps: results.length + articleResults.length,
+      results,
+      articleResults,
+    };
   }
 
   // Lint each book's rendered scripture for footnote imbalance and raise/clear an
@@ -567,6 +647,185 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     };
   }
 
+  // Export one (resource × top-level dir) of tW/tA articles. The article
+  // analogue of exportOne: render target_md files from D1 → R2 backup →
+  // safety-rail guards → single batch commit → PR → snapshot. See
+  // docs/design/tw-ta-translation-modules.md §5.
+  private async exportArticleDir(
+    resource: ArticleResource,
+    topDir: string,
+    instanceId: string,
+    dcsAllowed: boolean,
+  ): Promise<ArticleStepResult> {
+    const label = articleStepLabel(resource, topDir);
+    const { files, count } = await renderArticleFiles(this.env, resource, topDir);
+
+    if (count === 0) {
+      await this.recordSnapshot(label, resource, null, null, 0, "no_units");
+      return {
+        label, resource, topDir,
+        fileCount: 0, committedCount: 0,
+        branch: null, dcsCommitSha: null, dcsSkippedReason: "no_units", prNumber: null,
+      };
+    }
+
+    const cfg = await getProjectConfig(this.env);
+    const repo = resource === "tw" ? cfg.repos.tw : cfg.repos.ta;
+    const owner = this.env.DCS_EXPORT_OWNER ?? cfg.exportOrg;
+    const branch = buildExportBranch(label, []);
+
+    // R2 backup: one JSON bundle of {path: content} for the whole dir (not one
+    // object per file — that would be hundreds of R2 puts). Recoverable if the
+    // DCS commit later fails, same role as the verse path's per-file R2 write.
+    const r2Key = `exports/${instanceId}/articles/${label}.json`;
+    await this.env.BLOBS.put(
+      r2Key,
+      JSON.stringify({ resource, topDir, files }),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+
+    let dcsCommitSha: string | null = null;
+    let dcsSkippedReason: string | null = null;
+    let committedCount = 0;
+    let prNumber: number | null = null;
+    let prError: string | null = null;
+    // The branch reported in the result: null until we either commit to it or
+    // do a dry run (which reports the would-be branch, for parity with the verse
+    // exportOne). A guard skip leaves it null — nothing was committed there.
+    let resultBranch: string | null = null;
+
+    const done = (): ArticleStepResult => ({
+      label, resource, topDir,
+      fileCount: count, committedCount,
+      branch: resultBranch,
+      dcsCommitSha, dcsSkippedReason, prNumber,
+    });
+
+    if (!dcsAllowed) {
+      dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
+      resultBranch = branch; // report the would-be branch (matches exportOne's dry return)
+      await this.recordSnapshot(label, resource, branch, null, count, dcsSkippedReason, null, null);
+      return done();
+    }
+
+    // Safety rail — the article carry-over of the verse export's shrink guard:
+    // the backstop against a truncated / partial D1 read shipping a destructive
+    // shrink (the twl_PSA clobber signature). Baseline = the file count THIS
+    // export system last successfully committed for this (label, resource),
+    // from export_snapshots — NOT the target repo's current .md count. Two
+    // reasons this is the right baseline: (1) the intent is "don't drop
+    // PREVIOUSLY-EXPORTED files," which our own last export count measures
+    // exactly; (2) a GL target repo may be provisioned by seeding the full
+    // English article set, so its live .md count is NOT what we exported —
+    // comparing against it would false-block every early export (a handful
+    // translated vs ~1,000 English files). The verse path's SHA-watermark
+    // freshness gate has no article analogue: there is no article DCS→D1
+    // reimport loop (import-articles.mjs only seeds source_md) and the target
+    // has no out-of-band writer (only this export writes it, via a PR). First
+    // export (no prior successful snapshot) → nothing to protect → allowed.
+    const prevExported = await this.lastArticleExportCount(label, resource);
+    if (prevExported != null && shrinkRefused(count, prevExported)) {
+      const detail = `shrink_${prevExported - count}_of_${prevExported}`;
+      await this.recordArticleGuardAlert(label, resource, repo, detail);
+      dcsSkippedReason = `shrink_guard:${detail}`;
+      await this.recordSnapshot(label, resource, null, null, count, dcsSkippedReason);
+      return done();
+    }
+
+    const dcsCfg = { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo, branch };
+    resultBranch = branch; // committing to it now
+    const message = `bible-editor export: ${label} (${count} files) → ${branch} (${instanceId})`;
+    const commit = await commitFilesToDcs(dcsCfg, files, message);
+    dcsCommitSha = commit.commitSha || null;
+    committedCount = commit.committedCount;
+    if (!commit.changed) dcsSkippedReason = "unchanged"; // render already on the branch
+
+    // PR maintenance — runs whether or not THIS run changed the branch. Since
+    // count > 0 here, `commitFilesToDcs` always reset/created the branch
+    // (branchTouched), and the branch carries unmerged article translations
+    // either way. door43's frozen-merge-base bug means resetExportBranchToMaster
+    // can't actually re-base a long-lived branch (it 409s and only confirms the
+    // ref exists), so a PR that isn't periodically "update-branch"ed drifts to
+    // mergeable:false — hence we ensure + update on unchanged runs too, not just
+    // when the content changed. Unlike the verse path we do NOT close on
+    // unchanged: an article "unchanged" PR is NOT empty — it still holds the
+    // translations awaiting the publisher (only merging it lands them on master).
+    // No auto-merge: articles have no post-export validator; release-gating on
+    // completeness belongs to the future gl-publisher (design §5). Best-effort —
+    // the commit already landed, so a PR failure must not fail the step.
+    if (commit.branchTouched) {
+      try {
+        const pr = await ensureDcsPr(
+          dcsCfg,
+          `bible-editor: ${resource.toUpperCase()} ${topDir} → master`,
+          `Auto-opened by the bible-editor nightly export. Holds the latest ${resource.toUpperCase()} ` +
+            `article translations under \`${topDir}\`. Release-gating on completeness / checking level ` +
+            `is left to the publisher.`,
+        );
+        prNumber = pr.number;
+        if (pr.number != null) {
+          try {
+            const upd = await updateDcsPrBranch(dcsCfg, pr.number);
+            if (!upd.ok) {
+              console.log("export article PR update-branch skipped", {
+                label, repo, pr: pr.number, status: upd.status, detail: upd.detail,
+              });
+            }
+          } catch (e) {
+            console.error("export article PR update-branch failed", {
+              label, repo, pr: pr.number, error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+      } catch (e) {
+        prError = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+        console.error("export article ensure-PR failed", { label, repo, branch, error: prError });
+        await this.recordPrFailureAlert(label, resource, repo, branch, prError);
+      }
+    }
+
+    await this.recordSnapshot(label, resource, branch, dcsCommitSha, count, dcsSkippedReason, prNumber, prError);
+    return done();
+  }
+
+  // The file count THIS export system last SUCCESSFULLY committed for a
+  // (label, resource) — the shrink guard's baseline. `commit_sha IS NOT NULL`
+  // is the success predicate (same one contributorsFor uses). null when there's
+  // no prior successful export (first run → nothing to protect). Using our own
+  // export history, not the target repo's live file count, is what keeps the
+  // guard from false-blocking when the target was seeded with English articles.
+  private async lastArticleExportCount(
+    label: string,
+    resource: ArticleResource,
+  ): Promise<number | null> {
+    const row = await this.env.DB.prepare(
+      `SELECT rows_exported FROM export_snapshots
+        WHERE book = ?1 AND resource = ?2 AND commit_sha IS NOT NULL
+        ORDER BY committed_at DESC LIMIT 1`,
+    )
+      .bind(label, resource)
+      .first<{ rows_exported: number | null }>();
+    return row?.rows_exported ?? null;
+  }
+
+  // Banner alert when an article export step is blocked by the shrink guard (a
+  // render that would drop a large fraction of the files we last exported — the
+  // truncated/partial-D1 signature). Same replace-undismissed shape as
+  // recordShrinkSkipAlert.
+  private async recordArticleGuardAlert(
+    label: string,
+    resource: ArticleResource,
+    repo: string,
+    detail: string,
+  ): Promise<void> {
+    const source = `export_article_guard:${label}`;
+    const message =
+      `Benjamin — nightly export BLOCKED ${resource.toUpperCase()} articles (\`${label}\` → ${repo}): ${detail}. ` +
+      `The render has far fewer files than the last successful export of this set (truncated/partial D1 read) — ` +
+      `refusing to shrink it. Re-check the article_units data, then re-export.`;
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
+  }
+
   private async buildResource(book: string, resource: Resource): Promise<{ content: string; rowCount: number }> {
     const db = this.env.DB;
     if (resource === "tn") {
@@ -808,7 +1067,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
   private async recordSnapshot(
     book: string,
-    resource: Resource,
+    resource: Resource | ArticleResource,
     branch: string | null,
     commitSha: string | null,
     rowsExported: number,
@@ -999,7 +1258,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // pile up. Best-effort — an alert-write failure must not fail the step.
   private async recordPrFailureAlert(
     book: string,
-    resource: Resource,
+    resource: Resource | ArticleResource,
     repo: string,
     branch: string,
     detail: string,
