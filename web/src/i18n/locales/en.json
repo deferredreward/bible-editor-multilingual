@@ -149,7 +149,20 @@
     "questions": "Questions",
     "examplesCount": "{{n}} validated",
     "noExamples": "No validated examples yet. Approve notes in translation mode to build this memory.",
-    "revoke": "Un-approve"
+    "revoke": "Un-approve",
+    "assistedMode": "Assisted mode",
+    "assistedModeHelp": "When on, translate runs send the team's context pack (brief, terms, validated examples) to the AI.",
+    "assistedModeDisabled": "Export a context pack successfully before enabling assisted mode — an empty pack fails the AI run.",
+    "assistedModeAdminOnly": "Only an admin can change assisted mode or export the context pack.",
+    "assistedModeOn": "Assisted",
+    "assistedModeOff": "Raw baseline",
+    "exportNow": "Export context now",
+    "exportQueued": "Context export queued",
+    "exportStatusNever": "No context export yet",
+    "exportStatusSuccess": "Context pack ready ({{sha}})",
+    "exportStatusOther": "Last export: {{status}}",
+    "feedingAi": "Feeding AI",
+    "notFeedingAi": "Not yet feeding the AI — enable assisted mode after a successful export"
   },
   "export": {
     "noText": "No {{version}} text to export for {{target}}.",

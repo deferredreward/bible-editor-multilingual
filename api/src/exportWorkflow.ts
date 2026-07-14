@@ -65,6 +65,23 @@ import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportReso
 import { getProjectConfig } from "./projectConfig.ts";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 import { lintUsfmVerses } from "./lint";
+import {
+  renderContextPack,
+  contextRepoOwner,
+  contextRepoName,
+  type TranslationPrefsForRender,
+  type ValidatedTnRow,
+  type ValidatedTqRow,
+} from "./contextExport.ts";
+import { contextShrinkRefused, shrinkDetailCode, hasSemanticContent } from "./contextExportLib.ts";
+import { fetchEnSourceMaps } from "./contextSourceFetch.ts";
+import { commitContextPackToMaster, getBranchTipSha } from "./contextExportDcs.ts";
+import {
+  insertContextExportQueued,
+  finalizeContextExport,
+  getLatestContextExportStats,
+} from "./contextExportResults.ts";
+import type { TermImport } from "./translationMemoryLib.ts";
 
 export interface ExportParams {
   // Restrict the run to one book. Useful for manual /api/exports/run.
@@ -85,6 +102,11 @@ export interface ExportParams {
   // service token (reads public raw files) — unlike the pre-export sync, which
   // is gated on dcsAllowed.
   reimportOnly?: boolean;
+  // Skip verse + article phases; run only the translation-context pack export
+  // (same durable workflow bindings / auth / retries as a full export).
+  contextOnly?: boolean;
+  // Admin override for the context-pack semantic shrink guard.
+  shrinkOverride?: boolean;
 }
 
 export interface StepResult {
@@ -123,15 +145,45 @@ export interface ArticleStepResult {
   prNumber: number | null;
 }
 
+export interface ContextPackStepResult {
+  status: string;
+  commitSha: string | null;
+  contentFiles: number;
+  terms: number;
+  examplesTn: number;
+  examplesTq: number;
+  failureReason: string | null;
+}
+
 export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   async run(event: WorkflowEvent<ExportParams>, step: WorkflowStep): Promise<{
     instanceId: string;
     totalSteps: number;
     results: StepResult[];
     articleResults: ArticleStepResult[];
+    contextResult: ContextPackStepResult | null;
   }> {
     const params = event.payload ?? {};
     const instanceId = `export-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
+
+    const dcsAllowed = !params.dryDcs && !!this.env.DCS_SERVICE_TOKEN;
+
+    // contextOnly: first-class ExportWorkflow mode — skip verse/article/reimport;
+    // same durable step retries + admin trigger as a full export.
+    if (params.contextOnly) {
+      const contextResult = await step.do(
+        "export-context-pack",
+        { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+        async () => this.exportContextPack(instanceId, dcsAllowed, !!params.shrinkOverride),
+      );
+      return {
+        instanceId,
+        totalSteps: 1,
+        results: [],
+        articleResults: [],
+        contextResult,
+      };
+    }
 
     // 1. Resolve the books list.
     const books = await step.do("list-books", async () => {
@@ -145,8 +197,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const resources: Resource[] = params.resource && isResource(params.resource)
       ? [params.resource]
       : ALL_RESOURCES;
-
-    const dcsAllowed = !params.dryDcs && !!this.env.DCS_SERVICE_TOKEN;
 
     // 1b. Sync D1 from current master before rendering. Pulls out-of-band master
     //     edits (other tooling, manual USFM cleanup, the bp-assistant bot) into
@@ -189,7 +239,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // Self-heal mode (08:00 REIMPORT_CRON): D1 is now synced from DCS; there's
     // nothing to render or commit, so stop before the export steps below.
     if (params.reimportOnly) {
-      return { instanceId, totalSteps: 0, results: [], articleResults: [] };
+      return { instanceId, totalSteps: 0, results: [], articleResults: [], contextResult: null };
     }
 
     // 2. One step per (book, resource). step.do persists, so a single flaky
@@ -303,6 +353,33 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
     }
 
+    // 2c. translation-context pack export. Full-scope GL runs only (nightly or
+    //     manual with neither book nor resource). Writes {owner}/translation-context
+    //     on master with CAS + shrink guard. See docs/CONTEXT-REPO-CONTRACT.md.
+    let contextResult: ContextPackStepResult | null = null;
+    const projectCfgForContext = await getProjectConfig(this.env);
+    if (projectCfgForContext.translationSource && !params.resource && !params.book) {
+      try {
+        contextResult = await step.do(
+          "export-context-pack",
+          { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+          async () => this.exportContextPack(instanceId, dcsAllowed, !!params.shrinkOverride),
+        );
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        console.error("export context-pack step failed", { error: reason });
+        contextResult = {
+          status: "failed",
+          commitSha: null,
+          contentFiles: 0,
+          terms: 0,
+          examplesTn: 0,
+          examplesTq: 0,
+          failureReason: reason.slice(0, 180),
+        };
+      }
+    }
+
     // 3. Best-effort escalation of integrity issues the export can't auto-fix.
     //    Footnote (\f/\f*) imbalance is real data corruption a translator must
     //    resolve; surface it as an admin banner. Human-decision content issues
@@ -317,10 +394,268 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     return {
       instanceId,
-      totalSteps: results.length + articleResults.length,
+      totalSteps: results.length + articleResults.length + (contextResult ? 1 : 0),
       results,
       articleResults,
+      contextResult,
     };
+  }
+
+  // Render D1 translation memory → {owner}/translation-context@master with
+  // expected-parent CAS, semantic shrink guard, and full result persistence.
+  // A SHA is only recorded as success after CAS lands (or dry_run with stats).
+  private async exportContextPack(
+    instanceId: string,
+    dcsAllowed: boolean,
+    shrinkOverride: boolean,
+  ): Promise<ContextPackStepResult> {
+    const cfg = await getProjectConfig(this.env);
+    const owner = contextRepoOwner(this.env, cfg);
+    const resultId = await insertContextExportQueued(this.env, { instanceId, owner });
+
+    const empty = (status: string, reason: string | null): ContextPackStepResult => ({
+      status,
+      commitSha: null,
+      contentFiles: 0,
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+      failureReason: reason,
+    });
+
+    if (!cfg.translationSource) {
+      await finalizeContextExport(this.env, resultId, {
+        status: "failed",
+        failureReason: "not_a_gl_project",
+      });
+      return empty("failed", "not_a_gl_project");
+    }
+
+    // Load prefs / terms / validated rows from D1.
+    const prefsRow = await this.env.DB.prepare(
+      `SELECT audience, purpose, register, script_notes, instructions_md
+         FROM translation_prefs WHERE id = 1`,
+    ).first<TranslationPrefsForRender>();
+    const prefs: TranslationPrefsForRender = prefsRow ?? {
+      audience: null,
+      purpose: null,
+      register: "default",
+      script_notes: null,
+      instructions_md: null,
+    };
+
+    const termRs = await this.env.DB.prepare(
+      `SELECT concept_id, source_term, target_term, status, replacement, comment, tw_link
+         FROM terminology WHERE deleted_at IS NULL
+         ORDER BY concept_id, source_term, status`,
+    ).all<TermImport>();
+    const terms = termRs.results ?? [];
+
+    const tnRs = await this.env.DB.prepare(
+      `SELECT id, book, ref_raw, support_reference, quote, note, updated_at
+         FROM tn_rows
+        WHERE translation_state = 'validated' AND deleted_at IS NULL AND trashed_at IS NULL`,
+    ).all<ValidatedTnRow>();
+    const tqRs = await this.env.DB.prepare(
+      `SELECT id, book, ref_raw, question, response, updated_at
+         FROM tq_rows
+        WHERE translation_state = 'validated' AND deleted_at IS NULL`,
+    ).all<ValidatedTqRow>();
+    const tnRows = tnRs.results ?? [];
+    const tqRows = tqRs.results ?? [];
+
+    const sourceFetch = await fetchEnSourceMaps(this.env, cfg, tnRows, tqRows);
+    if (!sourceFetch.ok) {
+      await finalizeContextExport(this.env, resultId, {
+        status: "failed",
+        failureReason: sourceFetch.reason,
+      });
+          await this.recordSnapshot("CONTEXT", "ctx", null, null, 0, sourceFetch.reason);
+      return empty("failed", sourceFetch.reason);
+    }
+
+    // CAS retry loop: re-render from D1 on parent conflict (max 3).
+    const maxAttempts = 3;
+    let lastReason: string | null = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const rendered = renderContextPack({
+        cfg,
+        prefs,
+        terms,
+        tnRows,
+        tqRows,
+        sources: sourceFetch.sources,
+      });
+      if (!rendered.ok) {
+        await finalizeContextExport(this.env, resultId, {
+          status: "failed",
+          failureReason: rendered.reason,
+        });
+        await this.recordSnapshot("CONTEXT", "ctx" , null, null, 0, rendered.reason);
+        return empty("failed", rendered.reason);
+      }
+
+      const { files, stats } = rendered;
+      // Scaffold brief.md alone (— + Register: default) is not enough — refuse
+      // so assisted mode can't flip on an empty pack that still passes the bot's
+      // file-presence check.
+      if (
+        !hasSemanticContent({
+          prefs,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+        })
+      ) {
+        await finalizeContextExport(this.env, resultId, {
+          status: "no_content",
+          stats,
+          failureReason: "scaffold_only",
+        });
+        await this.recordSnapshot("CONTEXT", "ctx", null, null, 0, "scaffold_only");
+        return empty("no_content", "scaffold_only");
+      }
+
+      const prevStats = await getLatestContextExportStats(this.env);
+      const shrink = contextShrinkRefused(stats, prevStats);
+      if (shrink && !shrinkOverride) {
+        const code = shrinkDetailCode(shrink);
+        await finalizeContextExport(this.env, resultId, {
+          status: "shrink_refused",
+          stats,
+          failureReason: code,
+        });
+        await this.recordContextShrinkAlert(owner, code);
+        await this.recordSnapshot("CONTEXT", "ctx" , null, null, stats.contentFiles, code);
+        return {
+          status: "shrink_refused",
+          commitSha: null,
+          contentFiles: stats.contentFiles,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+          failureReason: code,
+        };
+      }
+
+      const r2Key = `exports/${instanceId}/context-pack.json`;
+      await this.env.BLOBS.put(
+        r2Key,
+        JSON.stringify({ files, stats, owner, renderedAt: new Date().toISOString() }),
+        { httpMetadata: { contentType: "application/json" } },
+      );
+
+      if (!dcsAllowed) {
+        const status = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "dry_run";
+        await finalizeContextExport(this.env, resultId, {
+          status: "dry_run",
+          stats,
+          r2Key,
+          failureReason: this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token",
+        });
+        await this.recordSnapshot(
+          "CONTEXT",
+          "ctx" ,
+          "master",
+          null,
+          stats.contentFiles,
+          this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token",
+        );
+        return {
+          status,
+          commitSha: null,
+          contentFiles: stats.contentFiles,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+          failureReason: this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token",
+        };
+      }
+
+      try {
+        const tip = await getBranchTipSha(
+          {
+            baseUrl: this.env.DCS_BASE_URL,
+            token: this.env.DCS_SERVICE_TOKEN!,
+            owner,
+            repo: contextRepoName(),
+          },
+          "master",
+        );
+        const commit = await commitContextPackToMaster(
+          {
+            baseUrl: this.env.DCS_BASE_URL,
+            token: this.env.DCS_SERVICE_TOKEN!,
+            owner,
+            repo: contextRepoName(),
+          },
+          files,
+          `bible-editor context-pack export (${stats.contentFiles} files, ${stats.terms} terms) → master (${instanceId})`,
+          tip,
+        );
+        await finalizeContextExport(this.env, resultId, {
+          status: "success",
+          commitSha: commit.commitSha,
+          parentSha: commit.parentSha,
+          stats,
+          r2Key,
+        });
+        await this.recordSnapshot(
+          "CONTEXT",
+          "ctx" ,
+          "master",
+          commit.commitSha,
+          stats.contentFiles,
+          commit.changed ? null : "unchanged",
+        );
+        return {
+          status: "success",
+          commitSha: commit.commitSha,
+          contentFiles: stats.contentFiles,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+          failureReason: null,
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        lastReason = msg;
+        if (msg.startsWith("context_cas_conflict") && attempt + 1 < maxAttempts) {
+          console.warn("context pack CAS conflict; re-rendering", { attempt, msg });
+          continue;
+        }
+        await finalizeContextExport(this.env, resultId, {
+          status: "failed",
+          stats,
+          failureReason: msg.slice(0, 400),
+          r2Key,
+        });
+        await this.recordSnapshot("CONTEXT", "ctx" , null, null, stats.contentFiles, `error:${msg.slice(0, 160)}`);
+        return {
+          status: "failed",
+          commitSha: null,
+          contentFiles: stats.contentFiles,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+          failureReason: msg.slice(0, 180),
+        };
+      }
+    }
+
+    await finalizeContextExport(this.env, resultId, {
+      status: "failed",
+      failureReason: lastReason ?? "cas_retries_exhausted",
+    });
+    return empty("failed", lastReason ?? "cas_retries_exhausted");
+  }
+
+  private async recordContextShrinkAlert(owner: string, detail: string): Promise<void> {
+    const source = "export_context_guard";
+    const message =
+      `Benjamin — context-pack export BLOCKED for ${owner}/translation-context: ${detail}. ` +
+      `Re-check translation prefs/terms/examples, then re-export with shrinkOverride if intentional.`;
+    await this.writeAlert(source, message, `${this.env.DCS_BASE_URL}/${owner}/translation-context`);
   }
 
   // Lint each book's rendered scripture for footnote imbalance and raise/clear an
@@ -1096,7 +1431,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
   private async recordSnapshot(
     book: string,
-    resource: Resource | ArticleResource,
+    resource: string,
     branch: string | null,
     commitSha: string | null,
     rowsExported: number,

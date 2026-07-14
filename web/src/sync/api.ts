@@ -291,6 +291,17 @@ export function setReadOnly(v: boolean) {
   readOnly = v;
 }
 
+// Admin flag — set when the current JWT carries role='admin'. Admin-only
+// surfaces (assisted-mode toggle, context export, prefs PUT) check this so
+// editors see a clear disabled state instead of a silent 403.
+let adminRole = false;
+export function isAdmin(): boolean {
+  return adminRole;
+}
+export function setIsAdmin(v: boolean) {
+  adminRole = v;
+}
+
 // Surface to the UI that we tried to silently refresh a 401 and it failed.
 // App.tsx subscribes to render a "Session expired — sign in again" banner;
 // the outbox keeps queuing edits in the meantime so nothing is lost.
@@ -892,6 +903,19 @@ export type TranslationPrefsInput = {
   assisted_mode: boolean;
 };
 
+export interface ContextExportStatus {
+  status: string;
+  sha: string | null;
+  completedAt: number | null;
+  terms: number;
+  examplesTn: number;
+  examplesTq: number;
+  contentFiles: number;
+  totalBytes: number;
+  owner: string | null;
+  failureReason: string | null;
+}
+
 export interface Term {
   id: number;
   concept_id: string;
@@ -1415,6 +1439,18 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
       body: JSON.stringify(patch),
+    }),
+  getContextExportStatus: () =>
+    request<ContextExportStatus>(`/api/translation-memory/export-status`),
+  runContextExport: (opts?: { dryDcs?: boolean; shrinkOverride?: boolean }) =>
+    request<{ id: string; status: string }>(`/api/exports/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contextOnly: true,
+        dryDcs: opts?.dryDcs,
+        shrinkOverride: opts?.shrinkOverride,
+      }),
     }),
   getTerms: (opts?: { status?: string; q?: string }) => {
     const qs = new URLSearchParams();

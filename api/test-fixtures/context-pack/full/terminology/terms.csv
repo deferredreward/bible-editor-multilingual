@@ -1,0 +1,5 @@
+concept_id,source_term,target_term,status,replacement,comment,tw_link
+kt/grace,grace,نعمة,preferred,,,
+kt/lord,Lord,الرب,preferred,,,rc://ar/tw/dict/bible/kt/lord
+kt/lord,Lord,السيد,forbidden,الرب,use the standard rendering,
+names/yhwh,YHWH,,do_not_translate,,,

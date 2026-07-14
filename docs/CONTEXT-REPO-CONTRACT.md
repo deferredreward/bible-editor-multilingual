@@ -1,8 +1,23 @@
 # CONTEXT-REPO-CONTRACT — `{org}/translation-context`
 
-**Status:** PROPOSED to bp-assistant · 2026-07-14 · owner: Benjamin
-**Consumers:** the bp-assistant `translate` skill (reader) · Bible Editor's context-export job (writer, to be built)
+**Status:** CONFIRMED against bp-assistant reader · 2026-07-14 · owner: Benjamin
+**Consumers:** the bp-assistant `translate` skill (reader) · Bible Editor's context-export job (writer)
 **Referenced by:** `INTEGRATION.md` §0.1 (`contextRef` opt-in), `PIPELINE-SPEC.md` §2.2/§3/§4 (both in the parent strategy folder), [`preferences-panel-design.md`](preferences-panel-design.md) §1.
+
+## Parser compatibility pin
+
+Pinned HEAD SHAs of the bot-side contract PRs (update to merge commits when they land on `main`):
+
+```yaml
+parser_compat:
+  bp_assistant: "f78cce88b2a3bca52e93ad44da9b36dabd367f55"   # unfoldingWord/bp-assistant#206 feat/context-repo-contract
+  bp_assistant_skills: "6475d5cdc95c96025d0e04e713b9d2be75754439" # unfoldingWord/bp-assistant-skills#136
+  format: 1
+  empty_pack_error_prefix: 'context pack has no content files at "'
+```
+
+Shared fixtures: `api/test-fixtures/context-pack/{minimal,full,invalid}/`.
+Validation gate (Node, not Worker): `node scripts/validate-context-pack.mjs --pack <dir>`.
 
 This pins the file layout and schemas of the per-language context repo so both sides can build independently. It **supersedes PIPELINE-SPEC §3's sketch** where they differ — the deltas exist because the editor side is now *built* (migration `0040_translation_memory.sql`, `/api/translation-memory/*`, panel UI — branch `feat/translation-preferences-panel`) and the schemas below are what its export will actually render from D1.
 
