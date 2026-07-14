@@ -280,13 +280,26 @@ export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
   return cfg;
 }
 
+// `overrides` has three intents, mirroring the PUT body:
+//   undefined → PRESERVE the row's existing overrides_json (switching preset
+//               must not silently erase an admin's custom repos/labels/panes);
+//   null      → explicitly CLEAR overrides;
+//   object    → REPLACE overrides.
 export async function writeProjectConfig(
   env: Env,
   preset: string,
-  overrides: Partial<ProjectConfig> | null,
+  overrides: Partial<ProjectConfig> | null | undefined,
 ): Promise<ProjectConfig> {
   if (!PRESETS[preset]) throw new Error(`unknown preset: ${preset}`);
-  const overridesJson = overrides ? JSON.stringify(overrides) : null;
+  let overridesJson: string | null;
+  if (overrides === undefined) {
+    const existing = await env.DB
+      .prepare("SELECT overrides_json FROM project_config WHERE id = 1")
+      .first<{ overrides_json: string | null }>();
+    overridesJson = existing?.overrides_json ?? null;
+  } else {
+    overridesJson = overrides ? JSON.stringify(overrides) : null;
+  }
   await env.DB
     .prepare(
       `INSERT INTO project_config (id, preset, overrides_json, updated_at)
