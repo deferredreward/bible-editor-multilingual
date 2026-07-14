@@ -735,23 +735,29 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const commit = await commitFilesToDcs(dcsCfg, files, message);
     dcsCommitSha = commit.commitSha || null;
     committedCount = commit.committedCount;
+    if (!commit.changed) dcsSkippedReason = "unchanged"; // render already on the branch
 
-    if (!commit.changed) {
-      // Render matched the branch byte-for-byte — nothing to merge.
-      dcsSkippedReason = "unchanged";
-    } else {
-      // Open a PR into master so the article edits are visible/reviewable. No
-      // auto-merge: articles have no post-export validator (release-gating on
-      // completeness belongs to the future gl-publisher, per design §5), so the
-      // PR just waits for a human/publisher. Best-effort — the commit already
-      // landed, so a PR failure must not fail the step.
+    // PR maintenance — runs whether or not THIS run changed the branch. Since
+    // count > 0 here, `commitFilesToDcs` always reset/created the branch
+    // (branchTouched), and the branch carries unmerged article translations
+    // either way. door43's frozen-merge-base bug means resetExportBranchToMaster
+    // can't actually re-base a long-lived branch (it 409s and only confirms the
+    // ref exists), so a PR that isn't periodically "update-branch"ed drifts to
+    // mergeable:false — hence we ensure + update on unchanged runs too, not just
+    // when the content changed. Unlike the verse path we do NOT close on
+    // unchanged: an article "unchanged" PR is NOT empty — it still holds the
+    // translations awaiting the publisher (only merging it lands them on master).
+    // No auto-merge: articles have no post-export validator; release-gating on
+    // completeness belongs to the future gl-publisher (design §5). Best-effort —
+    // the commit already landed, so a PR failure must not fail the step.
+    if (commit.branchTouched) {
       try {
         const pr = await ensureDcsPr(
           dcsCfg,
           `bible-editor: ${resource.toUpperCase()} ${topDir} → master`,
           `Auto-opened by the bible-editor nightly export. Holds the latest ${resource.toUpperCase()} ` +
-            `article translations under \`${topDir}\` (${committedCount} file(s) this run). Release-gating ` +
-            `on completeness / checking level is left to the publisher.`,
+            `article translations under \`${topDir}\`. Release-gating on completeness / checking level ` +
+            `is left to the publisher.`,
         );
         prNumber = pr.number;
         if (pr.number != null) {
