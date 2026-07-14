@@ -18,6 +18,8 @@ import {
   serializeTermsCsv,
   dedupeTerms,
   termKey,
+  parseIfMatch,
+  escapeLikeParam,
   type TermImport,
 } from "./translationMemoryLib.ts";
 
@@ -25,14 +27,6 @@ export const translationMemory = new Hono<{
   Bindings: Env;
   Variables: { userId?: number; username?: string };
 }>();
-
-function parseIfMatch(header: string | undefined): number | null {
-  if (!header) return null;
-  const m = /^"?(\d+)"?$/.exec(header.trim());
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  return Number.isFinite(n) ? n : null;
-}
 
 // ---------------------------------------------------------------------------
 // Preferences singleton (brief + instructions + register + assisted flag).
@@ -106,10 +100,11 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
     // First write: only valid against If-Match: 0. Coalesce omitted fields to defaults.
     if (expected !== 0) return c.json({ error: "version_mismatch", current: DEFAULT_PREFS }, 409);
     const d = parsed.data;
-    await c.env.DB.prepare(
+    const insertRes = await c.env.DB.prepare(
       `INSERT INTO translation_prefs
          (id, audience, purpose, register, script_notes, instructions_md, notes, assisted_mode, version, updated_at, updated_by)
-       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)`,
+       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)
+       ON CONFLICT(id) DO NOTHING`,
     )
       .bind(
         d.audience ?? null,
@@ -123,6 +118,12 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
         userId ?? null,
       )
       .run();
+    if (!insertRes.meta.changes) {
+      // Lost a concurrent first-write race — report the winner's row as a 409,
+      // same shape as the ordinary version-mismatch path below.
+      const current = await c.env.DB.prepare(`SELECT * FROM translation_prefs WHERE id = 1`).first<PrefsRow>();
+      return c.json({ error: "version_mismatch", current }, 409);
+    }
     const row = await c.env.DB.prepare(`SELECT * FROM translation_prefs WHERE id = 1`).first<PrefsRow>();
     return c.json({ prefs: row });
   }
@@ -190,12 +191,17 @@ translationMemory.get("/terms", requireEditor, async (c) => {
     conds.push(`status = ?${binds.length}`);
   }
   if (q) {
-    binds.push(`%${q}%`, `%${q}%`, `%${q}%`);
-    conds.push(`(source_term LIKE ?${binds.length - 2} OR target_term LIKE ?${binds.length - 1} OR concept_id LIKE ?${binds.length})`);
+    const like = `%${escapeLikeParam(q)}%`;
+    binds.push(like, like, like);
+    conds.push(
+      `(source_term LIKE ?${binds.length - 2} ESCAPE '\\' OR target_term LIKE ?${binds.length - 1} ESCAPE '\\' OR concept_id LIKE ?${binds.length} ESCAPE '\\')`,
+    );
   }
+  const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "500", 10) || 500, 1), 2000);
+  binds.push(limit);
   const rows = await c.env.DB.prepare(
     `SELECT ${TERM_COLS} FROM terminology WHERE ${conds.join(" AND ")}
-      ORDER BY concept_id, source_term, id`,
+      ORDER BY concept_id, source_term, id LIMIT ?${binds.length}`,
   )
     .bind(...binds)
     .all<TermRow>();
@@ -360,25 +366,44 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
 
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
-  // Upsert each row: UPDATE by (concept_id, source_term, status); INSERT if none.
-  for (const t of deduped) {
-    const upd = await c.env.DB.prepare(
-      `UPDATE terminology
-          SET target_term = ?1, replacement = ?2, comment = ?3, tw_link = ?4,
-              source_status = 'imported', version = version + 1, updated_at = ?5, updated_by = ?6
-        WHERE deleted_at IS NULL AND concept_id = ?7 AND source_term = ?8 AND status = ?9`,
-    )
-      .bind(t.target_term, t.replacement, t.comment, t.tw_link, now, userId ?? null, t.concept_id, t.source_term, t.status)
-      .run();
-    if (!upd.meta.changes) {
-      await c.env.DB.prepare(
-        `INSERT INTO terminology
-           (concept_id, source_term, target_term, status, replacement, comment, tw_link, source_status, version, created_at, updated_at, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'imported', 1, ?8, ?8, ?9)`,
-      )
-        .bind(t.concept_id, t.source_term, t.target_term, t.status, t.replacement, t.comment, t.tw_link, now, userId ?? null)
-        .run();
-    }
+  // Upsert each row: UPDATE by the same trim+lowercase identity termKey() uses
+  // (so applied writes agree with the dry-run count above, and case/whitespace-
+  // variant CSV rows update in place instead of creating a duplicate); INSERT
+  // the misses. Batched via DB.batch() in chunks so a large import stays well
+  // under the Workers ~1000-subrequest cap (CLAUDE.md documents this exact
+  // failure class from the nightly export/reimport path).
+  const CHUNK = 100;
+  const misses: TermImport[] = [];
+  for (let i = 0; i < deduped.length; i += CHUNK) {
+    const chunk = deduped.slice(i, i + CHUNK);
+    const results = await c.env.DB.batch(
+      chunk.map((t) =>
+        c.env.DB.prepare(
+          `UPDATE terminology
+              SET target_term = ?1, replacement = ?2, comment = ?3, tw_link = ?4,
+                  source_status = 'imported', version = version + 1, updated_at = ?5, updated_by = ?6
+            WHERE deleted_at IS NULL
+              AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?7))
+              AND LOWER(TRIM(source_term)) = LOWER(TRIM(?8))
+              AND status = ?9`,
+        ).bind(t.target_term, t.replacement, t.comment, t.tw_link, now, userId ?? null, t.concept_id, t.source_term, t.status),
+      ),
+    );
+    results.forEach((r, idx) => {
+      if (!r.meta.changes) misses.push(chunk[idx]);
+    });
+  }
+  for (let i = 0; i < misses.length; i += CHUNK) {
+    const chunk = misses.slice(i, i + CHUNK);
+    await c.env.DB.batch(
+      chunk.map((t) =>
+        c.env.DB.prepare(
+          `INSERT INTO terminology
+             (concept_id, source_term, target_term, status, replacement, comment, tw_link, source_status, version, created_at, updated_at, updated_by)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'imported', 1, ?8, ?8, ?9)`,
+        ).bind(t.concept_id, t.source_term, t.target_term, t.status, t.replacement, t.comment, t.tw_link, now, userId ?? null),
+      ),
+    );
   }
   return c.json({ dryRun: false, added, updated, parseErrors: errors, total: deduped.length });
 });
@@ -393,8 +418,10 @@ translationMemory.get("/terms/count", requireEditor, async (c) => {
 
 // ---------------------------------------------------------------------------
 // Validated examples (read-only browse). No table — validated rows ARE the
-// examples. The English source pairing is resolved client-side (useSourceNotes),
-// so this returns the target rows + their sticky rowId.
+// examples. Returns the target-language row only (no English source text) —
+// the design doc's "source + target" pairing is NOT yet built: tn_rows/tq_rows
+// don't store a source snapshot, and the row's own English source lives in a
+// different book's published TSV, not this row. Known gap; see PR review notes.
 // ---------------------------------------------------------------------------
 
 translationMemory.get("/examples", requireEditor, async (c) => {
@@ -404,15 +431,16 @@ translationMemory.get("/examples", requireEditor, async (c) => {
   const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
 
   if (resource === "tn") {
-    const conds = ["translation_state = 'validated'", "deleted_at IS NULL"];
+    const conds = ["translation_state = 'validated'", "deleted_at IS NULL", "trashed_at IS NULL"];
     const binds: unknown[] = [];
     if (supportRef) {
       binds.push(supportRef);
       conds.push(`support_reference = ?${binds.length}`);
     }
     if (q) {
-      binds.push(`%${q}%`, `%${q}%`);
-      conds.push(`(note LIKE ?${binds.length - 1} OR quote LIKE ?${binds.length})`);
+      const like = `%${escapeLikeParam(q)}%`;
+      binds.push(like, like);
+      conds.push(`(note LIKE ?${binds.length - 1} ESCAPE '\\' OR quote LIKE ?${binds.length} ESCAPE '\\')`);
     }
     binds.push(limit);
     const rows = await c.env.DB.prepare(
@@ -428,8 +456,9 @@ translationMemory.get("/examples", requireEditor, async (c) => {
     const conds = ["translation_state = 'validated'", "deleted_at IS NULL"];
     const binds: unknown[] = [];
     if (q) {
-      binds.push(`%${q}%`, `%${q}%`);
-      conds.push(`(question LIKE ?${binds.length - 1} OR response LIKE ?${binds.length})`);
+      const like = `%${escapeLikeParam(q)}%`;
+      binds.push(like, like);
+      conds.push(`(question LIKE ?${binds.length - 1} ESCAPE '\\' OR response LIKE ?${binds.length} ESCAPE '\\')`);
     }
     binds.push(limit);
     const rows = await c.env.DB.prepare(

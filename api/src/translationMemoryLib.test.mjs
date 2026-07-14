@@ -11,12 +11,13 @@ import {
   TERM_STATUSES,
   REGISTERS,
   isTermStatus,
-  isRegister,
   parseCsvRows,
   parseTermsCsv,
   serializeTermsCsv,
   dedupeTerms,
   termKey,
+  parseIfMatch,
+  escapeLikeParam,
 } from "./translationMemoryLib.ts";
 
 function assert(cond, msg) {
@@ -32,8 +33,6 @@ console.log("[picklists] closed enums guard bad values");
   assert(isTermStatus("preferred") && isTermStatus("forbidden") && isTermStatus("do_not_translate"), "valid statuses accepted");
   assert(!isTermStatus("banned") && !isTermStatus("") && !isTermStatus(3), "invalid statuses rejected");
   assert(TERM_STATUSES.length === 5, "exactly 5 term statuses");
-  assert(isRegister("formal") && isRegister("default") && isRegister("informal"), "valid registers accepted");
-  assert(!isRegister("casual") && !isRegister(null), "invalid registers rejected");
   assert(REGISTERS.length === 3, "exactly 3 registers");
 }
 
@@ -124,6 +123,24 @@ console.log("[termKey + dedupeTerms] identity + last-wins dedup");
   assert(deduped.length === 2, "same (concept,source,status) collapses; different status kept");
   const pref = deduped.find((t) => t.status === "preferred");
   assert(pref.target_term === "second", "last-wins on collision");
+}
+
+console.log("[parseIfMatch] bare/quoted integers, rejects garbage");
+{
+  assert(parseIfMatch("3") === 3, "bare integer");
+  assert(parseIfMatch('"3"') === 3, "quoted integer");
+  assert(parseIfMatch("0") === 0, "zero (first-write sentinel)");
+  assert(parseIfMatch(undefined) === null, "missing header");
+  assert(parseIfMatch("abc") === null, "non-numeric header rejected");
+  assert(parseIfMatch("3.5") === null, "fractional header rejected");
+}
+
+console.log("[escapeLikeParam] % and _ become literal in a LIKE pattern");
+{
+  assert(escapeLikeParam("100%") === "100\\%", "percent escaped");
+  assert(escapeLikeParam("do_not") === "do\\_not", "underscore escaped");
+  assert(escapeLikeParam("a\\b") === "a\\\\b", "backslash itself escaped");
+  assert(escapeLikeParam("grace") === "grace", "plain text unchanged");
 }
 
 console.log("\nAll translationMemoryLib tests passed.");

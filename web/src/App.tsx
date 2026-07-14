@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
-import { PreferencesWorkspace } from "./components/PreferencesWorkspace";
+import { PreferencesWorkspace, SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
 import {
@@ -16,9 +16,6 @@ import {
   type Role,
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
-
-type PrefsSection = "brief" | "instructions" | "terminology" | "examples";
-const PREFS_SECTIONS: PrefsSection[] = ["brief", "instructions", "terminology", "examples"];
 
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }

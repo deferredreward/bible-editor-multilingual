@@ -48,3 +48,11 @@ CREATE TABLE terminology (
 CREATE INDEX terminology_concept ON terminology(concept_id) WHERE deleted_at IS NULL;
 CREATE INDEX terminology_status ON terminology(status) WHERE deleted_at IS NULL;
 CREATE INDEX terminology_source ON terminology(source_term) WHERE deleted_at IS NULL;
+
+-- Case/whitespace-insensitive identity backstop: the CSV-import upsert (and
+-- termKey() in translationMemoryLib.ts) treat (concept_id, source_term, status)
+-- as one identity after trim+lowercase — this enforces it at the schema level
+-- so concurrent imports can't slip in a case-variant duplicate row.
+CREATE UNIQUE INDEX terminology_identity ON terminology(
+  LOWER(TRIM(concept_id)), LOWER(TRIM(source_term)), status
+) WHERE deleted_at IS NULL;

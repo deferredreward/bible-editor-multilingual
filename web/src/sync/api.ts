@@ -864,8 +864,10 @@ export interface ArticleUnit {
 }
 
 // ── Translation preferences & memory (migration 0040) ──
-export type TermStatus = "preferred" | "admitted" | "deprecated" | "forbidden" | "do_not_translate";
-export type Register = "default" | "formal" | "informal";
+export const TERM_STATUSES = ["preferred", "admitted", "deprecated", "forbidden", "do_not_translate"] as const;
+export type TermStatus = (typeof TERM_STATUSES)[number];
+export const REGISTERS = ["default", "formal", "informal"] as const;
+export type Register = (typeof REGISTERS)[number];
 
 export interface TranslationPrefs {
   id: number;

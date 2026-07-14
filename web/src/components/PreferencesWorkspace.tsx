@@ -27,6 +27,8 @@ import { useTranslation } from "react-i18next";
 import {
   api,
   ApiError,
+  REGISTERS,
+  TERM_STATUSES,
   type Register,
   type Term,
   type TermInput,
@@ -37,11 +39,8 @@ import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfi
 import { useTranslationPrefs, useTerms, useExamples } from "../hooks/useTranslationMemory";
 import { MarkdownView } from "./MarkdownView";
 
-type Section = "brief" | "instructions" | "terminology" | "examples";
-const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
-
-const REGISTERS: Register[] = ["default", "formal", "informal"];
-const TERM_STATUSES: TermStatus[] = ["preferred", "admitted", "deprecated", "forbidden", "do_not_translate"];
+export type Section = "brief" | "instructions" | "terminology" | "examples";
+export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
 
 // Term-status → semantic palette (design §10). Not the violet AI identity —
 // status is not an AI-draft state.
@@ -189,8 +188,17 @@ function BriefSection() {
       save.setMsg(t("preferences.saved"));
       refetch();
     } catch (e) {
-      save.setMsg(e instanceof ApiError && e.status === 409 ? t("preferences.conflict") : t("preferences.saveFailed"));
-      refetch();
+      if (e instanceof ApiError && e.status === 409) {
+        // Someone else's write won — reload their version so the next save
+        // has the right If-Match. Any other failure keeps the user's draft
+        // as-is (refetch() would otherwise clobber unsaved typing).
+        save.setMsg(t("preferences.conflict"));
+        refetch();
+      } else if (e instanceof ApiError && e.status === 403) {
+        save.setMsg(t("preferences.saveForbidden"));
+      } else {
+        save.setMsg(t("preferences.saveFailed"));
+      }
     } finally {
       save.setSaving(false);
     }
@@ -277,8 +285,14 @@ function InstructionsSection() {
       save.setMsg(t("preferences.saved"));
       refetch();
     } catch (e) {
-      save.setMsg(e instanceof ApiError && e.status === 409 ? t("preferences.conflict") : t("preferences.saveFailed"));
-      refetch();
+      if (e instanceof ApiError && e.status === 409) {
+        save.setMsg(t("preferences.conflict"));
+        refetch();
+      } else if (e instanceof ApiError && e.status === 403) {
+        save.setMsg(t("preferences.saveForbidden"));
+      } else {
+        save.setMsg(t("preferences.saveFailed"));
+      }
     } finally {
       save.setSaving(false);
     }
@@ -386,7 +400,9 @@ function TerminologySection({ direction }: { direction: "ltr" | "rtl" }) {
         {t("preferences.terminologyIntro")}
       </Typography>
 
-      {importOpen && <ImportPanel onDone={() => { setImportOpen(false); refetch(); }} />}
+      {importOpen && (
+        <ImportPanel onApplied={refetch} onError={() => save.setMsg(t("preferences.actionFailed"))} />
+      )}
 
       <Stack direction="row" spacing={1} flexWrap="wrap" gap={1}>
         <TextField
@@ -424,7 +440,13 @@ function TerminologySection({ direction }: { direction: "ltr" | "rtl" }) {
       ) : (
         <Stack spacing={1}>
           {terms.map((term) => (
-            <TermRow key={term.id} term={term} direction={direction} onChanged={refetch} />
+            <TermRow
+              key={term.id}
+              term={term}
+              direction={direction}
+              onChanged={refetch}
+              onError={(msg) => save.setMsg(msg)}
+            />
           ))}
         </Stack>
       )}
@@ -524,7 +546,17 @@ function NewTermRow({
   );
 }
 
-function TermRow({ term, direction, onChanged }: { term: Term; direction: "ltr" | "rtl"; onChanged: () => void }) {
+function TermRow({
+  term,
+  direction,
+  onChanged,
+  onError,
+}: {
+  term: Term;
+  direction: "ltr" | "rtl";
+  onChanged: () => void;
+  onError: (msg: string) => void;
+}) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Term>(term);
@@ -543,6 +575,16 @@ function TermRow({ term, direction, onChanged }: { term: Term; direction: "ltr" 
       });
       setEditing(false);
       onChanged();
+    } catch (e) {
+      // A 409 means someone else edited this term first — refresh the row so
+      // the retry has the right version instead of leaving a stale, silently
+      // un-saved edit in place.
+      if (e instanceof ApiError && e.status === 409) {
+        onError(t("preferences.conflict"));
+        onChanged();
+      } else {
+        onError(t("preferences.actionFailed"));
+      }
     } finally {
       setBusy(false);
     }
@@ -552,6 +594,8 @@ function TermRow({ term, direction, onChanged }: { term: Term; direction: "ltr" 
     try {
       await api.deleteTerm(term.id);
       onChanged();
+    } catch {
+      onError(t("preferences.actionFailed"));
     } finally {
       setBusy(false);
     }
@@ -653,7 +697,7 @@ function TermRow({ term, direction, onChanged }: { term: Term; direction: "ltr" 
   );
 }
 
-function ImportPanel({ onDone }: { onDone: () => void }) {
+function ImportPanel({ onApplied, onError }: { onApplied: () => void; onError: () => void }) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [result, setResult] = useState<{ added: number; updated: number; total: number; errors: number } | null>(null);
@@ -665,7 +709,12 @@ function ImportPanel({ onDone }: { onDone: () => void }) {
     try {
       const res = await api.importTerms(text, dryRun);
       setResult({ added: res.added, updated: res.updated, total: res.total, errors: res.parseErrors.length });
-      if (!dryRun) onDone();
+      // Refresh the term list but keep the panel open — the added/updated/error
+      // counts above are the whole point of a real (non-dry-run) import and
+      // must stay visible until the user is done reviewing them.
+      if (!dryRun) onApplied();
+    } catch {
+      onError();
     } finally {
       setBusy(false);
     }
@@ -714,6 +763,7 @@ function ExamplesSection() {
   const [debouncedQ, setDebouncedQ] = useState("");
   const { examples, loading, refetch } = useExamples(true, { resource, q: debouncedQ || undefined, limit: 200 });
   const [busyId, setBusyId] = useState<string | null>(null);
+  const save = useSaveState();
 
   useEffect(() => {
     const h = setTimeout(() => setDebouncedQ(query.trim()), 300);
@@ -726,6 +776,8 @@ function ExamplesSection() {
       if (resource === "tn") await api.validateNote(id, book, false);
       else await api.validateQuestion(id, book, false);
       refetch();
+    } catch {
+      save.setMsg(t("preferences.actionFailed"));
     } finally {
       setBusyId(null);
     }
@@ -813,6 +865,7 @@ function ExamplesSection() {
           ))}
         </Stack>
       )}
+      <Snackbar open={!!save.msg} autoHideDuration={3000} onClose={save.clear} message={save.msg ?? ""} />
     </Stack>
   );
 }

@@ -103,6 +103,8 @@
     "delete": "Delete",
     "saved": "Saved",
     "saveFailed": "Could not save",
+    "saveForbidden": "Only an admin can save these settings.",
+    "actionFailed": "Something went wrong — try again.",
     "conflict": "Someone else changed this — reloaded the latest.",
     "empty": "empty",
     "preview": "Preview",
