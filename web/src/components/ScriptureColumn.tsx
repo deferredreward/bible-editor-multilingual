@@ -152,13 +152,6 @@ interface Props {
   textCheck?: TextLaneCheck;
 }
 
-const VERSION_LABEL: Record<string, string> = {
-  ULT: "ULT",
-  UST: "UST",
-  UHB: "UHB",
-  UGNT: "UGNT",
-};
-
 const READ_ONLY_VERSIONS = new Set(["UHB", "UGNT"]);
 
 // Stable empty column so a missing version (`indexByVersion["ULT"] ?? …`)
@@ -1388,7 +1381,7 @@ function ActiveLine({
             flexGrow: 1,
           }}
         >
-          {VERSION_LABEL[label] ?? label}
+          {label}
         </Typography>
         {showHistory && (
           <Tooltip title={t("shell.tooltipVersionHistory")}>
