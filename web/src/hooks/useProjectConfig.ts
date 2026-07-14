@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, type ProjectConfig } from "../sync/api";
+import {
+  api,
+  type ProjectConfig,
+  type ProjectConfigResponse,
+  type ProjectPreset,
+} from "../sync/api";
 
 // The active per-project source config (org/language/direction/labels +
 // translationSource). Mirrors useNoteTemplates: one shared fetch, a
@@ -29,20 +34,27 @@ function writePersisted(cfg: ProjectConfig) {
   }
 }
 
-let cache: ProjectConfig | null = readPersisted();
-let inflight: Promise<ProjectConfig> | null = null;
-const subscribers = new Set<(c: ProjectConfig) => void>();
+const persisted = readPersisted();
+let cache: ProjectConfigResponse | null = persisted
+  ? { config: persisted, presets: [] }
+  : null;
+let inflight: Promise<ProjectConfigResponse> | null = null;
+const subscribers = new Set<(c: ProjectConfigResponse) => void>();
 
-function load(): Promise<ProjectConfig> {
+function publish(next: ProjectConfigResponse): ProjectConfigResponse {
+  cache = next;
+  writePersisted(next.config);
+  for (const s of subscribers) s(next);
+  return next;
+}
+
+function load(): Promise<ProjectConfigResponse> {
   if (inflight) return inflight;
   inflight = api
     .getProjectConfig()
     .then((res) => {
-      cache = res.config;
       inflight = null;
-      writePersisted(res.config);
-      for (const s of subscribers) s(res.config);
-      return res.config;
+      return publish(res);
     })
     .catch((err) => {
       inflight = null;
@@ -52,23 +64,57 @@ function load(): Promise<ProjectConfig> {
 }
 
 export function useProjectConfig(): ProjectConfig | null {
-  const [val, setVal] = useState<ProjectConfig | null>(() => cache);
+  const [val, setVal] = useState<ProjectConfig | null>(() => cache?.config ?? null);
   useEffect(() => {
     let mounted = true;
     load()
-      .then((c) => {
-        if (mounted) setVal(c);
+      .then((res) => {
+        if (mounted) setVal(res.config);
       })
       .catch(() => {
         /* keep cached value */
       });
-    subscribers.add(setVal);
+    const subscriber = (res: ProjectConfigResponse) => setVal(res.config);
+    subscribers.add(subscriber);
     return () => {
       mounted = false;
-      subscribers.delete(setVal);
+      subscribers.delete(subscriber);
     };
   }, []);
   return val;
+}
+
+export function useProjectPresets(): ProjectPreset[] {
+  const [val, setVal] = useState<ProjectPreset[]>(() => cache?.presets ?? []);
+  useEffect(() => {
+    let mounted = true;
+    load()
+      .then((res) => {
+        if (mounted) setVal(res.presets);
+      })
+      .catch(() => {
+        /* keep cached value */
+      });
+    const subscriber = (res: ProjectConfigResponse) => setVal(res.presets);
+    subscribers.add(subscriber);
+    return () => {
+      mounted = false;
+      subscribers.delete(subscriber);
+    };
+  }, []);
+  return val;
+}
+
+// Project mode is global server state, not a local UI preference. Publish the
+// PUT response through the same shared cache used by every mode-dependent
+// component so TopBar, Articles, and translation review UI update immediately.
+export async function selectProjectPreset(preset: string): Promise<ProjectConfig> {
+  const res = await api.putProjectConfig(preset);
+  publish({
+    config: res.config,
+    presets: cache?.presets ?? [],
+  });
+  return res.config;
 }
 
 // True when translation-mode UI should be shown: the active project translates

@@ -30,6 +30,7 @@ projectConfig.get("/", async (c) => {
       languageTitle: p.languageTitle,
       direction: p.direction,
       reposVerified: p.reposVerified,
+      isTranslation: p.translationSource !== null,
     })),
   });
 });

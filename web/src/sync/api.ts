@@ -1190,17 +1190,19 @@ export interface ProjectConfig {
   } | null;
   reposVerified: boolean;
 }
+export interface ProjectPreset {
+  preset: string;
+  org: string;
+  languageCode: string;
+  languageName: string;
+  languageTitle: string;
+  direction: "ltr" | "rtl";
+  reposVerified: boolean;
+  isTranslation: boolean;
+}
 export interface ProjectConfigResponse {
   config: ProjectConfig;
-  presets: Array<{
-    preset: string;
-    org: string;
-    languageCode: string;
-    languageName: string;
-    languageTitle: string;
-    direction: "ltr" | "rtl";
-    reposVerified: boolean;
-  }>;
+  presets: ProjectPreset[];
 }
 
 export const api = {
@@ -1241,6 +1243,11 @@ export const api = {
   // translationSource). Readable by any authenticated user; drives the
   // translation-mode UI gate. Fetched once per session by useProjectConfig.
   getProjectConfig: () => request<ProjectConfigResponse>(`/api/project-config`),
+  putProjectConfig: (preset: string) =>
+    request<{ config: ProjectConfig }>(`/api/project-config`, {
+      method: "PUT",
+      body: JSON.stringify({ preset, overrides: null }),
+    }),
 
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 

@@ -395,6 +395,7 @@ export function App() {
         {loc.view === "preferences" ? (
           <PreferencesWorkspace
             section={loc.section}
+            role={auth.role}
             onNavigate={(s) => {
               location.hash = `#/preferences/${s}`;
             }}

@@ -149,7 +149,18 @@
     "questions": "الأسئلة",
     "examplesCount": "{{n}} معتمد",
     "noExamples": "لا توجد أمثلة معتمدة بعد. اعتمد الملاحظات في وضع الترجمة لبناء هذه الذاكرة.",
-    "revoke": "إلغاء الاعتماد"
+    "revoke": "إلغاء الاعتماد",
+    "projectModeTitle": "وضع المشروع",
+    "projectModeIntro": "هذا الإعداد المسبق هو التكوين العام للمشروع. وهو يتحكم في مستودعات المصدر واللغة وما إذا كانت مسارات عمل الترجمة مفعّلة للجميع.",
+    "projectModeLabel": "وضع المشروع / الإعداد المسبق",
+    "authoringPreset": "تأليف {{language}} — {{org}}",
+    "translationPreset": "الترجمة إلى {{language}} — {{org}}",
+    "presetUnverified": "المستودعات غير متحققة بعد",
+    "applyProjectMode": "تطبيق وضع المشروع",
+    "applyingProjectMode": "جارٍ التطبيق…",
+    "projectModeSaved": "تم تحديث وضع المشروع للجميع.",
+    "projectModeForbidden": "يمكن للمسؤول فقط تغيير وضع المشروع.",
+    "projectModeFailed": "تعذّر تحديث وضع المشروع. حاول مرة أخرى."
   },
   "export": {
     "noText": "لا يوجد نص {{version}} لتصديره من أجل {{target}}.",

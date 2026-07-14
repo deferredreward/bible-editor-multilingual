@@ -518,22 +518,20 @@ export function TopBar({
           </Button>
         </Tooltip>
       )}
-      {showArticles && (
-        <Tooltip title={t("preferences.title")}>
-          <Button
-            size="small"
-            variant="text"
-            color="inherit"
-            startIcon={<TuneIcon fontSize="small" />}
-            onClick={() => {
-              location.hash = "#/preferences";
-            }}
-            sx={{ textTransform: "none", color: "text.secondary" }}
-          >
-            {t("preferences.title")}
-          </Button>
-        </Tooltip>
-      )}
+      <Tooltip title={t("preferences.title")}>
+        <Button
+          size="small"
+          variant="text"
+          color="inherit"
+          startIcon={<TuneIcon fontSize="small" />}
+          onClick={() => {
+            location.hash = "#/preferences";
+          }}
+          sx={{ textTransform: "none", color: "text.secondary" }}
+        >
+          {t("preferences.title")}
+        </Button>
+      </Tooltip>
       {lintIndicator}
       <VersionIndicator onRequestReload={onRequestReload} />
       <SyncStatusBar onNavigate={onNavigate} />
