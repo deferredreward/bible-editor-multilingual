@@ -92,7 +92,19 @@ found-flag consumption, morph-mismatch no-op, recursion, quote separators, ZWJ/B
 no-`\uXXXX`-escape-in-data guarantee — 33 asserts). **api typecheck + full api suite green** (EXIT 0).
 Committed + rebased onto main; **[PR #336](https://github.com/unfoldingWord/bible-editor/pull/336) opened**
 (branch `claude/canonize-hebrew-workflow-eb48d6`), NOT merged/deployed. Not
-browser-verified (server-side ingest transform, no UI surface). (memory: [[project_canonize_hebrew_to_uhb]])
+browser-verified (server-side ingest transform, no UI surface).
+**Pre-merge review** (`/code-review` skill blocked by a classifier outage this session; Codex passes run
+instead): (1) Stephen caught the **discontinuous-alignment repeat** gap — one source word split across
+multiple `\zaln-s` milestones (אָמַר around "Moses") only canonized the first; fixed. (2) Codex gpt-5.5 found a
+**walk-order swap**: consuming UHB entries in target order could assign occurrence 2 the pointing of occ 1 when
+English reorders — silent x-content corruption. Fixed by **failing closed on an ambiguous skeleton** (adopt
+only when every UHB word for a fold key is byte-identical; the exact tier keeps pointing so distinct-pointing
+words still canonize order-independently). Removed the found-flag/foundForms machinery (buckets now read
+statelessly). (3) Codex gpt-5.4-mini found **lemma/morph keying skips strong+content-only milestones**; rekeyed
+on **Strong's + folded content** (aligned with `milestoneSourceKey`). Final Codex gpt-5.5 pass: **clean, no
+findings.** Residual (non-blocking, no concrete bug): no D1-level integration test of `applyVerseUpdate`
+canonizing via `loadUhbSourceWords` — unit coverage is thorough (43 asserts). 3 fix commits on the branch.
+(memory: [[project_canonize_hebrew_to_uhb]])
 
 2026-07-09 · **recursing-hopper** — **Chapter copy-to-Word + TopBar USFM download (aligned/unaligned, chapter/book).**
 Two new user-facing features in the scripture views. **(1) Copy chapter to clipboard:** new `web/src/lib/chapterCopy.ts`
