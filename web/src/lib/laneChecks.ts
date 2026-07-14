@@ -5,6 +5,7 @@
 // "you + others". This module is the single source of that derivation so the
 // rail, the resource panels, the column/book toolbar, and the board all agree.
 
+import type { TFunction } from "i18next";
 import type { CheckLane, VerseLaneCheck } from "../sync/api";
 
 export type LaneShade = "open" | "me" | "others" | "both";
@@ -18,13 +19,6 @@ export interface TextLaneCheck {
   attribution: (verse: number) => string;
   onToggle: (verse: number) => void;
 }
-
-export const LANE_LABELS: Record<CheckLane, string> = {
-  text: "Text",
-  tn: "Notes",
-  tw: "Words",
-  tq: "Questions",
-};
 
 // Fill + on-fill text per shade, drawn from the Cultivate-teal family
 // (theme secondary.light/main/dark) so "you" matches today's check color.
@@ -70,12 +64,18 @@ export function laneApplicable(lane: CheckLane, hasTn: boolean, hasTq: boolean):
 }
 
 // Human attribution string. We only have user ids client-side (no name map yet),
-// so others render as counts rather than names.
-export function laneAttribution(checkers: number[] | undefined, meId: number | null): string {
-  if (!checkers || checkers.length === 0) return "open";
+// so others render as counts rather than names. The `t` translator is passed in
+// (this is a non-React module — no hooks here) so the caller's i18n instance
+// drives the wording.
+export function laneAttribution(
+  checkers: number[] | undefined,
+  meId: number | null,
+  t: TFunction,
+): string {
+  if (!checkers || checkers.length === 0) return t("lanes.attrOpen");
   const others = checkers.filter((id) => id !== meId).length;
   const mine = meId != null && checkers.includes(meId);
-  if (mine && others === 0) return "you";
-  if (mine) return others === 1 ? "you + 1 other" : `you + ${others} others`;
-  return others === 1 ? "someone else" : `${others} people`;
+  if (mine && others === 0) return t("lanes.attrYou");
+  if (mine) return t("lanes.attrYouPlusOthers", { count: others });
+  return others === 1 ? t("lanes.attrSomeoneElse") : t("lanes.attrPeople", { count: others });
 }

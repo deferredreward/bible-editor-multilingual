@@ -32,7 +32,7 @@
 
 import type { Env } from "./index";
 
-export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl";
+export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl" | "tw" | "ta";
 
 export interface GlBiblePane {
   /** DCS repo under the project org, e.g. "ar_avd" */
@@ -62,6 +62,14 @@ export interface ProjectConfig {
   /** Display labels for the role-coded lit/sim panes (bible_version stays ULT/UST) */
   litLabel: string;
   simLabel: string;
+  /**
+   * Display labels for the role-coded original-language panes (bible_version
+   * stays UHB/UGNT). The originals are universal (unfoldingWord hbo_uhb /
+   * el-x-koine_ugnt), so these default to "UHB"/"UGNT"; a project may override
+   * to show a native title without changing the role code.
+   */
+  origHebrewLabel: string;
+  origGreekLabel: string;
   /** Additional read-only GL Bible panes (imported on demand; verses keyed by their `version`) */
   glBibles: GlBiblePane[];
   /**
@@ -81,6 +89,7 @@ export interface ProjectConfig {
 
 const EN_REPOS: Record<ResourceKey, string> = {
   lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl",
+  tw: "en_tw", ta: "en_ta",
 };
 
 const UW_SOURCE = { org: "unfoldingWord", languageCode: "en", repos: EN_REPOS };
@@ -98,6 +107,8 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: EN_REPOS,
     litLabel: "ULT",
     simLabel: "UST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: null,
     reposVerified: true,
@@ -112,9 +123,11 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Arabic",
     languageTitle: "العربية",
     direction: "rtl",
-    repos: { lit: "ar_glt", sim: "ar_gst", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl" },
+    repos: { lit: "ar_glt", sim: "ar_gst", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [
       { repo: "ar_avd", version: "AVD", title: "فانديك" },
       { repo: "ar_nav", version: "NAV", title: "الترجمة العربية المبسطة" },
@@ -131,9 +144,11 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Indonesian",
     languageTitle: "Bahasa Indonesia",
     direction: "ltr",
-    repos: { lit: "id_glt", sim: "id_gst", tn: "id_tn", tq: "id_tq", twl: "id_twl" },
+    repos: { lit: "id_glt", sim: "id_gst", tn: "id_tn", tq: "id_tq", twl: "id_twl", tw: "id_tw", ta: "id_ta" },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: true,
@@ -152,9 +167,12 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: {
       lit: "es-419_glt", sim: "es-419_gst",
       tn: "es-419_tn", tq: "es-419_tq", twl: "es-419_twl",
+      tw: "es-419_tw", ta: "es-419_ta",
     },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: false,
@@ -169,9 +187,11 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Russian",
     languageTitle: "Русский",
     direction: "ltr",
-    repos: { lit: "ru_glt", sim: "ru_gst", tn: "ru_tn", tq: "ru_tq", twl: "ru_twl" },
+    repos: { lit: "ru_glt", sim: "ru_gst", tn: "ru_tn", tq: "ru_tq", twl: "ru_twl", tw: "ru_tw", ta: "ru_ta" },
     litLabel: "GLT",
     simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: false,
@@ -229,6 +249,8 @@ function materialize(preset: string, overridesJson: string | null): ProjectConfi
         : {}),
       ...(o.litLabel ? { litLabel: o.litLabel } : {}),
       ...(o.simLabel ? { simLabel: o.simLabel } : {}),
+      ...(o.origHebrewLabel ? { origHebrewLabel: o.origHebrewLabel } : {}),
+      ...(o.origGreekLabel ? { origGreekLabel: o.origGreekLabel } : {}),
       ...(Array.isArray(o.glBibles) ? { glBibles: o.glBibles } : {}),
       preset: base.preset,
     };

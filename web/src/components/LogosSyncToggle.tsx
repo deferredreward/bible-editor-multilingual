@@ -14,6 +14,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import { useTranslation } from "react-i18next";
 
 // USFM 3-letter code (lowercase) → Logos Bible abbreviation.
 // Matches the table from the upstream Logos-sync bookmarklet.
@@ -57,6 +58,7 @@ interface Props {
 }
 
 export function LogosSyncToggle({ book, chapter, verse }: Props) {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) === "true";
@@ -143,12 +145,12 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
       >
         Logos
       </Box>
-      <Tooltip title="Open this verse in Logos">
+      <Tooltip title={t("logos.openVerse")}>
         <IconButton size="small" onClick={() => fireLogos(book, chapter, verse)}>
           <OpenInNewIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      <Tooltip title="Auto-follow active verse in Logos (steals focus on each change)">
+      <Tooltip title={t("logos.autoFollowTooltip")}>
         <FormControlLabel
           control={
             <Checkbox
@@ -157,7 +159,7 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
               onChange={(e) => handleCheckboxChange(e.target.checked)}
             />
           }
-          label="auto-follow"
+          label={t("logos.autoFollow")}
           sx={{
             mr: 0,
             "& .MuiFormControlLabel-label": { fontSize: 13 },
@@ -165,14 +167,9 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
         />
       </Tooltip>
       <Dialog open={warnOpen} onClose={() => setWarnOpen(false)}>
-        <DialogTitle>Enable Logos sync?</DialogTitle>
+        <DialogTitle>{t("logos.enableTitle")}</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            Checking this will cause Logos to steal focus (bring its window to
-            the front) every time you change verses. Fine if you have Logos on
-            a second monitor, but otherwise just use the sync button when you
-            want to move Logos.
-          </DialogContentText>
+          <DialogContentText>{t("logos.enableBody")}</DialogContentText>
           <FormControlLabel
             sx={{ mt: 2 }}
             control={
@@ -181,13 +178,13 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
                 onChange={(e) => setDontShowAgain(e.target.checked)}
               />
             }
-            label="Don't show this again"
+            label={t("logos.dontShowAgain")}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setWarnOpen(false)}>Cancel</Button>
+          <Button onClick={() => setWarnOpen(false)}>{t("common.cancel")}</Button>
           <Button onClick={handleConfirm} variant="contained">
-            OK
+            {t("logos.ok")}
           </Button>
         </DialogActions>
       </Dialog>

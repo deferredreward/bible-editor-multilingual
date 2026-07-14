@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
+import { ArticleWorkspace } from "./components/ArticleWorkspace";
+import { PreferencesWorkspace, SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
 import {
@@ -15,11 +17,10 @@ import {
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
 
-interface Location {
-  book: string;
-  chapter: number;
-  verse: number;
-}
+type Location =
+  | { view: "chapter"; book: string; chapter: number; verse: number }
+  | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
+  | { view: "preferences"; section: PrefsSection };
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -34,9 +35,23 @@ const DEFAULT_BOOK = "OBA";
 const SIGNED_OUT_KEY = "bible-editor.signed_out";
 
 function parseHash(): Location {
+  const pm = location.hash.match(/^#\/preferences(?:\/(\w+))?$/);
+  if (pm) {
+    const s = pm[1] as PrefsSection | undefined;
+    return { view: "preferences", section: s && PREFS_SECTIONS.includes(s) ? s : "brief" };
+  }
+  const am = location.hash.match(/^#\/articles\/(tw|ta)(?:\/(.+))?$/);
+  if (am) {
+    return {
+      view: "article",
+      resource: am[1] as "tw" | "ta",
+      articleId: decodeURIComponent(am[2] ?? "") || null,
+    };
+  }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
-  if (!m) return { book: DEFAULT_BOOK, chapter: 1, verse: 1 };
+  if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
   return {
+    view: "chapter",
     book: m[1].toUpperCase(),
     chapter: m[2] ? parseInt(m[2], 10) : 1,
     verse: m[3] ? parseInt(m[3], 10) : 1,
@@ -44,7 +59,7 @@ function parseHash(): Location {
 }
 
 function isDefaultLoc(l: Location): boolean {
-  return l.book === DEFAULT_BOOK && l.chapter === 1 && l.verse === 1;
+  return l.view === "chapter" && l.book === DEFAULT_BOOK && l.chapter === 1 && l.verse === 1;
 }
 
 // Auth gate. The API requires a valid Access cookie for every write, so we
@@ -166,7 +181,10 @@ export function App() {
   // (which happen when the user navigates between chapters via the URL).
   // Don't initialize it until auth is ready — the BookSummary fetch is now
   // gated and would otherwise burn a 401 every reload.
-  const bookHook = useBook(loc.book, auth.kind === "ready");
+  const bookHook = useBook(
+    loc.view === "chapter" ? loc.book : DEFAULT_BOOK,
+    auth.kind === "ready" && loc.view === "chapter",
+  );
 
   useEffect(() => {
     const handler = () => setLoc(parseHash());
@@ -200,12 +218,13 @@ export function App() {
   // Debounced push of the current location to the server so the next sign-in
   // on a different device / after a logout can land back here.
   useEffect(() => {
-    if (auth.kind !== "ready") return;
+    if (auth.kind !== "ready" || loc.view !== "chapter") return;
+    const { book, chapter, verse } = loc;
     const t = setTimeout(() => {
-      void updateLastLocation(loc.book, loc.chapter, loc.verse);
+      void updateLastLocation(book, chapter, verse);
     }, 1500);
     return () => clearTimeout(t);
-  }, [auth.kind, loc.book, loc.chapter, loc.verse]);
+  }, [auth.kind, loc]);
 
   // Must run before any of the early returns below — otherwise the hook is
   // conditionally invoked across renders (loading → ready calls one extra
@@ -306,7 +325,7 @@ export function App() {
     // into React state (replaceState doesn't fire hashchange) so the next
     // sign-in's hydration sees loc=default and pulls from the server.
     history.replaceState(null, "", location.pathname);
-    setLoc({ book: DEFAULT_BOOK, chapter: 1, verse: 1 });
+    setLoc({ view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 });
     hydratedRef.current = false;
     setAuth({ kind: "missing" });
   };
@@ -373,16 +392,36 @@ export function App() {
         </Alert>
       )}
       <Box sx={{ flex: 1, minHeight: 0 }}>
-        <Shell
-          key={loc.book}
-          book={loc.book}
-          chapter={loc.chapter}
-          initialVerse={loc.verse}
-          onNavigate={navigate}
-          bookHook={bookHook}
-          onLogout={handleSignOut}
-          meUserId={auth.kind === "ready" ? auth.me?.userId ?? null : null}
-        />
+        {loc.view === "preferences" ? (
+          <PreferencesWorkspace
+            section={loc.section}
+            onNavigate={(s) => {
+              location.hash = `#/preferences/${s}`;
+            }}
+          />
+        ) : loc.view === "article" ? (
+          <ArticleWorkspace
+            resource={loc.resource}
+            articleId={loc.articleId}
+            onNavigate={(r, a) => {
+              // Empty articleId (e.g. switching resource with nothing selected)
+              // must not emit a trailing slash — `#/articles/ta/` fails the
+              // article regex and misparses as a chapter.
+              location.hash = a ? `#/articles/${r}/${encodeURIComponent(a)}` : `#/articles/${r}`;
+            }}
+          />
+        ) : (
+          <Shell
+            key={loc.book}
+            book={loc.book}
+            chapter={loc.chapter}
+            initialVerse={loc.verse}
+            onNavigate={navigate}
+            bookHook={bookHook}
+            onLogout={handleSignOut}
+            meUserId={auth.kind === "ready" ? auth.me?.userId ?? null : null}
+          />
+        )}
       </Box>
       <Snackbar
         open={sessionExpired}

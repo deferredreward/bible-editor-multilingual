@@ -48,10 +48,18 @@ function num(n) {
   return `${n}`;
 }
 
-// Slice a 7-col tN TSV to [startCh,endCh] and prefix the Note column with the
-// marker. Header row (Reference\tID\t…\tNote) is kept as-is. Reference is
-// "C:V" or "front:intro"; chapter = the part before the first ":".
-function markChapterRange(tsv, startCh, endCh) {
+// Which TSV columns carry translatable free text, per resource (0-indexed).
+//   tn: Reference ID Tags SupportReference Quote Occurrence Note   → [6]
+//   tq: Reference ID Tags Quote Occurrence Question Response       → [5,6]
+// Structural columns (Reference/ID/Tags/Quote/Occurrence/SupportReference) are
+// left byte-identical, exactly the column-preservation the contract guarantees.
+const TRANSLATABLE_COLS = { tn: [6], tq: [5, 6] };
+
+// Slice a 7-col TSV to [startCh,endCh] and prefix each translatable column with
+// the marker. Header row is kept as-is. Reference is "C:V" or "front:intro";
+// chapter = the part before the first ":".
+function markChapterRange(tsv, startCh, endCh, resource) {
+  const cols7 = TRANSLATABLE_COLS[resource] ?? TRANSLATABLE_COLS.tn;
   const lines = tsv.split(/\r?\n/);
   if (lines.length === 0) return tsv;
   const out = [lines[0]]; // header
@@ -62,16 +70,17 @@ function markChapterRange(tsv, startCh, endCh) {
       continue;
     }
     const cols = line.split("\t");
-    // 7 columns: Reference ID Tags SupportReference Quote Occurrence Note
     const ref = cols[0] ?? "";
     const chStr = ref.split(":")[0];
     const ch = chStr === "front" ? 0 : parseInt(chStr, 10);
     const inRange = Number.isFinite(ch) && ch >= startCh && ch <= endCh;
     if (inRange && cols.length >= 7) {
-      const note = cols[6] ?? "";
-      // Preserve empty notes; only mark non-empty ones (matches "no empty
-      // translations" guarantee — an already-empty source note stays empty).
-      cols[6] = note ? MARKER + note : note;
+      for (const ci of cols7) {
+        const val = cols[ci] ?? "";
+        // Preserve empty cells; only mark non-empty ones (matches "no empty
+        // translations" guarantee — an already-empty source cell stays empty).
+        cols[ci] = val ? MARKER + val : val;
+      }
       out.push(cols.join("\t"));
     } else {
       out.push(line);
@@ -80,14 +89,51 @@ function markChapterRange(tsv, startCh, endCh) {
   return out.join("\n");
 }
 
-async function fetchSourceTsv(sourceRef, book) {
+async function fetchSourceTsv(sourceRef, book, resource) {
   // sourceRef = "org/repo@ref"
   const [orgRepo, ref = "master"] = sourceRef.split("@");
   const [org, repo] = orgRepo.split("/");
-  const url = `${DCS_RAW}/${org}/${repo}/raw/branch/${ref}/tn_${book}.tsv`;
+  const url = `${DCS_RAW}/${org}/${repo}/raw/branch/${ref}/${resource}_${book}.tsv`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`source fetch ${url} → ${r.status}`);
   return await r.text();
+}
+
+// tw|ta articleId → repo-relative .md path (matches the bot's conventions).
+function articlePath(resource, articleId) {
+  let id = articleId;
+  if (resource === "tw") {
+    if (!id.startsWith("bible/")) id = `bible/${id}`;
+    return id.endsWith(".md") ? id : `${id}.md`;
+  }
+  // ta: a folder → the body file (01.md); the stub does one file per run.
+  return id.endsWith(".md") ? id : `${id}/01.md`;
+}
+
+// Fetch a source article's markdown by articleId (via sourceRef repo) or by a
+// direct git.door43.org articleUrl. Returns { path, md }.
+async function fetchArticle(sourceRef, resource, articleId, articleUrl) {
+  if (articleUrl) {
+    const raw = articleUrl.replace("/src/", "/raw/");
+    const r = await fetch(raw);
+    if (!r.ok) throw new Error(`article fetch ${raw} → ${r.status}`);
+    const after = raw.split(/\/raw\/(?:branch|commit|tag)\/[^/]+\//)[1];
+    return { path: after ?? articlePath(resource, articleId ?? "unknown"), md: await r.text() };
+  }
+  const [orgRepo, ref = "master"] = sourceRef.split("@");
+  const [org, repo] = orgRepo.split("/");
+  const path = articlePath(resource, articleId);
+  const url = `${DCS_RAW}/${org}/${repo}/raw/branch/${ref}/${path}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`article fetch ${url} → ${r.status}`);
+  return { path, md: await r.text() };
+}
+
+// Mark an article "translated": prefix the FIRST heading's text with the marker,
+// preserving heading structure, rc:// links and everything else byte-identical
+// (mirrors the article checks' preservation guarantees).
+function markArticle(md) {
+  return md.replace(/^(#+[ \t]+)(.+)$/m, (_, h, t) => `${h}${MARKER}${t}`);
 }
 
 function send(res, code, obj) {
@@ -117,8 +163,11 @@ const server = http.createServer(async (req, res) => {
       const startChapter = body.startChapter ?? 1;
       const endChapter = body.endChapter ?? startChapter;
       const options = body.options ?? {};
+      const resource = ["tq", "tw", "ta"].includes(options.resourceType) ? options.resourceType : "tn";
+      const isArticle = resource === "tw" || resource === "ta";
+      const scopeLabel = isArticle ? (options.articleId ?? options.articleUrl) : `${body.book} ${startChapter}-${endChapter}`;
       console.log(
-        `[stub] start ${body.book} ${startChapter}-${endChapter} → ${options.targetOrg}/${options.targetLang}` +
+        `[stub] start ${resource} ${scopeLabel} → ${options.targetOrg}/${options.targetLang}` +
           ` src=${options.sourceRef} ctx=${options.contextRef} delivery=${options.delivery}`,
       );
       const job = {
@@ -126,8 +175,11 @@ const server = http.createServer(async (req, res) => {
         startChapter,
         endChapter,
         options,
+        resource,
+        isArticle,
         createdAt: Date.now(),
         tsv: null,
+        article: null, // { path, md } for tw/ta
         error: FORCE_FAIL ? "forced_failure (--fail)" : null,
       };
       jobs.set(jobId, job);
@@ -136,15 +188,30 @@ const server = http.createServer(async (req, res) => {
       if (!FORCE_FAIL) {
         (async () => {
           try {
-            const tsv = FIXTURE
-              ? readFileSync(FIXTURE, "utf8")
-              : markChapterRange(
-                  await fetchSourceTsv(options.sourceRef ?? `unfoldingWord/en_tn@master`, body.book),
-                  startChapter,
-                  endChapter,
-                );
-            job.tsv = tsv;
-            console.log(`[stub] ${jobId} ready (${tsv.split(/\r?\n/).length} lines)`);
+            if (isArticle) {
+              const { path, md } = await fetchArticle(
+                options.sourceRef ?? `unfoldingWord/en_${resource}@master`,
+                resource,
+                options.articleId,
+                options.articleUrl,
+              );
+              job.article = { path, md: markArticle(md) };
+              console.log(`[stub] ${jobId} ready (article ${path}, ${job.article.md.length} chars)`);
+            } else {
+              job.tsv = FIXTURE
+                ? readFileSync(FIXTURE, "utf8")
+                : markChapterRange(
+                    await fetchSourceTsv(
+                      options.sourceRef ?? `unfoldingWord/en_${resource}@master`,
+                      body.book,
+                      resource,
+                    ),
+                    startChapter,
+                    endChapter,
+                    resource,
+                  );
+              console.log(`[stub] ${jobId} ready (${job.tsv.split(/\r?\n/).length} lines)`);
+            }
           } catch (e) {
             job.error = String(e && e.message ? e.message : e);
             console.log(`[stub] ${jobId} FAILED: ${job.error}`);
@@ -170,38 +237,60 @@ const server = http.createServer(async (req, res) => {
       updatedAt: new Date(job.createdAt).toISOString(),
       createdAt: new Date(job.createdAt).toISOString(),
     };
+    const resource = job.resource ?? "tn";
     if (job.error) {
       return send(res, 200, {
         ...base,
         state: "failed",
-        current: { chapter: job.startChapter, skill: "translate-tn", status: "failed", startedAt: base.createdAt, error: job.error },
+        current: { chapter: job.startChapter, skill: `translate-${resource}`, status: "failed", startedAt: base.createdAt, error: job.error },
       });
     }
-    // Simulate work: 'running' until DELAY_MS has elapsed AND the tsv is ready.
+    // Simulate work: 'running' until DELAY_MS has elapsed AND the output is ready.
+    const ready = job.isArticle ? !!job.article : !!job.tsv;
     const elapsed = Date.now() - job.createdAt;
-    if (elapsed < DELAY_MS || !job.tsv) {
+    if (elapsed < DELAY_MS || !ready) {
       return send(res, 200, {
         ...base,
         state: "running",
-        current: { chapter: job.startChapter, skill: "translate-tn", status: "translating", startedAt: base.createdAt },
+        current: { chapter: job.startChapter, skill: `translate-${resource}`, status: "translating", startedAt: base.createdAt },
       });
     }
-    // done — output[] points at the branch TSV this stub serves. repo tail
-    // is {targetLang}_tn so the editor's classify() routes it to the tn kind.
+    // done — output[] points at the branch file this stub serves. repo tail is
+    // {targetLang}_{resource} so the editor's classify() routes it to the
+    // matching kind (tn|tq → row apply; tw|ta → article apply by path).
     const targetOrg = job.options.targetOrg ?? "gl";
     const targetLang = job.options.targetLang ?? "xx";
-    const repo = `${targetOrg}/${targetLang}_tn`;
+    const repo = `${targetOrg}/${targetLang}_${resource}`;
+    if (job.isArticle) {
+      const branch = `AI-translate-${targetLang}-${resource}-${encodeURIComponent(job.options.articleId ?? "art")}`;
+      return send(res, 200, {
+        ...base,
+        state: "done",
+        output: [
+          {
+            type: resource, // real bot uses 'article'; editor classifies by repo tail, not type
+            repo,
+            branch,
+            path: job.article.path, // repo-relative markdown path = the round-trip id
+            rawUrl: `http://127.0.0.1:${PORT}/stub/article/${encodeURIComponent(jobId)}.md`,
+            prNumber: 0,
+            mergedAt: "",
+            commitSha: "stubsha",
+          },
+        ],
+      });
+    }
     const branch = `AI-translate-${targetLang}-${job.book}-${job.startChapter}`;
-    const rawUrl = `http://127.0.0.1:${PORT}/stub/tn/${encodeURIComponent(jobId)}.tsv`;
+    const rawUrl = `http://127.0.0.1:${PORT}/stub/${resource}/${encodeURIComponent(jobId)}.tsv`;
     return send(res, 200, {
       ...base,
       state: "done",
       output: [
         {
-          type: "tn",
+          type: resource,
           repo,
           branch,
-          path: `tn_${job.book}.tsv`,
+          path: `${resource}_${job.book}.tsv`,
           rawUrl,
           prNumber: 0,
           mergedAt: "",
@@ -211,8 +300,22 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // --- serve the produced article markdown (the rawUrl target the editor fetches) ---
+  const mArticle = url.pathname.match(/^\/stub\/article\/([^/]+)\.md$/);
+  if (req.method === "GET" && mArticle) {
+    const jobId = decodeURIComponent(mArticle[1]);
+    const job = jobs.get(jobId);
+    if (!job || !job.article) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      return res.end("not ready");
+    }
+    const buf = Buffer.from(job.article.md, "utf8");
+    res.writeHead(200, { "Content-Type": "text/markdown", "Content-Length": buf.length });
+    return res.end(buf);
+  }
+
   // --- serve the produced TSV (the rawUrl target the editor fetches) ---
-  const mTsv = url.pathname.match(/^\/stub\/tn\/([^/]+)\.tsv$/);
+  const mTsv = url.pathname.match(/^\/stub\/(?:tn|tq)\/([^/]+)\.tsv$/);
   if (req.method === "GET" && mTsv) {
     const jobId = decodeURIComponent(mTsv[1]);
     const job = jobs.get(jobId);
