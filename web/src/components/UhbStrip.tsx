@@ -1,4 +1,5 @@
 import { type ReactNode, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Typography, Stack, IconButton, Tooltip } from "@mui/material";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -35,6 +36,7 @@ export function UhbStrip({
   onToggleHidden: () => void;
   hctx: HighlightCtx;
 }) {
+  const { t } = useTranslation();
   const sourceIsHebrew = sourceLabel === "UHB";
   const projectConfig = useProjectConfig();
   const sourceDisplay = versionLabel(projectConfig, sourceLabel);
@@ -62,10 +64,11 @@ export function UhbStrip({
             fontWeight: 600,
           }}
         >
-          {sourceDisplay} · source
+          {sourceDisplay} · {t("aligner.sourceLabel")}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Tooltip title={hidden ? `show ${sourceDisplay} source` : `hide ${sourceDisplay} source`}>
+        <Tooltip title={hidden ? t("aligner.showSourceTooltip", { label: sourceDisplay }) : t("aligner.hideSourceTooltip", { label: sourceDisplay })}>
+
           <IconButton size="small" onClick={onToggleHidden} sx={{ p: 0.25, color: "text.disabled" }}>
             {hidden ? (
               <ExpandMoreIcon sx={{ fontSize: 18 }} />

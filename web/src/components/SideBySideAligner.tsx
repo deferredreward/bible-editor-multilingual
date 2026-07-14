@@ -11,6 +11,7 @@ import { Box, Typography, IconButton, Dialog, Tooltip, Button, useTheme } from "
 import CloseIcon from "@mui/icons-material/Close";
 import KeyboardArrowLeftIcon from "@mui/icons-material/KeyboardArrowLeft";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import { useTranslation } from "react-i18next";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { UhbStrip } from "./UhbStrip";
 import { type HoverHighlight, type HighlightCtx } from "../lib/highlightTypes";
@@ -118,6 +119,7 @@ export function SideBySideAligner({
   onPrevVerse,
   onNextVerse,
 }: Props) {
+  const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const [hover, setHover] = useState<HoverHighlight>(null);
   const [hoverLink, setHoverLink] = useState<boolean>(readHoverLink);
@@ -198,7 +200,7 @@ export function SideBySideAligner({
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-            <Tooltip title="previous verse">
+            <Tooltip title={t("aligner.previousVerse")}>
               <span>
                 <IconButton
                   onClick={onPrevVerse}
@@ -225,7 +227,7 @@ export function SideBySideAligner({
             >
               {vref}
             </Box>
-            <Tooltip title="next verse">
+            <Tooltip title={t("aligner.nextVerse")}>
               <span>
                 <IconButton
                   onClick={onNextVerse}
@@ -238,12 +240,16 @@ export function SideBySideAligner({
               </span>
             </Tooltip>
           </Box>
-          <Typography sx={{ fontWeight: 600, fontSize: 15 }}>Align side by side</Typography>
+          <Typography sx={{ fontWeight: 600, fontSize: 15 }}>{t("aligner.alignSideBySide")}</Typography>
           <Typography sx={{ fontSize: 12, opacity: 0.82 }}>
-            {versionLabel(projectConfig, left.bibleVersion)} ↔ {versionLabel(projectConfig, right.bibleVersion)} · both aligned to {versionLabel(projectConfig, sourceLabel)} · hover Hebrew to bridge
+            {t("aligner.dualSubtitle", {
+              left: versionLabel(projectConfig, left.bibleVersion),
+              right: versionLabel(projectConfig, right.bibleVersion),
+              source: versionLabel(projectConfig, sourceLabel),
+            })}
           </Typography>
           <Box sx={{ flex: 1 }} />
-          <Tooltip title="show the Hebrew lexicon tooltip on hover — turn off to see only what's aligned, without the popup covering the panels">
+          <Tooltip title={t("aligner.hebrewInfoTooltip")}>
             <Box
               component="label"
               sx={{
@@ -263,10 +269,10 @@ export function SideBySideAligner({
                 onChange={(e) => setLexInfo(e.target.checked)}
                 style={{ accentColor: "#fff", cursor: "pointer", margin: 0 }}
               />
-              Hebrew info
+              {t("aligner.hebrewInfo")}
             </Box>
           </Tooltip>
-          <Tooltip title="close">
+          <Tooltip title={t("aligner.close")}>
             <IconButton onClick={onClose} size="small" sx={{ color: "inherit" }}>
               <CloseIcon />
             </IconButton>
@@ -427,6 +433,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
   // alignment first, then the line unlocks.
   locked?: boolean;
 }>(function ReadingLine({ slot, onSave, onDirtyChange, locked = false }, ref) {
+  const { t } = useTranslation();
   const { bibleVersion, verse } = slot;
   const projectConfig = useProjectConfig();
   const versionDisplay = versionLabel(projectConfig, bibleVersion);
@@ -502,7 +509,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
             fontWeight: 600,
           }}
         >
-          {versionDisplay} · reading text{" "}
+          {t("aligner.readingText", { version: versionDisplay })}{" "}
           <Box
             component="span"
             sx={{
@@ -511,7 +518,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
               letterSpacing: 0,
             }}
           >
-            {locked ? "🔒 save alignment first" : "✎ editable"}
+            {locked ? t("aligner.saveAlignmentFirst") : t("aligner.editable")}
           </Box>
         </Typography>
         <Box sx={{ flex: 1 }} />
@@ -531,7 +538,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
                 py: 0.25,
               }}
             >
-              Undo
+              {t("common.undo")}
             </Button>
             <Button
               size="small"
@@ -547,7 +554,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
                 py: 0.25,
               }}
             >
-              Save {versionDisplay}
+              {t("aligner.saveVersion", { version: versionDisplay })}
             </Button>
           </>
         )}
@@ -560,7 +567,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
           spellCheck
           title={
             locked
-              ? "save or cancel the pending alignment edits before editing the reading text"
+              ? t("aligner.readingLockedTooltip")
               : undefined
           }
           onInput={(e) => {
@@ -595,7 +602,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
         />
       ) : (
         <Typography variant="body2" sx={{ color: "text.disabled", fontStyle: "italic", py: 0.5 }}>
-          no {versionDisplay} text for this verse
+          {t("aligner.noVersionText", { version: versionDisplay })}
         </Typography>
       )}
     </Box>

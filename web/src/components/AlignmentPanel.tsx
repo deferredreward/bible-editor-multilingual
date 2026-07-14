@@ -23,6 +23,7 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import HistoryIcon from "@mui/icons-material/History";
+import { useTranslation } from "react-i18next";
 import { assignChipHues, chipAccentColor, chipSupColor } from "../lib/highlightStyles";
 import {
   alignmentPlainText,
@@ -211,6 +212,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
     },
     ref,
   ) {
+    const { t } = useTranslation();
     const [historyOpen, setHistoryOpen] = useState(false);
     // Extracted so the crash-draft hydration effect re-parses against the same
     // source tree computedInitial uses (parse needs the UHB/UGNT to re-anchor
@@ -897,8 +899,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
         {!state && (
           <Box sx={{ p: 3 }}>
             <Typography variant="body2" color="text.secondary">
-              no alignment data for this verse — either the source has no `\zaln-s` markers,
-              or the verse was recently edited and alignment was cleared.
+              {t("aligner.noAlignmentData")}
             </Typography>
           </Box>
         )}
@@ -988,7 +989,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
               autoHideDuration={6000}
               onClose={() => setMergeUndo(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-              message="merged groups"
+              message={t("aligner.mergedGroups")}
               action={
                 <Button
                   color="inherit"
@@ -996,7 +997,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
                   onClick={handleUndoMerge}
                   sx={{ fontWeight: 700 }}
                 >
-                  UNDO
+                  {t("aligner.undo")}
                 </Button>
               }
             />
@@ -1005,7 +1006,7 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
               autoHideDuration={6000}
               onClose={() => setRestored(false)}
               anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-              message="restored unsaved alignment"
+              message={t("aligner.restoredUnsaved")}
             />
           </>
         )}
@@ -1060,6 +1061,7 @@ function InventoryStrip({
   onToggleHoverLink: () => void;
   hctx: HighlightCtx;
 }) {
+  const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const versionDisplay = versionLabel(projectConfig, bibleVersion);
   const [over, setOver] = useState(false);
@@ -1132,10 +1134,10 @@ function InventoryStrip({
             fontWeight: 600,
           }}
         >
-          {versionDisplay} words
+          {t("aligner.versionWords", { version: versionDisplay })}
         </Typography>
         <Chip
-          label={`${unalignedCount} unaligned`}
+          label={t("aligner.unalignedCount", { count: unalignedCount })}
           size="small"
           sx={{
             height: 18,
@@ -1148,9 +1150,9 @@ function InventoryStrip({
         {selectedIds.size > 0 && (
           <>
             <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace" }}>
-              · {selectedIds.size} selected
+              {t("aligner.selectedCount", { count: selectedIds.size })}
             </Typography>
-            <Tooltip title="clear selection">
+            <Tooltip title={t("aligner.clearSelection")}>
               <IconButton size="small" onClick={onClearSelection} sx={{ p: 0.25 }}>
                 <CloseIcon sx={{ fontSize: 14 }} />
               </IconButton>
@@ -1159,16 +1161,16 @@ function InventoryStrip({
         )}
         <Box sx={{ flex: 1 }} />
         <ToolbarToggle
-          label="colors"
+          label={t("aligner.colors")}
           checked={colorize}
           onChange={onToggleColorize}
-          tooltip="tint each repeated word with a unique color so matching instances are easy to find"
+          tooltip={t("aligner.colorsTooltip")}
         />
         <ToolbarToggle
-          label="hover-link"
+          label={t("aligner.hoverLink")}
           checked={hoverLink}
           onChange={onToggleHoverLink}
-          tooltip="hover any word to highlight its matches and aligned partner everywhere"
+          tooltip={t("aligner.hoverLinkTooltip")}
         />
         <Button
           size="small"
@@ -1183,7 +1185,7 @@ function InventoryStrip({
             py: 0.25,
           }}
         >
-          {showOnlyUnaligned ? "show all" : "show only unaligned"}
+          {showOnlyUnaligned ? t("aligner.showAll") : t("aligner.showOnlyUnaligned")}
         </Button>
       </Stack>
       <Box
@@ -1206,7 +1208,7 @@ function InventoryStrip({
       >
         {visible.length === 0 && (
           <Typography variant="caption" sx={{ color: "text.disabled", fontStyle: "italic" }}>
-            {showOnlyUnaligned ? "all words aligned" : "no words in verse"}
+            {showOnlyUnaligned ? t("aligner.allWordsAligned") : t("aligner.noWordsInVerse")}
           </Typography>
         )}
         {visible.map(({ idx, word, aligned }) =>
@@ -1236,7 +1238,7 @@ function InventoryStrip({
       </Box>
       <Box
         onMouseDown={startResize}
-        title="drag to resize"
+        title={t("aligner.dragToResize")}
         sx={{
           position: "absolute",
           left: 0,
@@ -1268,6 +1270,7 @@ function InventoryStrip({
 
 // ─── Section header above cards ────────────────────────────────────────
 function SectionHeader({ count }: { count: number }) {
+  const { t } = useTranslation();
   return (
     <Stack
       direction="row"
@@ -1286,14 +1289,14 @@ function SectionHeader({ count }: { count: number }) {
           fontWeight: 600,
         }}
       >
-        Groups · {count}
+        {t("aligner.groups", { count })}
       </Typography>
       <Box sx={{ flex: 1 }} />
       <Typography
         variant="caption"
         sx={{ color: "text.disabled", fontSize: 10.5 }}
       >
-        drag chips · dbl-click Hebrew to split · dbl-click English to unalign
+        {t("aligner.dragHint")}
       </Typography>
     </Stack>
   );
@@ -1327,6 +1330,7 @@ function ActionBar({
   version?: number;
   onOpenHistory?: () => void;
 }) {
+  const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const versionDisplay = versionLabel(projectConfig, bibleVersion);
   return (
@@ -1350,14 +1354,14 @@ function ActionBar({
         variant="caption"
         sx={{ fontFamily: "monospace", color: "text.disabled", fontSize: 10 }}
       >
-        editing {versionDisplay}
+        {t("aligner.editing", { version: versionDisplay })}
       </Typography>
       {/* Spacer keeps the actions right-aligned when the bar fits on one line;
           when it doesn't (narrow laptop screens), the actions wrap to a second
           row instead of the rightmost Save button overflowing off-screen. */}
       <Box sx={{ flex: 1, minWidth: 0 }} />
       {onOpenHistory && version != null && (
-        <Tooltip title="version history — view or restore an earlier alignment">
+        <Tooltip title={t("aligner.versionHistory")}>
           <Button
             size="small"
             startIcon={<HistoryIcon sx={{ fontSize: 16 }} />}
@@ -1370,12 +1374,12 @@ function ActionBar({
               fontFamily: "monospace",
             }}
           >
-            v{version}
+            {t("aligner.versionChip", { version })}
           </Button>
         </Tooltip>
       )}
       {onOpenDual && (
-        <Tooltip title={`open ${versionLabel(projectConfig, "ULT")} + ${versionLabel(projectConfig, "UST")} side by side (aligned to the same Hebrew)`}>
+        <Tooltip title={t("aligner.openDualTooltip", { left: versionLabel(projectConfig, "ULT"), right: versionLabel(projectConfig, "UST") })}>
           <Button
             size="small"
             onClick={onOpenDual}
@@ -1386,7 +1390,7 @@ function ActionBar({
               color: "text.secondary",
             }}
           >
-            ⇄ Side-by-side
+            {t("aligner.sideBySide")}
           </Button>
         </Tooltip>
       )}
@@ -1404,7 +1408,7 @@ function ActionBar({
             borderColor: "primary.main",
           }}
         >
-          ✓ accept {ghostCount} suggestion{ghostCount > 1 ? "s" : ""}
+          {t("aligner.acceptSuggestions", { count: ghostCount })}
         </Button>
       )}
       <Button
@@ -1418,7 +1422,7 @@ function ActionBar({
           fontWeight: 600,
         }}
       >
-        Clear
+        {t("aligner.clear")}
       </Button>
       <Button
         size="small"
@@ -1432,7 +1436,7 @@ function ActionBar({
           fontWeight: 600,
         }}
       >
-        Reset
+        {t("aligner.reset")}
       </Button>
       {!hideCancel && (
         <Button
@@ -1446,7 +1450,7 @@ function ActionBar({
             fontWeight: 600,
           }}
         >
-          Cancel
+          {t("common.cancel")}
         </Button>
       )}
       <Button
@@ -1462,7 +1466,7 @@ function ActionBar({
           px: 2,
         }}
       >
-        Save {versionDisplay}
+        {t("aligner.saveVersion", { version: versionDisplay })}
       </Button>
     </Stack>
   );
@@ -1510,6 +1514,7 @@ function AlignmentCards({
   sourcePos: Map<string, number>;
   posOffset: number;
 }) {
+  const { t } = useTranslation();
   // Precompute the per-verse TWL hint lookup once (see buildTwHintMap) so each
   // hover re-render isn't O(sourceWords × twlRows) of re-split + re-nfc work.
   const twHints = useMemo(
@@ -1578,7 +1583,7 @@ function AlignmentCards({
             })}
           </Box>
           {(g.targets.length > 0 || g.source.length > 1) && (
-            <Tooltip title="clear this group (send English back to the word bank, split compound source)">
+            <Tooltip title={t("aligner.clearGroupTooltip")}>
               <IconButton
                 size="small"
                 onClick={() => onClearGroup(g.id)}
@@ -1621,7 +1626,7 @@ function AlignmentCards({
                     textAlign: "center",
                   }}
                 >
-                  drop English here
+                  {t("aligner.dropEnglishHere")}
                 </Box>
               )
             ) : (
@@ -1665,6 +1670,7 @@ function DropTargetCard({
   onGroupDragEnd: () => void;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const [over, setOver] = useState(false);
   const isBeingDragged = draggingGroupId === groupId;
   const isMergeTarget = over && draggingGroupId !== null && !isBeingDragged;
@@ -1723,7 +1729,7 @@ function DropTargetCard({
       {/* Bottom grip — drag a whole card onto another to merge their groups.
           Sits at the bottom edge, clear of the top-right Hebrew occurrence
           superscripts and the top-left clear (×) button. */}
-      <Tooltip title="drag onto another card to merge the two groups">
+      <Tooltip title={t("aligner.mergeCardTooltip")}>
         <Box
           draggable
           onDragStart={(e) => {
@@ -1771,7 +1777,7 @@ function DropTargetCard({
             zIndex: 4,
           }}
         >
-          ⤵ merge into this group
+          {t("aligner.mergeIntoGroup")}
         </Box>
       )}
     </Paper>
@@ -1800,6 +1806,7 @@ function SourceWordTypography({
   onExtract: () => void;
   hctx: HighlightCtx;
 }) {
+  const { t } = useTranslation();
   const [hover, setHover] = useState(false);
   const tone = hctx.hebrewHighlight(pos, groupId);
   const showInfo = hctx.showSourceInfo;
@@ -1813,7 +1820,7 @@ function SourceWordTypography({
             <SourceTooltipBody source={source} lex={lex} twHint={twHint} />
             {canExtract && (
               <Box sx={{ mt: 0.5, fontSize: 11, opacity: 0.85 }}>
-                double-click to split out of compound
+                {t("aligner.doubleClickSplit")}
               </Box>
             )}
           </Box>
@@ -2012,12 +2019,13 @@ function SimpleDraggableChip({
   onUnalign?: () => void;
   hctx: HighlightCtx;
 }) {
+  const { t } = useTranslation();
   const tone = hctx.englishHighlight(wordId, text, occurrence, groupId);
   const hueDeg = hctx.colorize ? hctx.matchHues.get(`${text}|${occurrence}`) : undefined;
   const accent = hueDeg != null ? chipAccentColor(hueDeg, hctx.themeMode) : undefined;
   const supColor = hueDeg != null ? chipSupColor(hueDeg, hctx.themeMode) : "primary.dark";
   return (
-    <Tooltip title="double-click or drag back to the word bank to unalign">
+    <Tooltip title={t("aligner.unalignTooltip")}>
       <Chip
         label={targetLabel(text, occurrence, occurrences, supColor)}
         size="small"
@@ -2122,10 +2130,11 @@ function GhostChip({
   onAccept: () => void;
   onDismiss: () => void;
 }) {
+  const { t } = useTranslation();
   const pct = Math.round(ghost.confidence * 100);
-  const srcLabel = ghost.source === "memory" ? "wordMAP" : "lexicon";
+  const srcLabel = ghost.source === "memory" ? "wordMAP" : t("aligner.srcLexicon");
   return (
-    <Tooltip title={`suggested · ${srcLabel} · ${pct}% — click to accept, × to dismiss`}>
+    <Tooltip title={t("aligner.ghostTooltip", { src: srcLabel, pct })}>
       <Chip
         size="small"
         variant="outlined"
