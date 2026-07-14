@@ -52,6 +52,7 @@ import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { findSourceForTargetText, extractTargetSelectionText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
 import { resolveSpanToSource } from "../lib/twlResolve";
+import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { nfc } from "../lib/hebrew";
 import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
@@ -314,6 +315,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const [activeVerse, setActiveVerse] = useState(initialVerse);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [activeWordId, setActiveWordId] = useState<string | null>(null);
+  // Transient hover preview: hovering a Words row's "locate" spot lights up where
+  // its Hebrew/Greek word sits in the scripture, without clicking (no active
+  // switch, no verse jump). Feeds the same activeQuote/activeOccurrence highlight
+  // path below and takes precedence while set; cleared on mouse-leave / nav.
+  const [hoveredWordId, setHoveredWordId] = useState<string | null>(null);
+  const handleWordHoverPreview = useCallback((id: string | null) => setHoveredWordId(id), []);
   const [mode, setMode] = useState<ScriptureMode>(() =>
     loadFromStorage<ScriptureMode>(SCRIPTURE_MODE_KEY, "stacked"),
   );
@@ -842,6 +849,19 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     return out;
   }, [versesForTiles]);
 
+  // ULT verse objects for a verse in the current chapter — feeds ResourceColumn's
+  // canonical TWL ordering (by Hebrew/Greek word position in the aligned ULT).
+  // Stable identity (only changes when the verse index does) so the twl memos
+  // recompute the ULT walk once per alignment change, not on every render.
+  const ultVerseObjectsFor = useCallback(
+    (verse: number): unknown[] | null => {
+      const vo = (verseIndexByVersion["ULT"]?.[verse]?.content as { verseObjects?: unknown[] } | null)
+        ?.verseObjects;
+      return Array.isArray(vo) ? vo : null;
+    },
+    [verseIndexByVersion],
+  );
+
   // The widest range row across all versions that covers activeVerse. Used to
   // scope TN/TQ/TWL filtering in ResourceColumn — if UST 6-9 covers the active
   // verse, the user sees notes for verses 6-9, not just the navigated one.
@@ -955,6 +975,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // same matcher handles directly for UHB and via \zaln-s for ULT/UST.
   const { activeQuote, activeOccurrence } = useMemo(() => {
     if (!data) return { activeQuote: null, activeOccurrence: null };
+    // Hover preview wins while it's set — light up the hovered word's location
+    // over whatever is clicked-active, then fall back on mouse-leave.
+    if (hoveredWordId) {
+      const r = data.twl.find((r) => r.id === hoveredWordId);
+      if (r) return { activeQuote: r.orig_words ?? null, activeOccurrence: r.occurrence ?? null };
+    }
     if (activeNoteId) {
       const r = data.tn.find((r) => r.id === activeNoteId);
       return { activeQuote: r?.quote ?? null, activeOccurrence: r?.occurrence ?? null };
@@ -964,7 +990,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       return { activeQuote: r?.orig_words ?? null, activeOccurrence: r?.occurrence ?? null };
     }
     return { activeQuote: null, activeOccurrence: null };
-  }, [activeNoteId, activeWordId, data]);
+  }, [activeNoteId, activeWordId, hoveredWordId, data]);
+
+  // Drop a lingering hover preview if the row could unmount without a
+  // mouse-leave (keyboard nav / verse change), so the highlight never sticks.
+  useEffect(() => {
+    setHoveredWordId(null);
+  }, [activeVerse, chapter, book]);
 
   // Reorder "stoplight": while a note is dragged (or for ~3s after an arrow
   // move) ResourceColumn reports the moved note's candidate neighbours; we
@@ -1217,8 +1249,40 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       const chosenCategory = chosenArticleId.split("/")[0];
       const tag =
         chosenCategory === "kt" ? "keyterm" : chosenCategory === "names" ? "name" : "";
+      // Drop the new link into its CANONICAL slot (by Hebrew word position in the
+      // aligned ULT), not at the end. Display is already canonical, but assigning
+      // a matching sort_order keeps D1 consistent with what export/reimport
+      // compute — no churn. Place the stub among the verse's rows via the shared
+      // canonical order, then pick a sort_order relative to its canonical
+      // neighbour. Falls back to append-at-end when nothing resolves / no ULT.
       const list = sortedForVerse(data.twl, verse);
-      const sort_order = pickSortOrder(list, null, "after");
+      const STUB = "__new_twl__";
+      const newOrigWords = resolved?.orig_words ?? "";
+      const newOccurrence = resolved?.occurrence ?? 1;
+      const withNew = canonicalTwlOrder(
+        [
+          ...list.map((r) => ({
+            id: r.id,
+            orig_words: r.orig_words,
+            occurrence: r.occurrence,
+            sort_order: r.sort_order,
+          })),
+          { id: STUB, orig_words: newOrigWords, occurrence: newOccurrence, sort_order: null },
+        ],
+        ult ?? null,
+      );
+      const at = withNew.findIndex((r) => r.id === STUB);
+      const prev = at > 0 ? withNew[at - 1] : null;
+      const next = at >= 0 && at < withNew.length - 1 ? withNew[at + 1] : null;
+      const canonicalExisting = canonicalTwlOrder(list, ult ?? null);
+      const sort_order =
+        list.length === 0
+          ? 100
+          : prev
+            ? pickSortOrder(canonicalExisting, prev.id, "after")
+            : next
+              ? pickSortOrder(canonicalExisting, next.id, "before")
+              : pickSortOrder(list, null, "after");
       const created = await api.createRow<TwlRow>("twl", {
         book,
         chapter,
@@ -2573,6 +2637,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           tn={data.tn}
           tq={data.tq}
           twl={data.twl}
+          ultVerseObjectsFor={ultVerseObjectsFor}
+          onWordHoverPreview={handleWordHoverPreview}
           activeNoteId={activeNoteId}
           activeWordId={activeWordId}
           findNoteQuery={findNoteQuery}

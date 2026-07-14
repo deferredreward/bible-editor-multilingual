@@ -5,6 +5,7 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import TranslateIcon from "@mui/icons-material/Translate";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import UndoIcon from "@mui/icons-material/Undo";
@@ -95,6 +96,9 @@ interface Props {
   onDelete: (id: string) => void;
   onFocus: (row: TwlRow) => void;
   onReorder: (draggedId: string, refId: string, position: WordDropPosition) => void;
+  // Hover a row's "locate" spot to preview where its word is in the scripture
+  // (row id on enter, null on leave). No click / focus change.
+  onHoverPreview?: (id: string | null) => void;
   // Chapter has an active AI pipeline. Disables all interaction in this
   // table — TWLs aren't AI-touched, but locking the whole chapter is
   // simpler and avoids partial-edit confusion.
@@ -120,7 +124,16 @@ interface Props {
   suggestionAlternatives?: Map<string, string[]>;
 }
 
-function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder, locked = false, onTranslateQuote, onWordGloss, activeQuoteBuildId = null, quoteBuildSelectionCount = 0, onStartQuoteBuild, suggestionAlternatives }: Props) {
+// Reversible kill-switch for the manual TWL reorder gesture. TWL links are now
+// ordered CANONICALLY (by the Hebrew/Greek word's position in the aligned ULT —
+// see ../lib/twlCanonicalOrder), computed automatically on every surface, so a
+// manual drag/arrow reorder of an aligned link would just snap back. We disable
+// the gesture rather than delete it: flip this to `true` to fully restore the
+// drag grip + up/down arrows (Shell's onWordReorder / reorderSequential are left
+// intact and still wired). tn/tq note reordering is unaffected.
+const ENABLE_TWL_MANUAL_REORDER = false;
+
+function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder, onHoverPreview, locked = false, onTranslateQuote, onWordGloss, activeQuoteBuildId = null, quoteBuildSelectionCount = 0, onStartQuoteBuild, suggestionAlternatives }: Props) {
   const { t } = useTranslation();
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<
@@ -210,8 +223,10 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
       </Box>
       {rows.map((r) => {
         const showBefore =
+          ENABLE_TWL_MANUAL_REORDER &&
           dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "before";
         const showAfter =
+          ENABLE_TWL_MANUAL_REORDER &&
           dragId && dragId !== r.id && dragOver?.targetId === r.id && dragOver.position === "after";
         // Arrows reorder within the same verse only — onReorder maps to Shell's
         // sortedForVerse, which renumbers per-verse.
@@ -230,9 +245,9 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
               onSave={(p) => onSave(r.id, p)}
               onDelete={() => onDelete(r.id)}
               onFocus={() => onFocus(r)}
-              onGripDragStart={() => setDragId(r.id)}
+              onGripDragStart={ENABLE_TWL_MANUAL_REORDER ? () => setDragId(r.id) : undefined}
               onMoveUp={
-                prevWord
+                ENABLE_TWL_MANUAL_REORDER && prevWord
                   ? () => {
                       pendingFocusRef.current = { id: r.id, dir: "up" };
                       onReorder(r.id, prevWord.id, "before");
@@ -240,7 +255,7 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
                   : undefined
               }
               onMoveDown={
-                nextWord
+                ENABLE_TWL_MANUAL_REORDER && nextWord
                   ? () => {
                       pendingFocusRef.current = { id: r.id, dir: "down" };
                       onReorder(r.id, nextWord.id, "after");
@@ -248,6 +263,7 @@ function WordsTableInner({ rows, activeId, onSave, onDelete, onFocus, onReorder,
                   : undefined
               }
               flashArrow={recentMove?.id === r.id ? recentMove.dir : null}
+              onHoverPreview={onHoverPreview}
               onDragEnd={() => {
                 setDragId(null);
                 setDragOver(null);
@@ -333,6 +349,7 @@ const WordRow = memo(function WordRow({
   onStartQuoteBuild,
   onOpenArticle,
   flashArrow,
+  onHoverPreview,
   suggestionAltIds = "",
 }: {
   row: TwlRow;
@@ -342,12 +359,16 @@ const WordRow = memo(function WordRow({
   onSave: (patch: Partial<TwlRow>) => void;
   onDelete: () => void;
   onFocus: () => void;
-  onGripDragStart: () => void;
-  // Reorder one slot within the verse. Undefined when already first/last.
+  // Undefined when the manual reorder gesture is disabled (canonical ordering).
+  onGripDragStart?: () => void;
+  // Reorder one slot within the verse. Undefined when already first/last, or when
+  // the manual reorder gesture is disabled.
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   // The just-reordered arrow to flash a focus ring on ("up"/"down"), or null.
   flashArrow?: "up" | "down" | null;
+  // Hover the locate spot to preview the word's scripture highlight (id / null).
+  onHoverPreview?: (id: string | null) => void;
   onDragEnd: () => void;
   onRowDragOver: (position: WordDropPosition) => void;
   onRowDrop: (position: WordDropPosition) => void;
@@ -527,56 +548,81 @@ const WordRow = memo(function WordRow({
           justifyContent: "center",
         }}
       >
-        <Tooltip title={t("words.moveUp")}>
-          <span>
+        {/* Locate spot: hovering it lights up where this link's word sits in the
+            scripture (no click / focus change). onMouseLeave clears the preview;
+            onBlur covers keyboard focus leaving via Tab. */}
+        {onHoverPreview && (
+          <Tooltip title={t("words.showInText")}>
             <IconButton
               size="small"
-              data-reorder-arrow="up"
-              onClick={onMoveUp}
-              disabled={!onMoveUp}
-              sx={{ p: 0, color: "text.disabled", ...(flashArrow === "up" ? reorderFlashSx : null) }}
+              aria-label="show in text"
+              onMouseEnter={() => onHoverPreview(row.id)}
+              onMouseLeave={() => onHoverPreview(null)}
+              onFocus={() => onHoverPreview(row.id)}
+              onBlur={() => onHoverPreview(null)}
+              sx={{ p: 0, color: "text.disabled", "&:hover": { color: "primary.main" } }}
             >
-              <ArrowUpwardIcon sx={{ fontSize: 14 }} />
+              <CenterFocusStrongIcon sx={{ fontSize: 14 }} />
             </IconButton>
-          </span>
-        </Tooltip>
-        <Tooltip title={t("words.dragToReorder")}>
-          <Box
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/plain", row.id);
-              if (rowRef.current) {
-                e.dataTransfer.setDragImage(rowRef.current, 12, 12);
-              }
-              onGripDragStart();
-            }}
-            onDragEnd={onDragEnd}
-            sx={{
-              cursor: "grab",
-              color: "text.disabled",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              "&:active": { cursor: "grabbing" },
-            }}
-          >
-            <DragIndicatorIcon fontSize="small" />
-          </Box>
-        </Tooltip>
-        <Tooltip title={t("words.moveDown")}>
-          <span>
-            <IconButton
-              size="small"
-              data-reorder-arrow="down"
-              onClick={onMoveDown}
-              disabled={!onMoveDown}
-              sx={{ p: 0, color: "text.disabled", ...(flashArrow === "down" ? reorderFlashSx : null) }}
-            >
-              <ArrowDownwardIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-          </span>
-        </Tooltip>
+          </Tooltip>
+        )}
+        {/* Manual reorder controls — hidden while TWL order is canonical (the
+            grip cell stays for layout). Restored by flipping
+            ENABLE_TWL_MANUAL_REORDER in this file. */}
+        {ENABLE_TWL_MANUAL_REORDER && (
+          <>
+            <Tooltip title={t("words.moveUp")}>
+              <span>
+                <IconButton
+                  size="small"
+                  data-reorder-arrow="up"
+                  onClick={onMoveUp}
+                  disabled={!onMoveUp}
+                  sx={{ p: 0, color: "text.disabled", ...(flashArrow === "up" ? reorderFlashSx : null) }}
+                >
+                  <ArrowUpwardIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={t("words.dragToReorder")}>
+              <Box
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", row.id);
+                  if (rowRef.current) {
+                    e.dataTransfer.setDragImage(rowRef.current, 12, 12);
+                  }
+                  onGripDragStart?.();
+                }}
+                onDragEnd={onDragEnd}
+                sx={{
+                  cursor: "grab",
+                  color: "text.disabled",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  "&:active": { cursor: "grabbing" },
+                }}
+              >
+                <DragIndicatorIcon fontSize="small" />
+              </Box>
+            </Tooltip>
+            <Tooltip title={t("words.moveDown")}>
+              <span>
+                <IconButton
+                  size="small"
+                  data-reorder-arrow="down"
+                  onClick={onMoveDown}
+                  disabled={!onMoveDown}
+                  sx={{ p: 0, color: "text.disabled", ...(flashArrow === "down" ? reorderFlashSx : null) }}
+                >
+                  <ArrowDownwardIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </>
+        )}
       </Box>
       <Box sx={{ gridArea: "quote", minWidth: 0, display: "flex", gap: 0.5, alignItems: "center" }}>
         <TextField

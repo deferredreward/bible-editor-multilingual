@@ -116,6 +116,7 @@
     "moveUp": "تحريك لأعلى",
     "dragToReorder": "اسحب لإعادة الترتيب",
     "moveDown": "تحريك لأسفل",
+    "showInText": "إظهار في النص",
     "translateTooltip": "الترجمة إلى العبرية/اليونانية باستخدام محاذاة ULT",
     "occurrenceTooltip": "التكرار — أي نسخة من هذا الاقتباس في الآية (عادةً ١)",
     "occurrenceAriaLabel": "التكرار",

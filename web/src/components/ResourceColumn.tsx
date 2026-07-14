@@ -11,6 +11,7 @@ import { TwlSuggestions } from "./TwlSuggestions";
 import { QuestionsTable } from "./QuestionsTable";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
+import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import CheckIcon from "@mui/icons-material/Check";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
@@ -174,6 +175,15 @@ interface Props {
   onAddTwlSuggestion?: (suggestion: TwlSuggestion, chosenArticleId: string) => void;
   // Drop suggestions already linked on the active verse (resolved-OL identity).
   isTwlSuggestionExcluded?: (suggestion: TwlSuggestion) => boolean;
+  // ULT verse objects for a given verse (current chapter), used to order TWL
+  // links canonically by Hebrew/Greek word position. Stable identity (useCallback
+  // in Shell keyed on the verse index) so the twl memos recompute only when the
+  // ULT alignment changes, not on every render. Null when unavailable → order
+  // falls back to sort_order.
+  ultVerseObjectsFor?: (verse: number) => unknown[] | null;
+  // Hover a Words row's "locate" spot → preview where its word is highlighted in
+  // the scripture (pass the row id; null on leave). No click / verse jump.
+  onWordHoverPreview?: (id: string | null) => void;
   // Report the raw (pre-exclusion) suggestion list up to Shell so it can merge
   // the matcher's candidates onto committed rows (twlRowAlternatives).
   onTwlSuggestions?: (suggestions: TwlSuggestion[]) => void;
@@ -314,6 +324,8 @@ export function ResourceColumn({
   onStartWordQuoteBuild,
   onAddTwlSuggestion,
   isTwlSuggestionExcluded,
+  ultVerseObjectsFor,
+  onWordHoverPreview,
   onTwlSuggestions,
   twlRowAlternatives,
   twlBlockedArticleIds,
@@ -409,12 +421,17 @@ export function ResourceColumn({
       ),
     [tq, rangeStart, rangeEnd],
   );
+  // TWL links are ordered CANONICALLY — by the position of the Hebrew/Greek word
+  // in the aligned ULT verse — not by stored sort_order. This is the same
+  // ordering the nightly export + reimport compute (twlCanonicalOrder mirrors the
+  // server), so the live UX always matches what lands in DCS. sort_order is only
+  // the fallback for links whose word isn't found in the ULT alignment.
   const twlForVerse = useMemo(
     () =>
       groupByVerse(twl.filter((r) => r.verse >= rangeStart && r.verse <= rangeEnd)).flatMap(
-        ([, rows]) => sortBySortOrder(rows),
+        ([v, rows]) => canonicalTwlOrder(rows, ultVerseObjectsFor?.(v) ?? null),
       ),
-    [twl, rangeStart, rangeEnd],
+    [twl, rangeStart, rangeEnd, ultVerseObjectsFor],
   );
 
   // Pinned sections show the whole chapter, grouped by verse. Within each
@@ -436,9 +453,12 @@ export function ResourceColumn({
   const twlGroups = useMemo(
     () =>
       pinned.words
-        ? groupByVerse(twl).map(([v, rows]) => [v, sortBySortOrder(rows)] as [number, TwlRow[]])
+        ? groupByVerse(twl).map(
+            ([v, rows]) =>
+              [v, canonicalTwlOrder(rows, ultVerseObjectsFor?.(v) ?? null)] as [number, TwlRow[]],
+          )
         : null,
-    [pinned.words, twl],
+    [pinned.words, twl, ultVerseObjectsFor],
   );
 
   const totalTn = pinned.notes ? tn.length : tnForVerse.length;
@@ -891,6 +911,7 @@ export function ResourceColumn({
                       onDelete={onWordDelete}
                       onFocus={onWordFocus}
                       onReorder={onWordReorder}
+                      onHoverPreview={onWordHoverPreview}
                       locked={locked}
                       onTranslateQuote={onWordTranslateQuote}
                       onWordGloss={onWordGloss}
@@ -910,6 +931,7 @@ export function ResourceColumn({
                 onDelete={onWordDelete}
                 onFocus={onWordFocus}
                 onReorder={onWordReorder}
+                onHoverPreview={onWordHoverPreview}
                 locked={locked}
                 onTranslateQuote={onWordTranslateQuote}
                 onWordGloss={onWordGloss}
