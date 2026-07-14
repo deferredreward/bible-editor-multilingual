@@ -1106,6 +1106,8 @@ export interface ProjectConfig {
   repos: Record<string, string>;
   litLabel: string;
   simLabel: string;
+  origHebrewLabel: string;
+  origGreekLabel: string;
   glBibles: GlBiblePane[];
   translationSource: {
     org: string;

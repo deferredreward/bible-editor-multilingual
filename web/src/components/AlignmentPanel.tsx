@@ -49,6 +49,8 @@ import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
 import { lostAlignedWords } from "../lib/alignmentDelta";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
 import { useAlignmentSuggestions } from "../hooks/useAlignmentSuggestions";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 import {
   computeGhosts,
   dismissedGhostKey,
@@ -1060,6 +1062,8 @@ function InventoryStrip({
   hctx: HighlightCtx;
 }) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
+  const versionDisplay = versionLabel(projectConfig, bibleVersion);
   const [over, setOver] = useState(false);
   const [chipAreaHeight, setChipAreaHeight] = useState<number>(() =>
     clampInventoryHeight(readNumber(LS_INVENTORY_HEIGHT, DEFAULT_INVENTORY_HEIGHT)),
@@ -1130,7 +1134,7 @@ function InventoryStrip({
             fontWeight: 600,
           }}
         >
-          {t("aligner.versionWords", { version: bibleVersion })}
+          {t("aligner.versionWords", { version: versionDisplay })}
         </Typography>
         <Chip
           label={t("aligner.unalignedCount", { count: unalignedCount })}
@@ -1327,6 +1331,8 @@ function ActionBar({
   onOpenHistory?: () => void;
 }) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
+  const versionDisplay = versionLabel(projectConfig, bibleVersion);
   return (
     <Stack
       direction="row"
@@ -1348,7 +1354,7 @@ function ActionBar({
         variant="caption"
         sx={{ fontFamily: "monospace", color: "text.disabled", fontSize: 10 }}
       >
-        {t("aligner.editing", { version: bibleVersion })}
+        {t("aligner.editing", { version: versionDisplay })}
       </Typography>
       {/* Spacer keeps the actions right-aligned when the bar fits on one line;
           when it doesn't (narrow laptop screens), the actions wrap to a second
@@ -1373,7 +1379,7 @@ function ActionBar({
         </Tooltip>
       )}
       {onOpenDual && (
-        <Tooltip title={t("aligner.openDualTooltip")}>
+        <Tooltip title={t("aligner.openDualTooltip", { left: versionLabel(projectConfig, "ULT"), right: versionLabel(projectConfig, "UST") })}>
           <Button
             size="small"
             onClick={onOpenDual}
@@ -1460,7 +1466,7 @@ function ActionBar({
           px: 2,
         }}
       >
-        {t("aligner.saveVersion", { version: bibleVersion })}
+        {t("aligner.saveVersion", { version: versionDisplay })}
       </Button>
     </Stack>
   );

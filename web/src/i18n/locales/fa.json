@@ -436,7 +436,7 @@
     "editing": "در حال ویرایش {{version}}",
     "versionHistory": "تاریخچهٔ نسخه — مشاهده یا بازیابی یک همترازی پیشین",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "باز کردن ULT + UST کنار هم (همتراز با همان عبری)",
+    "openDualTooltip": "باز کردن {{left}} + {{right}} کنار هم (همتراز با همان عبری)",
     "sideBySide": "⇄ کنار هم",
     "acceptSuggestions_one": "✓ پذیرش {{count}} پیشنهاد",
     "acceptSuggestions_other": "✓ پذیرش {{count}} پیشنهاد",

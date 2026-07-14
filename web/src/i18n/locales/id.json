@@ -425,7 +425,7 @@
     "editing": "menyunting {{version}}",
     "versionHistory": "riwayat versi — lihat atau pulihkan penyejajaran sebelumnya",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "buka ULT + UST berdampingan (disejajarkan ke bahasa Ibrani yang sama)",
+    "openDualTooltip": "buka {{left}} + {{right}} berdampingan (disejajarkan ke bahasa Ibrani yang sama)",
     "sideBySide": "⇄ Berdampingan",
     "acceptSuggestions_other": "✓ terima {{count}} saran",
     "clear": "Kosongkan",

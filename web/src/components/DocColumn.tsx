@@ -13,6 +13,8 @@ import { SectionHeaderBand } from "./SectionHeaderBand";
 import { AlignLinkButton } from "./AlignLinkButton";
 import { drafts, verseKey, draftDirtyBorderSx } from "../sync/drafts";
 import { HebrewLine } from "./HebrewLine";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import type { FindMatch } from "./FindReplaceOverlay";
 import { formatVerseLabel, isFirstOfRange, isRangeRow } from "../lib/verseRange";
@@ -126,6 +128,7 @@ export function DocColumn({
   onEditSection,
   textCheck,
 }: Props) {
+  const projectConfig = useProjectConfig();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLSpanElement | null>(null);
 
@@ -171,7 +174,7 @@ export function DocColumn({
             flex: 1,
           }}
         >
-          {bibleVersion} · {readOnly ? "read-only" : "editing"}
+          {versionLabel(projectConfig, bibleVersion)} · {readOnly ? "read-only" : "editing"}
         </Typography>
         <CopyChapterButton
           book={book}

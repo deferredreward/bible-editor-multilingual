@@ -497,7 +497,7 @@
     "editing": "تحرير {{version}}",
     "versionHistory": "سجل الإصدارات — عرض أو استعادة محاذاة سابقة",
     "versionChip": "الإصدار {{version}}",
-    "openDualTooltip": "افتح ULT + UST جنبًا إلى جنب (مُحاذَيْن لنفس العبرية)",
+    "openDualTooltip": "افتح {{left}} + {{right}} جنبًا إلى جنب (مُحاذَيْن لنفس العبرية)",
     "sideBySide": "⇄ جنبًا إلى جنب",
     "acceptSuggestions_zero": "✓ قبول {{count}} اقتراح",
     "acceptSuggestions_one": "✓ قبول {{count}} اقتراح",

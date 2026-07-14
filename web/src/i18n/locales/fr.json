@@ -447,7 +447,7 @@
     "editing": "modification de {{version}}",
     "versionHistory": "historique des versions — consulter ou restaurer un alignement antérieur",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "ouvrir ULT + UST côte à côte (alignés sur le même hébreu)",
+    "openDualTooltip": "ouvrir {{left}} + {{right}} côte à côte (alignés sur le même hébreu)",
     "sideBySide": "⇄ Côte à côte",
     "acceptSuggestions_one": "✓ accepter {{count}} suggestion",
     "acceptSuggestions_many": "✓ accepter {{count}} suggestions",

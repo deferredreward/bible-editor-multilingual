@@ -479,7 +479,7 @@
     "editing": "editing {{version}}",
     "versionHistory": "version history — view or restore an earlier alignment",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "open ULT + UST side by side (aligned to the same Hebrew)",
+    "openDualTooltip": "open {{left}} + {{right}} side by side (aligned to the same Hebrew)",
     "sideBySide": "⇄ Side-by-side",
     "acceptSuggestions_one": "✓ accept {{count}} suggestion",
     "acceptSuggestions_other": "✓ accept {{count}} suggestions",

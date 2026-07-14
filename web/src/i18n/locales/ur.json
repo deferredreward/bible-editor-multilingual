@@ -436,7 +436,7 @@
     "editing": "{{version}} میں ترمیم",
     "versionHistory": "ورژن تاریخ — پچھلی ترتیب دیکھیں یا بحال کریں",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "ULT + UST ساتھ ساتھ کھولیں (اسی عبرانی سے منسلک)",
+    "openDualTooltip": "{{left}} + {{right}} ساتھ ساتھ کھولیں (اسی عبرانی سے منسلک)",
     "sideBySide": "⇄ ساتھ ساتھ",
     "acceptSuggestions_one": "✓ {{count}} تجویز قبول کریں",
     "acceptSuggestions_other": "✓ {{count}} تجاویز قبول کریں",

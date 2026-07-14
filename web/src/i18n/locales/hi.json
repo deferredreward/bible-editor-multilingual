@@ -436,7 +436,7 @@
     "editing": "{{version}} संपादित किया जा रहा है",
     "versionHistory": "संस्करण इतिहास — पिछला संरेखण देखें या पुनर्स्थापित करें",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "ULT + UST को साथ-साथ खोलें (उसी इब्रानी से संरेखित)",
+    "openDualTooltip": "{{left}} + {{right}} को साथ-साथ खोलें (उसी इब्रानी से संरेखित)",
     "sideBySide": "⇄ साथ-साथ",
     "acceptSuggestions_one": "✓ {{count}} सुझाव स्वीकार करें",
     "acceptSuggestions_other": "✓ {{count}} सुझाव स्वीकार करें",

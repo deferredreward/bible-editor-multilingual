@@ -18,6 +18,8 @@ import { type HoverHighlight, type HighlightCtx } from "../lib/highlightTypes";
 import type { TwlRow, VerseDto } from "../sync/api";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import { extractEditableText, normalizeEditable } from "../lib/usfm";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { versionLabel } from "../lib/versionLabels";
 
 // Separate key from the single-panel aligner's `be:alignmentHoverLink`
 // (which defaults OFF). The side-by-side popup's whole point is the
@@ -118,6 +120,7 @@ export function SideBySideAligner({
   onNextVerse,
 }: Props) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
   const [hover, setHover] = useState<HoverHighlight>(null);
   const [hoverLink, setHoverLink] = useState<boolean>(readHoverLink);
   // Hebrew lexicon tooltip on hover — default on; turn off to see only what's
@@ -240,9 +243,9 @@ export function SideBySideAligner({
           <Typography sx={{ fontWeight: 600, fontSize: 15 }}>{t("aligner.alignSideBySide")}</Typography>
           <Typography sx={{ fontSize: 12, opacity: 0.82 }}>
             {t("aligner.dualSubtitle", {
-              left: left.bibleVersion,
-              right: right.bibleVersion,
-              source: sourceLabel,
+              left: versionLabel(projectConfig, left.bibleVersion),
+              right: versionLabel(projectConfig, right.bibleVersion),
+              source: versionLabel(projectConfig, sourceLabel),
             })}
           </Typography>
           <Box sx={{ flex: 1 }} />
@@ -432,6 +435,8 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
 }>(function ReadingLine({ slot, onSave, onDirtyChange, locked = false }, ref) {
   const { t } = useTranslation();
   const { bibleVersion, verse } = slot;
+  const projectConfig = useProjectConfig();
+  const versionDisplay = versionLabel(projectConfig, bibleVersion);
   const editable = useMemo(() => (verse ? extractEditableText(verse.content) : ""), [verse]);
   const elRef = useRef<HTMLDivElement | null>(null);
   const lastTextRef = useRef("");
@@ -504,7 +509,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
             fontWeight: 600,
           }}
         >
-          {t("aligner.readingText", { version: bibleVersion })}{" "}
+          {t("aligner.readingText", { version: versionDisplay })}{" "}
           <Box
             component="span"
             sx={{
@@ -549,7 +554,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
                 py: 0.25,
               }}
             >
-              {t("aligner.saveVersion", { version: bibleVersion })}
+              {t("aligner.saveVersion", { version: versionDisplay })}
             </Button>
           </>
         )}
@@ -597,7 +602,7 @@ const ReadingLine = forwardRef<ReadingLineHandle, {
         />
       ) : (
         <Typography variant="body2" sx={{ color: "text.disabled", fontStyle: "italic", py: 0.5 }}>
-          {t("aligner.noVersionText", { version: bibleVersion })}
+          {t("aligner.noVersionText", { version: versionDisplay })}
         </Typography>
       )}
     </Box>

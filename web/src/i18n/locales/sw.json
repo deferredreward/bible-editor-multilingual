@@ -436,7 +436,7 @@
     "editing": "inahariri {{version}}",
     "versionHistory": "historia ya matoleo — tazama au rejesha upangiliaji wa awali",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "fungua ULT + UST ubavu kwa ubavu (zimepangiliwa na Kiebrania kile kile)",
+    "openDualTooltip": "fungua {{left}} + {{right}} ubavu kwa ubavu (zimepangiliwa na Kiebrania kile kile)",
     "sideBySide": "⇄ Ubavu kwa ubavu",
     "acceptSuggestions_one": "✓ kubali pendekezo {{count}}",
     "acceptSuggestions_other": "✓ kubali mapendekezo {{count}}",

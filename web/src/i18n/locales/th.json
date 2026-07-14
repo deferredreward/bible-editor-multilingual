@@ -425,7 +425,7 @@
     "editing": "กำลังแก้ไข {{version}}",
     "versionHistory": "ประวัติเวอร์ชัน — ดูหรือกู้คืนการจัดแนวก่อนหน้า",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "เปิด ULT + UST เคียงข้างกัน (จัดแนวกับภาษาฮีบรูเดียวกัน)",
+    "openDualTooltip": "เปิด {{left}} + {{right}} เคียงข้างกัน (จัดแนวกับภาษาฮีบรูเดียวกัน)",
     "sideBySide": "⇄ เคียงข้างกัน",
     "acceptSuggestions_other": "✓ ยอมรับ {{count}} คำแนะนำ",
     "clear": "ล้าง",

@@ -458,7 +458,7 @@
     "editing": "редактирование {{version}}",
     "versionHistory": "история версий — просмотреть или восстановить более раннее выравнивание",
     "versionChip": "v{{version}}",
-    "openDualTooltip": "открыть ULT + UST бок о бок (выровненные с одним и тем же ивритом)",
+    "openDualTooltip": "открыть {{left}} + {{right}} бок о бок (выровненные с одним и тем же ивритом)",
     "sideBySide": "⇄ Бок о бок",
     "acceptSuggestions_one": "✓ принять {{count}} предложение",
     "acceptSuggestions_few": "✓ принять {{count}} предложения",
