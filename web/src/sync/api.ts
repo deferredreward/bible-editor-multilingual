@@ -892,6 +892,19 @@ export type TranslationPrefsInput = {
   assisted_mode: boolean;
 };
 
+export interface ContextExportStatus {
+  status: string;
+  sha: string | null;
+  completedAt: number | null;
+  terms: number;
+  examplesTn: number;
+  examplesTq: number;
+  contentFiles: number;
+  totalBytes: number;
+  owner: string | null;
+  failureReason: string | null;
+}
+
 export interface Term {
   id: number;
   concept_id: string;
@@ -1415,6 +1428,18 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
       body: JSON.stringify(patch),
+    }),
+  getContextExportStatus: () =>
+    request<ContextExportStatus>(`/api/translation-memory/export-status`),
+  runContextExport: (opts?: { dryDcs?: boolean; shrinkOverride?: boolean }) =>
+    request<{ id: string; status: string }>(`/api/exports/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contextOnly: true,
+        dryDcs: opts?.dryDcs,
+        shrinkOverride: opts?.shrinkOverride,
+      }),
     }),
   getTerms: (opts?: { status?: string; q?: string }) => {
     const qs = new URLSearchParams();

@@ -1,0 +1,238 @@
+// Unit tests for contextExport.ts + contextExportLib.ts (pure renderer + gates).
+// Run: node --experimental-strip-types --no-warnings src/contextExport.test.mjs
+
+import {
+  renderManifestYaml,
+  renderBriefMd,
+  renderContextPack,
+  buildValidatedExamples,
+  renderValidatedJsonl,
+  hasMinimumContent,
+  buildContextRef,
+  contextRepoOwner,
+} from "./contextExport.ts";
+import {
+  contextShrinkRefused,
+  shrinkDetailCode,
+  nfc,
+  contentFileCount,
+} from "./contextExportLib.ts";
+import { applyAssistedContextRef } from "./assistedContextRef.ts";
+import { tsvLooksTruncated } from "./contextSourceFetch.ts";
+
+function assert(cond, msg) {
+  if (!cond) {
+    console.error(`FAIL: ${msg}`);
+    process.exit(1);
+  }
+  console.log(`  ok: ${msg}`);
+}
+
+const cfg = {
+  languageCode: "ar",
+  languageName: "Arabic",
+  languageTitle: "العربية",
+  direction: "rtl",
+  exportOrg: "BSOJ",
+  org: "BSOJ",
+};
+
+console.log("contextExport — manifest / brief");
+{
+  const m = renderManifestYaml({
+    languageCode: "ar",
+    direction: "rtl",
+    exportedAt: new Date("2026-07-14T12:00:00.000Z"),
+  });
+  assert(m.includes("format: 1"), "manifest has format: 1");
+  assert(m.includes("language: ar"), "manifest has language");
+  assert(m.includes("direction: rtl"), "manifest has direction");
+  assert(m.includes("exported_by: bible-editor"), "manifest has exported_by");
+  assert(m.includes("exported_at: 2026-07-14T12:00:00Z"), "manifest ISO time without ms");
+
+  const brief = renderBriefMd(
+    { audience: "teams", purpose: "notes", register: "formal", script_notes: "RTL", instructions_md: null },
+    "العربية",
+    "ar",
+  );
+  assert(brief.includes("**Register:** formal"), "brief Register line for bot parse");
+  assert(brief.includes("**Audience:** teams"), "brief audience");
+}
+
+console.log("contextExport — NFC + examples");
+{
+  // Hebrew with combining marks in legacy vs NFC order.
+  const legacy = "\u05D1\u05BC\u05B8"; // bet + dagesh + qamats (common UHB order)
+  const already = legacy.normalize("NFC");
+  assert(nfc(legacy) === already, "nfc() folds Hebrew combining marks");
+
+  const ex = buildValidatedExamples(
+    [
+      {
+        id: "abcd",
+        book: "OBA",
+        ref_raw: "1:1",
+        support_reference: "figs-metaphor",
+        quote: null,
+        note: "هذا مجاز.",
+        updated_at: 100,
+      },
+    ],
+    [],
+    {
+      tn: new Map([["abcd", { note: "This is a metaphor.", quote: null }]]),
+      tq: new Map(),
+    },
+  );
+  assert(ex.ok === true, "examples ok with EN source");
+  assert(ex.ok && ex.lines[0].source === "This is a metaphor.", "example source from EN map");
+
+  const miss = buildValidatedExamples(
+    [{ id: "zzzz", book: "OBA", ref_raw: "1:1", support_reference: null, quote: null, note: "x", updated_at: 1 }],
+    [],
+    { tn: new Map(), tq: new Map() },
+  );
+  assert(miss.ok === false && miss.reason.includes("missing_en_source"), "missing EN aborts");
+
+  const jsonl = renderValidatedJsonl(ex.ok ? ex.lines : []);
+  assert(jsonl.includes('"resource":"tn"'), "jsonl serializes resource");
+  assert(jsonl.endsWith("\n"), "jsonl trailing newline");
+}
+
+console.log("contextExport — full pack + omission rules");
+{
+  const emptyInstructions = renderContextPack({
+    cfg,
+    prefs: {
+      audience: "a",
+      purpose: "p",
+      register: "default",
+      script_notes: null,
+      instructions_md: null,
+    },
+    terms: [],
+    tnRows: [],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+    exportedAt: new Date("2026-07-14T12:00:00Z"),
+  });
+  assert(emptyInstructions.ok === true, "pack renders with brief alone");
+  assert(
+    emptyInstructions.ok && !emptyInstructions.files.some((f) => f.path === "instructions.md"),
+    "omits empty instructions.md",
+  );
+  assert(
+    emptyInstructions.ok && !emptyInstructions.files.some((f) => f.path === "examples/validated.jsonl"),
+    "omits empty examples",
+  );
+  assert(emptyInstructions.ok && hasMinimumContent(emptyInstructions.files), "brief counts as content");
+
+  const withTerms = renderContextPack({
+    cfg,
+    prefs: {
+      audience: null,
+      purpose: null,
+      register: "informal",
+      script_notes: null,
+      instructions_md: "Do the thing\n",
+    },
+    terms: [
+      {
+        concept_id: "kt/grace",
+        source_term: "grace",
+        target_term: "نعمة",
+        status: "preferred",
+        replacement: null,
+        comment: null,
+        tw_link: null,
+      },
+    ],
+    tnRows: [],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+  });
+  assert(withTerms.ok && withTerms.stats.terms === 1, "terms count");
+  assert(
+    withTerms.ok && withTerms.files.some((f) => f.path === "terminology/terms.csv"),
+    "emits terms.csv",
+  );
+  assert(
+    withTerms.ok && withTerms.files.some((f) => f.path === "instructions.md"),
+    "emits instructions when present",
+  );
+}
+
+console.log("contextExportLib — shrink + content count");
+{
+  assert(contentFileCount([{ path: "manifest.yaml", content: "x" }]) === 0, "manifest alone = 0 content");
+  assert(
+    !contextShrinkRefused(
+      { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+      null,
+    ),
+    "first export: no shrink",
+  );
+  const refused = contextShrinkRefused(
+    { terms: 2, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+    { terms: 100, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+  );
+  assert(refused && refused.metric === "terms", "terms shrink refused");
+  assert(shrinkDetailCode(refused).startsWith("shrink_guard:terms_"), "shrink code shape");
+
+  const bytes = contextShrinkRefused(
+    { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 100 },
+    { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+  );
+  assert(bytes && bytes.metric === "totalBytes", "bytes shrink refused");
+}
+
+console.log("assistedContextRef + owner + tsv truncation");
+{
+  assert(contextRepoOwner({ DCS_EXPORT_OWNER: "X" }, cfg) === "X", "DCS_EXPORT_OWNER wins");
+  assert(contextRepoOwner({}, cfg) === "BSOJ", "fallback to exportOrg");
+  assert(buildContextRef("BSOJ", "abc") === "BSOJ/translation-context@abc", "contextRef shape");
+
+  const injected = applyAssistedContextRef({ sourceRef: "x" }, true, {
+    sha: "deadbeef",
+    completedAt: 1,
+    owner: "BSOJ",
+    terms: 1,
+    examplesTn: 0,
+    examplesTq: 0,
+    contentFiles: 1,
+    totalBytes: 10,
+  });
+  assert(injected.contextRef === "BSOJ/translation-context@deadbeef", "injects when assisted+success");
+
+  const raw = applyAssistedContextRef({ sourceRef: "x" }, false, {
+    sha: "deadbeef",
+    completedAt: 1,
+    owner: "BSOJ",
+    terms: 1,
+    examplesTn: 0,
+    examplesTq: 0,
+    contentFiles: 1,
+    totalBytes: 10,
+  });
+  assert(raw.contextRef == null, "no inject when assisted_mode=0");
+
+  const noSha = applyAssistedContextRef({ sourceRef: "x" }, true, null);
+  assert(noSha.contextRef == null, "no inject without successful export");
+
+  const override = applyAssistedContextRef({ contextRef: "other/repo@1" }, true, {
+    sha: "deadbeef",
+    completedAt: 1,
+    owner: "BSOJ",
+    terms: 1,
+    examplesTn: 0,
+    examplesTq: 0,
+    contentFiles: 1,
+    totalBytes: 10,
+  });
+  assert(override.contextRef === "other/repo@1", "caller override wins");
+
+  assert(tsvLooksTruncated("ID\tNote\n"), "header-only TSV truncated");
+  assert(!tsvLooksTruncated("Reference\tID\tTags\tSupportReference\tQuote\tOccurrence\tNote\nabcd\tx\t\t\t\t\ty\n"), "normal TSV ok");
+}
+
+console.log("ALL contextExport tests passed");

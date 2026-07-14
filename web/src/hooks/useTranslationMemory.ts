@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Term, type TranslationPrefs, type TranslationExample } from "../sync/api";
+import {
+  api,
+  type Term,
+  type TranslationPrefs,
+  type TranslationExample,
+  type ContextExportStatus,
+} from "../sync/api";
 
 // Preferences singleton (brief + instructions + register + assisted flag).
 // `enabled === false` yields an idle result so the caller can gate on the
@@ -44,6 +50,49 @@ export function useTranslationPrefs(enabled: boolean): {
   }, [enabled, reloadKey]);
 
   return { prefs, loading, error, refetch };
+}
+
+/** Latest context-pack export status — gates the assisted-mode toggle. */
+export function useContextExportStatus(enabled: boolean): {
+  status: ContextExportStatus | null;
+  loading: boolean;
+  error: Error | null;
+  refetch: () => void;
+} {
+  const [status, setStatus] = useState<ContextExportStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  useEffect(() => {
+    if (!enabled) {
+      setStatus(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .getContextExportStatus()
+      .then((res) => {
+        if (cancelled) return;
+        setStatus(res);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e : new Error(String(e)));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, reloadKey]);
+
+  return { status, loading, error, refetch };
 }
 
 // Terminology list, filterable by status / free-text query.

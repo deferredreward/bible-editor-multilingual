@@ -14,6 +14,27 @@
 
 ## Last run
 
+2026-07-14 · **feat/context-repo-export (worktree off `main`)** — **D1→`{org}/translation-context` export + assisted-mode toggle built.**
+
+Closes the "Biggest remaining gap" from the Preferences panel (PR #14): the export leg that feeds curated memory to bp-assistant via `contextRef`.
+
+**Contract:** [`docs/CONTEXT-REPO-CONTRACT.md`](docs/CONTEXT-REPO-CONTRACT.md) status → CONFIRMED; pinned parser SHAs for bp-assistant#206 (`f78cce…`) + skills#136 (`6475d5…`). Shared fixtures in `api/test-fixtures/context-pack/`. Gate: `scripts/validate-context-pack.mjs` (runs vendored `vendor/bp-assistant-context-pack.js` — Node-only, never Worker-coupled).
+
+**Built:**
+- Pure renderer [`api/src/contextExport.ts`](api/src/contextExport.ts) + shrink/NFC helpers [`contextExportLib.ts`](api/src/contextExportLib.ts)
+- Batched EN-source fetch [`contextSourceFetch.ts`](api/src/contextSourceFetch.ts) — fail-closed on missing/truncated EN TSV (never publish partial English-source pack)
+- CAS master commit [`contextExportDcs.ts`](api/src/contextExportDcs.ts) — expected-parent + retry
+- Migration `0041_context_export_results.sql` + [`contextExportResults.ts`](api/src/contextExportResults.ts) — single "latest successful completion" predicate for SHA + UI
+- `ExportWorkflow` `contextOnly` mode + §2c full-run phase; `POST /api/exports/run { contextOnly, shrinkOverride }`
+- Assisted injection in `pipelines.ts` via [`assistedContextRef.ts`](api/src/assistedContextRef.ts) — `owner = DCS_EXPORT_OWNER ?? exportOrg` from the export record, never `cfg.exportOrg` alone
+- Preferences header toggle + Export now + Examples "feeding AI" chip; `GET /api/translation-memory/export-status`
+
+**Verified — how:** typecheck (both), `npm --workspace api run test` (incl. new contextExport suite), web build green, fixture packs accepted by real bp-assistant `loadContextPack`.
+
+**Honesty ledger:** live DCS scratch-repo export + assisted translate against deployed #206 not run this session (PRs still OPEN). Validator structural + reader path proven on fixtures. Semantic shrink override path admin-only via `shrinkOverride`.
+
+---
+
 2026-07-13 · **claude/lucid-bartik-17d777 (branch off `main`)** — **Phase B2b: tW/tA article EXPORT built + gated green. PR into `main` (NOT pushed to unfoldingWord; NOT deployed).**
 Completes the one piece PART B2 (PR #5, `feat/twl-and-article-translation`, merged to `main` as `70472bd`) deferred: rendering translated `article_units.target_md` back to the `{lang}_tw` / `{lang}_ta` Door43 repos. Design: `docs/design/tw-ta-translation-modules.md` §5.
 

@@ -5,10 +5,12 @@ import {
   Button,
   Chip,
   CircularProgress,
+  FormControlLabel,
   IconButton,
   MenuItem,
   Snackbar,
   Stack,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -37,7 +39,12 @@ import {
   type TranslationPrefs,
 } from "../sync/api";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
-import { useTranslationPrefs, useTerms, useExamples } from "../hooks/useTranslationMemory";
+import {
+  useTranslationPrefs,
+  useTerms,
+  useExamples,
+  useContextExportStatus,
+} from "../hooks/useTranslationMemory";
 import { MarkdownView } from "./MarkdownView";
 
 export type Section = "brief" | "instructions" | "terminology" | "examples";
@@ -129,6 +136,7 @@ export function PreferencesWorkspace({ onNavigate, section }: Props) {
           <Typography variant="caption" color="text.secondary">
             {cfg?.languageTitle ?? cfg?.languageName ?? cfg?.languageCode}
           </Typography>
+          <AssistedModeControls />
         </Stack>
         <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0, py: 0.5 }}>
           {SECTIONS.map((s) => {
@@ -166,6 +174,91 @@ export function PreferencesWorkspace({ onNavigate, section }: Props) {
         </Box>
       </Box>
     </Box>
+  );
+}
+
+function AssistedModeControls() {
+  const { t } = useTranslation();
+  const { prefs, refetch: refetchPrefs } = useTranslationPrefs(true);
+  const { status, refetch: refetchStatus } = useContextExportStatus(true);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const canEnable = status?.status === "success" && !!status.sha;
+  const assistedOn = prefs?.assisted_mode === 1;
+
+  const onToggle = async (next: boolean) => {
+    if (!prefs) return;
+    if (next && !canEnable) return;
+    setBusy(true);
+    try {
+      await api.putTranslationPrefs(prefs.version, { assisted_mode: next });
+      refetchPrefs();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) setMsg(t("preferences.saveForbidden"));
+      else if (e instanceof ApiError && e.status === 409) {
+        setMsg(t("preferences.conflict"));
+        refetchPrefs();
+      } else setMsg(t("preferences.saveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onExport = async () => {
+    setBusy(true);
+    try {
+      await api.runContextExport();
+      setMsg(t("preferences.exportQueued"));
+      // Poll status a few times so the toggle can enable after success.
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        refetchStatus();
+      }
+    } catch {
+      setMsg(t("preferences.actionFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLabel =
+    !status || status.status === "never"
+      ? t("preferences.exportStatusNever")
+      : status.status === "success" && status.sha
+        ? t("preferences.exportStatusSuccess", { sha: status.sha.slice(0, 8) })
+        : t("preferences.exportStatusOther", { status: status.status });
+
+  return (
+    <Stack spacing={0.75}>
+      <Tooltip title={canEnable ? t("preferences.assistedModeHelp") : t("preferences.assistedModeDisabled")}>
+        <span>
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={assistedOn}
+                disabled={busy || (!canEnable && !assistedOn)}
+                onChange={(_, checked) => void onToggle(checked)}
+              />
+            }
+            label={
+              <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                {assistedOn ? t("preferences.assistedModeOn") : t("preferences.assistedModeOff")}
+              </Typography>
+            }
+            sx={{ m: 0, alignItems: "center" }}
+          />
+        </span>
+      </Tooltip>
+      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
+        {statusLabel}
+      </Typography>
+      <Button size="small" variant="outlined" disabled={busy} onClick={() => void onExport()} sx={{ alignSelf: "flex-start" }}>
+        {t("preferences.exportNow")}
+      </Button>
+      <Snackbar open={!!msg} autoHideDuration={4000} onClose={() => setMsg(null)} message={msg} />
+    </Stack>
   );
 }
 
@@ -791,6 +884,8 @@ function ExamplesSection() {
   const [query, setQuery] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const { examples, loading, refetch } = useExamples(true, { resource, q: debouncedQ || undefined, limit: 200 });
+  const { prefs } = useTranslationPrefs(true);
+  const { status } = useContextExportStatus(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const save = useSaveState();
 
@@ -816,10 +911,20 @@ function ExamplesSection() {
   };
 
   const count = examples.length;
+  const feedingAi = prefs?.assisted_mode === 1 && status?.status === "success" && !!status.sha;
 
   return (
     <Stack spacing={2}>
-      <Typography variant="h6">{t("preferences.section.examples")}</Typography>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <Typography variant="h6">{t("preferences.section.examples")}</Typography>
+        <Chip
+          size="small"
+          label={feedingAi ? t("preferences.feedingAi") : t("preferences.notFeedingAi")}
+          color={feedingAi ? "success" : "default"}
+          variant="outlined"
+          sx={{ height: 18, fontSize: 10, fontWeight: 600 }}
+        />
+      </Stack>
       <Typography variant="body2" color="text.secondary">
         {t("preferences.examplesIntro")}
       </Typography>

@@ -19,6 +19,11 @@ const RunBody = z.object({
   // unset (= false) so a manual single-book test export doesn't trigger
   // the real auto-merge workflow on DCS. The 06:00 UTC cron passes true.
   validateAndMerge: z.boolean().optional(),
+  // First-class ExportWorkflow mode: skip verse+article phases; export only
+  // the translation-context pack (same durable bindings / retries / admin auth).
+  contextOnly: z.boolean().optional(),
+  // Admin override for the context-pack semantic shrink guard.
+  shrinkOverride: z.boolean().optional(),
 });
 
 exports.post("/run", requireAdmin, async (c) => {
@@ -43,11 +48,17 @@ exports.post("/run", requireAdmin, async (c) => {
     resource: parsed.data.resource as Resource | undefined,
     dryDcs: parsed.data.dryDcs,
     validateAndMerge: parsed.data.validateAndMerge,
+    contextOnly: parsed.data.contextOnly,
+    shrinkOverride: parsed.data.shrinkOverride,
   };
   // Deterministic id (second precision) so a double-submitted manual run
   // rejects on the duplicate instead of racing the first. The nightly cron
-  // uses `nightly-${day}` ids — see scheduled() in index.ts.
-  const id = `manual-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`;
+  // uses `nightly-${day}` ids — see scheduled() in index.ts. Context-only
+  // runs use a distinct prefix so they don't collide with a full manual run
+  // in the same second.
+  const id = parsed.data.contextOnly
+    ? `context-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`
+    : `manual-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`;
   try {
     const instance = await c.env.EXPORT_WORKFLOW.create({ id, params });
     return c.json({ id: instance.id, status: "queued" }, 202);
