@@ -498,7 +498,11 @@ function NewTermRow({
         source_term: draft.source_term.trim(),
         target_term: draft.target_term?.trim() || null,
         status: draft.status,
-        replacement: draft.replacement?.trim() || null,
+        // replacement only means anything for forbidden — force it null
+        // otherwise so switching the status field away from forbidden can't
+        // leave a stale value behind (the field stays in local draft state
+        // even when hidden from the form).
+        replacement: draft.status === "forbidden" ? draft.replacement?.trim() || null : null,
       });
       setDraft({ concept_id: "", source_term: "", target_term: "", status: "preferred" });
       onCreated();
@@ -589,7 +593,8 @@ function TermRow({
       await api.patchTerm(term.id, term.version, {
         target_term: draft.target_term,
         status: draft.status,
-        replacement: draft.replacement,
+        // Same stale-replacement guard as NewTermRow.add — see that comment.
+        replacement: draft.status === "forbidden" ? draft.replacement : null,
         comment: draft.comment,
         tw_link: draft.tw_link,
       });
