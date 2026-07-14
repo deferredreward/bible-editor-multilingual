@@ -8,6 +8,7 @@ import {
   buildValidatedExamples,
   renderValidatedJsonl,
   hasMinimumContent,
+  hasSemanticContent,
   buildContextRef,
   contextRepoOwner,
   sourceRowKey,
@@ -17,6 +18,7 @@ import {
   shrinkDetailCode,
   nfc,
   contentFileCount,
+  briefHasSemanticValue,
 } from "./contextExportLib.ts";
 import { applyAssistedContextRef } from "./assistedContextRef.ts";
 import { tsvLooksTruncated } from "./contextSourceFetch.ts";
@@ -166,7 +168,55 @@ console.log("contextExport — full pack + omission rules");
     emptyInstructions.ok && !emptyInstructions.files.some((f) => f.path === "examples/validated.jsonl"),
     "omits empty examples",
   );
-  assert(emptyInstructions.ok && hasMinimumContent(emptyInstructions.files), "brief counts as content");
+  assert(emptyInstructions.ok && hasMinimumContent(emptyInstructions.files), "brief counts as file-level content");
+  // Scaffold-only prefs (empty fields + default register) must NOT enable assisted.
+  assert(
+    !hasSemanticContent({
+      prefs: {
+        audience: null,
+        purpose: null,
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+      },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "scaffold-only prefs fail semantic gate",
+  );
+  assert(
+    hasSemanticContent({
+      prefs: {
+        audience: "a",
+        purpose: "p",
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+      },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "audience+purpose count as semantic",
+  );
+  assert(!briefHasSemanticValue({ audience: null, purpose: null, register: "default", script_notes: null }), "default register alone is not semantic");
+  assert(briefHasSemanticValue({ audience: null, purpose: null, register: "formal", script_notes: null }), "non-default register is semantic");
+  assert(
+    hasSemanticContent({
+      prefs: {
+        audience: null,
+        purpose: null,
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+      },
+      terms: 1,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "one term satisfies semantic gate",
+  );
 
   const withTerms = renderContextPack({
     cfg,

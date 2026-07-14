@@ -7,6 +7,7 @@ import { serializeTermsCsv, type TermImport } from "./translationMemoryLib.ts";
 import {
   contentFileCount,
   hasMinimumContent,
+  hasSemanticContent,
   nfc,
   totalBytes,
   type ContextFile,
@@ -14,7 +15,7 @@ import {
 } from "./contextExportLib.ts";
 
 export type { ContextFile, ContextPackStats };
-export { contentFileCount, hasMinimumContent, totalBytes };
+export { contentFileCount, hasMinimumContent, hasSemanticContent, totalBytes };
 
 export type TranslationPrefsForRender = {
   audience: string | null;

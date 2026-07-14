@@ -73,7 +73,7 @@ import {
   type ValidatedTnRow,
   type ValidatedTqRow,
 } from "./contextExport.ts";
-import { contextShrinkRefused, shrinkDetailCode, hasMinimumContent } from "./contextExportLib.ts";
+import { contextShrinkRefused, shrinkDetailCode, hasSemanticContent } from "./contextExportLib.ts";
 import { fetchEnSourceMaps } from "./contextSourceFetch.ts";
 import { commitContextPackToMaster, getBranchTipSha } from "./contextExportDcs.ts";
 import {
@@ -496,14 +496,24 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
 
       const { files, stats } = rendered;
-      if (!hasMinimumContent(files)) {
+      // Scaffold brief.md alone (— + Register: default) is not enough — refuse
+      // so assisted mode can't flip on an empty pack that still passes the bot's
+      // file-presence check.
+      if (
+        !hasSemanticContent({
+          prefs,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+        })
+      ) {
         await finalizeContextExport(this.env, resultId, {
           status: "no_content",
           stats,
-          failureReason: "no_content",
+          failureReason: "scaffold_only",
         });
-        await this.recordSnapshot("CONTEXT", "ctx" , null, null, 0, "no_content");
-        return empty("no_content", "no_content");
+        await this.recordSnapshot("CONTEXT", "ctx", null, null, 0, "scaffold_only");
+        return empty("no_content", "scaffold_only");
       }
 
       const prevStats = await getLatestContextExportStats(this.env);

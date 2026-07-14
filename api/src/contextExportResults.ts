@@ -35,7 +35,7 @@ export async function getLatestSuccessfulContextExport(
             content_files, total_bytes
        FROM context_export_results
       WHERE status = 'success' AND commit_sha IS NOT NULL AND completed_at IS NOT NULL
-      ORDER BY completed_at DESC
+      ORDER BY completed_at DESC, id DESC
       LIMIT 1`,
   ).first<{
     commit_sha: string;

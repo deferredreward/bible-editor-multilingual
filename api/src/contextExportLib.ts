@@ -41,8 +41,47 @@ export function totalBytes(files: readonly ContextFile[]): number {
   return n;
 }
 
+/** File-level gate: at least one content file besides manifest (bot empty-pack). */
 export function hasMinimumContent(files: readonly ContextFile[]): boolean {
   return contentFileCount(files) > 0;
+}
+
+/**
+ * Semantic gate: scaffold brief.md alone (— placeholders + Register: default)
+ * is NOT enough to enable assisted mode. Require at least one real value:
+ * non-empty audience/purpose/script_notes, non-default register, instructions,
+ * a terminology row, or a validated example.
+ */
+export function briefHasSemanticValue(prefs: {
+  audience: string | null;
+  purpose: string | null;
+  register: string;
+  script_notes: string | null;
+}): boolean {
+  if (prefs.audience?.trim()) return true;
+  if (prefs.purpose?.trim()) return true;
+  if (prefs.script_notes?.trim()) return true;
+  if (prefs.register && prefs.register !== "default") return true;
+  return false;
+}
+
+export function hasSemanticContent(input: {
+  prefs: {
+    audience: string | null;
+    purpose: string | null;
+    register: string;
+    script_notes: string | null;
+    instructions_md: string | null;
+  };
+  terms: number;
+  examplesTn: number;
+  examplesTq: number;
+}): boolean {
+  if (briefHasSemanticValue(input.prefs)) return true;
+  if (input.prefs.instructions_md?.trim()) return true;
+  if (input.terms > 0) return true;
+  if (input.examplesTn + input.examplesTq > 0) return true;
+  return false;
 }
 
 export type ShrinkDetail = {

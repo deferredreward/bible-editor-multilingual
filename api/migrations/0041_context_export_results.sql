@@ -22,5 +22,5 @@ CREATE TABLE context_export_results (
 );
 
 CREATE INDEX context_export_results_success
-  ON context_export_results(completed_at DESC)
+  ON context_export_results(completed_at DESC, id DESC)
   WHERE status = 'success' AND commit_sha IS NOT NULL;
