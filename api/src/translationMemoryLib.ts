@@ -163,17 +163,34 @@ export function parseTermsCsv(text: string): CsvParseResult {
       errors.push({ line, message: `invalid status "${rawStatus}" (expected one of ${TERM_STATUSES.join(", ")})` });
       continue;
     }
+    const replacement = nullable(at(cells, iReplace));
+    const invariantError = termInvariantError({ status, replacement });
+    if (invariantError) {
+      errors.push({ line, message: invariantError });
+      continue;
+    }
     terms.push({
       concept_id,
       source_term,
       target_term: nullable(at(cells, iTarget)),
       status,
-      replacement: nullable(at(cells, iReplace)),
+      replacement,
       comment: nullable(at(cells, iComment)),
       tw_link: nullable(at(cells, iTw)),
     });
   }
   return { terms, errors };
+}
+
+// The forbidden→replacement invariant (docs/CONTEXT-REPO-CONTRACT.md §3.3): a
+// forbidden rendering must carry a non-empty `replacement` so a QA flag can
+// always say "don't use X, use Y" instead of a bare prohibition. Shared by the
+// CSV importer above and the create/update routes in translationMemory.ts.
+export function termInvariantError(t: { status: string; replacement: string | null }): string | null {
+  if (t.status === "forbidden" && (!t.replacement || !t.replacement.trim())) {
+    return "a forbidden term must carry a replacement (what to use instead)";
+  }
+  return null;
 }
 
 // Quote a cell only when it contains a comma, quote, or newline (RFC-4180).

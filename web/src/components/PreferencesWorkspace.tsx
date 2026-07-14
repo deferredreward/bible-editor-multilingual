@@ -467,7 +467,12 @@ function NewTermRow({
   const { t } = useTranslation();
   const [draft, setDraft] = useState<TermInput>({ concept_id: "", source_term: "", target_term: "", status: "preferred" });
   const [busy, setBusy] = useState(false);
-  const canAdd = draft.concept_id.trim() && draft.source_term.trim();
+  const canAdd =
+    draft.concept_id.trim() &&
+    draft.source_term.trim() &&
+    // A forbidden entry always needs its "use instead" pointer (design §5.1) —
+    // the server rejects this too, but disabling Add here avoids a round trip.
+    (draft.status !== "forbidden" || !!draft.replacement?.trim());
 
   const add = async () => {
     if (!canAdd) return;
@@ -668,7 +673,11 @@ function TermRow({
         <Box sx={{ flex: 1 }} />
         {editing ? (
           <>
-            <Button size="small" onClick={saveEdit} disabled={busy}>
+            <Button
+              size="small"
+              onClick={saveEdit}
+              disabled={busy || (draft.status === "forbidden" && !draft.replacement?.trim())}
+            >
               {t("preferences.save")}
             </Button>
             <Button size="small" color="inherit" onClick={() => { setEditing(false); setDraft(term); }}>
@@ -770,8 +779,11 @@ function ExamplesSection() {
     return () => clearTimeout(h);
   }, [query]);
 
+  // 4-char row IDs are only unique per book (migration 0015's composite PK) —
+  // /examples browses across all books, so both the React key and the busy
+  // token below must be `book:id`, not bare `id`.
   const revoke = async (id: string, book: string) => {
-    setBusyId(id);
+    setBusyId(`${book}:${id}`);
     try {
       if (resource === "tn") await api.validateNote(id, book, false);
       else await api.validateQuestion(id, book, false);
@@ -827,7 +839,7 @@ function ExamplesSection() {
         <Stack spacing={1}>
           {examples.map((ex) => (
             <Box
-              key={ex.id}
+              key={`${ex.book}:${ex.id}`}
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
@@ -853,7 +865,7 @@ function ExamplesSection() {
                   size="small"
                   color="inherit"
                   onClick={() => revoke(ex.id, ex.book)}
-                  disabled={busyId === ex.id}
+                  disabled={busyId === `${ex.book}:${ex.id}`}
                 >
                   {t("preferences.revoke")}
                 </Button>

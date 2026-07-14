@@ -18,6 +18,7 @@ import {
   serializeTermsCsv,
   dedupeTerms,
   termKey,
+  termInvariantError,
   parseIfMatch,
   escapeLikeParam,
   type TermImport,
@@ -229,6 +230,25 @@ translationMemory.post("/terms", requireEditor, async (c) => {
   const parsed = TermBody.safeParse(body);
   if (!parsed.success) return c.json({ error: "validation_failed", issues: parsed.error.issues }, 400);
   const d = parsed.data;
+  const status = d.status ?? "preferred";
+  const replacement = d.replacement ?? null;
+  const invariantError = termInvariantError({ status, replacement });
+  if (invariantError) return c.json({ error: "validation_failed", issues: [{ message: invariantError }] }, 400);
+
+  // Pre-check the same normalized identity the unique index (0040) enforces,
+  // so a duplicate manual add gets a clean 409 instead of an uncaught D1
+  // constraint violation.
+  const dup = await c.env.DB.prepare(
+    `SELECT ${TERM_COLS} FROM terminology
+      WHERE deleted_at IS NULL
+        AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?1))
+        AND LOWER(TRIM(source_term)) = LOWER(TRIM(?2))
+        AND status = ?3`,
+  )
+    .bind(d.concept_id, d.source_term, status)
+    .first<TermRow>();
+  if (dup) return c.json({ error: "duplicate_term", current: dup }, 409);
+
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
   const res = await c.env.DB.prepare(
@@ -240,8 +260,8 @@ translationMemory.post("/terms", requireEditor, async (c) => {
       d.concept_id,
       d.source_term,
       d.target_term ?? null,
-      d.status ?? "preferred",
-      d.replacement ?? null,
+      status,
+      replacement,
       d.comment ?? null,
       d.tw_link ?? null,
       now,
@@ -283,6 +303,23 @@ translationMemory.patch("/terms/:id", requireEditor, async (c) => {
     comment: d.comment !== undefined ? d.comment : existing.comment,
     tw_link: d.tw_link !== undefined ? d.tw_link : existing.tw_link,
   };
+  const invariantError = termInvariantError(merged);
+  if (invariantError) return c.json({ error: "validation_failed", issues: [{ message: invariantError }] }, 400);
+
+  // Same duplicate pre-check as POST /terms — a rename that collides with a
+  // different existing row should be a clean 409, not an uncaught constraint
+  // violation from the unique index (0040).
+  const dup = await c.env.DB.prepare(
+    `SELECT ${TERM_COLS} FROM terminology
+      WHERE deleted_at IS NULL AND id != ?1
+        AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?2))
+        AND LOWER(TRIM(source_term)) = LOWER(TRIM(?3))
+        AND status = ?4`,
+  )
+    .bind(id, merged.concept_id, merged.source_term, merged.status)
+    .first<TermRow>();
+  if (dup) return c.json({ error: "duplicate_term", current: dup }, 409);
+
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
   const res = await c.env.DB.prepare(

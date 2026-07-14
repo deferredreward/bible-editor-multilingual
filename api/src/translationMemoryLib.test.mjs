@@ -16,6 +16,7 @@ import {
   serializeTermsCsv,
   dedupeTerms,
   termKey,
+  termInvariantError,
   parseIfMatch,
   escapeLikeParam,
 } from "./translationMemoryLib.ts";
@@ -79,13 +80,27 @@ console.log("[parseTermsCsv] column reordering + missing optional columns");
 
 console.log("[parseTermsCsv] error rows are reported, not guessed");
 {
-  const csv = "concept_id,source_term,status\nkt/god,God,banned\n,Empty,preferred\nkt/lord,Lord,forbidden\n";
+  // Row 4 (kt/lord, forbidden, no replacement) is now also an error — the
+  // forbidden->replacement invariant applies during import too, not just the
+  // create/update routes.
+  const csv =
+    "concept_id,source_term,status\nkt/god,God,banned\n,Empty,preferred\nkt/lord,Lord,forbidden\nkt/law,Law,preferred\n";
   const { terms, errors } = parseTermsCsv(csv);
   assert(terms.length === 1, "only the one valid row is kept");
-  assert(terms[0].source_term === "Lord", "the valid row survived");
-  assert(errors.length === 2, "two error rows reported");
+  assert(terms[0].source_term === "Law", "the valid row survived");
+  assert(errors.length === 3, "three error rows reported");
   assert(errors[0].line === 2 && /invalid status/.test(errors[0].message), "bad status reported with line number");
   assert(errors[1].line === 3 && /required/.test(errors[1].message), "missing concept_id reported");
+  assert(errors[2].line === 4 && /replacement/.test(errors[2].message), "forbidden-without-replacement reported");
+}
+
+console.log("[termInvariantError] forbidden requires a non-empty replacement");
+{
+  assert(termInvariantError({ status: "forbidden", replacement: null }) !== null, "forbidden + null replacement rejected");
+  assert(termInvariantError({ status: "forbidden", replacement: "" }) !== null, "forbidden + empty replacement rejected");
+  assert(termInvariantError({ status: "forbidden", replacement: "   " }) !== null, "forbidden + whitespace-only replacement rejected");
+  assert(termInvariantError({ status: "forbidden", replacement: "use X" }) === null, "forbidden + real replacement accepted");
+  assert(termInvariantError({ status: "preferred", replacement: null }) === null, "non-forbidden status never requires a replacement");
 }
 
 console.log("[parseTermsCsv] header without required columns");

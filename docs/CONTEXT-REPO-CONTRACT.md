@@ -107,8 +107,8 @@ One JSON object per line, append-ordered by validation time (most recent last):
 
 ```tsv
 support_reference	target_template	status	comment
-figs-metaphor	<AR template text>	active	
-figs-idiom	<AR template text>	active	
+figs-metaphor	<AR template text>	active	from the Google-sheet export
+figs-idiom	<AR template text>	active	needs review
 ```
 
 - Tab-separated, header row, UTF-8. One row per SupportReference slug per language.
