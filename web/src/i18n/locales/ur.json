@@ -279,7 +279,16 @@
     "alignLossIntro": "محفوظ کرنے سے {{ref}} میں {{phrase}} بغیر ماخذ لنک کے رہ جائے گا: ",
     "plusMore": " (+{{n}} مزید)",
     "alignLossOutro": "۔ اگر آپ کا ارادہ دوبارہ منسلک کرنے کا تھا تو یہ ٹھیک ہے — لیکن اگر یہ اتفاقی ہے تو یہ رات کی برآمد کو ماسٹر تک اس وقت تک روک دے گا جب تک {{state}} دوبارہ منسلک نہ ہوں۔ بہرحال محفوظ کریں، یا ترمیم جاری رکھنے کے لیے منسوخ کریں۔",
-    "unsavedDualBody": "ساتھ ساتھ منسلک کرنے والے میں آپ کی غیر محفوظ تبدیلیاں ہیں (ترتیب کی ترامیم یا پڑھنے کا متن)۔ انہیں محفوظ کریں، رد کریں، یا ترمیم جاری رکھنے کے لیے منسوخ کریں۔"
+    "unsavedDualBody": "ساتھ ساتھ منسلک کرنے والے میں آپ کی غیر محفوظ تبدیلیاں ہیں (ترتیب کی ترامیم یا پڑھنے کا متن)۔ انہیں محفوظ کریں، رد کریں، یا ترمیم جاری رکھنے کے لیے منسوخ کریں۔",
+    "boardTitle": "باب بورڈ — {{book}} {{chapter}}",
+    "shown": "دکھایا گیا",
+    "hidden": "چھپا ہوا",
+    "hideLaneInSidebar": "اس لین کو سائیڈبار میں چھپائیں",
+    "showLaneInSidebar": "اس لین کو سائیڈبار میں دکھائیں",
+    "hideLabelInSidebar": "{{label}} کو سائیڈبار میں چھپائیں",
+    "showLabelInSidebar": "{{label}} کو سائیڈبار میں دکھائیں",
+    "checkAllLabel": "تمام {{label}} پر نشان لگائیں",
+    "lanePercentComplete": "{{label}} {{percent}}% مکمل"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -451,6 +460,35 @@
     "saveAlignmentFirst": "🔒 پہلے ترتیب محفوظ کریں",
     "editable": "✎ قابل ترمیم",
     "readingLockedTooltip": "پڑھنے کے متن میں ترمیم سے پہلے زیر التوا ترتیب ترامیم محفوظ کریں یا منسوخ کریں",
-    "noVersionText": "اس آیت کے لیے کوئی {{version}} متن نہیں"
+    "noVersionText": "اس آیت کے لیے کوئی {{version}} متن نہیں",
+    "sourceLabel": "ماخذ",
+    "showSourceTooltip": "{{label}} ماخذ دکھائیں",
+    "hideSourceTooltip": "{{label}} ماخذ چھپائیں"
+  },
+  "lanes": {
+    "text": "متن",
+    "tn": "نوٹس",
+    "tw": "الفاظ",
+    "tq": "سوالات",
+    "textShort": "م",
+    "tnShort": "نو",
+    "twShort": "ا",
+    "tqShort": "س",
+    "attrOpen": "کھلا",
+    "attrYou": "آپ",
+    "attrSomeoneElse": "کوئی اور",
+    "attrYouPlusOthers_one": "آپ + {{count}} اور",
+    "attrYouPlusOthers_other": "آپ + {{count}} اور",
+    "attrPeople_one": "{{count}} شخص",
+    "attrPeople_other": "{{count}} لوگ"
+  },
+  "logos": {
+    "openVerse": "یہ آیت Logos میں کھولیں",
+    "autoFollow": "خودکار پیروی",
+    "autoFollowTooltip": "Logos میں فعال آیت کی خودکار پیروی کریں (ہر تبدیلی پر فوکس چھین لیتا ہے)",
+    "enableTitle": "Logos ہم آہنگی فعال کریں؟",
+    "enableBody": "اسے منتخب کرنے سے ہر بار آیت بدلنے پر Logos فوکس چھین لے گا (اپنی ونڈو کو سامنے لے آئے گا)۔ اگر Logos دوسرے مانیٹر پر ہے تو ٹھیک ہے، ورنہ Logos کو منتقل کرنے کے لیے صرف ہم آہنگی بٹن استعمال کریں۔",
+    "dontShowAgain": "دوبارہ نہ دکھائیں",
+    "ok": "ٹھیک ہے"
   }
 }

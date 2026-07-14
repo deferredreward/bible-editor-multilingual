@@ -288,7 +288,16 @@
     "alignLossIntro": "L'enregistrement laissera {{phrase}} sans lien source dans {{ref}} : ",
     "plusMore": " (+{{n}} de plus)",
     "alignLossOutro": ". C'est acceptable si vous comptiez réaligner — mais si c'est accidentel, cela bloquera l'export nocturne vers master jusqu'à ce que le {{state}} soit réaligné. Enregistrez quand même, ou annulez pour continuer à modifier.",
-    "unsavedDualBody": "Vous avez des modifications non enregistrées dans l'aligneur côte à côte (modifications d'alignement ou texte de lecture). Enregistrez-les, abandonnez-les, ou annulez pour continuer à modifier."
+    "unsavedDualBody": "Vous avez des modifications non enregistrées dans l'aligneur côte à côte (modifications d'alignement ou texte de lecture). Enregistrez-les, abandonnez-les, ou annulez pour continuer à modifier.",
+    "boardTitle": "Tableau du chapitre — {{book}} {{chapter}}",
+    "shown": "affiché",
+    "hidden": "masqué",
+    "hideLaneInSidebar": "Masquer cette voie dans la barre latérale",
+    "showLaneInSidebar": "Afficher cette voie dans la barre latérale",
+    "hideLabelInSidebar": "Masquer {{label}} dans la barre latérale",
+    "showLabelInSidebar": "Afficher {{label}} dans la barre latérale",
+    "checkAllLabel": "Tout cocher pour {{label}}",
+    "lanePercentComplete": "{{label}} terminé à {{percent}} %"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -463,6 +472,37 @@
     "saveAlignmentFirst": "🔒 enregistrez d'abord l'alignement",
     "editable": "✎ modifiable",
     "readingLockedTooltip": "enregistrez ou annulez les modifications d'alignement en attente avant de modifier le texte de lecture",
-    "noVersionText": "aucun texte {{version}} pour ce verset"
+    "noVersionText": "aucun texte {{version}} pour ce verset",
+    "sourceLabel": "source",
+    "showSourceTooltip": "afficher la source {{label}}",
+    "hideSourceTooltip": "masquer la source {{label}}"
+  },
+  "lanes": {
+    "text": "Texte",
+    "tn": "Notes",
+    "tw": "Mots",
+    "tq": "Questions",
+    "textShort": "T",
+    "tnShort": "N",
+    "twShort": "M",
+    "tqShort": "Q",
+    "attrOpen": "ouvert",
+    "attrYou": "vous",
+    "attrSomeoneElse": "quelqu’un d’autre",
+    "attrYouPlusOthers_one": "vous + {{count}} autre",
+    "attrYouPlusOthers_many": "vous + {{count}} autres",
+    "attrYouPlusOthers_other": "vous + {{count}} autres",
+    "attrPeople_one": "{{count}} personne",
+    "attrPeople_many": "{{count}} personnes",
+    "attrPeople_other": "{{count}} personnes"
+  },
+  "logos": {
+    "openVerse": "Ouvrir ce verset dans Logos",
+    "autoFollow": "suivi automatique",
+    "autoFollowTooltip": "Suivre automatiquement le verset actif dans Logos (capte le focus à chaque changement)",
+    "enableTitle": "Activer la synchronisation Logos ?",
+    "enableBody": "Cocher cette case fera que Logos capte le focus (ramène sa fenêtre au premier plan) chaque fois que vous changez de verset. Pratique si vous avez Logos sur un second écran, sinon utilisez simplement le bouton de synchronisation quand vous voulez déplacer Logos.",
+    "dontShowAgain": "Ne plus afficher",
+    "ok": "OK"
   }
 }

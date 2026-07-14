@@ -270,7 +270,16 @@
     "alignLossIntro": "Menyimpan akan menyisakan {{phrase}} tanpa tautan sumber di {{ref}}: ",
     "plusMore": " (+{{n}} lagi)",
     "alignLossOutro": ". Itu tidak masalah jika Anda memang bermaksud menyejajarkan ulang — tetapi jika tidak sengaja, hal itu akan memblokir ekspor malam hari ke master sampai {{state}} disejajarkan kembali. Tetap simpan, atau batalkan untuk melanjutkan penyuntingan.",
-    "unsavedDualBody": "Anda memiliki perubahan yang belum disimpan di penyejajar berdampingan (perubahan penyejajaran atau teks bacaan). Simpan, buang, atau batalkan untuk melanjutkan penyuntingan."
+    "unsavedDualBody": "Anda memiliki perubahan yang belum disimpan di penyejajar berdampingan (perubahan penyejajaran atau teks bacaan). Simpan, buang, atau batalkan untuk melanjutkan penyuntingan.",
+    "boardTitle": "Papan pasal — {{book}} {{chapter}}",
+    "shown": "ditampilkan",
+    "hidden": "disembunyikan",
+    "hideLaneInSidebar": "Sembunyikan jalur ini di bilah sisi",
+    "showLaneInSidebar": "Tampilkan jalur ini di bilah sisi",
+    "hideLabelInSidebar": "Sembunyikan {{label}} di bilah sisi",
+    "showLabelInSidebar": "Tampilkan {{label}} di bilah sisi",
+    "checkAllLabel": "Tandai semua {{label}}",
+    "lanePercentComplete": "{{label}} {{percent}}% selesai"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -439,6 +448,33 @@
     "saveAlignmentFirst": "🔒 simpan penyejajaran terlebih dahulu",
     "editable": "✎ dapat diubah",
     "readingLockedTooltip": "simpan atau batalkan perubahan penyejajaran yang tertunda sebelum mengubah teks bacaan",
-    "noVersionText": "tidak ada teks {{version}} untuk ayat ini"
+    "noVersionText": "tidak ada teks {{version}} untuk ayat ini",
+    "sourceLabel": "sumber",
+    "showSourceTooltip": "tampilkan sumber {{label}}",
+    "hideSourceTooltip": "sembunyikan sumber {{label}}"
+  },
+  "lanes": {
+    "text": "Teks",
+    "tn": "Catatan",
+    "tw": "Kata",
+    "tq": "Pertanyaan",
+    "textShort": "T",
+    "tnShort": "C",
+    "twShort": "K",
+    "tqShort": "P",
+    "attrOpen": "terbuka",
+    "attrYou": "Anda",
+    "attrSomeoneElse": "orang lain",
+    "attrYouPlusOthers_other": "Anda + {{count}} lainnya",
+    "attrPeople_other": "{{count}} orang"
+  },
+  "logos": {
+    "openVerse": "Buka ayat ini di Logos",
+    "autoFollow": "ikuti otomatis",
+    "autoFollowTooltip": "Ikuti ayat aktif secara otomatis di Logos (mengambil fokus pada setiap perubahan)",
+    "enableTitle": "Aktifkan sinkronisasi Logos?",
+    "enableBody": "Mencentang ini akan membuat Logos mengambil fokus (memunculkan jendelanya ke depan) setiap kali Anda mengganti ayat. Cocok jika Anda memiliki Logos di monitor kedua, jika tidak cukup gunakan tombol sinkronisasi saat ingin memindahkan Logos.",
+    "dontShowAgain": "Jangan tampilkan lagi",
+    "ok": "OK"
   }
 }

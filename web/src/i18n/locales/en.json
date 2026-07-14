@@ -225,6 +225,15 @@
     "noUnsavedEdits": "no unsaved edits",
     "undoEdits": "undo edits to this verse",
     "nothingToCheck": "nothing to check",
+    "boardTitle": "Chapter board — {{book}} {{chapter}}",
+    "shown": "shown",
+    "hidden": "hidden",
+    "hideLaneInSidebar": "Hide this lane in the sidebar",
+    "showLaneInSidebar": "Show this lane in the sidebar",
+    "hideLabelInSidebar": "Hide {{label}} in sidebar",
+    "showLabelInSidebar": "Show {{label}} in sidebar",
+    "checkAllLabel": "Check all {{label}}",
+    "lanePercentComplete": "{{label}} {{percent}}% complete",
     "noNotesInChapter": "no notes in this chapter",
     "noNotesForVerse": "no notes for this verse",
     "noWordsInChapter": "no words in this chapter",
@@ -280,6 +289,32 @@
     "plusMore": " (+{{n}} more)",
     "alignLossOutro": ". That's fine if you meant to re-align — but if it's accidental it will block the nightly export to master until the {{state}} aligned again. Save anyway, or cancel to keep editing.",
     "unsavedDualBody": "You have unsaved changes in the side-by-side aligner (alignment edits or reading text). Save them, discard them, or cancel to keep editing."
+  },
+  "lanes": {
+    "text": "Text",
+    "tn": "Notes",
+    "tw": "Words",
+    "tq": "Questions",
+    "textShort": "T",
+    "tnShort": "N",
+    "twShort": "W",
+    "tqShort": "Q",
+    "attrOpen": "open",
+    "attrYou": "you",
+    "attrYouPlusOthers_one": "you + {{count}} other",
+    "attrYouPlusOthers_other": "you + {{count}} others",
+    "attrSomeoneElse": "someone else",
+    "attrPeople_one": "{{count}} person",
+    "attrPeople_other": "{{count}} people"
+  },
+  "logos": {
+    "openVerse": "Open this verse in Logos",
+    "autoFollow": "auto-follow",
+    "autoFollowTooltip": "Auto-follow active verse in Logos (steals focus on each change)",
+    "enableTitle": "Enable Logos sync?",
+    "enableBody": "Checking this will cause Logos to steal focus (bring its window to the front) every time you change verses. Fine if you have Logos on a second monitor, but otherwise just use the sync button when you want to move Logos.",
+    "dontShowAgain": "Don't show this again",
+    "ok": "OK"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -451,6 +486,9 @@
     "saveAlignmentFirst": "🔒 save alignment first",
     "editable": "✎ editable",
     "readingLockedTooltip": "save or cancel the pending alignment edits before editing the reading text",
-    "noVersionText": "no {{version}} text for this verse"
+    "noVersionText": "no {{version}} text for this verse",
+    "sourceLabel": "source",
+    "showSourceTooltip": "show {{label}} source",
+    "hideSourceTooltip": "hide {{label}} source"
   }
 }

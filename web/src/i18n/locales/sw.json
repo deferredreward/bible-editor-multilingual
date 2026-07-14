@@ -279,7 +279,16 @@
     "alignLossIntro": "Kuhifadhi kutaacha {{phrase}} bila kiungo cha chanzo katika {{ref}}: ",
     "plusMore": " (+{{n}} zaidi)",
     "alignLossOutro": ". Hiyo ni sawa ikiwa ulikusudia kupangilia upya — lakini ikiwa ni kwa bahati mbaya itazuia uhamishaji wa usiku hadi kwenye tawi kuu mpaka {{state}} zipangiliwe tena. Hifadhi hata hivyo, au ghairi ili kuendelea kuhariri.",
-    "unsavedDualBody": "Una mabadiliko ambayo hayajahifadhiwa kwenye kipangaji cha ubavu kwa ubavu (mabadiliko ya upangiliaji au maandishi ya kusoma). Yahifadhi, yatupe, au ghairi ili kuendelea kuhariri."
+    "unsavedDualBody": "Una mabadiliko ambayo hayajahifadhiwa kwenye kipangaji cha ubavu kwa ubavu (mabadiliko ya upangiliaji au maandishi ya kusoma). Yahifadhi, yatupe, au ghairi ili kuendelea kuhariri.",
+    "boardTitle": "Ubao wa sura — {{book}} {{chapter}}",
+    "shown": "imeonyeshwa",
+    "hidden": "imefichwa",
+    "hideLaneInSidebar": "Ficha njia hii kwenye upau wa kando",
+    "showLaneInSidebar": "Onyesha njia hii kwenye upau wa kando",
+    "hideLabelInSidebar": "Ficha {{label}} kwenye upau wa kando",
+    "showLabelInSidebar": "Onyesha {{label}} kwenye upau wa kando",
+    "checkAllLabel": "Tia alama {{label}} zote",
+    "lanePercentComplete": "{{label}} imekamilika {{percent}}%"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -451,6 +460,35 @@
     "saveAlignmentFirst": "🔒 hifadhi upangiliaji kwanza",
     "editable": "✎ inaweza kuhaririwa",
     "readingLockedTooltip": "hifadhi au ghairi mabadiliko ya upangiliaji yanayosubiri kabla ya kuhariri maandishi ya kusoma",
-    "noVersionText": "hakuna maandishi ya {{version}} kwa mstari huu"
+    "noVersionText": "hakuna maandishi ya {{version}} kwa mstari huu",
+    "sourceLabel": "chanzo",
+    "showSourceTooltip": "onyesha chanzo cha {{label}}",
+    "hideSourceTooltip": "ficha chanzo cha {{label}}"
+  },
+  "lanes": {
+    "text": "Maandishi",
+    "tn": "Maelezo",
+    "tw": "Maneno",
+    "tq": "Maswali",
+    "textShort": "Ma",
+    "tnShort": "Me",
+    "twShort": "Mn",
+    "tqShort": "Ms",
+    "attrOpen": "wazi",
+    "attrYou": "wewe",
+    "attrSomeoneElse": "mtu mwingine",
+    "attrYouPlusOthers_one": "wewe + mwingine {{count}}",
+    "attrYouPlusOthers_other": "wewe + wengine {{count}}",
+    "attrPeople_one": "mtu {{count}}",
+    "attrPeople_other": "watu {{count}}"
+  },
+  "logos": {
+    "openVerse": "Fungua mstari huu katika Logos",
+    "autoFollow": "fuata kiotomatiki",
+    "autoFollowTooltip": "Fuata mstari unaotumika kiotomatiki katika Logos (huchukua umakini kila unapobadilika)",
+    "enableTitle": "Washa usawazishaji wa Logos?",
+    "enableBody": "Kuchagua hii kutafanya Logos kuchukua umakini (kuleta dirisha lake mbele) kila unapobadilisha mstari. Ni sawa ikiwa una Logos kwenye kifuatiliaji cha pili, vinginevyo tumia kitufe cha usawazishaji tu unapotaka kusogeza Logos.",
+    "dontShowAgain": "Usionyeshe tena",
+    "ok": "Sawa"
   }
 }

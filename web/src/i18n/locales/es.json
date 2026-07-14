@@ -288,7 +288,16 @@
     "alignLossIntro": "Al guardar, {{phrase}} quedará sin enlace a la fuente en {{ref}}: ",
     "plusMore": " (+{{n}} más)",
     "alignLossOutro": ". Está bien si tu intención era volver a alinear — pero si es accidental, bloqueará la exportación nocturna a master hasta que {{state}} vuelva a alinearse. Guarda de todos modos, o cancela para seguir editando.",
-    "unsavedDualBody": "Tienes cambios sin guardar en el alineador lado a lado (ediciones de alineación o texto de lectura). Guárdalos, descártalos o cancela para seguir editando."
+    "unsavedDualBody": "Tienes cambios sin guardar en el alineador lado a lado (ediciones de alineación o texto de lectura). Guárdalos, descártalos o cancela para seguir editando.",
+    "boardTitle": "Panel del capítulo — {{book}} {{chapter}}",
+    "shown": "mostrado",
+    "hidden": "oculto",
+    "hideLaneInSidebar": "Ocultar este carril en la barra lateral",
+    "showLaneInSidebar": "Mostrar este carril en la barra lateral",
+    "hideLabelInSidebar": "Ocultar {{label}} en la barra lateral",
+    "showLabelInSidebar": "Mostrar {{label}} en la barra lateral",
+    "checkAllLabel": "Marcar todos los {{label}}",
+    "lanePercentComplete": "{{label}} {{percent}}% completado"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -463,6 +472,37 @@
     "saveAlignmentFirst": "🔒 guarda primero la alineación",
     "editable": "✎ editable",
     "readingLockedTooltip": "guarda o cancela las ediciones de alineación pendientes antes de editar el texto de lectura",
-    "noVersionText": "no hay texto {{version}} para este versículo"
+    "noVersionText": "no hay texto {{version}} para este versículo",
+    "sourceLabel": "fuente",
+    "showSourceTooltip": "mostrar fuente {{label}}",
+    "hideSourceTooltip": "ocultar fuente {{label}}"
+  },
+  "lanes": {
+    "text": "Texto",
+    "tn": "Notas",
+    "tw": "Palabras",
+    "tq": "Preguntas",
+    "textShort": "T",
+    "tnShort": "N",
+    "twShort": "Pa",
+    "tqShort": "Pr",
+    "attrOpen": "abierto",
+    "attrYou": "tú",
+    "attrSomeoneElse": "otra persona",
+    "attrYouPlusOthers_one": "tú + {{count}} más",
+    "attrYouPlusOthers_many": "tú + {{count}} más",
+    "attrYouPlusOthers_other": "tú + {{count}} más",
+    "attrPeople_one": "{{count}} persona",
+    "attrPeople_many": "{{count}} personas",
+    "attrPeople_other": "{{count}} personas"
+  },
+  "logos": {
+    "openVerse": "Abrir este versículo en Logos",
+    "autoFollow": "seguir automáticamente",
+    "autoFollowTooltip": "Seguir automáticamente el versículo activo en Logos (roba el foco en cada cambio)",
+    "enableTitle": "¿Activar la sincronización con Logos?",
+    "enableBody": "Al marcar esto, Logos robará el foco (traerá su ventana al frente) cada vez que cambies de versículo. Está bien si tienes Logos en un segundo monitor, pero de lo contrario usa el botón de sincronización cuando quieras mover Logos.",
+    "dontShowAgain": "No volver a mostrar",
+    "ok": "Aceptar"
   }
 }

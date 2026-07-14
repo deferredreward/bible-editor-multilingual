@@ -315,7 +315,16 @@
     "alignLossIntro": "سيؤدي الحفظ إلى ترك {{phrase}} دون رابط مصدر في {{ref}}: ",
     "plusMore": " (+{{n}} أخرى)",
     "alignLossOutro": ". لا بأس بذلك إن كنت تقصد إعادة المحاذاة — لكن إن كان بالخطأ فسيمنع التصدير الليلي إلى الفرع الرئيسي حتى تتم محاذاة {{state}} من جديد. احفظ على أي حال، أو ألغِ لمتابعة التحرير.",
-    "unsavedDualBody": "لديك تغييرات غير محفوظة في أداة المحاذاة جنبًا إلى جنب (تعديلات محاذاة أو نص قراءة). احفظها، أو تجاهلها، أو ألغِ لمتابعة التحرير."
+    "unsavedDualBody": "لديك تغييرات غير محفوظة في أداة المحاذاة جنبًا إلى جنب (تعديلات محاذاة أو نص قراءة). احفظها، أو تجاهلها، أو ألغِ لمتابعة التحرير.",
+    "boardTitle": "لوحة الأصحاح — {{book}} {{chapter}}",
+    "shown": "معروض",
+    "hidden": "مخفي",
+    "hideLaneInSidebar": "إخفاء هذا المسار في الشريط الجانبي",
+    "showLaneInSidebar": "إظهار هذا المسار في الشريط الجانبي",
+    "hideLabelInSidebar": "إخفاء {{label}} في الشريط الجانبي",
+    "showLabelInSidebar": "إظهار {{label}} في الشريط الجانبي",
+    "checkAllLabel": "تحديد كل {{label}}",
+    "lanePercentComplete": "{{label}} مكتمل بنسبة {{percent}}%"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -499,6 +508,43 @@
     "saveAlignmentFirst": "🔒 احفظ المحاذاة أولًا",
     "editable": "✎ قابل للتحرير",
     "readingLockedTooltip": "احفظ أو ألغِ تعديلات المحاذاة المعلقة قبل تحرير نص القراءة",
-    "noVersionText": "لا يوجد نص {{version}} لهذه الآية"
+    "noVersionText": "لا يوجد نص {{version}} لهذه الآية",
+    "sourceLabel": "المصدر",
+    "showSourceTooltip": "إظهار مصدر {{label}}",
+    "hideSourceTooltip": "إخفاء مصدر {{label}}"
+  },
+  "lanes": {
+    "text": "النص",
+    "tn": "الملاحظات",
+    "tw": "الكلمات",
+    "tq": "الأسئلة",
+    "textShort": "ن",
+    "tnShort": "م",
+    "twShort": "ك",
+    "tqShort": "س",
+    "attrOpen": "مفتوح",
+    "attrYou": "أنت",
+    "attrSomeoneElse": "شخص آخر",
+    "attrYouPlusOthers_zero": "أنت + {{count}}",
+    "attrYouPlusOthers_one": "أنت + شخص آخر",
+    "attrYouPlusOthers_two": "أنت + شخصان آخران",
+    "attrYouPlusOthers_few": "أنت + {{count}} آخرين",
+    "attrYouPlusOthers_many": "أنت + {{count}} آخرين",
+    "attrYouPlusOthers_other": "أنت + {{count}} آخرين",
+    "attrPeople_zero": "{{count}} شخص",
+    "attrPeople_one": "شخص واحد",
+    "attrPeople_two": "شخصان",
+    "attrPeople_few": "{{count}} أشخاص",
+    "attrPeople_many": "{{count}} شخصًا",
+    "attrPeople_other": "{{count}} شخص"
+  },
+  "logos": {
+    "openVerse": "افتح هذه الآية في Logos",
+    "autoFollow": "متابعة تلقائية",
+    "autoFollowTooltip": "متابعة الآية النشطة تلقائيًا في Logos (يسحب التركيز عند كل تغيير)",
+    "enableTitle": "تفعيل مزامنة Logos؟",
+    "enableBody": "سيؤدي تحديد هذا إلى جعل Logos يسحب التركيز (يجلب نافذته إلى الأمام) في كل مرة تغيّر فيها الآية. لا بأس إن كان Logos على شاشة ثانية، وإلا فاستخدم زر المزامنة فقط عندما تريد تحريك Logos.",
+    "dontShowAgain": "عدم الإظهار مرة أخرى",
+    "ok": "موافق"
   }
 }

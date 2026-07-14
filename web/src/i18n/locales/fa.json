@@ -279,7 +279,16 @@
     "alignLossIntro": "ذخیره کردن {{phrase}} را در {{ref}} بدون پیوند منبع رها می‌کند: ",
     "plusMore": " (+{{n}} بیشتر)",
     "alignLossOutro": ". اگر قصد داشتید دوباره همتراز کنید اشکالی ندارد — اما اگر تصادفی باشد، صدور شبانه به مستر را تا زمانی که {{state}} دوباره همتراز شوند مسدود می‌کند. به‌هرحال ذخیره کنید، یا برای ادامهٔ ویرایش لغو کنید.",
-    "unsavedDualBody": "شما در همترازکنندهٔ کنارهم تغییرات ذخیره‌نشده دارید (ویرایش‌های همترازی یا متن خواندن). آنها را ذخیره کنید، دور بریزید، یا برای ادامهٔ ویرایش لغو کنید."
+    "unsavedDualBody": "شما در همترازکنندهٔ کنارهم تغییرات ذخیره‌نشده دارید (ویرایش‌های همترازی یا متن خواندن). آنها را ذخیره کنید، دور بریزید، یا برای ادامهٔ ویرایش لغو کنید.",
+    "boardTitle": "تختهٔ باب — {{book}} {{chapter}}",
+    "shown": "نمایش‌داده‌شده",
+    "hidden": "پنهان",
+    "hideLaneInSidebar": "پنهان کردن این مسیر در نوار کناری",
+    "showLaneInSidebar": "نمایش این مسیر در نوار کناری",
+    "hideLabelInSidebar": "پنهان کردن {{label}} در نوار کناری",
+    "showLabelInSidebar": "نمایش {{label}} در نوار کناری",
+    "checkAllLabel": "علامت‌گذاری همهٔ {{label}}",
+    "lanePercentComplete": "{{label}} {{percent}}٪ کامل"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -451,6 +460,35 @@
     "saveAlignmentFirst": "🔒 ابتدا همترازی را ذخیره کنید",
     "editable": "✎ قابل ویرایش",
     "readingLockedTooltip": "پیش از ویرایش متن خواندن، ویرایش‌های همترازی در انتظار را ذخیره یا لغو کنید",
-    "noVersionText": "متن {{version}} برای این آیه نیست"
+    "noVersionText": "متن {{version}} برای این آیه نیست",
+    "sourceLabel": "منبع",
+    "showSourceTooltip": "نمایش منبع {{label}}",
+    "hideSourceTooltip": "پنهان کردن منبع {{label}}"
+  },
+  "lanes": {
+    "text": "متن",
+    "tn": "یادداشت‌ها",
+    "tw": "واژگان",
+    "tq": "پرسش‌ها",
+    "textShort": "م",
+    "tnShort": "ی",
+    "twShort": "و",
+    "tqShort": "پ",
+    "attrOpen": "باز",
+    "attrYou": "شما",
+    "attrSomeoneElse": "شخص دیگر",
+    "attrYouPlusOthers_one": "شما + {{count}} نفر دیگر",
+    "attrYouPlusOthers_other": "شما + {{count}} نفر دیگر",
+    "attrPeople_one": "{{count}} نفر",
+    "attrPeople_other": "{{count}} نفر"
+  },
+  "logos": {
+    "openVerse": "باز کردن این آیه در Logos",
+    "autoFollow": "دنبال‌کردن خودکار",
+    "autoFollowTooltip": "دنبال‌کردن خودکار آیهٔ فعال در Logos (در هر تغییر تمرکز را می‌رباید)",
+    "enableTitle": "همگام‌سازی Logos فعال شود؟",
+    "enableBody": "با انتخاب این گزینه، هر بار که آیه را تغییر می‌دهید Logos تمرکز را می‌رباید (پنجرهٔ خود را جلو می‌آورد). اگر Logos روی نمایشگر دوم است اشکالی ندارد، در غیر این صورت فقط هنگام جابه‌جایی Logos از دکمهٔ همگام‌سازی استفاده کنید.",
+    "dontShowAgain": "دیگر نمایش نده",
+    "ok": "تأیید"
   }
 }

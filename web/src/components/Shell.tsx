@@ -33,7 +33,6 @@ import {
   laneApplicable,
   laneAttribution,
   shadeFromCheckers,
-  LANE_LABELS,
   type LaneShade,
   type TextLaneCheck,
 } from "../lib/laneChecks";
@@ -719,7 +718,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             : laneApplicable(lane, versesWithTn.has(verse), versesWithTq.has(verse));
         const checkers = laneIndex.get(laneKey(verse, lane));
         const shade: LaneShade = applicable ? shadeFromCheckers(checkers, meUserId) : "open";
-        const title = `${LANE_LABELS[lane]} — ${applicable ? laneAttribution(checkers, meUserId) : t("shell.nothingToCheck")}`;
+        const title = `${t(`lanes.${lane}`)} — ${applicable ? laneAttribution(checkers, meUserId, t) : t("shell.nothingToCheck")}`;
         return { lane, shade, applicable, title };
       });
     // Chapter-front USFM content (Psalm \d superscriptions, leading \p before \v 1)
@@ -785,11 +784,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       canCheck: meUserId != null,
       applicable: applic,
       shade: (lane) => (applic(lane) ? shadeFromCheckers(checkersOf(lane), meUserId) : "open"),
-      attribution: (lane) => laneAttribution(checkersOf(lane), meUserId),
+      attribution: (lane) => laneAttribution(checkersOf(lane), meUserId, t),
       onToggle: (lane) => toggleLane(activeVerse, lane),
       onBulkToggle: (lane) => bulkLaneToggle(lane),
     };
-  }, [activeVerse, laneIndex, versesWithTn, versesWithTq, meUserId, toggleLane, bulkLaneToggle]);
+  }, [activeVerse, laneIndex, versesWithTn, versesWithTq, meUserId, toggleLane, bulkLaneToggle, t]);
 
   // Text-lane checkoff for the column/book scripture views (per verse). Text is
   // always applicable. Memoized so BookView's memoized verse subtree is stable.
@@ -797,10 +796,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     () => ({
       canCheck: meUserId != null,
       shade: (verse) => shadeFromCheckers(laneIndex.get(laneKey(verse, "text")), meUserId),
-      attribution: (verse) => laneAttribution(laneIndex.get(laneKey(verse, "text")), meUserId),
+      attribution: (verse) => laneAttribution(laneIndex.get(laneKey(verse, "text")), meUserId, t),
       onToggle: (verse) => toggleLane(verse, "text"),
     }),
-    [laneIndex, meUserId, toggleLane],
+    [laneIndex, meUserId, toggleLane, t],
   );
 
   // Chapter board (verses × lanes overview) dialog.
@@ -2874,14 +2873,14 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       <Dialog open={!!pendingBulk} onClose={() => setPendingBulk(null)}>
         <DialogTitle>
           {pendingBulk?.checked
-            ? t("shell.bulkCheckTitle", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "" })
-            : t("shell.bulkClearTitle", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "" })}
+            ? t("shell.bulkCheckTitle", { label: pendingBulk ? t(`lanes.${pendingBulk.lane}`) : "" })
+            : t("shell.bulkClearTitle", { label: pendingBulk ? t(`lanes.${pendingBulk.lane}`) : "" })}
         </DialogTitle>
         <DialogContent>
           <DialogContentText>
             {pendingBulk?.checked
-              ? t("shell.bulkCheckBody", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "", verseCount: pendingBulk?.verses.length ?? 0, ref: `${book} ${chapter}` })
-              : t("shell.bulkClearBody", { label: pendingBulk ? LANE_LABELS[pendingBulk.lane] : "", verseCount: pendingBulk?.verses.length ?? 0, ref: `${book} ${chapter}` })}
+              ? t("shell.bulkCheckBody", { label: pendingBulk ? t(`lanes.${pendingBulk.lane}`) : "", verseCount: pendingBulk?.verses.length ?? 0, ref: `${book} ${chapter}` })
+              : t("shell.bulkClearBody", { label: pendingBulk ? t(`lanes.${pendingBulk.lane}`) : "", verseCount: pendingBulk?.verses.length ?? 0, ref: `${book} ${chapter}` })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

@@ -279,7 +279,16 @@
     "alignLossIntro": "सहेजने पर {{ref}} में {{phrase}} बिना किसी स्रोत लिंक के रह जाएगा: ",
     "plusMore": " (+{{n}} और)",
     "alignLossOutro": "। यदि आपका इरादा पुनः संरेखित करने का था तो यह ठीक है — पर यदि यह गलती से हुआ तो यह रात्रिकालीन master निर्यात को तब तक रोकेगा जब तक {{state}} पुनः संरेखित न हो जाए। फिर भी सहेजें, या संपादन जारी रखने के लिए रद्द करें।",
-    "unsavedDualBody": "साथ-साथ संरेखक में आपके असहेजे परिवर्तन हैं (संरेखण संपादन या पठन पाठ)। उन्हें सहेजें, त्यागें, या संपादन जारी रखने के लिए रद्द करें।"
+    "unsavedDualBody": "साथ-साथ संरेखक में आपके असहेजे परिवर्तन हैं (संरेखण संपादन या पठन पाठ)। उन्हें सहेजें, त्यागें, या संपादन जारी रखने के लिए रद्द करें।",
+    "boardTitle": "अध्याय बोर्ड — {{book}} {{chapter}}",
+    "shown": "दिखाया गया",
+    "hidden": "छिपा हुआ",
+    "hideLaneInSidebar": "इस लेन को साइडबार में छिपाएँ",
+    "showLaneInSidebar": "इस लेन को साइडबार में दिखाएँ",
+    "hideLabelInSidebar": "{{label}} को साइडबार में छिपाएँ",
+    "showLabelInSidebar": "{{label}} को साइडबार में दिखाएँ",
+    "checkAllLabel": "सभी {{label}} जाँचें",
+    "lanePercentComplete": "{{label}} {{percent}}% पूर्ण"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -451,6 +460,35 @@
     "saveAlignmentFirst": "🔒 पहले संरेखण सहेजें",
     "editable": "✎ संपादन योग्य",
     "readingLockedTooltip": "पठन पाठ संपादित करने से पहले लंबित संरेखण संपादन सहेजें या रद्द करें",
-    "noVersionText": "इस पद के लिए कोई {{version}} पाठ नहीं"
+    "noVersionText": "इस पद के लिए कोई {{version}} पाठ नहीं",
+    "sourceLabel": "स्रोत",
+    "showSourceTooltip": "{{label}} स्रोत दिखाएँ",
+    "hideSourceTooltip": "{{label}} स्रोत छिपाएँ"
+  },
+  "lanes": {
+    "text": "पाठ",
+    "tn": "टिप्पणियाँ",
+    "tw": "शब्द",
+    "tq": "प्रश्न",
+    "textShort": "पा",
+    "tnShort": "टि",
+    "twShort": "श",
+    "tqShort": "प्र",
+    "attrOpen": "खुला",
+    "attrYou": "आप",
+    "attrSomeoneElse": "कोई और",
+    "attrYouPlusOthers_one": "आप + {{count}} और",
+    "attrYouPlusOthers_other": "आप + {{count}} और",
+    "attrPeople_one": "{{count}} व्यक्ति",
+    "attrPeople_other": "{{count}} लोग"
+  },
+  "logos": {
+    "openVerse": "इस पद को Logos में खोलें",
+    "autoFollow": "स्वतः अनुसरण",
+    "autoFollowTooltip": "Logos में सक्रिय पद का स्वतः अनुसरण करें (हर बदलाव पर फ़ोकस छीन लेता है)",
+    "enableTitle": "Logos सिंक सक्षम करें?",
+    "enableBody": "इसे चुनने पर हर बार पद बदलने पर Logos फ़ोकस छीन लेगा (अपनी विंडो को सामने ले आएगा)। यदi Logos दूसरे मॉनिटर पर है तो ठीक है, अन्यथा जब Logos को स्थानांतरित करना हो तब केवल सिंक बटन का उपयोग करें।",
+    "dontShowAgain": "इसे दोबारा न दिखाएँ",
+    "ok": "ठीक है"
   }
 }
