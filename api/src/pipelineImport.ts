@@ -1424,7 +1424,8 @@ async function loadUhbSourceWords(
   const srcVersion = NT_BOOKS.has(job.book) ? "UGNT" : "UHB";
   const rs = await env.DB.prepare(
     `SELECT chapter, verse, content_json FROM verses
-      WHERE book = ?1 AND chapter BETWEEN ?2 AND ?3 AND bible_version = ?4`,
+      WHERE book = ?1 AND chapter BETWEEN ?2 AND ?3 AND bible_version = ?4
+        AND source_generation = 1`,
   )
     .bind(job.book, job.startChapter, job.endChapter, srcVersion)
     .all<{ chapter: number; verse: number; content_json: string }>();
@@ -1482,6 +1483,7 @@ async function applyVerseUpdate(
   // about to flip; a late apply would land on the superseded generation. TSV
   // resources (tn/tq) are lane-agnostic and don't reach this path.
   const lane = laneForBibleVersion(bibleVersion);
+  let sourceGeneration = 1;
   if (lane) {
     const gate = await assertLaneWritable(env, lane, "pipeline");
     if (!gate.ok) {
@@ -1494,6 +1496,7 @@ async function applyVerseUpdate(
         .run();
       return;
     }
+    sourceGeneration = gate.generation;
   }
 
   // Self-heal target `\w` occurrence numbering before the AI-applied alignment
@@ -1557,9 +1560,10 @@ async function applyVerseUpdate(
   // for verse history — see the guarded baseline insert below.
   const existing = await env.DB.prepare(
     `SELECT version, content_json, plain_text, updated_at FROM verses
-      WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+      WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4
+        AND source_generation = ?5`,
   )
-    .bind(book, chapter, verse, bibleVersion)
+    .bind(book, chapter, verse, bibleVersion, sourceGeneration)
     .first<{ version: number; content_json: string; plain_text: string | null; updated_at: number }>();
 
   const now = Math.floor(Date.now() / 1000);
@@ -1571,9 +1575,10 @@ async function applyVerseUpdate(
           `UPDATE verses
               SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                   version = version + 1, updated_at = ?4, updated_by = ?5
-            WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9`,
+            WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9
+              AND source_generation = ?10`,
         )
-        .bind(contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion),
+        .bind(contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion, sourceGeneration),
       // Preserve the pre-AI content as a baseline at its own version, so verse
       // history can restore the state before the AI ran. Guarded: only when that
       // version was never logged (i.e. the original bootstrap import), so repeat
@@ -1582,8 +1587,8 @@ async function applyVerseUpdate(
       env.DB
         .prepare(
           `INSERT INTO edit_log
-             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at)
-           SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5
+             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at, source_generation)
+           SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5, ?6
             WHERE NOT EXISTS (
               SELECT 1 FROM edit_log WHERE kind = 'verse' AND row_key = ?1 AND new_version = ?3
             )`,
@@ -1594,16 +1599,17 @@ async function applyVerseUpdate(
           existing.version,
           JSON.stringify({ plain_text: existing.plain_text, content: existing.content_json }),
           existing.updated_at,
+          sourceGeneration,
         ),
       // The AI version itself: log full content (not just plain_text) so it is
       // restorable — this is the alignment-bearing base translators edit from.
       env.DB
         .prepare(
           `INSERT INTO edit_log
-             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-           VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7)`,
+             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
+           VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7, ?8)`,
         )
-        .bind(rowKey, book, userId, existing.version, newVersion, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE),
+        .bind(rowKey, book, userId, existing.version, newVersion, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
       env.DB
         .prepare(
           `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
@@ -1618,17 +1624,17 @@ async function applyVerseUpdate(
   await env.DB.batch([
     env.DB
       .prepare(
-        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, content_json, plain_text, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, updated_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
       )
-      .bind(book, chapter, verse, verseEnd, bibleVersion, contentJson, plainText, userId),
+      .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId),
     env.DB
       .prepare(
         `INSERT INTO edit_log
-           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-         VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5)`,
+           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
+         VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5, ?6)`,
       )
-      .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE),
+      .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
     env.DB
       .prepare(
         `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,

@@ -454,14 +454,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // A scripture lane just froze for a replacement (source swap): the active
   // generation is about to flip, so any queued edit for that lane's version is
   // now against soon-to-be-superseded content. Quarantine those outbox ops and
-  // discard unsaved drafts so nothing lands post-flip, close the aligner if it's
-  // open on that version, and refresh the config so the lane's frozen/read-only
-  // state takes effect. Verse content refreshes when the settled event arrives.
+  // draft store entries (kept for discard/export — never deleted) so nothing
+  // lands post-flip, close the aligner if it's open on that version, and
+  // refresh the config so the lane's frozen/read-only state takes effect.
+  // Verse content refreshes when the settled event arrives.
   const onLaneFreeze = useCallback(
     (event: LaneReplacementEvent) => {
       const bibleVersion = event.lane === "lit" ? "ULT" : "UST";
-      void outbox.quarantineLaneOps(bibleVersion, t("shell.laneFrozenQuarantine", { version: bibleVersion }));
-      void drafts.clearByVersion(bibleVersion);
+      const reason = t("shell.laneFrozenQuarantine", { version: bibleVersion });
+      void outbox.quarantineLaneOps(bibleVersion, reason);
+      void drafts.quarantineByVersion(bibleVersion, reason);
       if (alignerTarget?.bibleVersion === bibleVersion) {
         setAlignerTarget(null);
         setPanelMode("resources");
@@ -1741,8 +1743,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
 
   const laneAllowsAlignment = useCallback(
     (bv: string): boolean => {
-      if (bv === "ULT") return projectConfig?.laneState?.lit?.config?.alignmentWritable !== false;
-      if (bv === "UST") return projectConfig?.laneState?.sim?.config?.alignmentWritable !== false;
+      if (bv === "ULT") {
+        const lit = projectConfig?.laneState?.lit;
+        if (lit?.replacementJobId || lit?.replacementRequired) return false;
+        return lit?.config?.alignmentWritable !== false;
+      }
+      if (bv === "UST") {
+        const sim = projectConfig?.laneState?.sim;
+        if (sim?.replacementJobId || sim?.replacementRequired) return false;
+        return sim?.config?.alignmentWritable !== false;
+      }
       // Source versions (UHB/UGNT) are never alignment targets here.
       return true;
     },

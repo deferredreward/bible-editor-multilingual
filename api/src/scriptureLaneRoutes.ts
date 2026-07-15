@@ -209,7 +209,14 @@ scriptureLaneRoutes.post("/:lane/replacements/:jobId/retry-book", requireAdmin, 
 });
 
 // POST /:lane/replacements/:jobId/waive-book
+const WaiveBody = z.object({
+  book: z.string().min(1),
+  confirm: z.boolean(),
+});
+
 scriptureLaneRoutes.post("/:lane/replacements/:jobId/waive-book", requireAdmin, async (c) => {
+  const lane = c.req.param("lane");
+  if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
   const jid = c.req.param("jobId");
   let body: unknown;
   try {
@@ -217,16 +224,16 @@ scriptureLaneRoutes.post("/:lane/replacements/:jobId/waive-book", requireAdmin, 
   } catch {
     return c.json({ error: "invalid_body" }, 400);
   }
-  const parsed = BookBody.safeParse(body);
+  const parsed = WaiveBody.safeParse(body);
   if (!parsed.success) return c.json({ error: "invalid_body" }, 400);
 
   try {
-    await waiveBook(c.env, jid, parsed.data.book.toUpperCase());
+    await waiveBook(c.env, lane, jid, parsed.data.book.toUpperCase(), parsed.data.confirm);
     const readiness = await markReadyIfComplete(c.env, jid);
     return c.json(readiness);
   } catch (e: unknown) {
     const err = e as Error & { status?: number };
-    return c.json({ error: err.message }, (err.status as 404 | 409) ?? 500);
+    return c.json({ error: err.message }, (err.status as 400 | 404 | 409) ?? 500);
   }
 });
 

@@ -1175,4 +1175,158 @@ function d1Batch(db, fns) {
   console.log("  ✓ hasHeldExportLease fresh-held only");
 }
 
+// ── 28. startReplacement CAS freeze: atomic claim + generation allocation ────
+// The hardened startReplacement claims the lane, blocks exports, and allocates
+// the generation in ONE guarded UPDATE (`replacement_job_id IS NULL RETURNING`).
+// A racing second start sees 0 rows changed (null return) → 409, and never
+// double-allocates a generation.
+
+{
+  const db = freshDb();
+  seedLane(db, "lit", { activeGen: 1, nextGen: 2 });
+
+  const casFreeze = (jobId) => db.prepare(`
+    UPDATE scripture_lane_state
+       SET replacement_job_id = ?1,
+           exports_blocked = 1,
+           next_generation = next_generation + 1,
+           updated_at = unixepoch()
+     WHERE lane = 'lit' AND replacement_job_id IS NULL
+     RETURNING active_generation, next_generation
+  `).get(jobId);
+
+  // First start wins the CAS.
+  const first = casFreeze("job-A");
+  assert.ok(first, "first start claims the lane");
+  assert.equal(first.active_generation, 1, "predecessor generation returned");
+  assert.equal(first.next_generation - 1, 2, "first start allocates generation 2");
+
+  const afterFirst = getLane(db, "lit");
+  assert.equal(afterFirst.replacement_job_id, "job-A", "lane frozen to job-A");
+  assert.equal(afterFirst.exports_blocked, 1, "exports blocked by freeze");
+  assert.equal(afterFirst.next_generation, 3, "next_generation advanced once");
+
+  // Second concurrent start loses the CAS: 0 rows, undefined return.
+  const second = casFreeze("job-B");
+  assert.equal(second, undefined, "second start gets no row (CAS lost)");
+
+  const afterSecond = getLane(db, "lit");
+  assert.equal(afterSecond.replacement_job_id, "job-A", "lane still owned by job-A");
+  assert.equal(afterSecond.next_generation, 3, "no double allocation from losing start");
+  console.log("  ✓ startReplacement CAS freeze: single winner, no double allocation");
+}
+
+// ── 29. releaseFreeze rolls back only our claim, restoring exports_blocked ───
+// If job/book insert fails after the freeze, releaseFreeze clears our
+// replacement_job_id and restores the prior exports_blocked. The
+// `replacement_job_id = ?` guard makes it a no-op if the lane moved on.
+
+{
+  const db = freshDb();
+  // BSOJ-style lane: exports were already blocked before the freeze.
+  seedLane(db, "lit", { activeGen: 1, nextGen: 2, exportsBlocked: 1, replacementRequired: 1 });
+
+  // Freeze
+  db.prepare(`
+    UPDATE scripture_lane_state
+       SET replacement_job_id = ?1, exports_blocked = 1,
+           next_generation = next_generation + 1, updated_at = unixepoch()
+     WHERE lane = 'lit' AND replacement_job_id IS NULL
+  `).run("job-roll");
+
+  const releaseFreeze = (jobId, priorExportsBlocked) => db.prepare(`
+    UPDATE scripture_lane_state
+       SET replacement_job_id = NULL, exports_blocked = ?1, updated_at = unixepoch()
+     WHERE lane = 'lit' AND replacement_job_id = ?2
+  `).run(priorExportsBlocked, jobId);
+
+  // Rollback restores prior exports_blocked (1, because replacement_required).
+  const r = releaseFreeze("job-roll", 1);
+  assert.equal(r.changes, 1, "rollback cleared our freeze");
+  const lane = getLane(db, "lit");
+  assert.equal(lane.replacement_job_id, null, "replacement_job_id cleared");
+  assert.equal(lane.exports_blocked, 1, "prior exports_blocked restored (BSOJ stays blocked)");
+
+  // A second rollback for a different owner is a no-op.
+  db.prepare("UPDATE scripture_lane_state SET replacement_job_id='job-other' WHERE lane='lit'").run();
+  const r2 = releaseFreeze("job-roll", 0);
+  assert.equal(r2.changes, 0, "rollback is a no-op when the lane moved on");
+  assert.equal(getLane(db, "lit").replacement_job_id, "job-other", "other owner untouched");
+  console.log("  ✓ releaseFreeze rolls back only our claim");
+}
+
+// ── 30. abandonStaleHeldLeases: stale held → abandoned + grace ──────────────
+// A held lease older than TTL is swept into abandon+grace so it can't slip past
+// both hasHeldExportLease (fresh-only) and waitAbandonedGrace (abandoned-only).
+
+{
+  const db = freshDb();
+  seedLane(db, "lit");
+  const now = Math.floor(Date.now() / 1000);
+  const stale = Math.floor((Date.now() - EXPORT_LEASE_TTL_MS - 5000) / 1000);
+  // fresh held (should stay held) + stale held (should be abandoned)
+  db.prepare(`INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at) VALUES ('fresh','lit','tf','held','w1',?1)`).run(now);
+  db.prepare(`INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at) VALUES ('stale','lit','ts','held','w2',?1)`).run(stale);
+
+  const abandonStale = () => db.prepare(`
+    UPDATE scripture_export_leases
+       SET status = 'abandoned', abandoned_at = unixepoch(),
+           grace_until = unixepoch() + ?1
+     WHERE lane = ?2 AND status = 'held' AND heartbeat_at * 1000 <= ?3
+  `).run(Math.ceil(EXPORT_ABANDON_GRACE_MS / 1000), "lit", Date.now() - EXPORT_LEASE_TTL_MS);
+
+  abandonStale();
+
+  const freshRow = db.prepare("SELECT * FROM scripture_export_leases WHERE lease_id='fresh'").get();
+  const staleRow = db.prepare("SELECT * FROM scripture_export_leases WHERE lease_id='stale'").get();
+  assert.equal(freshRow.status, "held", "fresh lease stays held");
+  assert.equal(staleRow.status, "abandoned", "stale lease abandoned");
+  assert.ok(staleRow.grace_until > now, "abandoned lease got a grace window");
+  console.log("  ✓ abandonStaleHeldLeases: stale held swept to abandon+grace");
+}
+
+// ── 31. activation drain: stale held blocks via grace, clears after grace ────
+// After abandonStaleHeldLeases, a lone stale held lease no longer counts as a
+// fresh held lease, but its grace window blocks activation (export_lease_grace)
+// until grace_until passes.
+
+{
+  const db = freshDb();
+  seedLane(db, "lit");
+  const stale = Math.floor((Date.now() - EXPORT_LEASE_TTL_MS - 5000) / 1000);
+  db.prepare(`INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at) VALUES ('s','lit','t','held','w',?1)`).run(stale);
+
+  const abandonStale = () => db.prepare(`
+    UPDATE scripture_export_leases
+       SET status = 'abandoned', abandoned_at = unixepoch(),
+           grace_until = unixepoch() + ?1
+     WHERE lane = ?2 AND status = 'held' AND heartbeat_at * 1000 <= ?3
+  `).run(Math.ceil(EXPORT_ABANDON_GRACE_MS / 1000), "lit", Date.now() - EXPORT_LEASE_TTL_MS);
+
+  const hasFreshHeld = () => !!db.prepare(`
+    SELECT 1 FROM scripture_export_leases
+    WHERE lane = ?1 AND status = 'held' AND heartbeat_at * 1000 > ?2 LIMIT 1
+  `).get("lit", Date.now() - EXPORT_LEASE_TTL_MS);
+
+  const graceClear = () => !db.prepare(`
+    SELECT 1 FROM scripture_export_leases
+    WHERE lane = ?1 AND status = 'abandoned' AND grace_until > unixepoch() LIMIT 1
+  `).get("lit");
+
+  // Before the sweep, the stale row is 'held' — hasFreshHeld ignores it (past
+  // TTL) and graceClear ignores it (not abandoned): the blind spot the fix closes.
+  assert.equal(hasFreshHeld(), false, "stale held is not a fresh held");
+  assert.equal(graceClear(), true, "pre-sweep: no abandoned row → grace looks clear (the gap)");
+
+  // Sweep it into abandon+grace.
+  abandonStale();
+  assert.equal(hasFreshHeld(), false, "still no fresh held after sweep");
+  assert.equal(graceClear(), false, "activation blocked: abandoned lease within grace");
+
+  // Once grace expires, activation is allowed.
+  db.prepare("UPDATE scripture_export_leases SET grace_until = unixepoch() - 1 WHERE lease_id='s'").run();
+  assert.equal(graceClear(), true, "activation allowed after grace window elapses");
+  console.log("  ✓ activation drain: stale held → grace block → allowed after grace");
+}
+
 console.log("\nscriptureLaneReplacement tests passed");

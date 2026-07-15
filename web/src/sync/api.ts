@@ -1723,11 +1723,12 @@ export const api = {
     ),
 
   // Authorize a book's absence (skip it) — marks it absent_authorized so it no
-  // longer blocks readiness. Returns updated job readiness.
-  laneWaiveBook: (lane: "lit" | "sim", jobId: string, book: string) =>
+  // longer blocks readiness. Requires confirm:true so a misclick can't permanently
+  // omit a book from the new generation. Returns updated job readiness.
+  laneWaiveBook: (lane: "lit" | "sim", jobId: string, book: string, confirm = true) =>
     request<{ ready?: boolean; pending?: string[] }>(
       `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/waive-book`,
-      { method: "POST", body: JSON.stringify({ book }) },
+      { method: "POST", body: JSON.stringify({ book, confirm }) },
     ),
 
   // Flip the generation pointer once the job is ready. The fencing token guards

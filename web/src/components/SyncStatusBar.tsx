@@ -64,7 +64,9 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
   // drafts haven't left the browser.
   const [draftList, setDraftList] = useState<DraftRecord[]>([]);
   useEffect(() => drafts.subscribe(setDraftList), []);
-  const draftCount = draftList.length;
+  const activeDrafts = draftList.filter((d) => !d.quarantined);
+  const quarantinedDrafts = draftList.filter((d) => !!d.quarantined);
+  const draftCount = activeDrafts.length;
 
   // Track navigator.onLine + last successful drain so we can distinguish
   // "actively saving" from "queueing because we have no internet". A separate
@@ -212,7 +214,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     inline = null;
   }
 
-  const showFloating = conflicts.length > 0 || failed.length > 0;
+  const showFloating = conflicts.length > 0 || failed.length > 0 || quarantinedDrafts.length > 0;
 
   // The drafts chip rides alongside the outbox chip. It surfaces unsaved
   // typing — distinct from "saving N" which is server in-flight. When
@@ -250,7 +252,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
         <Typography variant="caption" sx={{ fontWeight: 600 }}>
           {t("sync.unsavedEditsColon", { count: draftCount })}
         </Typography>
-        {draftList.map((d) => (
+        {activeDrafts.map((d) => (
           <Typography
             key={d.key}
             variant="caption"
@@ -295,7 +297,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
           >
             {t("sync.unsavedEditsClickToJump", { count: draftCount })}
           </Typography>
-          {draftList.map((d) => (
+          {activeDrafts.map((d) => (
             <MenuItem key={d.key} onClick={() => navigateToDraft(d.meta)} dense>
               <ListItemText
                 primaryTypographyProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
@@ -413,6 +415,108 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
                         size="small"
                         color="error"
                         onClick={() => void outbox.drop(op.id)}
+                        sx={{ p: 0.25 }}
+                      >
+                        <DeleteOutlineIcon fontSize="inherit" />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                ))}
+              </Stack>
+            )}
+            {quarantinedDrafts.length > 0 && (failed.length > 0 || conflicts.length > 0) && (
+              <Divider flexItem />
+            )}
+            {quarantinedDrafts.length > 0 && (
+              <Stack spacing={0.25}>
+                <Stack direction="row" alignItems="center" justifyContent="space-between">
+                  <Typography variant="caption" color="warning.main" sx={{ fontWeight: 600 }}>
+                    {t("sync.quarantinedDrafts", { count: quarantinedDrafts.length })}
+                  </Typography>
+                  <Stack direction="row" spacing={0.5}>
+                    <Tooltip title={t("sync.exportQuarantinedDrafts")}>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => {
+                          const blob = new Blob(
+                            [JSON.stringify(quarantinedDrafts, null, 2)],
+                            { type: "application/json" },
+                          );
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `quarantined-drafts-${Date.now()}.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        sx={{ minWidth: 0, py: 0, fontSize: 11 }}
+                      >
+                        {t("sync.export")}
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title={t("sync.discardQuarantinedDrafts")}>
+                      <Button
+                        size="small"
+                        variant="text"
+                        color="error"
+                        onClick={async () => {
+                          for (const d of quarantinedDrafts) await drafts.clear(d.key);
+                        }}
+                        sx={{ minWidth: 0, py: 0, fontSize: 11 }}
+                      >
+                        {t("sync.discardAll")}
+                      </Button>
+                    </Tooltip>
+                  </Stack>
+                </Stack>
+                {quarantinedDrafts.map((d) => (
+                  <Stack
+                    key={d.key}
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                    sx={{
+                      bgcolor: "action.hover",
+                      borderRadius: 0.5,
+                      px: 0.75,
+                      py: 0.25,
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          display: "block",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {formatDraftMeta(d.meta)}
+                      </Typography>
+                      {d.quarantined && (
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{
+                            display: "block",
+                            fontSize: 10,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {d.quarantined}
+                        </Typography>
+                      )}
+                    </Box>
+                    <Tooltip title={t("sync.discardThisEdit")}>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => void drafts.clear(d.key)}
                         sx={{ p: 0.25 }}
                       >
                         <DeleteOutlineIcon fontSize="inherit" />

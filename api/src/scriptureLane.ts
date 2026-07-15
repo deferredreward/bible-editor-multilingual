@@ -243,7 +243,10 @@ export async function assertLaneWritable(
     return { ok: false, error: "exports_blocked", status: 409, detail: { lane } };
   }
 
-  if (purpose === "verse_edit" && config.textReadOnly) {
+  // Interactive text edits AND AI pipeline writes that change verse content both
+  // honor textReadOnly. Pipelines that would rewrite AVD/NAV body text must not
+  // bypass the lock matrix (alignment-only lanes stay alignmentWritable-gated).
+  if ((purpose === "verse_edit" || purpose === "pipeline") && config.textReadOnly) {
     return { ok: false, error: "scripture_text_read_only", status: 403, detail: { lane, repo: repoRefKey(config) } };
   }
   if (purpose === "alignment_edit" && !config.alignmentWritable) {
@@ -309,16 +312,19 @@ export function origSourceGeneration(): number {
 }
 
 export async function allocateGeneration(env: Env, lane: LaneKey): Promise<number> {
-  // next_generation = next FREE. Increment and return the previous value.
-  await env.DB
+  // next_generation = next FREE. Increment and return the previous value in a
+  // single atomic statement — a separate UPDATE + SELECT can race two callers
+  // onto the same generation. D1/SQLite (>=3.35) supports UPDATE … RETURNING.
+  const row = await env.DB
     .prepare(
       `UPDATE scripture_lane_state
           SET next_generation = next_generation + 1, updated_at = unixepoch()
-        WHERE lane = ?1`,
+        WHERE lane = ?1
+        RETURNING next_generation`,
     )
     .bind(lane)
-    .run();
-  const row = await requireLaneState(env, lane);
+    .first<{ next_generation: number }>();
+  if (!row) throw new Error(`lane_state_missing:${lane}`);
   return row.next_generation - 1;
 }
 

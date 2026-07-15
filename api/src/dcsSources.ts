@@ -207,11 +207,11 @@ export function dcsRawUrl(env: Env, owner: string, repo: string, path: string, r
 // for the incremental reimport (skip a (book,resource) whose file SHA matches
 // what we last synced). Sends the service token when present so private repos
 // and rate limits are handled the same way the export path is.
-export async function fileCommitSha(env: Env, owner: string, repo: string, path: string): Promise<string | null> {
+export async function fileCommitSha(env: Env, owner: string, repo: string, path: string, ref = "master"): Promise<string | null> {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const url =
     `${base}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
-    `/commits?sha=master&path=${encodeURIComponent(path)}&limit=1&stat=false&verification=false&files=false`;
+    `/commits?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}&limit=1&stat=false&verification=false&files=false`;
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;

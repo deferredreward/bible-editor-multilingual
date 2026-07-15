@@ -21,7 +21,7 @@ import {
 import { requireAuth, requireEditor, currentUserId } from "./auth";
 import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText, type LaneRepoOverrides } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
-import { reimportBookFromDcs, recordResourceSync, type Resource } from "./bookReimport";
+import { reimportBookFromDcs, recordResourceSync, resourceSourceRef, type Resource } from "./bookReimport";
 import { lintTnRows, lintUsfmVerses } from "./lint";
 import type { TnRow, VerseRow } from "./types";
 import { ensureLaneState, requireLaneState, origSourceGeneration, activeLaneConfig } from "./scriptureLane";
@@ -332,8 +332,9 @@ async function importBookFromDcs(
     if (!counts.fetched[resource]) continue;
     const file = dcsResourceFile(cfg, book, resource);
     if (!file) continue;
-    const sha = await fileCommitSha(env, cfg.org, file.repo, file.path);
-    if (sha) await recordResourceSync(env, book, resource, sha, "import", cfg.org);
+    const src = await resourceSourceRef(env, resource, cfg);
+    const sha = await fileCommitSha(env, src.owner, src.repo, file.path, src.ref);
+    if (sha) await recordResourceSync(env, book, resource, sha, "import", src);
   }
 
   return counts;

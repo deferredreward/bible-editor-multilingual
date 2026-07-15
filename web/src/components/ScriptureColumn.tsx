@@ -211,14 +211,17 @@ function ScriptureColumnInner({
 }: Props) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
-  // Versions whose text is locked (lane textReadOnly) — fed into find/replace
-  // so matches in those versions are counted but excluded from replacement.
+  // Versions whose text is locked — lane textReadOnly, or a freeze /
+  // replacement_required quarantine. Fed into find/replace and editors so
+  // users can't keep typing until the server 409s.
   const textLockedVersions = useMemo(() => {
     const s = new Set<string>();
-    if (projectConfig?.laneState?.lit?.config?.textReadOnly) s.add("ULT");
-    if (projectConfig?.laneState?.sim?.config?.textReadOnly) s.add("UST");
+    const lit = projectConfig?.laneState?.lit;
+    const sim = projectConfig?.laneState?.sim;
+    if (lit?.config?.textReadOnly || lit?.replacementJobId || lit?.replacementRequired) s.add("ULT");
+    if (sim?.config?.textReadOnly || sim?.replacementJobId || sim?.replacementRequired) s.add("UST");
     return s;
-  }, [projectConfig?.laneState?.lit?.config?.textReadOnly, projectConfig?.laneState?.sim?.config?.textReadOnly]);
+  }, [projectConfig?.laneState?.lit, projectConfig?.laneState?.sim]);
   const activeRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);

@@ -31,6 +31,10 @@ export interface DraftRecord {
   // "Save Num 20:1 ULT?" without parsing the key. Verse drafts carry
   // book/chapter/verse/bibleVersion; row drafts carry kind/id/book.
   meta: DraftMeta;
+  // Set when a scripture lane freezes for replacement. Quarantined drafts are
+  // kept for discard/export but must not restore into editors or count as
+  // active unsaved typing — the generation is about to flip.
+  quarantined?: string;
 }
 
 export type DraftMeta =
@@ -142,7 +146,9 @@ export const drafts = {
   async get(key: string): Promise<DraftRecord | undefined> {
     const idb = await db();
     const rec = (await idb.get(STORE, key)) as DraftRecord | undefined;
-    if (rec) return rec;
+    // Quarantined drafts stay in IDB for discard/export but must not hydrate
+    // editors — restoring them would put superseded-generation text back in.
+    if (rec) return rec.quarantined ? undefined : rec;
     // One-time tolerance for the pre-book row key format ("row:{kind}:{id}").
     // On a miss, check whether a legacy record exists whose meta says it
     // belongs to this book; if so, migrate it under the new key. A legacy
@@ -175,19 +181,22 @@ export const drafts = {
     return listAll();
   },
 
-  // Discard every unsaved verse draft for a bible_version whose lane just froze
-  // for a replacement — the generation is about to flip, so the draft is against
-  // content that's being replaced. Row drafts (tn/tq/twl) are lane-agnostic and
-  // left alone. Returns the count cleared.
-  async clearByVersion(bibleVersion: string): Promise<number> {
-    const all = await listAll();
+  // Quarantine every unsaved verse draft for a bible_version whose lane just
+  // froze for a replacement. Drafts are kept (exportable / discardable) but
+  // stopped from restoring into editors. Row drafts (tn/tq/twl) are
+  // lane-agnostic and left alone. Returns the count quarantined.
+  async quarantineByVersion(bibleVersion: string, reason: string): Promise<number> {
+    const idb = await db();
+    const all = (await idb.getAll(STORE)) as DraftRecord[];
     let n = 0;
     for (const rec of all) {
-      if (rec.meta.kind === "verse" && rec.meta.bibleVersion === bibleVersion) {
-        await this.clear(rec.key);
-        n++;
-      }
+      if (rec.meta.kind !== "verse" || rec.meta.bibleVersion !== bibleVersion) continue;
+      if (rec.quarantined) continue;
+      pendingKeys.delete(rec.key);
+      await idb.put(STORE, { ...rec, quarantined: reason, updatedAt: Date.now() });
+      n++;
     }
+    if (n > 0) void notify();
     return n;
   },
 };

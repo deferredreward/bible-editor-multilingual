@@ -19,10 +19,11 @@
 //
 // 3. Switching a live database to a different org/preset is an admin action
 //    with consequences: the book_resource_syncs watermarks recorded under the
-//    old org no longer describe the new source. writeProjectConfig therefore
-//    stamps source_org on new watermarks and storedResourceSha treats an
-//    org-mismatched watermark as absent (see bookReimport.ts) — the reimport
-//    then treats the book as never-synced rather than trusting a stale SHA.
+//    old source no longer describe the new source. Watermarks are keyed by full
+//    source identity (generation, owner, ref) and storedResourceSha treats an
+//    identity-mismatched watermark as absent (see bookReimport.ts) — the
+//    reimport then treats the book as never-synced rather than trusting a
+//    stale SHA.
 //
 // 4. Presets are code, overrides are data. The four GL presets below were
 //    verified against live Door43 org listings on 2026-07-10. es-419 and ru
@@ -136,6 +137,24 @@ export const PRESETS: Record<string, ProjectConfig> = {
     repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
     litLabel: "AVD",
     simLabel: "NAV",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
+    glBibles: [],
+    translationSource: UW_SOURCE,
+    reposVerified: true,
+  },
+  // Verified live 2026-07-15: BibleEditorMLTest has the full English GL set.
+  "en-bible-editor-ml-test": {
+    preset: "en-bible-editor-ml-test",
+    org: "BibleEditorMLTest",
+    exportOrg: "BibleEditorMLTest",
+    languageCode: "en",
+    languageName: "English",
+    languageTitle: "English",
+    direction: "ltr",
+    repos: { lit: "en_glt", sim: "en_gst", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
+    litLabel: "GLT",
+    simLabel: "GST",
     origHebrewLabel: "UHB",
     origGreekLabel: "UGNT",
     glBibles: [],

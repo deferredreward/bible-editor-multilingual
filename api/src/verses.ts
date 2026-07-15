@@ -99,8 +99,15 @@ verses.get("/:book/:chapter/:verse/:bibleVersion", async (c) => {
   if (!isAllowedBibleVersion(bv)) {
     return c.json({ error: "invalid_bible_version" }, 400);
   }
+  // For lanes (ULT/UST) a null generation means the lane is quarantined
+  // (replacement_required). Do NOT fall back to generation 1 — that would serve
+  // legacy GLT/GST content that BSOJ replacement has retired.
+  const lane = laneForBibleVersion(bv);
   const gen = await activeGenerationForBibleVersion(c.env, bv);
-  // gen null → lane blocked (replacement_required) or non-lane bible version
+  if (lane && gen === null) {
+    return c.json({ error: "lane_replacement_required" }, 409);
+  }
+  // Non-lane source (UHB/UGNT) has no lane generation — always generation 1.
   const genFilter = gen ?? 1;
   const row = await c.env.DB.prepare(
     `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
@@ -143,7 +150,13 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
     return c.json({ error: "invalid_bible_version" }, 400);
   }
 
+  // Quarantined lane → no fallback to legacy generation-1 content (see the GET
+  // handler above). Non-lane source (UHB/UGNT) stays on generation 1.
+  const lane = laneForBibleVersion(bibleVersion);
   const gen = await activeGenerationForBibleVersion(c.env, bibleVersion);
+  if (lane && gen === null) {
+    return c.json({ error: "lane_replacement_required" }, 409);
+  }
   const genFilter = gen ?? 1;
   const row = await c.env.DB.prepare(
     `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
@@ -163,7 +176,12 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
   }
 
   const rowKey = `${book}/${chapter}/${verse}/${bibleVersion}`;
-  const rs = await c.env.DB.prepare(
+  // Scope history to the served generation so a lane bump doesn't bleed a
+  // retired generation's edits into the current one. edit_log.source_generation
+  // (migration 0042) is nullable for pre-migration / non-verse rows, so NULL
+  // still surfaces — mirrors the `el.book IS NULL` pre-0017 fallback. If the
+  // column predates this DB, retry without the generation predicate.
+  const historyQuery = (withGeneration: boolean) =>
     `SELECT el.new_version AS version,
             el.action,
             el.source,
@@ -176,11 +194,22 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
        LEFT JOIN users u ON u.id = el.user_id
       WHERE el.kind = 'verse' AND el.row_key = ?1
         AND (el.book = ?2 OR el.book IS NULL)
-        AND el.new_version IS NOT NULL
-      ORDER BY el.new_version ASC, el.created_at ASC`,
-  )
-    .bind(rowKey, book)
-    .all<VerseHistoryLogRow>();
+        AND el.new_version IS NOT NULL${
+          withGeneration
+            ? "\n        AND (el.source_generation = ?3 OR el.source_generation IS NULL)"
+            : ""
+        }
+      ORDER BY el.new_version ASC, el.created_at ASC`;
+  let rs;
+  try {
+    rs = await c.env.DB.prepare(historyQuery(true))
+      .bind(rowKey, book, genFilter)
+      .all<VerseHistoryLogRow>();
+  } catch {
+    rs = await c.env.DB.prepare(historyQuery(false))
+      .bind(rowKey, book)
+      .all<VerseHistoryLogRow>();
+  }
 
   const versions = buildVerseHistory(rs.results ?? [], {
     version: row.version,
@@ -240,9 +269,15 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
     const perm = allowVersePatch(gate.config, alignmentIntent);
     if (!perm.ok) return c.json({ error: perm.error }, 403);
 
-    // Verify X-Source-Generation matches active generation
+    // Require X-Source-Generation on lane writes. The client must prove which
+    // generation it loaded the verse under so a stale tab can't overwrite a new
+    // generation. Missing / blank / non-integer → 428 (re-read, then retry);
+    // a finite value that disagrees with the active generation → 409.
     const clientGen = parseInt(c.req.header("X-Source-Generation") ?? "", 10);
-    if (Number.isFinite(clientGen) && clientGen !== gate.generation) {
+    if (!Number.isFinite(clientGen)) {
+      return c.json({ error: "source_generation_required" }, 428);
+    }
+    if (clientGen !== gate.generation) {
       return c.json({ error: "source_generation_mismatch", expected: gate.generation, got: clientGen }, 409);
     }
   }
@@ -352,8 +387,8 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
       ),
     c.env.DB
       .prepare(
-        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json)
-         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6
+        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source_generation)
+         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
          WHERE changes() > 0`,
       )
       .bind(
@@ -363,6 +398,7 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
         expected,
         newVersion,
         JSON.stringify({ ...parsed.data, alignment_delta: delta }),
+        laneGeneration,
       ),
   ]);
 

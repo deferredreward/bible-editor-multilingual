@@ -12,7 +12,6 @@
 import type { Env } from "./index";
 import type { LaneKey, ScriptureLaneConfig } from "./scriptureLane";
 import {
-  allocateGeneration,
   bibleVersionForLane,
   configHash,
   getLaneState,
@@ -101,7 +100,8 @@ export async function startReplacement(
 ): Promise<{ job: ReplacementJob; books: ReplacementBookRow[] }> {
   const row = await requireLaneState(env, lane);
 
-  // CAS: no open job
+  // Cheap pre-check so we can 400 on missing confirmation before mutating.
+  // The authoritative "no open job" guard is the CAS freeze below.
   if (row.replacement_job_id) {
     throw Object.assign(new Error("replacement_already_active"), {
       status: 409,
@@ -112,15 +112,45 @@ export async function startReplacement(
     throw Object.assign(new Error("confirmation_required"), { status: 400 });
   }
 
-  const generation = await allocateGeneration(env, lane);
-  const bv = bibleVersionForLane(lane);
-  const snap = await snapshotRequiredBooks(env, bv, row.active_generation);
-  if ("error" in snap) {
-    throw Object.assign(new Error(snap.error), { status: 422 });
-  }
-
   const id = jobId();
   const predecessorHash = configHash(parseLaneConfig(row.active_config_json));
+
+  // CAS freeze: atomically claim the lane (replacement_job_id), block exports,
+  // and allocate the new generation in one statement. The `replacement_job_id
+  // IS NULL` guard means only one racing start can win — a second start sees 0
+  // rows changed (null return) and 409s. This closes the check-then-allocate
+  // race where two starts each read a null job id and then both proceeded.
+  const frozen = await env.DB.prepare(
+    `UPDATE scripture_lane_state
+        SET replacement_job_id = ?1,
+            exports_blocked = 1,
+            next_generation = next_generation + 1,
+            updated_at = unixepoch()
+      WHERE lane = ?2 AND replacement_job_id IS NULL
+      RETURNING active_generation, next_generation`,
+  )
+    .bind(id, lane)
+    .first<{ active_generation: number; next_generation: number }>();
+
+  if (!frozen) {
+    // Lost the race — re-read to surface the winning job id.
+    const cur = await getLaneState(env, lane);
+    throw Object.assign(new Error("replacement_already_active"), {
+      status: 409,
+      detail: { lane, jobId: cur?.replacement_job_id ?? null },
+    });
+  }
+
+  const activeGeneration = frozen.active_generation;
+  const generation = frozen.next_generation - 1; // just-allocated value
+  const priorExportsBlocked = row.exports_blocked;
+
+  const bv = bibleVersionForLane(lane);
+  const snap = await snapshotRequiredBooks(env, bv, activeGeneration);
+  if ("error" in snap) {
+    await releaseFreeze(env, lane, id, priorExportsBlocked);
+    throw Object.assign(new Error(snap.error), { status: 422 });
+  }
 
   const stmts: D1PreparedStatement[] = [
     env.DB.prepare(
@@ -130,17 +160,10 @@ export async function startReplacement(
          required_books_json, status, created_at
        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'reserved', unixepoch())`,
     ).bind(
-      id, lane, generation, row.active_generation,
+      id, lane, generation, activeGeneration,
       predecessorHash, JSON.stringify(pendingConfig),
       JSON.stringify(snap.books),
     ),
-    // Freeze lane: set replacement_job_id, block exports.
-    // Do NOT clear replacement_required yet — only activation clears it.
-    env.DB.prepare(
-      `UPDATE scripture_lane_state
-          SET replacement_job_id = ?1, exports_blocked = 1, updated_at = unixepoch()
-        WHERE lane = ?2`,
-    ).bind(id, lane),
   ];
 
   // Insert per-book rows
@@ -153,12 +176,42 @@ export async function startReplacement(
     );
   }
 
-  await env.DB.batch(stmts);
+  try {
+    await env.DB.batch(stmts);
+  } catch (e) {
+    // Job/book insert failed (e.g. UNIQUE(lane, generation) collision from a
+    // concurrent allocation). Release the freeze we took so the lane isn't left
+    // stuck pointing at a job that never existed. The generation reservation is
+    // intentionally not rolled back — gaps in next_generation are harmless.
+    await releaseFreeze(env, lane, id, priorExportsBlocked);
+    throw e;
+  }
 
   const job = await getJob(env, id);
   if (!job) throw new Error("job_insert_failed");
   const books = await getJobBooks(env, id);
   return { job, books };
+}
+
+/**
+ * Roll back a CAS freeze taken by startReplacement: clear replacement_job_id
+ * (only if it's still ours) and restore the prior exports_blocked value. The
+ * `replacement_job_id = ?2` guard makes this a no-op if another workflow has
+ * since taken over the lane.
+ */
+async function releaseFreeze(
+  env: Env,
+  lane: LaneKey,
+  jobId: string,
+  priorExportsBlocked: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE scripture_lane_state
+        SET replacement_job_id = NULL,
+            exports_blocked = ?1,
+            updated_at = unixepoch()
+      WHERE lane = ?2 AND replacement_job_id = ?3`,
+  ).bind(priorExportsBlocked, lane, jobId).run();
 }
 
 // ── 2. stageBook ─────────────────────────────────────────────────────────────
@@ -182,7 +235,8 @@ export async function stageBook(
   }
 
   const usfmPath = `${num}-${book}.usfm`;
-  const url = dcsRawUrl(env, owner, repo, usfmPath);
+  // Always fetch from the pending config's ref — never silently fall back to master.
+  const url = dcsRawUrl(env, owner, repo, usfmPath, ref);
 
   // Transition to staging on first book
   if (job.status === "reserved") {
@@ -205,7 +259,7 @@ export async function stageBook(
               error_json = ?1,
               updated_at = unixepoch()
         WHERE job_id = ?2 AND book = ?3`,
-    ).bind(JSON.stringify({ error: "fetch_failed", url }), jobId, book).run();
+    ).bind(JSON.stringify({ error: "fetch_failed", url, ref }), jobId, book).run();
     return { status: "retryable_error" };
   }
 
@@ -236,12 +290,58 @@ export async function stageBook(
               error_json = ?1,
               updated_at = unixepoch()
         WHERE job_id = ?2 AND book = ?3`,
-    ).bind(JSON.stringify({ error: "empty_usfm", url }), jobId, book).run();
+    ).bind(JSON.stringify({ error: "empty_usfm", url, ref }), jobId, book).run();
     return { status: "retryable_error" };
   }
 
-  // Insert verses with source_generation = job.generation, created_by_job_id = jobId
   const bv = bibleVersionForLane(job.lane);
+
+  // Completeness gate vs predecessor generation: a truncated file that parses
+  // one verse must not activate and wipe the rest of the book. Fail closed —
+  // admin can waive if the shrink is intentional.
+  const predCount = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM verses
+      WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
+  )
+    .bind(book, bv, job.predecessor_generation)
+    .first<{ n: number }>();
+  const predecessorVerses = predCount?.n ?? 0;
+  if (predecessorVerses > 0 && verses.length < predecessorVerses) {
+    await env.DB.prepare(
+      `UPDATE scripture_lane_replacement_books
+          SET status = 'retryable_error',
+              error_json = ?1,
+              updated_at = unixepoch()
+        WHERE job_id = ?2 AND book = ?3`,
+    ).bind(
+      JSON.stringify({
+        error: "incomplete_usfm",
+        staged: verses.length,
+        predecessor: predecessorVerses,
+        url,
+        ref,
+      }),
+      jobId,
+      book,
+    ).run();
+    return { status: "retryable_error" };
+  }
+
+  // Make staging idempotent: drop any prior partial rows for this job×book
+  // before re-inserting (a crash mid-chunk previously left PK collisions on retry).
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM verses
+        WHERE bible_version = ?1 AND source_generation = ?2 AND book = ?3
+          AND created_by_job_id = ?4`,
+    ).bind(bv, job.generation, book, jobId),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta
+        WHERE bible_version = ?1 AND source_generation = ?2 AND book = ?3
+          AND created_by_job_id = ?4`,
+    ).bind(bv, job.generation, book, jobId),
+  ]);
+
   const stmt = env.DB.prepare(
     `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, created_by_job_id)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
@@ -263,8 +363,22 @@ export async function stageBook(
     ).bind(book, bv, job.generation, JSON.stringify(headers), jobId).run();
   }
 
-  // Record SHA
-  const sha = await fileCommitSha(env, owner, repo, usfmPath);
+  // SHA must be for the same ref we fetched from.
+  const sha = await fileCommitSha(env, owner, repo, usfmPath, ref);
+  if (!sha) {
+    await env.DB.prepare(
+      `UPDATE scripture_lane_replacement_books
+          SET status = 'retryable_error',
+              error_json = ?1,
+              updated_at = unixepoch()
+        WHERE job_id = ?2 AND book = ?3`,
+    ).bind(
+      JSON.stringify({ error: "sha_unavailable", owner, repo, ref, path: usfmPath }),
+      jobId,
+      book,
+    ).run();
+    return { status: "retryable_error" };
+  }
 
   await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
@@ -277,7 +391,12 @@ export async function stageBook(
       WHERE job_id = ?6 AND book = ?7`,
   ).bind(
     owner, repo, ref, sha,
-    JSON.stringify({ verses: verses.length, bytes: rawUsfm.length }),
+    JSON.stringify({
+      verses: verses.length,
+      predecessorVerses,
+      bytes: rawUsfm.length,
+      ref,
+    }),
     jobId, book,
   ).run();
 
@@ -323,10 +442,13 @@ export async function activateReplacement(
   }
 
   // Export-fencing drain — never flip the pointer while an export might still be
-  // mid-DCS-commit. A fresh held lease means an exporter owns the lane right now;
-  // an abandoned lease still inside its grace window means a recently-dead
-  // exporter's in-flight commit could still land. Reject in both cases so the
-  // admin retries once the lane is quiescent.
+  // mid-DCS-commit. First fold any stale `held` lease into abandon+grace so it
+  // can't slip past both checks below (fresh-only / abandoned-only). Then: a
+  // fresh held lease means an exporter owns the lane right now; an abandoned
+  // lease still inside its grace window means a recently-dead exporter's
+  // in-flight commit could still land. Reject in both cases so the admin retries
+  // once the lane is quiescent.
+  await abandonStaleHeldLeases(env, job.lane);
   if (await hasHeldExportLease(env, job.lane)) {
     throw Object.assign(new Error("export_lease_held"), { status: 409, detail: { lane: job.lane } });
   }
@@ -498,20 +620,34 @@ export async function retryBook(
 
 export async function waiveBook(
   env: Env,
+  lane: LaneKey,
   jobId: string,
   book: string,
+  confirm: boolean,
 ): Promise<void> {
+  if (!confirm) {
+    throw Object.assign(new Error("confirmation_required"), { status: 400 });
+  }
   const job = await getJob(env, jobId);
   if (!job) throw Object.assign(new Error("job_not_found"), { status: 404 });
+  if (job.lane !== lane) {
+    throw Object.assign(new Error("job_lane_mismatch"), { status: 404 });
+  }
   if (job.status === "completed" || job.status === "cancelled" || job.status === "failed") {
     throw Object.assign(new Error("job_terminal"), { status: 409 });
   }
 
-  await env.DB.prepare(
+  // Only authorize absence for books that already failed staging — never for
+  // pending/in-progress rows (that would turn a transient fetch into a
+  // permanent omission without evidence the book is truly missing).
+  const upd = await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
         SET status = 'absent_authorized', error_json = NULL, updated_at = unixepoch()
-      WHERE job_id = ?1 AND book = ?2`,
+      WHERE job_id = ?1 AND book = ?2 AND status IN ('retryable_error', 'failed')`,
   ).bind(jobId, book).run();
+  if ((upd.meta.changes ?? 0) === 0) {
+    throw Object.assign(new Error("book_not_waivable"), { status: 409 });
+  }
 }
 
 // ── 7. Export lease helpers ──────────────────────────────────────────────────
@@ -525,26 +661,14 @@ export async function acquireExportLease(
   if (state.exports_blocked) return { error: "exports_blocked" };
   if (state.replacement_job_id) return { error: "replacement_in_progress" };
 
-  // Check for existing held leases
-  const existing = await env.DB.prepare(
-    `SELECT * FROM scripture_export_leases
-      WHERE lane = ?1 AND status = 'held'
-      ORDER BY heartbeat_at DESC LIMIT 1`,
-  ).bind(lane).first<{ lease_id: string; heartbeat_at: number }>();
-
-  if (existing) {
-    const age = Date.now() - existing.heartbeat_at * 1000;
-    if (age < EXPORT_LEASE_TTL_MS) {
-      return { error: "lease_held" };
-    }
-    // Abandon stale lease
-    await env.DB.prepare(
-      `UPDATE scripture_export_leases
-          SET status = 'abandoned', abandoned_at = unixepoch(),
-              grace_until = unixepoch() + ?1
-        WHERE lease_id = ?2 AND status = 'held'`,
-    ).bind(Math.ceil(EXPORT_ABANDON_GRACE_MS / 1000), existing.lease_id).run();
+  // A fresh held lease means another exporter owns the lane — can't acquire.
+  if (await hasHeldExportLease(env, lane)) {
+    return { error: "lease_held" };
   }
+  // Otherwise fold any stale held leases into abandon+grace so a dead holder's
+  // in-flight commit is still fenced by the grace window (shared with the
+  // activation drain).
+  await abandonStaleHeldLeases(env, lane);
 
   const leaseId = crypto.randomUUID();
   const fencingToken = crypto.randomUUID();
@@ -571,6 +695,29 @@ export async function acquireExportLease(
   }
 
   return { leaseId, fencingToken };
+}
+
+/**
+ * Sweep any `held` lease whose heartbeat is older than the TTL into the
+ * `abandoned` state with a fresh grace window. Without this, a stale held row
+ * falls into a blind spot: `hasHeldExportLease` filters to fresh heartbeats and
+ * `waitAbandonedGrace` only inspects `abandoned` rows, so a dead exporter whose
+ * DCS commit may still be in flight would be ignored by both checks and let
+ * activation flip the pointer prematurely. Marking it abandoned forces the
+ * grace gate to fence activation until the in-flight window closes.
+ */
+export async function abandonStaleHeldLeases(env: Env, lane: LaneKey): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE scripture_export_leases
+        SET status = 'abandoned',
+            abandoned_at = unixepoch(),
+            grace_until = unixepoch() + ?1
+      WHERE lane = ?2 AND status = 'held' AND heartbeat_at * 1000 <= ?3`,
+  ).bind(
+    Math.ceil(EXPORT_ABANDON_GRACE_MS / 1000),
+    lane,
+    Date.now() - EXPORT_LEASE_TTL_MS,
+  ).run();
 }
 
 /** True when a fresh (heartbeat within TTL) held lease exists for the lane. */

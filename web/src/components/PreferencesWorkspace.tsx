@@ -405,10 +405,13 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
 
   const handleWaiveBook = async (book: string) => {
     if (!replacementJobId) return;
+    if (!window.confirm(t("preferences.scriptureLanes.confirmWaiveBook", { book }))) {
+      return;
+    }
     setBusyBook(book);
     setError(null);
     try {
-      await api.laneWaiveBook(lane, replacementJobId, book);
+      await api.laneWaiveBook(lane, replacementJobId, book, true);
       const res = await api.laneGetJob(lane, replacementJobId);
       setJob(res);
     } catch (e) {

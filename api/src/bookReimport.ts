@@ -42,7 +42,7 @@
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
 import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, NT_BOOKS } from "./dcsSources";
-import { getProjectConfig } from "./projectConfig.ts";
+import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
 import {
   collectSourceWords,
   extractVersesForRange,
@@ -55,7 +55,7 @@ import {
   type VerseExtract,
 } from "./importParsers";
 import { activePipelineForChapter } from "./chapterLock";
-import { requireLaneState, laneForBibleVersion } from "./scriptureLane";
+import { requireLaneState, laneForBibleVersion, activeLaneConfig, origSourceGeneration, activeGenerationForBibleVersion } from "./scriptureLane";
 import { coerceRowId } from "./rowId";
 import { planTnContentDedup } from "./tnDedup";
 import { isCatastrophicTsvShrink } from "./shrinkGuard";
@@ -185,11 +185,12 @@ async function canonicalizeTwlOrder(env: Env, book: string): Promise<number> {
   )
     .bind(book)
     .all<TwlRow>();
+  const ultGen = (await activeGenerationForBibleVersion(env, "ULT")) ?? 1;
   const ultVerses = await env.DB.prepare(
-    `SELECT * FROM verses WHERE book = ?1 AND bible_version = 'ULT'
+    `SELECT * FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
      ORDER BY chapter, verse`,
   )
-    .bind(book)
+    .bind(book, ultGen)
     .all<VerseRow>();
   const updates = computeTwlSortOrderUpdates(twlRows.results, ultVerses.results);
   await applyTwlSortOrderUpdates(env.DB, book, updates);
@@ -1017,7 +1018,7 @@ async function healIncomingReplacementChars(
   const ph = chapters.map((_c, i) => `?${i + 3}`).join(", ");
   const rs = await env.DB.prepare(
     `SELECT chapter, verse, content_json FROM verses
-      WHERE book = ?1 AND bible_version = ?2 AND chapter IN (${ph})`,
+      WHERE book = ?1 AND bible_version = ?2 AND source_generation = 1 AND chapter IN (${ph})`,
   )
     .bind(book, srcVersion, ...chapters)
     .all<{ chapter: number; verse: number; content_json: string }>();
@@ -1106,6 +1107,11 @@ async function applyVerseRows(
   const counts = zeroCounts();
   if (verses.length === 0) return counts;
 
+  // Always operate on the active generation only — never touch staged or
+  // superseded generations that coexist after a replacement reservation.
+  const gen = await activeGenerationForBibleVersion(env, bibleVersion);
+  if (gen == null) return counts; // lane quarantined (replacement_required)
+
   // Heal AI-mangled U+FFFD source attributes before the diff so we never write
   // (or no-op against) upstream's garbled bytes. No-op + zero extra reads unless
   // an incoming verse actually carries the defect.
@@ -1116,7 +1122,7 @@ async function applyVerseRows(
   // 1. Read the current rows for exactly these verses' chapters in ONE query
   //    (callers pass a single chapter's verses, so the IN list is tiny).
   const chapters = [...new Set(verses.map((v) => v.chapter))];
-  const chPlaceholders = chapters.map((_, i) => `?${i + 3}`).join(", ");
+  const chPlaceholders = chapters.map((_, i) => `?${i + 4}`).join(", ");
   const existingRs = await env.DB.prepare(
     `SELECT chapter, verse, content_json, plain_text, verse_end, version, updated_by,
             (SELECT source FROM edit_log
@@ -1126,9 +1132,9 @@ async function applyVerseRows(
                  AND action IN ('create', 'update')
                ORDER BY id DESC LIMIT 1) AS latest_source
        FROM verses
-      WHERE book = ?1 AND bible_version = ?2 AND chapter IN (${chPlaceholders})`,
+      WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3 AND chapter IN (${chPlaceholders})`,
   )
-    .bind(book, bibleVersion, ...chapters)
+    .bind(book, bibleVersion, gen, ...chapters)
     .all<{
       chapter: number;
       verse: number;
@@ -1166,18 +1172,18 @@ async function applyVerseRows(
       writes.push(v);
       stmts.push(
         env.DB.prepare(
-          `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, content_json, plain_text)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-           ON CONFLICT(book, chapter, verse, bible_version) DO NOTHING`,
-        ).bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, v.contentJson, v.plainText),
+          `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+           ON CONFLICT(book, chapter, verse, bible_version, source_generation) DO NOTHING`,
+        ).bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText),
         // Audit conditional on the INSERT actually landing: ON CONFLICT DO
         // NOTHING means a verse that already exists (created between our read
         // and this batch) inserts 0 rows — don't log a phantom restorable v1.
         env.DB.prepare(
-          `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-           SELECT 'verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5
+          `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
+           SELECT 'verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5, ?6
             WHERE changes() > 0`,
-        ).bind(rowKey, book, userId, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE),
+        ).bind(rowKey, book, userId, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE, gen),
       );
       continue;
     }
@@ -1245,8 +1251,8 @@ async function applyVerseRows(
             SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                 version = version + 1, updated_at = ?4
           WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-            AND updated_by IS NULL`,
-      ).bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion),
+            AND source_generation = ?9 AND updated_by IS NULL`,
+      ).bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen),
       // Audit conditional on the UPDATE actually landing (mirrors verses.ts).
       // The UPDATE is guarded on `updated_by IS NULL`, so if an editor touched
       // this verse between our read and this batch the UPDATE matches 0 rows —
@@ -1255,10 +1261,10 @@ async function applyVerseRows(
       // could shadow the real ex.version+1 the editor just created). changes()
       // reflects the immediately-preceding UPDATE in this batch.
       env.DB.prepare(
-        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
+        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
+         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7, ?8
           WHERE changes() > 0`,
-      ).bind(rowKey, book, userId, ex.version, ex.version + 1, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE),
+      ).bind(rowKey, book, userId, ex.version, ex.version + 1, JSON.stringify({ plain_text: v.plainText, content: v.contentJson }), REIMPORT_SOURCE, gen),
     );
   }
 
@@ -1299,8 +1305,8 @@ async function applyVerseRows(
             `UPDATE verses
                 SET content_json = ?1, version = version + 1, updated_at = ?2
               WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
-                AND version = ?7`,
-          ).bind(u.mergedJson, now, book, u.v.chapter, u.v.verse, bibleVersion, u.oldVersion),
+                AND source_generation = ?7 AND version = ?8`,
+          ).bind(u.mergedJson, now, book, u.v.chapter, u.v.verse, bibleVersion, gen, u.oldVersion),
         ),
       );
       const logs: D1PreparedStatement[] = [];
@@ -1344,8 +1350,8 @@ async function applyVerseRows(
                 SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                     updated_by = NULL, version = version + 1, updated_at = ?4
               WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-                AND version = ?9`,
-          ).bind(u.v.contentJson, u.v.plainText, u.v.verseEnd, now, book, u.v.chapter, u.v.verse, bibleVersion, u.oldVersion),
+                AND source_generation = ?9 AND version = ?10`,
+          ).bind(u.v.contentJson, u.v.plainText, u.v.verseEnd, now, book, u.v.chapter, u.v.verse, bibleVersion, gen, u.oldVersion),
         ),
       );
       const logs: D1PreparedStatement[] = [];
@@ -1386,16 +1392,19 @@ async function applyVerseRowsPerRow(
   const counts = zeroCounts();
   if (verses.length === 0) return counts;
 
+  const gen = await activeGenerationForBibleVersion(env, bibleVersion);
+  if (gen == null) return counts;
+
   const now = Math.floor(Date.now() / 1000);
   for (const v of verses) {
     try {
       // Try insert first; cheap signal for "doesn't exist locally".
       const ins = await env.DB.prepare(
-        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, content_json, plain_text)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(book, chapter, verse, bible_version) DO NOTHING`,
+        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(book, chapter, verse, bible_version, source_generation) DO NOTHING`,
       )
-        .bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, v.contentJson, v.plainText)
+        .bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText)
         .run();
       if ((ins.meta.changes ?? 0) > 0) {
         counts.inserted++;
@@ -1421,9 +1430,10 @@ async function applyVerseRowsPerRow(
                      AND action IN ('create', 'update')
                    ORDER BY id DESC LIMIT 1) AS latest_source
            FROM verses
-          WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+          WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4
+            AND source_generation = ?5`,
       )
-        .bind(book, v.chapter, v.verse, bibleVersion)
+        .bind(book, v.chapter, v.verse, bibleVersion, gen)
         .first<{
           content_json: string;
           plain_text: string | null;
@@ -1461,9 +1471,9 @@ async function applyVerseRowsPerRow(
               SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                   updated_by = NULL, version = version + 1, updated_at = ?4
             WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-              AND version = ?9`,
+              AND source_generation = ?9 AND version = ?10`,
         )
-          .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, existing!.version)
+          .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen, existing!.version)
           .run();
         if ((upd.meta.changes ?? 0) > 0) {
           counts.reimported_ai++;
@@ -1483,17 +1493,18 @@ async function applyVerseRowsPerRow(
             SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                 version = version + 1, updated_at = ?4
           WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-            AND updated_by IS NULL`,
+            AND source_generation = ?9 AND updated_by IS NULL`,
       )
-        .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion)
+        .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen)
         .run();
       if ((upd.meta.changes ?? 0) > 0) {
         counts.updated++;
         const got = await env.DB.prepare(
           `SELECT version FROM verses
-            WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+            WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4
+              AND source_generation = ?5`,
         )
-          .bind(book, v.chapter, v.verse, bibleVersion)
+          .bind(book, v.chapter, v.verse, bibleVersion, gen)
           .first<{ version: number }>();
         if (got) {
           await logEdit(
@@ -1584,44 +1595,97 @@ async function readStaged(env: Env, key: string): Promise<string | null> {
   return obj ? await obj.text() : null;
 }
 
-// Upsert the per-(book,resource) sync watermark. `origin` is provenance only;
-// only 'import'/'reimport' watermarks are written as skip gates.
+// Full source identity a (book,resource) watermark is keyed by. Scripture
+// (ult/ust) tracks its lane's active source owner/repo/ref + active generation;
+// other resources track the project org + role repo on master at generation 1.
+export interface ResourceSourceRef {
+  generation: number;
+  owner: string;
+  repo: string;
+  ref: string;
+}
+
+// Resolve the source identity for a (book,resource) sync watermark. ULT/UST
+// read live lane state (active generation + the lane's source owner/repo/ref);
+// tn/tq/twl use the project config org + role repo on master at generation 1
+// (origSourceGeneration — also the sentinel used for UHB/UGNT originals).
+export async function resourceSourceRef(
+  env: Env,
+  resource: Resource,
+  cfg: ProjectConfig,
+): Promise<ResourceSourceRef> {
+  const lane = laneForBibleVersion(resource === "ult" ? "ULT" : resource === "ust" ? "UST" : resource);
+  if (lane) {
+    const row = await requireLaneState(env, lane);
+    const laneCfg = activeLaneConfig(row);
+    return {
+      generation: row.active_generation,
+      owner: laneCfg.source.owner,
+      repo: laneCfg.source.repo,
+      ref: laneCfg.source.ref,
+    };
+  }
+  // tn/tq/twl — project org + role repo on master at generation 1.
+  // Narrow away ult/ust (handled above via lane) so we can index cfg.repos.
+  if (resource === "ult" || resource === "ust") {
+    return {
+      generation: origSourceGeneration(),
+      owner: cfg.org,
+      repo: resource === "ult" ? cfg.repos.lit : cfg.repos.sim,
+      ref: "master",
+    };
+  }
+  return {
+    generation: origSourceGeneration(),
+    owner: cfg.org,
+    repo: cfg.repos[resource],
+    ref: "master",
+  };
+}
+
+// Upsert the per-(book,resource,generation,owner,ref) sync watermark. `origin`
+// is provenance only; only 'import'/'reimport' watermarks are written as skip
+// gates. source_repo is persisted for provenance but is NOT part of the key.
 export async function recordResourceSync(
   env: Env,
   book: string,
   resource: Resource,
   sha: string,
   origin: "import" | "reimport" | "export",
-  sourceOrg: string,
+  source: ResourceSourceRef,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO book_resource_syncs (book, resource, source_sha, synced_at, origin, source_org)
-     VALUES (?1, ?2, ?3, unixepoch(), ?4, ?5)
-     ON CONFLICT(book, resource) DO UPDATE SET
+    `INSERT INTO book_resource_syncs (
+       book, resource, source_generation, source_owner, source_repo, source_ref, source_sha, synced_at, origin
+     )
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, unixepoch(), ?8)
+     ON CONFLICT(book, resource, source_generation, source_owner, source_ref) DO UPDATE SET
+       source_repo = excluded.source_repo,
        source_sha = excluded.source_sha,
        synced_at = excluded.synced_at,
-       origin = excluded.origin,
-       source_org = excluded.source_org`,
+       origin = excluded.origin`,
   )
-    .bind(book, resource, sha, origin, sourceOrg)
+    .bind(book, resource, source.generation, source.owner, source.repo, source.ref, sha, origin)
     .run();
 }
 
-// A watermark recorded under a DIFFERENT source org describes a different
-// upstream — treat it as absent (fail-open: the reimport refetches, the
-// export freshness gate sees "no watermark"). This is what makes switching a
-// project's org via config safe rather than silently trusting a stale SHA.
+// A watermark recorded under a DIFFERENT source identity (generation, owner, or
+// ref) describes a different upstream — treat it as absent (fail-open: the
+// reimport refetches, the export freshness gate sees "no watermark"). This is
+// what makes switching a project's org/lane source safe rather than silently
+// trusting a stale SHA. source_repo is provenance only and not matched here.
 export async function storedResourceSha(
   env: Env,
   book: string,
   resource: Resource,
-  sourceOrg: string,
+  source: ResourceSourceRef,
 ): Promise<string | null> {
   const row = await env.DB.prepare(
     `SELECT source_sha FROM book_resource_syncs
-      WHERE book = ?1 AND resource = ?2 AND source_org = ?3`,
+      WHERE book = ?1 AND resource = ?2
+        AND source_generation = ?3 AND source_owner = ?4 AND source_ref = ?5`,
   )
-    .bind(book, resource, sourceOrg)
+    .bind(book, resource, source.generation, source.owner, source.ref)
     .first<{ source_sha: string | null }>();
   return row?.source_sha ?? null;
 }
@@ -1852,15 +1916,16 @@ async function planAndStageBookResources(
     const file = dcsResourceFile(cfg, book, resource);
     if (!file) { entries.push({ resource, changed: false, masterSha: null, r2Key: null }); continue; }
 
-    const masterSha = await fileCommitSha(env, cfg.org, file.repo, file.path);
-    const stored = await storedResourceSha(env, book, resource, cfg.org);
+    const src = await resourceSourceRef(env, resource, cfg);
+    const masterSha = await fileCommitSha(env, src.owner, src.repo, file.path, src.ref);
+    const stored = await storedResourceSha(env, book, resource, src);
     // Skip ONLY on a positive SHA match (fail-open: null/unknown → reimport).
     if (masterSha && stored && masterSha === stored) {
       entries.push({ resource, changed: false, masterSha, r2Key: null });
       continue;
     }
 
-    const raw = await fetchText(dcsRawUrl(env, cfg.org, file.repo, file.path));
+    const raw = await fetchText(dcsRawUrl(env, src.owner, src.repo, file.path, src.ref));
     if (raw == null) {
       // DCS 404 / fetch error → nothing to import, no watermark.
       entries.push({ resource, changed: false, masterSha: null, r2Key: null });
@@ -2048,7 +2113,11 @@ export async function runChunkedReimport(
     const cfg = await getProjectConfig(env);
     let recorded = 0;
     for (const e of changed) {
-      if (e.masterSha) { await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", cfg.org); recorded++; }
+      if (e.masterSha) {
+        const src = await resourceSourceRef(env, e.resource, cfg);
+        await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", src);
+        recorded++;
+      }
     }
     return { recorded };
   });

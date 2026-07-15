@@ -60,7 +60,7 @@ async function exportOwnerUrl(env: Env): Promise<string> {
 const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
-import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
+import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
 import {
@@ -748,6 +748,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // generation; TWL reads ULT verses for sort ordering, so it uses ULT's.
     // tn/tq don't touch generation-scoped rows (1 is an unused sentinel).
     let scriptureGen = 1;
+    // Lane export destination from live active_config_json — not projectCfg.
+    let laneExport: { owner: string; repo: string; baseRef: string } | null | undefined;
     if (lane) {
       const gate = await assertLaneWritable(this.env, lane, "export_lease");
       if (!gate.ok) {
@@ -760,6 +762,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         };
       }
       scriptureGen = gate.generation;
+      laneExport = gate.config.export;
     } else if (resource === "twl") {
       scriptureGen = await this.activeGenerationFor("ULT");
     }
@@ -796,8 +799,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // R2 is the local-only backup. Writing here first means a failed DCS
     // commit still leaves a recoverable artifact.
     const projectCfg = await getProjectConfig(this.env);
-    const target = resourceTargetsFor(projectCfg)[resource];
-    const filename = target.path(book);
+    const projectTarget = resourceTargetsFor(projectCfg)[resource];
+    // Scripture lanes use active_config.export when set; export:null means
+    // D1-only (R2 snapshot still written, no DCS commit). Non-scripture keeps
+    // the project-config target.
+    const filename = projectTarget.path(book);
     const r2Key = `exports/${instanceId}/${book}/${resource}/${filename}`;
     await this.env.BLOBS.put(r2Key, built.content, {
       httpMetadata: { contentType: filename.endsWith(".usfm") ? "text/plain" : "text/tab-separated-values" },
@@ -809,6 +815,21 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let prNumber: number | null = null;
     let prReason: string | null = null;
     let prError: string | null = null;
+
+    // Lane with export:null → local-only; never push to a project-default repo.
+    if (lane && laneExport === null) {
+      await this.recordSnapshot(book, resource, null, null, built.rowCount, "lane_export_disabled");
+      return {
+        book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key,
+        branch: null, dcsCommitSha: null, dcsChanged: false,
+        dcsSkippedReason: "lane_export_disabled", prNumber: null, prReason: null,
+      };
+    }
+
+    const dcsOwner = lane && laneExport
+      ? laneExport.owner
+      : (this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg);
+    const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
 
     // Freshness gate — the single guard against clobbering master. The export
     // renders from D1; if master moved past what D1 last synced (the
@@ -921,12 +942,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         fencingToken = lease.fencingToken;
       }
       try {
-      const owner = this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg;
+      const owner = dcsOwner;
       const dcsCfg = {
         baseUrl: this.env.DCS_BASE_URL,
         token: this.env.DCS_SERVICE_TOKEN!,
         owner,
-        repo: target.repo,
+        repo: dcsRepo,
         branch,
       };
       const message = `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`;
@@ -947,7 +968,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
             await closeDcsPr(dcsCfg, lingering);
           } catch (e) {
             console.error("export close-stale-PR failed", {
-              book, resource, repo: target.repo, pr: lingering,
+              book, resource, repo: dcsRepo, pr: lingering,
               error: e instanceof Error ? e.message : String(e),
             });
           }
@@ -962,7 +983,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         try {
           // Pruning superseded branches deletes refs on DCS — re-verify ownership.
           await this.assertFencingOrThrow(lane, fencingToken);
-          await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
+          await this.pruneSupersededBranches(book, resource, owner, dcsRepo, branch);
 
           // Renew around the (potentially long) PR operations; a failed renew
           // means another Worker took the lane — treat it as lost ownership and
@@ -987,12 +1008,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
               }
               await this.assertFencingOrThrow(lane, fencingToken);
               const upd = await updateDcsPrBranch(
-                { baseUrl: dcsCfg.baseUrl, token: dcsCfg.token, owner, repo: target.repo },
+                { baseUrl: dcsCfg.baseUrl, token: dcsCfg.token, owner, repo: dcsRepo },
                 pr.number,
               );
               if (!upd.ok) {
                 console.log("export PR update-branch skipped", {
-                  book, resource, repo: target.repo, pr: pr.number, status: upd.status, detail: upd.detail,
+                  book, resource, repo: dcsRepo, pr: pr.number, status: upd.status, detail: upd.detail,
                 });
                 if (upd.status === 409) {
                   // Recovery deletes + recommits the branch — renew + re-verify.
@@ -1001,7 +1022,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                   }
                   await this.assertFencingOrThrow(lane, fencingToken);
                   const recovered = await this.recoverConflictedBranch(
-                    book, resource, owner, target.repo, branch, dcsCfg, filename, built.content, message,
+                    book, resource, owner, dcsRepo, branch, dcsCfg, filename, built.content, message,
                   );
                   if (recovered) {
                     prNumber = recovered.prNumber;
@@ -1012,7 +1033,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
               }
             } catch (e) {
               console.error("export PR update-branch failed", {
-                book, resource, repo: target.repo, pr: pr.number,
+                book, resource, repo: dcsRepo, pr: pr.number,
                 error: e instanceof Error ? e.message : String(e),
               });
             }
@@ -1023,11 +1044,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           console.error("export ensure-PR failed", {
             book,
             resource,
-            repo: target.repo,
+            repo: dcsRepo,
             branch,
             error: prError,
           });
-          await this.recordPrFailureAlert(book, resource, target.repo, branch, prError);
+          await this.recordPrFailureAlert(book, resource, dcsRepo, branch, prError);
         }
       }
       } finally {
@@ -1547,13 +1568,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     resource: Resource,
   ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
     const cfg = await getProjectConfig(this.env);
+    const src = await resourceSourceRef(this.env, resource as ReimportResource, cfg);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     // Unknown book/resource → no file to compare; don't block (shouldn't happen
     // for the five real resources).
     if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
-    const watermark = await storedResourceSha(this.env, book, resource, cfg.org);
+    // For scripture lanes, compare against the lane's actual source identity
+    // (generation/owner/ref), not the project-config org alone.
+    const path = `${file.path}`;
+    const watermark = await storedResourceSha(this.env, book, resource, src);
     if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
-    const masterSha = await fileCommitSha(this.env, cfg.org, file.repo, file.path);
+    const masterSha = await fileCommitSha(this.env, src.owner, src.repo, path, src.ref);
     if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
     if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
     return { ok: false, detail: "master_ahead", masterSha, watermark };

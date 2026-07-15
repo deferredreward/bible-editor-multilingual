@@ -14,6 +14,11 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **PR #20 P1 remediation (uncommitted).**
+- Addressed blocking review on `1fdd470`: watermark/header/CAS/lease-grace/quarantine-reads already fixed mid-flight; finished staging (ref/sha + resumable INSERT + completeness), export destinations from `active_config_json.export`, reimport/pipeline generation scoping + pipeline `textReadOnly`, draft quarantine (no delete) + UI freeze on `replacementJobId`/`replacementRequired`, waive `confirm:true` + status-gated server ack.
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green (Node 24).
+- Still owed: commit + push to PR #20; two-tab quarantine smoke.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6 implemented end-to-end.**
 - Migration `0042_scripture_lanes.sql` applied locally (generation-keyed verses, lane state, replacement FSM, export leases, activation triggers).
 - Export fencing: renewable leases, hold/fresh verify before every mutating DCS call, grace drain before activation, generation-filtered scripture renders.
@@ -23,6 +28,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 P1 remediation (local)** — Blocking review items on scripture-lane PR addressed in working tree on `feat/scripture-repo-preferences` (not yet committed/pushed). See Last run.
 
 2026-07-15 · **Scripture Repository Preferences v6** — Generation-keyed scripture lanes with replacement FSM, export fencing via renewable lease tokens, per-lane text/alignment locks, Preferences UI for repo switching, and BSOJ AVD/NAV correction (quarantine gen-1 → replacement_required → import correct source → activate). Comprehensive test coverage via `node:sqlite` harness exercising migration 0042 triggers + invariants.
 
