@@ -11,6 +11,7 @@
 // Not a test framework; a failed assert exits non-zero.
 
 import { mayClaimImport, IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim.ts";
+import { rawUrlOriginError } from "./rawUrlPin.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -62,6 +63,31 @@ assert(
 assert(
   IMPORT_CLAIM_STALE_SECONDS >= 300,
   `stale window (${IMPORT_CLAIM_STALE_SECONDS}s) is well beyond a real apply`,
+);
+
+// --- rawUrl origin pin: the bot's poll response must not be able to point
+//     the Worker at an arbitrary host (content would be staged into
+//     pending_imports and from there reach the live tables) ---
+const DCS = "https://git.door43.org";
+assert(
+  rawUrlOriginError(`${DCS}/unfoldingWord/en_tn/raw/branch/x/tn_ZEC.tsv`, DCS) === null,
+  "DCS-origin rawUrl allowed",
+);
+assert(
+  rawUrlOriginError("https://evil.example/payload.tsv", DCS) !== null,
+  "foreign-host rawUrl rejected",
+);
+assert(
+  rawUrlOriginError("http://git.door43.org/x.tsv", DCS) !== null,
+  "scheme downgrade to http rejected (origin compare includes scheme)",
+);
+assert(
+  rawUrlOriginError("https://git.door43.org.evil.example/x.tsv", DCS) !== null,
+  "suffix-spoofed hostname rejected",
+);
+assert(
+  rawUrlOriginError("not a url", DCS) !== null,
+  "unparseable rawUrl rejected",
 );
 
 console.log("pipelineImport (claim guard): all assertions passed");

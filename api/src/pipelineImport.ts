@@ -29,6 +29,7 @@ import { tnContentKey } from "./tnDedup";
 import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim";
 import { nextPreDraftJson } from "./preDraftSnapshot";
 import { fetchBotOutputWith } from "./botOutput";
+import { rawUrlOriginError } from "./rawUrlPin";
 
 interface OutputEntry {
   type?: string;
@@ -201,6 +202,10 @@ async function parseOutputEntry(
   if (!isEditorDelivery && !entry.rawUrl) return { staged: [], skipReason: "missing rawUrl" };
   if (isEditorDelivery && !entry.file) {
     return { staged: [], skipReason: "editor delivery entry missing file" };
+  }
+  if (!isEditorDelivery) {
+    const originError = rawUrlOriginError(entry.rawUrl!, env.DCS_BASE_URL);
+    if (originError) return { staged: [], skipReason: originError };
   }
   const cls = classify(entry, ctx.cfg);
   if (cls.kind === "unknown") {
