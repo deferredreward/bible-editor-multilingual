@@ -14,6 +14,15 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Fourth-pass re-review P1s closed (`9723d83`).**
+- Merged `origin/main` (`a8b2e61`) to clear PR #20 CONFLICTING.
+- bookImport INSERT/meta batches EXISTS-fenced; pipeline apply UPDATE/INSERT fenced; stageBook `staging_claim_token` (migration `0045`).
+- bookReimport: watermark only when identity still valid; INSERT/UPDATE carry lane EXISTS.
+- Export: refuse first export when dest tip exists without baseline (`export_baseline_required`); textReadOnly non-alignment equality vs dest; conflict recreate/recommit passes `beforeMutation`; shrink/align guards use configured `baseRef`.
+- AlignmentPanel: drop generation-less drafts when verse is generation-keyed.
+- Local D1: `0045` applied. Prod still owes `0036`–`0045`.
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green (34).
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Re-review P1 blockers fixed (third pass).**
 - Dual-lane pipelines: per-lane `source_stamps_json` (migration `0044`); no more identical-identity requirement.
 - Orphan freeze: snapshot-before-CAS + job inserts in one batch; `ORPHAN_RESERVATION_GRACE_SECONDS` reclaim.
@@ -60,6 +69,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 fourth-pass P1 close-out** — Insert/apply EXISTS fences, staging claim tokens (`0045`), export baseline refuse, locked-text equality, conflict fencing, legacy alignment draft reject, baseRef shrink checks; main merge for conflict. Commit `9723d83`.
 
 2026-07-15 · **PR #20 P1 race remediation (second pass)** — All nine review P1s + smoke gaps (outbox 403 race, align-during-freeze) addressed on `feat/scripture-repo-preferences`. Migration `0043` added for pipeline source stamps + `staging` book status.
 
