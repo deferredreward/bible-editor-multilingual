@@ -14,10 +14,9 @@
 
 ## Last run
 
-2026-07-15 · **feat/scripture-repo-preferences** — **Merging PR #26 (BibleEditorMLTest) + quarantine smoke.**
-- Fixed PR #26 CI: preset was appended after `repoFor()` (syntax error); moved into `PRESETS`. Merged into this branch.
-- Prior: PR #20 P1 remediation committed (`b260098`) and pushed.
-- Still owed: two-tab quarantine smoke.
+2026-07-15 · **feat/scripture-repo-preferences** — **PR #26 merged + two-tab quarantine smoke.**
+- PR #26 CI was a syntax error (preset pasted after `repoFor()`); fixed in `fa40782`, manually merged into this branch as `53ac350` (GitHub merge blocked by conflict). PR closed.
+- Quarantine smoke (vite `:5174`, two Chrome contexts sharing cookies): Tab A seeded ULT draft; Tab B `POST …/lit/replacements` → Tab A draft marked `quarantined` with `laneFrozenQuarantine` text (freeze handler ran). Queued outbox op raced drain → `failed`/`http 403` before freeze could rewrite it. Align-AVD still opened during freeze (config refresh didn't gate the click — follow-up). Smoke job cancelled; lanes back at gen 2 / no job.
 
 2026-07-15 · **BibleEditorMLTest preset added** — Added the verified English GL repository set (`en_glt`, `en_gst`, `en_tn`, `en_tq`, `en_twl`, `en_tw`, `en_ta`) as the `en-bible-editor-ml-test` translation target. CI fix placed the entry inside `PRESETS`.
 
