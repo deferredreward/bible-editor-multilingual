@@ -55,6 +55,15 @@ import {
 } from "../hooks/useTranslationMemory";
 import { MarkdownView } from "./MarkdownView";
 
+const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
+  running: "preferences.exportStatus.running",
+  failed: "preferences.exportStatus.failed",
+  queued: "preferences.exportStatus.queued",
+  shrink_refused: "preferences.exportStatus.shrink_refused",
+  no_content: "preferences.exportStatus.no_content",
+  dry_run: "preferences.exportStatus.dry_run",
+};
+
 export type Section = "brief" | "instructions" | "terminology" | "examples";
 export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
 
@@ -313,14 +322,14 @@ function AssistedModeControls() {
     }
   };
 
-  const KNOWN_EXPORT_STATUS = new Set(["running", "failed", "queued"]);
+  const statusKey = status ? EXPORT_STATUS_I18N_KEY[status.status] : undefined;
   const statusLabel =
     !status || status.status === "never"
       ? t("preferences.exportStatusNever")
       : status.status === "success" && status.sha
         ? t("preferences.exportStatusSuccess", { sha: status.sha.slice(0, 8) })
-        : KNOWN_EXPORT_STATUS.has(status.status)
-          ? t(`preferences.exportStatus.${status.status}`)
+        : statusKey
+          ? t(statusKey)
           : t("preferences.exportStatusOther", { status: status.status });
 
   const toggleTooltip = !admin
