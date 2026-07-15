@@ -313,12 +313,15 @@ function AssistedModeControls() {
     }
   };
 
+  const KNOWN_EXPORT_STATUS = new Set(["running", "failed", "queued"]);
   const statusLabel =
     !status || status.status === "never"
       ? t("preferences.exportStatusNever")
       : status.status === "success" && status.sha
         ? t("preferences.exportStatusSuccess", { sha: status.sha.slice(0, 8) })
-        : t("preferences.exportStatusOther", { status: status.status });
+        : KNOWN_EXPORT_STATUS.has(status.status)
+          ? t(`preferences.exportStatus.${status.status}`)
+          : t("preferences.exportStatusOther", { status: status.status });
 
   const toggleTooltip = !admin
     ? t("preferences.assistedModeAdminOnly")
@@ -848,7 +851,7 @@ function TermRow({
           {term.source_term}
         </Typography>
         <Typography variant="body2" color="text.disabled">
-          →
+          {t("preferences.termArrow")}
         </Typography>
         {editing ? (
           <TextField
@@ -860,7 +863,7 @@ function TermRow({
           />
         ) : (
           <Typography variant="body2" dir={direction} sx={{ fontWeight: 600 }}>
-            {term.target_term ?? "—"}
+            {term.target_term ?? t("preferences.noRendering")}
           </Typography>
         )}
         {editing ? (
@@ -968,7 +971,7 @@ function ImportPanel({ onApplied, onError }: { onApplied: () => void; onError: (
         multiline
         minRows={5}
         fullWidth
-        placeholder={"concept_id,source_term,target_term,status,replacement,comment,tw_link"}
+        placeholder={t("preferences.csvColumnPlaceholder")}
         sx={{ mt: 1 }}
         slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 12 } } }}
       />

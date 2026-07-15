@@ -172,6 +172,12 @@
     "exportStatusNever": "لا يوجد تصدير سياق بعد",
     "exportStatusSuccess": "حزمة السياق جاهزة ({{sha}})",
     "exportStatusOther": "آخر تصدير: {{status}}",
+    "exportStatus.running": "التصدير قيد التنفيذ",
+    "exportStatus.failed": "فشل التصدير",
+    "exportStatus.queued": "التصدير في قائمة الانتظار",
+    "csvColumnPlaceholder": "concept_id,source_term,target_term,status,replacement,comment,tw_link",
+    "noRendering": "—",
+    "termArrow": "→",
     "feedingAi": "يُغذي الذكاء الاصطناعي",
     "notFeedingAi": "لا يغذي الذكاء الاصطناعي بعد — فعِّل الوضع المُساعَد بعد تصدير ناجح"
   },

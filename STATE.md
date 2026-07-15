@@ -14,6 +14,12 @@
 
 ## Last run
 
+2026-07-14 · **main (preferences i18n)** — **Translated Preferences & Memory panel for all UI locales.**
+- Machine-translated the full `preferences.*` namespace (~93 keys after delta) into bn/es/fa/fr/hi/id/ne/pt/ru/sw/th/ur (ar was already done).
+- Added `csvColumnPlaceholder`, `noRendering`, `termArrow`, and `exportStatus.{running,failed,queued}` to `en.json` + all locales; wired them in `PreferencesWorkspace.tsx` (no more hardcoded arrow/dash/CSV placeholder; known export status tokens map to translated labels).
+- Doc: `docs/i18n.md` namespace list now includes `preferences` (+ other missing namespaces).
+- Verified: `node scripts/check-i18n.mjs` 13/13, `npm run typecheck` green. Browser smoke on vite `:5189`: Spanish ("Preferencias y memoria") and French ("Préférences et mémoire") — section rail, export status, project mode copy all localized; no raw key leaks. Still machine-drafted; native review owed per `docs/i18n.md`.
+
 2026-07-14 · **feat/translation-mode-entry** — **Made project mode discoverable and switchable from Preferences.**
 - Preferences is now always visible in TopBar; Articles remains translation-project-only. Preferences always exposes the global project preset selector, including in English authoring mode, while translation-memory sections remain GL/editor gated.
 - Admins can switch through the existing preset catalog and admin-protected `PUT /api/project-config`; editors/viewers see the active preset plus a clear admin-only explanation. Successful writes publish through the shared project-config cache so mode-gated UI updates without reload. Preset switches preserve existing overrides (`overrides` omitted ≠ `null`).
