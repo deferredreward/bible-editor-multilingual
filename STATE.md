@@ -14,10 +14,16 @@
 
 ## Last run
 
-2026-07-15 · **feat/scripture-repo-preferences** — **PR #20 P1 remediation (uncommitted).**
-- Addressed blocking review on `1fdd470`: watermark/header/CAS/lease-grace/quarantine-reads already fixed mid-flight; finished staging (ref/sha + resumable INSERT + completeness), export destinations from `active_config_json.export`, reimport/pipeline generation scoping + pipeline `textReadOnly`, draft quarantine (no delete) + UI freeze on `replacementJobId`/`replacementRequired`, waive `confirm:true` + status-gated server ack.
+2026-07-15 · **feat/scripture-repo-preferences** — **Merging PR #26 (BibleEditorMLTest) + quarantine smoke.**
+- Fixed PR #26 CI: preset was appended after `repoFor()` (syntax error); moved into `PRESETS`. Merged into this branch.
+- Prior: PR #20 P1 remediation committed (`b260098`) and pushed.
+- Still owed: two-tab quarantine smoke.
+
+2026-07-15 · **BibleEditorMLTest preset added** — Added the verified English GL repository set (`en_glt`, `en_gst`, `en_tn`, `en_tq`, `en_twl`, `en_tw`, `en_ta`) as the `en-bible-editor-ml-test` translation target. CI fix placed the entry inside `PRESETS`.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **PR #20 P1 remediation shipped (`b260098`).**
+- Addressed blocking review on `1fdd470`: watermark/header/CAS/lease-grace/quarantine-reads; staging (ref/sha + resumable INSERT + completeness); export destinations; reimport/pipeline generation scoping + pipeline `textReadOnly`; draft quarantine (no delete) + UI freeze; waive `confirm:true`.
 - Verified: `npm run typecheck` green; `npm --workspace api run test` green (Node 24).
-- Still owed: commit + push to PR #20; two-tab quarantine smoke.
 
 2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6 implemented end-to-end.**
 - Migration `0042_scripture_lanes.sql` applied locally (generation-keyed verses, lane state, replacement FSM, export leases, activation triggers).
@@ -29,7 +35,9 @@
 
 ## Completed
 
-2026-07-15 · **PR #20 P1 remediation (local)** — Blocking review items on scripture-lane PR addressed in working tree on `feat/scripture-repo-preferences` (not yet committed/pushed). See Last run.
+2026-07-15 · **BibleEditorMLTest translation target** — Registered the fully populated, live-verified English GL repositories under `BibleEditorMLTest` in the project preset catalog; the server-driven Preferences dropdown now exposes it as a translation target. CI syntax fix landed before merge into `feat/scripture-repo-preferences`.
+
+2026-07-15 · **PR #20 P1 remediation** — Blocking review items on scripture-lane PR addressed and pushed (`b260098`).
 
 2026-07-15 · **Scripture Repository Preferences v6** — Generation-keyed scripture lanes with replacement FSM, export fencing via renewable lease tokens, per-lane text/alignment locks, Preferences UI for repo switching, and BSOJ AVD/NAV correction (quarantine gen-1 → replacement_required → import correct source → activate). Comprehensive test coverage via `node:sqlite` harness exercising migration 0042 triggers + invariants.
 
