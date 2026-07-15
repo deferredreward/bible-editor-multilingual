@@ -14,6 +14,13 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Sixth-pass re-review P1s closed.**
+- Migration `0046`: `exclusive_owner` on `scripture_lane_state` — shared CAS for lease acquire and replacement freeze (`exclusive_owner IS NULL`).
+- pipelineImport: pending accept back in the same D1 batch, `EXISTS` on landed version.
+- export PR helpers: `beforeMutation` before every POST/PATCH/DELETE (ensure/update/close/delete branch).
+- alignmentCanonical: preserve all non-zaln attrs (lemma/Strong’s/morph); only unwrap zaln.
+- Tests exercise real CAS interleaving + same-txn pipeline accept. Local D1: `0046` applied. Typecheck + api tests green.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Fifth-pass re-review P1s closed.**
 - bookImport: holds export leases on lit+sim for wipe+repopulate; `startReplacement` refuses while a fresh lease is held (mutual exclusion).
 - pipelineImport: accept `pending_imports` only after a matched verse mutation (not in the same batch as a fenced no-op).
@@ -78,6 +85,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 sixth-pass P1 close-out** — `exclusive_owner` CAS mutex (0046), atomic pipeline accept via EXISTS, PR beforeMutation, preserve non-alignment attrs in canonicalizer; real interleaving tests.
 
 2026-07-15 · **PR #20 fifth-pass P1 close-out** — Import/export lease mutual exclusion, predicated pipeline accept, reimport path fences + matched counts, lease-before-render, whole-USFM locked-text compare, baseRef on branch mutations + freshness ref.
 

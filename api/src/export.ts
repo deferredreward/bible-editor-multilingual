@@ -1004,6 +1004,7 @@ export async function deleteDcsBranch(
   config: Omit<DcsCommitConfig, "branch">,
   branch: string,
 ): Promise<boolean> {
+  await config.beforeMutation?.();
   const headers: Record<string, string> = {
     Authorization: `token ${config.token}`,
     Accept: "application/json",
@@ -1036,6 +1037,8 @@ export interface DcsPrConfig {
   base?: string;    // default "master"
   /** Alias for `base` — callers often carry baseRef on DcsCommitConfig. */
   baseRef?: string;
+  /** Called immediately before every mutating DCS request (export fencing). */
+  beforeMutation?: () => Promise<void>;
 }
 
 export interface DcsPrResult {
@@ -1083,6 +1086,7 @@ export async function ensureDcsPr(
   const existing = await findDcsOpenPr(config);
   if (existing != null) return { number: existing, created: false, reason: "existing" };
 
+  await config.beforeMutation?.();
   const createRes = await fetch(`${apiBase}/pulls`, {
     method: "POST",
     headers: dcsPrHeaders(config.token),
@@ -1113,6 +1117,7 @@ export async function updateDcsPrBranch(
   config: Omit<DcsCommitConfig, "branch">,
   prNumber: number,
 ): Promise<{ ok: boolean; status: number; detail: string }> {
+  await config.beforeMutation?.();
   const url = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/pulls/${prNumber}/update`;
   const res = await fetch(url, { method: "POST", headers: dcsPrHeaders(config.token) });
   if (res.ok) return { ok: true, status: res.status, detail: "" };
@@ -1130,6 +1135,7 @@ export async function closeDcsPr(
   config: Omit<DcsCommitConfig, "branch">,
   prNumber: number,
 ): Promise<{ ok: boolean; status: number; detail: string }> {
+  await config.beforeMutation?.();
   const url = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/pulls/${prNumber}`;
   const res = await fetch(url, {
     method: "PATCH",

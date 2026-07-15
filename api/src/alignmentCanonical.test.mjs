@@ -25,12 +25,38 @@ import {
   ];
   const result = stripAlignmentNodes(input);
   assert.equal(result.length, 3);
-  // \w nodes become {type: "text", text: ...}; non-word text nodes carry
-  // the full node shape from the normalizer (tag/content/endMarker undefined).
-  assert.equal(result[0].type, "text");
+  // \w nodes keep their full shape (lemma/strong/morph preserved); only zaln
+  // wrappers are unwrapped.
+  assert.equal(result[0].type, "word");
+  assert.equal(result[0].tag, "w");
   assert.equal(result[0].text, "hello");
   assert.equal(result[1].text, " ");
   assert.equal(result[2].text, "world");
+}
+
+// Linguistic attrs on words are NOT alignment-owned — must survive strip
+{
+  const input = [
+    {
+      type: "word",
+      tag: "w",
+      text: "God",
+      strong: "G2316",
+      lemma: "θεός",
+      morph: "Gr,N,,,,,NMS,",
+    },
+  ];
+  const result = stripAlignmentNodes(input);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].strong, "G2316");
+  assert.equal(result[0].lemma, "θεός");
+  assert.equal(result[0].morph, "Gr,N,,,,,NMS,");
+  // Different Strong's → not equal under nonAlignmentContentEqual
+  const a = { verseObjects: input };
+  const b = {
+    verseObjects: [{ type: "word", tag: "w", text: "God", strong: "G9999", lemma: "θεός", morph: "Gr,N,,,,,NMS," }],
+  };
+  assert.ok(!nonAlignmentContentEqual(a, b), "Strong's drift must not compare equal");
 }
 
 // Passes through non-alignment nodes

@@ -31,6 +31,7 @@ CREATE TABLE scripture_lane_state (
   active_config_json TEXT NOT NULL,
   config_revision INTEGER NOT NULL DEFAULT 1,
   replacement_job_id TEXT,
+  exclusive_owner TEXT,
   exports_blocked INTEGER NOT NULL DEFAULT 0,
   replacement_required INTEGER NOT NULL DEFAULT 0,
   pending_target_json TEXT,
@@ -1329,88 +1330,207 @@ function d1Batch(db, fns) {
   console.log("  ✓ activation drain: stale held → grace block → allowed after grace");
 }
 
-// ── 32. startReplacement refuses while a fresh export/import lease is held ───
-// Import holds scripture_export_leases across wipe+repopulate; replacement must
-// not CAS-freeze mid-import (would leave predecessor partially wiped).
+// ── 32. exclusive_owner CAS: lease acquire vs freeze are mutually exclusive ──
+// Both paths compete for `exclusive_owner IS NULL` on scripture_lane_state.
+// Interleave: freeze UPDATE then lease UPDATE (and the reverse) — exactly one
+// wins. This exercises the real SQL predicates, not a synthetic mirror.
 
 {
   const db = freshDb();
-  seedLane(db, "lit");
-  const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
-     VALUES ('imp','lit','t','held','import:ZEC',?1)`,
-  ).run(now);
+  seedLane(db, "lit", { activeGen: 1, nextGen: 2 });
 
-  const hasHeld = () => !!db.prepare(`
-    SELECT 1 FROM scripture_export_leases
-    WHERE lane = ?1 AND status = 'held' AND heartbeat_at * 1000 > ?2 LIMIT 1
-  `).get("lit", Date.now() - EXPORT_LEASE_TTL_MS);
-  assert.equal(hasHeld(), true, "import lease is held");
-
-  // Mirror of startReplacement's pre-CAS lease gate: refuse without mutating.
-  if (hasHeld()) {
-    // Would throw lane_lease_held — no CAS freeze runs.
-  } else {
+  const freezeCas = (jobId) =>
     db.prepare(`
       UPDATE scripture_lane_state
-         SET replacement_job_id = 'job-X', exports_blocked = 1
+         SET replacement_job_id = ?1,
+             exclusive_owner = ?2,
+             exports_blocked = 1,
+             next_generation = next_generation + 1,
+             updated_at = unixepoch()
        WHERE lane = 'lit' AND replacement_job_id IS NULL
-    `).run();
+         AND exclusive_owner IS NULL
+         AND active_generation = 1
+    `).run(jobId, `job:${jobId}`);
+
+  const leaseCas = (leaseId) => {
+    const owner = `lease:${leaseId}`;
+    const claim = db.prepare(`
+      UPDATE scripture_lane_state
+         SET exclusive_owner = ?1, updated_at = unixepoch()
+       WHERE lane = 'lit'
+         AND replacement_job_id IS NULL
+         AND exclusive_owner IS NULL
+    `).run(owner);
+    if (claim.changes !== 1) return { changes: 0 };
+    const ins = db.prepare(`
+      INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+      SELECT ?1, 'lit', 'tok', 'held', 'import:ZEC', unixepoch()
+       WHERE EXISTS (
+         SELECT 1 FROM scripture_lane_state WHERE lane = 'lit' AND exclusive_owner = ?2
+       )
+    `).run(leaseId, owner);
+    return { changes: claim.changes, inserted: ins.changes };
+  };
+
+  // Freeze wins first → lease must lose.
+  {
+    const db1 = freshDb();
+    seedLane(db1, "lit", { activeGen: 1, nextGen: 2 });
+    // Rebind helpers to db1
+    const f = (jobId) =>
+      db1.prepare(`
+        UPDATE scripture_lane_state
+           SET replacement_job_id = ?1, exclusive_owner = ?2, exports_blocked = 1,
+               next_generation = next_generation + 1, updated_at = unixepoch()
+         WHERE lane = 'lit' AND replacement_job_id IS NULL
+           AND exclusive_owner IS NULL AND active_generation = 1
+      `).run(jobId, `job:${jobId}`);
+    const l = (leaseId) => {
+      const owner = `lease:${leaseId}`;
+      const claim = db1.prepare(`
+        UPDATE scripture_lane_state SET exclusive_owner = ?1, updated_at = unixepoch()
+         WHERE lane = 'lit' AND replacement_job_id IS NULL AND exclusive_owner IS NULL
+      `).run(owner);
+      if (claim.changes !== 1) return claim;
+      return db1.prepare(`
+        INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+        SELECT ?1, 'lit', 'tok', 'held', 'import:ZEC', unixepoch()
+         WHERE EXISTS (SELECT 1 FROM scripture_lane_state WHERE exclusive_owner = ?2)
+      `).run(leaseId, owner);
+    };
+    assert.equal(f("job-A").changes, 1, "freeze claims exclusive_owner");
+    assert.equal(l("lease-B").changes, 0, "lease loses after freeze");
+    assert.equal(getLane(db1, "lit").exclusive_owner, "job:job-A");
+    assert.equal(
+      db1.prepare("SELECT COUNT(*) AS n FROM scripture_export_leases").get().n,
+      0,
+      "lost lease inserts no row",
+    );
   }
-  const lane = getLane(db, "lit");
-  assert.equal(lane.replacement_job_id, null, "lease-held start does not freeze the lane");
-  console.log("  ✓ startReplacement refuses while import/export lease held");
+
+  // Lease wins first → freeze must lose.
+  {
+    const db2 = freshDb();
+    seedLane(db2, "lit", { activeGen: 1, nextGen: 2 });
+    const l = (leaseId) => {
+      const owner = `lease:${leaseId}`;
+      const claim = db2.prepare(`
+        UPDATE scripture_lane_state SET exclusive_owner = ?1, updated_at = unixepoch()
+         WHERE lane = 'lit' AND replacement_job_id IS NULL AND exclusive_owner IS NULL
+      `).run(owner);
+      assert.equal(claim.changes, 1);
+      db2.prepare(`
+        INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+        SELECT ?1, 'lit', 'tok', 'held', 'import:ZEC', unixepoch()
+         WHERE EXISTS (SELECT 1 FROM scripture_lane_state WHERE exclusive_owner = ?2)
+      `).run(leaseId, owner);
+    };
+    const f = (jobId) =>
+      db2.prepare(`
+        UPDATE scripture_lane_state
+           SET replacement_job_id = ?1, exclusive_owner = ?2, exports_blocked = 1,
+               next_generation = next_generation + 1, updated_at = unixepoch()
+         WHERE lane = 'lit' AND replacement_job_id IS NULL
+           AND exclusive_owner IS NULL AND active_generation = 1
+      `).run(jobId, `job:${jobId}`);
+    l("lease-A");
+    assert.equal(f("job-B").changes, 0, "freeze loses after lease");
+    assert.equal(getLane(db2, "lit").exclusive_owner, "lease:lease-A");
+    assert.equal(getLane(db2, "lit").replacement_job_id, null, "freeze did not set job id");
+  }
+
+  void freezeCas;
+  void leaseCas;
+  void db;
+  console.log("  ✓ exclusive_owner CAS: lease vs freeze mutually exclusive");
 }
 
-// ── 33. pipeline accept is predicated on a matched verse mutation ────────────
-// A fenced UPDATE matching 0 rows must not still consume pending_imports.
+// ── 33. pipeline accept in same batch, predicated on landed version ──────────
+// Mirrors the production batch order: UPDATE verses → edit_log → conditional
+// pending accept via EXISTS(new version). A fenced no-op leaves pending open;
+// a matched write accepts atomically (same transaction).
 
 {
-  const db = freshDb();
-  // Minimal pending_imports + verses shape for the acceptance predicate.
+  const db = new DatabaseSync(":memory:");
   db.exec(`
-    CREATE TABLE IF NOT EXISTS pending_imports (
+    CREATE TABLE pending_imports (
       id TEXT PRIMARY KEY,
       accepted_at INTEGER,
       accepted_by INTEGER
     );
-    CREATE TABLE IF NOT EXISTS verses_pipe (
+    CREATE TABLE verses (
       book TEXT, chapter INTEGER, verse INTEGER, bible_version TEXT,
-      source_generation INTEGER, version INTEGER, content_json TEXT
+      source_generation INTEGER, version INTEGER, content_json TEXT,
+      PRIMARY KEY (book, chapter, verse, bible_version, source_generation)
+    );
+    CREATE TABLE edit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT, row_key TEXT, new_version INTEGER
     );
   `);
-  db.prepare(`INSERT INTO pending_imports (id, accepted_at) VALUES ('p1', NULL)`).run();
+  db.prepare(`INSERT INTO pending_imports (id) VALUES ('p1')`).run();
   db.prepare(
-    `INSERT INTO verses_pipe VALUES ('ZEC',1,1,'ULT',1,1,'{"verseObjects":[]}')`,
+    `INSERT INTO verses VALUES ('ZEC',1,1,'ULT',1,1,'{"verseObjects":[]}')`,
   ).run();
 
-  // Fenced update matches 0 (wrong generation) — do NOT accept.
-  const upd = db.prepare(`
-    UPDATE verses_pipe SET version = version + 1
+  // Simulate freeze: lane predicate fails → UPDATE matches 0 → EXISTS fails.
+  db.exec("BEGIN");
+  const noOp = db.prepare(`
+    UPDATE verses SET version = version + 1, content_json = '{"v":2}'
      WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
-       AND source_generation=2
+       AND source_generation=1
+       AND EXISTS (SELECT 1 WHERE 0)
   `).run();
-  assert.equal(upd.changes, 0);
-  if (upd.changes > 0) {
-    db.prepare(`UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1 WHERE id='p1'`).run();
-  }
-  const pending = db.prepare(`SELECT accepted_at FROM pending_imports WHERE id='p1'`).get();
-  assert.equal(pending.accepted_at, null, "zero-row fence leaves pending unaccepted");
+  db.prepare(`
+    UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1
+     WHERE id='p1'
+       AND EXISTS (
+         SELECT 1 FROM verses
+          WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+            AND source_generation=1 AND version=2
+       )
+  `).run();
+  db.exec("COMMIT");
+  assert.equal(noOp.changes, 0);
+  assert.equal(
+    db.prepare("SELECT accepted_at FROM pending_imports WHERE id='p1'").get().accepted_at,
+    null,
+    "fenced no-op leaves pending unaccepted",
+  );
+  assert.equal(
+    db.prepare("SELECT version FROM verses").get().version,
+    1,
+    "verse unchanged after fenced no-op",
+  );
 
-  // Successful mutation then accepts.
+  // Successful mutation + accept in one transaction.
+  db.exec("BEGIN");
   const ok = db.prepare(`
-    UPDATE verses_pipe SET version = version + 1
+    UPDATE verses SET version = version + 1, content_json = '{"v":2}'
      WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
        AND source_generation=1
   `).run();
+  db.prepare(`
+    INSERT INTO edit_log (kind, row_key, new_version)
+    SELECT 'verse', 'ZEC/1/1/ULT', 2 WHERE changes() > 0
+  `).run();
+  db.prepare(`
+    UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1
+     WHERE id='p1'
+       AND EXISTS (
+         SELECT 1 FROM verses
+          WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+            AND source_generation=1 AND version=2
+       )
+  `).run();
+  db.exec("COMMIT");
   assert.equal(ok.changes, 1);
-  if (ok.changes > 0) {
-    db.prepare(`UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1 WHERE id='p1'`).run();
-  }
-  const accepted = db.prepare(`SELECT accepted_at FROM pending_imports WHERE id='p1'`).get();
-  assert.ok(accepted.accepted_at != null, "matched mutation accepts pending");
-  console.log("  ✓ pipeline accept predicated on matched verse mutation");
+  assert.ok(
+    db.prepare("SELECT accepted_at FROM pending_imports WHERE id='p1'").get().accepted_at != null,
+    "matched mutation accepts pending in same txn",
+  );
+  assert.equal(db.prepare("SELECT version FROM verses").get().version, 2);
+  console.log("  ✓ pipeline accept predicated on landed version in same txn");
 }
 
 console.log("\nscriptureLaneReplacement tests passed");

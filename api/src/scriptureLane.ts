@@ -31,6 +31,8 @@ export interface LaneStateRow {
   active_config_json: string;
   config_revision: number;
   replacement_job_id: string | null;
+  /** Mutual-exclusion token: `lease:<id>` or `job:<id>`. NULL when free. */
+  exclusive_owner: string | null;
   exports_blocked: number;
   replacement_required: number;
   pending_target_json: string | null;
@@ -226,6 +228,7 @@ export async function recoverOrphanedReservation(
   await env.DB.prepare(
     `UPDATE scripture_lane_state
         SET replacement_job_id = NULL,
+            exclusive_owner = NULL,
             exports_blocked = CASE WHEN replacement_required = 1 THEN 1 ELSE 0 END,
             updated_at = unixepoch()
       WHERE lane = ?1 AND replacement_job_id = ?2

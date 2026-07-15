@@ -1,9 +1,30 @@
 // Canonical non-alignment comparison for text-locked scripture lanes.
 // Alignment metadata/grouping may differ; words, punctuation, markers,
-// headings, and footnotes must be identical after stripping zaln milestones.
+// headings, footnotes, and linguistic attrs must be identical after removing
+// only explicitly alignment-owned structure (zaln milestones).
 
 import usfm from "usfm-js";
 
+/** Keys owned by the word-alignment layer — dropped from comparison. */
+const ALIGNMENT_OWNED_KEYS: ReadonlySet<string> = new Set([
+  // zaln milestones are unwrapped entirely; reserved for residual attrs if any
+  // alignment tooling parks occurrence bookkeeping on non-zaln nodes.
+]);
+
+function stripAlignmentOwnedKeys(o: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (ALIGNMENT_OWNED_KEYS.has(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Deep-clone a node tree, unwrapping `\zaln` milestones and preserving every
+ * non-alignment attribute (lemma, Strong's, morph, footnote attrs, custom
+ * marker metadata, etc.).
+ */
 export function stripAlignmentNodes(nodes: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const node of nodes) {
@@ -16,38 +37,18 @@ export function stripAlignmentNodes(nodes: unknown[]): unknown[] {
       if (Array.isArray(o["children"])) out.push(...stripAlignmentNodes(o["children"] as unknown[]));
       continue;
     }
-    if (o["type"] === "word" && o["tag"] === "w") {
-      // Keep surface text only — drop strong/lemma/morph/occurrence attrs that
-      // alignment serialization may rewrite.
-      if (typeof o["text"] === "string") out.push({ type: "text", text: o["text"] });
-      else if (Array.isArray(o["children"])) out.push(...stripAlignmentNodes(o["children"] as unknown[]));
-      continue;
+    const kept = stripAlignmentOwnedKeys(o);
+    if (Array.isArray(kept["children"])) {
+      kept["children"] = stripAlignmentNodes(kept["children"] as unknown[]);
     }
-    if (Array.isArray(o["children"])) {
-      out.push({
-        type: o["type"],
-        tag: o["tag"],
-        content: o["content"],
-        text: o["text"],
-        endMarker: o["endMarker"],
-        children: stripAlignmentNodes(o["children"] as unknown[]),
-      });
-    } else {
-      out.push({
-        type: o["type"],
-        tag: o["tag"],
-        content: o["content"],
-        text: o["text"],
-        endMarker: o["endMarker"],
-      });
-    }
+    out.push(kept);
   }
   return out;
 }
 
 function normalizeLeaves(nodes: unknown[]): unknown[] {
   // Collapse adjacent text nodes and drop empty text so serialization
-  // segmentation differences don't false-positive.
+  // segmentation differences don't false-positive. Preserve all other attrs.
   const flat: unknown[] = [];
   const walk = (list: unknown[]) => {
     for (const n of list) {
@@ -58,29 +59,24 @@ function normalizeLeaves(nodes: unknown[]): unknown[] {
         if (!t) continue;
         const prev = flat[flat.length - 1] as Record<string, unknown> | undefined;
         if (prev && prev["type"] === "text" && typeof prev["text"] === "string") {
-          prev["text"] = (prev["text"] as string) + t;
-        } else {
-          flat.push({ type: "text", text: t });
+          // Only merge pure text leaves that carry no other distinguishing attrs.
+          const prevKeys = Object.keys(prev).filter((k) => k !== "type" && k !== "text");
+          const curKeys = Object.keys(o).filter((k) => k !== "type" && k !== "text");
+          if (prevKeys.length === 0 && curKeys.length === 0) {
+            prev["text"] = (prev["text"] as string) + t;
+            continue;
+          }
         }
+        flat.push({ ...o });
         continue;
       }
       if (Array.isArray(o["children"])) {
         flat.push({
-          type: o["type"],
-          tag: o["tag"],
-          content: o["content"],
-          text: o["text"],
-          endMarker: o["endMarker"],
+          ...o,
           children: normalizeLeaves(o["children"] as unknown[]),
         });
       } else {
-        flat.push({
-          type: o["type"],
-          tag: o["tag"],
-          content: o["content"],
-          text: o["text"],
-          endMarker: o["endMarker"],
-        });
+        flat.push({ ...o });
       }
     }
   };

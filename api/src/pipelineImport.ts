@@ -1655,7 +1655,7 @@ async function applyVerseUpdate(
                AND replacement_required = 0 AND active_generation = ?10
           )`
       : "";
-    const results = await env.DB.batch([
+    await env.DB.batch([
       env.DB
         .prepare(
           `UPDATE verses
@@ -1711,23 +1711,26 @@ async function applyVerseUpdate(
           JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration,
           book, chapter, verse, bibleVersion, sourceGeneration,
         ),
+      // Same batch as the verse mutation: accept only if the fenced write landed
+      // (new version present). changes() is unreliable after intervening INSERTs.
+      env.DB
+        .prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
+            WHERE id = ?1
+              AND EXISTS (
+                SELECT 1 FROM verses
+                 WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
+                   AND source_generation = ?7 AND version = ?8
+              )`,
+        )
+        .bind(p.id, userId, book, chapter, verse, bibleVersion, sourceGeneration, newVersion),
     ]);
-    // Accept only after a successful verse mutation. A fenced no-op must leave
-    // the pending row retryable — otherwise AI output is marked accepted and lost.
-    if ((results[0]?.meta?.changes ?? 0) === 0) {
-      return;
-    }
-    await env.DB.prepare(
-      `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
-    )
-      .bind(p.id, userId)
-      .run();
     return;
   }
 
   // The verse should exist from the initial book import; this branch is the
   // defensive case where the seed missed something. Insert as a brand-new row.
-  const insertResults = await env.DB.batch([
+  await env.DB.batch([
     lane
       ? env.DB
           .prepare(
@@ -1754,13 +1757,16 @@ async function applyVerseUpdate(
           WHERE changes() > 0`,
       )
       .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
+    env.DB
+      .prepare(
+        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1
+            AND EXISTS (
+              SELECT 1 FROM verses
+               WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
+                 AND source_generation = ?7 AND version = 1
+            )`,
+      )
+      .bind(p.id, userId, book, chapter, verse, bibleVersion, sourceGeneration),
   ]);
-  if ((insertResults[0]?.meta?.changes ?? 0) === 0) {
-    return;
-  }
-  await env.DB.prepare(
-    `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
-  )
-    .bind(p.id, userId)
-    .run();
 }

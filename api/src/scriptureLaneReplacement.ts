@@ -108,20 +108,18 @@ export async function startReplacement(
   const row = await requireLaneState(env, lane);
 
   // Cheap pre-check so we can 400 on missing confirmation before mutating.
-  // The authoritative "no open job" guard is the CAS freeze below.
+  // The authoritative "no open job" / no-lease guard is the CAS freeze below
+  // (`exclusive_owner IS NULL` — shared with acquireExportLease).
   if (row.replacement_job_id) {
     throw Object.assign(new Error("replacement_already_active"), {
       status: 409,
       detail: { lane, jobId: row.replacement_job_id },
     });
   }
-  // Import (and export) hold scripture_export_leases across multi-batch writes.
-  // Freezing while a lease is held lets replacement reserve mid-wipe/repopulate
-  // and leave predecessor data partially destroyed. Mutual exclusion here.
-  if (await hasHeldExportLease(env, lane)) {
+  if (row.exclusive_owner) {
     throw Object.assign(new Error("lane_lease_held"), {
       status: 409,
-      detail: { lane, reason: "import_or_export_lease_held" },
+      detail: { lane, reason: "import_or_export_lease_held", owner: row.exclusive_owner },
     });
   }
   if (!confirm) {
@@ -143,6 +141,7 @@ export async function startReplacement(
   }
 
   // Re-read: a concurrent start may have frozen while we were snapshotting.
+  await reclaimStaleExclusiveOwner(env, lane);
   const stillFree = await getLaneState(env, lane);
   if (!stillFree || stillFree.replacement_job_id || stillFree.active_generation !== activeGeneration) {
     throw Object.assign(new Error("replacement_already_active"), {
@@ -150,25 +149,28 @@ export async function startReplacement(
       detail: { lane, jobId: stillFree?.replacement_job_id ?? null },
     });
   }
-  if (await hasHeldExportLease(env, lane)) {
+  if (stillFree.exclusive_owner) {
     throw Object.assign(new Error("lane_lease_held"), {
       status: 409,
-      detail: { lane, reason: "import_or_export_lease_held" },
+      detail: { lane, reason: "import_or_export_lease_held", owner: stillFree.exclusive_owner },
     });
   }
 
-  // CAS freeze + job/book inserts in one batch so a concurrent writer cannot
-  // observe a freeze without a matching scripture_lane_replacement row.
+  // CAS freeze + job/book inserts in one batch. `exclusive_owner IS NULL` is the
+  // same predicate acquireExportLease uses — one atomic mutual-exclusion slot.
+  const exclusiveOwner = `job:${id}`;
   const stmts: D1PreparedStatement[] = [
     env.DB.prepare(
       `UPDATE scripture_lane_state
           SET replacement_job_id = ?1,
+              exclusive_owner = ?4,
               exports_blocked = 1,
               next_generation = next_generation + 1,
               updated_at = unixepoch()
         WHERE lane = ?2 AND replacement_job_id IS NULL
+          AND exclusive_owner IS NULL
           AND active_generation = ?3`,
-    ).bind(id, lane, activeGeneration),
+    ).bind(id, lane, activeGeneration, exclusiveOwner),
     env.DB.prepare(
       `INSERT INTO scripture_lane_replacement (
          job_id, lane, generation, predecessor_generation,
@@ -200,11 +202,17 @@ export async function startReplacement(
     const freezeChanges = results[0]?.meta?.changes ?? 0;
     if (freezeChanges !== 1) {
       // Lost the race — drop any partial INSERT that ran (should be zero via
-      // the SELECT guards) and surface the winning job.
+      // the SELECT guards) and surface the winning job / lease.
       await releaseFreeze(env, lane, id, priorExportsBlocked);
       await env.DB.prepare(`DELETE FROM scripture_lane_replacement_books WHERE job_id = ?1`).bind(id).run();
       await env.DB.prepare(`DELETE FROM scripture_lane_replacement WHERE job_id = ?1`).bind(id).run();
       const cur = await getLaneState(env, lane);
+      if (cur?.exclusive_owner?.startsWith("lease:")) {
+        throw Object.assign(new Error("lane_lease_held"), {
+          status: 409,
+          detail: { lane, reason: "import_or_export_lease_held", owner: cur.exclusive_owner },
+        });
+      }
       throw Object.assign(new Error("replacement_already_active"), {
         status: 409,
         detail: { lane, jobId: cur?.replacement_job_id ?? null },
@@ -242,6 +250,7 @@ async function releaseFreeze(
   await env.DB.prepare(
     `UPDATE scripture_lane_state
         SET replacement_job_id = NULL,
+            exclusive_owner = NULL,
             exports_blocked = ?1,
             updated_at = unixepoch()
       WHERE lane = ?2 AND replacement_job_id = ?3`,
@@ -603,6 +612,7 @@ export async function activateReplacement(
               active_config_json = ?2,
               config_revision = config_revision + 1,
               replacement_job_id = NULL,
+              exclusive_owner = NULL,
               exports_blocked = 0,
               replacement_required = 0,
               pending_target_json = NULL,
@@ -684,6 +694,7 @@ export async function cancelReplacement(
     env.DB.prepare(
       `UPDATE scripture_lane_state
           SET replacement_job_id = NULL,
+              exclusive_owner = NULL,
               exports_blocked = ?1,
               updated_at = unixepoch()
         WHERE lane = ?2 AND replacement_job_id = ?3`,
@@ -714,6 +725,7 @@ export async function failReplacement(
     env.DB.prepare(
       `UPDATE scripture_lane_state
           SET replacement_job_id = NULL,
+              exclusive_owner = NULL,
               exports_blocked = ?1,
               updated_at = unixepoch()
         WHERE lane = ?2 AND replacement_job_id = ?3`,
@@ -778,45 +790,74 @@ export async function waiveBook(
 
 // ── 7. Export lease helpers ──────────────────────────────────────────────────
 
+/** Clear exclusive_owner when it points at a stale/released lease. */
+export async function reclaimStaleExclusiveOwner(env: Env, lane: LaneKey): Promise<void> {
+  await abandonStaleHeldLeases(env, lane);
+  // lease:<uuid> whose lease row is missing, released, abandoned, or past TTL.
+  await env.DB.prepare(
+    `UPDATE scripture_lane_state
+        SET exclusive_owner = NULL, updated_at = unixepoch()
+      WHERE lane = ?1
+        AND exclusive_owner LIKE 'lease:%'
+        AND NOT EXISTS (
+          SELECT 1 FROM scripture_export_leases
+           WHERE lease_id = substr(exclusive_owner, 7)
+             AND status = 'held'
+             AND heartbeat_at * 1000 > ?2
+        )`,
+  ).bind(lane, Date.now() - EXPORT_LEASE_TTL_MS).run();
+}
+
 export async function acquireExportLease(
   env: Env,
   lane: LaneKey,
   holder: string,
 ): Promise<{ leaseId: string; fencingToken: string } | { error: string }> {
-  const state = await requireLaneState(env, lane);
-  if (state.exports_blocked) return { error: "exports_blocked" };
-  if (state.replacement_job_id) return { error: "replacement_in_progress" };
+  await reclaimStaleExclusiveOwner(env, lane);
 
-  // A fresh held lease means another exporter owns the lane — can't acquire.
-  if (await hasHeldExportLease(env, lane)) {
-    return { error: "lease_held" };
+  const state = await requireLaneState(env, lane);
+  if (state.exports_blocked && !state.exclusive_owner?.startsWith("lease:")) {
+    return { error: "exports_blocked" };
   }
-  // Otherwise fold any stale held leases into abandon+grace so a dead holder's
-  // in-flight commit is still fenced by the grace window (shared with the
-  // activation drain).
-  await abandonStaleHeldLeases(env, lane);
+  if (state.replacement_job_id) return { error: "replacement_in_progress" };
+  if (state.exclusive_owner) return { error: "lease_held" };
 
   const leaseId = crypto.randomUUID();
   const fencingToken = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
-     VALUES (?1, ?2, ?3, 'held', ?4, unixepoch())`,
-  ).bind(leaseId, lane, fencingToken, holder).run();
+  const exclusiveOwner = `lease:${leaseId}`;
 
-  // Race guard (D1 has no cross-statement locking, so two Workers can both pass
-  // the pre-insert check above and each insert a held lease). Pick a single
-  // deterministic winner among the fresh held leases for this lane — the oldest,
-  // ties broken by lease_id. If that winner isn't us, relinquish ours and bail
-  // so at most one lease is ever treated as authoritative.
-  const winner = await env.DB.prepare(
-    `SELECT lease_id FROM scripture_export_leases
-      WHERE lane = ?1 AND status = 'held' AND heartbeat_at * 1000 > ?2
-      ORDER BY created_at ASC, lease_id ASC LIMIT 1`,
-  ).bind(lane, Date.now() - EXPORT_LEASE_TTL_MS).first<{ lease_id: string }>();
-  if (!winner || winner.lease_id !== leaseId) {
+  // Atomic claim: same exclusive_owner IS NULL predicate as startReplacement's
+  // freeze CAS. INSERT is gated on owning the slot so a lost CAS never leaves
+  // an orphan lease row.
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE scripture_lane_state
+          SET exclusive_owner = ?1, updated_at = unixepoch()
+        WHERE lane = ?2
+          AND replacement_job_id IS NULL
+          AND exclusive_owner IS NULL`,
+    ).bind(exclusiveOwner, lane),
+    env.DB.prepare(
+      `INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+       SELECT ?1, ?2, ?3, 'held', ?4, unixepoch()
+        WHERE EXISTS (
+          SELECT 1 FROM scripture_lane_state
+           WHERE lane = ?2 AND exclusive_owner = ?5
+        )`,
+    ).bind(leaseId, lane, fencingToken, holder, exclusiveOwner),
+  ]);
+
+  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+    // Lost the race — clear our claim if we somehow got the UPDATE without INSERT.
+    await env.DB.prepare(
+      `UPDATE scripture_lane_state SET exclusive_owner = NULL, updated_at = unixepoch()
+        WHERE lane = ?1 AND exclusive_owner = ?2`,
+    ).bind(lane, exclusiveOwner).run();
     await env.DB.prepare(
       `UPDATE scripture_export_leases SET status = 'released' WHERE lease_id = ?1 AND status = 'held'`,
     ).bind(leaseId).run();
+    const cur = await getLaneState(env, lane);
+    if (cur?.replacement_job_id) return { error: "replacement_in_progress" };
     return { error: "lease_held" };
   }
 
@@ -871,9 +912,17 @@ export async function releaseExportLease(
   env: Env,
   leaseId: string,
 ): Promise<void> {
-  await env.DB.prepare(
-    `UPDATE scripture_export_leases SET status = 'released' WHERE lease_id = ?1 AND status = 'held'`,
-  ).bind(leaseId).run();
+  const exclusiveOwner = `lease:${leaseId}`;
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE scripture_export_leases SET status = 'released' WHERE lease_id = ?1 AND status = 'held'`,
+    ).bind(leaseId),
+    env.DB.prepare(
+      `UPDATE scripture_lane_state
+          SET exclusive_owner = NULL, updated_at = unixepoch()
+        WHERE exclusive_owner = ?1`,
+    ).bind(exclusiveOwner),
+  ]);
 }
 
 export async function verifyExportFencingToken(
