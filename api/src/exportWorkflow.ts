@@ -69,10 +69,10 @@ import {
   getLaneState,
   activeLaneConfig,
   activeGenerationForBibleVersion,
+  configHash,
   type LaneKey,
 } from "./scriptureLane";
-import { extractVersesForRange } from "./importParsers";
-import { nonAlignmentContentEqual } from "./alignmentCanonical";
+import { nonAlignmentUsfmEqual } from "./alignmentCanonical";
 import {
   acquireExportLease,
   renewExportLease,
@@ -753,6 +753,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let scriptureGen = 1;
     // Lane export destination from live active_config_json — not projectCfg.
     let laneExport: { owner: string; repo: string; baseRef: string } | null | undefined;
+    let leaseId: string | null = null;
+    let fencingToken: string | null = null;
+    let expectedConfigHash: string | null = null;
+
     if (lane) {
       const gate = await assertLaneWritable(this.env, lane, "export_lease");
       if (!gate.ok) {
@@ -764,13 +768,63 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           dcsSkippedReason: reason, prNumber: null, prReason: null,
         };
       }
-      scriptureGen = gate.generation;
-      laneExport = gate.config.export;
+      // Acquire the lease BEFORE capture/render so a replacement cannot activate
+      // mid-render and leave us holding old-generation bytes for a new destination.
+      if (dcsAllowed) {
+        const lease = await acquireExportLease(this.env, lane, `export:${instanceId}:${book}`);
+        if ("error" in lease) {
+          const reason = `lease_blocked:${lease.error}`;
+          await this.recordSnapshot(book, resource, null, null, 0, reason);
+          return {
+            book, resource, rowCount: 0, bytes: 0, r2Key: null,
+            branch: null, dcsCommitSha: null, dcsChanged: false,
+            dcsSkippedReason: reason, prNumber: null, prReason: null,
+          };
+        }
+        leaseId = lease.leaseId;
+        fencingToken = lease.fencingToken;
+      }
+      // Re-bind generation/export under the lease (or after the gate if local-only).
+      const bound = await assertLaneWritable(this.env, lane, "export_lease");
+      if (!bound.ok) {
+        if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
+        const reason = `lane_blocked:${bound.error}`;
+        await this.recordSnapshot(book, resource, null, null, 0, reason);
+        return {
+          book, resource, rowCount: 0, bytes: 0, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      scriptureGen = bound.generation;
+      laneExport = bound.config.export;
+      expectedConfigHash = configHash(bound.config);
     } else if (resource === "twl") {
       scriptureGen = await this.activeGenerationFor("ULT");
     }
 
+    try {
     const built = await this.buildResource(book, resource, scriptureGen);
+
+    // After render: lease + generation/config must still match what we rendered.
+    if (lane && leaseId) {
+      await this.assertFencingOrThrow(lane, fencingToken);
+      const still = await assertLaneWritable(this.env, lane, "export_lease");
+      if (
+        !still.ok ||
+        still.generation !== scriptureGen ||
+        configHash(still.config) !== expectedConfigHash
+      ) {
+        const reason = "lease_stale_after_render";
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      await renewExportLease(this.env, leaseId);
+    }
 
     if (built.content === "") {
       await this.recordSnapshot(book, resource, null, null, built.rowCount, "no_rows");
@@ -960,25 +1014,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
     } else {
-      // For ULT/UST: acquire an export lease so a concurrent replacement can't
-      // activate while we're mid-commit. Non-scripture resources skip the lease.
-      let leaseId: string | null = null;
-      let fencingToken: string | null = null;
-      if (lane) {
-        const lease = await acquireExportLease(this.env, lane, `export:${instanceId}:${book}`);
-        if ("error" in lease) {
-          const reason = `lease_blocked:${lease.error}`;
-          await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
-          return {
-            book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key,
-            branch: null, dcsCommitSha: null, dcsChanged: false,
-            dcsSkippedReason: reason, prNumber: null, prReason: null,
-          };
-        }
-        leaseId = lease.leaseId;
-        fencingToken = lease.fencingToken;
-      }
-      try {
       const owner = dcsOwner;
       const dcsCfg = {
         baseUrl: this.env.DCS_BASE_URL,
@@ -986,6 +1021,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         owner,
         repo: dcsRepo,
         branch,
+        baseRef: laneExport?.baseRef ?? "master",
         beforeMutation: fencingToken
           ? () => this.assertFencingOrThrow(lane, fencingToken)
           : undefined,
@@ -1105,9 +1141,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           await this.recordPrFailureAlert(book, resource, dcsRepo, branch, prError);
         }
       }
-      } finally {
-        if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
-      }
     }
 
     await this.recordSnapshot(book, resource, branch, dcsCommitSha, built.rowCount, dcsSkippedReason, prNumber, prError);
@@ -1125,6 +1158,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       prNumber,
       prReason,
     };
+    } finally {
+      if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
+    }
   }
 
   // Export one (resource × top-level dir) of tW/tA articles. The article
@@ -1549,7 +1585,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     owner: string,
     repo: string,
     branch: string,
-    dcsCfg: { baseUrl: string; token: string; owner: string; repo: string; branch: string },
+    dcsCfg: { baseUrl: string; token: string; owner: string; repo: string; branch: string; baseRef?: string },
     filename: string,
     content: string,
     message: string,
@@ -1569,6 +1605,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         owner,
         repo,
         branch,
+        baseRef: dcsCfg.baseRef,
         beforeMutation: fencingToken
           ? () => this.assertFencingOrThrow(lane, fencingToken)
           : undefined,
@@ -1718,34 +1755,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     if (!file) return { ok: true, detail: "no_file" };
     const destUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
     if (destUsfm == null) {
-      // Absent dest file: first push is allowed for locked text (no baseline body).
-      return { ok: true, detail: "dest_absent" };
+      // Fail closed: without a readable destination we cannot prove body equality.
+      return { ok: false, detail: "dest_unreadable" };
     }
-    const rendered = extractVersesForRange(renderedUsfm, 1, 999);
-    const dest = extractVersesForRange(destUsfm, 1, 999);
-    const destByKey = new Map(dest.map((v) => [`${v.chapter}:${v.verse}`, v]));
-    const offenders: string[] = [];
-    for (const v of rendered) {
-      const d = destByKey.get(`${v.chapter}:${v.verse}`);
-      if (!d) continue;
-      let renderedContent: unknown;
-      let destContent: unknown;
-      try {
-        renderedContent = JSON.parse(v.contentJson);
-        destContent = JSON.parse(d.contentJson);
-      } catch {
-        offenders.push(`${v.chapter}:${v.verse}:parse`);
-        continue;
-      }
-      if (!nonAlignmentContentEqual(renderedContent, destContent)) {
-        offenders.push(`${v.chapter}:${v.verse}`);
-        if (offenders.length >= 8) break;
-      }
-    }
-    if (offenders.length > 0) {
-      return { ok: false, detail: offenders.slice(0, 5).join(",") };
-    }
-    return { ok: true, detail: "ok" };
+    return nonAlignmentUsfmEqual(renderedUsfm, destUsfm);
   }
 
   private async recordLockedTextDriftAlert(
@@ -1781,7 +1794,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const destOwner = dest?.owner ?? src.owner;
     const destRepo = dest?.repo ?? src.repo;
     const baseRef = dest?.baseRef ?? src.ref;
-    const sameIdentity = destOwner === src.owner && destRepo === src.repo;
+    const sameIdentity =
+      destOwner === src.owner && destRepo === src.repo && baseRef === src.ref;
 
     if (sameIdentity) {
       const watermark = await storedResourceSha(this.env, book, resource, src);

@@ -4,6 +4,8 @@ import {
   canonicalizeNonAlignmentContent,
   nonAlignmentContentEqual,
   derivePlainText,
+  canonicalizeUsfmWithoutAlignment,
+  nonAlignmentUsfmEqual,
 } from "./alignmentCanonical.ts";
 
 // ── stripAlignmentNodes ──────────────────────────────────────────────────────
@@ -93,6 +95,51 @@ import {
 {
   assert.equal(derivePlainText(null), "");
   assert.equal(derivePlainText({}), "");
+}
+
+// ── canonicalizeUsfmWithoutAlignment / nonAlignmentUsfmEqual ─────────────────
+
+{
+  const base = `\\id TIT EN_ULT
+\\c 1
+\\p
+\\v 1 \\zaln-s |x-strong="G2316"|\\*\\w God\\w*\\zaln-e\\* speaks.
+\\v 2 Hello world.
+`;
+  const alignedDiff = `\\id TIT EN_ULT
+\\c 1
+\\p
+\\v 1 \\zaln-s |x-strong="G9999"|\\*\\w God\\w*\\zaln-e\\* speaks.
+\\v 2 Hello world.
+`;
+  const textDiff = `\\id TIT EN_ULT
+\\c 1
+\\p
+\\v 1 God speaks differently.
+\\v 2 Hello world.
+`;
+  const missingVerse = `\\id TIT EN_ULT
+\\c 1
+\\p
+\\v 1 God speaks.
+`;
+  const headerDiff = `\\id TIT EN_AVD
+\\c 1
+\\p
+\\v 1 God speaks.
+\\v 2 Hello world.
+`;
+
+  const a = canonicalizeUsfmWithoutAlignment(base);
+  const b = canonicalizeUsfmWithoutAlignment(alignedDiff);
+  assert.ok(a && b, "both parse");
+  assert.equal(a, b, "alignment-only change is equal after strip");
+
+  assert.equal(nonAlignmentUsfmEqual(base, alignedDiff).ok, true);
+  assert.equal(nonAlignmentUsfmEqual(base, textDiff).ok, false);
+  assert.equal(nonAlignmentUsfmEqual(base, missingVerse).ok, false, "verse deletion fails");
+  assert.equal(nonAlignmentUsfmEqual(base, headerDiff).ok, false, "header drift fails");
+  assert.equal(nonAlignmentUsfmEqual(base, "\\not valid {{{{").ok, false);
 }
 
 console.log("alignmentCanonical tests passed");

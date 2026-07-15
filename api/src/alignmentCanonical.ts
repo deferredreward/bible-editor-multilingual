@@ -2,6 +2,8 @@
 // Alignment metadata/grouping may differ; words, punctuation, markers,
 // headings, and footnotes must be identical after stripping zaln milestones.
 
+import usfm from "usfm-js";
+
 export function stripAlignmentNodes(nodes: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const node of nodes) {
@@ -121,4 +123,56 @@ export function derivePlainText(content: unknown): string {
   };
   walk(stripAlignmentNodes(vos));
   return parts.join("").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Canonicalize a whole-book USFM document with alignment milestones removed.
+ * Returns null if the USFM cannot be parsed. Used by textReadOnly export gates
+ * so headers, headings, chapter material, and verse key sets are compared —
+ * not only overlapping verse bodies.
+ */
+export function canonicalizeUsfmWithoutAlignment(usfmText: string): string | null {
+  let json: {
+    headers?: unknown;
+    chapters?: Record<string, Record<string, { verseObjects?: unknown[] }>>;
+  };
+  try {
+    json = usfm.toJSON(usfmText) as typeof json;
+  } catch {
+    return null;
+  }
+  if (!json || typeof json !== "object") return null;
+
+  const chaptersOut: Record<string, Record<string, unknown>> = {};
+  const chapters = json.chapters ?? {};
+  const chapterKeys = Object.keys(chapters).sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+  for (const ch of chapterKeys) {
+    const verses = chapters[ch] ?? {};
+    const verseKeys = Object.keys(verses).sort((a, b) => {
+      if (a === "front") return -1;
+      if (b === "front") return 1;
+      return Number(a) - Number(b) || a.localeCompare(b);
+    });
+    const verseOut: Record<string, unknown> = {};
+    for (const vk of verseKeys) {
+      const vos = verses[vk]?.verseObjects;
+      verseOut[vk] = Array.isArray(vos)
+        ? normalizeLeaves(stripAlignmentNodes(vos))
+        : [];
+    }
+    chaptersOut[ch] = verseOut;
+  }
+  return JSON.stringify({
+    headers: json.headers ?? null,
+    chapters: chaptersOut,
+  });
+}
+
+export function nonAlignmentUsfmEqual(a: string, b: string): { ok: boolean; detail: string } {
+  const ca = canonicalizeUsfmWithoutAlignment(a);
+  const cb = canonicalizeUsfmWithoutAlignment(b);
+  if (ca == null) return { ok: false, detail: "rendered_unparseable" };
+  if (cb == null) return { ok: false, detail: "dest_unparseable" };
+  if (ca === cb) return { ok: true, detail: "ok" };
+  return { ok: false, detail: "usfm_body_diverged" };
 }

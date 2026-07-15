@@ -25,6 +25,11 @@ import { reimportBookFromDcs, recordResourceSync, resourceSourceRef, type Resour
 import { lintTnRows, lintUsfmVerses } from "./lint";
 import type { TnRow, VerseRow } from "./types";
 import { ensureLaneState, requireLaneState, origSourceGeneration, activeLaneConfig } from "./scriptureLane";
+import {
+  acquireExportLease,
+  releaseExportLease,
+  renewExportLease,
+} from "./scriptureLaneReplacement";
 
 export const books = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -295,133 +300,165 @@ async function importBookFromDcs(
   const simGen = simRecheck.active_generation;
   const olGen = origSourceGeneration();
 
-  // Wipe + lane CAS in one batch. The leading UPDATEs must each affect 1 row
-  // (lane still free at expected gen); DELETEs are further guarded by EXISTS.
-  const wipe = await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE scripture_lane_state SET updated_at = unixepoch()
-        WHERE lane = 'lit'
-          AND replacement_job_id IS NULL
-          AND replacement_required = 0
-          AND active_generation = ?1`,
-    ).bind(litGen),
-    env.DB.prepare(
-      `UPDATE scripture_lane_state SET updated_at = unixepoch()
-        WHERE lane = 'sim'
-          AND replacement_job_id IS NULL
-          AND replacement_required = 0
-          AND active_generation = ?1`,
-    ).bind(simGen),
-    env.DB.prepare(`DELETE FROM tn_rows  WHERE book = ?1`).bind(book),
-    env.DB.prepare(`DELETE FROM tq_rows  WHERE book = ?1`).bind(book),
-    env.DB.prepare(`DELETE FROM twl_rows WHERE book = ?1`).bind(book),
-    env.DB.prepare(
-      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
-         AND EXISTS (
-           SELECT 1 FROM scripture_lane_state
-            WHERE lane = 'lit' AND replacement_job_id IS NULL
-              AND replacement_required = 0 AND active_generation = ?2
-         )`,
-    ).bind(book, litGen),
-    env.DB.prepare(
-      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2
-         AND EXISTS (
-           SELECT 1 FROM scripture_lane_state
-            WHERE lane = 'sim' AND replacement_job_id IS NULL
-              AND replacement_required = 0 AND active_generation = ?2
-         )`,
-    ).bind(book, simGen),
-    env.DB.prepare(
-      `DELETE FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
-    ).bind(book, origVersion, olGen),
-    env.DB.prepare(
-      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
-         AND EXISTS (
-           SELECT 1 FROM scripture_lane_state
-            WHERE lane = 'lit' AND replacement_job_id IS NULL
-              AND replacement_required = 0 AND active_generation = ?2
-         )`,
-    ).bind(book, litGen),
-    env.DB.prepare(
-      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2
-         AND EXISTS (
-           SELECT 1 FROM scripture_lane_state
-            WHERE lane = 'sim' AND replacement_job_id IS NULL
-              AND replacement_required = 0 AND active_generation = ?2
-         )`,
-    ).bind(book, simGen),
-    env.DB.prepare(
-      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
-    ).bind(book, origVersion, olGen),
-  ]);
-  if ((wipe[0]?.meta?.changes ?? 0) !== 1 || (wipe[1]?.meta?.changes ?? 0) !== 1) {
-    throw new Error("lane_state_changed_during_import");
+  // Hold export leases on both lanes for the whole wipe+repopulate. Per-statement
+  // EXISTS fences alone cannot roll back earlier committed batches if replacement
+  // reserves mid-import; startReplacement refuses while these leases are held.
+  const litLease = await acquireExportLease(env, "lit", `import:${book}`);
+  if ("error" in litLease) throw new Error(`lit_import_lease:${litLease.error}`);
+  const simLease = await acquireExportLease(env, "sim", `import:${book}`);
+  if ("error" in simLease) {
+    await releaseExportLease(env, litLease.leaseId).catch(() => {});
+    throw new Error(`sim_import_lease:${simLease.error}`);
   }
 
-  // Inserts are fenced with EXISTS predicates (not a separate recheck) so a
-  // replacement freeze/activation between wipe and write cannot land.
-  const counts: ImportCounts = {
-    verses: 0,
-    tn: 0,
-    tq: 0,
-    twl: 0,
-    fetched: {
-      ult: !!ultRaw,
-      ust: !!ustRaw,
-      orig: !!origRaw,
-      tn: !!tnRaw,
-      tq: !!tqRaw,
-      twl: !!twlRaw,
-    },
-  };
+  try {
+    // Renew once before the wipe so a slow DCS fetch above doesn't leave a
+    // near-expired heartbeat into the multi-batch writes.
+    await renewExportLease(env, litLease.leaseId);
+    await renewExportLease(env, simLease.leaseId);
 
-  counts.verses += await insertVerses(env, book, "ULT", ultRaw, litGen, "lit");
-  counts.verses += await insertVerses(env, book, "UST", ustRaw, simGen, "sim");
-  counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen, null);
+    // Wipe + lane CAS in one batch. The leading UPDATEs must each affect 1 row
+    // (lane still free at expected gen); DELETEs are further guarded by EXISTS.
+    const wipe = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE scripture_lane_state SET updated_at = unixepoch()
+          WHERE lane = 'lit'
+            AND replacement_job_id IS NULL
+            AND replacement_required = 0
+            AND active_generation = ?1`,
+      ).bind(litGen),
+      env.DB.prepare(
+        `UPDATE scripture_lane_state SET updated_at = unixepoch()
+          WHERE lane = 'sim'
+            AND replacement_job_id IS NULL
+            AND replacement_required = 0
+            AND active_generation = ?1`,
+      ).bind(simGen),
+      env.DB.prepare(`DELETE FROM tn_rows  WHERE book = ?1`).bind(book),
+      env.DB.prepare(`DELETE FROM tq_rows  WHERE book = ?1`).bind(book),
+      env.DB.prepare(`DELETE FROM twl_rows WHERE book = ?1`).bind(book),
+      env.DB.prepare(
+        `DELETE FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
+           AND EXISTS (
+             SELECT 1 FROM scripture_lane_state
+              WHERE lane = 'lit' AND replacement_job_id IS NULL
+                AND replacement_required = 0 AND active_generation = ?2
+           )`,
+      ).bind(book, litGen),
+      env.DB.prepare(
+        `DELETE FROM verses WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2
+           AND EXISTS (
+             SELECT 1 FROM scripture_lane_state
+              WHERE lane = 'sim' AND replacement_job_id IS NULL
+                AND replacement_required = 0 AND active_generation = ?2
+           )`,
+      ).bind(book, simGen),
+      env.DB.prepare(
+        `DELETE FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
+      ).bind(book, origVersion, olGen),
+      env.DB.prepare(
+        `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
+           AND EXISTS (
+             SELECT 1 FROM scripture_lane_state
+              WHERE lane = 'lit' AND replacement_job_id IS NULL
+                AND replacement_required = 0 AND active_generation = ?2
+           )`,
+      ).bind(book, litGen),
+      env.DB.prepare(
+        `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2
+           AND EXISTS (
+             SELECT 1 FROM scripture_lane_state
+              WHERE lane = 'sim' AND replacement_job_id IS NULL
+                AND replacement_required = 0 AND active_generation = ?2
+           )`,
+      ).bind(book, simGen),
+      env.DB.prepare(
+        `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
+      ).bind(book, origVersion, olGen),
+    ]);
+    if ((wipe[0]?.meta?.changes ?? 0) !== 1 || (wipe[1]?.meta?.changes ?? 0) !== 1) {
+      throw new Error("lane_state_changed_during_import");
+    }
 
-  counts.tn = await insertTnRows(env, book, tnRaw, userId, litGen, simGen);
-  counts.tq = await insertTqRows(env, book, tqRaw, userId, litGen, simGen);
-  counts.twl = await insertTwlRows(env, book, twlRaw, userId, litGen, simGen);
+    // Inserts are fenced with EXISTS predicates (not a separate recheck) so a
+    // replacement freeze/activation between wipe and write cannot land.
+    const counts: ImportCounts = {
+      verses: 0,
+      tn: 0,
+      tq: 0,
+      twl: 0,
+      fetched: {
+        ult: !!ultRaw,
+        ust: !!ustRaw,
+        orig: !!origRaw,
+        tn: !!tnRaw,
+        tq: !!tqRaw,
+        twl: !!twlRaw,
+      },
+    };
 
-  // Final marker — only if both lanes are still free at the expected gens.
-  const sources = Object.entries(counts.fetched)
-    .filter(([, ok]) => ok)
-    .map(([k]) => k)
-    .join(",");
-  const marker = await env.DB.prepare(
-    `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by)
-     SELECT ?1, ?2, unixepoch(), ?3
-      WHERE EXISTS (
-            SELECT 1 FROM scripture_lane_state
-             WHERE lane = 'lit' AND replacement_job_id IS NULL
-               AND replacement_required = 0 AND active_generation = ?4
-          )
-        AND EXISTS (
-            SELECT 1 FROM scripture_lane_state
-             WHERE lane = 'sim' AND replacement_job_id IS NULL
-               AND replacement_required = 0 AND active_generation = ?5
-          )`,
-  )
-    .bind(book, `dcs:${sources}`, userId, litGen, simGen)
-    .run();
-  if ((marker.meta?.changes ?? 0) !== 1) {
-    throw new Error("lane_state_changed_during_import");
+    const renewBoth = async () => {
+      const okLit = await renewExportLease(env, litLease.leaseId);
+      const okSim = await renewExportLease(env, simLease.leaseId);
+      if (!okLit || !okSim) throw new Error("import_lease_lost");
+    };
+
+    await renewBoth();
+    counts.verses += await insertVerses(env, book, "ULT", ultRaw, litGen, "lit");
+    await renewBoth();
+    counts.verses += await insertVerses(env, book, "UST", ustRaw, simGen, "sim");
+    counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen, null);
+
+    await renewBoth();
+    counts.tn = await insertTnRows(env, book, tnRaw, userId, litGen, simGen);
+    await renewBoth();
+    counts.tq = await insertTqRows(env, book, tqRaw, userId, litGen, simGen);
+    await renewBoth();
+    counts.twl = await insertTwlRows(env, book, twlRaw, userId, litGen, simGen);
+
+    // Final marker — only if both lanes are still free at the expected gens.
+    const sources = Object.entries(counts.fetched)
+      .filter(([, ok]) => ok)
+      .map(([k]) => k)
+      .join(",");
+    const marker = await env.DB.prepare(
+      `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by)
+       SELECT ?1, ?2, unixepoch(), ?3
+        WHERE EXISTS (
+              SELECT 1 FROM scripture_lane_state
+               WHERE lane = 'lit' AND replacement_job_id IS NULL
+                 AND replacement_required = 0 AND active_generation = ?4
+            )
+          AND EXISTS (
+              SELECT 1 FROM scripture_lane_state
+               WHERE lane = 'sim' AND replacement_job_id IS NULL
+                 AND replacement_required = 0 AND active_generation = ?5
+            )`,
+    )
+      .bind(book, `dcs:${sources}`, userId, litGen, simGen)
+      .run();
+    if ((marker.meta?.changes ?? 0) !== 1) {
+      throw new Error("lane_state_changed_during_import");
+    }
+
+    // Seed per-resource SHA watermarks so the nightly self-heal can skip files
+    // that haven't changed since this import (see book_resource_syncs +
+    // bookReimport.ts). Best-effort — a missing watermark just means the first
+    // nightly reimports that resource.
+    for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
+      if (!counts.fetched[resource]) continue;
+      const file = dcsResourceFile(cfg, book, resource);
+      if (!file) continue;
+      const src = await resourceSourceRef(env, resource, cfg);
+      const sha = await fileCommitSha(env, src.owner, src.repo, file.path, src.ref);
+      if (sha) await recordResourceSync(env, book, resource, sha, "import", src);
+    }
+
+    return counts;
+  } finally {
+    await releaseExportLease(env, litLease.leaseId).catch(() => {});
+    await releaseExportLease(env, simLease.leaseId).catch(() => {});
   }
-
-  // Seed per-resource SHA watermarks so the nightly self-heal can skip files
-  // that haven't changed since this import (see book_resource_syncs +
-  // bookReimport.ts). Best-effort — a missing watermark just means the first
-  // nightly reimports that resource.
-  for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
-    if (!counts.fetched[resource]) continue;
-    const file = dcsResourceFile(cfg, book, resource);
-    if (!file) continue;
-    const src = await resourceSourceRef(env, resource, cfg);
-    const sha = await fileCommitSha(env, src.owner, src.repo, file.path, src.ref);
-    if (sha) await recordResourceSync(env, book, resource, sha, "import", src);
-  }
-
-  return counts;
 }
 
 // D1 batch() caps at 100 statements per call. Keep chunks well under that.

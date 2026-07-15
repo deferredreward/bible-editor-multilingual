@@ -1204,6 +1204,8 @@ async function applyVerseRows(
   //    into counts once the batch commits (so a fallback doesn't double-count).
   const stmts = [];
   const writes: VerseExtract[] = []; // candidates, for the per-row fallback
+  /** Parallel to write statements in stmts (every even index); used to count matches. */
+  const writeKinds: Array<"insert" | "update"> = [];
   // Edited verses whose source-owned alignment attrs were reconciled from master
   // (target text + grouping unchanged). Written in a separate version-CAS batch.
   const sourceReconciles: Array<{ v: VerseExtract; mergedJson: string; oldVersion: number; plainText: string | null }> = [];
@@ -1212,14 +1214,12 @@ async function applyVerseRows(
   // in a version-CAS batch below (the main batch's UPDATE guards on
   // `updated_by IS NULL`, which an AI-only verse fails). Counted `reimported_ai`.
   const aiReseeds: Array<{ v: VerseExtract; oldVersion: number }> = [];
-  let inserted = 0;
-  let updated = 0;
   for (const v of verses) {
     const ex = existing.get(`${v.chapter}:${v.verse}`);
     const rowKey = `${book}/${v.chapter}/${v.verse}/${bibleVersion}`;
     if (!ex) {
-      inserted++;
       writes.push(v);
+      writeKinds.push("insert");
       stmts.push(
         env.DB.prepare(
           `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
@@ -1301,8 +1301,8 @@ async function applyVerseRows(
     }
     // Pristine + changed → update. The guard stays on the UPDATE; new_version is
     // ex.version + 1 because the update only applies while the row is untouched.
-    updated++;
     writes.push(v);
+    writeKinds.push("update");
     stmts.push(
       env.DB.prepare(
         `UPDATE verses
@@ -1338,9 +1338,20 @@ async function applyVerseRows(
   //    this path's pristine semantics.)
   if (stmts.length > 0) {
     try {
-      await env.DB.batch(stmts);
-      counts.inserted += inserted;
-      counts.updated += updated;
+      const results = await env.DB.batch(stmts);
+      // stmts alternate [write, audit]; count only writes whose fence matched.
+      let landedInsert = 0;
+      let landedUpdate = 0;
+      let kindIdx = 0;
+      for (let i = 0; i < results.length; i += 2) {
+        const kind = writeKinds[kindIdx++];
+        if ((results[i]?.meta?.changes ?? 0) > 0) {
+          if (kind === "insert") landedInsert++;
+          else landedUpdate++;
+        }
+      }
+      counts.inserted += landedInsert;
+      counts.updated += landedUpdate;
     } catch (e) {
       console.error("reimport verse batch failed; falling back per-row", {
         book,
@@ -1368,8 +1379,13 @@ async function applyVerseRows(
             `UPDATE verses
                 SET content_json = ?1, version = version + 1, updated_at = ?2
               WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
-                AND source_generation = ?7 AND version = ?8`,
-          ).bind(u.mergedJson, now, book, u.v.chapter, u.v.verse, bibleVersion, gen, u.oldVersion),
+                AND source_generation = ?7 AND version = ?8
+                AND EXISTS (
+                  SELECT 1 FROM scripture_lane_state
+                   WHERE lane = ?9 AND replacement_job_id IS NULL
+                     AND replacement_required = 0 AND active_generation = ?7
+                )`,
+          ).bind(u.mergedJson, now, book, u.v.chapter, u.v.verse, bibleVersion, gen, u.oldVersion, lane),
         ),
       );
       const logs: D1PreparedStatement[] = [];
@@ -1413,8 +1429,13 @@ async function applyVerseRows(
                 SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                     updated_by = NULL, version = version + 1, updated_at = ?4
               WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-                AND source_generation = ?9 AND version = ?10`,
-          ).bind(u.v.contentJson, u.v.plainText, u.v.verseEnd, now, book, u.v.chapter, u.v.verse, bibleVersion, gen, u.oldVersion),
+                AND source_generation = ?9 AND version = ?10
+                AND EXISTS (
+                  SELECT 1 FROM scripture_lane_state
+                   WHERE lane = ?11 AND replacement_job_id IS NULL
+                     AND replacement_required = 0 AND active_generation = ?9
+                )`,
+          ).bind(u.v.contentJson, u.v.plainText, u.v.verseEnd, now, book, u.v.chapter, u.v.verse, bibleVersion, gen, u.oldVersion, lane),
         ),
       );
       const logs: D1PreparedStatement[] = [];
@@ -1459,6 +1480,7 @@ async function applyVerseRowsPerRow(
   const identity = await verifyVerseWriteIdentity(env, bibleVersion, intendedSrc);
   if (!identity) return counts;
   const gen = identity.generation;
+  const lane = laneForBibleVersion(bibleVersion)!;
 
   const now = Math.floor(Date.now() / 1000);
   for (const v of verses) {
@@ -1469,10 +1491,18 @@ async function applyVerseRowsPerRow(
       // Try insert first; cheap signal for "doesn't exist locally".
       const ins = await env.DB.prepare(
         `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(book, chapter, verse, bible_version, source_generation) DO NOTHING`,
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+          WHERE NOT EXISTS (
+            SELECT 1 FROM verses
+             WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?5 AND source_generation = ?6
+          )
+            AND EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = ?9 AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?6
+          )`,
       )
-        .bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText)
+        .bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText, lane)
         .run();
       if ((ins.meta.changes ?? 0) > 0) {
         counts.inserted++;
@@ -1539,9 +1569,14 @@ async function applyVerseRowsPerRow(
               SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                   updated_by = NULL, version = version + 1, updated_at = ?4
             WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-              AND source_generation = ?9 AND version = ?10`,
+              AND source_generation = ?9 AND version = ?10
+              AND EXISTS (
+                SELECT 1 FROM scripture_lane_state
+                 WHERE lane = ?11 AND replacement_job_id IS NULL
+                   AND replacement_required = 0 AND active_generation = ?9
+              )`,
         )
-          .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen, existing!.version)
+          .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen, existing!.version, lane)
           .run();
         if ((upd.meta.changes ?? 0) > 0) {
           counts.reimported_ai++;
@@ -1561,9 +1596,14 @@ async function applyVerseRowsPerRow(
             SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                 version = version + 1, updated_at = ?4
           WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-            AND source_generation = ?9 AND updated_by IS NULL`,
+            AND source_generation = ?9 AND updated_by IS NULL
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_state
+               WHERE lane = ?10 AND replacement_job_id IS NULL
+                 AND replacement_required = 0 AND active_generation = ?9
+            )`,
       )
-        .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen)
+        .bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen, lane)
         .run();
       if ((upd.meta.changes ?? 0) > 0) {
         counts.updated++;

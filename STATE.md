@@ -14,6 +14,15 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Fifth-pass re-review P1s closed.**
+- bookImport: holds export leases on lit+sim for wipe+repopulate; `startReplacement` refuses while a fresh lease is held (mutual exclusion).
+- pipelineImport: accept `pending_imports` only after a matched verse mutation (not in the same batch as a fenced no-op).
+- bookReimport: EXISTS fences on source-attr reconcile, AI reseed, and per-row fallback; batch counts use `meta.changes`.
+- exportOne: acquire lease before capture/render; re-bind generation/config hash; re-verify after render.
+- Locked-text: whole-book `canonicalizeUsfmWithoutAlignment` / `nonAlignmentUsfmEqual` (headers + key sets); fail closed on unreadable dest.
+- export.ts: `baseRef` threaded through reset/create/compare/PR; freshness `sameIdentity` includes ref.
+- Tests: USFM equality cases + lease-blocks-start + predicated pipeline accept. Typecheck + api tests green.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Fourth-pass re-review P1s closed (`9723d83`).**
 - Merged `origin/main` (`a8b2e61`) to clear PR #20 CONFLICTING.
 - bookImport INSERT/meta batches EXISTS-fenced; pipeline apply UPDATE/INSERT fenced; stageBook `staging_claim_token` (migration `0045`).
@@ -69,6 +78,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 fifth-pass P1 close-out** — Import/export lease mutual exclusion, predicated pipeline accept, reimport path fences + matched counts, lease-before-render, whole-USFM locked-text compare, baseRef on branch mutations + freshness ref.
 
 2026-07-15 · **PR #20 fourth-pass P1 close-out** — Insert/apply EXISTS fences, staging claim tokens (`0045`), export baseline refuse, locked-text equality, conflict fencing, legacy alignment draft reject, baseRef shrink checks; main merge for conflict. Commit `9723d83`.
 

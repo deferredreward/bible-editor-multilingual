@@ -499,6 +499,8 @@ export interface DcsCommitConfig {
   owner: string;
   repo: string;
   branch: string;
+  /** Base branch/ref for reset, create, and content compare (default "master"). */
+  baseRef?: string;
   /** Called immediately before every mutating DCS request (export fencing). */
   beforeMutation?: () => Promise<void>;
 }
@@ -540,8 +542,9 @@ async function resetExportBranchToMaster(config: DcsCommitConfig): Promise<void>
     Accept: "application/json",
   };
   const repoBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+  const baseRef = config.baseRef ?? "master";
 
-  const masterRes = await fetch(`${repoBase}/git/refs/heads/master`, { method: "GET", headers });
+  const masterRes = await fetch(`${repoBase}/git/refs/heads/${encodeURIComponent(baseRef)}`, { method: "GET", headers });
   if (!masterRes.ok) {
     throw new Error(`dcs_master_ref_failed: ${masterRes.status} ${await masterRes.text()}`);
   }
@@ -586,19 +589,20 @@ async function resetExportBranchToMaster(config: DcsCommitConfig): Promise<void>
   throw new Error(`dcs_branch_ensure_failed: ${patchRes.status} ${await patchRes.text()}`);
 }
 
-// POST a new branch off master. 409 = a concurrent run already created it
-// (benign). Any other non-ok status is a real failure.
+// POST a new branch off the configured baseRef. 409 = a concurrent run already
+// created it (benign). Any other non-ok status is a real failure.
 async function createBranchFromMaster(
   repoBase: string,
   headers: Record<string, string>,
   branch: string,
-  config?: Pick<DcsCommitConfig, "beforeMutation">,
+  config?: Pick<DcsCommitConfig, "beforeMutation" | "baseRef">,
 ): Promise<void> {
   await config?.beforeMutation?.();
+  const baseRef = config?.baseRef ?? "master";
   const createRes = await fetch(`${repoBase}/branches`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ new_branch_name: branch, old_branch_name: "master" }),
+    body: JSON.stringify({ new_branch_name: branch, old_branch_name: baseRef }),
   });
   if (!createRes.ok && createRes.status !== 409) {
     throw new Error(`dcs_branch_create_failed: ${createRes.status} ${await createRes.text()}`);
@@ -746,7 +750,8 @@ export async function commitToDcs(
 
   const contentBase64 = utf8ToBase64(content);
   if (!opts?.forceBranch) {
-    const masterFile = await getDcsFileBase64(base, headers, "master");
+    const baseRef = config.baseRef ?? "master";
+    const masterFile = await getDcsFileBase64(base, headers, baseRef);
     if (masterFile?.base64 != null && masterFile.base64 === contentBase64) {
       return { contentSha: masterFile.sha ?? "", commitSha: "", changed: false, branchTouched: false };
     }
@@ -1029,6 +1034,8 @@ export interface DcsPrConfig {
   repo: string;
   branch: string;   // head
   base?: string;    // default "master"
+  /** Alias for `base` — callers often carry baseRef on DcsCommitConfig. */
+  baseRef?: string;
 }
 
 export interface DcsPrResult {
@@ -1051,7 +1058,7 @@ function dcsPrHeaders(token: string): Record<string, string> {
 // this base/head. A 200 can be a closed or merged PR — the endpoint doesn't
 // filter by state — so only an "open" one counts.
 export async function findDcsOpenPr(config: DcsPrConfig): Promise<number | null> {
-  const base = config.base ?? "master";
+  const base = config.base ?? config.baseRef ?? "master";
   const apiBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
   const res = await fetch(
     `${apiBase}/pulls/${encodeURIComponent(base)}/${encodeURIComponent(config.branch)}`,
@@ -1068,7 +1075,7 @@ export async function ensureDcsPr(
   title: string,
   body: string,
 ): Promise<DcsPrResult> {
-  const base = config.base ?? "master";
+  const base = config.base ?? config.baseRef ?? "master";
   if (config.branch === base) return { number: null, created: false, reason: "head_equals_base" };
 
   const apiBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;

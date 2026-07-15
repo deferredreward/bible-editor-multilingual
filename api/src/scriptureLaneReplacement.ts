@@ -115,6 +115,15 @@ export async function startReplacement(
       detail: { lane, jobId: row.replacement_job_id },
     });
   }
+  // Import (and export) hold scripture_export_leases across multi-batch writes.
+  // Freezing while a lease is held lets replacement reserve mid-wipe/repopulate
+  // and leave predecessor data partially destroyed. Mutual exclusion here.
+  if (await hasHeldExportLease(env, lane)) {
+    throw Object.assign(new Error("lane_lease_held"), {
+      status: 409,
+      detail: { lane, reason: "import_or_export_lease_held" },
+    });
+  }
   if (!confirm) {
     throw Object.assign(new Error("confirmation_required"), { status: 400 });
   }
@@ -139,6 +148,12 @@ export async function startReplacement(
     throw Object.assign(new Error("replacement_already_active"), {
       status: 409,
       detail: { lane, jobId: stillFree?.replacement_job_id ?? null },
+    });
+  }
+  if (await hasHeldExportLease(env, lane)) {
+    throw Object.assign(new Error("lane_lease_held"), {
+      status: 409,
+      detail: { lane, reason: "import_or_export_lease_held" },
     });
   }
 

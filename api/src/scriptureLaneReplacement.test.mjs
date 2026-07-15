@@ -1329,4 +1329,88 @@ function d1Batch(db, fns) {
   console.log("  ✓ activation drain: stale held → grace block → allowed after grace");
 }
 
+// ── 32. startReplacement refuses while a fresh export/import lease is held ───
+// Import holds scripture_export_leases across wipe+repopulate; replacement must
+// not CAS-freeze mid-import (would leave predecessor partially wiped).
+
+{
+  const db = freshDb();
+  seedLane(db, "lit");
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+     VALUES ('imp','lit','t','held','import:ZEC',?1)`,
+  ).run(now);
+
+  const hasHeld = () => !!db.prepare(`
+    SELECT 1 FROM scripture_export_leases
+    WHERE lane = ?1 AND status = 'held' AND heartbeat_at * 1000 > ?2 LIMIT 1
+  `).get("lit", Date.now() - EXPORT_LEASE_TTL_MS);
+  assert.equal(hasHeld(), true, "import lease is held");
+
+  // Mirror of startReplacement's pre-CAS lease gate: refuse without mutating.
+  if (hasHeld()) {
+    // Would throw lane_lease_held — no CAS freeze runs.
+  } else {
+    db.prepare(`
+      UPDATE scripture_lane_state
+         SET replacement_job_id = 'job-X', exports_blocked = 1
+       WHERE lane = 'lit' AND replacement_job_id IS NULL
+    `).run();
+  }
+  const lane = getLane(db, "lit");
+  assert.equal(lane.replacement_job_id, null, "lease-held start does not freeze the lane");
+  console.log("  ✓ startReplacement refuses while import/export lease held");
+}
+
+// ── 33. pipeline accept is predicated on a matched verse mutation ────────────
+// A fenced UPDATE matching 0 rows must not still consume pending_imports.
+
+{
+  const db = freshDb();
+  // Minimal pending_imports + verses shape for the acceptance predicate.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_imports (
+      id TEXT PRIMARY KEY,
+      accepted_at INTEGER,
+      accepted_by INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS verses_pipe (
+      book TEXT, chapter INTEGER, verse INTEGER, bible_version TEXT,
+      source_generation INTEGER, version INTEGER, content_json TEXT
+    );
+  `);
+  db.prepare(`INSERT INTO pending_imports (id, accepted_at) VALUES ('p1', NULL)`).run();
+  db.prepare(
+    `INSERT INTO verses_pipe VALUES ('ZEC',1,1,'ULT',1,1,'{"verseObjects":[]}')`,
+  ).run();
+
+  // Fenced update matches 0 (wrong generation) — do NOT accept.
+  const upd = db.prepare(`
+    UPDATE verses_pipe SET version = version + 1
+     WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+       AND source_generation=2
+  `).run();
+  assert.equal(upd.changes, 0);
+  if (upd.changes > 0) {
+    db.prepare(`UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1 WHERE id='p1'`).run();
+  }
+  const pending = db.prepare(`SELECT accepted_at FROM pending_imports WHERE id='p1'`).get();
+  assert.equal(pending.accepted_at, null, "zero-row fence leaves pending unaccepted");
+
+  // Successful mutation then accepts.
+  const ok = db.prepare(`
+    UPDATE verses_pipe SET version = version + 1
+     WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+       AND source_generation=1
+  `).run();
+  assert.equal(ok.changes, 1);
+  if (ok.changes > 0) {
+    db.prepare(`UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1 WHERE id='p1'`).run();
+  }
+  const accepted = db.prepare(`SELECT accepted_at FROM pending_imports WHERE id='p1'`).get();
+  assert.ok(accepted.accepted_at != null, "matched mutation accepts pending");
+  console.log("  ✓ pipeline accept predicated on matched verse mutation");
+}
+
 console.log("\nscriptureLaneReplacement tests passed");

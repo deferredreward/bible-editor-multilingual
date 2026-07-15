@@ -1711,16 +1711,17 @@ async function applyVerseUpdate(
           JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration,
           book, chapter, verse, bibleVersion, sourceGeneration,
         ),
-      env.DB
-        .prepare(
-          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
-        )
-        .bind(p.id, userId),
     ]);
-    // If the fenced UPDATE matched 0 rows, a freeze/activation won — treat as skip.
-    if (lane && (results[0]?.meta?.changes ?? 0) === 0) {
+    // Accept only after a successful verse mutation. A fenced no-op must leave
+    // the pending row retryable — otherwise AI output is marked accepted and lost.
+    if ((results[0]?.meta?.changes ?? 0) === 0) {
       return;
     }
+    await env.DB.prepare(
+      `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+    )
+      .bind(p.id, userId)
+      .run();
     return;
   }
 
@@ -1753,13 +1754,13 @@ async function applyVerseUpdate(
           WHERE changes() > 0`,
       )
       .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
-    env.DB
-      .prepare(
-        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
-      )
-      .bind(p.id, userId),
   ]);
-  if (lane && (insertResults[0]?.meta?.changes ?? 0) === 0) {
+  if ((insertResults[0]?.meta?.changes ?? 0) === 0) {
     return;
   }
+  await env.DB.prepare(
+    `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+  )
+    .bind(p.id, userId)
+    .run();
 }
