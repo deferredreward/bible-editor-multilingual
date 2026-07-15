@@ -67,9 +67,12 @@ import {
   laneForBibleVersion,
   assertLaneWritable,
   getLaneState,
+  activeLaneConfig,
   activeGenerationForBibleVersion,
   type LaneKey,
 } from "./scriptureLane";
+import { extractVersesForRange } from "./importParsers";
+import { nonAlignmentContentEqual } from "./alignmentCanonical";
 import {
   acquireExportLease,
   renewExportLease,
@@ -875,7 +878,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // whose row==line model makes the count exact. This is what would have
     // stopped the twl_PSA clobber (4880 rows shipped over master's 7776).
     if (dcsAllowed && (resource === "tn" || resource === "tq" || resource === "twl")) {
-      const guard = await this.checkTsvShrink(book, resource, built.rowCount, dcsOwner, dcsRepo);
+      const guard = await this.checkTsvShrink(
+        book, resource, built.rowCount, dcsOwner, dcsRepo, "master",
+      );
       if (!guard.ok) {
         await this.recordShrinkSkipAlert(book, resource, built.rowCount, guard.masterRows, guard.detail);
         const reason = `shrink_guard:${guard.detail}`;
@@ -906,7 +911,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // Conservative: only blocks a verse whose aligned-word count shrank while
     // its plain text is unchanged — a real text rewrite is always allowed.
     if (dcsAllowed && (resource === "ult" || resource === "ust")) {
-      const guard = await this.checkUsfmAlignmentShrink(book, resource, built.content, dcsOwner, dcsRepo);
+      const guard = await this.checkUsfmAlignmentShrink(
+        book, resource, built.content, dcsOwner, dcsRepo, laneExport?.baseRef ?? "master",
+      );
       if (!guard.ok) {
         await this.recordAlignmentShrinkSkipAlert(book, resource, guard.detail);
         const reason = `align_shrink_guard:${guard.detail}`;
@@ -924,6 +931,29 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           prNumber: null,
           prReason: null,
         };
+      }
+    }
+
+    // textReadOnly lanes (AVD/NAV): refuse to export if non-alignment body text
+    // diverged from the destination tip. Alignment-only changes are allowed.
+    if (dcsAllowed && lane && (resource === "ult" || resource === "ust")) {
+      const laneRow = await getLaneState(this.env, lane);
+      const laneCfg = laneRow ? activeLaneConfig(laneRow) : null;
+      if (laneCfg?.textReadOnly) {
+        const baseRef = laneExport?.baseRef ?? "master";
+        const eq = await this.checkLockedTextEquality(
+          book, resource, built.content, dcsOwner, dcsRepo, baseRef,
+        );
+        if (!eq.ok) {
+          await this.recordLockedTextDriftAlert(book, resource, eq.detail);
+          const reason = `locked_text_drift:${eq.detail}`;
+          await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+          return {
+            book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key,
+            branch: null, dcsCommitSha: null, dcsChanged: false,
+            dcsSkippedReason: reason, prNumber: null, prReason: null,
+          };
+        }
       }
     }
 
@@ -1539,6 +1569,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         owner,
         repo,
         branch,
+        beforeMutation: fencingToken
+          ? () => this.assertFencingOrThrow(lane, fencingToken)
+          : undefined,
       });
       if (!res.rebuilt) {
         await this.recordPrConflictAlert(book, resource, repo, branch, res.detail);
@@ -1549,7 +1582,18 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // child of master. The delete auto-closed the old PR, so ensureDcsPr mints
       // a fresh one whose diff is exactly the D1 delta.
       await this.assertFencingOrThrow(lane, fencingToken);
-      const recommit = await commitToDcs(dcsCfg, filename, content, message, { forceBranch: true });
+      const recommit = await commitToDcs(
+        {
+          ...dcsCfg,
+          beforeMutation: fencingToken
+            ? () => this.assertFencingOrThrow(lane, fencingToken)
+            : undefined,
+        },
+        filename,
+        content,
+        message,
+        { forceBranch: true },
+      );
       await this.assertFencingOrThrow(lane, fencingToken);
       const pr = await ensureDcsPr(
         dcsCfg,
@@ -1613,11 +1657,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     renderedRows: number,
     destOwner: string,
     destRepo: string,
+    baseRef = "master",
   ): Promise<{ ok: boolean; detail: string; masterRows: number | null }> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const raw = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path));
+    const raw = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
     if (raw == null) return { ok: false, detail: "master_unreadable", masterRows: null };
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
     const masterRows = Math.max(0, raw.split(/\r?\n/).filter((l) => l.length > 0).length - 1);
@@ -1629,18 +1674,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
   // Fetch destination master's current USFM and decide whether this ULT/UST
   // render would silently drop \zaln word alignment. Always reads the SAME
-  // owner/repo the commit will target.
+  // owner/repo/ref the commit will target.
   private async checkUsfmAlignmentShrink(
     book: string,
     resource: Resource,
     renderedUsfm: string,
     destOwner: string,
     destRepo: string,
+    baseRef = "master",
   ): Promise<{ ok: boolean; detail: string }> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
-    const masterUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path));
+    const masterUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
     if (masterUsfm == null) return { ok: false, detail: "master_unreadable" };
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);
     if (result.refused) {
@@ -1656,6 +1702,62 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return { ok: false, detail: `align_loss_${result.offenders.length}:${sample}` };
     }
     return { ok: true, detail: "ok" };
+  }
+
+  /** Non-alignment body must match destination for textReadOnly lanes. */
+  private async checkLockedTextEquality(
+    book: string,
+    resource: Resource,
+    renderedUsfm: string,
+    destOwner: string,
+    destRepo: string,
+    baseRef: string,
+  ): Promise<{ ok: boolean; detail: string }> {
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
+    if (!file) return { ok: true, detail: "no_file" };
+    const destUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
+    if (destUsfm == null) {
+      // Absent dest file: first push is allowed for locked text (no baseline body).
+      return { ok: true, detail: "dest_absent" };
+    }
+    const rendered = extractVersesForRange(renderedUsfm, 1, 999);
+    const dest = extractVersesForRange(destUsfm, 1, 999);
+    const destByKey = new Map(dest.map((v) => [`${v.chapter}:${v.verse}`, v]));
+    const offenders: string[] = [];
+    for (const v of rendered) {
+      const d = destByKey.get(`${v.chapter}:${v.verse}`);
+      if (!d) continue;
+      let renderedContent: unknown;
+      let destContent: unknown;
+      try {
+        renderedContent = JSON.parse(v.contentJson);
+        destContent = JSON.parse(d.contentJson);
+      } catch {
+        offenders.push(`${v.chapter}:${v.verse}:parse`);
+        continue;
+      }
+      if (!nonAlignmentContentEqual(renderedContent, destContent)) {
+        offenders.push(`${v.chapter}:${v.verse}`);
+        if (offenders.length >= 8) break;
+      }
+    }
+    if (offenders.length > 0) {
+      return { ok: false, detail: offenders.slice(0, 5).join(",") };
+    }
+    return { ok: true, detail: "ok" };
+  }
+
+  private async recordLockedTextDriftAlert(
+    book: string,
+    resource: Resource,
+    detail: string,
+  ): Promise<void> {
+    const source = `export_locked_text:${book}:${resource}`;
+    const message =
+      `Benjamin — nightly export blocked ${book} ${resource.toUpperCase()}: textReadOnly lane ` +
+      `body drifted from destination (${detail}). Alignment-only changes are fine; text rewrites are not.`;
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
   // Freshness against the repo we will commit to. When source == export, use
@@ -1706,7 +1808,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       .first<{ base_sha: string | null }>();
     const watermark = baseline?.base_sha ?? null;
     if (!watermark) {
-      // First export to this destination — nothing to clobber yet.
+      // First export: only safe when the destination file is absent. If tipSha
+      // is set, the dest already has content we could clobber — refuse until a
+      // baseline is explicitly recorded (or tip matches after a sync).
+      if (tipSha) {
+        return { ok: false, detail: "export_baseline_required", masterSha: tipSha, watermark: null };
+      }
       return { ok: true, detail: "no_export_baseline", masterSha: tipSha, watermark: null };
     }
     if (!tipSha) return { ok: false, detail: "export_tip_unknown", masterSha: null, watermark };

@@ -1155,6 +1155,7 @@ async function applyVerseRows(
   const identity = await verifyVerseWriteIdentity(env, bibleVersion, intendedSrc);
   if (!identity) return counts;
   const gen = identity.generation;
+  const lane = laneForBibleVersion(bibleVersion)!;
 
   // Heal AI-mangled U+FFFD source attributes before the diff so we never write
   // (or no-op against) upstream's garbled bytes. No-op + zero extra reads unless
@@ -1222,9 +1223,17 @@ async function applyVerseRows(
       stmts.push(
         env.DB.prepare(
           `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-           ON CONFLICT(book, chapter, verse, bible_version, source_generation) DO NOTHING`,
-        ).bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText),
+           SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+            WHERE NOT EXISTS (
+              SELECT 1 FROM verses
+               WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?5 AND source_generation = ?6
+            )
+              AND EXISTS (
+              SELECT 1 FROM scripture_lane_state
+               WHERE lane = ?9 AND replacement_job_id IS NULL
+                 AND replacement_required = 0 AND active_generation = ?6
+            )`,
+        ).bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText, lane),
         // Audit conditional on the INSERT actually landing: ON CONFLICT DO
         // NOTHING means a verse that already exists (created between our read
         // and this batch) inserts 0 rows — don't log a phantom restorable v1.
@@ -1300,8 +1309,13 @@ async function applyVerseRows(
             SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                 version = version + 1, updated_at = ?4
           WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-            AND source_generation = ?9 AND updated_by IS NULL`,
-      ).bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen),
+            AND source_generation = ?9 AND updated_by IS NULL
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_state
+               WHERE lane = ?10 AND replacement_job_id IS NULL
+                 AND replacement_required = 0 AND active_generation = ?9
+            )`,
+      ).bind(v.contentJson, v.plainText, v.verseEnd, now, book, v.chapter, v.verse, bibleVersion, gen, lane),
       // Audit conditional on the UPDATE actually landing (mirrors verses.ts).
       // The UPDATE is guarded on `updated_by IS NULL`, so if an editor touched
       // this verse between our read and this batch the UPDATE matches 0 rows —
@@ -2170,16 +2184,19 @@ export async function runChunkedReimport(
     perResource.twl.twl_reordered += r.reordered;
   }
 
-  // Record fetch-time SHAs for resources that ran (so a later night can skip).
-  // Use the staged `src` captured at plan time — do NOT re-call resourceSourceRef
-  // (a mid-run generation flip would stamp the watermark under the wrong identity).
+  // Record fetch-time SHAs only for resources still under a valid identity.
+  // A mid-run replacement must not certify a watermark for skipped writes.
   await step.do(`reimport-sync-${book}`, async () => {
     let recorded = 0;
     for (const e of changed) {
-      if (e.masterSha && e.src) {
-        await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", e.src);
-        recorded++;
+      if (!e.masterSha || !e.src) continue;
+      if (e.resource === "ult" || e.resource === "ust") {
+        const bv = e.resource === "ult" ? "ULT" : "UST";
+        const still = await verifyVerseWriteIdentity(env, bv, e.src);
+        if (!still) continue;
       }
+      await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", e.src);
+      recorded++;
     }
     return { recorded };
   });

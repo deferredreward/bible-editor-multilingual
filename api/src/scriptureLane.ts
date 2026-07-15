@@ -6,7 +6,6 @@ import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig.ts";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
 import type { RepoRef } from "./repoUrl.ts";
-import { repoRefEquals } from "./repoUrl.ts";
 
 export type LaneKey = "lit" | "sim";
 

@@ -351,9 +351,8 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
           return;
         }
         if (
-          rec.sourceGeneration != null &&
-          baseGen != null &&
-          rec.sourceGeneration !== baseGen
+          rec.sourceGeneration == null ||
+          (baseGen != null && rec.sourceGeneration !== baseGen)
         ) {
           void alignmentDrafts.clear(key);
           return;

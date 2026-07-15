@@ -974,6 +974,7 @@ export async function recreateExportBranchFromMaster(
   // Delete the diverged branch (needs branch-delete scope). 404 = already gone,
   // which is fine — we recreate it below either way. A 403 means the token can't
   // delete; surface it so the caller alerts instead of throwing.
+  await config.beforeMutation?.();
   const del = await fetch(
     `${repoBase}/branches/${encodeURIComponent(config.branch)}`,
     { method: "DELETE", headers },
