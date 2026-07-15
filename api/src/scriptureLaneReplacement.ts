@@ -248,10 +248,13 @@ export async function stageBook(
 
   // Serialize concurrent stage of the same job×book. Also reclaim stale
   // `staging` rows (Worker died after claim) after STAGING_CLAIM_STALE_SECONDS.
+  // Each claim gets a unique token; subsequent destructive writes require it so
+  // a slow original Worker cannot resume after takeover.
+  const claimToken = crypto.randomUUID();
   const claimed = await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
         SET status = 'staging', updated_at = unixepoch(),
-            error_json = NULL
+            error_json = NULL, staging_claim_token = ?4
       WHERE job_id = ?1 AND book = ?2
         AND (
           status IN ('pending', 'retryable_error', 'failed')
@@ -259,7 +262,7 @@ export async function stageBook(
         )
       RETURNING book`,
   )
-    .bind(jobId, book, STAGING_CLAIM_STALE_SECONDS)
+    .bind(jobId, book, STAGING_CLAIM_STALE_SECONDS, claimToken)
     .first<{ book: string }>();
   if (!claimed) {
     const cur = await env.DB.prepare(
@@ -272,18 +275,39 @@ export async function stageBook(
 
   // Drop any partial verses this job already wrote for the book×generation
   // (no-op on a fresh pending→staging claim; required for stale reclaim).
+  // Token-gated: if we lost the claim mid-flight, stop.
   const bv = bibleVersionForLane(job.lane as LaneKey);
+  const stillOurs = async (): Promise<boolean> => {
+    const row = await env.DB.prepare(
+      `SELECT staging_claim_token FROM scripture_lane_replacement_books
+        WHERE job_id = ?1 AND book = ?2 AND staging_claim_token = ?3`,
+    )
+      .bind(jobId, book, claimToken)
+      .first();
+    return !!row;
+  };
+
+  if (!(await stillOurs())) return { status: "lost_claim" };
+
   await env.DB.batch([
     env.DB.prepare(
       `DELETE FROM verses
         WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
-          AND created_by_job_id = ?4`,
-    ).bind(book, bv, job.generation, jobId),
+          AND created_by_job_id = ?4
+          AND EXISTS (
+            SELECT 1 FROM scripture_lane_replacement_books
+             WHERE job_id = ?4 AND book = ?1 AND staging_claim_token = ?5
+          )`,
+    ).bind(book, bv, job.generation, jobId, claimToken),
     env.DB.prepare(
       `DELETE FROM book_usfm_meta
         WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
-          AND created_by_job_id = ?4`,
-    ).bind(book, bv, job.generation, jobId),
+          AND created_by_job_id = ?4
+          AND EXISTS (
+            SELECT 1 FROM scripture_lane_replacement_books
+             WHERE job_id = ?4 AND book = ?1 AND staging_claim_token = ?5
+          )`,
+    ).bind(book, bv, job.generation, jobId, claimToken),
   ]);
 
   const pendingCfg: ScriptureLaneConfig = JSON.parse(job.pending_config_json);
@@ -302,22 +326,45 @@ export async function stageBook(
     ).bind(jobId).run();
   }
 
+  const setBookStatus = async (
+    status: string,
+    extra?: { errorJson?: string; sourceFields?: boolean },
+    source?: { owner: string; repo: string; ref: string; sha: string; n: number },
+  ): Promise<boolean> => {
+    if (extra?.sourceFields && source) {
+      const r = await env.DB.prepare(
+        `UPDATE scripture_lane_replacement_books
+            SET status = ?1,
+                source_owner = ?2, source_repo = ?3, source_ref = ?4, source_sha = ?5,
+                completeness_json = ?6, error_json = NULL, updated_at = unixepoch()
+          WHERE job_id = ?7 AND book = ?8 AND staging_claim_token = ?9`,
+      )
+        .bind(
+          status, source.owner, source.repo, source.ref, source.sha,
+          JSON.stringify({ verses: source.n }),
+          jobId, book, claimToken,
+        )
+        .run();
+      return (r.meta?.changes ?? 0) === 1;
+    }
+    const r = await env.DB.prepare(
+      `UPDATE scripture_lane_replacement_books
+          SET status = ?1, error_json = ?2, updated_at = unixepoch()
+        WHERE job_id = ?3 AND book = ?4 AND staging_claim_token = ?5`,
+    )
+      .bind(status, extra?.errorJson ?? null, jobId, book, claimToken)
+      .run();
+    return (r.meta?.changes ?? 0) === 1;
+  };
+
   // Resolve the file's commit SHA at the configured ref FIRST, then fetch
   // USFM from that immutable SHA so the bytes we stage and the SHA we record
   // cannot diverge (a push between fetch and sha-lookup used to race).
   const sha = await fileCommitSha(env, owner, repo, usfmPath, ref);
   if (!sha) {
-    await env.DB.prepare(
-      `UPDATE scripture_lane_replacement_books
-          SET status = 'retryable_error',
-              error_json = ?1,
-              updated_at = unixepoch()
-        WHERE job_id = ?2 AND book = ?3`,
-    ).bind(
-      JSON.stringify({ error: "sha_unavailable", owner, repo, ref, path: usfmPath }),
-      jobId,
-      book,
-    ).run();
+    await setBookStatus("retryable_error", {
+      errorJson: JSON.stringify({ error: "sha_unavailable", owner, repo, ref, path: usfmPath }),
+    });
     return { status: "retryable_error" };
   }
 
@@ -331,13 +378,9 @@ export async function stageBook(
   }
 
   if (!rawUsfm) {
-    await env.DB.prepare(
-      `UPDATE scripture_lane_replacement_books
-          SET status = 'retryable_error',
-              error_json = ?1,
-              updated_at = unixepoch()
-        WHERE job_id = ?2 AND book = ?3`,
-    ).bind(JSON.stringify({ error: "fetch_failed", url, ref, sha }), jobId, book).run();
+    await setBookStatus("retryable_error", {
+      errorJson: JSON.stringify({ error: "fetch_failed", url, ref, sha }),
+    });
     return { status: "retryable_error" };
   }
 
@@ -348,27 +391,16 @@ export async function stageBook(
     headers = extractUsfmHeaders(rawUsfm);
     verses = extractVersesForRange(rawUsfm, 1, 999);
   } catch (e) {
-    await env.DB.prepare(
-      `UPDATE scripture_lane_replacement_books
-          SET status = 'retryable_error',
-              error_json = ?1,
-              updated_at = unixepoch()
-        WHERE job_id = ?2 AND book = ?3`,
-    ).bind(
-      JSON.stringify({ error: "parse_failed", message: e instanceof Error ? e.message : String(e) }),
-      jobId, book,
-    ).run();
+    await setBookStatus("retryable_error", {
+      errorJson: JSON.stringify({ error: "parse_failed", message: e instanceof Error ? e.message : String(e) }),
+    });
     return { status: "retryable_error" };
   }
 
   if (verses.length === 0) {
-    await env.DB.prepare(
-      `UPDATE scripture_lane_replacement_books
-          SET status = 'retryable_error',
-              error_json = ?1,
-              updated_at = unixepoch()
-        WHERE job_id = ?2 AND book = ?3`,
-    ).bind(JSON.stringify({ error: "empty_usfm", url, ref, sha }), jobId, book).run();
+    await setBookStatus("retryable_error", {
+      errorJson: JSON.stringify({ error: "empty_usfm", url, ref, sha }),
+    });
     return { status: "retryable_error" };
   }
 
@@ -383,14 +415,8 @@ export async function stageBook(
     .first<{ n: number }>();
   const predecessorVerses = predCount?.n ?? 0;
   if (predecessorVerses > 0 && verses.length < predecessorVerses) {
-    await env.DB.prepare(
-      `UPDATE scripture_lane_replacement_books
-          SET status = 'retryable_error',
-              error_json = ?1,
-              updated_at = unixepoch()
-        WHERE job_id = ?2 AND book = ?3`,
-    ).bind(
-      JSON.stringify({
+    await setBookStatus("retryable_error", {
+      errorJson: JSON.stringify({
         error: "incomplete_usfm",
         staged: verses.length,
         predecessor: predecessorVerses,
@@ -398,11 +424,11 @@ export async function stageBook(
         ref,
         sha,
       }),
-      jobId,
-      book,
-    ).run();
+    });
     return { status: "retryable_error" };
   }
+
+  if (!(await stillOurs())) return { status: "lost_claim" };
 
   // Make staging idempotent: drop any prior partial rows for this job×book
   // before re-inserting (a crash mid-chunk previously left PK collisions on retry).
@@ -410,38 +436,60 @@ export async function stageBook(
     env.DB.prepare(
       `DELETE FROM verses
         WHERE bible_version = ?1 AND source_generation = ?2 AND book = ?3
-          AND created_by_job_id = ?4`,
-    ).bind(bv, job.generation, book, jobId),
+          AND created_by_job_id = ?4
+          AND EXISTS (
+            SELECT 1 FROM scripture_lane_replacement_books
+             WHERE job_id = ?4 AND book = ?3 AND staging_claim_token = ?5
+          )`,
+    ).bind(bv, job.generation, book, jobId, claimToken),
     env.DB.prepare(
       `DELETE FROM book_usfm_meta
         WHERE bible_version = ?1 AND source_generation = ?2 AND book = ?3
-          AND created_by_job_id = ?4`,
-    ).bind(bv, job.generation, book, jobId),
+          AND created_by_job_id = ?4
+          AND EXISTS (
+            SELECT 1 FROM scripture_lane_replacement_books
+             WHERE job_id = ?4 AND book = ?3 AND staging_claim_token = ?5
+          )`,
+    ).bind(bv, job.generation, book, jobId, claimToken),
   ]);
+
+  if (!(await stillOurs())) return { status: "lost_claim" };
 
   const stmt = env.DB.prepare(
     `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, created_by_job_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+      WHERE EXISTS (
+        SELECT 1 FROM scripture_lane_replacement_books
+         WHERE job_id = ?9 AND book = ?1 AND staging_claim_token = ?10
+      )`,
   );
+  let inserted = 0;
   for (let i = 0; i < verses.length; i += CHUNK) {
     const slice = verses.slice(i, i + CHUNK);
-    await env.DB.batch(
+    const results = await env.DB.batch(
       slice.map((v) =>
-        stmt.bind(book, v.chapter, v.verse, v.verseEnd, bv, job.generation, v.contentJson, v.plainText, jobId),
+        stmt.bind(book, v.chapter, v.verse, v.verseEnd, bv, job.generation, v.contentJson, v.plainText, jobId, claimToken),
       ),
     );
+    for (const r of results) inserted += r.meta?.changes ?? 0;
   }
+  if (inserted !== verses.length) return { status: "lost_claim" };
 
   // Store headers
   if (headers) {
-    await env.DB.prepare(
+    const meta = await env.DB.prepare(
       `INSERT OR REPLACE INTO book_usfm_meta (book, bible_version, source_generation, headers_json, created_by_job_id)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
-    ).bind(book, bv, job.generation, JSON.stringify(headers), jobId).run();
+       SELECT ?1, ?2, ?3, ?4, ?5
+        WHERE EXISTS (
+          SELECT 1 FROM scripture_lane_replacement_books
+           WHERE job_id = ?5 AND book = ?1 AND staging_claim_token = ?6
+        )`,
+    ).bind(book, bv, job.generation, JSON.stringify(headers), jobId, claimToken).run();
+    if ((meta.meta?.changes ?? 0) !== 1) return { status: "lost_claim" };
   }
 
   // Record the same SHA we fetched from (immutable commit).
-  await env.DB.prepare(
+  const ok = await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
         SET status = 'artifact_ok',
             source_owner = ?1, source_repo = ?2, source_ref = ?3,
@@ -449,7 +497,7 @@ export async function stageBook(
             completeness_json = ?5,
             error_json = NULL,
             updated_at = unixepoch()
-      WHERE job_id = ?6 AND book = ?7`,
+      WHERE job_id = ?6 AND book = ?7 AND staging_claim_token = ?8`,
   ).bind(
     owner, repo, ref, sha,
     JSON.stringify({
@@ -459,8 +507,9 @@ export async function stageBook(
       ref,
       sha,
     }),
-    jobId, book,
+    jobId, book, claimToken,
   ).run();
+  if ((ok.meta?.changes ?? 0) !== 1) return { status: "lost_claim" };
 
   return { status: "artifact_ok" };
 }

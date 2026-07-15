@@ -1648,16 +1648,28 @@ async function applyVerseUpdate(
   const now = Math.floor(Date.now() / 1000);
   if (existing) {
     const newVersion = existing.version + 1;
-    await env.DB.batch([
+    const lanePred = lane
+      ? `AND EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = ?11 AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?10
+          )`
+      : "";
+    const results = await env.DB.batch([
       env.DB
         .prepare(
           `UPDATE verses
               SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                   version = version + 1, updated_at = ?4, updated_by = ?5
             WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9
-              AND source_generation = ?10`,
+              AND source_generation = ?10
+              ${lanePred}`,
         )
-        .bind(contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion, sourceGeneration),
+        .bind(
+          ...(lane
+            ? [contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion, sourceGeneration, lane]
+            : [contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion, sourceGeneration]),
+        ),
       // Preserve the pre-AI content as a baseline at its own version, so verse
       // history can restore the state before the AI ran. Guarded: only when that
       // version was never logged (i.e. the original bootstrap import), so repeat
@@ -1668,7 +1680,8 @@ async function applyVerseUpdate(
           `INSERT INTO edit_log
              (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at, source_generation)
            SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5, ?6
-            WHERE NOT EXISTS (
+            WHERE changes() > 0
+              AND NOT EXISTS (
               SELECT 1 FROM edit_log WHERE kind = 'verse' AND row_key = ?1 AND new_version = ?3
             )`,
         )
@@ -1686,32 +1699,58 @@ async function applyVerseUpdate(
         .prepare(
           `INSERT INTO edit_log
              (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
-           VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7, ?8)`,
+           SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7, ?8
+            WHERE changes() > 0 OR EXISTS (
+              SELECT 1 FROM verses
+               WHERE book = ?9 AND chapter = ?10 AND verse = ?11 AND bible_version = ?12
+                 AND source_generation = ?13 AND version = ?5
+            )`,
         )
-        .bind(rowKey, book, userId, existing.version, newVersion, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
+        .bind(
+          rowKey, book, userId, existing.version, newVersion,
+          JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration,
+          book, chapter, verse, bibleVersion, sourceGeneration,
+        ),
       env.DB
         .prepare(
           `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
         )
         .bind(p.id, userId),
     ]);
+    // If the fenced UPDATE matched 0 rows, a freeze/activation won — treat as skip.
+    if (lane && (results[0]?.meta?.changes ?? 0) === 0) {
+      return;
+    }
     return;
   }
 
   // The verse should exist from the initial book import; this branch is the
   // defensive case where the seed missed something. Insert as a brand-new row.
-  await env.DB.batch([
-    env.DB
-      .prepare(
-        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
-      )
-      .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId),
+  const insertResults = await env.DB.batch([
+    lane
+      ? env.DB
+          .prepare(
+            `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, updated_by)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+              WHERE EXISTS (
+                SELECT 1 FROM scripture_lane_state
+                 WHERE lane = ?10 AND replacement_job_id IS NULL
+                   AND replacement_required = 0 AND active_generation = ?6
+              )`,
+          )
+          .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId, lane)
+      : env.DB
+          .prepare(
+            `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, updated_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+          )
+          .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId),
     env.DB
       .prepare(
         `INSERT INTO edit_log
            (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
-         VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5, ?6)`,
+         SELECT 'verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5, ?6
+          WHERE changes() > 0`,
       )
       .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
     env.DB
@@ -1720,4 +1759,7 @@ async function applyVerseUpdate(
       )
       .bind(p.id, userId),
   ]);
+  if (lane && (insertResults[0]?.meta?.changes ?? 0) === 0) {
+    return;
+  }
 }
