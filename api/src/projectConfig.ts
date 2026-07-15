@@ -142,6 +142,24 @@ export const PRESETS: Record<string, ProjectConfig> = {
     translationSource: UW_SOURCE,
     reposVerified: true,
   },
+  // Verified live 2026-07-15: BibleEditorMLTest has the full English GL set.
+  "en-bible-editor-ml-test": {
+    preset: "en-bible-editor-ml-test",
+    org: "BibleEditorMLTest",
+    exportOrg: "BibleEditorMLTest",
+    languageCode: "en",
+    languageName: "English",
+    languageTitle: "English",
+    direction: "ltr",
+    repos: { lit: "en_glt", sim: "en_gst", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
+    litLabel: "GLT",
+    simLabel: "GST",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
+    glBibles: [],
+    translationSource: UW_SOURCE,
+    reposVerified: true,
+  },
   // Verified live 2026-07-10: id_gl has the full standard set.
   "id-gl": {
     preset: "id-gl",
@@ -324,21 +342,3 @@ export async function writeProjectConfig(
 export function repoFor(cfg: ProjectConfig, key: ResourceKey): string {
   return cfg.repos[key];
 }
-  // Verified live 2026-07-15: BibleEditorMLTest has the full English GL set.
-  "en-bible-editor-ml-test": {
-    preset: "en-bible-editor-ml-test",
-    org: "BibleEditorMLTest",
-    exportOrg: "BibleEditorMLTest",
-    languageCode: "en",
-    languageName: "English",
-    languageTitle: "English",
-    direction: "ltr",
-    repos: { lit: "en_glt", sim: "en_gst", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
-    litLabel: "GLT",
-    simLabel: "GST",
-    origHebrewLabel: "UHB",
-    origGreekLabel: "UGNT",
-    glBibles: [],
-    translationSource: UW_SOURCE,
-    reposVerified: true,
-  },
