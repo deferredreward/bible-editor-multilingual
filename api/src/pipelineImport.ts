@@ -1708,8 +1708,9 @@ async function applyVerseUpdate(
             WHERE id = ?1 AND changes() > 0`,
         )
         .bind(p.id, userId),
-      // Baseline / AI audit: gate on our CAS target version existing — not on
-      // changes() (already consumed by the pending accept above).
+      // Audit only if THIS mutation landed: match the causal fingerprint we wrote
+      // (version + updated_by + content_json + updated_at). A competitor that
+      // created newVersion with different bytes must not fabricate our history.
       env.DB
         .prepare(
           `INSERT INTO edit_log
@@ -1719,6 +1720,7 @@ async function applyVerseUpdate(
               SELECT 1 FROM verses
                WHERE book = ?7 AND chapter = ?8 AND verse = ?9 AND bible_version = ?10
                  AND source_generation = ?11 AND version = ?12
+                 AND updated_by = ?13 AND content_json = ?14 AND updated_at = ?15
             )
               AND NOT EXISTS (
               SELECT 1 FROM edit_log WHERE kind = 'verse' AND row_key = ?1 AND new_version = ?3
@@ -1737,6 +1739,9 @@ async function applyVerseUpdate(
           bibleVersion,
           sourceGeneration,
           newVersion,
+          userId,
+          contentJson,
+          now,
         ),
       env.DB
         .prepare(
@@ -1747,6 +1752,7 @@ async function applyVerseUpdate(
               SELECT 1 FROM verses
                WHERE book = ?9 AND chapter = ?10 AND verse = ?11 AND bible_version = ?12
                  AND source_generation = ?13 AND version = ?5
+                 AND updated_by = ?3 AND content_json = ?14 AND updated_at = ?15
             )`,
         )
         .bind(
@@ -1763,6 +1769,8 @@ async function applyVerseUpdate(
           verse,
           bibleVersion,
           sourceGeneration,
+          contentJson,
+          now,
         ),
     ]);
     return;
@@ -1805,6 +1813,7 @@ async function applyVerseUpdate(
             SELECT 1 FROM verses
              WHERE book = ?7 AND chapter = ?8 AND verse = ?9 AND bible_version = ?10
                AND source_generation = ?11 AND version = 1
+               AND updated_by = ?3 AND content_json = ?12
           )`,
       )
       .bind(
@@ -1819,6 +1828,7 @@ async function applyVerseUpdate(
         verse,
         bibleVersion,
         sourceGeneration,
+        contentJson,
       ),
   ]);
 }

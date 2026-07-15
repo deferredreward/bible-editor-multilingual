@@ -113,6 +113,27 @@ CREATE TABLE scripture_export_leases (
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- Rolling-deploy: old Workers must not INSERT a held lease after a new Worker
+-- claimed exclusive_owner (or a replacement froze the lane).
+CREATE TRIGGER scripture_export_leases_honor_exclusive_owner
+BEFORE INSERT ON scripture_export_leases
+FOR EACH ROW
+WHEN NEW.status = 'held'
+BEGIN
+  SELECT RAISE(ABORT, 'lane_exclusive_owner_conflict')
+  WHERE EXISTS (
+    SELECT 1 FROM scripture_lane_state s
+     WHERE s.lane = NEW.lane
+       AND (
+         s.replacement_job_id IS NOT NULL
+         OR (
+           s.exclusive_owner IS NOT NULL
+           AND s.exclusive_owner != ('lease:' || NEW.lease_id)
+         )
+       )
+  );
+END;
+
 -- Activation invariant triggers (from migration 0042)
 CREATE TRIGGER trg_activation_job_completed
 AFTER UPDATE OF status ON scripture_lane_replacement
@@ -1593,7 +1614,86 @@ function d1Batch(db, fns) {
   console.log("  ✓ pipeline accept predicated on landed version in same txn");
 }
 
-// ── 34. Rolling deploy: legacy held lease blocks freeze without exclusive_owner ─
+// ── 34. Competing writer at newVersion must not fabricate this batch's audit ─
+{
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE pending_imports (id TEXT PRIMARY KEY, accepted_at INTEGER, accepted_by INTEGER);
+    CREATE TABLE verses (
+      book TEXT, chapter INTEGER, verse INTEGER, bible_version TEXT,
+      source_generation INTEGER, version INTEGER, content_json TEXT,
+      plain_text TEXT, updated_by INTEGER, updated_at INTEGER,
+      PRIMARY KEY (book, chapter, verse, bible_version, source_generation)
+    );
+    CREATE TABLE edit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT, row_key TEXT, new_version INTEGER, action TEXT, payload_json TEXT
+    );
+  `);
+  db.prepare(`INSERT INTO pending_imports (id) VALUES ('p-race')`).run();
+  db.prepare(
+    `INSERT INTO verses VALUES ('ZEC',1,1,'ULT',1,1,'{"old":true}',null,NULL,100)`,
+  ).run();
+
+  // Competitor already advanced to v2 with different content.
+  db.prepare(`
+    UPDATE verses SET version=2, content_json='{"competitor":true}', updated_by=99, updated_at=200
+     WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT' AND source_generation=1
+  `).run();
+
+  const ourContent = '{"ai":true}';
+  const ourNow = 300;
+  const ourUser = 7;
+  db.exec("BEGIN");
+  const cas = db.prepare(`
+    UPDATE verses SET content_json=?1, version=version+1, updated_at=?2, updated_by=?3
+     WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+       AND source_generation=1 AND version=1
+  `).run(ourContent, ourNow, ourUser);
+  db.prepare(`
+    UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=?1
+     WHERE id='p-race' AND changes() > 0
+  `).run(ourUser);
+  db.prepare(`
+    INSERT INTO edit_log (kind, row_key, new_version, action, payload_json)
+    SELECT 'verse', 'ZEC/1/1/ULT', 1, 'baseline', '{}'
+     WHERE EXISTS (
+       SELECT 1 FROM verses
+        WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+          AND source_generation=1 AND version=2
+          AND updated_by=?1 AND content_json=?2 AND updated_at=?3
+     )
+  `).run(ourUser, ourContent, ourNow);
+  db.prepare(`
+    INSERT INTO edit_log (kind, row_key, new_version, action, payload_json)
+    SELECT 'verse', 'ZEC/1/1/ULT', 2, 'update', ?1
+     WHERE EXISTS (
+       SELECT 1 FROM verses
+        WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+          AND source_generation=1 AND version=2
+          AND updated_by=?2 AND content_json=?3 AND updated_at=?4
+     )
+  `).run(ourContent, ourUser, ourContent, ourNow);
+  db.exec("COMMIT");
+
+  assert.equal(cas.changes, 0, "stale CAS loses to competitor");
+  assert.equal(
+    db.prepare("SELECT accepted_at FROM pending_imports WHERE id='p-race'").get().accepted_at,
+    null,
+  );
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM edit_log").get().n,
+    0,
+    "no fabricated baseline/AI audit for unlanded output",
+  );
+  assert.equal(
+    db.prepare("SELECT content_json FROM verses").get().content_json,
+    '{"competitor":true}',
+  );
+  console.log("  ✓ competing writer at newVersion does not fabricate audit history");
+}
+
+// ── 35. Rolling deploy: legacy held lease blocks freeze without exclusive_owner ─
 {
   const db = freshDb();
   seedLane(db, "lit", { activeGen: 1, nextGen: 2 });
@@ -1619,6 +1719,40 @@ function d1Batch(db, fns) {
   assert.equal(freeze.changes, 0, "legacy held lease blocks freeze CAS");
   assert.equal(getLane(db, "lit").replacement_job_id, null);
   console.log("  ✓ legacy held lease blocks freeze without exclusive_owner");
+}
+
+// ── 36. Trigger: old Worker cannot INSERT held lease after new claim ─────────
+{
+  const db = freshDb();
+  seedLane(db, "lit");
+  // New Worker claimed the slot.
+  db.prepare(`UPDATE scripture_lane_state SET exclusive_owner='lease:new-id' WHERE lane='lit'`).run();
+  let aborted = false;
+  try {
+    db.prepare(`
+      INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+      VALUES ('old-id','lit','t','held','old-worker',unixepoch())
+    `).run();
+  } catch (e) {
+    aborted = String(e?.message ?? e).includes("lane_exclusive_owner_conflict")
+      || String(e?.message ?? e).includes("ABORT");
+  }
+  assert.equal(aborted, true, "old Worker INSERT aborted by trigger");
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM scripture_export_leases").get().n,
+    0,
+  );
+
+  // Matching lease id (new Worker completing its own acquire) is allowed.
+  db.prepare(`
+    INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
+    VALUES ('new-id','lit','t','held','export:ZEC',unixepoch())
+  `).run();
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM scripture_export_leases WHERE lease_id='new-id'").get().n,
+    1,
+  );
+  console.log("  ✓ trigger blocks old lease INSERT after exclusive_owner claim");
 }
 
 console.log("\nscriptureLaneReplacement tests passed");

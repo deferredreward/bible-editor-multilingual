@@ -77,6 +77,42 @@ import {
   assert.equal(stripped[0].strong, "G2316");
 }
 
+// Footnote/custom occurrence-named attrs are NOT alignment-owned — must survive
+{
+  const a = {
+    verseObjects: [
+      { type: "note", tag: "f", occurrence: "fn-1", children: [{ type: "text", text: "note" }] },
+      { type: "word", tag: "w", text: "God", strong: "G2316", occurrence: "1" },
+    ],
+  };
+  const b = {
+    verseObjects: [
+      { type: "note", tag: "f", occurrence: "fn-2", children: [{ type: "text", text: "note" }] },
+      { type: "word", tag: "w", text: "God", strong: "G2316", occurrence: "9" },
+    ],
+  };
+  // Different footnote occurrence → locked-text drift
+  assert.ok(!nonAlignmentContentEqual(a, b), "footnote occurrence change is text drift");
+  const stripped = stripAlignmentNodes(a.verseObjects);
+  assert.equal(stripped[0].occurrence, "fn-1", "non-word occurrence preserved");
+  assert.equal(stripped[1].occurrence, undefined, "word occurrence stripped");
+}
+
+// Locked USFM: occurrence-only word drift equals; footnote occurrence does not
+{
+  const base = `\\id TIT EN_ULT
+\\c 1
+\\p
+\\v 1 \\w God|strong="G2316" occurrence="1" occurrences="1"\\w* speaks.
+`;
+  const occOnly = `\\id TIT EN_ULT
+\\c 1
+\\p
+\\v 1 \\w God|strong="G2316" occurrence="2" occurrences="1"\\w* speaks.
+`;
+  assert.equal(nonAlignmentUsfmEqual(base, occOnly).ok, true, "USFM occurrence-only drift ok");
+}
+
 // Passes through non-alignment nodes
 {
   const input = [

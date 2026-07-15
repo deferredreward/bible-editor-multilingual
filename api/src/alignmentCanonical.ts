@@ -27,7 +27,9 @@ function stripAlignmentOwnedKeys(o: Record<string, unknown>): Record<string, unk
 /**
  * Deep-clone a node tree, unwrapping `\zaln` milestones and preserving every
  * non-alignment attribute (lemma, Strong's, morph, footnote attrs, custom
- * marker metadata, etc.).
+ * marker metadata, etc.). Occurrence bookkeeping is stripped only from target
+ * `\w` nodes — footnotes/custom markers may legitimately carry occurrence-named
+ * attributes that must remain in the locked-text compare.
  */
 export function stripAlignmentNodes(nodes: unknown[]): unknown[] {
   const out: unknown[] = [];
@@ -41,7 +43,8 @@ export function stripAlignmentNodes(nodes: unknown[]): unknown[] {
       if (Array.isArray(o["children"])) out.push(...stripAlignmentNodes(o["children"] as unknown[]));
       continue;
     }
-    const kept = stripAlignmentOwnedKeys(o);
+    const isTargetWord = o["type"] === "word" && o["tag"] === "w";
+    const kept = isTargetWord ? stripAlignmentOwnedKeys(o) : { ...o };
     if (Array.isArray(kept["children"])) {
       kept["children"] = stripAlignmentNodes(kept["children"] as unknown[]);
     }

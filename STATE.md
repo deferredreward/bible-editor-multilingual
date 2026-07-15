@@ -14,6 +14,12 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Eighth-pass P1/P2 close-out.**
+- pipelineImport: audit inserts gated on causal fingerprint (`version`+`updated_by`+`content_json`+`updated_at`) so a competitor at `newVersion` cannot fabricate history.
+- Migration `0048`: BEFORE INSERT trigger aborts held leases that conflict with `exclusive_owner` / replacement freeze (rolling-deploy old Workers).
+- alignmentCanonical: strip occurrence keys only on target `\w` nodes; footnotes keep occurrence-named attrs.
+- Tests: fabricated-audit race, trigger abort, footnote vs word occurrence, USFM occurrence-only equality. Local D1: `0048` applied.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Seventh-pass re-review P1s closed.**
 - pipelineImport: expected-version CAS; accept via `changes() > 0` immediately after UPDATE (before edit_log).
 - 0046/0047: backfill `exclusive_owner` from held leases; runtime CAS keeps `NOT EXISTS (fresh held lease)` for rolling deploys.
@@ -91,6 +97,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 eighth-pass P1/P2 close-out** — Causal pipeline audit fingerprint; lease INSERT trigger honoring exclusive_owner; occurrence strip limited to `\w` nodes.
 
 2026-07-15 · **PR #20 seventh-pass P1 close-out** — Pipeline expected-version CAS + changes()-gated accept; exclusive_owner backfill + legacy lease NOT EXISTS; strip occurrence metadata from locked-text compare.
 
