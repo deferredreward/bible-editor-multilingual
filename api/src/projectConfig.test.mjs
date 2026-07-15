@@ -10,6 +10,17 @@ test("preset catalog identifies authoring and translation projects", () => {
   }
 });
 
+test("BibleEditorMLTest preset targets its verified English GL repositories", () => {
+  const preset = PRESETS["en-bible-editor-ml-test"];
+  assert.equal(preset.org, "BibleEditorMLTest");
+  assert.equal(preset.exportOrg, "BibleEditorMLTest");
+  assert.deepEqual(preset.repos, {
+    lit: "en_glt", sim: "en_gst", tn: "en_tn", tq: "en_tq",
+    twl: "en_twl", tw: "en_tw", ta: "en_ta",
+  });
+  assert.equal(preset.reposVerified, true);
+});
+
 // Fake D1: `.first()` returns the pre-seeded row (the preserve path reads
 // existing overrides_json); `.run()` captures the INSERT bind values.
 function fakeDb(existingOverridesJson = null) {

@@ -14,6 +14,8 @@
 
 ## Last run
 
+2026-07-15 · **BibleEditorMLTest preset added** — Added the verified English GL repository set (`en_glt`, `en_gst`, `en_tn`, `en_tq`, `en_twl`, `en_tw`, `en_ta`) as the `en-bible-editor-ml-test` translation target. It appears automatically in Preferences' project-mode dropdown. `git diff --check` passes; API typecheck remains blocked by pre-existing in-progress errors in `bookReimport.ts` and `exportWorkflow.ts`.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6 implemented end-to-end.**
 - Migration `0042_scripture_lanes.sql` applied locally (generation-keyed verses, lane state, replacement FSM, export leases, activation triggers).
 - Export fencing: renewable leases, hold/fresh verify before every mutating DCS call, grace drain before activation, generation-filtered scripture renders.
@@ -23,6 +25,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **BibleEditorMLTest translation target** — Registered the fully populated, live-verified English GL repositories under `BibleEditorMLTest` in the project preset catalog; the server-driven Preferences dropdown now exposes it as a translation target.
 
 2026-07-15 · **Scripture Repository Preferences v6** — Generation-keyed scripture lanes with replacement FSM, export fencing via renewable lease tokens, per-lane text/alignment locks, Preferences UI for repo switching, and BSOJ AVD/NAV correction (quarantine gen-1 → replacement_required → import correct source → activate). Comprehensive test coverage via `node:sqlite` harness exercising migration 0042 triggers + invariants.
 
