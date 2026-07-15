@@ -16,6 +16,7 @@ import {
   configHash,
   getLaneState,
   parseLaneConfig,
+  recoverOrphanedReservation,
   requireLaneState,
   snapshotRequiredBooks,
 } from "./scriptureLane";
@@ -98,6 +99,10 @@ export async function startReplacement(
   pendingConfig: ScriptureLaneConfig,
   confirm: boolean,
 ): Promise<{ job: ReplacementJob; books: ReplacementBookRow[] }> {
+  // Heal an orphan freeze before the "already active" pre-check so a dead
+  // reservation doesn't permanently block the lane.
+  await recoverOrphanedReservation(env, lane);
+
   const row = await requireLaneState(env, lane);
 
   // Cheap pre-check so we can 400 on missing confirmation before mutating.
@@ -152,6 +157,9 @@ export async function startReplacement(
     throw Object.assign(new Error(snap.error), { status: 422 });
   }
 
+  // Insert job + book rows immediately after the CAS so the freeze window
+  // without a matching scripture_lane_replacement row is as short as possible.
+  // On any failure, releaseFreeze clears the orphan claim.
   const stmts: D1PreparedStatement[] = [
     env.DB.prepare(
       `INSERT INTO scripture_lane_replacement (
@@ -227,6 +235,27 @@ export async function stageBook(
     throw Object.assign(new Error("job_not_stageable"), { status: 409, detail: { status: job.status } });
   }
 
+  // Serialize concurrent stage of the same job×book: only one Worker may claim
+  // a pending/retryable/failed row into 'staging'. No row returned → another
+  // worker owns it, or it's already artifact_ok / absent_authorized.
+  const claimed = await env.DB.prepare(
+    `UPDATE scripture_lane_replacement_books
+        SET status = 'staging', updated_at = unixepoch()
+      WHERE job_id = ?1 AND book = ?2
+        AND status IN ('pending', 'retryable_error', 'failed')
+      RETURNING book`,
+  )
+    .bind(jobId, book)
+    .first<{ book: string }>();
+  if (!claimed) {
+    const cur = await env.DB.prepare(
+      `SELECT status FROM scripture_lane_replacement_books WHERE job_id = ?1 AND book = ?2`,
+    )
+      .bind(jobId, book)
+      .first<{ status: string }>();
+    return { status: cur?.status ?? "skipped" };
+  }
+
   const pendingCfg: ScriptureLaneConfig = JSON.parse(job.pending_config_json);
   const { owner, repo, ref } = pendingCfg.source;
   const num = BOOK_NUMBERS[book];
@@ -235,15 +264,34 @@ export async function stageBook(
   }
 
   const usfmPath = `${num}-${book}.usfm`;
-  // Always fetch from the pending config's ref — never silently fall back to master.
-  const url = dcsRawUrl(env, owner, repo, usfmPath, ref);
 
-  // Transition to staging on first book
+  // Transition job to staging on first book
   if (job.status === "reserved") {
     await env.DB.prepare(
       `UPDATE scripture_lane_replacement SET status = 'staging' WHERE job_id = ?1 AND status = 'reserved'`,
     ).bind(jobId).run();
   }
+
+  // Resolve the file's commit SHA at the configured ref FIRST, then fetch
+  // USFM from that immutable SHA so the bytes we stage and the SHA we record
+  // cannot diverge (a push between fetch and sha-lookup used to race).
+  const sha = await fileCommitSha(env, owner, repo, usfmPath, ref);
+  if (!sha) {
+    await env.DB.prepare(
+      `UPDATE scripture_lane_replacement_books
+          SET status = 'retryable_error',
+              error_json = ?1,
+              updated_at = unixepoch()
+        WHERE job_id = ?2 AND book = ?3`,
+    ).bind(
+      JSON.stringify({ error: "sha_unavailable", owner, repo, ref, path: usfmPath }),
+      jobId,
+      book,
+    ).run();
+    return { status: "retryable_error" };
+  }
+
+  const url = dcsRawUrl(env, owner, repo, usfmPath, sha);
 
   let rawUsfm: string | null;
   try {
@@ -259,7 +307,7 @@ export async function stageBook(
               error_json = ?1,
               updated_at = unixepoch()
         WHERE job_id = ?2 AND book = ?3`,
-    ).bind(JSON.stringify({ error: "fetch_failed", url, ref }), jobId, book).run();
+    ).bind(JSON.stringify({ error: "fetch_failed", url, ref, sha }), jobId, book).run();
     return { status: "retryable_error" };
   }
 
@@ -290,7 +338,7 @@ export async function stageBook(
               error_json = ?1,
               updated_at = unixepoch()
         WHERE job_id = ?2 AND book = ?3`,
-    ).bind(JSON.stringify({ error: "empty_usfm", url, ref }), jobId, book).run();
+    ).bind(JSON.stringify({ error: "empty_usfm", url, ref, sha }), jobId, book).run();
     return { status: "retryable_error" };
   }
 
@@ -320,6 +368,7 @@ export async function stageBook(
         predecessor: predecessorVerses,
         url,
         ref,
+        sha,
       }),
       jobId,
       book,
@@ -363,23 +412,7 @@ export async function stageBook(
     ).bind(book, bv, job.generation, JSON.stringify(headers), jobId).run();
   }
 
-  // SHA must be for the same ref we fetched from.
-  const sha = await fileCommitSha(env, owner, repo, usfmPath, ref);
-  if (!sha) {
-    await env.DB.prepare(
-      `UPDATE scripture_lane_replacement_books
-          SET status = 'retryable_error',
-              error_json = ?1,
-              updated_at = unixepoch()
-        WHERE job_id = ?2 AND book = ?3`,
-    ).bind(
-      JSON.stringify({ error: "sha_unavailable", owner, repo, ref, path: usfmPath }),
-      jobId,
-      book,
-    ).run();
-    return { status: "retryable_error" };
-  }
-
+  // Record the same SHA we fetched from (immutable commit).
   await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
         SET status = 'artifact_ok',
@@ -396,6 +429,7 @@ export async function stageBook(
       predecessorVerses,
       bytes: rawUsfm.length,
       ref,
+      sha,
     }),
     jobId, book,
   ).run();

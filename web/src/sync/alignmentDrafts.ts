@@ -93,8 +93,11 @@ export const alignmentDrafts = {
 // Belt-and-suspenders: when the verse's PATCH lands (200), the alignment the
 // draft was protecting is now durable server-side, so drop it. AlignmentPanel
 // also clears optimistically in its save-commit closure; both are idempotent.
+// Skip clear when the op was quarantined — a late 200 after lane freeze must
+// not wipe the crash-draft the freeze handler preserved.
 onOutboxResult((op, result) => {
   if (result.kind !== "ok") return;
+  if (op.quarantined) return;
   if (op.target.kind === "verse") {
     void alignmentDrafts.clear(
       alignmentDraftKey(op.target.book, op.target.chapter, op.target.verse, op.target.bibleVersion),

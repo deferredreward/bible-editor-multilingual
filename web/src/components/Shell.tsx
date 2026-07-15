@@ -39,6 +39,11 @@ import {
 } from "../lib/laneChecks";
 import { ChapterBoard } from "./ChapterBoard";
 import { drafts, verseKey } from "../sync/drafts";
+import {
+  clearLaneFrozen,
+  isLaneFrozen,
+  markLaneFrozen,
+} from "../sync/laneFreeze";
 import { smartEditVerse } from "../lib/replace";
 import { extractEditableText, extractPlainText, normalizeEditable, SECTION_HEADER_TAGS } from "../lib/usfm";
 import { verseHasUnalignedWork, countUnalignedTargetWords } from "../lib/alignment";
@@ -453,36 +458,104 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
 
   // A scripture lane just froze for a replacement (source swap): the active
   // generation is about to flip, so any queued edit for that lane's version is
-  // now against soon-to-be-superseded content. Quarantine those outbox ops and
-  // draft store entries (kept for discard/export — never deleted) so nothing
-  // lands post-flip, close the aligner if it's open on that version, and
-  // refresh the config so the lane's frozen/read-only state takes effect.
+  // now against soon-to-be-superseded content. Order matters:
+  //   1) set local freeze flag SYNCHRONOUSLY (blocks drafts/enqueue/aligner)
+  //   2) quarantine outbox + drafts
+  //   3) serialize dirty aligner state into quarantined drafts, then close
+  //   4) refresh project config (async — flag covers the window)
   // Verse content refreshes when the settled event arrives.
   const onLaneFreeze = useCallback(
     (event: LaneReplacementEvent) => {
       const bibleVersion = event.lane === "lit" ? "ULT" : "UST";
       const reason = t("shell.laneFrozenQuarantine", { version: bibleVersion });
+      markLaneFrozen(bibleVersion, reason);
       void outbox.quarantineLaneOps(bibleVersion, reason);
       void drafts.quarantineByVersion(bibleVersion, reason);
+
+      const quarantineAlignerSnapshot = (
+        panel: AlignmentPanelHandle | null | undefined,
+        chapterNum: number,
+        verseNum: number,
+        bv: string,
+      ) => {
+        if (!panel?.isDirty()) return;
+        panel.flushCrashDraft();
+        const snap = panel.getDirtySnapshot();
+        if (!snap) return;
+        void drafts.set(
+          verseKey(book, chapterNum, verseNum, bv),
+          { content: snap.content, plainText: snap.plainText },
+          snap.expectedVersion,
+          { kind: "verse", book, chapter: chapterNum, verse: verseNum, bibleVersion: bv },
+          { quarantined: reason },
+        );
+      };
+
       if (alignerTarget?.bibleVersion === bibleVersion) {
+        quarantineAlignerSnapshot(
+          alignmentPanelRef.current,
+          alignerTarget.chapter,
+          alignerTarget.verse,
+          bibleVersion,
+        );
         setAlignerTarget(null);
         setPanelMode("resources");
       }
+
+      // Dual aligner (ULT left / UST right) — close whenever either lane freezes
+      // (popup always involves both). Serialize the frozen side into quarantined
+      // drafts; flush the other side's crash-draft so force-close doesn't drop it.
+      if (dualTarget) {
+        const flushDualSide = (
+          panel: AlignmentPanelHandle | null | undefined,
+          bv: "ULT" | "UST",
+          readingDirty: boolean,
+          readingRef: { current: ReadingLineHandle | null },
+        ) => {
+          if (bv === bibleVersion) {
+            quarantineAlignerSnapshot(panel, dualTarget.chapter, dualTarget.verse, bv);
+          } else if (panel?.isDirty()) {
+            panel.flushCrashDraft();
+          }
+          if (readingDirty) readingRef.current?.save();
+        };
+        flushDualSide(dualLeftRef.current, "ULT", dualLeftReadingDirty, dualLeftReadingRef);
+        flushDualSide(dualRightRef.current, "UST", dualRightReadingDirty, dualRightReadingRef);
+        setDualTarget(null);
+        setDualLeftDirty(false);
+        setDualRightDirty(false);
+        setDualLeftReadingDirty(false);
+        setDualRightReadingDirty(false);
+      }
+
+      // Re-quarantine after aligner serialization so any just-written draft
+      // (and reading-line stash) is marked too.
+      void drafts.quarantineByVersion(bibleVersion, reason);
       void refreshProjectConfig().catch(() => {});
       pushPipelineToast(t("shell.laneFrozen", { version: bibleVersion }), "info");
     },
-    [t, alignerTarget, pushPipelineToast],
+    [
+      t,
+      book,
+      alignerTarget,
+      dualTarget,
+      dualLeftReadingDirty,
+      dualRightReadingDirty,
+      pushPipelineToast,
+    ],
   );
   useEffect(() => {
     laneFreezeRef.current = onLaneFreeze;
   }, [onLaneFreeze]);
 
   // The replacement settled (activated / cancelled / failed) and the freeze
-  // lifted: refresh the config (lane state) and reload the open chapter so its
-  // verses reflect the new generation (or the reverted state on cancel/fail).
+  // lifted: clear the local freeze flag, refresh the config (lane state) and
+  // reload the open chapter so its verses reflect the new generation (or the
+  // reverted state on cancel/fail).
   const onLaneSettled = useCallback(
     (event: LaneReplacementEvent) => {
       const bibleVersion = event.lane === "lit" ? "ULT" : "UST";
+      clearLaneFrozen(bibleVersion);
       void refreshProjectConfig().catch(() => {});
       void refetch();
       pushPipelineToast(t("shell.laneSettled", { version: bibleVersion }), "info");
@@ -1743,6 +1816,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
 
   const laneAllowsAlignment = useCallback(
     (bv: string): boolean => {
+      // Local freeze flag covers the window before projectConfig refresh.
+      if (isLaneFrozen(bv)) return false;
       if (bv === "ULT") {
         const lit = projectConfig?.laneState?.lit;
         if (lit?.replacementJobId || lit?.replacementRequired) return false;
@@ -1883,12 +1958,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       // alignment and all clean switches still apply immediately.
       runWithDirtyGate(() => {
         if (mode === "alignment" && !alignerTarget) {
+          // Same freeze/lock gate as openAligner — don't open AVD/ULT during
+          // a local freeze before projectConfig refresh lands.
+          if (!laneAllowsAlignment("ULT")) {
+            pushPipelineToast(t("shell.alignmentLocked", { version: "ULT" }), "info");
+            return;
+          }
           setAlignerTarget({ chapter, verse: activeVerse, bibleVersion: "ULT" });
         }
         setPanelMode(mode);
       });
     },
-    [runWithDirtyGate, alignerTarget, chapter, activeVerse],
+    [runWithDirtyGate, alignerTarget, chapter, activeVerse, laneAllowsAlignment, pushPipelineToast, t],
   );
 
   const dismissPendingNav = useCallback(() => setPendingNav(null), []);

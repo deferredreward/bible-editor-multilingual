@@ -14,6 +14,18 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **All remaining P1 race findings fixed (pre-review).**
+- bookImport: recheck gen/lock after DCS fetch; generation-scoped DELETE only.
+- bookReimport: persist owner/repo/ref/generation on staged resources; exact match before write/watermark.
+- pipelines: migration `0043` stamps `source_generation`/`owner`/`repo`/`ref` at create; dispatch + apply require match; dual-lane identity must agree.
+- scriptureLaneReplacement: `recoverOrphanedReservation`; stageBook claims `staging` CAS + commit-SHA-first fetch.
+- exportWorkflow: revalidate fencing token before every prune/recover DCS mutation.
+- Shell/freeze UI: sync `laneFreeze` module; block drafts/enqueue/aligner opens; quarantine single+dual aligners; outbox preserves quarantined recovery on late 200 / raced 403.
+- verses: strict `/^\d+$/` for `X-Source-Generation`.
+- `DCS_EXPORT_OWNER = "BibleEditorService"` kept intentional (dev + production).
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green.
+- **Human owed:** apply migration `0043` to local + prod D1 before exercising pipeline stamps / `staging` book status.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **PR #26 merged + two-tab quarantine smoke.**
 - PR #26 CI was a syntax error (preset pasted after `repoFor()`); fixed in `fa40782`, manually merged into this branch as `53ac350` (GitHub merge blocked by conflict). PR closed.
 - Quarantine smoke (vite `:5174`, two Chrome contexts sharing cookies): Tab A seeded ULT draft; Tab B `POST …/lit/replacements` → Tab A draft marked `quarantined` with `laneFrozenQuarantine` text (freeze handler ran). Queued outbox op raced drain → `failed`/`http 403` before freeze could rewrite it. Align-AVD still opened during freeze (config refresh didn't gate the click — follow-up). Smoke job cancelled; lanes back at gen 2 / no job.
@@ -33,6 +45,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 P1 race remediation (second pass)** — All nine review P1s + smoke gaps (outbox 403 race, align-during-freeze) addressed on `feat/scripture-repo-preferences`. Migration `0043` added for pipeline source stamps + `staging` book status.
 
 2026-07-15 · **BibleEditorMLTest translation target** — Registered the fully populated, live-verified English GL repositories under `BibleEditorMLTest` in the project preset catalog; the server-driven Preferences dropdown now exposes it as a translation target. CI syntax fix landed before merge into `feat/scripture-repo-preferences`.
 
@@ -1476,6 +1490,7 @@ Not yet PR'd.
 
 ## Escalated / blocked on a human (not a code change Claude can land alone)
 
+- **Apply migration `0043_pipeline_job_source_generation.sql`** — local (`bible_editor_dev --local`) and prod (`bible_editor --remote --env production`) before relying on pipeline source stamps or `staging` book-status CAS. Code landed on `feat/scripture-repo-preferences`; D1 not applied this session.
 - **Prod `DEU 27:22` TN content-dup** — 2 live PRISTINE notes, same content (occ 1, quote `שֹׁכֵב֙ עִם`,
   note "See how you translated 'lies with'…") under ids `y3oq` + `oi0y` (both valid ids — a pure
   doubling, not a digit-first id). The new reimport Guard 2 PREVENTS new doubles but does NOT remediate

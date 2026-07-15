@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { backoffMs } from "./backoff";
 import { classifyRowPatchConflict } from "./rowConflict";
+import { isLaneFrozen, laneFreezeReason } from "./laneFreeze";
 
 const DB_NAME = "bible-editor-outbox";
 const DB_VERSION = 1;
@@ -126,6 +127,10 @@ export interface OutboxOp {
   // The source_generation the verse was loaded under. Sent as X-Source-Generation
   // so the server can reject edits against a superseded generation.
   sourceGeneration?: number;
+  // Set when a scripture lane freezes for replacement. Quarantined ops stay in
+  // IDB as failed recovery copies — a late 200 from an in-flight dispatch must
+  // not delete them (see drainPass).
+  quarantined?: string;
 }
 
 type Subscriber = (ops: OutboxOp[]) => void;
@@ -311,6 +316,29 @@ export const outbox = {
         "patch",
         patch as Record<string, unknown>,
       );
+    }
+    // Lane freeze: refuse to ship — park as a failed/quarantined recovery copy
+    // with no network attempt. Covers the window before projectConfig refresh.
+    if (isLaneFrozen(bibleVersion)) {
+      const reason =
+        laneFreezeReason(bibleVersion) ?? `Quarantined: ${bibleVersion} lane is frozen`;
+      const op: OutboxOp = {
+        id: uid(),
+        target: { kind: "verse", book, chapter, verse, bibleVersion },
+        action: "patch",
+        patch: patch as Record<string, unknown>,
+        expectedVersion,
+        queuedAt: Date.now(),
+        seq: nextSeq(),
+        attempts: 0,
+        status: "failed",
+        lastError: reason,
+        quarantined: reason,
+        ...(opts?.sourceGeneration != null ? { sourceGeneration: opts.sourceGeneration } : {}),
+      };
+      await (await db()).put(STORE, op);
+      void notify();
+      return op;
     }
     const op: OutboxOp = {
       id: uid(),
@@ -510,10 +538,20 @@ export const outbox = {
       await tx.done;
       return;
     }
+    // Still-frozen lane: keep the quarantine — retrying would just re-fail.
+    if (
+      op.quarantined &&
+      op.target.kind === "verse" &&
+      isLaneFrozen(op.target.bibleVersion)
+    ) {
+      await tx.done;
+      return;
+    }
     op.status = "pending";
     op.attempts = 0;
     op.hardAttempts = 0;
     op.lastError = undefined;
+    op.quarantined = undefined;
     await tx.store.put(op);
     await tx.done;
     void notify();
@@ -528,10 +566,10 @@ export const outbox = {
   // for a replacement. The active generation is about to flip, so any still-
   // queued edit is against a generation the server will reject (or, worse,
   // would land on soon-to-be-superseded content). Mark them `failed` with a
-  // clear reason so they surface in the failed-ops drawer instead of silently
-  // draining post-flip. Touches pending / in_flight / conflict ops (a request
-  // already on the wire will 409 on the generation guard anyway). Returns the
-  // count quarantined.
+  // durable `quarantined` flag so they surface in the failed-ops drawer and a
+  // late 200 from an already-in-flight dispatch cannot delete the recovery
+  // copy. Touches pending / in_flight / conflict / failed (e.g. raced to
+  // http 403 before freeze landed) ops. Returns the count quarantined.
   async quarantineLaneOps(bibleVersion: string, reason: string): Promise<number> {
     const idb = await db();
     const tx = idb.transaction(STORE, "readwrite");
@@ -540,9 +578,16 @@ export const outbox = {
     for (const o of all) {
       if (o.target.kind !== "verse") continue;
       if (o.target.bibleVersion !== bibleVersion) continue;
-      if (o.status === "pending" || o.status === "in_flight" || o.status === "conflict") {
+      if (o.quarantined) continue;
+      if (
+        o.status === "pending" ||
+        o.status === "in_flight" ||
+        o.status === "conflict" ||
+        o.status === "failed"
+      ) {
         o.status = "failed";
         o.lastError = reason;
+        o.quarantined = reason;
         o.conflictCurrent = undefined;
         await tx.store.put(o);
         n++;
@@ -659,7 +704,9 @@ async function dispatch(op: OutboxOp): Promise<Result> {
         if (
           errCode === "source_generation_mismatch" ||
           errCode === "lane_replacement_required" ||
-          errCode === "lane_replacement_in_progress"
+          errCode === "lane_replacement_in_progress" ||
+          errCode === "scripture_text_read_only" ||
+          errCode === "scripture_fully_locked"
         ) {
           return { kind: "fatal", reason: errCode };
         }
@@ -834,6 +881,23 @@ async function drainPass() {
       await tx.done;
       continue;
     }
+    // Local freeze may have landed after enqueue — park as quarantined recovery
+    // without sending another PATCH that would race the generation flip.
+    if (
+      fresh.target.kind === "verse" &&
+      isLaneFrozen(fresh.target.bibleVersion)
+    ) {
+      const reason =
+        laneFreezeReason(fresh.target.bibleVersion) ??
+        `Quarantined: ${fresh.target.bibleVersion} lane is frozen`;
+      fresh.status = "failed";
+      fresh.lastError = reason;
+      fresh.quarantined = reason;
+      await tx.store.put(fresh);
+      await tx.done;
+      void notify();
+      continue;
+    }
     fresh.status = "in_flight";
     fresh.attempts += 1;
     fresh.dispatchedAt = Date.now();
@@ -852,21 +916,52 @@ async function drainPass() {
     // Persist the new status *before* notifying listeners. If a put() or
     // delete() throws, the catch below resets the op to pending so it
     // doesn't strand at in_flight.
+    //
+    // Always re-read before mutating: quarantineLaneOps may have flipped this
+    // op to failed+quarantined while dispatch was in flight. A stale in-memory
+    // `next` would delete/overwrite the recovery copy and let onOutboxResult
+    // clear the matching quarantined draft.
+    const preserveIfQuarantined = async (): Promise<boolean> => {
+      if (!next) return false;
+      const idb = await db();
+      const stored = (await idb.get(STORE, next.id)) as OutboxOp | undefined;
+      if (!stored?.quarantined) return false;
+      stored.status = "failed";
+      stored.lastError = stored.quarantined;
+      stored.dispatchedAt = undefined;
+      await idb.put(STORE, stored);
+      next = stored;
+      return true;
+    };
     try {
       if (result.kind === "ok") {
-        await (await db()).delete(STORE, next.id);
-        // Best-effort only, and outside the persist-recovery catch's reach:
-        // a threading failure must not resurrect the just-completed op.
-        try {
-          await threadVersionToSiblings(next, result.updated);
-        } catch {
-          /* siblings keep their stale version and resolve via the 409 flow */
+        if (await preserveIfQuarantined()) {
+          try {
+            await threadVersionToSiblings(next, result.updated);
+          } catch {
+            /* siblings keep their stale version and resolve via the 409 flow */
+          }
+        } else {
+          await (await db()).delete(STORE, next.id);
+          // Best-effort only, and outside the persist-recovery catch's reach:
+          // a threading failure must not resurrect the just-completed op.
+          try {
+            await threadVersionToSiblings(next, result.updated);
+          } catch {
+            /* siblings keep their stale version and resolve via the 409 flow */
+          }
         }
       } else if (result.kind === "locked") {
         // The chapter is mid-pipeline; the auto-apply will overwrite this
-        // row anyway. Drop the op and let the listener surface a toast.
-        await (await db()).delete(STORE, next.id);
+        // row anyway. Drop the op and let the listener surface a toast —
+        // unless quarantine already claimed it as a recovery copy.
+        if (!(await preserveIfQuarantined())) {
+          await (await db()).delete(STORE, next.id);
+        }
       } else if (result.kind === "conflict") {
+        if (await preserveIfQuarantined()) {
+          /* keep quarantine */
+        } else {
         const serverVersion = (result.current as { version?: unknown } | null | undefined)
           ?.version;
         // Two classes of 409 auto-heal against the server's version instead of
@@ -912,7 +1007,11 @@ async function drainPass() {
           await (await db()).put(STORE, next);
           blocked.add(targetKey(next.target));
         }
+        }
       } else if (result.kind === "retry") {
+        if (await preserveIfQuarantined()) {
+          /* keep quarantine */
+        } else {
         // Only genuine server errors (`transient NNN`) consume the
         // MAX_ATTEMPTS cap. Network failures (`network`, `dispatch_threw`)
         // and auth retries (`auth 401`) recur for as long as the laptop is
@@ -934,18 +1033,40 @@ async function drainPass() {
           scheduleDrain(backoffMs(next.attempts));
           blocked.add(targetKey(next.target));
         }
+        }
       } else {
-        next.status = "failed";
-        next.lastError = result.reason;
-        await (await db()).put(STORE, next);
+        if (!(await preserveIfQuarantined())) {
+          next.status = "failed";
+          next.lastError = result.reason;
+          // Terminal lane/fence errors: keep as recovery copies so a concurrent
+          // quarantineLaneOps (or late freeze) doesn't leave an unrecoverable
+          // http-403-style failed op without the quarantined flag.
+          if (
+            next.target.kind === "verse" &&
+            (result.reason === "source_generation_mismatch" ||
+              result.reason === "lane_replacement_required" ||
+              result.reason === "lane_replacement_in_progress" ||
+              result.reason === "scripture_text_read_only" ||
+              result.reason === "scripture_fully_locked" ||
+              isLaneFrozen(next.target.bibleVersion) ||
+              /^http 403$/.test(result.reason))
+          ) {
+            next.quarantined =
+              laneFreezeReason(next.target.bibleVersion) ?? result.reason;
+          }
+          await (await db()).put(STORE, next);
+        }
       }
     } catch (persistErr) {
       // Best-effort recovery — if IndexedDB itself failed, the op may be
-      // half-written. Force pending so the next drain pass tries again.
+      // half-written. Force pending so the next drain pass tries again —
+      // unless quarantine already owns it.
       try {
-        next.status = "pending";
-        next.lastError = `persist_failed: ${String(persistErr)}`;
-        await (await db()).put(STORE, next);
+        if (!(await preserveIfQuarantined())) {
+          next.status = "pending";
+          next.lastError = `persist_failed: ${String(persistErr)}`;
+          await (await db()).put(STORE, next);
+        }
       } catch {
         /* nothing we can do; will be picked up by recoverInFlight on reload */
       }

@@ -9,6 +9,7 @@
 
 import { openDB, type IDBPDatabase } from "idb";
 import { isReadOnly, type RowKind } from "./api";
+import { isLaneFrozen } from "./laneFreeze";
 import { onOutboxResult } from "./outbox";
 
 const DB_NAME = "bible-editor-drafts";
@@ -127,17 +128,31 @@ export const drafts = {
     payload: DraftPayload,
     expectedVersion: number,
     meta: DraftMeta,
+    opts?: { quarantined?: string },
   ): Promise<void> {
     if (isReadOnly()) return;
+    // While a lane is frozen, refuse new keystroke drafts — quarantine already
+    // scanned existing ones. Exception: an explicit `quarantined` write used
+    // by the freeze handler to serialize dirty aligner state before close.
+    if (
+      meta.kind === "verse" &&
+      isLaneFrozen(meta.bibleVersion) &&
+      !opts?.quarantined
+    ) {
+      return;
+    }
     // Mark dirty synchronously — before the async put — so the unload guard
-    // sees it during the commit window (see pendingKeys).
-    pendingKeys.add(key);
+    // sees it during the commit window (see pendingKeys). Quarantined writes
+    // are recovery copies, not active typing.
+    if (!opts?.quarantined) pendingKeys.add(key);
+    else pendingKeys.delete(key);
     const rec: DraftRecord = {
       key,
       payload,
       expectedVersion,
       updatedAt: Date.now(),
       meta,
+      ...(opts?.quarantined ? { quarantined: opts.quarantined } : {}),
     };
     await (await db()).put(STORE, rec);
     void notify();
@@ -219,8 +234,14 @@ export function draftDirtyBorderSx() {
 // landed. Anything other than a 200 keeps the draft so the user can retry
 // or hand-edit. 409 is special — the user resolves via SyncStatusBar; the
 // draft survives so the next retry has the right payload.
+//
+// Quarantined drafts/ops must NOT clear on a late 200: an in-flight op can
+// still succeed after quarantineLaneOps marked it failed — clearing would
+// wipe the recovery copy the freeze handler just preserved. drainPass
+// re-reads the op and forwards the quarantined flag on the listener op.
 onOutboxResult((op, result) => {
   if (result.kind !== "ok") return;
+  if (op.quarantined) return;
   if (op.target.kind === "verse") {
     void drafts.clear(
       verseKey(op.target.book, op.target.chapter, op.target.verse, op.target.bibleVersion),

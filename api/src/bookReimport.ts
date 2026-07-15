@@ -275,6 +275,9 @@ async function runReimport(
   // requires a replacement must not accept a scripture reimport — it would
   // clobber the generation the replacement is staging/superseding. TSV
   // resources (tn/tq/twl) are lane-agnostic and stay allowed.
+  // Capture the intended source identity once so later writes + watermarks stay
+  // sticky to the generation/owner/repo/ref we planned against.
+  const intendedByBv: Partial<Record<"ULT" | "UST", ResourceSourceRef>> = {};
   for (const [resource, bv] of [["ult", "ULT"], ["ust", "UST"]] as const) {
     if (!want.has(resource)) continue;
     const lane = laneForBibleVersion(bv);
@@ -283,6 +286,7 @@ async function runReimport(
     if (state.replacement_job_id || state.replacement_required) {
       throw new Error(`${lane}_lane_frozen_for_replacement`);
     }
+    intendedByBv[bv] = await resourceSourceRef(env, resource, cfg);
   }
   let [ultRaw, ustRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
     want.has("ult") ? fetchText(urls.ult) : Promise.resolve(null),
@@ -339,11 +343,11 @@ async function runReimport(
       addCounts(perResource.twl, c);
     }
     if (want.has("ult") && ultRaw) {
-      const c = await reimportVersesForChapter(env, book, chapter, ultRaw, "ULT", userId);
+      const c = await reimportVersesForChapter(env, book, chapter, ultRaw, "ULT", userId, intendedByBv.ULT);
       addCounts(perResource.ult, c);
     }
     if (want.has("ust") && ustRaw) {
-      const c = await reimportVersesForChapter(env, book, chapter, ustRaw, "UST", userId);
+      const c = await reimportVersesForChapter(env, book, chapter, ustRaw, "UST", userId, intendedByBv.UST);
       addCounts(perResource.ust, c);
     }
   }
@@ -991,8 +995,14 @@ async function reimportVersesForChapter(
   rawUsfm: string,
   bibleVersion: "ULT" | "UST",
   userId: number | null,
+  intendedSrc?: ResourceSourceRef | null,
 ): Promise<ReimportCounts> {
-  return applyVerseRows(env, book, bibleVersion, extractVersesForRange(rawUsfm, chapter, chapter), userId);
+  return applyVerseRows(
+    env, book, bibleVersion,
+    extractVersesForRange(rawUsfm, chapter, chapter),
+    userId,
+    intendedSrc,
+  );
 }
 
 // Heal AI-mangled U+FFFD in `\zaln-s` source attributes (x-content / x-lemma /
@@ -1076,6 +1086,38 @@ function reconcileEditedVerseSourceAttrs(
   return { changed, json: changed ? JSON.stringify(d1Parsed) : d1Json, divergent: report.divergent.length };
 }
 
+// Confirm the lane's active generation + source owner/repo/ref still match the
+// identity we intend to write. Uncached D1 read. Returns null on freeze /
+// quarantine / mismatch so callers can abort with zero writes (and no watermark).
+async function verifyVerseWriteIdentity(
+  env: Env,
+  bibleVersion: "ULT" | "UST",
+  intended: ResourceSourceRef | null | undefined,
+): Promise<ResourceSourceRef | null> {
+  const lane = laneForBibleVersion(bibleVersion);
+  if (!lane) return null;
+  const row = await requireLaneState(env, lane);
+  if (row.replacement_job_id || row.replacement_required) return null;
+  const cfg = activeLaneConfig(row);
+  const live: ResourceSourceRef = {
+    generation: row.active_generation,
+    owner: cfg.source.owner,
+    repo: cfg.source.repo,
+    ref: cfg.source.ref,
+  };
+  if (intended) {
+    if (
+      live.generation !== intended.generation ||
+      live.owner !== intended.owner ||
+      live.repo !== intended.repo ||
+      live.ref !== intended.ref
+    ) {
+      return null;
+    }
+  }
+  return live;
+}
+
 // Per-verse upsert over already-parsed verses (keys off each verse's own
 // chapter, so it works across a whole chunk range). Batched: ONE read of the
 // current rows for these verses' chapters, an in-memory diff, then ONE atomic
@@ -1103,19 +1145,26 @@ async function applyVerseRows(
   bibleVersion: "ULT" | "UST",
   verses: VerseExtract[],
   userId: number | null,
+  intendedSrc?: ResourceSourceRef | null,
 ): Promise<ReimportCounts> {
   const counts = zeroCounts();
   if (verses.length === 0) return counts;
 
-  // Always operate on the active generation only — never touch staged or
-  // superseded generations that coexist after a replacement reservation.
-  const gen = await activeGenerationForBibleVersion(env, bibleVersion);
-  if (gen == null) return counts; // lane quarantined (replacement_required)
+  // Capture (or re-verify) the intended source identity before any write. A
+  // freeze / generation flip / source swap mid-run → zero writes, no watermark.
+  const identity = await verifyVerseWriteIdentity(env, bibleVersion, intendedSrc);
+  if (!identity) return counts;
+  const gen = identity.generation;
 
   // Heal AI-mangled U+FFFD source attributes before the diff so we never write
   // (or no-op against) upstream's garbled bytes. No-op + zero extra reads unless
   // an incoming verse actually carries the defect.
   await healIncomingReplacementChars(env, book, bibleVersion, verses);
+
+  // Re-verify immediately before the write batch — a replacement may have
+  // activated during the (potentially slow) heal / read above.
+  const recheck = await verifyVerseWriteIdentity(env, bibleVersion, identity);
+  if (!recheck) return counts;
 
   const now = Math.floor(Date.now() / 1000);
 
@@ -1285,7 +1334,7 @@ async function applyVerseRows(
         chapters,
         error: e instanceof Error ? e.message : String(e),
       });
-      addCounts(counts, await applyVerseRowsPerRow(env, book, bibleVersion, writes, userId));
+      addCounts(counts, await applyVerseRowsPerRow(env, book, bibleVersion, writes, userId, identity));
     }
   }
 
@@ -1388,15 +1437,20 @@ async function applyVerseRowsPerRow(
   bibleVersion: "ULT" | "UST",
   verses: VerseExtract[],
   userId: number | null,
+  intendedSrc?: ResourceSourceRef | null,
 ): Promise<ReimportCounts> {
   const counts = zeroCounts();
   if (verses.length === 0) return counts;
 
-  const gen = await activeGenerationForBibleVersion(env, bibleVersion);
-  if (gen == null) return counts;
+  const identity = await verifyVerseWriteIdentity(env, bibleVersion, intendedSrc);
+  if (!identity) return counts;
+  const gen = identity.generation;
 
   const now = Math.floor(Date.now() / 1000);
   for (const v of verses) {
+    // Re-verify per verse so a mid-loop activation can't write into a new gen.
+    const still = await verifyVerseWriteIdentity(env, bibleVersion, identity);
+    if (!still) return counts;
     try {
       // Try insert first; cheap signal for "doesn't exist locally".
       const ins = await env.DB.prepare(
@@ -1568,6 +1622,8 @@ interface StagedResource {
   changed: boolean;        // false → SHA unchanged or DCS 404; skipped
   masterSha: string | null;
   r2Key: string | null;    // staged file location when changed
+  /** Source identity captured at plan time — used for watermarks + write gates. */
+  src: ResourceSourceRef | null;
 }
 
 interface ReimportPlan {
@@ -1914,21 +1970,21 @@ async function planAndStageBookResources(
   const entries: StagedResource[] = [];
   for (const resource of resources) {
     const file = dcsResourceFile(cfg, book, resource);
-    if (!file) { entries.push({ resource, changed: false, masterSha: null, r2Key: null }); continue; }
+    if (!file) { entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null }); continue; }
 
     const src = await resourceSourceRef(env, resource, cfg);
     const masterSha = await fileCommitSha(env, src.owner, src.repo, file.path, src.ref);
     const stored = await storedResourceSha(env, book, resource, src);
     // Skip ONLY on a positive SHA match (fail-open: null/unknown → reimport).
     if (masterSha && stored && masterSha === stored) {
-      entries.push({ resource, changed: false, masterSha, r2Key: null });
+      entries.push({ resource, changed: false, masterSha, r2Key: null, src });
       continue;
     }
 
     const raw = await fetchText(dcsRawUrl(env, src.owner, src.repo, file.path, src.ref));
     if (raw == null) {
       // DCS 404 / fetch error → nothing to import, no watermark.
-      entries.push({ resource, changed: false, masterSha: null, r2Key: null });
+      entries.push({ resource, changed: false, masterSha: null, r2Key: null, src });
       continue;
     }
     // Completeness gate (TSV only). A truncated body must NOT be staged or get a
@@ -1939,12 +1995,12 @@ async function planAndStageBookResources(
       (resource === "tn" || resource === "tq" || resource === "twl") &&
       (await tsvFetchLooksTruncated(env, book, resource, raw))
     ) {
-      entries.push({ resource, changed: false, masterSha: null, r2Key: null });
+      entries.push({ resource, changed: false, masterSha: null, r2Key: null, src });
       continue;
     }
     const r2Key = `reimport-stage/${instanceId}/${book}/${resource}`;
     await env.BLOBS.put(r2Key, raw);
-    entries.push({ resource, changed: true, masterSha, r2Key });
+    entries.push({ resource, changed: true, masterSha, r2Key, src });
   }
   return { maxChapter, entries };
 }
@@ -2021,10 +2077,12 @@ async function reimportStagedChunk(
       addCounts(perResource[kind], await applyTsvRows(env, book, kind, byCh.get(chapter) ?? [], userId));
     }
     if (versesByChapter.ult) {
-      addCounts(perResource.ult, await applyVerseRows(env, book, "ULT", versesByChapter.ult.get(chapter) ?? [], userId));
+      const src = staged.find((e) => e.resource === "ult")?.src ?? null;
+      addCounts(perResource.ult, await applyVerseRows(env, book, "ULT", versesByChapter.ult.get(chapter) ?? [], userId, src));
     }
     if (versesByChapter.ust) {
-      addCounts(perResource.ust, await applyVerseRows(env, book, "UST", versesByChapter.ust.get(chapter) ?? [], userId));
+      const src = staged.find((e) => e.resource === "ust")?.src ?? null;
+      addCounts(perResource.ust, await applyVerseRows(env, book, "UST", versesByChapter.ust.get(chapter) ?? [], userId, src));
     }
   }
   return perResource;
@@ -2109,13 +2167,13 @@ export async function runChunkedReimport(
   }
 
   // Record fetch-time SHAs for resources that ran (so a later night can skip).
+  // Use the staged `src` captured at plan time — do NOT re-call resourceSourceRef
+  // (a mid-run generation flip would stamp the watermark under the wrong identity).
   await step.do(`reimport-sync-${book}`, async () => {
-    const cfg = await getProjectConfig(env);
     let recorded = 0;
     for (const e of changed) {
-      if (e.masterSha) {
-        const src = await resourceSourceRef(env, e.resource, cfg);
-        await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", src);
+      if (e.masterSha && e.src) {
+        await recordResourceSync(env, book, e.resource, e.masterSha, "reimport", e.src);
         recorded++;
       }
     }

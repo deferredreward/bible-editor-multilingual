@@ -197,9 +197,12 @@ export function dcsResourceFile(
 }
 
 // Raw content URL for an owner/repo/path at a given ref (defaults to master).
+// A 40-char hex ref is treated as an immutable commit SHA (Gitea/Door43
+// `/raw/commit/<sha>/…`); anything else uses `/raw/branch/<ref>/…`.
 export function dcsRawUrl(env: Env, owner: string, repo: string, path: string, ref = "master"): string {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
-  return `${base}/${owner}/${repo}/raw/branch/${ref}/${path}`;
+  const kind = /^[0-9a-f]{40}$/i.test(ref) ? "commit" : "branch";
+  return `${base}/${owner}/${repo}/raw/${kind}/${ref}/${path}`;
 }
 
 // Latest commit SHA on master that touched `path` in `repo`, or null on

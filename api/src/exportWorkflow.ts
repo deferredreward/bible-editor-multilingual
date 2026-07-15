@@ -983,7 +983,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         try {
           // Pruning superseded branches deletes refs on DCS — re-verify ownership.
           await this.assertFencingOrThrow(lane, fencingToken);
-          await this.pruneSupersededBranches(book, resource, owner, dcsRepo, branch);
+          await this.pruneSupersededBranches(book, resource, owner, dcsRepo, branch, lane, fencingToken);
 
           // Renew around the (potentially long) PR operations; a failed renew
           // means another Worker took the lane — treat it as lost ownership and
@@ -1023,6 +1023,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                   await this.assertFencingOrThrow(lane, fencingToken);
                   const recovered = await this.recoverConflictedBranch(
                     book, resource, owner, dcsRepo, branch, dcsCfg, filename, built.content, message,
+                    lane, fencingToken,
                   );
                   if (recovered) {
                     prNumber = recovered.prNumber;
@@ -1431,6 +1432,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     owner: string,
     repo: string,
     keepBranch: string,
+    lane: LaneKey | null = null,
+    fencingToken: string | null = null,
   ): Promise<void> {
     // Steady-state short-circuit: when the most recent snapshot already
     // recorded this same branch, any superseded branches were already pruned
@@ -1463,11 +1466,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const targets = [...new Set([...stale, LEGACY_EXPORT_BRANCH])].filter((b) => b && b !== keepBranch);
     for (const b of targets) {
       try {
+        // Re-verify fencing before every branch DELETE — a mid-loop activation
+        // must not let us keep mutating DCS under a superseded token.
+        await this.assertFencingOrThrow(lane, fencingToken);
         await deleteDcsBranch(
           { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo },
           b,
         );
       } catch (e) {
+        if (e instanceof Error && e.message === "fencing_token_superseded") throw e;
         console.error("prune: branch delete failed", { repo, branch: b, error: e instanceof Error ? e.message : String(e) });
       }
     }
@@ -1493,6 +1500,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     filename: string,
     content: string,
     message: string,
+    lane: LaneKey | null = null,
+    fencingToken: string | null = null,
   ): Promise<{ prNumber: number | null; prReason: string; commitSha: string | null } | null> {
     const adminToken = this.env.DCS_TOKEN;
     if (!adminToken) {
@@ -1500,6 +1509,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return null;
     }
     try {
+      await this.assertFencingOrThrow(lane, fencingToken);
       const res = await recreateExportBranchFromMaster({
         baseUrl: dcsCfg.baseUrl,
         token: adminToken,
@@ -1515,7 +1525,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // we know it differs from master — that's what conflicted) → one commit,
       // child of master. The delete auto-closed the old PR, so ensureDcsPr mints
       // a fresh one whose diff is exactly the D1 delta.
+      await this.assertFencingOrThrow(lane, fencingToken);
       const recommit = await commitToDcs(dcsCfg, filename, content, message, { forceBranch: true });
+      await this.assertFencingOrThrow(lane, fencingToken);
       const pr = await ensureDcsPr(
         dcsCfg,
         `bible-editor: ${book} ${resource} → master`,
@@ -1527,6 +1539,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       await this.recordBranchRebuiltAlert(book, resource, repo, branch, pr.number);
       return { prNumber: pr.number, prReason: `rebuilt:${pr.reason}`, commitSha: recommit.commitSha || null };
     } catch (e) {
+      if (e instanceof Error && e.message === "fencing_token_superseded") throw e;
       const detail = e instanceof Error ? e.message : String(e);
       console.error("export conflict-recovery failed", { book, resource, repo, branch, error: detail });
       await this.recordPrConflictAlert(book, resource, repo, branch, detail.slice(0, 120));

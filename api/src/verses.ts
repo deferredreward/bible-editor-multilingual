@@ -271,12 +271,15 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
 
     // Require X-Source-Generation on lane writes. The client must prove which
     // generation it loaded the verse under so a stale tab can't overwrite a new
-    // generation. Missing / blank / non-integer → 428 (re-read, then retry);
-    // a finite value that disagrees with the active generation → 409.
-    const clientGen = parseInt(c.req.header("X-Source-Generation") ?? "", 10);
-    if (!Number.isFinite(clientGen)) {
+    // generation. Missing / blank / non-digit → 428 (re-read, then retry);
+    // a strict digit string that disagrees with the active generation → 409.
+    // Reject "1.5" / "1e2" / " 1 " with trailing junk — parseInt would accept
+    // those and silently coerce; only /^\d+$/ after trim is allowed.
+    const genHeader = (c.req.header("X-Source-Generation") ?? "").trim();
+    if (!/^\d+$/.test(genHeader)) {
       return c.json({ error: "source_generation_required" }, 428);
     }
+    const clientGen = Number(genHeader);
     if (clientGen !== gate.generation) {
       return c.json({ error: "source_generation_mismatch", expected: gate.generation, got: clientGen }, 409);
     }

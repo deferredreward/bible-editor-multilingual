@@ -422,12 +422,28 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
   // write is attributed to them, matching the contract that says the run
   // was triggered on their behalf.
   const starter = await env.DB.prepare(
-    `SELECT user_id FROM pipeline_jobs WHERE job_id = ?1`,
+    `SELECT user_id, source_generation, source_owner, source_repo, source_ref,
+            pipeline_type
+       FROM pipeline_jobs WHERE job_id = ?1`,
   )
     .bind(job.jobId)
-    .first<{ user_id: number }>();
+    .first<{
+      user_id: number;
+      source_generation: number | null;
+      source_owner: string | null;
+      source_repo: string | null;
+      source_ref: string | null;
+      pipeline_type: string;
+    }>();
   if (!starter) throw new Error(`apply: pipeline_jobs row not found for ${job.jobId}`);
   const userId = starter.user_id;
+  const jobStamp = {
+    source_generation: starter.source_generation,
+    source_owner: starter.source_owner,
+    source_repo: starter.source_repo,
+    source_ref: starter.source_ref,
+    pipeline_type: starter.pipeline_type,
+  };
 
   // All unresolved proposals for this job, in stable order so retries do
   // the same work in the same sequence.
@@ -629,7 +645,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
       : new Map<number, SourceWord[]>();
 
   for (const p of verseProposals) {
-    await applyVerseUpdate(env, p, userId, uhbWordsByVerse);
+    await applyVerseUpdate(env, p, userId, uhbWordsByVerse, jobStamp);
     affected.add(p.chapter);
     result.verseUpdated += 1;
   }
@@ -1464,6 +1480,13 @@ async function applyVerseUpdate(
   p: PendingImportRow,
   userId: number,
   uhbWordsByVerse: Map<number, SourceWord[]>,
+  jobStamp?: {
+    source_generation: number | null;
+    source_owner: string | null;
+    source_repo: string | null;
+    source_ref: string | null;
+    pipeline_type: string;
+  },
 ): Promise<void> {
   const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
   const book = String(payload.book ?? p.book);
@@ -1496,7 +1519,34 @@ async function applyVerseUpdate(
         .run();
       return;
     }
-    sourceGeneration = gate.generation;
+    // Generate jobs must have stamped a generation at create; refuse applies
+    // that would land on a different generation than the job was started for.
+    if (jobStamp?.pipeline_type === "generate") {
+      if (jobStamp.source_generation == null) {
+        await env.DB.prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+        )
+          .bind(p.id, userId)
+          .run();
+        return;
+      }
+      if (
+        gate.generation !== jobStamp.source_generation ||
+        gate.config.source.owner !== jobStamp.source_owner ||
+        gate.config.source.repo !== jobStamp.source_repo ||
+        gate.config.source.ref !== jobStamp.source_ref
+      ) {
+        await env.DB.prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+        )
+          .bind(p.id, userId)
+          .run();
+        return;
+      }
+      sourceGeneration = jobStamp.source_generation;
+    } else {
+      sourceGeneration = gate.generation;
+    }
   }
 
   // Self-heal target `\w` occurrence numbering before the AI-applied alignment

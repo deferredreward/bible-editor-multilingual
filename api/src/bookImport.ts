@@ -273,15 +273,57 @@ async function importBookFromDcs(
     throw new Error(`DCS fetch failed for ${missing.length} resource(s); retry: ${missing.join("; ")}`);
   }
 
+  // Re-check lane state AFTER the (potentially slow) DCS fetches and BEFORE any
+  // DELETE/INSERT. A replacement may have started or activated while we were
+  // waiting; writing the generations we captured at the top would clobber the
+  // wrong generation or race a freeze.
+  const litRecheck = await requireLaneState(env, "lit");
+  const simRecheck = await requireLaneState(env, "sim");
+  if (litRecheck.replacement_job_id) throw new Error("lit_lane_frozen_for_replacement");
+  if (simRecheck.replacement_job_id) throw new Error("sim_lane_frozen_for_replacement");
+  if (litRecheck.replacement_required) throw new Error("lit_lane_replacement_required");
+  if (simRecheck.replacement_required) throw new Error("sim_lane_replacement_required");
+  if (litRecheck.active_generation !== litState.active_generation) {
+    throw new Error("lit_lane_generation_changed");
+  }
+  if (simRecheck.active_generation !== simState.active_generation) {
+    throw new Error("sim_lane_generation_changed");
+  }
+
+  // Resolve active generation per lane for the imported verses (re-captured
+  // after the recheck so writes match the just-validated pointer).
+  const litGen = litRecheck.active_generation;
+  const simGen = simRecheck.active_generation;
+  const olGen = origSourceGeneration();
+
   // Wipe any partial leftovers from a prior failed run. book_imports stays
   // empty until the very end so a midway failure leaves the book in an
   // unimported state (the next POST retries cleanly).
+  // Verses / book_usfm_meta are generation-keyed — only delete the generations
+  // we are about to rewrite (never `DELETE FROM verses WHERE book=?` alone).
+  // tn/tq/twl are not generation-keyed; book-scoped wipe is correct for TSV.
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM tn_rows  WHERE book = ?1`).bind(book),
     env.DB.prepare(`DELETE FROM tq_rows  WHERE book = ?1`).bind(book),
     env.DB.prepare(`DELETE FROM twl_rows WHERE book = ?1`).bind(book),
-    env.DB.prepare(`DELETE FROM verses   WHERE book = ?1`).bind(book),
-    env.DB.prepare(`DELETE FROM book_usfm_meta WHERE book = ?1`).bind(book),
+    env.DB.prepare(
+      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2`,
+    ).bind(book, litGen),
+    env.DB.prepare(
+      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2`,
+    ).bind(book, simGen),
+    env.DB.prepare(
+      `DELETE FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
+    ).bind(book, origVersion, olGen),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2`,
+    ).bind(book, litGen),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2`,
+    ).bind(book, simGen),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
+    ).bind(book, origVersion, olGen),
   ]);
 
   const counts: ImportCounts = {
@@ -298,11 +340,6 @@ async function importBookFromDcs(
       twl: !!twlRaw,
     },
   };
-
-  // Resolve active generation per lane for the imported verses.
-  const litGen = litState.active_generation;
-  const simGen = simState.active_generation;
-  const olGen = origSourceGeneration();
 
   counts.verses += await insertVerses(env, book, "ULT", ultRaw, litGen);
   counts.verses += await insertVerses(env, book, "UST", ustRaw, simGen);

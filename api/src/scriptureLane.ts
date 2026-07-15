@@ -193,6 +193,36 @@ export async function requireLaneState(env: Env, lane: LaneKey): Promise<LaneSta
   return row;
 }
 
+/**
+ * Clear a lane freeze whose replacement_job_id points at a missing
+ * scripture_lane_replacement row (Worker died between CAS freeze and job
+ * INSERT). Returns true when an orphan was cleared. Safe to call anytime —
+ * no-op when the job exists or the lane is not frozen.
+ */
+export async function recoverOrphanedReservation(
+  env: Env,
+  lane: LaneKey,
+): Promise<boolean> {
+  const row = await getLaneState(env, lane);
+  if (!row?.replacement_job_id) return false;
+  const job = await env.DB.prepare(
+    `SELECT 1 AS ok FROM scripture_lane_replacement WHERE job_id = ?1`,
+  )
+    .bind(row.replacement_job_id)
+    .first();
+  if (job) return false;
+  await env.DB.prepare(
+    `UPDATE scripture_lane_state
+        SET replacement_job_id = NULL,
+            exports_blocked = CASE WHEN replacement_required = 1 THEN 1 ELSE 0 END,
+            updated_at = unixepoch()
+      WHERE lane = ?1 AND replacement_job_id = ?2`,
+  )
+    .bind(lane, row.replacement_job_id)
+    .run();
+  return true;
+}
+
 export function activeLaneConfig(row: LaneStateRow): ScriptureLaneConfig {
   return parseLaneConfig(row.active_config_json);
 }
@@ -215,6 +245,9 @@ export async function assertLaneWritable(
   lane: LaneKey,
   purpose: "verse_edit" | "alignment_edit" | "import" | "reimport" | "pipeline" | "export_lease" | "config_patch",
 ): Promise<LaneWriteGate> {
+  // Heal an orphan freeze before treating the lane as frozen.
+  await recoverOrphanedReservation(env, lane);
+
   const row = await requireLaneState(env, lane);
   const config = activeLaneConfig(row);
 

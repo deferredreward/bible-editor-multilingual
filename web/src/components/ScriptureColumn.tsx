@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button, Chip } from "@mui/material";
 import HistoryIcon from "@mui/icons-material/History";
@@ -12,6 +12,11 @@ import SaveIcon from "@mui/icons-material/Save";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import type { ChapterPayload, TnRow, TwlRow, VerseDto } from "../sync/api";
 import { drafts, verseKey } from "../sync/drafts";
+import {
+  getLaneFreezeEpoch,
+  isLaneFrozen,
+  subscribeLaneFreeze,
+} from "../sync/laneFreeze";
 import { DocColumn } from "./DocColumn";
 import { useProjectConfig } from "../hooks/useProjectConfig";
 import { versionLabel } from "../lib/versionLabels";
@@ -211,6 +216,13 @@ function ScriptureColumnInner({
 }: Props) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
+  // Local freeze flag covers the WS→config-refresh window so editors lock
+  // immediately (projectConfig.replacementJobId may still be null).
+  const freezeEpoch = useSyncExternalStore(
+    subscribeLaneFreeze,
+    getLaneFreezeEpoch,
+    getLaneFreezeEpoch,
+  );
   // Versions whose text is locked — lane textReadOnly, or a freeze /
   // replacement_required quarantine. Fed into find/replace and editors so
   // users can't keep typing until the server 409s.
@@ -218,10 +230,26 @@ function ScriptureColumnInner({
     const s = new Set<string>();
     const lit = projectConfig?.laneState?.lit;
     const sim = projectConfig?.laneState?.sim;
-    if (lit?.config?.textReadOnly || lit?.replacementJobId || lit?.replacementRequired) s.add("ULT");
-    if (sim?.config?.textReadOnly || sim?.replacementJobId || sim?.replacementRequired) s.add("UST");
+    if (
+      isLaneFrozen("ULT") ||
+      lit?.config?.textReadOnly ||
+      lit?.replacementJobId ||
+      lit?.replacementRequired
+    ) {
+      s.add("ULT");
+    }
+    if (
+      isLaneFrozen("UST") ||
+      sim?.config?.textReadOnly ||
+      sim?.replacementJobId ||
+      sim?.replacementRequired
+    ) {
+      s.add("UST");
+    }
     return s;
-  }, [projectConfig?.laneState?.lit, projectConfig?.laneState?.sim]);
+    // freezeEpoch is the subscription signal — isLaneFrozen reads the module Set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- freezeEpoch drives recompute
+  }, [projectConfig?.laneState?.lit, projectConfig?.laneState?.sim, freezeEpoch]);
   const activeRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
