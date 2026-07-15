@@ -1,0 +1,20 @@
+---
+description: Always target PRs to the fork repository, not upstream
+alwaysApply: true
+---
+
+# GitHub PR Target
+
+This checkout has:
+
+- `origin` = `deferredreward/bible-editor-multilingual`
+- `upstream` = `unfoldingWord/bible-editor`
+
+The GitHub CLI may resolve bare `gh pr create` / `gh repo view` to upstream because an `upstream` remote exists. For this folder, always pass the repository explicitly when opening or inspecting PRs:
+
+```powershell
+gh pr create --repo deferredreward/bible-editor-multilingual --base main
+gh pr view --repo deferredreward/bible-editor-multilingual
+```
+
+Never accept a PR URL under `github.com/unfoldingWord/bible-editor` for this workspace unless the user explicitly asks to target upstream.
