@@ -1140,6 +1140,11 @@ export function ResourceColumn({
           <iframe
             src={SEARCH_IFRAME_URL}
             title={t("shell.search")}
+            // sandbox grants only what a search tool needs (its own scripts,
+            // storage, forms, and opening result links in a new tab);
+            // referrerPolicy keeps our URL out of the external site's logs.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            referrerPolicy="no-referrer"
             style={{ width: "100%", height: "100%", border: 0 }}
           />
         </Box>

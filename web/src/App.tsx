@@ -370,7 +370,9 @@ export function App() {
               sx={{ borderRadius: 0, py: 0.5 }}
             >
               {a.message}
-              {a.linkUrl && (
+              {/* Scheme check: linkUrl is server-authored, but React doesn't
+                  block javascript: hrefs — only render a link for https. */}
+              {a.linkUrl && /^https:\/\//.test(a.linkUrl) && (
                 <>
                   {" — "}
                   <Link
