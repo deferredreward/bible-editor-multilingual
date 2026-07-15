@@ -8,7 +8,7 @@
 
 import { useEffect, useRef } from "react";
 import { openChapterRoom } from "../sync/wsClient";
-import type { TnRow, TqRow, TwlRow, VerseDto, VerseStatus, LaneCheckState, VerseLaneCheck, CheckLane } from "../sync/api";
+import type { TnRow, TqRow, TwlRow, VerseDto, VerseStatus, LaneCheckState, VerseLaneCheck, CheckLane, LaneReplacementEvent } from "../sync/api";
 
 type RowKind = "tn" | "tq" | "twl";
 type AnyRow = TnRow | TqRow | TwlRow;
@@ -22,11 +22,19 @@ interface WireEvent {
   verse?: VerseDto;
   status?: VerseStatus;
   check?: LaneCheckState;
-  lane?: CheckLane;
+  // Lane-check events carry a CheckLane ("text"|"tn"|"tw"|"tq"); lane.replacement
+  // events carry a scripture lane ("lit"|"sim"). Typed loosely and narrowed at
+  // the dispatch site.
+  lane?: string;
   checks?: VerseLaneCheck[];
   book?: string;
   chapter?: number;
   pipeline_type?: string;
+  // lane.replacement_freeze / lane.replacement_settled
+  jobId?: string;
+  predecessorGeneration?: number;
+  activeGeneration?: number;
+  configRevision?: number;
 }
 
 export interface UseChapterRoomHandlers {
@@ -39,6 +47,12 @@ export interface UseChapterRoomHandlers {
   // An AI pipeline wrote rows into this chapter out of band — the row list is
   // stale. Optional: tabs that don't care (or aren't this chapter) can ignore it.
   onPipelineApplied?: (book: string, chapter: number, pipelineType: string) => void;
+  // A scripture lane froze for a replacement — quarantine queued edits for the
+  // lane's bible_version and stop editing it. Optional.
+  onLaneFreeze?: (event: LaneReplacementEvent) => void;
+  // The replacement settled (activated / cancelled / failed) — refresh config +
+  // chapter. Optional.
+  onLaneSettled?: (event: LaneReplacementEvent) => void;
 }
 
 export function useChapterRoom(
@@ -77,7 +91,25 @@ export function useChapterRoom(
           return;
         }
         if (ev.type === "lane_check.bulk" && ev.lane && Array.isArray(ev.checks)) {
-          handlersRef.current.onLaneCheckBulkUpdate(ev.lane, ev.checks);
+          handlersRef.current.onLaneCheckBulkUpdate(ev.lane as CheckLane, ev.checks);
+          return;
+        }
+        if (
+          (ev.type === "lane.replacement_freeze" || ev.type === "lane.replacement_settled") &&
+          (ev.lane === "lit" || ev.lane === "sim") &&
+          typeof ev.jobId === "string"
+        ) {
+          const rawStatus = (ev as unknown as { status?: unknown }).status;
+          const detail: LaneReplacementEvent = {
+            lane: ev.lane,
+            jobId: ev.jobId,
+            predecessorGeneration: ev.predecessorGeneration ?? 0,
+            activeGeneration: ev.activeGeneration ?? 0,
+            configRevision: ev.configRevision ?? 0,
+            status: typeof rawStatus === "string" ? rawStatus : "",
+          };
+          if (ev.type === "lane.replacement_freeze") handlersRef.current.onLaneFreeze?.(detail);
+          else handlersRef.current.onLaneSettled?.(detail);
           return;
         }
         if (

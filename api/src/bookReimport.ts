@@ -55,6 +55,7 @@ import {
   type VerseExtract,
 } from "./importParsers";
 import { activePipelineForChapter } from "./chapterLock";
+import { requireLaneState, laneForBibleVersion } from "./scriptureLane";
 import { coerceRowId } from "./rowId";
 import { planTnContentDedup } from "./tnDedup";
 import { isCatastrophicTsvShrink } from "./shrinkGuard";
@@ -268,6 +269,20 @@ async function runReimport(
   // Fetch each requested resource once at the book level. ULT/UST/TN/TQ/TWL
   // are whole-book files; chapter filtering happens after parse.
   const want = new Set(resources);
+
+  // Scripture-lane guard: a frozen lane (open replacement) or a lane that still
+  // requires a replacement must not accept a scripture reimport — it would
+  // clobber the generation the replacement is staging/superseding. TSV
+  // resources (tn/tq/twl) are lane-agnostic and stay allowed.
+  for (const [resource, bv] of [["ult", "ULT"], ["ust", "UST"]] as const) {
+    if (!want.has(resource)) continue;
+    const lane = laneForBibleVersion(bv);
+    if (!lane) continue;
+    const state = await requireLaneState(env, lane);
+    if (state.replacement_job_id || state.replacement_required) {
+      throw new Error(`${lane}_lane_frozen_for_replacement`);
+    }
+  }
   let [ultRaw, ustRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
     want.has("ult") ? fetchText(urls.ult) : Promise.resolve(null),
     want.has("ust") ? fetchText(urls.ust) : Promise.resolve(null),

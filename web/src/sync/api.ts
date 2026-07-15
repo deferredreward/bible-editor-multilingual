@@ -104,6 +104,8 @@ export interface VerseDto {
   // NULL for singleton verses. PR 2 widens UI rendering to span these.
   verse_end: number | null;
   bible_version: string;
+  /** Lane generation for ULT/UST; typically 1 for UHB/UGNT. */
+  source_generation?: number;
   plain_text: string | null;
   version: number;
   updated_by: number | null;
@@ -1193,6 +1195,72 @@ export interface GlBiblePane {
   version: string;
   title: string;
 }
+export interface LanePublicState {
+  lane: "lit" | "sim";
+  activeGeneration: number;
+  configRevision: number;
+  replacementJobId: string | null;
+  exportsBlocked: boolean;
+  replacementRequired: boolean;
+  config: {
+    label: string;
+    source: { owner: string; repo: string; ref: string };
+    export: { owner: string; repo: string; baseRef: string; branchPolicy: string } | null;
+    textReadOnly: boolean;
+    alignmentWritable: boolean;
+  };
+  pendingTarget: LanePublicState["config"] | null;
+}
+
+// WS event fired when a scripture lane freezes for a replacement (source swap)
+// or the replacement settles. Mirrors api/src/wsEvents.ts. Open tabs use these
+// to quarantine queued edits and refresh once the generation flips.
+export interface LaneReplacementEvent {
+  lane: "lit" | "sim";
+  jobId: string;
+  predecessorGeneration: number;
+  activeGeneration: number;
+  configRevision: number;
+  status: string;
+}
+
+// Replacement job + per-book staging state. Mirrors the D1 rows returned by
+// GET /api/project-config/lanes/:lane/replacements/:jobId.
+export type LaneReplacementStatus =
+  | "reserved"
+  | "staging"
+  | "ready"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface LaneReplacementJob {
+  job_id: string;
+  lane: "lit" | "sim";
+  generation: number;
+  predecessor_generation: number;
+  status: LaneReplacementStatus;
+  error_json: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface LaneReplacementBook {
+  job_id: string;
+  book: string;
+  // pending | artifact_ok | retryable_error | absent_authorized | failed
+  status: string;
+  source_sha: string | null;
+  completeness_json: string | null;
+  error_json: string | null;
+  updated_at: number;
+}
+
+export interface LaneReplacementJobResponse {
+  job: LaneReplacementJob;
+  books: LaneReplacementBook[];
+}
+
 export interface ProjectConfig {
   preset: string;
   org: string;
@@ -1213,6 +1281,10 @@ export interface ProjectConfig {
     repos: Record<string, string>;
   } | null;
   reposVerified: boolean;
+  laneState?: {
+    lit: LanePublicState;
+    sim: LanePublicState;
+  };
 }
 export interface ProjectPreset {
   preset: string;
@@ -1533,15 +1605,21 @@ export const api = {
     bibleVersion: string,
     expectedVersion: number,
     payload: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
-  ) =>
-    request<T>(
+    opts?: { sourceGeneration?: number },
+  ) => {
+    const headers: Record<string, string> = { "If-Match": String(expectedVersion) };
+    if (opts?.sourceGeneration != null) {
+      headers["X-Source-Generation"] = String(opts.sourceGeneration);
+    }
+    return request<T>(
       `/api/verses/${encodeURIComponent(book)}/${chapter}/${verse}/${encodeURIComponent(bibleVersion)}`,
       {
         method: "PATCH",
-        headers: { "If-Match": String(expectedVersion) },
+        headers,
         body: JSON.stringify(payload),
       },
-    ),
+    );
+  },
 
   tnQuick: (body: TnQuickRequest, signal?: AbortSignal) =>
     request<TnQuickResponse>(`/api/tn-quick`, {
@@ -1600,5 +1678,76 @@ export const api = {
     request<{ items: PendingImport[] }>(
       `/api/pending-imports?book=${encodeURIComponent(book)}&chapter=${chapter}`,
       { signal },
+    ),
+
+  // ── Scripture lane management ──
+  laneValidate: (lane: "lit" | "sim", url: string) =>
+    request<{
+      source: { owner: string; repo: string; ref: string };
+      currentSource: { owner: string; repo: string; ref: string };
+      impactBooks: number;
+      impactVerses: number;
+      laneState: LanePublicState;
+    }>(`/api/project-config/lanes/${lane}/validate`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+
+  laneStartReplacement: (
+    lane: "lit" | "sim",
+    config: LanePublicState["config"],
+    confirm: boolean,
+  ) =>
+    request<{ job: unknown; books: unknown[] }>(
+      `/api/project-config/lanes/${lane}/replacements`,
+      { method: "POST", body: JSON.stringify({ config, confirm }) },
+    ),
+
+  laneGetJob: (lane: "lit" | "sim", jobId: string) =>
+    request<LaneReplacementJobResponse>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}`,
+    ),
+
+  laneCancelJob: (lane: "lit" | "sim", jobId: string) =>
+    request<{ ok: boolean }>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST" },
+    ),
+
+  // Re-stage a single book that hit a retryable_error. Returns updated job
+  // readiness (ready + pending list) so the caller can re-poll / enable activate.
+  laneRetryBook: (lane: "lit" | "sim", jobId: string, book: string) =>
+    request<{ status: string; ready?: boolean; pending?: string[] }>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/retry-book`,
+      { method: "POST", body: JSON.stringify({ book }) },
+    ),
+
+  // Authorize a book's absence (skip it) — marks it absent_authorized so it no
+  // longer blocks readiness. Returns updated job readiness.
+  laneWaiveBook: (lane: "lit" | "sim", jobId: string, book: string) =>
+    request<{ ready?: boolean; pending?: string[] }>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/waive-book`,
+      { method: "POST", body: JSON.stringify({ book }) },
+    ),
+
+  // Flip the generation pointer once the job is ready. The fencing token guards
+  // against a split-brain export completing a stale render after the flip.
+  laneActivate: (lane: "lit" | "sim", jobId: string, fencingToken: string) =>
+    request<{ activated: boolean }>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/activate`,
+      { method: "POST", body: JSON.stringify({ fencingToken }) },
+    ),
+
+  lanePatch: (
+    lane: "lit" | "sim",
+    configRevision: number,
+    patch: { label?: string; textReadOnly?: boolean; alignmentWritable?: boolean },
+  ) =>
+    request<{ laneState: LanePublicState }>(
+      `/api/project-config/lanes/${lane}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ ...patch, configRevision }),
+      },
     ),
 };

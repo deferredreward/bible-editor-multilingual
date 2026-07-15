@@ -174,6 +174,22 @@ export const drafts = {
   async list(): Promise<DraftRecord[]> {
     return listAll();
   },
+
+  // Discard every unsaved verse draft for a bible_version whose lane just froze
+  // for a replacement — the generation is about to flip, so the draft is against
+  // content that's being replaced. Row drafts (tn/tq/twl) are lane-agnostic and
+  // left alone. Returns the count cleared.
+  async clearByVersion(bibleVersion: string): Promise<number> {
+    const all = await listAll();
+    let n = 0;
+    for (const rec of all) {
+      if (rec.meta.kind === "verse" && rec.meta.bibleVersion === bibleVersion) {
+        await this.clear(rec.key);
+        n++;
+      }
+    }
+    return n;
+  },
 };
 
 // Emotion/sx fragment for the orange "you have unsaved typing here" border.

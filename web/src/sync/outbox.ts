@@ -123,6 +123,9 @@ export interface OutboxOp {
   // genuine one (the server changed a field we're also editing). Only set for
   // row patches; absent for verse/status/lane ops and pre-baseline records.
   baseline?: Record<string, unknown>;
+  // The source_generation the verse was loaded under. Sent as X-Source-Generation
+  // so the server can reject edits against a superseded generation.
+  sourceGeneration?: number;
 }
 
 type Subscriber = (ops: OutboxOp[]) => void;
@@ -300,6 +303,7 @@ export const outbox = {
     bibleVersion: string,
     expectedVersion: number,
     patch: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
+    opts?: { sourceGeneration?: number },
   ): Promise<OutboxOp> {
     if (isReadOnly()) {
       return noopOp(
@@ -318,6 +322,7 @@ export const outbox = {
       seq: nextSeq(),
       attempts: 0,
       status: "pending",
+      ...(opts?.sourceGeneration != null ? { sourceGeneration: opts.sourceGeneration } : {}),
     };
     await (await db()).put(STORE, op);
     void notify();
@@ -518,6 +523,35 @@ export const outbox = {
   async list(): Promise<OutboxOp[]> {
     return listAll();
   },
+
+  // Quarantine every queued verse op for a bible_version whose lane just froze
+  // for a replacement. The active generation is about to flip, so any still-
+  // queued edit is against a generation the server will reject (or, worse,
+  // would land on soon-to-be-superseded content). Mark them `failed` with a
+  // clear reason so they surface in the failed-ops drawer instead of silently
+  // draining post-flip. Touches pending / in_flight / conflict ops (a request
+  // already on the wire will 409 on the generation guard anyway). Returns the
+  // count quarantined.
+  async quarantineLaneOps(bibleVersion: string, reason: string): Promise<number> {
+    const idb = await db();
+    const tx = idb.transaction(STORE, "readwrite");
+    const all = (await tx.store.getAll()) as OutboxOp[];
+    let n = 0;
+    for (const o of all) {
+      if (o.target.kind !== "verse") continue;
+      if (o.target.bibleVersion !== bibleVersion) continue;
+      if (o.status === "pending" || o.status === "in_flight" || o.status === "conflict") {
+        o.status = "failed";
+        o.lastError = reason;
+        o.conflictCurrent = undefined;
+        await tx.store.put(o);
+        n++;
+      }
+    }
+    await tx.done;
+    void notify();
+    return n;
+  },
 };
 
 // ---------- drain ----------
@@ -605,6 +639,7 @@ async function dispatch(op: OutboxOp): Promise<Result> {
         op.target.bibleVersion,
         op.expectedVersion,
         op.patch as { content: unknown; plain_text?: string | null },
+        { sourceGeneration: op.sourceGeneration },
       );
     }
     return { kind: "ok", updated };
@@ -617,6 +652,16 @@ async function dispatch(op: OutboxOp): Promise<Result> {
         const alignmentLoss = unexpectedAlignmentLossReason(e.body);
         if (alignmentLoss) {
           return { kind: "fatal", reason: alignmentLoss };
+        }
+        // Lane-specific terminal errors: the verse's generation is stale or a
+        // replacement is active — retrying won't help; quarantine immediately.
+        const errCode = (e.body as { error?: string } | null)?.error;
+        if (
+          errCode === "source_generation_mismatch" ||
+          errCode === "lane_replacement_required" ||
+          errCode === "lane_replacement_in_progress"
+        ) {
+          return { kind: "fatal", reason: errCode };
         }
         const body = e.body as { current?: unknown } | undefined;
         return { kind: "conflict", current: body?.current };

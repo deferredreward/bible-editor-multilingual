@@ -26,7 +26,8 @@ import { useTwlFilters } from "../hooks/useTwlFilters";
 import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox } from "../sync/outbox";
 import { api, CHECK_LANES } from "../sync/api";
-import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion } from "../sync/api";
+import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion, LaneReplacementEvent } from "../sync/api";
+import { refreshProjectConfig, useProjectConfig } from "../hooks/useProjectConfig";
 import {
   indexLaneChecks,
   laneKey,
@@ -172,6 +173,7 @@ interface Props {
 
 export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, onLogout, meUserId = null }: Props) {
   const { t } = useTranslation();
+  const projectConfig = useProjectConfig();
   const {
     status,
     data,
@@ -203,6 +205,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // toast state declared after this hook), so the WS handler reaches it through
   // a ref, mirroring dataRef above.
   const promptRefreshRef = useRef<(pipelineType: string) => void>(() => {});
+  // Lane freeze/settled handlers reach state declared further down (toast,
+  // aligner) through refs, same as promptRefreshRef above.
+  const laneFreezeRef = useRef<(event: LaneReplacementEvent) => void>(() => {});
+  const laneSettledRef = useRef<(event: LaneReplacementEvent) => void>(() => {});
   useChapterRoom(book, chapter, {
     onUpsert: (kind, row) => {
       const list = dataRef.current?.[kind] as Array<TnRow | TqRow | TwlRow> | undefined;
@@ -248,6 +254,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       // collaborators too (their tab gets no pipeline-completion event).
       promptRefreshRef.current(pipelineType);
     },
+    onLaneFreeze: (event) => laneFreezeRef.current(event),
+    onLaneSettled: (event) => laneSettledRef.current(event),
   });
   // Book-level DCS-validation summary for the topbar "issues to clean up"
   // indicator. Keyed on book, so it fetches once per book change — never on
@@ -442,6 +450,46 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   useEffect(() => {
     promptRefreshRef.current = promptChapterRefresh;
   }, [promptChapterRefresh]);
+
+  // A scripture lane just froze for a replacement (source swap): the active
+  // generation is about to flip, so any queued edit for that lane's version is
+  // now against soon-to-be-superseded content. Quarantine those outbox ops and
+  // discard unsaved drafts so nothing lands post-flip, close the aligner if it's
+  // open on that version, and refresh the config so the lane's frozen/read-only
+  // state takes effect. Verse content refreshes when the settled event arrives.
+  const onLaneFreeze = useCallback(
+    (event: LaneReplacementEvent) => {
+      const bibleVersion = event.lane === "lit" ? "ULT" : "UST";
+      void outbox.quarantineLaneOps(bibleVersion, t("shell.laneFrozenQuarantine", { version: bibleVersion }));
+      void drafts.clearByVersion(bibleVersion);
+      if (alignerTarget?.bibleVersion === bibleVersion) {
+        setAlignerTarget(null);
+        setPanelMode("resources");
+      }
+      void refreshProjectConfig().catch(() => {});
+      pushPipelineToast(t("shell.laneFrozen", { version: bibleVersion }), "info");
+    },
+    [t, alignerTarget, pushPipelineToast],
+  );
+  useEffect(() => {
+    laneFreezeRef.current = onLaneFreeze;
+  }, [onLaneFreeze]);
+
+  // The replacement settled (activated / cancelled / failed) and the freeze
+  // lifted: refresh the config (lane state) and reload the open chapter so its
+  // verses reflect the new generation (or the reverted state on cancel/fail).
+  const onLaneSettled = useCallback(
+    (event: LaneReplacementEvent) => {
+      const bibleVersion = event.lane === "lit" ? "ULT" : "UST";
+      void refreshProjectConfig().catch(() => {});
+      void refetch();
+      pushPipelineToast(t("shell.laneSettled", { version: bibleVersion }), "info");
+    },
+    [t, refetch, pushPipelineToast],
+  );
+  useEffect(() => {
+    laneSettledRef.current = onLaneSettled;
+  }, [onLaneSettled]);
 
   useEffect(
     () =>
@@ -1691,8 +1739,22 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     setAlignerTarget({ ...alignerTarget, chapter, verse: activeVerse });
   }, [activeVerse, chapter, panelMode, alignerTarget]);
 
+  const laneAllowsAlignment = useCallback(
+    (bv: string): boolean => {
+      if (bv === "ULT") return projectConfig?.laneState?.lit?.config?.alignmentWritable !== false;
+      if (bv === "UST") return projectConfig?.laneState?.sim?.config?.alignmentWritable !== false;
+      // Source versions (UHB/UGNT) are never alignment targets here.
+      return true;
+    },
+    [projectConfig],
+  );
+
   const openAligner = useCallback(
     (chapterNum: number, v: number, bv: string) => {
+      if (!laneAllowsAlignment(bv)) {
+        pushPipelineToast(t("shell.alignmentLocked", { version: bv }), "info");
+        return;
+      }
       runWithDirtyGate(() => {
         setAlignerTarget({ chapter: chapterNum, verse: v, bibleVersion: bv });
         setActiveVerse(v);
@@ -1701,7 +1763,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         setPanelMode("alignment");
       });
     },
-    [runWithDirtyGate],
+    [runWithDirtyGate, laneAllowsAlignment, pushPipelineToast, t],
   );
 
   // Open the side-by-side ULT/UST aligner on a verse. Layered over the UI as a
@@ -1709,12 +1771,16 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // unsaved drags before opening.
   const openDualAligner = useCallback(
     (chapterNum: number, v: number) => {
+      if (!laneAllowsAlignment("ULT") || !laneAllowsAlignment("UST")) {
+        pushPipelineToast(t("shell.alignmentLocked", { version: "ULT/UST" }), "info");
+        return;
+      }
       runWithDirtyGate(() => {
         setActiveVerse(v);
         setDualTarget({ chapter: chapterNum, verse: v });
       });
     },
-    [runWithDirtyGate],
+    [runWithDirtyGate, laneAllowsAlignment, pushPipelineToast, t],
   );
   // Any action that leaves or re-targets the dual aligner gates on unsaved work
   // — alignment drags OR reading-text edits in either panel (save/discard
@@ -1882,6 +1948,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
               bibleVersion,
               expectedVersion,
               { content, plain_text: plainText, alignment_intent: "alignment_edit" },
+              { sourceGeneration: base.source_generation },
             );
             onConfirmedApply?.();
           },
@@ -1910,6 +1977,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       bibleVersion,
       expectedVersion,
       { content, plain_text: plainText, alignment_intent: intent },
+      { sourceGeneration: base.source_generation },
     );
     return true;
   }, [book, pushPipelineToast, t]);

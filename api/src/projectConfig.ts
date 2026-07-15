@@ -85,6 +85,15 @@ export interface ProjectConfig {
   } | null;
   /** True when the org's repos were confirmed to exist on Door43 (2026-07-10 survey) */
   reposVerified: boolean;
+  /**
+   * Optional authoritative lane state (lit/sim generations, locks, freezes).
+   * Populated by GET /api/project-config via overlayLaneLabels — not stored in
+   * overrides_json. Clients must treat this as source of truth for write gates.
+   */
+  laneState?: {
+    lit: Record<string, unknown>;
+    sim: Record<string, unknown>;
+  };
 }
 
 const EN_REPOS: Record<ResourceKey, string> = {
@@ -113,8 +122,9 @@ export const PRESETS: Record<string, ProjectConfig> = {
     translationSource: null,
     reposVerified: true,
   },
-  // Verified live 2026-07-10: BSOJ has ar_glt, ar_gst, ar_tn, ar_tq, ar_twl,
-  // ar_tw, ar_ta plus Bibles ar_avd (Van Dyke), ar_nav, ar_arst.
+  // BSOJ literal/simplified are Van Dyke (ar_avd) and Open NAV (ar_nav) —
+  // both text-read-only with alignment editable. Earlier builds incorrectly
+  // used ar_glt/ar_gst as primaries (underspec); those are not supported choices.
   "ar-bsoj": {
     preset: "ar-bsoj",
     org: "BSOJ",
@@ -123,15 +133,12 @@ export const PRESETS: Record<string, ProjectConfig> = {
     languageName: "Arabic",
     languageTitle: "العربية",
     direction: "rtl",
-    repos: { lit: "ar_glt", sim: "ar_gst", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
-    litLabel: "GLT",
-    simLabel: "GST",
+    repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
+    litLabel: "AVD",
+    simLabel: "NAV",
     origHebrewLabel: "UHB",
     origGreekLabel: "UGNT",
-    glBibles: [
-      { repo: "ar_avd", version: "AVD", title: "فانديك" },
-      { repo: "ar_nav", version: "NAV", title: "الترجمة العربية المبسطة" },
-    ],
+    glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: true,
   },

@@ -19,11 +19,12 @@ import {
   refParts,
 } from "./importParsers";
 import { requireAuth, requireEditor, currentUserId } from "./auth";
-import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText } from "./dcsSources";
+import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText, type LaneRepoOverrides } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
 import { reimportBookFromDcs, recordResourceSync, type Resource } from "./bookReimport";
 import { lintTnRows, lintUsfmVerses } from "./lint";
 import type { TnRow, VerseRow } from "./types";
+import { ensureLaneState, requireLaneState, origSourceGeneration, activeLaneConfig } from "./scriptureLane";
 
 export const books = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -221,8 +222,28 @@ async function importBookFromDcs(
   _num: string,
   userId: number,
 ): Promise<ImportCounts> {
+  // Assert lanes not frozen before starting import. A frozen lane (an open
+  // replacement job) or a lane that still requires a replacement (BSOJ
+  // transitional gen-1 quarantine) must not accept a fresh scripture import —
+  // it would write gen-1 rows the replacement is meant to supersede.
+  await ensureLaneState(env);
+  const litState = await requireLaneState(env, "lit");
+  const simState = await requireLaneState(env, "sim");
+  if (litState.replacement_job_id) throw new Error("lit_lane_frozen_for_replacement");
+  if (simState.replacement_job_id) throw new Error("sim_lane_frozen_for_replacement");
+  if (litState.replacement_required) throw new Error("lit_lane_replacement_required");
+  if (simState.replacement_required) throw new Error("sim_lane_replacement_required");
+
   const cfg = await getProjectConfig(env);
-  const urls = dcsUrls(env, cfg, book);
+
+  // Use lane source refs from active config for scripture USFM URLs
+  const litCfg = activeLaneConfig(litState);
+  const simCfg = activeLaneConfig(simState);
+  const laneOverrides: LaneRepoOverrides = {
+    lit: litCfg.source,
+    sim: simCfg.source,
+  };
+  const urls = dcsUrls(env, cfg, book, laneOverrides);
   if (!urls) throw new Error(`unknown book: ${book}`);
   const origVersion = urls.origVersion;
 
@@ -278,9 +299,14 @@ async function importBookFromDcs(
     },
   };
 
-  counts.verses += await insertVerses(env, book, "ULT", ultRaw);
-  counts.verses += await insertVerses(env, book, "UST", ustRaw);
-  counts.verses += await insertVerses(env, book, origVersion, origRaw);
+  // Resolve active generation per lane for the imported verses.
+  const litGen = litState.active_generation;
+  const simGen = simState.active_generation;
+  const olGen = origSourceGeneration();
+
+  counts.verses += await insertVerses(env, book, "ULT", ultRaw, litGen);
+  counts.verses += await insertVerses(env, book, "UST", ustRaw, simGen);
+  counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen);
 
   counts.tn = await insertTnRows(env, book, tnRaw, userId);
   counts.tq = await insertTqRows(env, book, tqRaw, userId);
@@ -321,16 +347,19 @@ async function insertVerses(
   book: string,
   bibleVersion: string,
   rawUsfm: string | null,
+  sourceGeneration?: number,
 ): Promise<number> {
   if (!rawUsfm) return 0;
+
+  const gen = sourceGeneration ?? 1;
 
   const headers = extractUsfmHeaders(rawUsfm);
   if (headers) {
     await env.DB.prepare(
-      `INSERT OR REPLACE INTO book_usfm_meta (book, bible_version, headers_json)
-       VALUES (?1, ?2, ?3)`,
+      `INSERT OR REPLACE INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
+       VALUES (?1, ?2, ?3, ?4)`,
     )
-      .bind(book, bibleVersion, JSON.stringify(headers))
+      .bind(book, bibleVersion, gen, JSON.stringify(headers))
       .run();
   }
 
@@ -339,14 +368,14 @@ async function insertVerses(
   if (verses.length === 0) return 0;
 
   const stmt = env.DB.prepare(
-    `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, content_json, plain_text)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   );
   for (let i = 0; i < verses.length; i += CHUNK) {
     const slice = verses.slice(i, i + CHUNK);
     await env.DB.batch(
       slice.map((v) =>
-        stmt.bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, v.contentJson, v.plainText),
+        stmt.bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText),
       ),
     );
   }

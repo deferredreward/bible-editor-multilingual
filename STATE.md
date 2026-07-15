@@ -14,6 +14,24 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6 implemented end-to-end.**
+- Migration `0042_scripture_lanes.sql` applied locally (generation-keyed verses, lane state, replacement FSM, export leases, activation triggers).
+- Export fencing: renewable leases, hold/fresh verify before every mutating DCS call, grace drain before activation, generation-filtered scripture renders.
+- Preferences contracts: admin lane APIs, WS `lane.replacement_freeze` / `lane.replacement_settled`, outbox quarantine + draft clear, BookView/stacked/columns `textLockedVersions`, find/replace skips text-locked lanes, Preferences 3s job polling + activate/retry/waive/cancel, staging kickoff via `waitUntil`.
+- BSOJ: populated DB sets `replacement_required` (blocks AVD/NAV-labeled reads/exports of legacy gen-1); empty DB starts on AVD/NAV; browser smoke: Preferences → AVD URL → stage ZEC → activate → lit gen 2 on `ar_avd`.
+- Tests: `scriptureLaneReplacement.test.mjs` (33 cases incl. both activation races + fencing CAS), `scriptureLane` / `repoUrl` / `alignmentCanonical`; `npm run typecheck`, web tests, `check-i18n` green.
+- Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
+
+## Completed
+
+2026-07-15 · **Scripture Repository Preferences v6** — Generation-keyed scripture lanes with replacement FSM, export fencing via renewable lease tokens, per-lane text/alignment locks, Preferences UI for repo switching, and BSOJ AVD/NAV correction (quarantine gen-1 → replacement_required → import correct source → activate). Comprehensive test coverage via `node:sqlite` harness exercising migration 0042 triggers + invariants.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6: comprehensive replacement FSM test suite.**
+- Created `api/src/scriptureLaneReplacement.test.mjs` using `node:sqlite` `DatabaseSync` as a lightweight D1 harness — applies the 0042 migration schema + triggers to an in-memory SQLite DB.
+- Race / generation / freeze / BSOJ / fencing CAS coverage; wired into `api/package.json` test script.
+
+---
+
 2026-07-14 · **main (preferences i18n)** — **Translated Preferences & Memory panel for all UI locales.**
 - Machine-translated the full `preferences.*` namespace (~93 keys after delta) into bn/es/fa/fr/hi/id/ne/pt/ru/sw/th/ur (ar was already done).
 - Added `csvColumnPlaceholder`, `noRendering`, `termArrow`, and `exportStatus.{running,failed,queued}` to `en.json` + all locales; wired them in `PreferencesWorkspace.tsx` (no more hardcoded arrow/dash/CSV placeholder; known export status tokens map to translated labels).
@@ -1479,6 +1497,11 @@ Highlights that bite repeatedly:
 - **`usfm-js` parks leading punctuation/markers on the node's `text`** — markers can carry text; opening
   quotes after a marker live on the marker node, not as a sibling.
 - **Export USFM puts punctuation outside `\w` (`\w earth\w*.`) on purpose** — correct uW form, not churn; don't "fix" it.
+- **`node:sqlite` (`DatabaseSync`) works for D1 schema/trigger testing.** Node 24's built-in SQLite supports `unixepoch()`,
+  `?1`/`?2` positional params, triggers with `RAISE(ABORT)`, and CHECK constraints. Use an in-memory DB + the migration
+  CREATE TABLE/TRIGGER statements to unit-test schema invariants without Miniflare. Wrap multi-statement batches in
+  `BEGIN`/`COMMIT` with try/catch `ROLLBACK` to match D1 batch atomicity (SQLite's `RAISE(ABORT)` only rolls back
+  the current statement, not the whole transaction).
 
 ## Stop conditions / goals
 

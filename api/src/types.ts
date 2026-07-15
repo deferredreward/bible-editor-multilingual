@@ -142,11 +142,14 @@ export interface VerseRow {
   // NULL for singleton verses.
   verse_end: number | null;
   bible_version: string;
+  /** Lane generation for ULT/UST; always 1 for UHB/UGNT. */
+  source_generation: number;
   content_json: string;
   plain_text: string | null;
   version: number;
   updated_by: number | null;
   updated_at: number;
+  created_by_job_id?: string | null;
 }
 
 export interface VerseStatus {

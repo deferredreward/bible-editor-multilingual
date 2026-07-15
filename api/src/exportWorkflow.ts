@@ -63,6 +63,19 @@ import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
+import {
+  laneForBibleVersion,
+  assertLaneWritable,
+  getLaneState,
+  activeGenerationForBibleVersion,
+  type LaneKey,
+} from "./scriptureLane";
+import {
+  acquireExportLease,
+  renewExportLease,
+  releaseExportLease,
+  verifyExportFencingToken,
+} from "./scriptureLaneReplacement";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 import { lintUsfmVerses } from "./lint";
 import {
@@ -663,6 +676,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // the next run. Returns a small summary for step observability.
   private async escalateIntegrityIssues(books: string[]): Promise<{ flagged: string[] }> {
     const flagged: string[] = [];
+    // Lint only the active generation of each lane. A lane mid-replacement
+    // (replacement_required → null) is blocked; skip it rather than lint stale
+    // or quarantined rows.
+    const laneGen: Record<string, number | null> = {
+      ULT: await activeGenerationForBibleVersion(this.env, "ULT"),
+      UST: await activeGenerationForBibleVersion(this.env, "UST"),
+    };
     // Raise a per-book admin banner when `offenders` is non-empty, else clear any
     // stale undismissed alert for that source (the issue was fixed). One source
     // per issue category so they raise/clear independently.
@@ -684,10 +704,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         const footnoteOffenders: string[] = [];
         const gluedOffenders: string[] = [];
         for (const bv of ["ULT", "UST"]) {
+          const gen = laneGen[bv];
+          if (gen == null) continue;
           const rs = await this.env.DB.prepare(
-            `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 ORDER BY chapter, verse`,
+            `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3 ORDER BY chapter, verse`,
           )
-            .bind(book, bv)
+            .bind(book, bv, gen)
             .all<VerseRow>();
           for (const issue of lintUsfmVerses(rs.results ?? [])) {
             if (issue.bucket !== "escalate") continue;
@@ -719,7 +741,30 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     instanceId: string,
     dcsAllowed: boolean,
   ): Promise<StepResult> {
-    const built = await this.buildResource(book, resource);
+    // Lane fencing for scripture resources (ULT/UST): check writability from
+    // live D1 state (not cached project config) before doing anything.
+    const lane = (resource === "ult" || resource === "ust") ? laneForBibleVersion(resource.toUpperCase()) : null;
+    // Active generation to render from. ULT/UST render their own lane's active
+    // generation; TWL reads ULT verses for sort ordering, so it uses ULT's.
+    // tn/tq don't touch generation-scoped rows (1 is an unused sentinel).
+    let scriptureGen = 1;
+    if (lane) {
+      const gate = await assertLaneWritable(this.env, lane, "export_lease");
+      if (!gate.ok) {
+        const reason = `lane_blocked:${gate.error}`;
+        await this.recordSnapshot(book, resource, null, null, 0, reason);
+        return {
+          book, resource, rowCount: 0, bytes: 0, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      scriptureGen = gate.generation;
+    } else if (resource === "twl") {
+      scriptureGen = await this.activeGenerationFor("ULT");
+    }
+
+    const built = await this.buildResource(book, resource, scriptureGen);
 
     if (built.content === "") {
       await this.recordSnapshot(book, resource, null, null, built.rowCount, "no_rows");
@@ -857,6 +902,25 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
     } else {
+      // For ULT/UST: acquire an export lease so a concurrent replacement can't
+      // activate while we're mid-commit. Non-scripture resources skip the lease.
+      let leaseId: string | null = null;
+      let fencingToken: string | null = null;
+      if (lane) {
+        const lease = await acquireExportLease(this.env, lane, `export:${instanceId}:${book}`);
+        if ("error" in lease) {
+          const reason = `lease_blocked:${lease.error}`;
+          await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+          return {
+            book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key,
+            branch: null, dcsCommitSha: null, dcsChanged: false,
+            dcsSkippedReason: reason, prNumber: null, prReason: null,
+          };
+        }
+        leaseId = lease.leaseId;
+        fencingToken = lease.fencingToken;
+      }
+      try {
       const owner = this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg;
       const dcsCfg = {
         baseUrl: this.env.DCS_BASE_URL,
@@ -866,18 +930,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         branch,
       };
       const message = `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`;
+
+      // Fencing token must still hold before the file commit — the one mutation
+      // we must never do with a stale token (it would push over a just-activated
+      // replacement generation). Throws → the run() step catch records the skip;
+      // nothing was committed.
+      await this.assertFencingOrThrow(lane, fencingToken);
+
       const commit = await commitToDcs(dcsCfg, filename, built.content, message);
       if (!commit.branchTouched) {
-        // Rendered content matches master — nothing to merge. Close any open PR
-        // lingering from an earlier night (an edit since reverted in D1, or
-        // already merged to master) so empty (0-diff) PRs don't pile up and the
-        // validate-and-merge job's worklist stays equal to "books with unmerged
-        // edits". We can't delete the branch (the service token lacks
-        // branch-delete), but closing the PR is enough; the branch gets a fresh
-        // PR the next time this (book, resource) actually diverges from master.
         const lingering = await findDcsOpenPr(dcsCfg);
         if (lingering != null) {
           try {
+            // Closing a stale PR mutates DCS — re-verify ownership first.
+            await this.assertFencingOrThrow(lane, fencingToken);
             await closeDcsPr(dcsCfg, lingering);
           } catch (e) {
             console.error("export close-stale-PR failed", {
@@ -893,17 +959,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       if (!commit.branchTouched) {
         dcsSkippedReason = "unchanged";
       } else {
-        // Prune branches this export superseded: any prior {book}-be-* branch for
-        // this (book, resource) whose name changed because the contributor set
-        // changed, plus the legacy live-snapshot branch. Best-effort — a prune
-        // failure must never fail or retry the export step.
-        await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
-
-        // Ensure the branch has an open PR into master so the DCS validate-and-
-        // merge workflow can act on it (it merges -be- PRs, not bare branches).
-        // Best-effort: the commit already succeeded and the snapshot is recorded,
-        // so a PR failure must not fail the export — the PR can be opened later.
         try {
+          // Pruning superseded branches deletes refs on DCS — re-verify ownership.
+          await this.assertFencingOrThrow(lane, fencingToken);
+          await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
+
+          // Renew around the (potentially long) PR operations; a failed renew
+          // means another Worker took the lane — treat it as lost ownership and
+          // abort the remaining mutations rather than racing them.
+          if (leaseId && !(await renewExportLease(this.env, leaseId))) {
+            throw new Error("fencing_token_superseded");
+          }
+          await this.assertFencingOrThrow(lane, fencingToken);
+
           const pr = await ensureDcsPr(
             dcsCfg,
             `bible-editor: ${book} ${resource} → master`,
@@ -912,12 +980,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           prNumber = pr.number;
           prReason = pr.reason;
           if (pr.number != null) {
-            // Merge master into the PR head ("update branch"). door43's PATCH
-            // git/refs 409s on existing refs, so this is the only thing that
-            // actually re-bases a long-lived branch; without it the PR drifts
-            // to mergeable:False. Conflicts are expected sometimes — log, never
-            // fail the step.
             try {
+              // Renew + re-verify before update-branch (another mutating call).
+              if (leaseId && !(await renewExportLease(this.env, leaseId))) {
+                throw new Error("fencing_token_superseded");
+              }
+              await this.assertFencingOrThrow(lane, fencingToken);
               const upd = await updateDcsPrBranch(
                 { baseUrl: dcsCfg.baseUrl, token: dcsCfg.token, owner, repo: target.repo },
                 pr.number,
@@ -926,26 +994,18 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                 console.log("export PR update-branch skipped", {
                   book, resource, repo: target.repo, pr: pr.number, status: upd.status, detail: upd.detail,
                 });
-                // 409 = genuine merge conflict: the branch drifted from master
-                // (an out-of-band master edit to the same rows) and won't
-                // auto-merge. D1 is authoritative, so rebuild the branch as a
-                // clean child of CURRENT master carrying the SAME rendered file
-                // and re-open the PR — diff becomes exactly the D1 delta, no
-                // conflict. built.content already passed the freshness + shrink
-                // gates above; we reuse it (never re-render). Gated on an admin
-                // token; absent → just alert (today's drift behavior). See
-                // docs/export-rebase-fix.md.
                 if (upd.status === 409) {
+                  // Recovery deletes + recommits the branch — renew + re-verify.
+                  if (leaseId && !(await renewExportLease(this.env, leaseId))) {
+                    throw new Error("fencing_token_superseded");
+                  }
+                  await this.assertFencingOrThrow(lane, fencingToken);
                   const recovered = await this.recoverConflictedBranch(
                     book, resource, owner, target.repo, branch, dcsCfg, filename, built.content, message,
                   );
                   if (recovered) {
                     prNumber = recovered.prNumber;
                     prReason = recovered.prReason;
-                    // Record the FRESH rebuilt commit, not the stale one from the
-                    // (now deleted) conflicted branch — otherwise the snapshot's
-                    // commit_sha is wrong and contributorsFor's `commit_sha IS
-                    // NOT NULL` cutoff can't advance.
                     if (recovered.commitSha) dcsCommitSha = recovered.commitSha;
                   }
                 }
@@ -969,6 +1029,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           });
           await this.recordPrFailureAlert(book, resource, target.repo, branch, prError);
         }
+      }
+      } finally {
+        if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
       }
     }
 
@@ -1168,9 +1231,30 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
+  // Live active generation for a bible version (lit→ULT, sim→UST); 1 for OL /
+  // unknown. Reads uncached D1 lane state — never the project-config isolate
+  // cache — so a concurrent replacement activation is seen immediately.
+  private async activeGenerationFor(bibleVersion: string): Promise<number> {
+    const lane = laneForBibleVersion(bibleVersion);
+    if (!lane) return 1;
+    const st = await getLaneState(this.env, lane);
+    return st?.active_generation ?? 1;
+  }
+
+  // Re-check the export fencing token before a mutating DCS call and throw if it
+  // no longer holds (lease released/expired/abandoned, superseding lease, or the
+  // lane became exports_blocked by a replacement). Non-scripture resources have
+  // no lane/lease, so they short-circuit as always-valid.
+  private async assertFencingOrThrow(lane: LaneKey | null, token: string | null): Promise<void> {
+    if (!lane || !token) return;
+    const valid = await verifyExportFencingToken(this.env, lane, token);
+    if (!valid) throw new Error("fencing_token_superseded");
+  }
+
   private async buildResource(
     book: string,
     resource: Resource,
+    scriptureGen: number,
   ): Promise<{ content: string; rowCount: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
     const db = this.env.DB;
     if (resource === "tn") {
@@ -1207,10 +1291,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         .all<TwlRow>();
       const ultVerses = await db
         .prepare(
-          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2
+          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
            ORDER BY chapter, verse`,
         )
-        .bind(book, "ULT")
+        .bind(book, "ULT", scriptureGen)
         .all<VerseRow>();
       if (rs.results.length === 0) {
         return { content: "", rowCount: 0, sortOrderUpdates: [] };
@@ -1231,15 +1315,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const bibleVersion = resource.toUpperCase();
     const rs = await db
       .prepare(
-        `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2
+        `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
          ORDER BY chapter, verse`,
       )
-      .bind(book, bibleVersion)
+      .bind(book, bibleVersion, scriptureGen)
       .all<VerseRow>();
     if (rs.results.length === 0) return { content: "", rowCount: 0, sortOrderUpdates: [] };
     const headersRow = await db
-      .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2`)
-      .bind(book, bibleVersion)
+      .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`)
+      .bind(book, bibleVersion, scriptureGen)
       .first<{ headers_json: string }>();
     let headers: unknown[] | null = null;
     if (headersRow) {

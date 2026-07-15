@@ -57,7 +57,7 @@ test("writeProjectConfig clears overrides when overrides is null", async () => {
   const db = fakeDb(JSON.stringify({ litLabel: "AVD" }));
   const config = await writeProjectConfig({ DB: db }, "ar-bsoj", null);
   assert.deepEqual(db.state.bound, ["ar-bsoj", null]);
-  assert.equal(config.litLabel, "GLT");
+  assert.equal(config.litLabel, "AVD");
 });
 
 test("writeProjectConfig replaces overrides when an object is passed", async () => {

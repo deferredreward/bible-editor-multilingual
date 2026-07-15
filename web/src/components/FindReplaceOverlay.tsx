@@ -42,9 +42,8 @@ import {
 } from "../lib/sourceSearch";
 
 // UHB / UGNT are upstream source texts — the worker returns 403 on PATCH.
-// Filtering replace matches here keeps the outbox from queueing ops that
-// will fatally fail.
-const READ_ONLY_VERSIONS = new Set(["UHB", "UGNT"]);
+// Additional versions may be text-locked via lane config (textReadOnly).
+const HARDCODED_READ_ONLY_VERSIONS = new Set(["UHB", "UGNT"]);
 
 export interface FindMatch {
   chapter: number;
@@ -172,6 +171,9 @@ interface Props {
   // occurrence ("here I am") and scroll it into view. Null when the active
   // result isn't a replaceable note body hit.
   onActiveNoteMatchChange: (match: { noteId: string; occurrence: number } | null) => void;
+  // Additional versions where text replacement is blocked (lane textReadOnly).
+  // Combined with HARDCODED_READ_ONLY_VERSIONS for replace filtering.
+  textLockedVersions?: Set<string>;
 }
 
 export function FindReplaceOverlay({
@@ -191,7 +193,14 @@ export function FindReplaceOverlay({
   onScrollToNoteMatch,
   onNoteQueryChange,
   onActiveNoteMatchChange,
+  textLockedVersions,
 }: Props) {
+  // Combined read-only version set: hardcoded OL sources + lane-locked versions.
+  const readOnlyVersions = useMemo(() => {
+    if (!textLockedVersions || textLockedVersions.size === 0) return HARDCODED_READ_ONLY_VERSIONS;
+    return new Set([...HARDCODED_READ_ONLY_VERSIONS, ...textLockedVersions]);
+  }, [textLockedVersions]);
+
   const [find, setFind] = useState("");
   const [replace, setReplace] = useState("");
   const [regex, setRegex] = useState(false);
@@ -469,7 +478,7 @@ export function FindReplaceOverlay({
   >(null);
 
   const doReplaceMatch = (m: FindMatch) => {
-    if (READ_ONLY_VERSIONS.has(m.bibleVersion)) return;
+    if (readOnlyVersions.has(m.bibleVersion)) return;
     const state = chapters.get(m.chapter);
     if (!state || state.kind !== "ready") return;
     const verse = state.data.verses[m.bibleVersion]?.[m.verse];
@@ -508,7 +517,7 @@ export function FindReplaceOverlay({
     const byVerse = new Map<string, FindMatch[]>();
     let readOnlySkipped = 0;
     for (const m of bibleMatches) {
-      if (READ_ONLY_VERSIONS.has(m.bibleVersion)) {
+      if (readOnlyVersions.has(m.bibleVersion)) {
         readOnlySkipped += 1;
         continue;
       }
@@ -637,7 +646,7 @@ export function FindReplaceOverlay({
     if (replaceScope === "bible") {
       const verses = new Set<string>();
       for (const m of bibleMatches) {
-        if (READ_ONLY_VERSIONS.has(m.bibleVersion)) continue;
+        if (readOnlyVersions.has(m.bibleVersion)) continue;
         verses.add(`${m.chapter}|${m.verse}|${m.bibleVersion}`);
       }
       if (verses.size === 0) return;

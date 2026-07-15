@@ -211,6 +211,14 @@ function ScriptureColumnInner({
 }: Props) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
+  // Versions whose text is locked (lane textReadOnly) — fed into find/replace
+  // so matches in those versions are counted but excluded from replacement.
+  const textLockedVersions = useMemo(() => {
+    const s = new Set<string>();
+    if (projectConfig?.laneState?.lit?.config?.textReadOnly) s.add("ULT");
+    if (projectConfig?.laneState?.sim?.config?.textReadOnly) s.add("UST");
+    return s;
+  }, [projectConfig?.laneState?.lit?.config?.textReadOnly, projectConfig?.laneState?.sim?.config?.textReadOnly]);
   const activeRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -488,6 +496,7 @@ function ScriptureColumnInner({
               onScrollToNoteMatch={onScrollToNoteMatch}
               onNoteQueryChange={onNoteQueryChange}
               onActiveNoteMatchChange={onActiveNoteMatchChange}
+              textLockedVersions={textLockedVersions}
             />
           </Suspense>
         )}
@@ -514,6 +523,7 @@ function ScriptureColumnInner({
             onRestoreVerse={onRestoreVerse}
             onEditSection={onEditSection}
             locked={locked}
+            textLockedVersions={textLockedVersions}
           />
         ) : mode === "book" && bookChapterList && bookChapters && onLoadBookChapter && onSelectBookVerse && onEditBookVerse && onSaveBookVerse && onOpenBookAligner ? (
           <Suspense fallback={null}>
@@ -543,6 +553,7 @@ function ScriptureColumnInner({
               onOpenAligner={onOpenBookAligner}
               onEditSection={onEditBookSection}
               locked={locked}
+              textLockedVersions={textLockedVersions}
               textCheck={textCheck}
             />
           </Suspense>
@@ -558,8 +569,8 @@ function ScriptureColumnInner({
                 verseNumbers={verseNumbers}
                 chapter={chapter}
                 activeVerse={activeVerse}
-                readOnly={READ_ONLY_VERSIONS.has(v) || locked}
-                textCheck={READ_ONLY_VERSIONS.has(v) ? undefined : textCheck}
+                readOnly={READ_ONLY_VERSIONS.has(v) || locked || textLockedVersions.has(v)}
+                textCheck={READ_ONLY_VERSIONS.has(v) || textLockedVersions.has(v) ? undefined : textCheck}
                 rtl={v === "UHB"}
                 activeNoteQuote={activeNoteQuote}
                 activeNoteOccurrence={activeNoteOccurrence}
@@ -665,6 +676,7 @@ function StackedBody({
   onRestoreVerse,
   onEditSection,
   locked,
+  textLockedVersions,
 }: {
   book: string;
   indexByVersion: Record<string, Record<number, VerseDto>>;
@@ -698,6 +710,7 @@ function StackedBody({
     base: VerseDto,
   ) => void;
   locked: boolean;
+  textLockedVersions: Set<string>;
 }) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
@@ -802,22 +815,26 @@ function StackedBody({
                 nextHighlights={ultNextHL}
                 search={search}
                 findActiveMatch={findActiveMatch}
-                editable={!locked}
+                editable={!locked && !textLockedVersions.has("ULT")}
                 onOpenAligner={() => onOpenAligner(ultStart, "ULT")}
                 onEditPlain={
-                  ultV ? (plain) => onEditVerse(ultStart, "ULT", plain, ultV) : undefined
+                  ultV && !textLockedVersions.has("ULT")
+                    ? (plain) => onEditVerse(ultStart, "ULT", plain, ultV)
+                    : undefined
                 }
                 onSave={
-                  ultV ? (plain) => onSaveVerse(ultStart, "ULT", plain, ultV) : undefined
+                  ultV && !textLockedVersions.has("ULT")
+                    ? (plain) => onSaveVerse(ultStart, "ULT", plain, ultV)
+                    : undefined
                 }
                 version={ultV?.version}
                 onRestoreVersion={
-                  ultV
+                  ultV && !textLockedVersions.has("ULT")
                     ? (content, plainText) => onRestoreVerse(ultStart, "ULT", content, plainText, ultV)
                     : undefined
                 }
                 onEditSection={
-                  ultV && onEditSection
+                  ultV && onEditSection && !textLockedVersions.has("ULT")
                     ? (change) => onEditSection(ultStart, "ULT", change, ultV)
                     : undefined
                 }
@@ -837,22 +854,26 @@ function StackedBody({
                 nextHighlights={ustNextHL}
                 search={search}
                 findActiveMatch={findActiveMatch}
-                editable={!locked}
+                editable={!locked && !textLockedVersions.has("UST")}
                 onOpenAligner={() => onOpenAligner(ustStart, "UST")}
                 onEditPlain={
-                  ustV ? (plain) => onEditVerse(ustStart, "UST", plain, ustV) : undefined
+                  ustV && !textLockedVersions.has("UST")
+                    ? (plain) => onEditVerse(ustStart, "UST", plain, ustV)
+                    : undefined
                 }
                 onSave={
-                  ustV ? (plain) => onSaveVerse(ustStart, "UST", plain, ustV) : undefined
+                  ustV && !textLockedVersions.has("UST")
+                    ? (plain) => onSaveVerse(ustStart, "UST", plain, ustV)
+                    : undefined
                 }
                 version={ustV?.version}
                 onRestoreVersion={
-                  ustV
+                  ustV && !textLockedVersions.has("UST")
                     ? (content, plainText) => onRestoreVerse(ustStart, "UST", content, plainText, ustV)
                     : undefined
                 }
                 onEditSection={
-                  ustV && onEditSection
+                  ustV && onEditSection && !textLockedVersions.has("UST")
                     ? (change) => onEditSection(ustStart, "UST", change, ustV)
                     : undefined
                 }

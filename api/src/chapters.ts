@@ -22,6 +22,7 @@ import {
   logCorruptContentJson,
   parseVerseContentJson,
 } from "./contentJson.ts";
+import { ensureLaneState, requireLaneState } from "./scriptureLane";
 
 export const chapters = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -33,6 +34,20 @@ chapters.get("/:book/:chapter", async (c) => {
     return c.json({ error: "invalid_params" }, 400);
   }
   const db = c.env.DB;
+
+  // Ensure lane state rows exist; resolve active generations.
+  await ensureLaneState(c.env);
+  const litState = await requireLaneState(c.env, "lit");
+  const simState = await requireLaneState(c.env, "sim");
+
+  // Build generation filters — only serve verses for the active generation
+  // of each lane. OL (UHB/UGNT) always uses generation 1.
+  const genForBv: Record<string, number | null> = {
+    ULT: litState.replacement_required ? null : litState.active_generation,
+    UST: simState.replacement_required ? null : simState.active_generation,
+    UHB: 1,
+    UGNT: 1,
+  };
 
   // `latest_source` is derived from edit_log per row — the source column on
   // the *most recent* entry for (kind, row_key). It's 'ai_pipeline' iff the
@@ -100,8 +115,15 @@ chapters.get("/:book/:chapter", async (c) => {
   ]);
 
   // Reshape verses → verses[bibleVersion][verseNum] = VerseDto for easy client lookup.
+  // Filter by active generation per lane; replacement_required lanes are omitted.
   const verseMap: Record<string, Record<number, VerseDto>> = {};
   for (const v of verses.results) {
+    const requiredGen = genForBv[v.bible_version];
+    // null means lane blocked (replacement_required) — omit entirely
+    if (requiredGen === null || requiredGen === undefined) continue;
+    // Filter to active generation only
+    if ((v as VerseRow & { source_generation?: number }).source_generation !== undefined
+        && (v as VerseRow & { source_generation?: number }).source_generation !== requiredGen) continue;
     if (!verseMap[v.bible_version]) verseMap[v.bible_version] = {};
     const { content_json, ...rest } = v;
     void content_json;
@@ -129,7 +151,11 @@ chapters.get("/:book/:chapter", async (c) => {
     // the nightly export still emit source verbatim, so round-trip stays exact.
     const vos = (parsed as { verseObjects?: unknown[] } | null)?.verseObjects;
     if (Array.isArray(vos)) recomputeTargetOccurrences(vos);
-    verseMap[v.bible_version][v.verse] = { ...rest, content: parsed };
+    verseMap[v.bible_version][v.verse] = {
+      ...rest,
+      content: parsed,
+      source_generation: (v as VerseRow & { source_generation?: number }).source_generation ?? 1,
+    } as VerseDto;
   }
 
   const payload: ChapterPayload = {
@@ -335,6 +361,10 @@ chapters.patch("/:book/:chapter/lanes/:lane/bulk", requireEditor, async (c) => {
 chapters.get("/:book", async (c) => {
   const book = c.req.param("book").toUpperCase();
   const db = c.env.DB;
+  // Resolve lit lane active generation for the ULT verse count filter.
+  await ensureLaneState(c.env);
+  const litState = await requireLaneState(c.env, "lit");
+  const litGen = litState.replacement_required ? -1 : litState.active_generation;
   const summary = await db
     .prepare(
       `SELECT chapter,
@@ -343,7 +373,7 @@ chapters.get("/:book", async (c) => {
               SUM(CASE WHEN kind='tq' THEN 1 ELSE 0 END) AS tq,
               SUM(CASE WHEN kind='twl' THEN 1 ELSE 0 END) AS twl
        FROM (
-         SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT'
+         SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
          UNION ALL
          SELECT chapter, 'tn' FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
          UNION ALL
@@ -353,7 +383,7 @@ chapters.get("/:book", async (c) => {
        )
        GROUP BY chapter ORDER BY chapter`,
     )
-    .bind(book)
+    .bind(book, litGen)
     .all<{ chapter: number; verses: number; tn: number; tq: number; twl: number }>();
   return c.json({ book, chapters: summary.results });
 });

@@ -21,6 +21,7 @@ import {
   type VerseExtract,
 } from "./importParsers";
 import { canonizeAlignmentSource } from "./canonizeHebrew";
+import { assertLaneWritable, laneForBibleVersion } from "./scriptureLane";
 import { NT_BOOKS } from "./dcsSources";
 import type { ProjectConfig } from "./projectConfig";
 import { newRowId, isValidRowId } from "./rowId";
@@ -1475,6 +1476,25 @@ async function applyVerseUpdate(
   let contentJson = String(payload.content_json ?? "");
   const plainText = (payload.plain_text as string | null) ?? null;
   const rowKey = `${book}/${chapter}/${verse}/${bibleVersion}`;
+
+  // Scripture-lane guard: never let an AI pipeline write scripture into a lane
+  // that's frozen for a replacement (or still requires one). The generation is
+  // about to flip; a late apply would land on the superseded generation. TSV
+  // resources (tn/tq) are lane-agnostic and don't reach this path.
+  const lane = laneForBibleVersion(bibleVersion);
+  if (lane) {
+    const gate = await assertLaneWritable(env, lane, "pipeline");
+    if (!gate.ok) {
+      // Mark the pending row accepted-with-skip so the job can finalize instead
+      // of retrying a write the freeze will keep rejecting.
+      await env.DB.prepare(
+        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+      )
+        .bind(p.id, userId)
+        .run();
+      return;
+    }
+  }
 
   // Self-heal target `\w` occurrence numbering before the AI-applied alignment
   // lands in D1. The bot can emit colliding/`occurrences="1"` data; recomputing

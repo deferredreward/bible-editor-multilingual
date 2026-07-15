@@ -182,7 +182,36 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Feeding AI",
-    "notFeedingAi": "Not yet feeding the AI — enable assisted mode after a successful export"
+    "notFeedingAi": "Not yet feeding the AI — enable assisted mode after a successful export",
+    "scriptureLanes": {
+      "title": "Scripture repositories",
+      "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
+      "noState": "Lane state not initialized for {{lane}}.",
+      "textReadOnly": "Text read-only",
+      "alignmentWritable": "Alignment writable",
+      "sourceUrlLabel": "New source URL (Door43)",
+      "changeSource": "Change source",
+      "confirmReplace": "This will replace {{books}} book(s) ({{verses}} verses) with content from {{owner}}/{{repo}}. Are you sure?",
+      "replacementStarted": "Replacement job started.",
+      "replacementRequired": "Replacement required",
+      "replacementActive": "Replacement in progress",
+      "pendingTargetBanner": "This lane requires a source replacement before content is available.",
+      "jobRunning": "Replacement job running…",
+      "cancel": "Cancel replacement",
+      "activate": "Activate",
+      "replacementActivated": "Replacement activated.",
+      "booksProgress": "Books staged: {{done}} / {{total}}",
+      "bookRetryHint": "{{book}} failed to stage — click to retry, or dismiss to skip it.",
+      "jobStatus": {
+        "reserved": "Preparing replacement…",
+        "staging": "Staging books…",
+        "ready": "Ready to activate",
+        "completed": "Replacement completed",
+        "failed": "Replacement failed",
+        "cancelled": "Replacement cancelled"
+      },
+      "saved": "Lane config saved."
+    }
   },
   "export": {
     "noText": "No {{version}} text to export for {{target}}.",
@@ -380,6 +409,10 @@
     "checkoffVerse": "{{title}} for this verse — {{attribution}} · click to {{action}}",
     "checkAllChapter": "check {{title}} for every applicable verse in this chapter",
     "aiReady": "New AI {{pipelineType}} are ready for this chapter. Save your work, then refresh.",
+    "laneFrozen": "{{version}} is being replaced — editing is paused until the new source is ready.",
+    "laneFrozenQuarantine": "Quarantined: {{version}} is being replaced, so this queued edit was not applied.",
+    "laneSettled": "{{version}} replacement finished — the chapter has been refreshed.",
+    "alignmentLocked": "Alignment is locked for {{version}}.",
     "aiApplied": "AI {{pipelineType}} applied to {{where}}.",
     "aiFailed": "AI {{pipelineType}} failed for {{where}}: {{error}}",
     "editDroppedLocked": "Edit dropped — the AI run for this chapter is mid-flight. Try again after it finishes.",

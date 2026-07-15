@@ -39,7 +39,31 @@ export type WsEvent =
   // no row.upserted events fired). This is a coalesced *hint* — one per changed
   // chapter, not one per row — telling open tabs their row list is stale. The
   // client prompts the user to save and refresh rather than refetching silently.
-  | { type: "chapter.pipeline_applied"; book: string; chapter: number; pipeline_type: string };
+  | { type: "chapter.pipeline_applied"; book: string; chapter: number; pipeline_type: string }
+  // A scripture lane just froze for a replacement (source swap). Open tabs must
+  // quarantine any queued edits for that lane's bible_version and stop editing
+  // it until the replacement settles — the active generation is about to flip.
+  | {
+      type: "lane.replacement_freeze";
+      lane: "lit" | "sim";
+      jobId: string;
+      predecessorGeneration: number;
+      activeGeneration: number;
+      configRevision: number;
+      status: string;
+    }
+  // The replacement settled (activated / cancelled / failed) and the freeze
+  // lifted. Open tabs refresh their project config + chapter so they pick up
+  // the new generation's content (or the reverted state on cancel/fail).
+  | {
+      type: "lane.replacement_settled";
+      lane: "lit" | "sim";
+      jobId: string;
+      predecessorGeneration: number;
+      activeGeneration: number;
+      configRevision: number;
+      status: string;
+    };
 
 export async function broadcastChapter(
   env: Env,
@@ -64,6 +88,36 @@ export async function broadcastChapter(
     console.error("broadcastChapter failed", {
       book,
       chapter,
+      type: event.type,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
+ * Fan a lane-scoped event (freeze / settled) out to every chapter room that
+ * currently has content in D1. There's no global room registry — ChapterRoom
+ * only tracks its own live sockets — so this coarse approach picks the set of
+ * (book, chapter) rooms a translator could plausibly have open and broadcasts
+ * to each. A room with no live sockets is a cheap no-op DO fetch. Capped so a
+ * huge D1 can't blow the per-request subrequest budget; the freeze/settle is a
+ * hint anyway (HTTP + generation guards are the source of truth), so missing a
+ * rarely-open room just means that tab refreshes on its next action.
+ */
+export async function broadcastLaneEvent(env: Env, event: WsEvent): Promise<void> {
+  try {
+    const rs = await env.DB.prepare(
+      `SELECT DISTINCT book, chapter FROM verses ORDER BY book, chapter LIMIT 500`,
+    ).all<{ book: string; chapter: number }>();
+    // Chunk the fanout so we don't launch 500 DO fetches at once (subrequest
+    // budget); each chunk resolves before the next starts.
+    const CHUNK = 50;
+    for (let i = 0; i < rs.results.length; i += CHUNK) {
+      const slice = rs.results.slice(i, i + CHUNK);
+      await Promise.all(slice.map((r) => broadcastChapter(env, r.book, r.chapter, event)));
+    }
+  } catch (e) {
+    console.error("broadcastLaneEvent failed", {
       type: event.type,
       error: e instanceof Error ? e.message : String(e),
     });

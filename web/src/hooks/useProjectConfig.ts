@@ -117,6 +117,24 @@ export async function selectProjectPreset(preset: string): Promise<ProjectConfig
   return res.config;
 }
 
+// Publish an externally-obtained config update (e.g. from a lane PATCH
+// response) through the shared cache so every subscriber re-renders.
+export function updateProjectConfig(cfg: ProjectConfig): void {
+  publish({
+    config: cfg,
+    presets: cache?.presets ?? [],
+  });
+}
+
+// Force a fresh fetch from the server and publish. Useful after lane mutations
+// where the server returns partial state and we want the full picture.
+export async function refreshProjectConfig(): Promise<ProjectConfig> {
+  inflight = null; // clear any stale in-flight
+  const res = await api.getProjectConfig();
+  publish(res);
+  return res.config;
+}
+
 // True when translation-mode UI should be shown: the active project translates
 // FROM a source language (English root project → translationSource === null →
 // false, so its UX is byte-for-byte unchanged).

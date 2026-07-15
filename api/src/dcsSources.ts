@@ -12,6 +12,7 @@
 
 import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig";
+import type { RepoRef } from "./repoUrl";
 
 // Standard unfoldingWord book number prefixes for USFM filenames. Mirror of
 // the BOOK_NUMBERS map in scripts/import-book.mjs and api/src/export.ts.
@@ -51,11 +52,24 @@ export interface DcsUrlSet {
 // same UHB/UGNT under the unfoldingWord org, regardless of its own org.
 export const ORIG_OWNER = "unfoldingWord";
 
+// Optional per-resource RepoRef overrides from lane state. When provided,
+// the lit/sim URL uses the lane source ref instead of hardcoding master.
+export interface LaneRepoOverrides {
+  lit?: RepoRef;
+  sim?: RepoRef;
+}
+
 // Build the set of DCS raw-content URLs for a given book. `book` is the
 // uppercase 3-char canonical id (e.g. "ZEC", "1CO"). Returns null if the
 // book id isn't in BOOK_NUMBERS (unknown book). Owner + repo names come
 // from the project config (roles lit/sim → internal ULT/UST labels).
-export function dcsUrls(env: Env, cfg: ProjectConfig, book: string): DcsUrlSet | null {
+// Optional `overrides` lets callers supply lane-specific source refs.
+export function dcsUrls(
+  env: Env,
+  cfg: ProjectConfig,
+  book: string,
+  overrides?: LaneRepoOverrides,
+): DcsUrlSet | null {
   const num = BOOK_NUMBERS[book];
   if (!num) return null;
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
@@ -63,9 +77,17 @@ export function dcsUrls(env: Env, cfg: ProjectConfig, book: string): DcsUrlSet |
   const isNt = NT_BOOKS.has(book);
   const origRepo = isNt ? "el-x-koine_ugnt" : "hbo_uhb";
   const org = cfg.org;
+
+  const litOwner = overrides?.lit?.owner ?? org;
+  const litRepo = overrides?.lit?.repo ?? cfg.repos.lit;
+  const litRef = overrides?.lit?.ref ?? "master";
+  const simOwner = overrides?.sim?.owner ?? org;
+  const simRepo = overrides?.sim?.repo ?? cfg.repos.sim;
+  const simRef = overrides?.sim?.ref ?? "master";
+
   return {
-    ult: `${base}/${org}/${cfg.repos.lit}/raw/branch/master/${usfmName}`,
-    ust: `${base}/${org}/${cfg.repos.sim}/raw/branch/master/${usfmName}`,
+    ult: `${base}/${litOwner}/${litRepo}/raw/branch/${litRef}/${usfmName}`,
+    ust: `${base}/${simOwner}/${simRepo}/raw/branch/${simRef}/${usfmName}`,
     orig: `${base}/${ORIG_OWNER}/${origRepo}/raw/branch/master/${usfmName}`,
     origVersion: isNt ? "UGNT" : "UHB",
     tn: `${base}/${org}/${cfg.repos.tn}/raw/branch/master/tn_${book}.tsv`,
@@ -174,10 +196,10 @@ export function dcsResourceFile(
   }
 }
 
-// Raw master-branch content URL for an owner/repo/path (same shape dcsUrls builds).
-export function dcsRawUrl(env: Env, owner: string, repo: string, path: string): string {
+// Raw content URL for an owner/repo/path at a given ref (defaults to master).
+export function dcsRawUrl(env: Env, owner: string, repo: string, path: string, ref = "master"): string {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
-  return `${base}/${owner}/${repo}/raw/branch/master/${path}`;
+  return `${base}/${owner}/${repo}/raw/branch/${ref}/${path}`;
 }
 
 // Latest commit SHA on master that touched `path` in `repo`, or null on
