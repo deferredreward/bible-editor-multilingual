@@ -46,6 +46,7 @@ import {
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
 import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
+import { isLaneFrozen } from "../sync/laneFreeze";
 import { lostAlignedWords } from "../lib/alignmentDelta";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
 import { useAlignmentSuggestions } from "../hooks/useAlignmentSuggestions";
@@ -335,10 +336,25 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       if (!computedInitial || !verse) return;
       const key = alignmentDraftKey(book, chapter, verseNum, bibleVersion);
       const baseVersion = verse.version;
+      const baseGen = verse.source_generation;
       let cancelled = false;
       void alignmentDrafts.get(key).then((rec) => {
         if (cancelled || !rec) return;
+        // Quarantined crash drafts are recovery-only (shared drafts store);
+        // never restore them onto a replaced generation via the aligner path.
+        if (rec.quarantined || isLaneFrozen(bibleVersion)) {
+          void alignmentDrafts.clear(key);
+          return;
+        }
         if (rec.expectedVersion !== baseVersion) {
+          void alignmentDrafts.clear(key);
+          return;
+        }
+        if (
+          rec.sourceGeneration != null &&
+          baseGen != null &&
+          rec.sourceGeneration !== baseGen
+        ) {
           void alignmentDrafts.clear(key);
           return;
         }
@@ -380,7 +396,9 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       const baseVersion = verse.version;
       const t = setTimeout(() => {
         const content = { verseObjects: serializeAlignment(state) };
-        void alignmentDrafts.set(key, content, baseVersion);
+        void alignmentDrafts.set(key, content, baseVersion, {
+          sourceGeneration: verse.source_generation,
+        });
       }, 400);
       return () => clearTimeout(t);
     }, [state, dirty, verse, book, chapter, verseNum, bibleVersion]);
@@ -890,7 +908,9 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
           if (!dirty || !state || !verse) return;
           const key = alignmentDraftKey(book, chapter, verseNum, bibleVersion);
           const content = { verseObjects: serializeAlignment(state) };
-          void alignmentDrafts.set(key, content, verse.version);
+          void alignmentDrafts.set(key, content, verse.version, {
+            sourceGeneration: verse.source_generation,
+          });
         },
         getDirtySnapshot: () => {
           if (!dirty || !state || !verse) return null;

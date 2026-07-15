@@ -423,7 +423,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
   // was triggered on their behalf.
   const starter = await env.DB.prepare(
     `SELECT user_id, source_generation, source_owner, source_repo, source_ref,
-            pipeline_type
+            source_stamps_json, pipeline_type
        FROM pipeline_jobs WHERE job_id = ?1`,
   )
     .bind(job.jobId)
@@ -433,6 +433,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
       source_owner: string | null;
       source_repo: string | null;
       source_ref: string | null;
+      source_stamps_json: string | null;
       pipeline_type: string;
     }>();
   if (!starter) throw new Error(`apply: pipeline_jobs row not found for ${job.jobId}`);
@@ -442,6 +443,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     source_owner: starter.source_owner,
     source_repo: starter.source_repo,
     source_ref: starter.source_ref,
+    source_stamps_json: starter.source_stamps_json,
     pipeline_type: starter.pipeline_type,
   };
 
@@ -1485,6 +1487,7 @@ async function applyVerseUpdate(
     source_owner: string | null;
     source_repo: string | null;
     source_ref: string | null;
+    source_stamps_json: string | null;
     pipeline_type: string;
   },
 ): Promise<void> {
@@ -1521,8 +1524,34 @@ async function applyVerseUpdate(
     }
     // Generate jobs must have stamped a generation at create; refuse applies
     // that would land on a different generation than the job was started for.
+    // Dual-lane jobs fence each bible version against THAT lane's stamp.
     if (jobStamp?.pipeline_type === "generate") {
-      if (jobStamp.source_generation == null) {
+      let laneStamp: {
+        generation: number;
+        owner: string;
+        repo: string;
+        ref: string;
+      } | null = null;
+      if (jobStamp.source_stamps_json) {
+        try {
+          const parsed = JSON.parse(jobStamp.source_stamps_json) as Record<
+            string,
+            { generation: number; owner: string; repo: string; ref: string }
+          >;
+          laneStamp = parsed[lane] ?? null;
+        } catch {
+          laneStamp = null;
+        }
+      }
+      if (!laneStamp && jobStamp.source_generation != null) {
+        laneStamp = {
+          generation: jobStamp.source_generation,
+          owner: jobStamp.source_owner!,
+          repo: jobStamp.source_repo!,
+          ref: jobStamp.source_ref!,
+        };
+      }
+      if (!laneStamp) {
         await env.DB.prepare(
           `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
         )
@@ -1531,10 +1560,10 @@ async function applyVerseUpdate(
         return;
       }
       if (
-        gate.generation !== jobStamp.source_generation ||
-        gate.config.source.owner !== jobStamp.source_owner ||
-        gate.config.source.repo !== jobStamp.source_repo ||
-        gate.config.source.ref !== jobStamp.source_ref
+        gate.generation !== laneStamp.generation ||
+        gate.config.source.owner !== laneStamp.owner ||
+        gate.config.source.repo !== laneStamp.repo ||
+        gate.config.source.ref !== laneStamp.ref
       ) {
         await env.DB.prepare(
           `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
@@ -1543,7 +1572,7 @@ async function applyVerseUpdate(
           .run();
         return;
       }
-      sourceGeneration = jobStamp.source_generation;
+      sourceGeneration = laneStamp.generation;
     } else {
       sourceGeneration = gate.generation;
     }

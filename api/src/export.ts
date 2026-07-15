@@ -499,6 +499,8 @@ export interface DcsCommitConfig {
   owner: string;
   repo: string;
   branch: string;
+  /** Called immediately before every mutating DCS request (export fencing). */
+  beforeMutation?: () => Promise<void>;
 }
 
 export interface DcsCommitResult {
@@ -552,18 +554,19 @@ async function resetExportBranchToMaster(config: DcsCommitConfig): Promise<void>
 
   // Try to reset the export branch ref onto master. Happy path; preserves any
   // open PR (delete+recreate would close it).
+  await config.beforeMutation?.();
   const patchRes = await fetch(
     `${repoBase}/git/refs/heads/${encodeURIComponent(config.branch)}`,
     { method: "PATCH", headers, body: JSON.stringify({ target: masterSha }) },
   );
   if (patchRes.ok) {
-    await ensureBranchVisible(repoBase, headers, config.branch);
+    await ensureBranchVisible(repoBase, headers, config.branch, config);
     return;
   }
   // 404 → the branch doesn't exist yet: create it from master.
   if (patchRes.status === 404) {
-    await createBranchFromMaster(repoBase, headers, config.branch);
-    await ensureBranchVisible(repoBase, headers, config.branch);
+    await createBranchFromMaster(repoBase, headers, config.branch, config);
+    await ensureBranchVisible(repoBase, headers, config.branch, config);
     return;
   }
   // 409 / 422 → the ref already exists and Gitea rejected the update via this
@@ -575,9 +578,9 @@ async function resetExportBranchToMaster(config: DcsCommitConfig): Promise<void>
   // reports it actually absent.
   if (patchRes.status === 409 || patchRes.status === 422) {
     if (!(await branchExists(repoBase, headers, config.branch))) {
-      await createBranchFromMaster(repoBase, headers, config.branch);
+      await createBranchFromMaster(repoBase, headers, config.branch, config);
     }
-    await ensureBranchVisible(repoBase, headers, config.branch);
+    await ensureBranchVisible(repoBase, headers, config.branch, config);
     return;
   }
   throw new Error(`dcs_branch_ensure_failed: ${patchRes.status} ${await patchRes.text()}`);
@@ -589,7 +592,9 @@ async function createBranchFromMaster(
   repoBase: string,
   headers: Record<string, string>,
   branch: string,
+  config?: Pick<DcsCommitConfig, "beforeMutation">,
 ): Promise<void> {
+  await config?.beforeMutation?.();
   const createRes = await fetch(`${repoBase}/branches`, {
     method: "POST",
     headers,
@@ -626,11 +631,12 @@ async function ensureBranchVisible(
   repoBase: string,
   headers: Record<string, string>,
   branch: string,
+  config?: Pick<DcsCommitConfig, "beforeMutation">,
 ): Promise<void> {
   if (await pollBranchVisible(repoBase, headers, branch)) return;
   if (await refExists(repoBase, headers, branch)) {
-    await deleteDanglingRef(repoBase, headers, branch);
-    await createBranchFromMaster(repoBase, headers, branch);
+    await deleteDanglingRef(repoBase, headers, branch, config);
+    await createBranchFromMaster(repoBase, headers, branch, config);
     if (await pollBranchVisible(repoBase, headers, branch)) return;
   }
   throw new Error(`dcs_branch_not_visible: ${branch}`);
@@ -674,12 +680,15 @@ async function deleteDanglingRef(
   repoBase: string,
   headers: Record<string, string>,
   branch: string,
+  config?: Pick<DcsCommitConfig, "beforeMutation">,
 ): Promise<void> {
+  await config?.beforeMutation?.();
   const refDel = await fetch(`${repoBase}/git/refs/heads/${encodeURIComponent(branch)}`, {
     method: "DELETE",
     headers,
   });
   if (refDel.ok || refDel.status === 404) return;
+  await config?.beforeMutation?.();
   await fetch(`${repoBase}/branches/${encodeURIComponent(branch)}`, {
     method: "DELETE",
     headers,
@@ -769,6 +778,7 @@ export async function commitToDcs(
   // (idempotent across 200/404/409/422), so a commit failure here is a real
   // error rather than a missing or racing branch.
   const method = existingSha ? "PUT" : "POST";
+  await config.beforeMutation?.();
   const res = await fetch(base, { method, headers, body: JSON.stringify(body) });
   if (!res.ok) {
     throw new Error(`dcs_commit_failed: ${method} ${res.status} ${await res.text()}`);
@@ -857,8 +867,8 @@ async function ensureExportBranchExists(config: DcsCommitConfig): Promise<void> 
   };
   const repoBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
   if (await branchExists(repoBase, headers, config.branch)) return;
-  await createBranchFromMaster(repoBase, headers, config.branch);
-  await ensureBranchVisible(repoBase, headers, config.branch);
+  await createBranchFromMaster(repoBase, headers, config.branch, config);
+  await ensureBranchVisible(repoBase, headers, config.branch, config);
 }
 
 export interface DcsBatchCommitResult {
@@ -974,8 +984,8 @@ export async function recreateExportBranchFromMaster(
 
   // Recreate from master HEAD (createBranchFromMaster swallows a benign 409),
   // then poll until it's a visible branch the commit can target.
-  await createBranchFromMaster(repoBase, headers, config.branch);
-  await ensureBranchVisible(repoBase, headers, config.branch);
+  await createBranchFromMaster(repoBase, headers, config.branch, config);
+  await ensureBranchVisible(repoBase, headers, config.branch, config);
   return { rebuilt: true, detail: "rebuilt" };
 }
 

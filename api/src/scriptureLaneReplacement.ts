@@ -26,6 +26,8 @@ import { extractVersesForRange, extractUsfmHeaders } from "./importParsers";
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const EXPORT_LEASE_TTL_MS = 120_000;
+/** Stale staging reclaim: Worker died mid-fetch/insert of a book. */
+export const STAGING_CLAIM_STALE_SECONDS = 600;
 export const EXPORT_ABANDON_GRACE_MS = 600_000;
 
 const CHUNK = 80;
@@ -119,84 +121,93 @@ export async function startReplacement(
 
   const id = jobId();
   const predecessorHash = configHash(parseLaneConfig(row.active_config_json));
-
-  // CAS freeze: atomically claim the lane (replacement_job_id), block exports,
-  // and allocate the new generation in one statement. The `replacement_job_id
-  // IS NULL` guard means only one racing start can win — a second start sees 0
-  // rows changed (null return) and 409s. This closes the check-then-allocate
-  // race where two starts each read a null job id and then both proceeded.
-  const frozen = await env.DB.prepare(
-    `UPDATE scripture_lane_state
-        SET replacement_job_id = ?1,
-            exports_blocked = 1,
-            next_generation = next_generation + 1,
-            updated_at = unixepoch()
-      WHERE lane = ?2 AND replacement_job_id IS NULL
-      RETURNING active_generation, next_generation`,
-  )
-    .bind(id, lane)
-    .first<{ active_generation: number; next_generation: number }>();
-
-  if (!frozen) {
-    // Lost the race — re-read to surface the winning job id.
-    const cur = await getLaneState(env, lane);
-    throw Object.assign(new Error("replacement_already_active"), {
-      status: 409,
-      detail: { lane, jobId: cur?.replacement_job_id ?? null },
-    });
-  }
-
-  const activeGeneration = frozen.active_generation;
-  const generation = frozen.next_generation - 1; // just-allocated value
   const priorExportsBlocked = row.exports_blocked;
+  const activeGeneration = row.active_generation;
 
+  // Snapshot BEFORE the CAS freeze so the only work between freeze and job
+  // INSERT is building the D1 batch (no verse I/O). Orphan recovery also
+  // waits ORPHAN_RESERVATION_GRACE_SECONDS before reclaiming a missing job.
   const bv = bibleVersionForLane(lane);
   const snap = await snapshotRequiredBooks(env, bv, activeGeneration);
   if ("error" in snap) {
-    await releaseFreeze(env, lane, id, priorExportsBlocked);
     throw Object.assign(new Error(snap.error), { status: 422 });
   }
 
-  // Insert job + book rows immediately after the CAS so the freeze window
-  // without a matching scripture_lane_replacement row is as short as possible.
-  // On any failure, releaseFreeze clears the orphan claim.
+  // Re-read: a concurrent start may have frozen while we were snapshotting.
+  const stillFree = await getLaneState(env, lane);
+  if (!stillFree || stillFree.replacement_job_id || stillFree.active_generation !== activeGeneration) {
+    throw Object.assign(new Error("replacement_already_active"), {
+      status: 409,
+      detail: { lane, jobId: stillFree?.replacement_job_id ?? null },
+    });
+  }
+
+  // CAS freeze + job/book inserts in one batch so a concurrent writer cannot
+  // observe a freeze without a matching scripture_lane_replacement row.
   const stmts: D1PreparedStatement[] = [
+    env.DB.prepare(
+      `UPDATE scripture_lane_state
+          SET replacement_job_id = ?1,
+              exports_blocked = 1,
+              next_generation = next_generation + 1,
+              updated_at = unixepoch()
+        WHERE lane = ?2 AND replacement_job_id IS NULL
+          AND active_generation = ?3`,
+    ).bind(id, lane, activeGeneration),
     env.DB.prepare(
       `INSERT INTO scripture_lane_replacement (
          job_id, lane, generation, predecessor_generation,
          predecessor_config_hash, pending_config_json,
          required_books_json, status, created_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'reserved', unixepoch())`,
+       )
+       SELECT ?1, ?2, next_generation - 1, ?3, ?4, ?5, ?6, 'reserved', unixepoch()
+         FROM scripture_lane_state
+        WHERE lane = ?2 AND replacement_job_id = ?1`,
     ).bind(
-      id, lane, generation, activeGeneration,
+      id, lane, activeGeneration,
       predecessorHash, JSON.stringify(pendingConfig),
       JSON.stringify(snap.books),
     ),
   ];
 
-  // Insert per-book rows
   for (const book of snap.books) {
     stmts.push(
       env.DB.prepare(
         `INSERT INTO scripture_lane_replacement_books (job_id, book, status, updated_at)
-         VALUES (?1, ?2, 'pending', unixepoch())`,
+         SELECT ?1, ?2, 'pending', unixepoch()
+           FROM scripture_lane_replacement WHERE job_id = ?1`,
       ).bind(id, book),
     );
   }
 
   try {
-    await env.DB.batch(stmts);
+    const results = await env.DB.batch(stmts);
+    const freezeChanges = results[0]?.meta?.changes ?? 0;
+    if (freezeChanges !== 1) {
+      // Lost the race — drop any partial INSERT that ran (should be zero via
+      // the SELECT guards) and surface the winning job.
+      await releaseFreeze(env, lane, id, priorExportsBlocked);
+      await env.DB.prepare(`DELETE FROM scripture_lane_replacement_books WHERE job_id = ?1`).bind(id).run();
+      await env.DB.prepare(`DELETE FROM scripture_lane_replacement WHERE job_id = ?1`).bind(id).run();
+      const cur = await getLaneState(env, lane);
+      throw Object.assign(new Error("replacement_already_active"), {
+        status: 409,
+        detail: { lane, jobId: cur?.replacement_job_id ?? null },
+      });
+    }
   } catch (e) {
-    // Job/book insert failed (e.g. UNIQUE(lane, generation) collision from a
-    // concurrent allocation). Release the freeze we took so the lane isn't left
-    // stuck pointing at a job that never existed. The generation reservation is
-    // intentionally not rolled back — gaps in next_generation are harmless.
+    if ((e as { status?: number }).status === 409) throw e;
     await releaseFreeze(env, lane, id, priorExportsBlocked);
+    await env.DB.prepare(`DELETE FROM scripture_lane_replacement_books WHERE job_id = ?1`).bind(id).run();
+    await env.DB.prepare(`DELETE FROM scripture_lane_replacement WHERE job_id = ?1`).bind(id).run();
     throw e;
   }
 
   const job = await getJob(env, id);
-  if (!job) throw new Error("job_insert_failed");
+  if (!job) {
+    await releaseFreeze(env, lane, id, priorExportsBlocked);
+    throw new Error("job_insert_failed");
+  }
   const books = await getJobBooks(env, id);
   return { job, books };
 }
@@ -235,17 +246,20 @@ export async function stageBook(
     throw Object.assign(new Error("job_not_stageable"), { status: 409, detail: { status: job.status } });
   }
 
-  // Serialize concurrent stage of the same job×book: only one Worker may claim
-  // a pending/retryable/failed row into 'staging'. No row returned → another
-  // worker owns it, or it's already artifact_ok / absent_authorized.
+  // Serialize concurrent stage of the same job×book. Also reclaim stale
+  // `staging` rows (Worker died after claim) after STAGING_CLAIM_STALE_SECONDS.
   const claimed = await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
-        SET status = 'staging', updated_at = unixepoch()
+        SET status = 'staging', updated_at = unixepoch(),
+            error_json = NULL
       WHERE job_id = ?1 AND book = ?2
-        AND status IN ('pending', 'retryable_error', 'failed')
+        AND (
+          status IN ('pending', 'retryable_error', 'failed')
+          OR (status = 'staging' AND updated_at < unixepoch() - ?3)
+        )
       RETURNING book`,
   )
-    .bind(jobId, book)
+    .bind(jobId, book, STAGING_CLAIM_STALE_SECONDS)
     .first<{ book: string }>();
   if (!claimed) {
     const cur = await env.DB.prepare(
@@ -255,6 +269,22 @@ export async function stageBook(
       .first<{ status: string }>();
     return { status: cur?.status ?? "skipped" };
   }
+
+  // Drop any partial verses this job already wrote for the book×generation
+  // (no-op on a fresh pending→staging claim; required for stale reclaim).
+  const bv = bibleVersionForLane(job.lane as LaneKey);
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM verses
+        WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+          AND created_by_job_id = ?4`,
+    ).bind(book, bv, job.generation, jobId),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta
+        WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+          AND created_by_job_id = ?4`,
+    ).bind(book, bv, job.generation, jobId),
+  ]);
 
   const pendingCfg: ScriptureLaneConfig = JSON.parse(job.pending_config_json);
   const { owner, repo, ref } = pendingCfg.source;
@@ -341,8 +371,6 @@ export async function stageBook(
     ).bind(JSON.stringify({ error: "empty_usfm", url, ref, sha }), jobId, book).run();
     return { status: "retryable_error" };
   }
-
-  const bv = bibleVersionForLane(job.lane);
 
   // Completeness gate vs predecessor generation: a truncated file that parses
   // one verse must not activate and wipe the rest of the book. Fail closed —

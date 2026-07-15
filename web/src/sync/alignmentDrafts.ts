@@ -19,7 +19,7 @@ import { isReadOnly } from "./api";
 import { onOutboxResult } from "./outbox";
 
 const DB_NAME = "bible-editor-alignment-drafts";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "drafts";
 
 export interface AlignmentDraftRecord {
@@ -33,6 +33,12 @@ export interface AlignmentDraftRecord {
   // changed under the draft (a save from another tab, a reimport) and the
   // draft is stale and must be discarded, not applied over newer content.
   expectedVersion: number;
+  // Generation the draft was captured against. When set, restore only if it
+  // still matches the verse's source_generation (replacement may reuse version=1).
+  sourceGeneration?: number;
+  // When set (lane freeze), never restore via the normal aligner path — recovery
+  // lives in the shared drafts store as a quarantined record instead.
+  quarantined?: string;
   updatedAt: number;
 }
 
@@ -61,13 +67,25 @@ export function alignmentDraftKey(
   return `${book}:${chapter}:${verse}:${bibleVersion}`;
 }
 
+export type AlignmentDraftOpts = {
+  sourceGeneration?: number;
+  quarantined?: string;
+};
+
 export const alignmentDrafts = {
-  async set(key: string, content: unknown, expectedVersion: number): Promise<void> {
+  async set(
+    key: string,
+    content: unknown,
+    expectedVersion: number,
+    opts?: AlignmentDraftOpts,
+  ): Promise<void> {
     if (isReadOnly()) return;
     const rec: AlignmentDraftRecord = {
       key,
       content,
       expectedVersion,
+      sourceGeneration: opts?.sourceGeneration,
+      quarantined: opts?.quarantined,
       updatedAt: Date.now(),
     };
     await (await db()).put(STORE, rec);

@@ -196,9 +196,12 @@ export async function requireLaneState(env: Env, lane: LaneKey): Promise<LaneSta
 /**
  * Clear a lane freeze whose replacement_job_id points at a missing
  * scripture_lane_replacement row (Worker died between CAS freeze and job
- * INSERT). Returns true when an orphan was cleared. Safe to call anytime —
- * no-op when the job exists or the lane is not frozen.
+ * INSERT). Only reclaim after a grace window so a live startReplacement that
+ * has frozen but not yet inserted its job row is not cleared mid-flight.
+ * Returns true when an orphan was cleared.
  */
+export const ORPHAN_RESERVATION_GRACE_SECONDS = 60;
+
 export async function recoverOrphanedReservation(
   env: Env,
   lane: LaneKey,
@@ -211,14 +214,19 @@ export async function recoverOrphanedReservation(
     .bind(row.replacement_job_id)
     .first();
   if (job) return false;
+  // Grace: freeze bumps updated_at; do not reclaim during the legitimate
+  // gap between CAS freeze and job INSERT.
+  const age = Math.floor(Date.now() / 1000) - (row.updated_at ?? 0);
+  if (age < ORPHAN_RESERVATION_GRACE_SECONDS) return false;
   await env.DB.prepare(
     `UPDATE scripture_lane_state
         SET replacement_job_id = NULL,
             exports_blocked = CASE WHEN replacement_required = 1 THEN 1 ELSE 0 END,
             updated_at = unixepoch()
-      WHERE lane = ?1 AND replacement_job_id = ?2`,
+      WHERE lane = ?1 AND replacement_job_id = ?2
+        AND updated_at <= unixepoch() - ?3`,
   )
-    .bind(lane, row.replacement_job_id)
+    .bind(lane, row.replacement_job_id, ORPHAN_RESERVATION_GRACE_SECONDS)
     .run();
   return true;
 }

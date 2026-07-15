@@ -842,7 +842,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // silent revert. A fresh book with no watermark has nothing to clobber.
     // Only meaningful when we'd actually commit (dcsAllowed); a dry run renders
     // to R2 only and can't clobber anything.
-    const fresh = dcsAllowed ? await this.checkMasterFreshness(book, resource) : { ok: true as const, detail: "dry", masterSha: null, watermark: null };
+    const fresh = dcsAllowed
+      ? await this.checkMasterFreshness(book, resource, {
+          owner: dcsOwner,
+          repo: dcsRepo,
+          baseRef: laneExport?.baseRef ?? "master",
+          lane,
+        })
+      : { ok: true as const, detail: "dry", masterSha: null, watermark: null };
     if (!fresh.ok) {
       await this.recordStaleSkipAlert(book, resource, fresh.masterSha, fresh.watermark);
       const reason = `stale_master:${fresh.detail}`;
@@ -868,7 +875,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // whose row==line model makes the count exact. This is what would have
     // stopped the twl_PSA clobber (4880 rows shipped over master's 7776).
     if (dcsAllowed && (resource === "tn" || resource === "tq" || resource === "twl")) {
-      const guard = await this.checkTsvShrink(book, resource, built.rowCount);
+      const guard = await this.checkTsvShrink(book, resource, built.rowCount, dcsOwner, dcsRepo);
       if (!guard.ok) {
         await this.recordShrinkSkipAlert(book, resource, built.rowCount, guard.masterRows, guard.detail);
         const reason = `shrink_guard:${guard.detail}`;
@@ -899,7 +906,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // Conservative: only blocks a verse whose aligned-word count shrank while
     // its plain text is unchanged — a real text rewrite is always allowed.
     if (dcsAllowed && (resource === "ult" || resource === "ust")) {
-      const guard = await this.checkUsfmAlignmentShrink(book, resource, built.content);
+      const guard = await this.checkUsfmAlignmentShrink(book, resource, built.content, dcsOwner, dcsRepo);
       if (!guard.ok) {
         await this.recordAlignmentShrinkSkipAlert(book, resource, guard.detail);
         const reason = `align_shrink_guard:${guard.detail}`;
@@ -949,6 +956,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         owner,
         repo: dcsRepo,
         branch,
+        beforeMutation: fencingToken
+          ? () => this.assertFencingOrThrow(lane, fencingToken)
+          : undefined,
       };
       const message = `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`;
 
@@ -976,6 +986,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
       dcsCommitSha = commit.commitSha || null;
       dcsChanged = commit.changed;
+
+      // Remember the destination tip we exported against so divergent
+      // source≠export freshness checks don't re-validate the wrong repo.
+      if (lane && laneExport && fresh.masterSha) {
+        await this.recordExportBaseline(
+          lane,
+          dcsOwner,
+          dcsRepo,
+          laneExport.baseRef,
+          book,
+          fresh.masterSha,
+        );
+      }
 
       if (!commit.branchTouched) {
         dcsSkippedReason = "unchanged";
@@ -1565,38 +1588,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       .run();
   }
 
-  // Is D1 for this (book, resource) current with master? Compares master's
-  // latest file-commit SHA to the book_resource_syncs watermark (what the last
-  // successful sync recorded). Returns ok only when we can POSITIVELY confirm
-  // freshness:
-  //   - no watermark        → fresh book, nothing on master to clobber → ok.
-  //   - masterSha == wm      → D1 is current → ok.
-  //   - masterSha != wm      → master moved past D1 → STALE → not ok.
-  //   - masterSha null (fetch failed) but watermark present → can't confirm →
-  //     not ok (fail closed; a skipped night beats a silent revert).
-  // Mirror of planAndStageBookResources's SHA gate, used here to gate the
-  // EXPORT rather than to skip the reimport.
-  private async checkMasterFreshness(
-    book: string,
-    resource: Resource,
-  ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
-    const cfg = await getProjectConfig(this.env);
-    const src = await resourceSourceRef(this.env, resource as ReimportResource, cfg);
-    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
-    // Unknown book/resource → no file to compare; don't block (shouldn't happen
-    // for the five real resources).
-    if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
-    // For scripture lanes, compare against the lane's actual source identity
-    // (generation/owner/ref), not the project-config org alone.
-    const path = `${file.path}`;
-    const watermark = await storedResourceSha(this.env, book, resource, src);
-    if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
-    const masterSha = await fileCommitSha(this.env, src.owner, src.repo, path, src.ref);
-    if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
-    if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
-    return { ok: false, detail: "master_ahead", masterSha, watermark };
-  }
-
   // Banner alert when the freshness gate skips an export to avoid clobbering
   // master. Same replace-undismissed shape as recordPrFailureAlert.
   private async recordStaleSkipAlert(
@@ -1613,20 +1604,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
-  // Fetch master's current TSV row count and decide whether this render would
-  // shrink it dangerously (see export.ts exportTsvShrinkRefused). Fail closed
-  // when master can't be read — a truncated master fetch now returns null from
-  // fetchText too, so "unreadable" rightly blocks rather than letting an
-  // unverified commit through.
+  // Fetch destination master's current TSV row count and decide whether this
+  // render would shrink it dangerously (see export.ts exportTsvShrinkRefused).
+  // Always reads the SAME owner/repo the commit will target.
   private async checkTsvShrink(
     book: string,
     resource: Resource,
     renderedRows: number,
+    destOwner: string,
+    destRepo: string,
   ): Promise<{ ok: boolean; detail: string; masterRows: number | null }> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const raw = await fetchText(dcsRawUrl(this.env, cfg.org, file.repo, file.path));
+    const raw = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path));
     if (raw == null) return { ok: false, detail: "master_unreadable", masterRows: null };
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
     const masterRows = Math.max(0, raw.split(/\r?\n/).filter((l) => l.length > 0).length - 1);
@@ -1636,20 +1627,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return { ok: true, detail: "ok", masterRows };
   }
 
-  // Fetch master's current USFM and decide whether this ULT/UST render would
-  // silently drop \zaln word alignment (the 1CH 4:21 / NUM 24 signature; see
-  // export.ts usfmAlignmentShrinkRefused). Fail closed when master can't be
-  // read — a truncated master fetch returns null from fetchText, and an
-  // unverifiable master must block rather than let an unchecked render through.
+  // Fetch destination master's current USFM and decide whether this ULT/UST
+  // render would silently drop \zaln word alignment. Always reads the SAME
+  // owner/repo the commit will target.
   private async checkUsfmAlignmentShrink(
     book: string,
     resource: Resource,
     renderedUsfm: string,
+    destOwner: string,
+    destRepo: string,
   ): Promise<{ ok: boolean; detail: string }> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
-    const masterUsfm = await fetchText(dcsRawUrl(this.env, cfg.org, file.repo, file.path));
+    const masterUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path));
     if (masterUsfm == null) return { ok: false, detail: "master_unreadable" };
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);
     if (result.refused) {
@@ -1665,6 +1656,82 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return { ok: false, detail: `align_loss_${result.offenders.length}:${sample}` };
     }
     return { ok: true, detail: "ok" };
+  }
+
+  // Freshness against the repo we will commit to. When source == export, use
+  // book_resource_syncs watermarks. When they diverge, use
+  // scripture_export_baselines for the export destination tip.
+  private async checkMasterFreshness(
+    book: string,
+    resource: Resource,
+    dest?: {
+      owner: string;
+      repo: string;
+      baseRef?: string;
+      lane?: LaneKey | null;
+    },
+  ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
+    const cfg = await getProjectConfig(this.env);
+    const src = await resourceSourceRef(this.env, resource as ReimportResource, cfg);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
+    if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
+    const path = `${file.path}`;
+    const destOwner = dest?.owner ?? src.owner;
+    const destRepo = dest?.repo ?? src.repo;
+    const baseRef = dest?.baseRef ?? src.ref;
+    const sameIdentity = destOwner === src.owner && destRepo === src.repo;
+
+    if (sameIdentity) {
+      const watermark = await storedResourceSha(this.env, book, resource, src);
+      if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
+      const masterSha = await fileCommitSha(this.env, src.owner, src.repo, path, src.ref);
+      if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
+      if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
+      return { ok: false, detail: "master_ahead", masterSha, watermark };
+    }
+
+    // Export destination differs from source: fence on export baselines, not
+    // the source watermark (which describes a different repo).
+    const lane = dest?.lane ?? null;
+    if (!lane) {
+      // Non-scripture shouldn't hit diverge via laneExport; fail closed if it does.
+      return { ok: false, detail: "export_dest_without_lane", masterSha: null, watermark: null };
+    }
+    const tipSha = await fileCommitSha(this.env, destOwner, destRepo, path, baseRef);
+    const baseline = await this.env.DB.prepare(
+      `SELECT base_sha FROM scripture_export_baselines
+        WHERE lane = ?1 AND owner = ?2 AND repo = ?3 AND base_ref = ?4 AND book = ?5`,
+    )
+      .bind(lane, destOwner, destRepo, baseRef, book)
+      .first<{ base_sha: string | null }>();
+    const watermark = baseline?.base_sha ?? null;
+    if (!watermark) {
+      // First export to this destination — nothing to clobber yet.
+      return { ok: true, detail: "no_export_baseline", masterSha: tipSha, watermark: null };
+    }
+    if (!tipSha) return { ok: false, detail: "export_tip_unknown", masterSha: null, watermark };
+    if (tipSha === watermark) return { ok: true, detail: "current", masterSha: tipSha, watermark };
+    return { ok: false, detail: "export_ahead", masterSha: tipSha, watermark };
+  }
+
+  private async recordExportBaseline(
+    lane: LaneKey,
+    owner: string,
+    repo: string,
+    baseRef: string,
+    book: string,
+    baseSha: string | null,
+  ): Promise<void> {
+    if (!baseSha) return;
+    await this.env.DB.prepare(
+      `INSERT INTO scripture_export_baselines (lane, owner, repo, base_ref, book, base_sha, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())
+       ON CONFLICT(lane, owner, repo, base_ref, book) DO UPDATE SET
+         base_sha = excluded.base_sha,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(lane, owner, repo, baseRef, book, baseSha)
+      .run();
   }
 
   // Banner alert when the alignment-shrink backstop blocks an ULT/UST export to

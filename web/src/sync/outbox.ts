@@ -918,155 +918,140 @@ async function drainPass() {
     // doesn't strand at in_flight.
     //
     // Always re-read before mutating: quarantineLaneOps may have flipped this
-    // op to failed+quarantined while dispatch was in flight. A stale in-memory
-    // `next` would delete/overwrite the recovery copy and let onOutboxResult
-    // clear the matching quarantined draft.
-    const preserveIfQuarantined = async (): Promise<boolean> => {
-      if (!next) return false;
+    // op to failed+quarantined while dispatch was in flight. Check + delete/put
+    // MUST share one readwrite transaction so a quarantine between get and
+    // delete cannot erase recovery. Mutate must be synchronous (no other awaits
+    // while the txn is open) so IndexedDB does not auto-commit early.
+    const settleAfterDispatch = async (
+      mutate: (stored: OutboxOp) => "delete" | "put",
+    ): Promise<"deleted" | "quarantined" | "kept" | "missing"> => {
+      if (!next) return "missing";
       const idb = await db();
-      const stored = (await idb.get(STORE, next.id)) as OutboxOp | undefined;
-      if (!stored?.quarantined) return false;
-      stored.status = "failed";
-      stored.lastError = stored.quarantined;
-      stored.dispatchedAt = undefined;
-      await idb.put(STORE, stored);
+      const tx = idb.transaction(STORE, "readwrite");
+      const stored = (await tx.store.get(next.id)) as OutboxOp | undefined;
+      if (!stored) {
+        await tx.done;
+        return "missing";
+      }
+      if (stored.quarantined) {
+        stored.status = "failed";
+        stored.lastError = stored.quarantined;
+        stored.dispatchedAt = undefined;
+        await tx.store.put(stored);
+        await tx.done;
+        next = stored;
+        return "quarantined";
+      }
+      const action = mutate(stored);
+      if (action === "delete") {
+        await tx.store.delete(stored.id);
+        await tx.done;
+        return "deleted";
+      }
+      await tx.store.put(stored);
+      await tx.done;
       next = stored;
-      return true;
+      return "kept";
     };
     try {
       if (result.kind === "ok") {
-        if (await preserveIfQuarantined()) {
-          try {
-            await threadVersionToSiblings(next, result.updated);
-          } catch {
-            /* siblings keep their stale version and resolve via the 409 flow */
-          }
-        } else {
-          await (await db()).delete(STORE, next.id);
-          // Best-effort only, and outside the persist-recovery catch's reach:
-          // a threading failure must not resurrect the just-completed op.
-          try {
-            await threadVersionToSiblings(next, result.updated);
-          } catch {
-            /* siblings keep their stale version and resolve via the 409 flow */
-          }
+        await settleAfterDispatch(() => "delete");
+        try {
+          await threadVersionToSiblings(next, result.updated);
+        } catch {
+          /* siblings keep their stale version and resolve via the 409 flow */
         }
       } else if (result.kind === "locked") {
         // The chapter is mid-pipeline; the auto-apply will overwrite this
-        // row anyway. Drop the op and let the listener surface a toast —
-        // unless quarantine already claimed it as a recovery copy.
-        if (!(await preserveIfQuarantined())) {
-          await (await db()).delete(STORE, next.id);
-        }
+        // row anyway. Drop the op — unless quarantine already claimed it.
+        await settleAfterDispatch(() => "delete");
       } else if (result.kind === "conflict") {
-        if (await preserveIfQuarantined()) {
+        const settled = await settleAfterDispatch((stored) => {
+          const serverVersion = (result.current as { version?: unknown } | null | undefined)
+            ?.version;
+          const sortOrderOnly =
+            stored.target.kind === "row" &&
+            stored.action === "patch" &&
+            isSortOrderOnlyPatch(stored.patch);
+          const nonConflictingContent =
+            stored.target.kind === "row" &&
+            stored.action === "patch" &&
+            !sortOrderOnly &&
+            classifyRowPatchConflict(
+              stored.patch,
+              stored.baseline,
+              result.current as Record<string, unknown>,
+            ) === "auto_heal";
+          if (
+            (sortOrderOnly || nonConflictingContent) &&
+            typeof serverVersion === "number" &&
+            (stored.conflictRetries ?? 0) < MAX_CONFLICT_AUTOHEAL
+          ) {
+            stored.status = "pending";
+            stored.expectedVersion = serverVersion;
+            stored.conflictRetries = (stored.conflictRetries ?? 0) + 1;
+            stored.conflictCurrent = undefined;
+            stored.lastError = sortOrderOnly ? "sort_order_autoheal" : "nonconflict_autoheal";
+          } else {
+            stored.status = "conflict";
+            stored.conflictCurrent = result.current;
+            stored.lastError = "version_mismatch";
+            blocked.add(targetKey(stored.target));
+          }
+          return "put";
+        });
+        if (settled === "quarantined") {
           /* keep quarantine */
-        } else {
-        const serverVersion = (result.current as { version?: unknown } | null | undefined)
-          ?.version;
-        // Two classes of 409 auto-heal against the server's version instead of
-        // prompting: (1) a reorder-only patch (sort_order is last-write-wins,
-        // positional metadata), and (2) a content patch whose change doesn't
-        // genuinely conflict with the server's current row — the version
-        // advanced for an unrelated reason (another field/tab, a bit-toggle, a
-        // reimport) or our edit already landed. Only true conflicts (the server
-        // changed a field we're also editing, to a different value) prompt.
-        const sortOrderOnly =
-          next.target.kind === "row" &&
-          next.action === "patch" &&
-          isSortOrderOnlyPatch(next.patch);
-        const nonConflictingContent =
-          next.target.kind === "row" &&
-          next.action === "patch" &&
-          !sortOrderOnly &&
-          classifyRowPatchConflict(
-            next.patch,
-            next.baseline,
-            result.current as Record<string, unknown>,
-          ) === "auto_heal";
-        if (
-          (sortOrderOnly || nonConflictingContent) &&
-          typeof serverVersion === "number" &&
-          (next.conflictRetries ?? 0) < MAX_CONFLICT_AUTOHEAL
-        ) {
-          // Spurious mismatch — re-arm against the server's version and retry
-          // silently rather than surfacing a conflict. Don't block the target:
-          // it stays drainable so this pass picks it straight back up. On retry
-          // the PATCH only rewrites our own fields, so an unrelated concurrent
-          // change on the same row is preserved (field-level merge).
-          next.status = "pending";
-          next.expectedVersion = serverVersion;
-          next.conflictRetries = (next.conflictRetries ?? 0) + 1;
-          next.conflictCurrent = undefined;
-          next.lastError = sortOrderOnly ? "sort_order_autoheal" : "nonconflict_autoheal";
-          await (await db()).put(STORE, next);
-        } else {
-          next.status = "conflict";
-          next.conflictCurrent = result.current;
-          next.lastError = "version_mismatch";
-          await (await db()).put(STORE, next);
-          blocked.add(targetKey(next.target));
-        }
         }
       } else if (result.kind === "retry") {
-        if (await preserveIfQuarantined()) {
+        const settled = await settleAfterDispatch((stored) => {
+          // Only genuine server errors (`transient NNN`) consume MAX_ATTEMPTS.
+          const capEligible = result.reason.startsWith("transient");
+          if (capEligible) stored.hardAttempts = (stored.hardAttempts ?? 0) + 1;
+          if (capEligible && (stored.hardAttempts ?? 0) >= MAX_ATTEMPTS) {
+            stored.status = "failed";
+            stored.lastError = "max_attempts_exceeded";
+          } else {
+            stored.status = "pending";
+            stored.lastError = result.reason;
+            scheduleDrain(backoffMs(stored.attempts));
+            blocked.add(targetKey(stored.target));
+          }
+          return "put";
+        });
+        if (settled === "quarantined") {
           /* keep quarantine */
-        } else {
-        // Only genuine server errors (`transient NNN`) consume the
-        // MAX_ATTEMPTS cap. Network failures (`network`, `dispatch_threw`)
-        // and auth retries (`auth 401`) recur for as long as the laptop is
-        // offline or the session is dead — parking those as `failed` would
-        // strand real edits behind a no-confirm discard button.
-        const capEligible = result.reason.startsWith("transient");
-        if (capEligible) next.hardAttempts = (next.hardAttempts ?? 0) + 1;
-        if (capEligible && (next.hardAttempts ?? 0) >= MAX_ATTEMPTS) {
-          // Out of retries — promote to `failed` so the UI can surface
-          // it. `attempts` carries the count so the drawer can show how
-          // long we tried before giving up.
-          next.status = "failed";
-          next.lastError = "max_attempts_exceeded";
-          await (await db()).put(STORE, next);
-        } else {
-          next.status = "pending";
-          next.lastError = result.reason;
-          await (await db()).put(STORE, next);
-          scheduleDrain(backoffMs(next.attempts));
-          blocked.add(targetKey(next.target));
-        }
         }
       } else {
-        if (!(await preserveIfQuarantined())) {
-          next.status = "failed";
-          next.lastError = result.reason;
-          // Terminal lane/fence errors: keep as recovery copies so a concurrent
-          // quarantineLaneOps (or late freeze) doesn't leave an unrecoverable
-          // http-403-style failed op without the quarantined flag.
+        await settleAfterDispatch((stored) => {
+          stored.status = "failed";
+          stored.lastError = result.reason;
           if (
-            next.target.kind === "verse" &&
+            stored.target.kind === "verse" &&
             (result.reason === "source_generation_mismatch" ||
               result.reason === "lane_replacement_required" ||
               result.reason === "lane_replacement_in_progress" ||
               result.reason === "scripture_text_read_only" ||
               result.reason === "scripture_fully_locked" ||
-              isLaneFrozen(next.target.bibleVersion) ||
+              isLaneFrozen(stored.target.bibleVersion) ||
               /^http 403$/.test(result.reason))
           ) {
-            next.quarantined =
-              laneFreezeReason(next.target.bibleVersion) ?? result.reason;
+            stored.quarantined =
+              laneFreezeReason(stored.target.bibleVersion) ?? result.reason;
           }
-          await (await db()).put(STORE, next);
-        }
+          return "put";
+        });
       }
     } catch (persistErr) {
       // Best-effort recovery — if IndexedDB itself failed, the op may be
       // half-written. Force pending so the next drain pass tries again —
       // unless quarantine already owns it.
       try {
-        if (!(await preserveIfQuarantined())) {
-          next.status = "pending";
-          next.lastError = `persist_failed: ${String(persistErr)}`;
-          await (await db()).put(STORE, next);
-        }
+        await settleAfterDispatch((stored) => {
+          stored.status = "pending";
+          stored.lastError = `persist_failed: ${String(persistErr)}`;
+          return "put";
+        });
       } catch {
         /* nothing we can do; will be picked up by recoverInFlight on reload */
       }

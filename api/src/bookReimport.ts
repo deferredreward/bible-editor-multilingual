@@ -1699,9 +1699,9 @@ export async function resourceSourceRef(
   };
 }
 
-// Upsert the per-(book,resource,generation,owner,ref) sync watermark. `origin`
-// is provenance only; only 'import'/'reimport' watermarks are written as skip
-// gates. source_repo is persisted for provenance but is NOT part of the key.
+// Upsert the per-(book,resource,generation,owner,repo,ref) sync watermark.
+// `origin` is provenance only; only 'import'/'reimport' watermarks are written
+// as skip gates. source_repo is part of the identity key (migration 0044).
 export async function recordResourceSync(
   env: Env,
   book: string,
@@ -1715,8 +1715,7 @@ export async function recordResourceSync(
        book, resource, source_generation, source_owner, source_repo, source_ref, source_sha, synced_at, origin
      )
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, unixepoch(), ?8)
-     ON CONFLICT(book, resource, source_generation, source_owner, source_ref) DO UPDATE SET
-       source_repo = excluded.source_repo,
+     ON CONFLICT(book, resource, source_generation, source_owner, source_repo, source_ref) DO UPDATE SET
        source_sha = excluded.source_sha,
        synced_at = excluded.synced_at,
        origin = excluded.origin`,
@@ -1725,11 +1724,11 @@ export async function recordResourceSync(
     .run();
 }
 
-// A watermark recorded under a DIFFERENT source identity (generation, owner, or
-// ref) describes a different upstream — treat it as absent (fail-open: the
-// reimport refetches, the export freshness gate sees "no watermark"). This is
-// what makes switching a project's org/lane source safe rather than silently
-// trusting a stale SHA. source_repo is provenance only and not matched here.
+// A watermark recorded under a DIFFERENT source identity (generation, owner,
+// repo, or ref) describes a different upstream — treat it as absent (fail-open:
+// the reimport refetches, the export freshness gate sees "no watermark"). This
+// is what makes switching a project's org/lane source safe rather than silently
+// trusting a stale SHA.
 export async function storedResourceSha(
   env: Env,
   book: string,
@@ -1739,9 +1738,10 @@ export async function storedResourceSha(
   const row = await env.DB.prepare(
     `SELECT source_sha FROM book_resource_syncs
       WHERE book = ?1 AND resource = ?2
-        AND source_generation = ?3 AND source_owner = ?4 AND source_ref = ?5`,
+        AND source_generation = ?3 AND source_owner = ?4
+        AND source_repo = ?5 AND source_ref = ?6`,
   )
-    .bind(book, resource, source.generation, source.owner, source.ref)
+    .bind(book, resource, source.generation, source.owner, source.repo, source.ref)
     .first<{ source_sha: string | null }>();
   return row?.source_sha ?? null;
 }
@@ -1981,7 +1981,11 @@ async function planAndStageBookResources(
       continue;
     }
 
-    const raw = await fetchText(dcsRawUrl(env, src.owner, src.repo, file.path, src.ref));
+    // Fetch from the immutable commit SHA when we have one (same discipline as
+    // stageBook) so the bytes we stage cannot diverge from the watermark SHA
+    // if master moves between the SHA lookup and the raw fetch.
+    const fetchRef = masterSha ?? src.ref;
+    const raw = await fetchText(dcsRawUrl(env, src.owner, src.repo, file.path, fetchRef));
     if (raw == null) {
       // DCS 404 / fetch error → nothing to import, no watermark.
       entries.push({ resource, changed: false, masterSha: null, r2Key: null, src });

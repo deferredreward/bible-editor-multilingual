@@ -14,6 +14,21 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Re-review P1 blockers fixed (third pass).**
+- Dual-lane pipelines: per-lane `source_stamps_json` (migration `0044`); no more identical-identity requirement.
+- Orphan freeze: snapshot-before-CAS + job inserts in one batch; `ORPHAN_RESERVATION_GRACE_SECONDS` reclaim.
+- bookImport: lane CAS + EXISTS-gated DELETE in one batch; post-wipe recheck before INSERT.
+- stageBook: stale `staging` reclaim after 600s + wipe partial job verses.
+- outbox: quarantine check + delete/put in one IndexedDB readwrite txn.
+- alignmentDrafts: `sourceGeneration` + clear live crash draft on freeze; skip restore when frozen/quarantined.
+- export: destination freshness via `scripture_export_baselines` when source≠export; shrink guards read dest owner/repo; `beforeMutation` fence hook before every DCS mutation in commit/reset helpers.
+- bookReimport: fetch USFM from immutable SHA; watermark PK includes `source_repo` (0044).
+- Local D1: `0044` applied. Prod still owes `0036`–`0044` (apply remotely when ready).
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Migration `0043` applied to local D1** (`npx wrangler d1 migrations apply bible_editor_dev --local`). Prod still needs `0043` (`bible_editor --remote --env production`).
+
+
 2026-07-15 · **feat/scripture-repo-preferences** — **All remaining P1 race findings fixed (pre-review).**
 - bookImport: recheck gen/lock after DCS fetch; generation-scoped DELETE only.
 - bookReimport: persist owner/repo/ref/generation on staged resources; exact match before write/watermark.

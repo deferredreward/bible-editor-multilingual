@@ -273,10 +273,11 @@ async function importBookFromDcs(
     throw new Error(`DCS fetch failed for ${missing.length} resource(s); retry: ${missing.join("; ")}`);
   }
 
-  // Re-check lane state AFTER the (potentially slow) DCS fetches and BEFORE any
-  // DELETE/INSERT. A replacement may have started or activated while we were
-  // waiting; writing the generations we captured at the top would clobber the
-  // wrong generation or race a freeze.
+  // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
+  // the destructive wipe to a transactional lane-state predicate: DELETE only
+  // while both lanes are still free at the expected generation (EXISTS). A
+  // concurrent replacement freeze makes the DELETEs no-ops; we abort before
+  // INSERT if the claim count is wrong.
   const litRecheck = await requireLaneState(env, "lit");
   const simRecheck = await requireLaneState(env, "sim");
   if (litRecheck.replacement_job_id) throw new Error("lit_lane_frozen_for_replacement");
@@ -290,42 +291,84 @@ async function importBookFromDcs(
     throw new Error("sim_lane_generation_changed");
   }
 
-  // Resolve active generation per lane for the imported verses (re-captured
-  // after the recheck so writes match the just-validated pointer).
   const litGen = litRecheck.active_generation;
   const simGen = simRecheck.active_generation;
   const olGen = origSourceGeneration();
 
-  // Wipe any partial leftovers from a prior failed run. book_imports stays
-  // empty until the very end so a midway failure leaves the book in an
-  // unimported state (the next POST retries cleanly).
-  // Verses / book_usfm_meta are generation-keyed — only delete the generations
-  // we are about to rewrite (never `DELETE FROM verses WHERE book=?` alone).
-  // tn/tq/twl are not generation-keyed; book-scoped wipe is correct for TSV.
-  await env.DB.batch([
+  // Wipe + lane CAS in one batch. The leading UPDATEs must each affect 1 row
+  // (lane still free at expected gen); DELETEs are further guarded by EXISTS.
+  const wipe = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE scripture_lane_state SET updated_at = unixepoch()
+        WHERE lane = 'lit'
+          AND replacement_job_id IS NULL
+          AND replacement_required = 0
+          AND active_generation = ?1`,
+    ).bind(litGen),
+    env.DB.prepare(
+      `UPDATE scripture_lane_state SET updated_at = unixepoch()
+        WHERE lane = 'sim'
+          AND replacement_job_id IS NULL
+          AND replacement_required = 0
+          AND active_generation = ?1`,
+    ).bind(simGen),
     env.DB.prepare(`DELETE FROM tn_rows  WHERE book = ?1`).bind(book),
     env.DB.prepare(`DELETE FROM tq_rows  WHERE book = ?1`).bind(book),
     env.DB.prepare(`DELETE FROM twl_rows WHERE book = ?1`).bind(book),
     env.DB.prepare(
-      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2`,
+      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
+         AND EXISTS (
+           SELECT 1 FROM scripture_lane_state
+            WHERE lane = 'lit' AND replacement_job_id IS NULL
+              AND replacement_required = 0 AND active_generation = ?2
+         )`,
     ).bind(book, litGen),
     env.DB.prepare(
-      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2`,
+      `DELETE FROM verses WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2
+         AND EXISTS (
+           SELECT 1 FROM scripture_lane_state
+            WHERE lane = 'sim' AND replacement_job_id IS NULL
+              AND replacement_required = 0 AND active_generation = ?2
+         )`,
     ).bind(book, simGen),
     env.DB.prepare(
       `DELETE FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
     ).bind(book, origVersion, olGen),
     env.DB.prepare(
-      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2`,
+      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
+         AND EXISTS (
+           SELECT 1 FROM scripture_lane_state
+            WHERE lane = 'lit' AND replacement_job_id IS NULL
+              AND replacement_required = 0 AND active_generation = ?2
+         )`,
     ).bind(book, litGen),
     env.DB.prepare(
-      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2`,
+      `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = 'UST' AND source_generation = ?2
+         AND EXISTS (
+           SELECT 1 FROM scripture_lane_state
+            WHERE lane = 'sim' AND replacement_job_id IS NULL
+              AND replacement_required = 0 AND active_generation = ?2
+         )`,
     ).bind(book, simGen),
     env.DB.prepare(
       `DELETE FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
     ).bind(book, origVersion, olGen),
   ]);
+  if ((wipe[0]?.meta?.changes ?? 0) !== 1 || (wipe[1]?.meta?.changes ?? 0) !== 1) {
+    throw new Error("lane_state_changed_during_import");
+  }
 
+  // Re-assert before INSERTs (batch above committed; replacement may have won).
+  const litPost = await requireLaneState(env, "lit");
+  const simPost = await requireLaneState(env, "sim");
+  if (
+    litPost.replacement_job_id ||
+    simPost.replacement_job_id ||
+    litPost.active_generation !== litGen ||
+    simPost.active_generation !== simGen
+  ) {
+    throw new Error("lane_state_changed_during_import");
+  }
   const counts: ImportCounts = {
     verses: 0,
     tn: 0,

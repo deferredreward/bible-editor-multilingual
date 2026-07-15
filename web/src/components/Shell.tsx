@@ -39,6 +39,7 @@ import {
 } from "../lib/laneChecks";
 import { ChapterBoard } from "./ChapterBoard";
 import { drafts, verseKey } from "../sync/drafts";
+import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
 import {
   clearLaneFrozen,
   isLaneFrozen,
@@ -478,17 +479,24 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         verseNum: number,
         bv: string,
       ) => {
-        if (!panel?.isDirty()) return;
+        if (!panel?.isDirty()) {
+          void alignmentDrafts.clear(alignmentDraftKey(book, chapterNum, verseNum, bv));
+          return;
+        }
         panel.flushCrashDraft();
         const snap = panel.getDirtySnapshot();
-        if (!snap) return;
-        void drafts.set(
-          verseKey(book, chapterNum, verseNum, bv),
-          { content: snap.content, plainText: snap.plainText },
-          snap.expectedVersion,
-          { kind: "verse", book, chapter: chapterNum, verse: verseNum, bibleVersion: bv },
-          { quarantined: reason },
-        );
+        if (snap) {
+          void drafts.set(
+            verseKey(book, chapterNum, verseNum, bv),
+            { content: snap.content, plainText: snap.plainText },
+            snap.expectedVersion,
+            { kind: "verse", book, chapter: chapterNum, verse: verseNum, bibleVersion: bv },
+            { quarantined: reason },
+          );
+        }
+        // Remove the live crash-draft so a post-activation reopen cannot restore
+        // pre-freeze alignment onto a new generation that reused version=1.
+        void alignmentDrafts.clear(alignmentDraftKey(book, chapterNum, verseNum, bv));
       };
 
       if (alignerTarget?.bibleVersion === bibleVersion) {
