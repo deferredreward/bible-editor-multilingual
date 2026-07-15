@@ -14,6 +14,12 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Seventh-pass re-review P1s closed.**
+- pipelineImport: expected-version CAS; accept via `changes() > 0` immediately after UPDATE (before edit_log).
+- 0046/0047: backfill `exclusive_owner` from held leases; runtime CAS keeps `NOT EXISTS (fresh held lease)` for rolling deploys.
+- alignmentCanonical: strip `occurrence`/`occurrences`/`x-occurrence`/`x-occurrences`; keep lemma/Strong’s/morph.
+- Tests: version-CAS collision, legacy-lease-without-exclusive_owner, occurrence-only equality. Local D1: `0047` applied.
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Sixth-pass re-review P1s closed.**
 - Migration `0046`: `exclusive_owner` on `scripture_lane_state` — shared CAS for lease acquire and replacement freeze (`exclusive_owner IS NULL`).
 - pipelineImport: pending accept back in the same D1 batch, `EXISTS` on landed version.
@@ -85,6 +91,8 @@
 - Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
 
 ## Completed
+
+2026-07-15 · **PR #20 seventh-pass P1 close-out** — Pipeline expected-version CAS + changes()-gated accept; exclusive_owner backfill + legacy lease NOT EXISTS; strip occurrence metadata from locked-text compare.
 
 2026-07-15 · **PR #20 sixth-pass P1 close-out** — `exclusive_owner` CAS mutex (0046), atomic pipeline accept via EXISTS, PR beforeMutation, preserve non-alignment attrs in canonicalizer; real interleaving tests.
 

@@ -1647,40 +1647,79 @@ async function applyVerseUpdate(
 
   const now = Math.floor(Date.now() / 1000);
   if (existing) {
-    const newVersion = existing.version + 1;
+    const expectedVersion = existing.version;
+    const newVersion = expectedVersion + 1;
+    // Param order for the UPDATE: content…, book coords, source_generation,
+    // expectedVersion, [lane]. Lane EXISTS uses the generation + lane binds.
     const lanePred = lane
       ? `AND EXISTS (
             SELECT 1 FROM scripture_lane_state
-             WHERE lane = ?11 AND replacement_job_id IS NULL
+             WHERE lane = ?12 AND replacement_job_id IS NULL
                AND replacement_required = 0 AND active_generation = ?10
           )`
       : "";
     await env.DB.batch([
+      // Expected-version CAS: only this mutation may advance expected → expected+1.
       env.DB
         .prepare(
           `UPDATE verses
               SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                   version = version + 1, updated_at = ?4, updated_by = ?5
             WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9
-              AND source_generation = ?10
+              AND source_generation = ?10 AND version = ?11
               ${lanePred}`,
         )
         .bind(
           ...(lane
-            ? [contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion, sourceGeneration, lane]
-            : [contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion, sourceGeneration]),
+            ? [
+                contentJson,
+                plainText,
+                verseEnd,
+                now,
+                userId,
+                book,
+                chapter,
+                verse,
+                bibleVersion,
+                sourceGeneration,
+                expectedVersion,
+                lane,
+              ]
+            : [
+                contentJson,
+                plainText,
+                verseEnd,
+                now,
+                userId,
+                book,
+                chapter,
+                verse,
+                bibleVersion,
+                sourceGeneration,
+                expectedVersion,
+              ]),
         ),
-      // Preserve the pre-AI content as a baseline at its own version, so verse
-      // history can restore the state before the AI ran. Guarded: only when that
-      // version was never logged (i.e. the original bootstrap import), so repeat
-      // AI runs / prior edits — which already logged their content — don't
-      // duplicate it. created_at carries the outgoing row's own timestamp.
+      // Accept immediately after the UPDATE so changes() reflects THAT mutation
+      // (not a concurrent writer's version bump). Intervening statements would
+      // overwrite changes().
+      env.DB
+        .prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
+            WHERE id = ?1 AND changes() > 0`,
+        )
+        .bind(p.id, userId),
+      // Baseline / AI audit: gate on our CAS target version existing — not on
+      // changes() (already consumed by the pending accept above).
       env.DB
         .prepare(
           `INSERT INTO edit_log
              (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at, source_generation)
            SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5, ?6
-            WHERE changes() > 0
+            WHERE EXISTS (
+              SELECT 1 FROM verses
+               WHERE book = ?7 AND chapter = ?8 AND verse = ?9 AND bible_version = ?10
+                 AND source_generation = ?11 AND version = ?12
+            )
               AND NOT EXISTS (
               SELECT 1 FROM edit_log WHERE kind = 'verse' AND row_key = ?1 AND new_version = ?3
             )`,
@@ -1688,42 +1727,43 @@ async function applyVerseUpdate(
         .bind(
           rowKey,
           book,
-          existing.version,
+          expectedVersion,
           JSON.stringify({ plain_text: existing.plain_text, content: existing.content_json }),
           existing.updated_at,
           sourceGeneration,
+          book,
+          chapter,
+          verse,
+          bibleVersion,
+          sourceGeneration,
+          newVersion,
         ),
-      // The AI version itself: log full content (not just plain_text) so it is
-      // restorable — this is the alignment-bearing base translators edit from.
       env.DB
         .prepare(
           `INSERT INTO edit_log
              (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
            SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7, ?8
-            WHERE changes() > 0 OR EXISTS (
+            WHERE EXISTS (
               SELECT 1 FROM verses
                WHERE book = ?9 AND chapter = ?10 AND verse = ?11 AND bible_version = ?12
                  AND source_generation = ?13 AND version = ?5
             )`,
         )
         .bind(
-          rowKey, book, userId, existing.version, newVersion,
-          JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration,
-          book, chapter, verse, bibleVersion, sourceGeneration,
+          rowKey,
+          book,
+          userId,
+          expectedVersion,
+          newVersion,
+          JSON.stringify({ plain_text: plainText, content: contentJson }),
+          AI_SOURCE,
+          sourceGeneration,
+          book,
+          chapter,
+          verse,
+          bibleVersion,
+          sourceGeneration,
         ),
-      // Same batch as the verse mutation: accept only if the fenced write landed
-      // (new version present). changes() is unreliable after intervening INSERTs.
-      env.DB
-        .prepare(
-          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
-            WHERE id = ?1
-              AND EXISTS (
-                SELECT 1 FROM verses
-                 WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
-                   AND source_generation = ?7 AND version = ?8
-              )`,
-        )
-        .bind(p.id, userId, book, chapter, verse, bibleVersion, sourceGeneration, newVersion),
     ]);
     return;
   }
@@ -1749,24 +1789,36 @@ async function applyVerseUpdate(
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
           )
           .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId),
+    // Accept immediately after INSERT so changes() reflects that mutation.
+    env.DB
+      .prepare(
+        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1 AND changes() > 0`,
+      )
+      .bind(p.id, userId),
     env.DB
       .prepare(
         `INSERT INTO edit_log
            (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
          SELECT 'verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5, ?6
-          WHERE changes() > 0`,
+          WHERE EXISTS (
+            SELECT 1 FROM verses
+             WHERE book = ?7 AND chapter = ?8 AND verse = ?9 AND bible_version = ?10
+               AND source_generation = ?11 AND version = 1
+          )`,
       )
-      .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE, sourceGeneration),
-    env.DB
-      .prepare(
-        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
-          WHERE id = ?1
-            AND EXISTS (
-              SELECT 1 FROM verses
-               WHERE book = ?3 AND chapter = ?4 AND verse = ?5 AND bible_version = ?6
-                 AND source_generation = ?7 AND version = 1
-            )`,
-      )
-      .bind(p.id, userId, book, chapter, verse, bibleVersion, sourceGeneration),
+      .bind(
+        rowKey,
+        book,
+        userId,
+        JSON.stringify({ plain_text: plainText, content: contentJson }),
+        AI_SOURCE,
+        sourceGeneration,
+        book,
+        chapter,
+        verse,
+        bibleVersion,
+        sourceGeneration,
+      ),
   ]);
 }

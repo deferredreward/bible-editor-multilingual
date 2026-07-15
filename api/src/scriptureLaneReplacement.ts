@@ -158,7 +158,10 @@ export async function startReplacement(
 
   // CAS freeze + job/book inserts in one batch. `exclusive_owner IS NULL` is the
   // same predicate acquireExportLease uses — one atomic mutual-exclusion slot.
+  // NOT EXISTS (fresh held lease) covers rolling deploys where an old Worker
+  // holds scripture_export_leases without exclusive_owner set.
   const exclusiveOwner = `job:${id}`;
+  const leaseFreshAfter = Date.now() - EXPORT_LEASE_TTL_MS;
   const stmts: D1PreparedStatement[] = [
     env.DB.prepare(
       `UPDATE scripture_lane_state
@@ -169,8 +172,12 @@ export async function startReplacement(
               updated_at = unixepoch()
         WHERE lane = ?2 AND replacement_job_id IS NULL
           AND exclusive_owner IS NULL
-          AND active_generation = ?3`,
-    ).bind(id, lane, activeGeneration, exclusiveOwner),
+          AND active_generation = ?3
+          AND NOT EXISTS (
+            SELECT 1 FROM scripture_export_leases
+             WHERE lane = ?2 AND status = 'held' AND heartbeat_at * 1000 > ?5
+          )`,
+    ).bind(id, lane, activeGeneration, exclusiveOwner, leaseFreshAfter),
     env.DB.prepare(
       `INSERT INTO scripture_lane_replacement (
          job_id, lane, generation, predecessor_generation,
@@ -825,18 +832,24 @@ export async function acquireExportLease(
   const leaseId = crypto.randomUUID();
   const fencingToken = crypto.randomUUID();
   const exclusiveOwner = `lease:${leaseId}`;
+  const leaseFreshAfter = Date.now() - EXPORT_LEASE_TTL_MS;
 
   // Atomic claim: same exclusive_owner IS NULL predicate as startReplacement's
-  // freeze CAS. INSERT is gated on owning the slot so a lost CAS never leaves
-  // an orphan lease row.
+  // freeze CAS. NOT EXISTS (fresh held lease) keeps a rolling deploy safe when
+  // an old Worker still holds a lease without exclusive_owner. INSERT is gated
+  // on owning the slot so a lost CAS never leaves an orphan lease row.
   const results = await env.DB.batch([
     env.DB.prepare(
       `UPDATE scripture_lane_state
           SET exclusive_owner = ?1, updated_at = unixepoch()
         WHERE lane = ?2
           AND replacement_job_id IS NULL
-          AND exclusive_owner IS NULL`,
-    ).bind(exclusiveOwner, lane),
+          AND exclusive_owner IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM scripture_export_leases
+             WHERE lane = ?2 AND status = 'held' AND heartbeat_at * 1000 > ?3
+          )`,
+    ).bind(exclusiveOwner, lane, leaseFreshAfter),
     env.DB.prepare(
       `INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
        SELECT ?1, ?2, ?3, 'held', ?4, unixepoch()

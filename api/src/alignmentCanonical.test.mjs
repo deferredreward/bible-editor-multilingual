@@ -59,6 +59,24 @@ import {
   assert.ok(!nonAlignmentContentEqual(a, b), "Strong's drift must not compare equal");
 }
 
+// Occurrence bookkeeping is alignment-owned — stale vs normalized must equal
+{
+  const a = {
+    verseObjects: [
+      { type: "word", tag: "w", text: "God", strong: "G2316", occurrence: "1", occurrences: "2" },
+    ],
+  };
+  const b = {
+    verseObjects: [
+      { type: "word", tag: "w", text: "God", strong: "G2316", occurrence: "2", occurrences: "2" },
+    ],
+  };
+  assert.ok(nonAlignmentContentEqual(a, b), "occurrence-only drift is alignment-editable");
+  const stripped = stripAlignmentNodes(a.verseObjects);
+  assert.equal(stripped[0].occurrence, undefined);
+  assert.equal(stripped[0].strong, "G2316");
+}
+
 // Passes through non-alignment nodes
 {
   const input = [

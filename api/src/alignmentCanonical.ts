@@ -7,8 +7,12 @@ import usfm from "usfm-js";
 
 /** Keys owned by the word-alignment layer — dropped from comparison. */
 const ALIGNMENT_OWNED_KEYS: ReadonlySet<string> = new Set([
-  // zaln milestones are unwrapped entirely; reserved for residual attrs if any
-  // alignment tooling parks occurrence bookkeeping on non-zaln nodes.
+  // Occurrence bookkeeping is rewritten by alignment saves/exports; treating it
+  // as locked text would reject valid alignment-only work as drift.
+  "occurrence",
+  "occurrences",
+  "x-occurrence",
+  "x-occurrences",
 ]);
 
 function stripAlignmentOwnedKeys(o: Record<string, unknown>): Record<string, unknown> {

@@ -1384,13 +1384,21 @@ function d1Batch(db, fns) {
                next_generation = next_generation + 1, updated_at = unixepoch()
          WHERE lane = 'lit' AND replacement_job_id IS NULL
            AND exclusive_owner IS NULL AND active_generation = 1
-      `).run(jobId, `job:${jobId}`);
+           AND NOT EXISTS (
+             SELECT 1 FROM scripture_export_leases
+              WHERE lane = 'lit' AND status = 'held' AND heartbeat_at * 1000 > ?3
+           )
+      `).run(jobId, `job:${jobId}`, Date.now() - EXPORT_LEASE_TTL_MS);
     const l = (leaseId) => {
       const owner = `lease:${leaseId}`;
       const claim = db1.prepare(`
         UPDATE scripture_lane_state SET exclusive_owner = ?1, updated_at = unixepoch()
          WHERE lane = 'lit' AND replacement_job_id IS NULL AND exclusive_owner IS NULL
-      `).run(owner);
+           AND NOT EXISTS (
+             SELECT 1 FROM scripture_export_leases
+              WHERE lane = 'lit' AND status = 'held' AND heartbeat_at * 1000 > ?2
+           )
+      `).run(owner, Date.now() - EXPORT_LEASE_TTL_MS);
       if (claim.changes !== 1) return claim;
       return db1.prepare(`
         INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
@@ -1417,7 +1425,11 @@ function d1Batch(db, fns) {
       const claim = db2.prepare(`
         UPDATE scripture_lane_state SET exclusive_owner = ?1, updated_at = unixepoch()
          WHERE lane = 'lit' AND replacement_job_id IS NULL AND exclusive_owner IS NULL
-      `).run(owner);
+           AND NOT EXISTS (
+             SELECT 1 FROM scripture_export_leases
+              WHERE lane = 'lit' AND status = 'held' AND heartbeat_at * 1000 > ?2
+           )
+      `).run(owner, Date.now() - EXPORT_LEASE_TTL_MS);
       assert.equal(claim.changes, 1);
       db2.prepare(`
         INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at)
@@ -1432,7 +1444,11 @@ function d1Batch(db, fns) {
                next_generation = next_generation + 1, updated_at = unixepoch()
          WHERE lane = 'lit' AND replacement_job_id IS NULL
            AND exclusive_owner IS NULL AND active_generation = 1
-      `).run(jobId, `job:${jobId}`);
+           AND NOT EXISTS (
+             SELECT 1 FROM scripture_export_leases
+              WHERE lane = 'lit' AND status = 'held' AND heartbeat_at * 1000 > ?3
+           )
+      `).run(jobId, `job:${jobId}`, Date.now() - EXPORT_LEASE_TTL_MS);
     l("lease-A");
     assert.equal(f("job-B").changes, 0, "freeze loses after lease");
     assert.equal(getLane(db2, "lit").exclusive_owner, "lease:lease-A");
@@ -1503,25 +1519,25 @@ function d1Batch(db, fns) {
     "verse unchanged after fenced no-op",
   );
 
-  // Successful mutation + accept in one transaction.
+  // Successful mutation + accept in one transaction (accept immediately after
+  // UPDATE via changes(), before intervening statements).
   db.exec("BEGIN");
   const ok = db.prepare(`
     UPDATE verses SET version = version + 1, content_json = '{"v":2}'
      WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
-       AND source_generation=1
-  `).run();
-  db.prepare(`
-    INSERT INTO edit_log (kind, row_key, new_version)
-    SELECT 'verse', 'ZEC/1/1/ULT', 2 WHERE changes() > 0
+       AND source_generation=1 AND version=1
   `).run();
   db.prepare(`
     UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1
-     WHERE id='p1'
-       AND EXISTS (
-         SELECT 1 FROM verses
-          WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
-            AND source_generation=1 AND version=2
-       )
+     WHERE id='p1' AND changes() > 0
+  `).run();
+  db.prepare(`
+    INSERT INTO edit_log (kind, row_key, new_version)
+    SELECT 'verse', 'ZEC/1/1/ULT', 2
+     WHERE EXISTS (
+       SELECT 1 FROM verses WHERE book='ZEC' AND chapter=1 AND verse=1
+         AND bible_version='ULT' AND source_generation=1 AND version=2
+     )
   `).run();
   db.exec("COMMIT");
   assert.equal(ok.changes, 1);
@@ -1530,7 +1546,79 @@ function d1Batch(db, fns) {
     "matched mutation accepts pending in same txn",
   );
   assert.equal(db.prepare("SELECT version FROM verses").get().version, 2);
+
+  // Concurrent version collision: another writer already advanced past our
+  // expected version → CAS no-op → pending for a second row stays open.
+  db.prepare(`INSERT INTO pending_imports (id) VALUES ('p2')`).run();
+  db.exec("BEGIN");
+  const raced = db.prepare(`
+    UPDATE verses SET version = version + 1, content_json = '{"v":3}'
+     WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+       AND source_generation=1 AND version=1
+  `).run();
+  db.prepare(`
+    UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1
+     WHERE id='p2' AND changes() > 0
+  `).run();
+  db.exec("COMMIT");
+  assert.equal(raced.changes, 0, "stale expected-version CAS matches 0");
+  assert.equal(
+    db.prepare("SELECT accepted_at FROM pending_imports WHERE id='p2'").get().accepted_at,
+    null,
+    "raced CAS does not consume pending",
+  );
+  assert.equal(db.prepare("SELECT version FROM verses").get().version, 2, "version unchanged by stale CAS");
+
+  // Concurrent advance to +1 by another writer, then our CAS for expected=2
+  // lands at 3 while a confused EXISTS(version=2) would wrongly accept —
+  // with changes()-after-UPDATE, only our landing accepts.
+  db.prepare(`INSERT INTO pending_imports (id) VALUES ('p3')`).run();
+  db.exec("BEGIN");
+  // Simulate "another writer" already at v=2; we CAS expected=2 → 3.
+  const land = db.prepare(`
+    UPDATE verses SET version = version + 1, content_json = '{"v":3}'
+     WHERE book='ZEC' AND chapter=1 AND verse=1 AND bible_version='ULT'
+       AND source_generation=1 AND version=2
+  `).run();
+  db.prepare(`
+    UPDATE pending_imports SET accepted_at=unixepoch(), accepted_by=1
+     WHERE id='p3' AND changes() > 0
+  `).run();
+  db.exec("COMMIT");
+  assert.equal(land.changes, 1);
+  assert.ok(
+    db.prepare("SELECT accepted_at FROM pending_imports WHERE id='p3'").get().accepted_at != null,
+  );
+  assert.equal(db.prepare("SELECT version FROM verses").get().version, 3);
   console.log("  ✓ pipeline accept predicated on landed version in same txn");
+}
+
+// ── 34. Rolling deploy: legacy held lease blocks freeze without exclusive_owner ─
+{
+  const db = freshDb();
+  seedLane(db, "lit", { activeGen: 1, nextGen: 2 });
+  const now = Math.floor(Date.now() / 1000);
+  // Pre-0046 Worker: lease row held, exclusive_owner still NULL.
+  db.prepare(`
+    INSERT INTO scripture_export_leases (lease_id, lane, fencing_token, status, holder, heartbeat_at, created_at)
+    VALUES ('legacy','lit','t','held','old-worker',?1,?1)
+  `).run(now);
+  assert.equal(getLane(db, "lit").exclusive_owner, null);
+
+  const freeze = db.prepare(`
+    UPDATE scripture_lane_state
+       SET replacement_job_id = 'job-X', exclusive_owner = 'job:job-X',
+           exports_blocked = 1, next_generation = next_generation + 1
+     WHERE lane = 'lit' AND replacement_job_id IS NULL
+       AND exclusive_owner IS NULL AND active_generation = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM scripture_export_leases
+          WHERE lane = 'lit' AND status = 'held' AND heartbeat_at * 1000 > ?1
+       )
+  `).run(Date.now() - EXPORT_LEASE_TTL_MS);
+  assert.equal(freeze.changes, 0, "legacy held lease blocks freeze CAS");
+  assert.equal(getLane(db, "lit").replacement_job_id, null);
+  console.log("  ✓ legacy held lease blocks freeze without exclusive_owner");
 }
 
 console.log("\nscriptureLaneReplacement tests passed");
