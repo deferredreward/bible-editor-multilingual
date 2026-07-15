@@ -55,6 +55,15 @@ import {
 } from "../hooks/useTranslationMemory";
 import { MarkdownView } from "./MarkdownView";
 
+const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
+  running: "preferences.exportStatus.running",
+  failed: "preferences.exportStatus.failed",
+  queued: "preferences.exportStatus.queued",
+  shrink_refused: "preferences.exportStatus.shrink_refused",
+  no_content: "preferences.exportStatus.no_content",
+  dry_run: "preferences.exportStatus.dry_run",
+};
+
 export type Section = "brief" | "instructions" | "terminology" | "examples";
 export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
 
@@ -313,12 +322,15 @@ function AssistedModeControls() {
     }
   };
 
+  const statusKey = status ? EXPORT_STATUS_I18N_KEY[status.status] : undefined;
   const statusLabel =
     !status || status.status === "never"
       ? t("preferences.exportStatusNever")
       : status.status === "success" && status.sha
         ? t("preferences.exportStatusSuccess", { sha: status.sha.slice(0, 8) })
-        : t("preferences.exportStatusOther", { status: status.status });
+        : statusKey
+          ? t(statusKey)
+          : t("preferences.exportStatusOther", { status: status.status });
 
   const toggleTooltip = !admin
     ? t("preferences.assistedModeAdminOnly")
@@ -848,7 +860,7 @@ function TermRow({
           {term.source_term}
         </Typography>
         <Typography variant="body2" color="text.disabled">
-          →
+          {t("preferences.termArrow")}
         </Typography>
         {editing ? (
           <TextField
@@ -860,7 +872,7 @@ function TermRow({
           />
         ) : (
           <Typography variant="body2" dir={direction} sx={{ fontWeight: 600 }}>
-            {term.target_term ?? "—"}
+            {term.target_term ?? t("preferences.noRendering")}
           </Typography>
         )}
         {editing ? (
@@ -968,7 +980,7 @@ function ImportPanel({ onApplied, onError }: { onApplied: () => void; onError: (
         multiline
         minRows={5}
         fullWidth
-        placeholder={"concept_id,source_term,target_term,status,replacement,comment,tw_link"}
+        placeholder={t("preferences.csvColumnPlaceholder")}
         sx={{ mt: 1 }}
         slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 12 } } }}
       />
