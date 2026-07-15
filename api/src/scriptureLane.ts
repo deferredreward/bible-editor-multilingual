@@ -63,14 +63,20 @@ export function defaultLaneConfig(cfg: ProjectConfig, lane: LaneKey): ScriptureL
     baseRef: "master",
     branchPolicy: "contributor_book_branch",
   };
-  // v1: locked alignment export requires source == export base
-  if (textReadOnly && exportTarget && !repoRefEquals(source, { owner: exportTarget.owner, repo: exportTarget.repo, ref: exportTarget.baseRef })) {
-    // Prefer same-repo export when we forced equality
-  }
+  // Locked text (e.g. AVD/NAV): force export destination == source so the
+  // nightly path never commits to a divergent fork without a text-equality gate.
+  const exportCfg: LaneExport | null = textReadOnly
+    ? {
+        owner: source.owner,
+        repo: source.repo,
+        baseRef: source.ref,
+        branchPolicy: "contributor_book_branch",
+      }
+    : exportTarget;
   return {
     label,
     source,
-    export: exportTarget,
+    export: exportCfg,
     textReadOnly,
     alignmentWritable: textReadOnly ? true : alignmentWritable,
   };

@@ -358,17 +358,8 @@ async function importBookFromDcs(
     throw new Error("lane_state_changed_during_import");
   }
 
-  // Re-assert before INSERTs (batch above committed; replacement may have won).
-  const litPost = await requireLaneState(env, "lit");
-  const simPost = await requireLaneState(env, "sim");
-  if (
-    litPost.replacement_job_id ||
-    simPost.replacement_job_id ||
-    litPost.active_generation !== litGen ||
-    simPost.active_generation !== simGen
-  ) {
-    throw new Error("lane_state_changed_during_import");
-  }
+  // Inserts are fenced with EXISTS predicates (not a separate recheck) so a
+  // replacement freeze/activation between wipe and write cannot land.
   const counts: ImportCounts = {
     verses: 0,
     tn: 0,
@@ -384,25 +375,38 @@ async function importBookFromDcs(
     },
   };
 
-  counts.verses += await insertVerses(env, book, "ULT", ultRaw, litGen);
-  counts.verses += await insertVerses(env, book, "UST", ustRaw, simGen);
-  counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen);
+  counts.verses += await insertVerses(env, book, "ULT", ultRaw, litGen, "lit");
+  counts.verses += await insertVerses(env, book, "UST", ustRaw, simGen, "sim");
+  counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen, null);
 
-  counts.tn = await insertTnRows(env, book, tnRaw, userId);
-  counts.tq = await insertTqRows(env, book, tqRaw, userId);
-  counts.twl = await insertTwlRows(env, book, twlRaw, userId);
+  counts.tn = await insertTnRows(env, book, tnRaw, userId, litGen, simGen);
+  counts.tq = await insertTqRows(env, book, tqRaw, userId, litGen, simGen);
+  counts.twl = await insertTwlRows(env, book, twlRaw, userId, litGen, simGen);
 
-  // Final marker — the read path keys off this row's presence.
+  // Final marker — only if both lanes are still free at the expected gens.
   const sources = Object.entries(counts.fetched)
     .filter(([, ok]) => ok)
     .map(([k]) => k)
     .join(",");
-  await env.DB.prepare(
+  const marker = await env.DB.prepare(
     `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by)
-     VALUES (?1, ?2, unixepoch(), ?3)`,
+     SELECT ?1, ?2, unixepoch(), ?3
+      WHERE EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = 'lit' AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?4
+          )
+        AND EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = 'sim' AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?5
+          )`,
   )
-    .bind(book, `dcs:${sources}`, userId)
+    .bind(book, `dcs:${sources}`, userId, litGen, simGen)
     .run();
+  if ((marker.meta?.changes ?? 0) !== 1) {
+    throw new Error("lane_state_changed_during_import");
+  }
 
   // Seed per-resource SHA watermarks so the nightly self-heal can skip files
   // that haven't changed since this import (see book_resource_syncs +
@@ -429,6 +433,7 @@ async function insertVerses(
   bibleVersion: string,
   rawUsfm: string | null,
   sourceGeneration?: number,
+  lane?: "lit" | "sim" | null,
 ): Promise<number> {
   if (!rawUsfm) return 0;
 
@@ -436,31 +441,79 @@ async function insertVerses(
 
   const headers = extractUsfmHeaders(rawUsfm);
   if (headers) {
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
-       VALUES (?1, ?2, ?3, ?4)`,
-    )
-      .bind(book, bibleVersion, gen, JSON.stringify(headers))
-      .run();
+    if (lane) {
+      const meta = await env.DB.prepare(
+        `INSERT OR REPLACE INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
+         SELECT ?1, ?2, ?3, ?4
+          WHERE EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = ?5 AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?3
+          )`,
+      )
+        .bind(book, bibleVersion, gen, JSON.stringify(headers), lane)
+        .run();
+      if ((meta.meta?.changes ?? 0) !== 1) {
+        throw new Error("lane_state_changed_during_import");
+      }
+    } else {
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
+         VALUES (?1, ?2, ?3, ?4)`,
+      )
+        .bind(book, bibleVersion, gen, JSON.stringify(headers))
+        .run();
+    }
   }
 
   // Whole-book extract; the [1, 999] range covers any chapter that exists.
   const verses = extractVersesForRange(rawUsfm, 1, 999);
   if (verses.length === 0) return 0;
 
-  const stmt = env.DB.prepare(
-    `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-  );
+  const stmt = lane
+    ? env.DB.prepare(
+        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+          WHERE EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = ?9 AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?6
+          )`,
+      )
+    : env.DB.prepare(
+        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+      );
+  let inserted = 0;
   for (let i = 0; i < verses.length; i += CHUNK) {
     const slice = verses.slice(i, i + CHUNK);
-    await env.DB.batch(
+    const results = await env.DB.batch(
       slice.map((v) =>
-        stmt.bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText),
+        lane
+          ? stmt.bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText, lane)
+          : stmt.bind(book, v.chapter, v.verse, v.verseEnd, bibleVersion, gen, v.contentJson, v.plainText),
       ),
     );
+    for (const r of results) inserted += r.meta?.changes ?? 0;
+  }
+  if (lane && inserted !== verses.length) {
+    throw new Error("lane_state_changed_during_import");
   }
   return verses.length;
+}
+
+/** Dual-lane free predicate for bootstrap TSV inserts. */
+function bothLanesFreeSql(litParam: string, simParam: string): string {
+  return `EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = 'lit' AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ${litParam}
+          )
+        AND EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = 'sim' AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ${simParam}
+          )`;
 }
 
 async function insertTnRows(
@@ -468,6 +521,8 @@ async function insertTnRows(
   book: string,
   raw: string | null,
   userId: number,
+  litGen: number,
+  simGen: number,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -476,19 +531,25 @@ async function insertTnRows(
   const insertStmt = env.DB.prepare(
     `INSERT INTO tn_rows
        (id, book, chapter, verse, ref_raw, tags, support_reference, quote, occurrence, note, sort_order)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+      WHERE ${bothLanesFreeSql("?12", "?13")}`,
   );
   const auditStmt = env.DB.prepare(
     `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json)
-     VALUES ('tn', ?1, ?2, ?3, NULL, 1, 'create', ?4)`,
+     SELECT 'tn', ?1, ?2, ?3, NULL, 1, 'create', ?4
+      WHERE changes() > 0`,
   );
 
-  let count = 0;
+  let expected = 0;
+  let landed = 0;
   const nextSort = makeVerseSortOrder();
   let batch: D1PreparedStatement[] = [];
   const flush = async () => {
     if (batch.length === 0) return;
-    await env.DB.batch(batch);
+    const results = await env.DB.batch(batch);
+    for (let i = 0; i < results.length; i += 2) {
+      if ((results[i]?.meta?.changes ?? 0) > 0) landed++;
+    }
     batch = [];
   };
 
@@ -515,14 +576,16 @@ async function insertTnRows(
         id, book, ch, v, refRaw,
         payload.tags, payload.support_reference, payload.quote, payload.occurrence, payload.note,
         nextSort(ch, v),
+        litGen, simGen,
       ),
       auditStmt.bind(id, book, userId, JSON.stringify(payload)),
     );
-    count++;
+    expected++;
     if (batch.length >= CHUNK) await flush();
   }
   await flush();
-  return count;
+  if (landed !== expected) throw new Error("lane_state_changed_during_import");
+  return landed;
 }
 
 async function insertTqRows(
@@ -530,6 +593,8 @@ async function insertTqRows(
   book: string,
   raw: string | null,
   userId: number,
+  litGen: number,
+  simGen: number,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -538,19 +603,25 @@ async function insertTqRows(
   const insertStmt = env.DB.prepare(
     `INSERT INTO tq_rows
        (id, book, chapter, verse, ref_raw, tags, quote, occurrence, question, response, sort_order)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+      WHERE ${bothLanesFreeSql("?12", "?13")}`,
   );
   const auditStmt = env.DB.prepare(
     `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json)
-     VALUES ('tq', ?1, ?2, ?3, NULL, 1, 'create', ?4)`,
+     SELECT 'tq', ?1, ?2, ?3, NULL, 1, 'create', ?4
+      WHERE changes() > 0`,
   );
 
-  let count = 0;
+  let expected = 0;
+  let landed = 0;
   const nextSort = makeVerseSortOrder();
   let batch: D1PreparedStatement[] = [];
   const flush = async () => {
     if (batch.length === 0) return;
-    await env.DB.batch(batch);
+    const results = await env.DB.batch(batch);
+    for (let i = 0; i < results.length; i += 2) {
+      if ((results[i]?.meta?.changes ?? 0) > 0) landed++;
+    }
     batch = [];
   };
 
@@ -577,14 +648,16 @@ async function insertTqRows(
         id, book, ch, v, refRaw,
         payload.tags, payload.quote, payload.occurrence, payload.question, payload.response,
         nextSort(ch, v),
+        litGen, simGen,
       ),
       auditStmt.bind(id, book, userId, JSON.stringify(payload)),
     );
-    count++;
+    expected++;
     if (batch.length >= CHUNK) await flush();
   }
   await flush();
-  return count;
+  if (landed !== expected) throw new Error("lane_state_changed_during_import");
+  return landed;
 }
 
 async function insertTwlRows(
@@ -592,6 +665,8 @@ async function insertTwlRows(
   book: string,
   raw: string | null,
   userId: number,
+  litGen: number,
+  simGen: number,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -600,19 +675,25 @@ async function insertTwlRows(
   const insertStmt = env.DB.prepare(
     `INSERT INTO twl_rows
        (id, book, chapter, verse, ref_raw, tags, orig_words, occurrence, tw_link, sort_order)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+      WHERE ${bothLanesFreeSql("?11", "?12")}`,
   );
   const auditStmt = env.DB.prepare(
     `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json)
-     VALUES ('twl', ?1, ?2, ?3, NULL, 1, 'create', ?4)`,
+     SELECT 'twl', ?1, ?2, ?3, NULL, 1, 'create', ?4
+      WHERE changes() > 0`,
   );
 
-  let count = 0;
+  let expected = 0;
+  let landed = 0;
   const nextSort = makeVerseSortOrder();
   let batch: D1PreparedStatement[] = [];
   const flush = async () => {
     if (batch.length === 0) return;
-    await env.DB.batch(batch);
+    const results = await env.DB.batch(batch);
+    for (let i = 0; i < results.length; i += 2) {
+      if ((results[i]?.meta?.changes ?? 0) > 0) landed++;
+    }
     batch = [];
   };
 
@@ -638,12 +719,14 @@ async function insertTwlRows(
         id, book, ch, v, refRaw,
         payload.tags, payload.orig_words, payload.occurrence, payload.tw_link,
         nextSort(ch, v),
+        litGen, simGen,
       ),
       auditStmt.bind(id, book, userId, JSON.stringify(payload)),
     );
-    count++;
+    expected++;
     if (batch.length >= CHUNK) await flush();
   }
   await flush();
-  return count;
+  if (landed !== expected) throw new Error("lane_state_changed_during_import");
+  return landed;
 }
