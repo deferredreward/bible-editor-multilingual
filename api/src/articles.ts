@@ -159,14 +159,18 @@ articles.post("/:resource/unit/validate", requireEditor, async (c) => {
   const action = state === "validated" ? "validate" : "unvalidate";
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
-  // Approval clears the pre-draft snapshot (migration 0049): the validated
-  // content IS the published content now, so the export gate stops
-  // substituting. Un-approve does not restore it — accepted.
-  const clearSnapshot = state === "validated" ? ", pre_draft_json = NULL" : "";
+  // Approval snapshots the now-published md into pre_draft_json (migration
+  // 0049) — NOT NULL. A later human edit demotes 'validated' -> 'edited', and
+  // the export gate then ships this snapshot until re-approval; clearing to
+  // NULL would let the unvalidated edit reach DCS. Un-approve leaves it in
+  // place (once-approved content keeps exporting — accepted).
+  const snapshotClause = state === "validated"
+    ? ", pre_draft_json = json_object('target_md', target_md)"
+    : "";
   const [updateRes] = await c.env.DB.batch([
     c.env.DB
       .prepare(
-        `UPDATE article_units SET translation_state = ?1, updated_at = ?2${clearSnapshot}
+        `UPDATE article_units SET translation_state = ?1, updated_at = ?2${snapshotClause}
           WHERE resource = ?3 AND path = ?4 AND deleted_at IS NULL AND translation_state IS NOT NULL`,
       )
       .bind(state, now, resource, path),

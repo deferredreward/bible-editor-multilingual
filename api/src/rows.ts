@@ -950,10 +950,16 @@ async function setTnTranslationState(
 ): Promise<TnRow | null> {
   const now = Math.floor(Date.now() / 1000);
   const action = state === "validated" ? "validate" : "unvalidate";
-  // Approval clears the pre-draft snapshot: the validated content IS the
-  // published content now, so the export gate stops substituting (migration
-  // 0049). Un-approve does not restore it — accepted (docs/plan Design 2).
-  const clearSnapshot = state === "validated" ? ", pre_draft_json = NULL" : "";
+  // Approval snapshots the now-published content into pre_draft_json (migration
+  // 0049) — NOT NULL. A subsequent human content edit demotes 'validated' ->
+  // 'edited' (see the demote CASE in the PATCH handler), and the export gate
+  // then ships this snapshot (the last validated content) until the edit is
+  // re-approved. Clearing to NULL instead would let the unvalidated edit reach
+  // DCS as a legacy row. Un-approve leaves the snapshot in place (the once-
+  // approved content keeps exporting — accepted, docs/plan Design 2).
+  const snapshotClause = state === "validated"
+    ? ", pre_draft_json = json_object('note', note, 'tags', tags)"
+    : "";
   // Only rows that are ALREADY translation drafts (state non-NULL) can be
   // validated/un-validated. Without this guard a validate on a row the
   // translate pipeline never touched (translation_state IS NULL — e.g. a
@@ -965,7 +971,7 @@ async function setTnTranslationState(
     env.DB
       .prepare(
         `UPDATE tn_rows
-           SET translation_state = ?1, updated_at = ?2${clearSnapshot}
+           SET translation_state = ?1, updated_at = ?2${snapshotClause}
          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
@@ -997,13 +1003,15 @@ async function setTqTranslationState(
 ): Promise<TqRow | null> {
   const now = Math.floor(Date.now() / 1000);
   const action = state === "validated" ? "validate" : "unvalidate";
-  // Approval clears the pre-draft snapshot — see setTnTranslationState.
-  const clearSnapshot = state === "validated" ? ", pre_draft_json = NULL" : "";
+  // Approval snapshots the now-published content — see setTnTranslationState.
+  const snapshotClause = state === "validated"
+    ? ", pre_draft_json = json_object('question', question, 'response', response)"
+    : "";
   const [updateRes] = await env.DB.batch([
     env.DB
       .prepare(
         `UPDATE tq_rows
-           SET translation_state = ?1, updated_at = ?2${clearSnapshot}
+           SET translation_state = ?1, updated_at = ?2${snapshotClause}
          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
