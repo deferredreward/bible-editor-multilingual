@@ -99,6 +99,11 @@ verses.get("/:book/:chapter/:verse/:bibleVersion", async (c) => {
   if (!isAllowedBibleVersion(bv)) {
     return c.json({ error: "invalid_bible_version" }, 400);
   }
+  const ch = parseInt(chapter, 10);
+  const vs = parseInt(verse, 10);
+  if (!Number.isFinite(ch) || !Number.isFinite(vs)) {
+    return c.json({ error: "invalid_ref" }, 400);
+  }
   // For lanes (ULT/UST) a null generation means the lane is quarantined
   // (replacement_required). Do NOT fall back to generation 1 — that would serve
   // legacy GLT/GST content that BSOJ replacement has retired.
@@ -112,7 +117,7 @@ verses.get("/:book/:chapter/:verse/:bibleVersion", async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
   )
-    .bind(book.toUpperCase(), parseInt(chapter, 10), parseInt(verse, 10), bv, genFilter)
+    .bind(book.toUpperCase(), ch, vs, bv, genFilter)
     .first<VerseRow>();
   if (!row) return c.json({ error: "not_found" }, 404);
   let parsed: unknown;
@@ -148,6 +153,9 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
   const bibleVersion = c.req.param("bibleVersion").toUpperCase();
   if (!isAllowedBibleVersion(bibleVersion)) {
     return c.json({ error: "invalid_bible_version" }, 400);
+  }
+  if (!Number.isFinite(chapter) || !Number.isFinite(verse)) {
+    return c.json({ error: "invalid_ref" }, 400);
   }
 
   // Quarantined lane → no fallback to legacy generation-1 content (see the GET
@@ -227,6 +235,9 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
   const bibleVersion = c.req.param("bibleVersion").toUpperCase();
   if (!isAllowedBibleVersion(bibleVersion)) {
     return c.json({ error: "invalid_bible_version" }, 400);
+  }
+  if (!Number.isFinite(chapter) || !Number.isFinite(verse)) {
+    return c.json({ error: "invalid_ref" }, 400);
   }
   const expected = parseIfMatch(c.req.header("if-match"));
   if (expected === null) {

@@ -158,22 +158,14 @@ export async function verifyToken(token: string, env: Env): Promise<AuthClaims |
   }
 }
 
-// Pulls an Access JWT off the request — first from the Access cookie (the
-// browser flow), falling back to Authorization: Bearer for non-browser
-// callers + the cutover window for any still-cached localStorage tokens.
+// Pulls an Access JWT off the request from the be_access cookie and stamps the
+// claims on the context. The web client (web/src/sync/api.ts) is cookie-only,
+// so the earlier Authorization: Bearer fallback — kept during the localStorage
+// cutover — has been removed; there are no non-browser callers of this API.
 // Doesn't reject on missing/invalid token; that's requireAuth's job. Running
 // on every request lets reads become user-aware later without re-plumbing.
 export const attachAuth: MiddlewareHandler = async (c, next) => {
-  let token: string | undefined;
-  const cookieToken = getCookie(c, ACCESS_COOKIE);
-  if (cookieToken) {
-    token = cookieToken;
-  } else {
-    const header = c.req.header("authorization");
-    if (header && header.toLowerCase().startsWith("bearer ")) {
-      token = header.slice(7).trim();
-    }
-  }
+  const token = getCookie(c, ACCESS_COOKIE);
   if (token) {
     const claims = await verifyToken(token, c.env as Env);
     if (claims) {

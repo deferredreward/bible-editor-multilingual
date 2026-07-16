@@ -57,12 +57,30 @@ function buildDisambiguation(articles: TwArticleLite[]) {
   return { groups, index };
 }
 
+// buildDisambiguation walks the full term map over ~950 articles on every
+// call — the same non-trivial cost twlSuggest.ts caches its trie against. The
+// groups depend ONLY on the canonical tw_articles catalog, so memoize them at
+// module scope keyed by the catalog signature (row count + newest sync) and
+// rebuild only when the catalog changes. This is an UNAUTHENTICATED endpoint,
+// so the rebuild is worth avoiding per-request. The usage-derived twLinks below
+// stay live each request (a bounded GROUP BY) so a freshly-added link still
+// autocompletes immediately.
+let disambigCache:
+  | { sig: string; value: ReturnType<typeof buildDisambiguation> }
+  | null = null;
+
 // Support references are served from the curated canonical TA list
 // (taSupportReferences.ts) — the notes picker restricts to these. TW links prefer
 // the canonical en_tw catalog (tw_articles, migration 0032 + scripts/import-tw.mjs)
 // and fall back to / union with usage-derived links so nothing regresses before
 // the first import and any in-use-but-not-canonical link still autocompletes.
 catalogs.get("/", async (c) => {
+  // Catalog signature for the disambiguation cache (mirrors twlSuggest.ts).
+  const meta = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS c, COALESCE(MAX(last_synced), 0) AS m FROM tw_articles`,
+  ).first<{ c: number; m: number }>();
+  const sig = `${meta?.c ?? 0}:${meta?.m ?? 0}`;
+
   // Canonical en_tw articles (empty until the first import). id + title also
   // feed the disambiguation groups below.
   const canonical = await c.env.DB.prepare(
@@ -96,9 +114,13 @@ catalogs.get("/", async (c) => {
     }
   }
 
-  const disambiguation = buildDisambiguation(
-    canonical.results.map((r) => ({ id: r.id, title: r.title })),
-  );
+  let disambiguation = disambigCache && disambigCache.sig === sig ? disambigCache.value : null;
+  if (!disambiguation) {
+    disambiguation = buildDisambiguation(
+      canonical.results.map((r) => ({ id: r.id, title: r.title })),
+    );
+    disambigCache = { sig, value: disambiguation };
+  }
 
   return c.json({
     supportReferences: TA_SUPPORT_REFERENCES,

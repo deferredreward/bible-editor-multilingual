@@ -3,6 +3,15 @@ import type { Env } from "./index";
 
 export const lexicon = new Hono<{ Bindings: Env }>();
 
+// Cap on the bulk `?strongs=` list. This route is UNAUTHENTICATED, and each
+// key can fan out to a D1 query chunk (CHUNK below), so an unbounded list lets
+// one HTTP request trigger hundreds of D1 subrequests. The largest legitimate
+// batch is the unique Strong's numbers in one loaded chapter (a few hundred),
+// so 2000 leaves generous headroom while turning "unbounded" into "bounded".
+// Over the cap is a clean 400 rather than a silent truncation (which would
+// return wrong/partial results the client can't detect).
+export const MAX_STRONGS = 2000;
+
 export interface LexiconEntry {
   strong: string;
   resource: "uhal" | "ugl";
@@ -44,6 +53,9 @@ lexicon.get("/", async (c) => {
   const raw = c.req.query("strongs") ?? "";
   const requested = raw.split(",").map((s) => s.trim()).filter(Boolean);
   if (requested.length === 0) return c.json({ entries: [] });
+  if (requested.length > MAX_STRONGS) {
+    return c.json({ error: "too_many_keys", max: MAX_STRONGS, got: requested.length }, 400);
+  }
 
   // Collect unique lookup keys with the request key they came from so the
   // client can match each returned entry back to the original raw strong.
