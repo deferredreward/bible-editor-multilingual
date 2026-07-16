@@ -14,6 +14,13 @@
 
 ## Last run
 
+2026-07-16 - **claude/project-setup-issues-c0ec37** - **Project setup deadlocked on `meta_missing_for_book`.**
+- Symptom: after switching preset to BibleEditorMLTest, both lanes sat in `replacement_required`; GLT showed red banner `meta_missing_for_book:ZEC`, and CHANGE SOURCE failed immediately.
+- Root cause: `startReplacement` -> `snapshotRequiredBooks` (scriptureLane.ts) hard-failed because the active generation had ZEC verses but no `book_usfm_meta` row. That gate asserts verses<->meta consistency of the content being *replaced* - a chicken-and-egg deadlock (can't replace broken content because it fails a pre-check). Meta is absent because both the seed script and `bookImport.ts` write meta only `if (headers)` is non-empty.
+- Fix: `snapshotRequiredBooks` now returns the **union** of books present in verses OR meta (no error return); removed the dead 422 branch in `startReplacement`. Books missing from the new source still surface later as retryable/waivable per-book staging errors. Regression test added (section 30 in `scriptureLaneReplacement.test.mjs`, node:sqlite D1 shim). Also mapped raw lane error codes -> translated messages via `laneErrorMessage` in `PreferencesWorkspace.tsx` + `errors` i18n block in all 14 locales.
+- Verified: api unit tests 35/35 (incl. new regression); web typecheck clean; all 14 locale JSON valid + `errors.*` at full i18n parity. NOT run here (pre-existing env gaps, fail identically at HEAD): api `tsc --noEmit` (missing `@cloudflare/workers-types` in shared node_modules) and browser smoke (vite not installed in worktree). **Owed: browser smoke + deploy to remote dev Worker** where the user hit this.
+- Out of scope (noted): import path still writes verses-without-meta when header extraction is empty (latent; produces header-less USFM on export); 5 pre-existing i18n keys (`confirmWaiveBook`, `sync.*`) still missing in all locales - predate this branch.
+
 2026-07-16 · **main (uncommitted)** — **Preset switch left sticky scripture lanes.**
 - Root cause: `scripture_lane_state` is a D1 singleton; `ensureLaneState` only INSERT OR IGNORE. First visit under `ar-bsoj` seeded LEGACY `BSOJ/ar_glt|gst` + pending AVD/NAV and never rewrote on preset change — so BibleEditorMLTest still showed Arabic chips.
 - Second bug: `PUT /api/project-config` returned `materialize()` without `overlayLaneLabels`, and the client published that into the shared cache → transient “Lane state not initialized for AVD/NAV” until refresh.

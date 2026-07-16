@@ -625,6 +625,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "Konten saat ini pada jalur ini untuk {{book}} tidak memiliki data header USFM, sehingga tidak dapat diambil snapshot-nya. Impor ulang {{book}} atau hubungi admin.",
+        "verses_missing_for_book": "Konten saat ini pada jalur ini untuk {{book}} memiliki data header tetapi tidak ada ayat.",
+        "replacement_already_active": "Penggantian sudah berjalan untuk jalur ini.",
+        "lane_lease_held": "Jalur ini sedang sibuk (sebuah impor atau ekspor sedang menahannya). Coba lagi sebentar lagi.",
+        "confirmation_required": "Konfirmasi diperlukan untuk memulai penggantian.",
+        "lane_replacement_required": "Jalur ini memerlukan penggantian sumber sebelum dapat diedit."
+      },
       "saved": "Lane config saved."
     }
   }

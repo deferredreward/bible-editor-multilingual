@@ -653,6 +653,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "Le contenu actuel de cette voie pour {{book}} ne contient pas ses données d'en-tête USFM, il ne peut donc pas être capturé. Réimportez {{book}} ou contactez un administrateur.",
+        "verses_missing_for_book": "Le contenu actuel de cette voie pour {{book}} contient des données d'en-tête mais aucun verset.",
+        "replacement_already_active": "Un remplacement est déjà en cours pour cette voie.",
+        "lane_lease_held": "Cette voie est occupée (un import ou un export la verrouille). Réessayez sous peu.",
+        "confirmation_required": "Une confirmation est requise pour lancer un remplacement.",
+        "lane_replacement_required": "Cette voie nécessite un remplacement de source avant de pouvoir être modifiée."
+      },
       "saved": "Lane config saved."
     }
   }

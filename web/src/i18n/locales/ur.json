@@ -639,6 +639,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "اس لین کے موجودہ مواد میں {{book}} کے لیے اس کا USFM ہیڈر ڈیٹا موجود نہیں ہے، اس لیے اس کا اسنیپ شاٹ نہیں لیا جا سکتا۔ {{book}} کو دوبارہ درآمد کریں یا کسی منتظم سے رابطہ کریں۔",
+        "verses_missing_for_book": "اس لین کے موجودہ مواد میں {{book}} کے لیے ہیڈر ڈیٹا موجود ہے لیکن کوئی آیت نہیں۔",
+        "replacement_already_active": "اس لین کے لیے ایک متبادل عمل پہلے ہی جاری ہے۔",
+        "lane_lease_held": "یہ لین مصروف ہے (ایک درآمد یا برآمد اسے روکے ہوئے ہے)۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔",
+        "confirmation_required": "متبادل شروع کرنے کے لیے تصدیق درکار ہے۔",
+        "lane_replacement_required": "ترمیم کیے جانے سے پہلے اس لین کو ماخذ کے متبادل کی ضرورت ہے۔"
+      },
       "saved": "Lane config saved."
     }
   }

@@ -505,7 +505,7 @@ export async function snapshotRequiredBooks(
   env: Env,
   bibleVersion: string,
   generation: number,
-): Promise<{ books: string[] } | { error: string }> {
+): Promise<{ books: string[] }> {
   const verses = await env.DB
     .prepare(
       `SELECT DISTINCT book FROM verses
@@ -525,18 +525,13 @@ export async function snapshotRequiredBooks(
 
   const vSet = new Set(verses.results.map((r) => r.book));
   const mSet = new Set(meta.results.map((r) => r.book));
-  // Meta without verses (or vice versa) is a validation failure — except empty both.
-  for (const b of vSet) {
-    if (mSet.size > 0 && !mSet.has(b)) {
-      return { error: `meta_missing_for_book:${b}` };
-    }
-  }
-  for (const b of mSet) {
-    if (!vSet.has(b)) {
-      return { error: `verses_missing_for_book:${b}` };
-    }
-  }
-  return { books: [...vSet].sort() };
+  // Required books = anything present in either table for the generation being replaced.
+  // A verses/meta mismatch here is NOT a reason to block the replacement — that would
+  // deadlock the very workflow meant to fix inconsistent content (the new source rewrites
+  // both verses and meta for the incoming generation). Books absent from the new source
+  // surface later as retryable/waivable per-book staging errors.
+  const books = [...new Set([...vSet, ...mSet])].sort();
+  return { books };
 }
 
 /** DTO fields published with every lane-aware response. */

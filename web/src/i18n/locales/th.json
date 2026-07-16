@@ -625,6 +625,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "เนื้อหาปัจจุบันของเลนนี้สำหรับ {{book}} ไม่มีข้อมูลส่วนหัว USFM จึงไม่สามารถบันทึกสแนปช็อตได้ โปรดนำเข้า {{book}} อีกครั้งหรือติดต่อผู้ดูแลระบบ",
+        "verses_missing_for_book": "เนื้อหาปัจจุบันของเลนนี้สำหรับ {{book}} มีข้อมูลส่วนหัวแต่ไม่มีข้อพระคัมภีร์",
+        "replacement_already_active": "มีการแทนที่กำลังทำงานอยู่แล้วสำหรับเลนนี้",
+        "lane_lease_held": "เลนนี้กำลังไม่ว่าง (การนำเข้าหรือส่งออกกำลังใช้งานอยู่) โปรดลองอีกครั้งในไม่ช้า",
+        "confirmation_required": "ต้องยืนยันเพื่อเริ่มการแทนที่",
+        "lane_replacement_required": "เลนนี้ต้องมีการแทนที่แหล่งที่มาก่อนจึงจะแก้ไขได้"
+      },
       "saved": "Lane config saved."
     }
   }

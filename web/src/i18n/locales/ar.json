@@ -211,6 +211,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "المحتوى الحالي لهذا المسار الخاص بسفر {{book}} يفتقر إلى بيانات ترويسة USFM، لذا لا يمكن التقاطه. أعد استيراد {{book}} أو تواصل مع المسؤول.",
+        "verses_missing_for_book": "المحتوى الحالي لهذا المسار الخاص بسفر {{book}} يحتوي على بيانات الترويسة لكن دون أي آيات.",
+        "replacement_already_active": "هناك عملية استبدال قيد التنفيذ بالفعل لهذا المسار.",
+        "lane_lease_held": "هذا المسار مشغول (عملية استيراد أو تصدير تحتجزه). حاول مرة أخرى بعد قليل.",
+        "confirmation_required": "التأكيد مطلوب لبدء عملية الاستبدال.",
+        "lane_replacement_required": "يحتاج هذا المسار إلى استبدال المصدر قبل أن يصبح قابلاً للتحرير."
+      },
       "saved": "Lane config saved."
     }
   },

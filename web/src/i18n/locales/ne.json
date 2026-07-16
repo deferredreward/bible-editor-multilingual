@@ -639,6 +639,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "{{book}} का लागि यस लेनको हालको सामग्रीमा यसको USFM हेडर डेटा छैन, त्यसैले यसको स्न्यापसट लिन सकिँदैन। {{book}} पुनः आयात गर्नुहोस् वा प्रशासकलाई सम्पर्क गर्नुहोस्।",
+        "verses_missing_for_book": "{{book}} का लागि यस लेनको हालको सामग्रीमा हेडर डेटा छ तर कुनै पद छैन।",
+        "replacement_already_active": "यस लेनका लागि प्रतिस्थापन पहिले नै चलिरहेको छ।",
+        "lane_lease_held": "यो लेन व्यस्त छ (आयात वा निर्यातले यसलाई रोकेको छ)। केही बेरमा पुनः प्रयास गर्नुहोस्।",
+        "confirmation_required": "प्रतिस्थापन सुरु गर्न पुष्टि आवश्यक छ।",
+        "lane_replacement_required": "सम्पादन गर्नुअघि यस लेनलाई स्रोत प्रतिस्थापन आवश्यक छ।"
+      },
       "saved": "Lane config saved."
     }
   }

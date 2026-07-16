@@ -68,6 +68,29 @@ const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
   dry_run: "preferences.exportStatus.dry_run",
 };
 
+// Lane replacement/activation errors arrive from the server as bare codes (some with a
+// `:book` suffix, e.g. `meta_missing_for_book:ZEC`). Map known codes to translated copy;
+// fall back to the raw string for anything unrecognized so nothing is hidden.
+const LANE_ERROR_CODES = new Set([
+  "meta_missing_for_book",
+  "verses_missing_for_book",
+  "replacement_already_active",
+  "lane_lease_held",
+  "confirmation_required",
+  "lane_replacement_required",
+]);
+
+function laneErrorMessage(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  raw: string,
+): string {
+  const [code, book] = raw.split(/:(.*)/s, 2);
+  if (LANE_ERROR_CODES.has(code)) {
+    return t(`preferences.scriptureLanes.errors.${code}`, book ? { book } : undefined);
+  }
+  return raw;
+}
+
 export type Section = "brief" | "instructions" | "terminology" | "examples";
 export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
 
@@ -350,7 +373,8 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
       setSuccessMsg(t("preferences.scriptureLanes.replacementStarted"));
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (e) {
-      setError(e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e));
+      const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
+      setError(laneErrorMessage(t, raw));
     } finally {
       setValidating(false);
     }
@@ -382,7 +406,8 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
       setSuccessMsg(t("preferences.scriptureLanes.replacementActivated"));
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (e) {
-      setError(e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e));
+      const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
+      setError(laneErrorMessage(t, raw));
     } finally {
       setActivating(false);
     }

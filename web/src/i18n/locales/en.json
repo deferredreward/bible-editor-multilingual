@@ -212,6 +212,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "This lane's current content for {{book}} is missing its USFM header data, so it can't be snapshotted. Re-import {{book}} or contact an admin.",
+        "verses_missing_for_book": "This lane's current content for {{book}} has header data but no verses.",
+        "replacement_already_active": "A replacement is already running for this lane.",
+        "lane_lease_held": "This lane is busy (an import or export is holding it). Try again shortly.",
+        "confirmation_required": "Confirmation is required to start a replacement.",
+        "lane_replacement_required": "This lane needs a source replacement before it can be edited."
+      },
       "saved": "Lane config saved."
     }
   },

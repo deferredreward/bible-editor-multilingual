@@ -639,6 +639,14 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "meta_missing_for_book": "محتوای فعلی این خط برای {{book}} فاقد داده‌های سرصفحهٔ USFM است، بنابراین نمی‌توان از آن تصویر لحظه‌ای گرفت. {{book}} را دوباره وارد کنید یا با مدیر تماس بگیرید.",
+        "verses_missing_for_book": "محتوای فعلی این خط برای {{book}} داده‌های سرصفحه دارد اما هیچ آیه‌ای ندارد.",
+        "replacement_already_active": "یک جایگزینی هم‌اکنون برای این خط در حال اجراست.",
+        "lane_lease_held": "این خط مشغول است (یک وارد کردن یا برون‌بری آن را در اختیار دارد). کمی بعد دوباره تلاش کنید.",
+        "confirmation_required": "برای شروع جایگزینی، تأیید لازم است.",
+        "lane_replacement_required": "این خط پیش از قابل‌ویرایش شدن به جایگزینی منبع نیاز دارد."
+      },
       "saved": "Lane config saved."
     }
   }

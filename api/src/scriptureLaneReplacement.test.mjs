@@ -13,6 +13,7 @@ import {
   bsojLaneConfig,
   laneForBibleVersion,
   allowVersePatch,
+  snapshotRequiredBooks,
 } from "./scriptureLane.ts";
 
 // scriptureLaneReplacement.ts can't be imported under --experimental-strip-types
@@ -1754,5 +1755,65 @@ function d1Batch(db, fns) {
   );
   console.log("  ✓ trigger blocks old lease INSERT after exclusive_owner claim");
 }
+
+// -- 30. snapshotRequiredBooks tolerates verses-without-meta ----------------
+// Regression: a preset switch quarantines existing content and requires a
+// replacement. Starting that replacement must NOT hard-fail just because the
+// content being replaced is internally inconsistent (e.g. ZEC has verses but no
+// book_usfm_meta row). The snapshot returns the union of books present in either
+// table so the workflow can proceed and re-fetch them from the new source.
+
+// Minimal D1-shaped shim over node:sqlite for the one async function under test.
+function d1EnvFor(db) {
+  return {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...params) {
+            return {
+              async all() {
+                return { results: db.prepare(sql).all(...params) };
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+}
+
+await (async () => {
+  const db = freshDb();
+  const env = d1EnvFor(db);
+
+  // ZEC: verses only, no meta (the deadlock case).
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('ZEC', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  // PSA: consistent - verses AND meta.
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('PSA', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
+     VALUES ('PSA', 'ULT', 1, '[]')`,
+  ).run();
+
+  const snap = await snapshotRequiredBooks(env, "ULT", 1);
+  assert.ok(!("error" in snap), "no error returned for verses-without-meta");
+  assert.deepEqual(snap.books, ["PSA", "ZEC"], "union of books present, sorted");
+
+  // Reverse direction (meta-only book) is also tolerated and included.
+  db.prepare(
+    `INSERT INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
+     VALUES ('OBA', 'ULT', 1, '[]')`,
+  ).run();
+  const snap2 = await snapshotRequiredBooks(env, "ULT", 1);
+  assert.deepEqual(snap2.books, ["OBA", "PSA", "ZEC"], "meta-only book also required");
+
+  console.log("  [ok] snapshotRequiredBooks tolerates verses/meta mismatch (union)");
+})();
 
 console.log("\nscriptureLaneReplacement tests passed");
