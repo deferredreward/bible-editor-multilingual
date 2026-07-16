@@ -447,7 +447,22 @@ console.log("manual add");
   // source_not_found when body missing.
   const nf = await populateSingleArticle(env, "tw", "kt/nope", { fetch: makeFetch(new Map()) });
   assert.equal(nf.error, "source_not_found", "missing source → source_not_found");
-  console.log("  ✓ manual add / unparseable / source_not_found");
+
+  // Config-fence: a source switch DURING the fetch window must abort the write.
+  // The snapshot is captured before the fetch, so mutating project_config from
+  // the fetch callback makes the fence fire and the manual add roll back.
+  {
+    const db2 = freshDb();
+    seedConfig(db2);
+    const env2 = makeEnv(db2);
+    const src2 = new Map([["bible/kt/mercy.md", { status: 200, text: "# Mercy\n" }]]);
+    const mutate2 = () =>
+      db2.prepare(`UPDATE project_config SET overrides_json = '{"org":"Switched"}' WHERE id = 1`).run();
+    const switched = await populateSingleArticle(env2, "tw", "kt/mercy", { fetch: makeFetch(src2, mutate2) });
+    assert.equal(switched.error, "source_changed", "source switch mid-fetch aborts manual add");
+    assert.equal(countUnits(db2), 0, "manual add rolled back — zero writes");
+  }
+  console.log("  ✓ manual add / unparseable / source_not_found / mid-fetch fence");
 }
 
 // ── 8. refreshFromSource cursor + demotion ────────────────────────────────────

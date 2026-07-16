@@ -668,6 +668,10 @@ export async function populateSingleArticle(
   }
 
   const repo = repoForResource(src, resource);
+  // Snapshot BEFORE the fetch (as the reconciler does) so the fence window
+  // covers the fetch: a source switch mid-fetch must abort the write, not slip
+  // through because the snapshot was taken after the switch.
+  const snapshot = await readConfigSnapshot(env);
   const fetched = await Promise.all(
     want.map(async (w) => {
       const url = dcsRawUrl(env, src.org, repo, w.path, "master");
@@ -684,7 +688,6 @@ export async function populateSingleArticle(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const snapshot = await readConfigSnapshot(env);
   const stmts: D1PreparedStatement[] = [fenceStmt(env, snapshot)];
   const written: string[] = [];
   for (const f of fetched) {
