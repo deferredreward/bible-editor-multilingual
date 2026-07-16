@@ -589,6 +589,7 @@
     "projectModeSaved": "सभी के लिए परियोजना मोड अपडेट किया गया।",
     "projectModeForbidden": "केवल व्यवस्थापक परियोजना मोड बदल सकता है।",
     "projectModeFailed": "परियोजना मोड अपडेट नहीं हो सका। पुनः प्रयास करें।",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "सहायता मोड",
     "assistedModeHelp": "चालू होने पर, अनुवाद रन टीम का संदर्भ पैक (संक्षिप्त विवरण, शब्द, सत्यापित उदाहरण) AI को भेजते हैं।",
     "assistedModeDisabled": "सहायता मोड सक्षम करने से पहले संदर्भ पैक सफलतापूर्वक निर्यात करें — खाली पैक AI रन विफल करता है।",

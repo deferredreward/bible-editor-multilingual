@@ -603,6 +603,7 @@
     "projectModeSaved": "Modo de projeto atualizado para todos.",
     "projectModeForbidden": "Somente um administrador pode alterar o modo de projeto.",
     "projectModeFailed": "Não foi possível atualizar o modo de projeto. Tente novamente.",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "Modo assistido",
     "assistedModeHelp": "Quando ativado, execuções de tradução enviam o pacote de contexto da equipe (resumo, termos, exemplos validados) para a IA.",
     "assistedModeDisabled": "Exporte um pacote de contexto com sucesso antes de ativar o modo assistido — um pacote vazio faz a execução de IA falhar.",

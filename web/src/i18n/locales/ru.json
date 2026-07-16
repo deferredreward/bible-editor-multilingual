@@ -617,6 +617,7 @@
     "projectModeSaved": "Режим проекта обновлён для всех.",
     "projectModeForbidden": "Только администратор может менять режим проекта.",
     "projectModeFailed": "Не удалось обновить режим проекта. Попробуйте снова.",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "Режим с поддержкой",
     "assistedModeHelp": "Когда включён, запуски перевода отправляют контекстный пакет команды (краткое описание, термины, проверенные примеры) в AI.",
     "assistedModeDisabled": "Успешно экспортируйте контекстный пакет перед включением режима с поддержкой — пустой пакет приводит к сбою запуска AI.",

@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { requireAuth, requireAdmin } from "./auth";
 import { getProjectConfig, writeProjectConfig, PRESETS } from "./projectConfig.ts";
-import { overlayLaneLabels } from "./scriptureLane";
+import { overlayLaneLabels, reconcileLaneStateForPreset } from "./scriptureLane";
 import { scriptureLaneRoutes } from "./scriptureLaneRoutes";
 
 export const projectConfig = new Hono<{
@@ -67,12 +67,35 @@ projectConfig.put("/", requireAdmin, async (c) => {
   try {
     // Preserve `undefined` (field omitted) vs `null` (explicit clear) — do NOT
     // collapse them with `?? null`, or a preset switch would wipe overrides.
+    const before = await getProjectConfig(c.env);
     const cfg = await writeProjectConfig(
       c.env,
       parsed.data.preset,
       parsed.data.overrides as Record<string, unknown> | null | undefined,
     );
-    return c.json({ config: cfg });
+    // Lane rows are a D1 singleton (not per-preset). Switching project mode
+    // must rewrite quarantine/pending targets; otherwise BSOJ LEGACY sticks
+    // under English presets. Always return overlay so the client never
+    // publishes a PUT body without laneState ("Lane state not initialized").
+    if (before.preset !== cfg.preset) {
+      try {
+        await reconcileLaneStateForPreset(c.env, cfg);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith("lane_busy:")) {
+          return c.json(
+            {
+              error: "lane_busy",
+              detail: msg,
+              hint: "Finish or cancel the in-flight scripture source replacement before switching project mode.",
+            },
+            409,
+          );
+        }
+        throw e;
+      }
+    }
+    return c.json({ config: await overlayLaneLabels(c.env, cfg) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ error: "write_failed", detail: msg }, 500);

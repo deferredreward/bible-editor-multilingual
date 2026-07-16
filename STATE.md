@@ -14,6 +14,11 @@
 
 ## Last run
 
+2026-07-16 · **main (uncommitted)** — **Preset switch left sticky scripture lanes.**
+- Root cause: `scripture_lane_state` is a D1 singleton; `ensureLaneState` only INSERT OR IGNORE. First visit under `ar-bsoj` seeded LEGACY `BSOJ/ar_glt|gst` + pending AVD/NAV and never rewrote on preset change — so BibleEditorMLTest still showed Arabic chips.
+- Second bug: `PUT /api/project-config` returned `materialize()` without `overlayLaneLabels`, and the client published that into the shared cache → transient “Lane state not initialized for AVD/NAV” until refresh.
+- Fix: `reconcileLaneStateForPreset` on preset change; `maybeHealLaneStateForPreset` on GET overlay (heals already-stuck DBs); PUT returns overlay; client refreshes after apply; 409 if lane busy. Tests in `lanePresetReconcile.test.mjs`. **Needs deploy to remote dev Worker.**
+
 2026-07-15 · **feat/scripture-repo-preferences** — **Eighth-pass P1/P2 close-out.**
 - pipelineImport: audit inserts gated on causal fingerprint (`version`+`updated_by`+`content_json`+`updated_at`) so a competitor at `newVersion` cannot fabricate history.
 - Migration `0048`: BEFORE INSERT trigger aborts held leases that conflict with `exclusive_owner` / replacement freeze (rolling-deploy old Workers).

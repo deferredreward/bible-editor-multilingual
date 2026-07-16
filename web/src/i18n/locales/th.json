@@ -575,6 +575,7 @@
     "projectModeSaved": "อัปเดตโหมดโครงการสำหรับทุกคนแล้ว",
     "projectModeForbidden": "มีเพียงผู้ดูแลระบบเท่านั้นที่เปลี่ยนโหมดโครงการได้",
     "projectModeFailed": "อัปเดตโหมดโครงการไม่ได้ ลองอีกครั้ง",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "โหมดช่วยเหลือ",
     "assistedModeHelp": "เมื่อเปิด การรันแปลจะส่งชุดบริบทของทีม (สรุปย่อ คำศัพท์ ตัวอย่างที่ตรวจสอบแล้ว) ไปยัง AI",
     "assistedModeDisabled": "ส่งออกชุดบริบทสำเร็จก่อนเปิดโหมดช่วยเหลือ — ชุดว่างจะทำให้การรัน AI ล้มเหลว",
