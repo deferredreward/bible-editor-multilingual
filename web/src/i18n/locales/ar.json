@@ -36,6 +36,7 @@
     "populateFromBooks": "التعبئة من الكتب المستوردة",
     "populateDone": "تمت تعبئة المقالات.",
     "populateWarnings": "تمت التعبئة مع {{n}} تحذير.",
+    "populateAborted": "توقفت التعبئة: تغيّر المصدر. أعد المحاولة.",
     "articleAdded": "تمت إضافة {{id}}."
   },
   "topbar": {

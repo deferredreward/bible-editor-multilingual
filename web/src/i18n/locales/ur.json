@@ -520,6 +520,7 @@
     "populateFromBooks": "درآمد شدہ کتب سے بھریں",
     "populateDone": "مضامین بھر دیے گئے۔",
     "populateWarnings": "{{n}} انتباہ کے ساتھ بھرا گیا۔",
+    "populateAborted": "آبادکاری رک گئی: ماخذ تبدیل ہو گیا۔ دوبارہ کوشش کریں۔",
     "articleAdded": "{{id}} شامل کر دیا گیا۔"
   },
   "preferences": {

@@ -506,6 +506,7 @@
     "populateFromBooks": "Isi dari kitab yang diimpor",
     "populateDone": "Artikel telah diisi.",
     "populateWarnings": "Diisi dengan {{n}} peringatan.",
+    "populateAborted": "Pengisian dihentikan: sumber berubah. Coba lagi.",
     "articleAdded": "{{id}} ditambahkan."
   },
   "preferences": {

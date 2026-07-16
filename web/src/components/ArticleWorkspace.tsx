@@ -168,14 +168,22 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
     setSnack(null);
     try {
       let warnings = 0;
+      let aborted = false;
       let guard = 0;
       for (;;) {
         const res = await api.populateArticles();
         warnings += res.warnings?.length ?? 0;
+        if (res.aborted) aborted = true;
         if (res.skipped || res.aborted || res.remaining === 0 || ++guard > 200) break;
       }
       refetch();
-      setSnack(warnings > 0 ? t("articles.populateWarnings", { n: warnings }) : t("articles.populateDone"));
+      setSnack(
+        aborted
+          ? t("articles.populateAborted")
+          : warnings > 0
+            ? t("articles.populateWarnings", { n: warnings })
+            : t("articles.populateDone"),
+      );
     } catch (e) {
       setSnack(e instanceof Error ? e.message : String(e));
     } finally {

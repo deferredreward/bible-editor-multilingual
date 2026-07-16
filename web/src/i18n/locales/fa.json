@@ -520,6 +520,7 @@
     "populateFromBooks": "پر کردن از کتاب‌های وارد‌شده",
     "populateDone": "مقاله‌ها پر شدند.",
     "populateWarnings": "با {{n}} هشدار پر شد.",
+    "populateAborted": "پرکردن متوقف شد: منبع تغییر کرد. دوباره تلاش کنید.",
     "articleAdded": "«{{id}}» افزوده شد."
   },
   "preferences": {

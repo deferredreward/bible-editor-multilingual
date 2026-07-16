@@ -506,6 +506,7 @@
     "populateFromBooks": "เติมจากหนังสือที่นำเข้า",
     "populateDone": "เติมบทความแล้ว",
     "populateWarnings": "เติมแล้วโดยมีคำเตือน {{n}} รายการ",
+    "populateAborted": "การเติมข้อมูลหยุดลง: แหล่งที่มาเปลี่ยนไป ลองอีกครั้ง",
     "articleAdded": "เพิ่ม {{id}} แล้ว"
   },
   "preferences": {

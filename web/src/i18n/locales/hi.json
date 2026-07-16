@@ -520,6 +520,7 @@
     "populateFromBooks": "आयातित पुस्तकों से भरें",
     "populateDone": "लेख भर दिए गए।",
     "populateWarnings": "{{n}} चेतावनी के साथ भरा गया।",
+    "populateAborted": "पॉपुलेशन रुक गया: स्रोत बदल गया। पुनः प्रयास करें।",
     "articleAdded": "{{id}} जोड़ा गया।"
   },
   "preferences": {

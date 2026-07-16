@@ -534,6 +534,7 @@
     "populateFromBooks": "Rellenar desde los libros importados",
     "populateDone": "Artículos rellenados.",
     "populateWarnings": "Rellenado con {{n}} advertencia(s).",
+    "populateAborted": "Se detuvo la carga: la fuente cambió. Inténtalo de nuevo.",
     "articleAdded": "Se agregó {{id}}."
   },
   "preferences": {

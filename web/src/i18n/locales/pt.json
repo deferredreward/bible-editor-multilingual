@@ -534,6 +534,7 @@
     "populateFromBooks": "Preencher a partir dos livros importados",
     "populateDone": "Artigos preenchidos.",
     "populateWarnings": "Preenchido com {{n}} aviso(s).",
+    "populateAborted": "Preenchimento interrompido: a fonte mudou. Tente novamente.",
     "articleAdded": "{{id}} adicionado."
   },
   "preferences": {

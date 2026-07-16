@@ -520,6 +520,7 @@
     "populateFromBooks": "Jaza kutoka vitabu vilivyoletwa",
     "populateDone": "Makala yamejazwa.",
     "populateWarnings": "Imejazwa na maonyo {{n}}.",
+    "populateAborted": "Ujazaji umesimama: chanzo kimebadilika. Jaribu tena.",
     "articleAdded": "{{id}} imeongezwa."
   },
   "preferences": {

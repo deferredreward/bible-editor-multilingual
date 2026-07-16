@@ -36,6 +36,7 @@
     "populateFromBooks": "Populate from imported books",
     "populateDone": "Articles populated.",
     "populateWarnings": "Populated with {{n}} warning(s).",
+    "populateAborted": "Population stopped: the source changed. Try again.",
     "articleAdded": "Added {{id}}."
   },
   "topbar": {
