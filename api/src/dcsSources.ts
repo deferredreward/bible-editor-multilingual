@@ -158,6 +158,42 @@ export async function fetchText(url: string): Promise<string | null> {
   return null;
 }
 
+// Status-aware sibling of fetchText, for callers that must distinguish a 404
+// (terminal "this file doesn't exist at the source") from a transient 5xx /
+// network error / truncated read (retryable). fetchText collapses all of those
+// into null; the article populator needs the distinction to decide whether to
+// record a 'not_found' (terminal) vs an 'error' (retry) fetch-state row.
+//
+// SUCCESS is strictly status===200 && text!==null && !truncated. A truncated
+// 200 (short body vs declared Content-Length — the twl_PSA data-loss signature)
+// is a RETRYABLE failure: text stays null, truncated:true, and it is NEVER
+// treated as content. Sends the DCS service token when present (private repos /
+// rate limits), matching fileCommitSha. fetchText itself is left untouched.
+export interface FetchTextResult {
+  status: number; // 0 = network error / exception
+  text: string | null;
+  truncated?: boolean;
+}
+
+export async function fetchTextWithStatus(env: Env, url: string): Promise<FetchTextResult> {
+  try {
+    const headers: Record<string, string> = {};
+    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+    const r = await fetch(url, Object.keys(headers).length ? { headers } : undefined);
+    if (!r.ok) return { status: r.status, text: null };
+    const buf = await r.arrayBuffer();
+    const cl = r.headers.get("content-length");
+    const expected = cl == null ? null : Number(cl);
+    if (expected != null && Number.isFinite(expected) && buf.byteLength < expected) {
+      // Short read → truncated. Retryable; never content.
+      return { status: 200, text: null, truncated: true };
+    }
+    return { status: 200, text: new TextDecoder("utf-8").decode(buf) };
+  } catch {
+    return { status: 0, text: null };
+  }
+}
+
 // ── Per-resource repo/path + git-SHA helpers (incremental self-heal reimport) ──
 // The reimport reads the project's configured source on master — the same
 // org dcsUrls() resolves. The SHA check below MUST agree with the raw fetch on

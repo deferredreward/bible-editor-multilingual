@@ -1515,6 +1515,35 @@ export const api = {
       body: JSON.stringify({ value: value ? 1 : 0 }),
     }),
 
+  // Manually add a single article by id ("kt/grace" / "translate/figs-aside").
+  // Restores a soft-deleted unit. 400 unparseable_id/not_translation_project,
+  // 404 source_not_found.
+  addArticle: (resource: "tw" | "ta", id: string) =>
+    request<{ ok: true; resource: "tw" | "ta"; article_id: string; paths: string[] }>(
+      `/api/articles/${resource}/add`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      },
+    ),
+
+  // Populate tW/tA article sources from imported notes. One bounded chunk per
+  // call — the caller loops until `remaining === 0`. `book` scopes it to one
+  // book; omitted → global.
+  populateArticles: (opts?: { book?: string; retryFailed?: boolean }) =>
+    request<{
+      processed: number;
+      remaining: number;
+      warnings: string[];
+      skipped?: boolean;
+      aborted?: "source_changed";
+    }>(`/api/articles/populate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts ?? {}),
+    }),
+
   // ── Translation preferences & memory (migration 0040) ──
   getTranslationPrefs: () => request<{ prefs: TranslationPrefs }>(`/api/translation-memory/prefs`),
   putTranslationPrefs: (expectedVersion: number, patch: Partial<TranslationPrefsInput>) =>

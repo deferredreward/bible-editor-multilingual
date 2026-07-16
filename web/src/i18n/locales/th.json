@@ -499,7 +499,15 @@
     "partTitle": "ชื่อเรื่อง",
     "partSubTitle": "ชื่อเรื่องรอง",
     "partBody": "เนื้อหา",
-    "backToScripture": "กลับไปยังพระคัมภีร์"
+    "backToScripture": "กลับไปยังพระคัมภีร์",
+    "searchPlaceholder": "ค้นหาบทความ",
+    "addArticle": "เพิ่ม \"{{id}}\"",
+    "addUnknownId": "ไม่พบ \"{{id}}\" ที่แหล่งที่มา",
+    "populateFromBooks": "เติมจากหนังสือที่นำเข้า",
+    "populateDone": "เติมบทความแล้ว",
+    "populateWarnings": "เติมแล้วโดยมีคำเตือน {{n}} รายการ",
+    "populateAborted": "การเติมข้อมูลหยุดลง: แหล่งที่มาเปลี่ยนไป ลองอีกครั้ง",
+    "articleAdded": "เพิ่ม {{id}} แล้ว"
   },
   "preferences": {
     "title": "การตั้งค่าและหน่วยความจำ",

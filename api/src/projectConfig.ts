@@ -87,6 +87,15 @@ export interface ProjectConfig {
   /** True when the org's repos were confirmed to exist on Door43 (2026-07-10 survey) */
   reposVerified: boolean;
   /**
+   * When true, nightly export routes to `cfg.exportOrg` and IGNORES the
+   * `DCS_EXPORT_OWNER` env fallback. Export routing is a per-project CAPABILITY,
+   * not a preset-name check: a project that translates its own content (e.g.
+   * BibleEditorMLTest, or PR B's custom-gl) must export to its own org, never to
+   * the shared service account that `DCS_EXPORT_OWNER` names for the English
+   * root. All other presets leave this unset and keep the env-wins fallback.
+   */
+  exportOwnerFromConfig?: boolean;
+  /**
    * Optional authoritative lane state (lit/sim generations, locks, freezes).
    * Populated by GET /api/project-config via overlayLaneLabels — not stored in
    * overrides_json. Clients must treat this as source of truth for write gates.
@@ -160,6 +169,10 @@ export const PRESETS: Record<string, ProjectConfig> = {
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: true,
+    // Exports to BibleEditorMLTest itself, not the shared DCS_EXPORT_OWNER
+    // service account — this is the PR A smoke preset and its populated
+    // articles must land in its own org.
+    exportOwnerFromConfig: true,
   },
   // Verified live 2026-07-10: id_gl has the full standard set.
   "id-gl": {
@@ -342,4 +355,16 @@ export async function writeProjectConfig(
 // The repo name for a role under this project (what dcsResourceFile consumes).
 export function repoFor(cfg: ProjectConfig, key: ResourceKey): string {
   return cfg.repos[key];
+}
+
+// The DCS org nightly export (verse/TSV, article, and context-pack) commits to.
+// Centralized so all export paths agree: a project that owns its export target
+// (exportOwnerFromConfig) always uses cfg.exportOrg; otherwise DCS_EXPORT_OWNER
+// wins for back-compat with the English root's shared service account, falling
+// back to cfg.exportOrg when the env var is unset.
+export function exportOwnerFor(
+  env: { DCS_EXPORT_OWNER?: string },
+  cfg: ProjectConfig,
+): string {
+  return cfg.exportOwnerFromConfig ? cfg.exportOrg : (env.DCS_EXPORT_OWNER ?? cfg.exportOrg);
 }

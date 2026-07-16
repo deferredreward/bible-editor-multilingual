@@ -51,7 +51,7 @@ const EXPORT_ALERT_USERNAME = "deferredreward";
 // DCS web URL of the org exports land on — for alert links.
 async function exportOwnerUrl(env: Env): Promise<string> {
   const cfg = await getProjectConfig(env);
-  return `${env.DCS_BASE_URL}/${env.DCS_EXPORT_OWNER ?? cfg.exportOrg}`;
+  return `${env.DCS_BASE_URL}/${exportOwnerFor(env, cfg)}`;
 }
 
 // Legacy export branch, superseded by per-(book,resource) contributor branches.
@@ -62,7 +62,7 @@ import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
-import { getProjectConfig } from "./projectConfig.ts";
+import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
 import {
   laneForBibleVersion,
   assertLaneWritable,
@@ -886,7 +886,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     const dcsOwner = lane && laneExport
       ? laneExport.owner
-      : (this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg);
+      : exportOwnerFor(this.env, projectCfg);
     const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
 
     // Freshness gate — the single guard against clobbering master. The export
@@ -1188,7 +1188,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     const cfg = await getProjectConfig(this.env);
     const repo = resource === "tw" ? cfg.repos.tw : cfg.repos.ta;
-    const owner = this.env.DCS_EXPORT_OWNER ?? cfg.exportOrg;
+    const owner = exportOwnerFor(this.env, cfg);
     const branch = buildExportBranch(label, []);
 
     // R2 backup: one JSON bundle of {path: content} for the whole dir (not one

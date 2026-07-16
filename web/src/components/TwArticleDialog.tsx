@@ -14,7 +14,8 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { MarkdownView } from "./MarkdownView";
-import { fetchTwArticle, twArticleDcsUrl, twShort } from "../lib/twArticle";
+import { fetchTwArticle, twArticleDcsUrl, twShort, type TwArticleSource } from "../lib/twArticle";
+import { useProjectConfig } from "../hooks/useProjectConfig";
 
 interface Props {
   articleId: string | null;
@@ -29,6 +30,17 @@ function titleFromMarkdown(md: string, fallback: string): string {
 
 
 export function TwArticleDialog({ articleId, onClose }: Props) {
+  const cfg = useProjectConfig();
+  // A GL project reads tW articles from its translationSource (English source
+  // repo); non-translation projects read their own org's tW repo. Default (null
+  // cfg) falls back to unfoldingWord/en_tw inside twArticle.
+  const source: TwArticleSource | undefined = cfg
+    ? cfg.translationSource
+      ? { org: cfg.translationSource.org, repo: cfg.translationSource.repos.tw }
+      : { org: cfg.org, repo: cfg.repos.tw }
+    : undefined;
+  const sourceKey = source ? `${source.org}/${source.repo}` : "";
+
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -37,7 +49,7 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
     let cancelled = false;
     setMarkdown(null);
     setError(false);
-    fetchTwArticle(articleId)
+    fetchTwArticle(articleId, source)
       .then((md) => {
         if (!cancelled) setMarkdown(md);
       })
@@ -47,10 +59,11 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [articleId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [articleId, sourceKey]);
 
   const open = articleId !== null;
-  const dcsUrl = twArticleDcsUrl(articleId);
+  const dcsUrl = twArticleDcsUrl(articleId, source);
   const title = markdown ? titleFromMarkdown(markdown, twShort(articleId)) : twShort(articleId);
 
   return (

@@ -513,7 +513,15 @@
     "partTitle": "শিরোনাম",
     "partSubTitle": "উপশিরোনাম",
     "partBody": "মূল অংশ",
-    "backToScripture": "শাস্ত্রে ফিরে যান"
+    "backToScripture": "শাস্ত্রে ফিরে যান",
+    "searchPlaceholder": "নিবন্ধ খুঁজুন",
+    "addArticle": "\"{{id}}\" যোগ করুন",
+    "addUnknownId": "উৎসে \"{{id}}\" খুঁজে পাওয়া যায়নি।",
+    "populateFromBooks": "আমদানি করা বই থেকে পূরণ করুন",
+    "populateDone": "নিবন্ধ পূরণ হয়েছে।",
+    "populateWarnings": "{{n}}টি সতর্কতাসহ পূরণ হয়েছে।",
+    "populateAborted": "পপুলেশন থেমে গেছে: উৎস পরিবর্তিত হয়েছে। আবার চেষ্টা করুন।",
+    "articleAdded": "{{id}} যোগ করা হয়েছে।"
   },
   "preferences": {
     "title": "পছন্দ ও স্মৃতি",

@@ -29,7 +29,15 @@
     "partTitle": "Title",
     "partSubTitle": "Subtitle",
     "partBody": "Body",
-    "backToScripture": "Back to scripture"
+    "backToScripture": "Back to scripture",
+    "searchPlaceholder": "Search articles",
+    "addArticle": "Add \"{{id}}\"",
+    "addUnknownId": "Couldn’t find \"{{id}}\" at the source.",
+    "populateFromBooks": "Populate from imported books",
+    "populateDone": "Articles populated.",
+    "populateWarnings": "Populated with {{n}} warning(s).",
+    "populateAborted": "Population stopped: the source changed. Try again.",
+    "articleAdded": "Added {{id}}."
   },
   "topbar": {
     "showVerseList": "show verse list",

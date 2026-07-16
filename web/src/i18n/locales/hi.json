@@ -513,7 +513,15 @@
     "partTitle": "शीर्षक",
     "partSubTitle": "उपशीर्षक",
     "partBody": "मुख्य भाग",
-    "backToScripture": "धर्मशास्त्र पर वापस जाएँ"
+    "backToScripture": "धर्मशास्त्र पर वापस जाएँ",
+    "searchPlaceholder": "लेख खोजें",
+    "addArticle": "\"{{id}}\" जोड़ें",
+    "addUnknownId": "स्रोत में \"{{id}}\" नहीं मिला।",
+    "populateFromBooks": "आयातित पुस्तकों से भरें",
+    "populateDone": "लेख भर दिए गए।",
+    "populateWarnings": "{{n}} चेतावनी के साथ भरा गया।",
+    "populateAborted": "पॉपुलेशन रुक गया: स्रोत बदल गया। पुनः प्रयास करें।",
+    "articleAdded": "{{id}} जोड़ा गया।"
   },
   "preferences": {
     "title": "वरीयताएँ और स्मृति",

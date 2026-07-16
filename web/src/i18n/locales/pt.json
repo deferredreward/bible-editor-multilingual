@@ -527,7 +527,15 @@
     "partTitle": "Título",
     "partSubTitle": "Subtítulo",
     "partBody": "Corpo",
-    "backToScripture": "Voltar à Escritura"
+    "backToScripture": "Voltar à Escritura",
+    "searchPlaceholder": "Pesquisar artigos",
+    "addArticle": "Adicionar \"{{id}}\"",
+    "addUnknownId": "Não foi possível encontrar \"{{id}}\" na fonte.",
+    "populateFromBooks": "Preencher a partir dos livros importados",
+    "populateDone": "Artigos preenchidos.",
+    "populateWarnings": "Preenchido com {{n}} aviso(s).",
+    "populateAborted": "Preenchimento interrompido: a fonte mudou. Tente novamente.",
+    "articleAdded": "{{id}} adicionado."
   },
   "preferences": {
     "title": "Preferências e memória",

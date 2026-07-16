@@ -541,7 +541,15 @@
     "partTitle": "Заголовок",
     "partSubTitle": "Подзаголовок",
     "partBody": "Текст",
-    "backToScripture": "Назад к Писанию"
+    "backToScripture": "Назад к Писанию",
+    "searchPlaceholder": "Поиск статей",
+    "addArticle": "Добавить «{{id}}»",
+    "addUnknownId": "Не удалось найти «{{id}}» в источнике.",
+    "populateFromBooks": "Заполнить из импортированных книг",
+    "populateDone": "Статьи заполнены.",
+    "populateWarnings": "Заполнено с {{n}} предупреждениями.",
+    "populateAborted": "Заполнение остановлено: источник изменился. Повторите попытку.",
+    "articleAdded": "Добавлено: {{id}}."
   },
   "preferences": {
     "title": "Настройки и память",
