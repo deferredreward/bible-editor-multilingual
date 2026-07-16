@@ -52,6 +52,8 @@ test("parseManifestFacts: uW block-style manifest with relation list", () => {
   const facts = parseManifestFacts(UW_BLOCK_MANIFEST);
   assert.ok(facts);
   assert.equal(facts.language, "en");
+  assert.equal(facts.languageTitle, "English"); // from dublin_core.language.title
+  assert.equal(facts.languageDirection, "ltr"); // from dublin_core.language.direction
   assert.equal(facts.identifier, "glt");
   assert.equal(facts.subject, "Aligned Bible");
   assert.deepEqual(facts.relation, ["en/tn", "en/tq", "en/twl"]); // ?v= stripped
@@ -61,6 +63,8 @@ test("parseManifestFacts: BSOJ-style (bare language string, non-standard identif
   const facts = parseManifestFacts(BSOJ_STYLE_MANIFEST);
   assert.ok(facts);
   assert.equal(facts.language, "ar");
+  assert.equal(facts.languageTitle, null); // bare string carries no title
+  assert.equal(facts.languageDirection, null); // nor direction
   assert.equal(facts.identifier, "avd");
   assert.equal(facts.subject, "Bible");
 });
@@ -128,6 +132,41 @@ test("inferFromRepoList: full GL set resolves lit/sim/tn/tq/twl/tw/ta cleanly", 
   assert.equal(inf.taRepo, "en_ta");
   assert.deepEqual(inf.missing, []);
   assert.deepEqual(inf.ambiguous, []);
+});
+
+test("inferFromRepoList: languageName/direction come from the tn manifest, not the heuristic", () => {
+  // A language NOT in the RTL heuristic set whose tn manifest declares rtl +
+  // a human title: both must come from the manifest, overriding the code and
+  // the ltr default.
+  const repos = [{ name: "xyz_tn" }, { name: "xyz_glt" }, { name: "xyz_gst" }];
+  const manifests = manifestMap({
+    xyz_tn: {
+      language: "xyz",
+      languageTitle: "Xyzian",
+      languageDirection: "rtl",
+      relation: [],
+      identifier: "tn",
+      subject: "Translation Notes",
+    },
+    xyz_glt: { language: "xyz", languageTitle: null, languageDirection: null, relation: [], identifier: "glt", subject: "Aligned Bible" },
+    xyz_gst: { language: "xyz", languageTitle: null, languageDirection: null, relation: [], identifier: "gst", subject: "Aligned Bible" },
+  });
+  const inf = inferFromRepoList("XyzOrg", repos, manifests);
+  assert.equal(inf.languageCode, "xyz");
+  assert.equal(inf.languageName, "Xyzian"); // manifest title, not the "xyz" code
+  assert.equal(inf.direction, "rtl"); // manifest direction, not the ltr default
+});
+
+test("inferFromRepoList: falls back to code + heuristic direction when the tn manifest omits them", () => {
+  const repos = [{ name: "ar_tn" }, { name: "ar_glt" }, { name: "ar_gst" }];
+  const manifests = manifestMap({
+    ar_tn: { language: "ar", languageTitle: null, languageDirection: null, relation: [], identifier: "tn", subject: "Translation Notes" },
+    ar_glt: { language: "ar", relation: [], identifier: "glt", subject: "Aligned Bible" },
+    ar_gst: { language: "ar", relation: [], identifier: "gst", subject: "Aligned Bible" },
+  });
+  const inf = inferFromRepoList("SomeArabicOrg", repos, manifests);
+  assert.equal(inf.languageName, "ar"); // no title in manifest -> code
+  assert.equal(inf.direction, "rtl"); // ar is in the RTL heuristic set
 });
 
 test("inferFromRepoList: nonstandard identifiers (avd/nav) are ambiguous, never auto-assigned", () => {

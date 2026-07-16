@@ -81,6 +81,8 @@ export async function listOrgRepos(
 
 export interface ManifestFacts {
   language: string | null;
+  languageTitle: string | null;
+  languageDirection: "ltr" | "rtl" | null;
   relation: string[];
   identifier: string | null;
   subject: string | null;
@@ -105,11 +107,15 @@ export function parseManifestFacts(yamlText: string): ManifestFacts | null {
   const d = dc as Record<string, unknown>;
 
   let language: string | null = null;
+  let languageTitle: string | null = null;
+  let languageDirection: "ltr" | "rtl" | null = null;
   const langField = d.language;
   if (typeof langField === "string") language = langField;
   else if (langField && typeof langField === "object") {
-    const id = (langField as Record<string, unknown>).identifier;
-    if (typeof id === "string") language = id;
+    const lf = langField as Record<string, unknown>;
+    if (typeof lf.identifier === "string") language = lf.identifier;
+    if (typeof lf.title === "string" && lf.title.trim() !== "") languageTitle = lf.title;
+    if (lf.direction === "ltr" || lf.direction === "rtl") languageDirection = lf.direction;
   }
 
   let relation: string[] = [];
@@ -122,7 +128,7 @@ export function parseManifestFacts(yamlText: string): ManifestFacts | null {
   const identifier = typeof d.identifier === "string" ? d.identifier : null;
   const subject = typeof d.subject === "string" ? d.subject : null;
 
-  return { language, relation, identifier, subject };
+  return { language, languageTitle, languageDirection, relation, identifier, subject };
 }
 
 function isBibleSubject(subject: string | null): boolean {
@@ -306,16 +312,19 @@ export function inferFromRepoList(
   const litLabel = litRepo ? litRepo.slice(langCode ? langCode.length + 1 : 0).toUpperCase() : null;
   const simLabel = simRepo ? simRepo.slice(langCode ? langCode.length + 1 : 0).toUpperCase() : null;
 
-  // languageName: RC manifests carry only a code in dublin_core.language in
-  // most GL repos, not a title — fall back to the code itself; the admin can
-  // edit the label in the draft.
-  const languageName = langCode;
+  // Prefer the tn repo manifest's own dublin_core.language.{title,direction}
+  // (authoritative) over the repo-name code and the RTL heuristic; the admin
+  // can still edit the draft. Fall back to the code / heuristic when the
+  // manifest omits them or wasn't parseable.
+  const tnFacts = tnRepo ? manifests.get(tnRepo)?.facts ?? null : null;
+  const languageName = tnFacts?.languageTitle ?? langCode;
+  const direction = tnFacts?.languageDirection ?? directionFor(langCode);
 
   void org;
   return {
     languageCode: langCode,
     languageName,
-    direction: directionFor(langCode),
+    direction,
     tnRepo,
     litRepo,
     simRepo,
