@@ -53,6 +53,8 @@ gh pr view --json state,mergedAt 2>/dev/null
 
 If the PR for the current branch was already merged, **do not push to the same branch**. Rebase onto main, create a new branch, and open a fresh PR. This happens regularly: a PR is merged, the user tests on local main, requests a tweak, and a new PR is needed for the follow-up change.
 
+**This checkout has both `origin` (`deferredreward/bible-editor-multilingual`, this fork) and `upstream` (`unfoldingWord/bible-editor`) remotes.** `gh pr create` / `gh pr view` / `gh pr close` without an explicit `--repo` can resolve against `upstream` instead of `origin` and open or act on a PR in the wrong repo. Before any `gh pr *` command, confirm the target with `gh repo view --json nameWithOwner` (or pass `--repo deferredreward/bible-editor-multilingual` explicitly) — don't assume `gh`'s default matches where the branch was pushed.
+
 ## Committing
 
 Commit messages with a body: pass repeated `-m` flags (`git commit -m "subject" -m "body para" -m "Co-Authored-By: …"`). Do **not** use PowerShell here-string syntax (`@'…'@`) for the message — these git commands run through the **Bash** tool, where `@'…'@` is not heredoc and leaks a literal `@` into the subject line.
