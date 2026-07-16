@@ -639,6 +639,17 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "replacement_already_active": "Ubadilishaji tayari unaendelea kwa njia hii.",
+        "lane_lease_held": "Njia hii ina shughuli (uingizaji au usafirishaji unaishikilia). Jaribu tena hivi karibuni.",
+        "confirmation_required": "Uthibitisho unahitajika kuanza ubadilishaji.",
+        "lane_replacement_required": "Njia hii inahitaji ubadilishaji wa chanzo kabla ya kuhaririwa.",
+      "job_not_found": "Kazi hii ya ubadilishaji haikuweza kupatikana. Huenda tayari imesitishwa au kukamilika.",
+      "job_not_ready": "Ubadilishaji huu bado haujawa tayari kuamilishwa.",
+      "export_lease_held": "Haiwezekani kuamilisha sasa hivi: usafirishaji unaendelea kwa njia hii. Jaribu tena hivi karibuni.",
+      "export_lease_grace": "Haiwezekani kuamilisha sasa hivi: inasubiri usafirishaji unaoendelea ukamilike. Jaribu tena hivi karibuni.",
+      "activation_cas_failed": "Uamilishaji umeshindwa kwa sababu njia imebadilika. Onyesha upya kisha ujaribu tena."
+      },
       "saved": "Lane config saved."
     }
   }

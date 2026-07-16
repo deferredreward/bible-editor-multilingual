@@ -505,7 +505,16 @@ export async function snapshotRequiredBooks(
   env: Env,
   bibleVersion: string,
   generation: number,
-): Promise<{ books: string[] } | { error: string }> {
+): Promise<{ books: string[] }> {
+  // Required books = whatever has verse content in the generation being replaced.
+  // `verses` is the sole authoritative signal for "what's active in this lane" —
+  // book_usfm_meta is enrichment written alongside verses during staging, not an
+  // independent membership signal. Consulting it here previously either hard-blocked
+  // the replacement on a mismatch (deadlocking the workflow meant to fix inconsistent
+  // content) or, if merely unioned in, would force staging/waiving of books that were
+  // never really part of the lane (a stray meta row with no matching verses). Books
+  // the new source can't supply still surface later as retryable/waivable per-book
+  // staging errors — this only decides what to *ask* the new source for.
   const verses = await env.DB
     .prepare(
       `SELECT DISTINCT book FROM verses
@@ -514,29 +523,7 @@ export async function snapshotRequiredBooks(
     )
     .bind(bibleVersion, generation)
     .all<{ book: string }>();
-  const meta = await env.DB
-    .prepare(
-      `SELECT DISTINCT book FROM book_usfm_meta
-        WHERE bible_version = ?1 AND source_generation = ?2
-        ORDER BY book`,
-    )
-    .bind(bibleVersion, generation)
-    .all<{ book: string }>();
-
-  const vSet = new Set(verses.results.map((r) => r.book));
-  const mSet = new Set(meta.results.map((r) => r.book));
-  // Meta without verses (or vice versa) is a validation failure — except empty both.
-  for (const b of vSet) {
-    if (mSet.size > 0 && !mSet.has(b)) {
-      return { error: `meta_missing_for_book:${b}` };
-    }
-  }
-  for (const b of mSet) {
-    if (!vSet.has(b)) {
-      return { error: `verses_missing_for_book:${b}` };
-    }
-  }
-  return { books: [...vSet].sort() };
+  return { books: verses.results.map((r) => r.book) };
 }
 
 /** DTO fields published with every lane-aware response. */

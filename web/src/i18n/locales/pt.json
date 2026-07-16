@@ -653,6 +653,17 @@
         "failed": "Replacement failed",
         "cancelled": "Replacement cancelled"
       },
+      "errors": {
+        "replacement_already_active": "Já há uma substituição em andamento para esta faixa.",
+        "lane_lease_held": "Esta faixa está ocupada (uma importação ou exportação a está retendo). Tente novamente em breve.",
+        "confirmation_required": "É necessária confirmação para iniciar uma substituição.",
+        "lane_replacement_required": "Esta faixa precisa de uma substituição de fonte antes de poder ser editada.",
+      "job_not_found": "Este trabalho de substituição não foi encontrado. Ele pode já ter sido cancelado ou concluído.",
+      "job_not_ready": "Esta substituição ainda não está pronta para ser ativada.",
+      "export_lease_held": "Não é possível ativar agora: há uma exportação em andamento para esta faixa. Tente novamente em breve.",
+      "export_lease_grace": "Não é possível ativar agora: aguardando a conclusão de uma exportação em andamento. Tente novamente em breve.",
+      "activation_cas_failed": "A ativação falhou porque a faixa mudou nesse meio-tempo. Atualize e tente novamente."
+      },
       "saved": "Lane config saved."
     }
   }

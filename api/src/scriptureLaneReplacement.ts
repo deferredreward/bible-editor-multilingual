@@ -136,9 +136,6 @@ export async function startReplacement(
   // waits ORPHAN_RESERVATION_GRACE_SECONDS before reclaiming a missing job.
   const bv = bibleVersionForLane(lane);
   const snap = await snapshotRequiredBooks(env, bv, activeGeneration);
-  if ("error" in snap) {
-    throw Object.assign(new Error(snap.error), { status: 422 });
-  }
 
   // Re-read: a concurrent start may have frozen while we were snapshotting.
   await reclaimStaleExclusiveOwner(env, lane);
