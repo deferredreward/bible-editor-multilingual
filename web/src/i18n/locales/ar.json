@@ -29,7 +29,14 @@
     "partTitle": "العنوان",
     "partSubTitle": "العنوان الفرعي",
     "partBody": "المتن",
-    "backToScripture": "العودة إلى النص الكتابي"
+    "backToScripture": "العودة إلى النص الكتابي",
+    "searchPlaceholder": "بحث في المقالات",
+    "addArticle": "إضافة «{{id}}»",
+    "addUnknownId": "تعذّر العثور على «{{id}}» في المصدر.",
+    "populateFromBooks": "التعبئة من الكتب المستوردة",
+    "populateDone": "تمت تعبئة المقالات.",
+    "populateWarnings": "تمت التعبئة مع {{n}} تحذير.",
+    "articleAdded": "تمت إضافة {{id}}."
   },
   "topbar": {
     "showVerseList": "إظهار قائمة الآيات",

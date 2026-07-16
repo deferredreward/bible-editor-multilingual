@@ -18,6 +18,7 @@ import { projectConfig } from "./projectConfigRoutes";
 import { articles } from "./articles";
 import { translationMemory } from "./translationMemory";
 import { books } from "./bookImport";
+import { populateReferencedArticles } from "./articlePopulate";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId, verifyToken } from "./auth";
 
 export interface Env {
@@ -321,6 +322,17 @@ export default {
     }
     if (controller.cron === POLL_CRON) {
       await pollAllNonTerminal(env);
+      // Article-population backstop: auto-import schedules population via
+      // waitUntil, but a crashed isolate or a book imported before this feature
+      // shipped can leave referenced tW/tA articles unpopulated. Drain one
+      // bounded chunk per tick — a cheap no-op once everything is populated.
+      // ISOLATED from pipeline polling: neither cron subsystem may starve or
+      // abort the other, so this gets its own try/catch.
+      try {
+        await populateReferencedArticles(env, { maxFetches: 200 });
+      } catch (e) {
+        console.error("cron populateReferencedArticles failed", e instanceof Error ? e.message : String(e));
+      }
       // Stale-lock sweep for book_import_locks. Imports take 5-60s in
       // practice; anything past 10 minutes is a Worker that died mid-import
       // (OOM, isolate eviction) and left the row behind. The next POST for

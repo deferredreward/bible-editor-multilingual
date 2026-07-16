@@ -513,7 +513,14 @@
     "partTitle": "عنوان",
     "partSubTitle": "زیرعنوان",
     "partBody": "متن",
-    "backToScripture": "بازگشت به کتاب‌مقدس"
+    "backToScripture": "بازگشت به کتاب‌مقدس",
+    "searchPlaceholder": "جستجوی مقاله‌ها",
+    "addArticle": "افزودن «{{id}}»",
+    "addUnknownId": "«{{id}}» در منبع یافت نشد.",
+    "populateFromBooks": "پر کردن از کتاب‌های وارد‌شده",
+    "populateDone": "مقاله‌ها پر شدند.",
+    "populateWarnings": "با {{n}} هشدار پر شد.",
+    "articleAdded": "«{{id}}» افزوده شد."
   },
   "preferences": {
     "title": "تفضیلات و حافظه",

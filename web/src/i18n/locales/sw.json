@@ -513,7 +513,14 @@
     "partTitle": "Kichwa",
     "partSubTitle": "Kichwa kidogo",
     "partBody": "Kiini",
-    "backToScripture": "Rudi kwa Maandiko"
+    "backToScripture": "Rudi kwa Maandiko",
+    "searchPlaceholder": "Tafuta makala",
+    "addArticle": "Ongeza \"{{id}}\"",
+    "addUnknownId": "Haikuweza kupata \"{{id}}\" kwenye chanzo.",
+    "populateFromBooks": "Jaza kutoka vitabu vilivyoletwa",
+    "populateDone": "Makala yamejazwa.",
+    "populateWarnings": "Imejazwa na maonyo {{n}}.",
+    "articleAdded": "{{id}} imeongezwa."
   },
   "preferences": {
     "title": "Mapendeleo na Kumbukumbu",

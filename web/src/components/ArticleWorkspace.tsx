@@ -124,6 +124,65 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
     [units, articleId],
   );
 
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [snack, setSnack] = useState<string | null>(null);
+
+  const query = search.trim();
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase();
+    return q ? articles.filter((a) => a.id.toLowerCase().includes(q)) : articles;
+  }, [articles, query]);
+
+  // Add a single article by the typed id (e.g. "kt/grace") when the search
+  // matches nothing locally — fetches its source and navigates to it.
+  const handleAdd = useCallback(async () => {
+    if (!query || busy) return;
+    setBusy(true);
+    setSnack(null);
+    try {
+      const res = await api.addArticle(resource, query);
+      refetch();
+      onNavigate(resource, res.article_id);
+      setSearch("");
+      setSnack(t("articles.articleAdded", { id: res.article_id }));
+    } catch (e) {
+      const code = e instanceof ApiError ? (e.body as { error?: string } | undefined)?.error : undefined;
+      setSnack(
+        code === "source_not_found"
+          ? t("articles.addUnknownId", { id: query })
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [query, busy, resource, refetch, onNavigate, t]);
+
+  // Populate the workspace from the imported books' referenced articles. The
+  // route processes one bounded chunk per call, so loop until nothing remains.
+  const handlePopulate = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setSnack(null);
+    try {
+      let warnings = 0;
+      let guard = 0;
+      for (;;) {
+        const res = await api.populateArticles();
+        warnings += res.warnings?.length ?? 0;
+        if (res.skipped || res.aborted || res.remaining === 0 || ++guard > 200) break;
+      }
+      refetch();
+      setSnack(warnings > 0 ? t("articles.populateWarnings", { n: warnings }) : t("articles.populateDone"));
+    } catch (e) {
+      setSnack(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, refetch, t]);
+
   if (!isTranslation) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }} spacing={1}>
@@ -179,6 +238,14 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
           <Typography variant="caption" color="text.secondary">
             {t("articles.approved", { n: validatedCount, total })}
           </Typography>
+          <TextField
+            size="small"
+            fullWidth
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("articles.searchPlaceholder")}
+            inputProps={{ style: { fontSize: 13 } }}
+          />
         </Stack>
 
         <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
@@ -187,11 +254,41 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
               <CircularProgress size={20} />
             </Stack>
           ) : articles.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-              {t("articles.noArticles")}
-            </Typography>
+            // Empty workspace — offer to populate from the imported books.
+            <Stack spacing={1.5} sx={{ p: 2 }} alignItems="flex-start">
+              <Typography variant="body2" color="text.secondary">
+                {t("articles.noArticles")}
+              </Typography>
+              <Button
+                size="small"
+                variant="contained"
+                disabled={busy}
+                startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}
+                onClick={handlePopulate}
+              >
+                {t("articles.populateFromBooks")}
+              </Button>
+            </Stack>
+          ) : filtered.length === 0 ? (
+            // No local match — offer to add the typed id straight from source.
+            <Stack spacing={1.5} sx={{ p: 2 }} alignItems="flex-start">
+              <Typography variant="body2" color="text.secondary">
+                {t("articles.noArticles")}
+              </Typography>
+              {query && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}
+                  onClick={handleAdd}
+                >
+                  {t("articles.addArticle", { id: query })}
+                </Button>
+              )}
+            </Stack>
           ) : (
-            articles.map((a) => {
+            filtered.map((a) => {
               const selected = a.id === articleId;
               return (
                 <Box
@@ -253,6 +350,17 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
           />
         )}
       </Box>
+
+      <Snackbar
+        open={snack !== null}
+        autoHideDuration={6000}
+        onClose={() => setSnack(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="info" onClose={() => setSnack(null)}>
+          {snack}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

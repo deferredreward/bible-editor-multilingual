@@ -4,7 +4,20 @@
 // Accepts both the short form ("kt/god") the catalog/matcher use and the long
 // rc:// link form ("rc://*/tw/dict/bible/kt/god") stored on TWL rows.
 
-const TW_BASE = "https://git.door43.org/unfoldingWord/en_tw";
+const DCS_HOST = "https://git.door43.org";
+const DEFAULT_SOURCE = { org: "unfoldingWord", repo: "en_tw" } as const;
+
+// The repo base for tW articles. Defaults to unfoldingWord/en_tw; a GL project
+// passes its translationSource (or its own org/repo) so the viewer fetches the
+// article from the project's source repo rather than always English.
+export interface TwArticleSource {
+  org: string;
+  repo: string;
+}
+function twBase(source?: TwArticleSource): string {
+  const { org, repo } = source ?? DEFAULT_SOURCE;
+  return `${DCS_HOST}/${org}/${repo}`;
+}
 
 export interface TwArticleRef {
   cat: string; // "kt" | "names" | "other"
@@ -26,15 +39,15 @@ export function twShort(idOrLink: string | null | undefined): string {
 }
 
 // Rendered Gitea preview page — the "View on DCS" link target (human-facing).
-export function twArticleDcsUrl(idOrLink: string | null | undefined): string {
+export function twArticleDcsUrl(idOrLink: string | null | undefined, source?: TwArticleSource): string {
   const ref = parseTwId(idOrLink);
-  return ref ? `${TW_BASE}/src/branch/master/bible/${ref.cat}/${ref.art}.md` : "";
+  return ref ? `${twBase(source)}/src/branch/master/bible/${ref.cat}/${ref.art}.md` : "";
 }
 
 // Raw markdown — what the in-app viewer fetches and renders.
-export function twArticleRawUrl(idOrLink: string | null | undefined): string {
+export function twArticleRawUrl(idOrLink: string | null | undefined, source?: TwArticleSource): string {
   const ref = parseTwId(idOrLink);
-  return ref ? `${TW_BASE}/raw/branch/master/bible/${ref.cat}/${ref.art}.md` : "";
+  return ref ? `${twBase(source)}/raw/branch/master/bible/${ref.cat}/${ref.art}.md` : "";
 }
 
 // Door43 serves raw .md with permissive CORS (node-twl-generator relies on the
@@ -42,8 +55,8 @@ export function twArticleRawUrl(idOrLink: string | null | undefined): string {
 // articles are immutable for the life of a tab.
 const cache = new Map<string, Promise<string>>();
 
-export function fetchTwArticle(idOrLink: string): Promise<string> {
-  const url = twArticleRawUrl(idOrLink);
+export function fetchTwArticle(idOrLink: string, source?: TwArticleSource): Promise<string> {
+  const url = twArticleRawUrl(idOrLink, source);
   if (!url) return Promise.reject(new Error("unrecognized TW article id"));
   let pending = cache.get(url);
   if (!pending) {

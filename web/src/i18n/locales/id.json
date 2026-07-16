@@ -499,7 +499,14 @@
     "partTitle": "Judul",
     "partSubTitle": "Subjudul",
     "partBody": "Isi",
-    "backToScripture": "Kembali ke Kitab Suci"
+    "backToScripture": "Kembali ke Kitab Suci",
+    "searchPlaceholder": "Cari artikel",
+    "addArticle": "Tambah \"{{id}}\"",
+    "addUnknownId": "Tidak dapat menemukan \"{{id}}\" di sumber.",
+    "populateFromBooks": "Isi dari kitab yang diimpor",
+    "populateDone": "Artikel telah diisi.",
+    "populateWarnings": "Diisi dengan {{n}} peringatan.",
+    "articleAdded": "{{id}} ditambahkan."
   },
   "preferences": {
     "title": "Preferensi & Memori",

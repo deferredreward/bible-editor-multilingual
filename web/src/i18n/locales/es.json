@@ -527,7 +527,14 @@
     "partTitle": "Título",
     "partSubTitle": "Subtítulo",
     "partBody": "Cuerpo",
-    "backToScripture": "Volver a la Escritura"
+    "backToScripture": "Volver a la Escritura",
+    "searchPlaceholder": "Buscar artículos",
+    "addArticle": "Agregar \"{{id}}\"",
+    "addUnknownId": "No se encontró \"{{id}}\" en la fuente.",
+    "populateFromBooks": "Rellenar desde los libros importados",
+    "populateDone": "Artículos rellenados.",
+    "populateWarnings": "Rellenado con {{n}} advertencia(s).",
+    "articleAdded": "Se agregó {{id}}."
   },
   "preferences": {
     "title": "Preferencias y memoria",

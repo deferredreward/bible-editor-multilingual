@@ -21,6 +21,8 @@ import {
 import { requireAuth, requireEditor, currentUserId } from "./auth";
 import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText, type LaneRepoOverrides } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
+import { populateReferencedArticles } from "./articlePopulate";
+import type { Context } from "hono";
 import { reimportBookFromDcs, recordResourceSync, resourceSourceRef, type Resource } from "./bookReimport";
 import { lintTnRows, lintUsfmVerses } from "./lint";
 import type { TnRow, VerseRow } from "./types";
@@ -32,6 +34,25 @@ import {
 } from "./scriptureLaneReplacement";
 
 export const books = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
+
+// Schedule article population off the import hot path — the fetch fan-out
+// (~300-500 tW + ~50-70 tA×3 for a large book) must never run inside the
+// importBookFromDcs subrequest budget. waitUntil keeps the response fast and
+// lets the population settle after; a failure only logs (edits stay safe, and
+// the POLL_CRON backstop + next import catch up).
+function schedulePopulate(
+  c: Context<{ Bindings: Env; Variables: { userId?: number } }>,
+  book: string,
+): void {
+  const run = populateReferencedArticles(c.env, { book, maxFetches: 150 })
+    .catch((e) => console.error("populateReferencedArticles failed", book, e instanceof Error ? e.message : String(e)));
+  try {
+    c.executionCtx.waitUntil(run);
+  } catch {
+    // No execution context (e.g. in a test harness) — fire and forget.
+    void run;
+  }
+}
 
 books.get("/", async (c) => {
   const rs = await c.env.DB.prepare(
@@ -90,6 +111,7 @@ books.post("/:book/import", requireEditor, async (c) => {
     .bind(book)
     .first<{ book: string; imported_at: number }>();
   if (existing) {
+    schedulePopulate(c, book);
     return c.json({ ok: true, book, alreadyImported: true, imported_at: existing.imported_at });
   }
 
@@ -130,6 +152,7 @@ books.post("/:book/import", requireEditor, async (c) => {
     )
       .bind(book, userId)
       .run();
+    schedulePopulate(c, book);
     return c.json({ ok: true, book, recovered: true });
   }
 
@@ -151,6 +174,7 @@ books.post("/:book/import", requireEditor, async (c) => {
 
   try {
     const result = await importBookFromDcs(c.env, book, num, userId);
+    schedulePopulate(c, book);
     return c.json({ ok: true, book, ...result });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -203,6 +227,8 @@ books.post("/:book/reimport", requireEditor, async (c) => {
 
   try {
     const result = await reimportBookFromDcs(c.env, book, chapters, resources, userId, { source: "user" });
+    // New tn/twl content can reference articles not yet populated — repopulate.
+    if (resources.includes("tn") || resources.includes("twl")) schedulePopulate(c, book);
     return c.json({ ok: true, ...result });
   } catch (e) {
     const name = e instanceof Error ? e.constructor.name : "";

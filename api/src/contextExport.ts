@@ -2,7 +2,7 @@
 // No DCS / Hono imports — EN source maps are injected by the caller so unit
 // tests stay fixture-driven. Workflow orchestration lives in exportWorkflow.
 
-import type { ProjectConfig } from "./projectConfig.ts";
+import { exportOwnerFor, type ProjectConfig } from "./projectConfig.ts";
 import { serializeTermsCsv, type TermImport } from "./translationMemoryLib.ts";
 import {
   contentFileCount,
@@ -239,7 +239,7 @@ export function renderContextPack(input: {
 
 /** Owner for the context repo and contextRef — mirrors article export. */
 export function contextRepoOwner(env: { DCS_EXPORT_OWNER?: string }, cfg: ProjectConfig): string {
-  return env.DCS_EXPORT_OWNER ?? cfg.exportOrg;
+  return exportOwnerFor(env, cfg);
 }
 
 export function contextRepoName(): string {

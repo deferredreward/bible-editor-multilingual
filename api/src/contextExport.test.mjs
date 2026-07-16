@@ -22,6 +22,7 @@ import {
 } from "./contextExportLib.ts";
 import { applyAssistedContextRef } from "./assistedContextRef.ts";
 import { tsvLooksTruncated } from "./contextSourceFetch.ts";
+import { PRESETS } from "./projectConfig.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -281,6 +282,13 @@ console.log("assistedContextRef + owner + tsv truncation");
 {
   assert(contextRepoOwner({ DCS_EXPORT_OWNER: "X" }, cfg) === "X", "DCS_EXPORT_OWNER wins");
   assert(contextRepoOwner({}, cfg) === "BSOJ", "fallback to exportOrg");
+  // exportOwnerFromConfig makes cfg.exportOrg win over the env fallback — the
+  // en-bible-editor-ml-test preset exports to its own org, not the service acct.
+  const mlTest = PRESETS["en-bible-editor-ml-test"];
+  assert(
+    contextRepoOwner({ DCS_EXPORT_OWNER: "BibleEditorService" }, mlTest) === "BibleEditorMLTest",
+    "exportOwnerFromConfig: en-bible-editor-ml-test resolves to BibleEditorMLTest (ignores DCS_EXPORT_OWNER)",
+  );
   assert(buildContextRef("BSOJ", "abc") === "BSOJ/translation-context@abc", "contextRef shape");
 
   const injected = applyAssistedContextRef({ sourceRef: "x" }, true, {

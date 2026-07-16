@@ -9,6 +9,11 @@ import { z } from "zod";
 import type { Env } from "./index";
 import type { ArticleUnit } from "./types";
 import { currentUserId, requireEditor } from "./auth";
+import {
+  populateReferencedArticles,
+  populateSingleArticle,
+  refreshFromSource,
+} from "./articlePopulate";
 
 export const articles = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -94,6 +99,12 @@ articles.patch("/:resource/unit", requireEditor, async (c) => {
         `UPDATE article_units
             SET target_md = ?1,
                 translation_state = CASE
+                  -- A first human edit of a POPULATED-but-untranslated article
+                  -- (source imported, translation_state still NULL) becomes
+                  -- 'edited' so it can subsequently be approved (validate guards
+                  -- on translation_state IS NOT NULL). Clearing the target back
+                  -- to empty leaves NULL untouched (never translated).
+                  WHEN translation_state IS NULL AND ?1 <> '' THEN 'edited'
                   WHEN translation_state IN ('ai_draft','validated') THEN 'edited'
                   ELSE translation_state END,
                 version = version + 1,
@@ -191,4 +202,84 @@ articles.post("/:resource/unit/validate", requireEditor, async (c) => {
     .bind(resource, path)
     .first<ArticleUnit>();
   return c.json(updated);
+});
+
+// POST /api/articles/populate — populate tW/tA article sources from imported
+// notes. Global by default (the workspace has no book context); `book` scopes
+// it. `refresh: true` instead pulls upstream edits for current-identity rows,
+// paging via `cursor` (a "resource:path" token the caller loops on).
+const PopulateBody = z.object({
+  book: z.string().optional(),
+  retryFailed: z.boolean().optional(),
+  refresh: z.boolean().optional(),
+  cursor: z.string().optional(),
+});
+
+articles.post("/populate", requireEditor, async (c) => {
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* empty body is fine — defaults apply */
+  }
+  const parsed = PopulateBody.safeParse(body);
+  if (!parsed.success) return c.json({ error: "validation_failed", issues: parsed.error.issues }, 400);
+
+  if (parsed.data.refresh) {
+    let cursor: { resource: string; path: string } | null = null;
+    if (parsed.data.cursor) {
+      const idx = parsed.data.cursor.indexOf(":");
+      if (idx > 0) {
+        cursor = { resource: parsed.data.cursor.slice(0, idx), path: parsed.data.cursor.slice(idx + 1) };
+      }
+    }
+    const res = await refreshFromSource(c.env, { cursor });
+    return c.json({
+      processed: res.processed,
+      changed: res.changed,
+      nextCursor: res.nextCursor ? `${res.nextCursor.resource}:${res.nextCursor.path}` : undefined,
+      skipped: res.skipped,
+      aborted: res.aborted,
+    });
+  }
+
+  const res = await populateReferencedArticles(c.env, {
+    book: parsed.data.book,
+    retryFailed: parsed.data.retryFailed,
+  });
+  return c.json({
+    processed: res.processed,
+    remaining: res.remaining,
+    warnings: res.warnings,
+    skipped: res.skipped,
+    aborted: res.aborted,
+  });
+});
+
+// POST /api/articles/:resource/add — manually add a single article by id
+// ("kt/grace" for tw, "translate/figs-aside" for ta). Restores a soft-deleted
+// unit. 400 unparseable_id / not_translation_project; 404 source_not_found.
+const AddBody = z.object({ id: z.string().min(1) });
+
+articles.post("/:resource/add", requireEditor, async (c) => {
+  const resource = c.req.param("resource");
+  if (!isResource(resource)) return c.json({ error: "unknown_resource" }, 400);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const parsed = AddBody.safeParse(body);
+  if (!parsed.success) return c.json({ error: "validation_failed", issues: parsed.error.issues }, 400);
+
+  const res = await populateSingleArticle(c.env, resource, parsed.data.id);
+  if ("error" in res) {
+    if (res.error === "not_translation_project" || res.error === "unparseable_id") {
+      return c.json({ error: res.error }, 400);
+    }
+    if (res.error === "source_not_found") return c.json({ error: res.error }, 404);
+    return c.json({ error: res.error }, 409); // source_changed
+  }
+  return c.json(res);
 });
