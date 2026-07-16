@@ -21,6 +21,7 @@ import {
   type VerseExtract,
 } from "./importParsers";
 import { canonizeAlignmentSource } from "./canonizeHebrew";
+import { assertLaneWritable, laneForBibleVersion } from "./scriptureLane";
 import { NT_BOOKS } from "./dcsSources";
 import type { ProjectConfig } from "./projectConfig";
 import { newRowId, isValidRowId } from "./rowId";
@@ -421,12 +422,30 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
   // write is attributed to them, matching the contract that says the run
   // was triggered on their behalf.
   const starter = await env.DB.prepare(
-    `SELECT user_id FROM pipeline_jobs WHERE job_id = ?1`,
+    `SELECT user_id, source_generation, source_owner, source_repo, source_ref,
+            source_stamps_json, pipeline_type
+       FROM pipeline_jobs WHERE job_id = ?1`,
   )
     .bind(job.jobId)
-    .first<{ user_id: number }>();
+    .first<{
+      user_id: number;
+      source_generation: number | null;
+      source_owner: string | null;
+      source_repo: string | null;
+      source_ref: string | null;
+      source_stamps_json: string | null;
+      pipeline_type: string;
+    }>();
   if (!starter) throw new Error(`apply: pipeline_jobs row not found for ${job.jobId}`);
   const userId = starter.user_id;
+  const jobStamp = {
+    source_generation: starter.source_generation,
+    source_owner: starter.source_owner,
+    source_repo: starter.source_repo,
+    source_ref: starter.source_ref,
+    source_stamps_json: starter.source_stamps_json,
+    pipeline_type: starter.pipeline_type,
+  };
 
   // All unresolved proposals for this job, in stable order so retries do
   // the same work in the same sequence.
@@ -628,7 +647,7 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
       : new Map<number, SourceWord[]>();
 
   for (const p of verseProposals) {
-    await applyVerseUpdate(env, p, userId, uhbWordsByVerse);
+    await applyVerseUpdate(env, p, userId, uhbWordsByVerse, jobStamp);
     affected.add(p.chapter);
     result.verseUpdated += 1;
   }
@@ -1423,7 +1442,8 @@ async function loadUhbSourceWords(
   const srcVersion = NT_BOOKS.has(job.book) ? "UGNT" : "UHB";
   const rs = await env.DB.prepare(
     `SELECT chapter, verse, content_json FROM verses
-      WHERE book = ?1 AND chapter BETWEEN ?2 AND ?3 AND bible_version = ?4`,
+      WHERE book = ?1 AND chapter BETWEEN ?2 AND ?3 AND bible_version = ?4
+        AND source_generation = 1`,
   )
     .bind(job.book, job.startChapter, job.endChapter, srcVersion)
     .all<{ chapter: number; verse: number; content_json: string }>();
@@ -1462,6 +1482,14 @@ async function applyVerseUpdate(
   p: PendingImportRow,
   userId: number,
   uhbWordsByVerse: Map<number, SourceWord[]>,
+  jobStamp?: {
+    source_generation: number | null;
+    source_owner: string | null;
+    source_repo: string | null;
+    source_ref: string | null;
+    source_stamps_json: string | null;
+    pipeline_type: string;
+  },
 ): Promise<void> {
   const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
   const book = String(payload.book ?? p.book);
@@ -1475,6 +1503,80 @@ async function applyVerseUpdate(
   let contentJson = String(payload.content_json ?? "");
   const plainText = (payload.plain_text as string | null) ?? null;
   const rowKey = `${book}/${chapter}/${verse}/${bibleVersion}`;
+
+  // Scripture-lane guard: never let an AI pipeline write scripture into a lane
+  // that's frozen for a replacement (or still requires one). The generation is
+  // about to flip; a late apply would land on the superseded generation. TSV
+  // resources (tn/tq) are lane-agnostic and don't reach this path.
+  const lane = laneForBibleVersion(bibleVersion);
+  let sourceGeneration = 1;
+  if (lane) {
+    const gate = await assertLaneWritable(env, lane, "pipeline");
+    if (!gate.ok) {
+      // Mark the pending row accepted-with-skip so the job can finalize instead
+      // of retrying a write the freeze will keep rejecting.
+      await env.DB.prepare(
+        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+      )
+        .bind(p.id, userId)
+        .run();
+      return;
+    }
+    // Generate jobs must have stamped a generation at create; refuse applies
+    // that would land on a different generation than the job was started for.
+    // Dual-lane jobs fence each bible version against THAT lane's stamp.
+    if (jobStamp?.pipeline_type === "generate") {
+      let laneStamp: {
+        generation: number;
+        owner: string;
+        repo: string;
+        ref: string;
+      } | null = null;
+      if (jobStamp.source_stamps_json) {
+        try {
+          const parsed = JSON.parse(jobStamp.source_stamps_json) as Record<
+            string,
+            { generation: number; owner: string; repo: string; ref: string }
+          >;
+          laneStamp = parsed[lane] ?? null;
+        } catch {
+          laneStamp = null;
+        }
+      }
+      if (!laneStamp && jobStamp.source_generation != null) {
+        laneStamp = {
+          generation: jobStamp.source_generation,
+          owner: jobStamp.source_owner!,
+          repo: jobStamp.source_repo!,
+          ref: jobStamp.source_ref!,
+        };
+      }
+      if (!laneStamp) {
+        await env.DB.prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+        )
+          .bind(p.id, userId)
+          .run();
+        return;
+      }
+      if (
+        gate.generation !== laneStamp.generation ||
+        gate.config.source.owner !== laneStamp.owner ||
+        gate.config.source.repo !== laneStamp.repo ||
+        gate.config.source.ref !== laneStamp.ref
+      ) {
+        await env.DB.prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
+        )
+          .bind(p.id, userId)
+          .run();
+        return;
+      }
+      sourceGeneration = laneStamp.generation;
+    } else {
+      sourceGeneration = gate.generation;
+    }
+  }
 
   // Self-heal target `\w` occurrence numbering before the AI-applied alignment
   // lands in D1. The bot can emit colliding/`occurrences="1"` data; recomputing
@@ -1537,58 +1639,139 @@ async function applyVerseUpdate(
   // for verse history — see the guarded baseline insert below.
   const existing = await env.DB.prepare(
     `SELECT version, content_json, plain_text, updated_at FROM verses
-      WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+      WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4
+        AND source_generation = ?5`,
   )
-    .bind(book, chapter, verse, bibleVersion)
+    .bind(book, chapter, verse, bibleVersion, sourceGeneration)
     .first<{ version: number; content_json: string; plain_text: string | null; updated_at: number }>();
 
   const now = Math.floor(Date.now() / 1000);
   if (existing) {
-    const newVersion = existing.version + 1;
+    const expectedVersion = existing.version;
+    const newVersion = expectedVersion + 1;
+    // Param order for the UPDATE: content…, book coords, source_generation,
+    // expectedVersion, [lane]. Lane EXISTS uses the generation + lane binds.
+    const lanePred = lane
+      ? `AND EXISTS (
+            SELECT 1 FROM scripture_lane_state
+             WHERE lane = ?12 AND replacement_job_id IS NULL
+               AND replacement_required = 0 AND active_generation = ?10
+          )`
+      : "";
     await env.DB.batch([
+      // Expected-version CAS: only this mutation may advance expected → expected+1.
       env.DB
         .prepare(
           `UPDATE verses
               SET content_json = ?1, plain_text = ?2, verse_end = ?3,
                   version = version + 1, updated_at = ?4, updated_by = ?5
-            WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9`,
+            WHERE book = ?6 AND chapter = ?7 AND verse = ?8 AND bible_version = ?9
+              AND source_generation = ?10 AND version = ?11
+              ${lanePred}`,
         )
-        .bind(contentJson, plainText, verseEnd, now, userId, book, chapter, verse, bibleVersion),
-      // Preserve the pre-AI content as a baseline at its own version, so verse
-      // history can restore the state before the AI ran. Guarded: only when that
-      // version was never logged (i.e. the original bootstrap import), so repeat
-      // AI runs / prior edits — which already logged their content — don't
-      // duplicate it. created_at carries the outgoing row's own timestamp.
+        .bind(
+          ...(lane
+            ? [
+                contentJson,
+                plainText,
+                verseEnd,
+                now,
+                userId,
+                book,
+                chapter,
+                verse,
+                bibleVersion,
+                sourceGeneration,
+                expectedVersion,
+                lane,
+              ]
+            : [
+                contentJson,
+                plainText,
+                verseEnd,
+                now,
+                userId,
+                book,
+                chapter,
+                verse,
+                bibleVersion,
+                sourceGeneration,
+                expectedVersion,
+              ]),
+        ),
+      // Accept immediately after the UPDATE so changes() reflects THAT mutation
+      // (not a concurrent writer's version bump). Intervening statements would
+      // overwrite changes().
+      env.DB
+        .prepare(
+          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
+            WHERE id = ?1 AND changes() > 0`,
+        )
+        .bind(p.id, userId),
+      // Audit only if THIS mutation landed: match the causal fingerprint we wrote
+      // (version + updated_by + content_json + updated_at). A competitor that
+      // created newVersion with different bytes must not fabricate our history.
       env.DB
         .prepare(
           `INSERT INTO edit_log
-             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at)
-           SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5
-            WHERE NOT EXISTS (
+             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, created_at, source_generation)
+           SELECT 'verse', ?1, ?2, NULL, NULL, ?3, 'baseline', ?4, NULL, ?5, ?6
+            WHERE EXISTS (
+              SELECT 1 FROM verses
+               WHERE book = ?7 AND chapter = ?8 AND verse = ?9 AND bible_version = ?10
+                 AND source_generation = ?11 AND version = ?12
+                 AND updated_by = ?13 AND content_json = ?14 AND updated_at = ?15
+            )
+              AND NOT EXISTS (
               SELECT 1 FROM edit_log WHERE kind = 'verse' AND row_key = ?1 AND new_version = ?3
             )`,
         )
         .bind(
           rowKey,
           book,
-          existing.version,
+          expectedVersion,
           JSON.stringify({ plain_text: existing.plain_text, content: existing.content_json }),
           existing.updated_at,
+          sourceGeneration,
+          book,
+          chapter,
+          verse,
+          bibleVersion,
+          sourceGeneration,
+          newVersion,
+          userId,
+          contentJson,
+          now,
         ),
-      // The AI version itself: log full content (not just plain_text) so it is
-      // restorable — this is the alignment-bearing base translators edit from.
       env.DB
         .prepare(
           `INSERT INTO edit_log
-             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-           VALUES ('verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7)`,
+             (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
+           SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7, ?8
+            WHERE EXISTS (
+              SELECT 1 FROM verses
+               WHERE book = ?9 AND chapter = ?10 AND verse = ?11 AND bible_version = ?12
+                 AND source_generation = ?13 AND version = ?5
+                 AND updated_by = ?3 AND content_json = ?14 AND updated_at = ?15
+            )`,
         )
-        .bind(rowKey, book, userId, existing.version, newVersion, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE),
-      env.DB
-        .prepare(
-          `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
-        )
-        .bind(p.id, userId),
+        .bind(
+          rowKey,
+          book,
+          userId,
+          expectedVersion,
+          newVersion,
+          JSON.stringify({ plain_text: plainText, content: contentJson }),
+          AI_SOURCE,
+          sourceGeneration,
+          book,
+          chapter,
+          verse,
+          bibleVersion,
+          sourceGeneration,
+          contentJson,
+          now,
+        ),
     ]);
     return;
   }
@@ -1596,23 +1779,56 @@ async function applyVerseUpdate(
   // The verse should exist from the initial book import; this branch is the
   // defensive case where the seed missed something. Insert as a brand-new row.
   await env.DB.batch([
+    lane
+      ? env.DB
+          .prepare(
+            `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, updated_by)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+              WHERE EXISTS (
+                SELECT 1 FROM scripture_lane_state
+                 WHERE lane = ?10 AND replacement_job_id IS NULL
+                   AND replacement_required = 0 AND active_generation = ?6
+              )`,
+          )
+          .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId, lane)
+      : env.DB
+          .prepare(
+            `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, source_generation, content_json, plain_text, updated_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+          )
+          .bind(book, chapter, verse, verseEnd, bibleVersion, sourceGeneration, contentJson, plainText, userId),
+    // Accept immediately after INSERT so changes() reflects that mutation.
     env.DB
       .prepare(
-        `INSERT INTO verses (book, chapter, verse, verse_end, bible_version, content_json, plain_text, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2
+          WHERE id = ?1 AND changes() > 0`,
       )
-      .bind(book, chapter, verse, verseEnd, bibleVersion, contentJson, plainText, userId),
+      .bind(p.id, userId),
     env.DB
       .prepare(
         `INSERT INTO edit_log
-           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
-         VALUES ('verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5)`,
+           (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source, source_generation)
+         SELECT 'verse', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5, ?6
+          WHERE EXISTS (
+            SELECT 1 FROM verses
+             WHERE book = ?7 AND chapter = ?8 AND verse = ?9 AND bible_version = ?10
+               AND source_generation = ?11 AND version = 1
+               AND updated_by = ?3 AND content_json = ?12
+          )`,
       )
-      .bind(rowKey, book, userId, JSON.stringify({ plain_text: plainText, content: contentJson }), AI_SOURCE),
-    env.DB
-      .prepare(
-        `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
-      )
-      .bind(p.id, userId),
+      .bind(
+        rowKey,
+        book,
+        userId,
+        JSON.stringify({ plain_text: plainText, content: contentJson }),
+        AI_SOURCE,
+        sourceGeneration,
+        book,
+        chapter,
+        verse,
+        bibleVersion,
+        sourceGeneration,
+        contentJson,
+      ),
   ]);
 }

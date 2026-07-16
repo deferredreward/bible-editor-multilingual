@@ -8,6 +8,8 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { requireAuth, requireAdmin } from "./auth";
 import { getProjectConfig, writeProjectConfig, PRESETS } from "./projectConfig.ts";
+import { overlayLaneLabels } from "./scriptureLane";
+import { scriptureLaneRoutes } from "./scriptureLaneRoutes";
 
 export const projectConfig = new Hono<{
   Bindings: Env;
@@ -18,8 +20,11 @@ projectConfig.use("*", requireAuth);
 
 // Any authenticated user may read the active config (it drives UI labels and
 // direction). Also exposes the preset catalog so an admin UI can offer choices.
+projectConfig.route("/lanes", scriptureLaneRoutes);
+
 projectConfig.get("/", async (c) => {
-  const cfg = await getProjectConfig(c.env);
+  const raw = await getProjectConfig(c.env);
+  const cfg = await overlayLaneLabels(c.env, raw);
   return c.json({
     config: cfg,
     presets: Object.values(PRESETS).map((p) => ({

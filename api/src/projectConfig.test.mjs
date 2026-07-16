@@ -10,6 +10,17 @@ test("preset catalog identifies authoring and translation projects", () => {
   }
 });
 
+test("BibleEditorMLTest preset targets its verified English GL repositories", () => {
+  const preset = PRESETS["en-bible-editor-ml-test"];
+  assert.equal(preset.org, "BibleEditorMLTest");
+  assert.equal(preset.exportOrg, "BibleEditorMLTest");
+  assert.deepEqual(preset.repos, {
+    lit: "en_glt", sim: "en_gst", tn: "en_tn", tq: "en_tq",
+    twl: "en_twl", tw: "en_tw", ta: "en_ta",
+  });
+  assert.equal(preset.reposVerified, true);
+});
+
 // Fake D1: `.first()` returns the pre-seeded row (the preserve path reads
 // existing overrides_json); `.run()` captures the INSERT bind values.
 function fakeDb(existingOverridesJson = null) {
@@ -57,7 +68,7 @@ test("writeProjectConfig clears overrides when overrides is null", async () => {
   const db = fakeDb(JSON.stringify({ litLabel: "AVD" }));
   const config = await writeProjectConfig({ DB: db }, "ar-bsoj", null);
   assert.deepEqual(db.state.bound, ["ar-bsoj", null]);
-  assert.equal(config.litLabel, "GLT");
+  assert.equal(config.litLabel, "AVD");
 });
 
 test("writeProjectConfig replaces overrides when an object is passed", async () => {

@@ -19,6 +19,8 @@ import {
 } from "./alignmentDelta.ts";
 import { buildVerseHistory, type VerseHistoryLogRow } from "./verseHistory.ts";
 import { lanesToReopenOnVerseEdit, reopenLaneChecks } from "./laneReopen.ts";
+import { laneForBibleVersion, assertLaneWritable, allowVersePatch, activeGenerationForBibleVersion } from "./scriptureLane";
+import { nonAlignmentContentEqual, derivePlainText } from "./alignmentCanonical";
 
 // Verse content can carry malformed/missing `\w` occurrence data — colliding
 // `(text, occurrence)` pairs from a bad import or AI alignment (ULT/UST), or no
@@ -97,10 +99,20 @@ verses.get("/:book/:chapter/:verse/:bibleVersion", async (c) => {
   if (!isAllowedBibleVersion(bv)) {
     return c.json({ error: "invalid_bible_version" }, 400);
   }
+  // For lanes (ULT/UST) a null generation means the lane is quarantined
+  // (replacement_required). Do NOT fall back to generation 1 — that would serve
+  // legacy GLT/GST content that BSOJ replacement has retired.
+  const lane = laneForBibleVersion(bv);
+  const gen = await activeGenerationForBibleVersion(c.env, bv);
+  if (lane && gen === null) {
+    return c.json({ error: "lane_replacement_required" }, 409);
+  }
+  // Non-lane source (UHB/UGNT) has no lane generation — always generation 1.
+  const genFilter = gen ?? 1;
   const row = await c.env.DB.prepare(
-    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
   )
-    .bind(book.toUpperCase(), parseInt(chapter, 10), parseInt(verse, 10), bv)
+    .bind(book.toUpperCase(), parseInt(chapter, 10), parseInt(verse, 10), bv, genFilter)
     .first<VerseRow>();
   if (!row) return c.json({ error: "not_found" }, 404);
   let parsed: unknown;
@@ -138,10 +150,18 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
     return c.json({ error: "invalid_bible_version" }, 400);
   }
 
+  // Quarantined lane → no fallback to legacy generation-1 content (see the GET
+  // handler above). Non-lane source (UHB/UGNT) stays on generation 1.
+  const lane = laneForBibleVersion(bibleVersion);
+  const gen = await activeGenerationForBibleVersion(c.env, bibleVersion);
+  if (lane && gen === null) {
+    return c.json({ error: "lane_replacement_required" }, 409);
+  }
+  const genFilter = gen ?? 1;
   const row = await c.env.DB.prepare(
-    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
   )
-    .bind(book, chapter, verse, bibleVersion)
+    .bind(book, chapter, verse, bibleVersion, genFilter)
     .first<VerseRow>();
   if (!row) return c.json({ error: "not_found" }, 404);
   let parsed: unknown;
@@ -156,7 +176,12 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
   }
 
   const rowKey = `${book}/${chapter}/${verse}/${bibleVersion}`;
-  const rs = await c.env.DB.prepare(
+  // Scope history to the served generation so a lane bump doesn't bleed a
+  // retired generation's edits into the current one. edit_log.source_generation
+  // (migration 0042) is nullable for pre-migration / non-verse rows, so NULL
+  // still surfaces — mirrors the `el.book IS NULL` pre-0017 fallback. If the
+  // column predates this DB, retry without the generation predicate.
+  const historyQuery = (withGeneration: boolean) =>
     `SELECT el.new_version AS version,
             el.action,
             el.source,
@@ -169,11 +194,22 @@ verses.get("/:book/:chapter/:verse/:bibleVersion/history", requireEditor, async 
        LEFT JOIN users u ON u.id = el.user_id
       WHERE el.kind = 'verse' AND el.row_key = ?1
         AND (el.book = ?2 OR el.book IS NULL)
-        AND el.new_version IS NOT NULL
-      ORDER BY el.new_version ASC, el.created_at ASC`,
-  )
-    .bind(rowKey, book)
-    .all<VerseHistoryLogRow>();
+        AND el.new_version IS NOT NULL${
+          withGeneration
+            ? "\n        AND (el.source_generation = ?3 OR el.source_generation IS NULL)"
+            : ""
+        }
+      ORDER BY el.new_version ASC, el.created_at ASC`;
+  let rs;
+  try {
+    rs = await c.env.DB.prepare(historyQuery(true))
+      .bind(rowKey, book, genFilter)
+      .all<VerseHistoryLogRow>();
+  } catch {
+    rs = await c.env.DB.prepare(historyQuery(false))
+      .bind(rowKey, book)
+      .all<VerseHistoryLogRow>();
+  }
 
   const versions = buildVerseHistory(rs.results ?? [], {
     version: row.version,
@@ -216,6 +252,39 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
     return c.json({ error: "invalid_content", reason: "unsafe_marker_tag" }, 400);
   }
 
+  // Lane write gate: check replacement / freeze / permission matrix.
+  const lane = laneForBibleVersion(bibleVersion);
+  const alignmentIntent = (parsed.data.alignment_intent ?? "text_edit") as AlignmentIntent;
+  let laneGeneration = 1;
+  let laneTextReadOnly = false;
+  if (lane) {
+    const purposeForGate = alignmentIntent === "alignment_edit" ? "alignment_edit" as const : "verse_edit" as const;
+    const gate = await assertLaneWritable(c.env, lane, purposeForGate);
+    if (!gate.ok) return c.json({ error: gate.error, detail: gate.detail }, gate.status);
+
+    laneGeneration = gate.generation;
+    laneTextReadOnly = gate.config.textReadOnly;
+
+    // Permission matrix for the specific intent
+    const perm = allowVersePatch(gate.config, alignmentIntent);
+    if (!perm.ok) return c.json({ error: perm.error }, 403);
+
+    // Require X-Source-Generation on lane writes. The client must prove which
+    // generation it loaded the verse under so a stale tab can't overwrite a new
+    // generation. Missing / blank / non-digit → 428 (re-read, then retry);
+    // a strict digit string that disagrees with the active generation → 409.
+    // Reject "1.5" / "1e2" / " 1 " with trailing junk — parseInt would accept
+    // those and silently coerce; only /^\d+$/ after trim is allowed.
+    const genHeader = (c.req.header("X-Source-Generation") ?? "").trim();
+    if (!/^\d+$/.test(genHeader)) {
+      return c.json({ error: "source_generation_required" }, 428);
+    }
+    const clientGen = Number(genHeader);
+    if (clientGen !== gate.generation) {
+      return c.json({ error: "source_generation_mismatch", expected: gate.generation, got: clientGen }, 409);
+    }
+  }
+
   // Lock verse writes while an AI pipeline targets this chapter. The
   // auto-apply step overwrites verse content on completion; concurrent edits
   // would race with it and silently lose to the AI result.
@@ -228,9 +297,9 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
   normalizeOccurrences(parsed.data.content);
 
   const existing = await c.env.DB.prepare(
-    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
   )
-    .bind(book, chapter, verse, bibleVersion)
+    .bind(book, chapter, verse, bibleVersion, laneGeneration)
     .first<VerseRow>();
   if (!existing) return c.json({ error: "not_found" }, 404);
   if (existing.version !== expected) {
@@ -259,7 +328,6 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
     }
     throw err;
   }
-  const alignmentIntent = (parsed.data.alignment_intent ?? "text_edit") as AlignmentIntent;
   const delta = analyzeAlignmentDelta(existingParsed, parsed.data.content);
   // Block any save that collaterally de-aligns untouched words. The enforced
   // predicate lives in guardBlocksSave — DO NOT inline a narrowing such as
@@ -276,6 +344,15 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
       },
       409,
     );
+  }
+
+  // Text-locked lane: alignment_edit must not change non-alignment content.
+  // Server derives plain_text to prevent forged intents.
+  if (laneTextReadOnly && alignmentIntent === "alignment_edit") {
+    if (!nonAlignmentContentEqual(existingParsed, parsed.data.content)) {
+      return c.json({ error: "text_content_changed_on_locked_lane" }, 403);
+    }
+    parsed.data.plain_text = derivePlainText(parsed.data.content);
   }
 
   const userId = currentUserId(c);
@@ -297,7 +374,7 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
            SET content_json = ?1, plain_text = COALESCE(?2, plain_text), version = version + 1,
                updated_at = ?3, updated_by = ?4
          WHERE book = ?5 AND chapter = ?6 AND verse = ?7 AND bible_version = ?8
-           AND version = ?9`,
+           AND source_generation = ?9 AND version = ?10`,
       )
       .bind(
         JSON.stringify(parsed.data.content),
@@ -308,12 +385,13 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
         chapter,
         verse,
         bibleVersion,
+        laneGeneration,
         expected,
       ),
     c.env.DB
       .prepare(
-        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json)
-         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6
+        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source_generation)
+         SELECT 'verse', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7
          WHERE changes() > 0`,
       )
       .bind(
@@ -323,14 +401,15 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
         expected,
         newVersion,
         JSON.stringify({ ...parsed.data, alignment_delta: delta }),
+        laneGeneration,
       ),
   ]);
 
   if (!updateRes.meta.changes) {
     const fresh = await c.env.DB.prepare(
-      `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+      `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
     )
-      .bind(book, chapter, verse, bibleVersion)
+      .bind(book, chapter, verse, bibleVersion, laneGeneration)
       .first<VerseRow>();
     if (!fresh) return c.json({ error: "not_found" }, 404);
     let freshParsed: unknown;
@@ -350,9 +429,9 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
   }
 
   const updated = await c.env.DB.prepare(
-    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4`,
+    `SELECT * FROM verses WHERE book = ?1 AND chapter = ?2 AND verse = ?3 AND bible_version = ?4 AND source_generation = ?5`,
   )
-    .bind(book, chapter, verse, bibleVersion)
+    .bind(book, chapter, verse, bibleVersion, laneGeneration)
     .first<VerseRow>();
   let updatedParsed: unknown = null;
   try {

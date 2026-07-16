@@ -60,9 +60,25 @@ async function exportOwnerUrl(env: Env): Promise<string> {
 const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
-import { runChunkedReimport, storedResourceSha, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
+import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
+import {
+  laneForBibleVersion,
+  assertLaneWritable,
+  getLaneState,
+  activeLaneConfig,
+  activeGenerationForBibleVersion,
+  configHash,
+  type LaneKey,
+} from "./scriptureLane";
+import { nonAlignmentUsfmEqual } from "./alignmentCanonical";
+import {
+  acquireExportLease,
+  renewExportLease,
+  releaseExportLease,
+  verifyExportFencingToken,
+} from "./scriptureLaneReplacement";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
 import { lintUsfmVerses } from "./lint";
 import {
@@ -663,6 +679,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // the next run. Returns a small summary for step observability.
   private async escalateIntegrityIssues(books: string[]): Promise<{ flagged: string[] }> {
     const flagged: string[] = [];
+    // Lint only the active generation of each lane. A lane mid-replacement
+    // (replacement_required → null) is blocked; skip it rather than lint stale
+    // or quarantined rows.
+    const laneGen: Record<string, number | null> = {
+      ULT: await activeGenerationForBibleVersion(this.env, "ULT"),
+      UST: await activeGenerationForBibleVersion(this.env, "UST"),
+    };
     // Raise a per-book admin banner when `offenders` is non-empty, else clear any
     // stale undismissed alert for that source (the issue was fixed). One source
     // per issue category so they raise/clear independently.
@@ -684,10 +707,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         const footnoteOffenders: string[] = [];
         const gluedOffenders: string[] = [];
         for (const bv of ["ULT", "UST"]) {
+          const gen = laneGen[bv];
+          if (gen == null) continue;
           const rs = await this.env.DB.prepare(
-            `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 ORDER BY chapter, verse`,
+            `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3 ORDER BY chapter, verse`,
           )
-            .bind(book, bv)
+            .bind(book, bv, gen)
             .all<VerseRow>();
           for (const issue of lintUsfmVerses(rs.results ?? [])) {
             if (issue.bucket !== "escalate") continue;
@@ -719,7 +744,87 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     instanceId: string,
     dcsAllowed: boolean,
   ): Promise<StepResult> {
-    const built = await this.buildResource(book, resource);
+    // Lane fencing for scripture resources (ULT/UST): check writability from
+    // live D1 state (not cached project config) before doing anything.
+    const lane = (resource === "ult" || resource === "ust") ? laneForBibleVersion(resource.toUpperCase()) : null;
+    // Active generation to render from. ULT/UST render their own lane's active
+    // generation; TWL reads ULT verses for sort ordering, so it uses ULT's.
+    // tn/tq don't touch generation-scoped rows (1 is an unused sentinel).
+    let scriptureGen = 1;
+    // Lane export destination from live active_config_json — not projectCfg.
+    let laneExport: { owner: string; repo: string; baseRef: string } | null | undefined;
+    let leaseId: string | null = null;
+    let fencingToken: string | null = null;
+    let expectedConfigHash: string | null = null;
+
+    if (lane) {
+      const gate = await assertLaneWritable(this.env, lane, "export_lease");
+      if (!gate.ok) {
+        const reason = `lane_blocked:${gate.error}`;
+        await this.recordSnapshot(book, resource, null, null, 0, reason);
+        return {
+          book, resource, rowCount: 0, bytes: 0, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      // Acquire the lease BEFORE capture/render so a replacement cannot activate
+      // mid-render and leave us holding old-generation bytes for a new destination.
+      if (dcsAllowed) {
+        const lease = await acquireExportLease(this.env, lane, `export:${instanceId}:${book}`);
+        if ("error" in lease) {
+          const reason = `lease_blocked:${lease.error}`;
+          await this.recordSnapshot(book, resource, null, null, 0, reason);
+          return {
+            book, resource, rowCount: 0, bytes: 0, r2Key: null,
+            branch: null, dcsCommitSha: null, dcsChanged: false,
+            dcsSkippedReason: reason, prNumber: null, prReason: null,
+          };
+        }
+        leaseId = lease.leaseId;
+        fencingToken = lease.fencingToken;
+      }
+      // Re-bind generation/export under the lease (or after the gate if local-only).
+      const bound = await assertLaneWritable(this.env, lane, "export_lease");
+      if (!bound.ok) {
+        if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
+        const reason = `lane_blocked:${bound.error}`;
+        await this.recordSnapshot(book, resource, null, null, 0, reason);
+        return {
+          book, resource, rowCount: 0, bytes: 0, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      scriptureGen = bound.generation;
+      laneExport = bound.config.export;
+      expectedConfigHash = configHash(bound.config);
+    } else if (resource === "twl") {
+      scriptureGen = await this.activeGenerationFor("ULT");
+    }
+
+    try {
+    const built = await this.buildResource(book, resource, scriptureGen);
+
+    // After render: lease + generation/config must still match what we rendered.
+    if (lane && leaseId) {
+      await this.assertFencingOrThrow(lane, fencingToken);
+      const still = await assertLaneWritable(this.env, lane, "export_lease");
+      if (
+        !still.ok ||
+        still.generation !== scriptureGen ||
+        configHash(still.config) !== expectedConfigHash
+      ) {
+        const reason = "lease_stale_after_render";
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      await renewExportLease(this.env, leaseId);
+    }
 
     if (built.content === "") {
       await this.recordSnapshot(book, resource, null, null, built.rowCount, "no_rows");
@@ -751,8 +856,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // R2 is the local-only backup. Writing here first means a failed DCS
     // commit still leaves a recoverable artifact.
     const projectCfg = await getProjectConfig(this.env);
-    const target = resourceTargetsFor(projectCfg)[resource];
-    const filename = target.path(book);
+    const projectTarget = resourceTargetsFor(projectCfg)[resource];
+    // Scripture lanes use active_config.export when set; export:null means
+    // D1-only (R2 snapshot still written, no DCS commit). Non-scripture keeps
+    // the project-config target.
+    const filename = projectTarget.path(book);
     const r2Key = `exports/${instanceId}/${book}/${resource}/${filename}`;
     await this.env.BLOBS.put(r2Key, built.content, {
       httpMetadata: { contentType: filename.endsWith(".usfm") ? "text/plain" : "text/tab-separated-values" },
@@ -765,6 +873,21 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let prReason: string | null = null;
     let prError: string | null = null;
 
+    // Lane with export:null → local-only; never push to a project-default repo.
+    if (lane && laneExport === null) {
+      await this.recordSnapshot(book, resource, null, null, built.rowCount, "lane_export_disabled");
+      return {
+        book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key,
+        branch: null, dcsCommitSha: null, dcsChanged: false,
+        dcsSkippedReason: "lane_export_disabled", prNumber: null, prReason: null,
+      };
+    }
+
+    const dcsOwner = lane && laneExport
+      ? laneExport.owner
+      : (this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg);
+    const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
+
     // Freshness gate — the single guard against clobbering master. The export
     // renders from D1; if master moved past what D1 last synced (the
     // book_resource_syncs watermark), committing this render would REVERT
@@ -776,7 +899,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // silent revert. A fresh book with no watermark has nothing to clobber.
     // Only meaningful when we'd actually commit (dcsAllowed); a dry run renders
     // to R2 only and can't clobber anything.
-    const fresh = dcsAllowed ? await this.checkMasterFreshness(book, resource) : { ok: true as const, detail: "dry", masterSha: null, watermark: null };
+    const fresh = dcsAllowed
+      ? await this.checkMasterFreshness(book, resource, {
+          owner: dcsOwner,
+          repo: dcsRepo,
+          baseRef: laneExport?.baseRef ?? "master",
+          lane,
+        })
+      : { ok: true as const, detail: "dry", masterSha: null, watermark: null };
     if (!fresh.ok) {
       await this.recordStaleSkipAlert(book, resource, fresh.masterSha, fresh.watermark);
       const reason = `stale_master:${fresh.detail}`;
@@ -802,7 +932,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // whose row==line model makes the count exact. This is what would have
     // stopped the twl_PSA clobber (4880 rows shipped over master's 7776).
     if (dcsAllowed && (resource === "tn" || resource === "tq" || resource === "twl")) {
-      const guard = await this.checkTsvShrink(book, resource, built.rowCount);
+      const guard = await this.checkTsvShrink(
+        book, resource, built.rowCount, dcsOwner, dcsRepo, "master",
+      );
       if (!guard.ok) {
         await this.recordShrinkSkipAlert(book, resource, built.rowCount, guard.masterRows, guard.detail);
         const reason = `shrink_guard:${guard.detail}`;
@@ -833,7 +965,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // Conservative: only blocks a verse whose aligned-word count shrank while
     // its plain text is unchanged — a real text rewrite is always allowed.
     if (dcsAllowed && (resource === "ult" || resource === "ust")) {
-      const guard = await this.checkUsfmAlignmentShrink(book, resource, built.content);
+      const guard = await this.checkUsfmAlignmentShrink(
+        book, resource, built.content, dcsOwner, dcsRepo, laneExport?.baseRef ?? "master",
+      );
       if (!guard.ok) {
         await this.recordAlignmentShrinkSkipAlert(book, resource, guard.detail);
         const reason = `align_shrink_guard:${guard.detail}`;
@@ -854,34 +988,63 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
     }
 
+    // textReadOnly lanes (AVD/NAV): refuse to export if non-alignment body text
+    // diverged from the destination tip. Alignment-only changes are allowed.
+    if (dcsAllowed && lane && (resource === "ult" || resource === "ust")) {
+      const laneRow = await getLaneState(this.env, lane);
+      const laneCfg = laneRow ? activeLaneConfig(laneRow) : null;
+      if (laneCfg?.textReadOnly) {
+        const baseRef = laneExport?.baseRef ?? "master";
+        const eq = await this.checkLockedTextEquality(
+          book, resource, built.content, dcsOwner, dcsRepo, baseRef,
+        );
+        if (!eq.ok) {
+          await this.recordLockedTextDriftAlert(book, resource, eq.detail);
+          const reason = `locked_text_drift:${eq.detail}`;
+          await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+          return {
+            book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key,
+            branch: null, dcsCommitSha: null, dcsChanged: false,
+            dcsSkippedReason: reason, prNumber: null, prReason: null,
+          };
+        }
+      }
+    }
+
     if (!dcsAllowed) {
       dcsSkippedReason = this.env.DCS_SERVICE_TOKEN ? "dry_run" : "no_service_token";
     } else {
-      const owner = this.env.DCS_EXPORT_OWNER ?? projectCfg.exportOrg;
+      const owner = dcsOwner;
       const dcsCfg = {
         baseUrl: this.env.DCS_BASE_URL,
         token: this.env.DCS_SERVICE_TOKEN!,
         owner,
-        repo: target.repo,
+        repo: dcsRepo,
         branch,
+        baseRef: laneExport?.baseRef ?? "master",
+        beforeMutation: fencingToken
+          ? () => this.assertFencingOrThrow(lane, fencingToken)
+          : undefined,
       };
       const message = `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`;
+
+      // Fencing token must still hold before the file commit — the one mutation
+      // we must never do with a stale token (it would push over a just-activated
+      // replacement generation). Throws → the run() step catch records the skip;
+      // nothing was committed.
+      await this.assertFencingOrThrow(lane, fencingToken);
+
       const commit = await commitToDcs(dcsCfg, filename, built.content, message);
       if (!commit.branchTouched) {
-        // Rendered content matches master — nothing to merge. Close any open PR
-        // lingering from an earlier night (an edit since reverted in D1, or
-        // already merged to master) so empty (0-diff) PRs don't pile up and the
-        // validate-and-merge job's worklist stays equal to "books with unmerged
-        // edits". We can't delete the branch (the service token lacks
-        // branch-delete), but closing the PR is enough; the branch gets a fresh
-        // PR the next time this (book, resource) actually diverges from master.
         const lingering = await findDcsOpenPr(dcsCfg);
         if (lingering != null) {
           try {
+            // Closing a stale PR mutates DCS — re-verify ownership first.
+            await this.assertFencingOrThrow(lane, fencingToken);
             await closeDcsPr(dcsCfg, lingering);
           } catch (e) {
             console.error("export close-stale-PR failed", {
-              book, resource, repo: target.repo, pr: lingering,
+              book, resource, repo: dcsRepo, pr: lingering,
               error: e instanceof Error ? e.message : String(e),
             });
           }
@@ -890,20 +1053,35 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       dcsCommitSha = commit.commitSha || null;
       dcsChanged = commit.changed;
 
+      // Remember the destination tip we exported against so divergent
+      // source≠export freshness checks don't re-validate the wrong repo.
+      if (lane && laneExport && fresh.masterSha) {
+        await this.recordExportBaseline(
+          lane,
+          dcsOwner,
+          dcsRepo,
+          laneExport.baseRef,
+          book,
+          fresh.masterSha,
+        );
+      }
+
       if (!commit.branchTouched) {
         dcsSkippedReason = "unchanged";
       } else {
-        // Prune branches this export superseded: any prior {book}-be-* branch for
-        // this (book, resource) whose name changed because the contributor set
-        // changed, plus the legacy live-snapshot branch. Best-effort — a prune
-        // failure must never fail or retry the export step.
-        await this.pruneSupersededBranches(book, resource, owner, target.repo, branch);
-
-        // Ensure the branch has an open PR into master so the DCS validate-and-
-        // merge workflow can act on it (it merges -be- PRs, not bare branches).
-        // Best-effort: the commit already succeeded and the snapshot is recorded,
-        // so a PR failure must not fail the export — the PR can be opened later.
         try {
+          // Pruning superseded branches deletes refs on DCS — re-verify ownership.
+          await this.assertFencingOrThrow(lane, fencingToken);
+          await this.pruneSupersededBranches(book, resource, owner, dcsRepo, branch, lane, fencingToken);
+
+          // Renew around the (potentially long) PR operations; a failed renew
+          // means another Worker took the lane — treat it as lost ownership and
+          // abort the remaining mutations rather than racing them.
+          if (leaseId && !(await renewExportLease(this.env, leaseId))) {
+            throw new Error("fencing_token_superseded");
+          }
+          await this.assertFencingOrThrow(lane, fencingToken);
+
           const pr = await ensureDcsPr(
             dcsCfg,
             `bible-editor: ${book} ${resource} → master`,
@@ -912,47 +1090,40 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           prNumber = pr.number;
           prReason = pr.reason;
           if (pr.number != null) {
-            // Merge master into the PR head ("update branch"). door43's PATCH
-            // git/refs 409s on existing refs, so this is the only thing that
-            // actually re-bases a long-lived branch; without it the PR drifts
-            // to mergeable:False. Conflicts are expected sometimes — log, never
-            // fail the step.
             try {
+              // Renew + re-verify before update-branch (another mutating call).
+              if (leaseId && !(await renewExportLease(this.env, leaseId))) {
+                throw new Error("fencing_token_superseded");
+              }
+              await this.assertFencingOrThrow(lane, fencingToken);
               const upd = await updateDcsPrBranch(
-                { baseUrl: dcsCfg.baseUrl, token: dcsCfg.token, owner, repo: target.repo },
+                { baseUrl: dcsCfg.baseUrl, token: dcsCfg.token, owner, repo: dcsRepo },
                 pr.number,
               );
               if (!upd.ok) {
                 console.log("export PR update-branch skipped", {
-                  book, resource, repo: target.repo, pr: pr.number, status: upd.status, detail: upd.detail,
+                  book, resource, repo: dcsRepo, pr: pr.number, status: upd.status, detail: upd.detail,
                 });
-                // 409 = genuine merge conflict: the branch drifted from master
-                // (an out-of-band master edit to the same rows) and won't
-                // auto-merge. D1 is authoritative, so rebuild the branch as a
-                // clean child of CURRENT master carrying the SAME rendered file
-                // and re-open the PR — diff becomes exactly the D1 delta, no
-                // conflict. built.content already passed the freshness + shrink
-                // gates above; we reuse it (never re-render). Gated on an admin
-                // token; absent → just alert (today's drift behavior). See
-                // docs/export-rebase-fix.md.
                 if (upd.status === 409) {
+                  // Recovery deletes + recommits the branch — renew + re-verify.
+                  if (leaseId && !(await renewExportLease(this.env, leaseId))) {
+                    throw new Error("fencing_token_superseded");
+                  }
+                  await this.assertFencingOrThrow(lane, fencingToken);
                   const recovered = await this.recoverConflictedBranch(
-                    book, resource, owner, target.repo, branch, dcsCfg, filename, built.content, message,
+                    book, resource, owner, dcsRepo, branch, dcsCfg, filename, built.content, message,
+                    lane, fencingToken,
                   );
                   if (recovered) {
                     prNumber = recovered.prNumber;
                     prReason = recovered.prReason;
-                    // Record the FRESH rebuilt commit, not the stale one from the
-                    // (now deleted) conflicted branch — otherwise the snapshot's
-                    // commit_sha is wrong and contributorsFor's `commit_sha IS
-                    // NOT NULL` cutoff can't advance.
                     if (recovered.commitSha) dcsCommitSha = recovered.commitSha;
                   }
                 }
               }
             } catch (e) {
               console.error("export PR update-branch failed", {
-                book, resource, repo: target.repo, pr: pr.number,
+                book, resource, repo: dcsRepo, pr: pr.number,
                 error: e instanceof Error ? e.message : String(e),
               });
             }
@@ -963,11 +1134,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           console.error("export ensure-PR failed", {
             book,
             resource,
-            repo: target.repo,
+            repo: dcsRepo,
             branch,
             error: prError,
           });
-          await this.recordPrFailureAlert(book, resource, target.repo, branch, prError);
+          await this.recordPrFailureAlert(book, resource, dcsRepo, branch, prError);
         }
       }
     }
@@ -987,6 +1158,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       prNumber,
       prReason,
     };
+    } finally {
+      if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
+    }
   }
 
   // Export one (resource × top-level dir) of tW/tA articles. The article
@@ -1168,9 +1342,30 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
+  // Live active generation for a bible version (lit→ULT, sim→UST); 1 for OL /
+  // unknown. Reads uncached D1 lane state — never the project-config isolate
+  // cache — so a concurrent replacement activation is seen immediately.
+  private async activeGenerationFor(bibleVersion: string): Promise<number> {
+    const lane = laneForBibleVersion(bibleVersion);
+    if (!lane) return 1;
+    const st = await getLaneState(this.env, lane);
+    return st?.active_generation ?? 1;
+  }
+
+  // Re-check the export fencing token before a mutating DCS call and throw if it
+  // no longer holds (lease released/expired/abandoned, superseding lease, or the
+  // lane became exports_blocked by a replacement). Non-scripture resources have
+  // no lane/lease, so they short-circuit as always-valid.
+  private async assertFencingOrThrow(lane: LaneKey | null, token: string | null): Promise<void> {
+    if (!lane || !token) return;
+    const valid = await verifyExportFencingToken(this.env, lane, token);
+    if (!valid) throw new Error("fencing_token_superseded");
+  }
+
   private async buildResource(
     book: string,
     resource: Resource,
+    scriptureGen: number,
   ): Promise<{ content: string; rowCount: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
     const db = this.env.DB;
     if (resource === "tn") {
@@ -1207,10 +1402,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         .all<TwlRow>();
       const ultVerses = await db
         .prepare(
-          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2
+          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
            ORDER BY chapter, verse`,
         )
-        .bind(book, "ULT")
+        .bind(book, "ULT", scriptureGen)
         .all<VerseRow>();
       if (rs.results.length === 0) {
         return { content: "", rowCount: 0, sortOrderUpdates: [] };
@@ -1231,15 +1426,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const bibleVersion = resource.toUpperCase();
     const rs = await db
       .prepare(
-        `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2
+        `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
          ORDER BY chapter, verse`,
       )
-      .bind(book, bibleVersion)
+      .bind(book, bibleVersion, scriptureGen)
       .all<VerseRow>();
     if (rs.results.length === 0) return { content: "", rowCount: 0, sortOrderUpdates: [] };
     const headersRow = await db
-      .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2`)
-      .bind(book, bibleVersion)
+      .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`)
+      .bind(book, bibleVersion, scriptureGen)
       .first<{ headers_json: string }>();
     let headers: unknown[] | null = null;
     if (headersRow) {
@@ -1326,6 +1521,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     owner: string,
     repo: string,
     keepBranch: string,
+    lane: LaneKey | null = null,
+    fencingToken: string | null = null,
   ): Promise<void> {
     // Steady-state short-circuit: when the most recent snapshot already
     // recorded this same branch, any superseded branches were already pruned
@@ -1358,11 +1555,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const targets = [...new Set([...stale, LEGACY_EXPORT_BRANCH])].filter((b) => b && b !== keepBranch);
     for (const b of targets) {
       try {
+        // Re-verify fencing before every branch DELETE — a mid-loop activation
+        // must not let us keep mutating DCS under a superseded token.
+        await this.assertFencingOrThrow(lane, fencingToken);
         await deleteDcsBranch(
           { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner, repo },
           b,
         );
       } catch (e) {
+        if (e instanceof Error && e.message === "fencing_token_superseded") throw e;
         console.error("prune: branch delete failed", { repo, branch: b, error: e instanceof Error ? e.message : String(e) });
       }
     }
@@ -1384,10 +1585,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     owner: string,
     repo: string,
     branch: string,
-    dcsCfg: { baseUrl: string; token: string; owner: string; repo: string; branch: string },
+    dcsCfg: { baseUrl: string; token: string; owner: string; repo: string; branch: string; baseRef?: string },
     filename: string,
     content: string,
     message: string,
+    lane: LaneKey | null = null,
+    fencingToken: string | null = null,
   ): Promise<{ prNumber: number | null; prReason: string; commitSha: string | null } | null> {
     const adminToken = this.env.DCS_TOKEN;
     if (!adminToken) {
@@ -1395,12 +1598,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return null;
     }
     try {
+      await this.assertFencingOrThrow(lane, fencingToken);
       const res = await recreateExportBranchFromMaster({
         baseUrl: dcsCfg.baseUrl,
         token: adminToken,
         owner,
         repo,
         branch,
+        baseRef: dcsCfg.baseRef,
+        beforeMutation: fencingToken
+          ? () => this.assertFencingOrThrow(lane, fencingToken)
+          : undefined,
       });
       if (!res.rebuilt) {
         await this.recordPrConflictAlert(book, resource, repo, branch, res.detail);
@@ -1410,7 +1618,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // we know it differs from master — that's what conflicted) → one commit,
       // child of master. The delete auto-closed the old PR, so ensureDcsPr mints
       // a fresh one whose diff is exactly the D1 delta.
-      const recommit = await commitToDcs(dcsCfg, filename, content, message, { forceBranch: true });
+      await this.assertFencingOrThrow(lane, fencingToken);
+      const recommit = await commitToDcs(
+        {
+          ...dcsCfg,
+          beforeMutation: fencingToken
+            ? () => this.assertFencingOrThrow(lane, fencingToken)
+            : undefined,
+        },
+        filename,
+        content,
+        message,
+        { forceBranch: true },
+      );
+      await this.assertFencingOrThrow(lane, fencingToken);
       const pr = await ensureDcsPr(
         dcsCfg,
         `bible-editor: ${book} ${resource} → master`,
@@ -1422,6 +1643,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       await this.recordBranchRebuiltAlert(book, resource, repo, branch, pr.number);
       return { prNumber: pr.number, prReason: `rebuilt:${pr.reason}`, commitSha: recommit.commitSha || null };
     } catch (e) {
+      if (e instanceof Error && e.message === "fencing_token_superseded") throw e;
       const detail = e instanceof Error ? e.message : String(e);
       console.error("export conflict-recovery failed", { book, resource, repo, branch, error: detail });
       await this.recordPrConflictAlert(book, resource, repo, branch, detail.slice(0, 120));
@@ -1447,34 +1669,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       .run();
   }
 
-  // Is D1 for this (book, resource) current with master? Compares master's
-  // latest file-commit SHA to the book_resource_syncs watermark (what the last
-  // successful sync recorded). Returns ok only when we can POSITIVELY confirm
-  // freshness:
-  //   - no watermark        → fresh book, nothing on master to clobber → ok.
-  //   - masterSha == wm      → D1 is current → ok.
-  //   - masterSha != wm      → master moved past D1 → STALE → not ok.
-  //   - masterSha null (fetch failed) but watermark present → can't confirm →
-  //     not ok (fail closed; a skipped night beats a silent revert).
-  // Mirror of planAndStageBookResources's SHA gate, used here to gate the
-  // EXPORT rather than to skip the reimport.
-  private async checkMasterFreshness(
-    book: string,
-    resource: Resource,
-  ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
-    const cfg = await getProjectConfig(this.env);
-    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
-    // Unknown book/resource → no file to compare; don't block (shouldn't happen
-    // for the five real resources).
-    if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
-    const watermark = await storedResourceSha(this.env, book, resource, cfg.org);
-    if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
-    const masterSha = await fileCommitSha(this.env, cfg.org, file.repo, file.path);
-    if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
-    if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
-    return { ok: false, detail: "master_ahead", masterSha, watermark };
-  }
-
   // Banner alert when the freshness gate skips an export to avoid clobbering
   // master. Same replace-undismissed shape as recordPrFailureAlert.
   private async recordStaleSkipAlert(
@@ -1491,20 +1685,21 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
-  // Fetch master's current TSV row count and decide whether this render would
-  // shrink it dangerously (see export.ts exportTsvShrinkRefused). Fail closed
-  // when master can't be read — a truncated master fetch now returns null from
-  // fetchText too, so "unreadable" rightly blocks rather than letting an
-  // unverified commit through.
+  // Fetch destination master's current TSV row count and decide whether this
+  // render would shrink it dangerously (see export.ts exportTsvShrinkRefused).
+  // Always reads the SAME owner/repo the commit will target.
   private async checkTsvShrink(
     book: string,
     resource: Resource,
     renderedRows: number,
+    destOwner: string,
+    destRepo: string,
+    baseRef = "master",
   ): Promise<{ ok: boolean; detail: string; masterRows: number | null }> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const raw = await fetchText(dcsRawUrl(this.env, cfg.org, file.repo, file.path));
+    const raw = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
     if (raw == null) return { ok: false, detail: "master_unreadable", masterRows: null };
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
     const masterRows = Math.max(0, raw.split(/\r?\n/).filter((l) => l.length > 0).length - 1);
@@ -1514,20 +1709,21 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return { ok: true, detail: "ok", masterRows };
   }
 
-  // Fetch master's current USFM and decide whether this ULT/UST render would
-  // silently drop \zaln word alignment (the 1CH 4:21 / NUM 24 signature; see
-  // export.ts usfmAlignmentShrinkRefused). Fail closed when master can't be
-  // read — a truncated master fetch returns null from fetchText, and an
-  // unverifiable master must block rather than let an unchecked render through.
+  // Fetch destination master's current USFM and decide whether this ULT/UST
+  // render would silently drop \zaln word alignment. Always reads the SAME
+  // owner/repo/ref the commit will target.
   private async checkUsfmAlignmentShrink(
     book: string,
     resource: Resource,
     renderedUsfm: string,
+    destOwner: string,
+    destRepo: string,
+    baseRef = "master",
   ): Promise<{ ok: boolean; detail: string }> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
-    const masterUsfm = await fetchText(dcsRawUrl(this.env, cfg.org, file.repo, file.path));
+    const masterUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
     if (masterUsfm == null) return { ok: false, detail: "master_unreadable" };
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);
     if (result.refused) {
@@ -1543,6 +1739,120 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return { ok: false, detail: `align_loss_${result.offenders.length}:${sample}` };
     }
     return { ok: true, detail: "ok" };
+  }
+
+  /** Non-alignment body must match destination for textReadOnly lanes. */
+  private async checkLockedTextEquality(
+    book: string,
+    resource: Resource,
+    renderedUsfm: string,
+    destOwner: string,
+    destRepo: string,
+    baseRef: string,
+  ): Promise<{ ok: boolean; detail: string }> {
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
+    if (!file) return { ok: true, detail: "no_file" };
+    const destUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
+    if (destUsfm == null) {
+      // Fail closed: without a readable destination we cannot prove body equality.
+      return { ok: false, detail: "dest_unreadable" };
+    }
+    return nonAlignmentUsfmEqual(renderedUsfm, destUsfm);
+  }
+
+  private async recordLockedTextDriftAlert(
+    book: string,
+    resource: Resource,
+    detail: string,
+  ): Promise<void> {
+    const source = `export_locked_text:${book}:${resource}`;
+    const message =
+      `Benjamin — nightly export blocked ${book} ${resource.toUpperCase()}: textReadOnly lane ` +
+      `body drifted from destination (${detail}). Alignment-only changes are fine; text rewrites are not.`;
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
+  }
+
+  // Freshness against the repo we will commit to. When source == export, use
+  // book_resource_syncs watermarks. When they diverge, use
+  // scripture_export_baselines for the export destination tip.
+  private async checkMasterFreshness(
+    book: string,
+    resource: Resource,
+    dest?: {
+      owner: string;
+      repo: string;
+      baseRef?: string;
+      lane?: LaneKey | null;
+    },
+  ): Promise<{ ok: boolean; detail: string; masterSha: string | null; watermark: string | null }> {
+    const cfg = await getProjectConfig(this.env);
+    const src = await resourceSourceRef(this.env, resource as ReimportResource, cfg);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
+    if (!file) return { ok: true, detail: "no_file", masterSha: null, watermark: null };
+    const path = `${file.path}`;
+    const destOwner = dest?.owner ?? src.owner;
+    const destRepo = dest?.repo ?? src.repo;
+    const baseRef = dest?.baseRef ?? src.ref;
+    const sameIdentity =
+      destOwner === src.owner && destRepo === src.repo && baseRef === src.ref;
+
+    if (sameIdentity) {
+      const watermark = await storedResourceSha(this.env, book, resource, src);
+      if (!watermark) return { ok: true, detail: "no_watermark", masterSha: null, watermark: null };
+      const masterSha = await fileCommitSha(this.env, src.owner, src.repo, path, src.ref);
+      if (!masterSha) return { ok: false, detail: "master_sha_unknown", masterSha: null, watermark };
+      if (masterSha === watermark) return { ok: true, detail: "current", masterSha, watermark };
+      return { ok: false, detail: "master_ahead", masterSha, watermark };
+    }
+
+    // Export destination differs from source: fence on export baselines, not
+    // the source watermark (which describes a different repo).
+    const lane = dest?.lane ?? null;
+    if (!lane) {
+      // Non-scripture shouldn't hit diverge via laneExport; fail closed if it does.
+      return { ok: false, detail: "export_dest_without_lane", masterSha: null, watermark: null };
+    }
+    const tipSha = await fileCommitSha(this.env, destOwner, destRepo, path, baseRef);
+    const baseline = await this.env.DB.prepare(
+      `SELECT base_sha FROM scripture_export_baselines
+        WHERE lane = ?1 AND owner = ?2 AND repo = ?3 AND base_ref = ?4 AND book = ?5`,
+    )
+      .bind(lane, destOwner, destRepo, baseRef, book)
+      .first<{ base_sha: string | null }>();
+    const watermark = baseline?.base_sha ?? null;
+    if (!watermark) {
+      // First export: only safe when the destination file is absent. If tipSha
+      // is set, the dest already has content we could clobber — refuse until a
+      // baseline is explicitly recorded (or tip matches after a sync).
+      if (tipSha) {
+        return { ok: false, detail: "export_baseline_required", masterSha: tipSha, watermark: null };
+      }
+      return { ok: true, detail: "no_export_baseline", masterSha: tipSha, watermark: null };
+    }
+    if (!tipSha) return { ok: false, detail: "export_tip_unknown", masterSha: null, watermark };
+    if (tipSha === watermark) return { ok: true, detail: "current", masterSha: tipSha, watermark };
+    return { ok: false, detail: "export_ahead", masterSha: tipSha, watermark };
+  }
+
+  private async recordExportBaseline(
+    lane: LaneKey,
+    owner: string,
+    repo: string,
+    baseRef: string,
+    book: string,
+    baseSha: string | null,
+  ): Promise<void> {
+    if (!baseSha) return;
+    await this.env.DB.prepare(
+      `INSERT INTO scripture_export_baselines (lane, owner, repo, base_ref, book, base_sha, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())
+       ON CONFLICT(lane, owner, repo, base_ref, book) DO UPDATE SET
+         base_sha = excluded.base_sha,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(lane, owner, repo, baseRef, book, baseSha)
+      .run();
   }
 
   // Banner alert when the alignment-shrink backstop blocks an ULT/UST export to

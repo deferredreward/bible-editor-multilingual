@@ -265,6 +265,10 @@
     "checkoffVerse": "{{title}} pour ce verset — {{attribution}} · cliquez pour {{action}}",
     "checkAllChapter": "cocher {{title}} pour chaque verset applicable de ce chapitre",
     "aiReady": "De nouvelles {{pipelineType}} par IA sont prêtes pour ce chapitre. Enregistrez votre travail, puis actualisez.",
+    "laneFrozen": "{{version}} est en cours de remplacement — l'édition est suspendue jusqu'à ce que la nouvelle source soit prête.",
+    "laneFrozenQuarantine": "Mis en quarantaine : {{version}} est en cours de remplacement, cette modification en attente n'a donc pas été appliquée.",
+    "laneSettled": "Remplacement de {{version}} terminé — le chapitre a été actualisé.",
+    "alignmentLocked": "L'alignement est verrouillé pour {{version}}.",
     "aiApplied": "{{pipelineType}} par IA appliquées à {{where}}.",
     "aiFailed": "Échec des {{pipelineType}} par IA pour {{where}} : {{error}}",
     "editDroppedLocked": "Modification abandonnée — l'exécution IA de ce chapitre est en cours. Réessayez une fois terminée.",
@@ -620,6 +624,35 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Alimente l'IA",
-    "notFeedingAi": "N'alimente pas encore l'IA — activez le mode assisté après un export réussi"
+    "notFeedingAi": "N'alimente pas encore l'IA — activez le mode assisté après un export réussi",
+    "scriptureLanes": {
+      "title": "Scripture repositories",
+      "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
+      "noState": "Lane state not initialized for {{lane}}.",
+      "textReadOnly": "Text read-only",
+      "alignmentWritable": "Alignment writable",
+      "sourceUrlLabel": "New source URL (Door43)",
+      "changeSource": "Change source",
+      "confirmReplace": "This will replace {{books}} book(s) ({{verses}} verses) with content from {{owner}}/{{repo}}. Are you sure?",
+      "replacementStarted": "Replacement job started.",
+      "replacementRequired": "Replacement required",
+      "replacementActive": "Replacement in progress",
+      "pendingTargetBanner": "This lane requires a source replacement before content is available.",
+      "jobRunning": "Replacement job running…",
+      "cancel": "Cancel replacement",
+      "activate": "Activate",
+      "replacementActivated": "Replacement activated.",
+      "booksProgress": "Books staged: {{done}} / {{total}}",
+      "bookRetryHint": "{{book}} failed to stage — click to retry, or dismiss to skip it.",
+      "jobStatus": {
+        "reserved": "Preparing replacement…",
+        "staging": "Staging books…",
+        "ready": "Ready to activate",
+        "completed": "Replacement completed",
+        "failed": "Replacement failed",
+        "cancelled": "Replacement cancelled"
+      },
+      "saved": "Lane config saved."
+    }
   }
 }

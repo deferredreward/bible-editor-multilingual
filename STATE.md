@@ -14,6 +14,114 @@
 
 ## Last run
 
+2026-07-15 · **feat/scripture-repo-preferences** — **Eighth-pass P1/P2 close-out.**
+- pipelineImport: audit inserts gated on causal fingerprint (`version`+`updated_by`+`content_json`+`updated_at`) so a competitor at `newVersion` cannot fabricate history.
+- Migration `0048`: BEFORE INSERT trigger aborts held leases that conflict with `exclusive_owner` / replacement freeze (rolling-deploy old Workers).
+- alignmentCanonical: strip occurrence keys only on target `\w` nodes; footnotes keep occurrence-named attrs.
+- Tests: fabricated-audit race, trigger abort, footnote vs word occurrence, USFM occurrence-only equality. Local D1: `0048` applied.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Seventh-pass re-review P1s closed.**
+- pipelineImport: expected-version CAS; accept via `changes() > 0` immediately after UPDATE (before edit_log).
+- 0046/0047: backfill `exclusive_owner` from held leases; runtime CAS keeps `NOT EXISTS (fresh held lease)` for rolling deploys.
+- alignmentCanonical: strip `occurrence`/`occurrences`/`x-occurrence`/`x-occurrences`; keep lemma/Strong’s/morph.
+- Tests: version-CAS collision, legacy-lease-without-exclusive_owner, occurrence-only equality. Local D1: `0047` applied.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Sixth-pass re-review P1s closed.**
+- Migration `0046`: `exclusive_owner` on `scripture_lane_state` — shared CAS for lease acquire and replacement freeze (`exclusive_owner IS NULL`).
+- pipelineImport: pending accept back in the same D1 batch, `EXISTS` on landed version.
+- export PR helpers: `beforeMutation` before every POST/PATCH/DELETE (ensure/update/close/delete branch).
+- alignmentCanonical: preserve all non-zaln attrs (lemma/Strong’s/morph); only unwrap zaln.
+- Tests exercise real CAS interleaving + same-txn pipeline accept. Local D1: `0046` applied. Typecheck + api tests green.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Fifth-pass re-review P1s closed.**
+- bookImport: holds export leases on lit+sim for wipe+repopulate; `startReplacement` refuses while a fresh lease is held (mutual exclusion).
+- pipelineImport: accept `pending_imports` only after a matched verse mutation (not in the same batch as a fenced no-op).
+- bookReimport: EXISTS fences on source-attr reconcile, AI reseed, and per-row fallback; batch counts use `meta.changes`.
+- exportOne: acquire lease before capture/render; re-bind generation/config hash; re-verify after render.
+- Locked-text: whole-book `canonicalizeUsfmWithoutAlignment` / `nonAlignmentUsfmEqual` (headers + key sets); fail closed on unreadable dest.
+- export.ts: `baseRef` threaded through reset/create/compare/PR; freshness `sameIdentity` includes ref.
+- Tests: USFM equality cases + lease-blocks-start + predicated pipeline accept. Typecheck + api tests green.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Fourth-pass re-review P1s closed (`9723d83`).**
+- Merged `origin/main` (`a8b2e61`) to clear PR #20 CONFLICTING.
+- bookImport INSERT/meta batches EXISTS-fenced; pipeline apply UPDATE/INSERT fenced; stageBook `staging_claim_token` (migration `0045`).
+- bookReimport: watermark only when identity still valid; INSERT/UPDATE carry lane EXISTS.
+- Export: refuse first export when dest tip exists without baseline (`export_baseline_required`); textReadOnly non-alignment equality vs dest; conflict recreate/recommit passes `beforeMutation`; shrink/align guards use configured `baseRef`.
+- AlignmentPanel: drop generation-less drafts when verse is generation-keyed.
+- Local D1: `0045` applied. Prod still owes `0036`–`0045`.
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green (34).
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Re-review P1 blockers fixed (third pass).**
+- Dual-lane pipelines: per-lane `source_stamps_json` (migration `0044`); no more identical-identity requirement.
+- Orphan freeze: snapshot-before-CAS + job inserts in one batch; `ORPHAN_RESERVATION_GRACE_SECONDS` reclaim.
+- bookImport: lane CAS + EXISTS-gated DELETE in one batch; post-wipe recheck before INSERT.
+- stageBook: stale `staging` reclaim after 600s + wipe partial job verses.
+- outbox: quarantine check + delete/put in one IndexedDB readwrite txn.
+- alignmentDrafts: `sourceGeneration` + clear live crash draft on freeze; skip restore when frozen/quarantined.
+- export: destination freshness via `scripture_export_baselines` when source≠export; shrink guards read dest owner/repo; `beforeMutation` fence hook before every DCS mutation in commit/reset helpers.
+- bookReimport: fetch USFM from immutable SHA; watermark PK includes `source_repo` (0044).
+- Local D1: `0044` applied. Prod still owes `0036`–`0044` (apply remotely when ready).
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Migration `0043` applied to local D1** (`npx wrangler d1 migrations apply bible_editor_dev --local`). Prod still needs `0043` (`bible_editor --remote --env production`).
+
+
+2026-07-15 · **feat/scripture-repo-preferences** — **All remaining P1 race findings fixed (pre-review).**
+- bookImport: recheck gen/lock after DCS fetch; generation-scoped DELETE only.
+- bookReimport: persist owner/repo/ref/generation on staged resources; exact match before write/watermark.
+- pipelines: migration `0043` stamps `source_generation`/`owner`/`repo`/`ref` at create; dispatch + apply require match; dual-lane identity must agree.
+- scriptureLaneReplacement: `recoverOrphanedReservation`; stageBook claims `staging` CAS + commit-SHA-first fetch.
+- exportWorkflow: revalidate fencing token before every prune/recover DCS mutation.
+- Shell/freeze UI: sync `laneFreeze` module; block drafts/enqueue/aligner opens; quarantine single+dual aligners; outbox preserves quarantined recovery on late 200 / raced 403.
+- verses: strict `/^\d+$/` for `X-Source-Generation`.
+- `DCS_EXPORT_OWNER = "BibleEditorService"` kept intentional (dev + production).
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green.
+- **Human owed:** apply migration `0043` to local + prod D1 before exercising pipeline stamps / `staging` book status.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **PR #26 merged + two-tab quarantine smoke.**
+- PR #26 CI was a syntax error (preset pasted after `repoFor()`); fixed in `fa40782`, manually merged into this branch as `53ac350` (GitHub merge blocked by conflict). PR closed.
+- Quarantine smoke (vite `:5174`, two Chrome contexts sharing cookies): Tab A seeded ULT draft; Tab B `POST …/lit/replacements` → Tab A draft marked `quarantined` with `laneFrozenQuarantine` text (freeze handler ran). Queued outbox op raced drain → `failed`/`http 403` before freeze could rewrite it. Align-AVD still opened during freeze (config refresh didn't gate the click — follow-up). Smoke job cancelled; lanes back at gen 2 / no job.
+
+2026-07-15 · **BibleEditorMLTest preset added** — Added the verified English GL repository set (`en_glt`, `en_gst`, `en_tn`, `en_tq`, `en_twl`, `en_tw`, `en_ta`) as the `en-bible-editor-ml-test` translation target. CI fix placed the entry inside `PRESETS`.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **PR #20 P1 remediation shipped (`b260098`).**
+- Addressed blocking review on `1fdd470`: watermark/header/CAS/lease-grace/quarantine-reads; staging (ref/sha + resumable INSERT + completeness); export destinations; reimport/pipeline generation scoping + pipeline `textReadOnly`; draft quarantine (no delete) + UI freeze; waive `confirm:true`.
+- Verified: `npm run typecheck` green; `npm --workspace api run test` green (Node 24).
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6 implemented end-to-end.**
+- Migration `0042_scripture_lanes.sql` applied locally (generation-keyed verses, lane state, replacement FSM, export leases, activation triggers).
+- Export fencing: renewable leases, hold/fresh verify before every mutating DCS call, grace drain before activation, generation-filtered scripture renders.
+- Preferences contracts: admin lane APIs, WS `lane.replacement_freeze` / `lane.replacement_settled`, outbox quarantine + draft clear, BookView/stacked/columns `textLockedVersions`, find/replace skips text-locked lanes, Preferences 3s job polling + activate/retry/waive/cancel, staging kickoff via `waitUntil`.
+- BSOJ: populated DB sets `replacement_required` (blocks AVD/NAV-labeled reads/exports of legacy gen-1); empty DB starts on AVD/NAV; browser smoke: Preferences → AVD URL → stage ZEC → activate → lit gen 2 on `ar_avd`.
+- Tests: `scriptureLaneReplacement.test.mjs` (33 cases incl. both activation races + fencing CAS), `scriptureLane` / `repoUrl` / `alignmentCanonical`; `npm run typecheck`, web tests, `check-i18n` green.
+- Follow-up fixed in-session: replacement start must prefer `pendingTarget` locks/export (not quarantined LEGACY); per-lane label overlay when only one lane is frozen.
+
+## Completed
+
+2026-07-15 · **PR #20 eighth-pass P1/P2 close-out** — Causal pipeline audit fingerprint; lease INSERT trigger honoring exclusive_owner; occurrence strip limited to `\w` nodes.
+
+2026-07-15 · **PR #20 seventh-pass P1 close-out** — Pipeline expected-version CAS + changes()-gated accept; exclusive_owner backfill + legacy lease NOT EXISTS; strip occurrence metadata from locked-text compare.
+
+2026-07-15 · **PR #20 sixth-pass P1 close-out** — `exclusive_owner` CAS mutex (0046), atomic pipeline accept via EXISTS, PR beforeMutation, preserve non-alignment attrs in canonicalizer; real interleaving tests.
+
+2026-07-15 · **PR #20 fifth-pass P1 close-out** — Import/export lease mutual exclusion, predicated pipeline accept, reimport path fences + matched counts, lease-before-render, whole-USFM locked-text compare, baseRef on branch mutations + freshness ref.
+
+2026-07-15 · **PR #20 fourth-pass P1 close-out** — Insert/apply EXISTS fences, staging claim tokens (`0045`), export baseline refuse, locked-text equality, conflict fencing, legacy alignment draft reject, baseRef shrink checks; main merge for conflict. Commit `9723d83`.
+
+2026-07-15 · **PR #20 P1 race remediation (second pass)** — All nine review P1s + smoke gaps (outbox 403 race, align-during-freeze) addressed on `feat/scripture-repo-preferences`. Migration `0043` added for pipeline source stamps + `staging` book status.
+
+2026-07-15 · **BibleEditorMLTest translation target** — Registered the fully populated, live-verified English GL repositories under `BibleEditorMLTest` in the project preset catalog; the server-driven Preferences dropdown now exposes it as a translation target. CI syntax fix landed before merge into `feat/scripture-repo-preferences`.
+
+2026-07-15 · **PR #20 P1 remediation** — Blocking review items on scripture-lane PR addressed and pushed (`b260098`).
+
+2026-07-15 · **Scripture Repository Preferences v6** — Generation-keyed scripture lanes with replacement FSM, export fencing via renewable lease tokens, per-lane text/alignment locks, Preferences UI for repo switching, and BSOJ AVD/NAV correction (quarantine gen-1 → replacement_required → import correct source → activate). Comprehensive test coverage via `node:sqlite` harness exercising migration 0042 triggers + invariants.
+
+2026-07-15 · **feat/scripture-repo-preferences** — **Scripture Repository Preferences v6: comprehensive replacement FSM test suite.**
+- Created `api/src/scriptureLaneReplacement.test.mjs` using `node:sqlite` `DatabaseSync` as a lightweight D1 harness — applies the 0042 migration schema + triggers to an in-memory SQLite DB.
+- Race / generation / freeze / BSOJ / fencing CAS coverage; wired into `api/package.json` test script.
+
+---
+
 2026-07-14 · **main (preferences i18n)** — **Translated Preferences & Memory panel for all UI locales.**
 - Machine-translated the full `preferences.*` namespace (~93 keys after delta) into bn/es/fa/fr/hi/id/ne/pt/ru/sw/th/ur (ar was already done).
 - Added `csvColumnPlaceholder`, `noRendering`, `termArrow`, and `exportStatus.{running,failed,queued}` to `en.json` + all locales; wired them in `PreferencesWorkspace.tsx` (no more hardcoded arrow/dash/CSV placeholder; known export status tokens map to translated labels).
@@ -1444,6 +1552,7 @@ Not yet PR'd.
 
 ## Escalated / blocked on a human (not a code change Claude can land alone)
 
+- **Apply migration `0043_pipeline_job_source_generation.sql`** — local (`bible_editor_dev --local`) and prod (`bible_editor --remote --env production`) before relying on pipeline source stamps or `staging` book-status CAS. Code landed on `feat/scripture-repo-preferences`; D1 not applied this session.
 - **Prod `DEU 27:22` TN content-dup** — 2 live PRISTINE notes, same content (occ 1, quote `שֹׁכֵב֙ עִם`,
   note "See how you translated 'lies with'…") under ids `y3oq` + `oi0y` (both valid ids — a pure
   doubling, not a digit-first id). The new reimport Guard 2 PREVENTS new doubles but does NOT remediate
@@ -1479,6 +1588,11 @@ Highlights that bite repeatedly:
 - **`usfm-js` parks leading punctuation/markers on the node's `text`** — markers can carry text; opening
   quotes after a marker live on the marker node, not as a sibling.
 - **Export USFM puts punctuation outside `\w` (`\w earth\w*.`) on purpose** — correct uW form, not churn; don't "fix" it.
+- **`node:sqlite` (`DatabaseSync`) works for D1 schema/trigger testing.** Node 24's built-in SQLite supports `unixepoch()`,
+  `?1`/`?2` positional params, triggers with `RAISE(ABORT)`, and CHECK constraints. Use an in-memory DB + the migration
+  CREATE TABLE/TRIGGER statements to unit-test schema invariants without Miniflare. Wrap multi-statement batches in
+  `BEGIN`/`COMMIT` with try/catch `ROLLBACK` to match D1 batch atomicity (SQLite's `RAISE(ABORT)` only rolls back
+  the current statement, not the whole transaction).
 
 ## Stop conditions / goals
 

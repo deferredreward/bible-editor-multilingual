@@ -249,6 +249,10 @@
     "checkoffVerse": "{{title}} สำหรับข้อนี้ — {{attribution}} · คลิกเพื่อ {{action}}",
     "checkAllChapter": "ทำเครื่องหมาย {{title}} สำหรับทุกข้อที่เกี่ยวข้องในบทนี้",
     "aiReady": "AI {{pipelineType}} ใหม่พร้อมแล้วสำหรับบทนี้ บันทึกงานของคุณ แล้วรีเฟรช",
+    "laneFrozen": "กำลังแทนที่ {{version}} — การแก้ไขถูกหยุดชั่วคราวจนกว่าจะมีแหล่งข้อมูลใหม่พร้อม",
+    "laneFrozenQuarantine": "กักกันไว้: กำลังแทนที่ {{version}} การแก้ไขที่อยู่ในคิวนี้จึงไม่ถูกนำไปใช้",
+    "laneSettled": "การแทนที่ {{version}} เสร็จสิ้น — รีเฟรชบทแล้ว",
+    "alignmentLocked": "การจัดแนวถูกล็อกสำหรับ {{version}}",
     "aiApplied": "AI {{pipelineType}} ถูกนำไปใช้กับ {{where}}",
     "aiFailed": "AI {{pipelineType}} ล้มเหลวสำหรับ {{where}}: {{error}}",
     "editDroppedLocked": "การแก้ไขถูกยกเลิก — การทำงาน AI ของบทนี้กำลังดำเนินอยู่ ลองอีกครั้งหลังจากเสร็จสิ้น",
@@ -592,6 +596,35 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "กำลังป้อนข้อมูลให้ AI",
-    "notFeedingAi": "ยังไม่ได้ป้อนข้อมูลให้ AI — เปิดโหมดช่วยเหลือหลังส่งออกสำเร็จ"
+    "notFeedingAi": "ยังไม่ได้ป้อนข้อมูลให้ AI — เปิดโหมดช่วยเหลือหลังส่งออกสำเร็จ",
+    "scriptureLanes": {
+      "title": "Scripture repositories",
+      "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
+      "noState": "Lane state not initialized for {{lane}}.",
+      "textReadOnly": "Text read-only",
+      "alignmentWritable": "Alignment writable",
+      "sourceUrlLabel": "New source URL (Door43)",
+      "changeSource": "Change source",
+      "confirmReplace": "This will replace {{books}} book(s) ({{verses}} verses) with content from {{owner}}/{{repo}}. Are you sure?",
+      "replacementStarted": "Replacement job started.",
+      "replacementRequired": "Replacement required",
+      "replacementActive": "Replacement in progress",
+      "pendingTargetBanner": "This lane requires a source replacement before content is available.",
+      "jobRunning": "Replacement job running…",
+      "cancel": "Cancel replacement",
+      "activate": "Activate",
+      "replacementActivated": "Replacement activated.",
+      "booksProgress": "Books staged: {{done}} / {{total}}",
+      "bookRetryHint": "{{book}} failed to stage — click to retry, or dismiss to skip it.",
+      "jobStatus": {
+        "reserved": "Preparing replacement…",
+        "staging": "Staging books…",
+        "ready": "Ready to activate",
+        "completed": "Replacement completed",
+        "failed": "Replacement failed",
+        "cancelled": "Replacement cancelled"
+      },
+      "saved": "Lane config saved."
+    }
   }
 }

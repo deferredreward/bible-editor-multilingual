@@ -33,6 +33,7 @@ import {
   isReadOnly,
   REGISTERS,
   TERM_STATUSES,
+  type LanePublicState,
   type Register,
   type Term,
   type TermInput,
@@ -40,12 +41,15 @@ import {
   type TranslationPrefs,
   type ProjectConfig,
   type Role,
+  type LaneReplacementJobResponse,
+  type LaneReplacementBook,
 } from "../sync/api";
 import {
   useProjectConfig,
   useProjectPresets,
   isTranslationProject,
   selectProjectPreset,
+  refreshProjectConfig,
 } from "../hooks/useProjectConfig";
 import {
   useTranslationPrefs,
@@ -162,6 +166,7 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
           <ProjectModeControl cfg={cfg} role={role} />
+          {role === "admin" && cfg && <ScriptureLanesSection cfg={cfg} />}
           {cfg === null ? null : !isTranslation ? (
             <Alert severity="info" variant="outlined">
               {t("preferences.glOnly")}
@@ -180,6 +185,392 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
           )}
         </Box>
       </Box>
+    </Box>
+  );
+}
+
+// ── Scripture Lanes admin section ──────────────────────────────────────────
+
+function ScriptureLanesSection({ cfg }: { cfg: ProjectConfig }) {
+  const { t } = useTranslation();
+  const lanes: Array<{ key: "lit" | "sim"; label: string }> = [
+    {
+      key: "lit",
+      label:
+        (cfg.laneState?.lit?.config?.label && cfg.laneState.lit.config.label !== "LEGACY"
+          ? cfg.laneState.lit.config.label
+          : null) ||
+        (cfg.laneState?.lit?.pendingTarget)?.label ||
+        cfg.litLabel ||
+        "ULT",
+    },
+    {
+      key: "sim",
+      label:
+        (cfg.laneState?.sim?.config?.label && cfg.laneState.sim.config.label !== "LEGACY"
+          ? cfg.laneState.sim.config.label
+          : null) ||
+        (cfg.laneState?.sim?.pendingTarget)?.label ||
+        cfg.simLabel ||
+        "UST",
+    },
+  ];
+
+  return (
+    <Box
+      component="section"
+      aria-labelledby="scripture-lanes-heading"
+      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, mb: 3 }}
+    >
+      <Typography id="scripture-lanes-heading" variant="h6" gutterBottom>
+        {t("preferences.scriptureLanes.title")}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {t("preferences.scriptureLanes.intro")}
+      </Typography>
+      <Stack spacing={2}>
+          {lanes.map(({ key, label }) => (
+          <LaneCard key={key} lane={key} label={label} cfg={cfg} />
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
+function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cfg: ProjectConfig }) {
+  const { t } = useTranslation();
+  const state: LanePublicState | undefined = cfg.laneState?.[lane];
+  const [saving, setSaving] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [validating, setValidating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [job, setJob] = useState<LaneReplacementJobResponse | null>(null);
+  const [activating, setActivating] = useState(false);
+  const [busyBook, setBusyBook] = useState<string | null>(null);
+
+  const replacementJobId = state?.replacementJobId ?? null;
+
+  // Poll the job while one is running so per-book staging status + readiness
+  // stay live without a manual reload. Stops on a terminal status and refreshes
+  // the shared config (which clears replacementJobId, so the poll won't re-arm).
+  useEffect(() => {
+    if (!replacementJobId) {
+      setJob(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const res = await api.laneGetJob(lane, replacementJobId);
+        if (cancelled) return;
+        setJob(res);
+        const s = res.job.status;
+        if (s === "completed" || s === "cancelled" || s === "failed") {
+          await refreshProjectConfig().catch(() => {});
+          return; // terminal — stop polling
+        }
+      } catch {
+        // transient — keep polling
+      }
+      if (!cancelled) timer = setTimeout(poll, 3000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [lane, replacementJobId]);
+
+  if (!state) {
+    return (
+      <Box sx={{ p: 1 }}>
+        <Typography variant="body2" color="text.secondary">
+          {t("preferences.scriptureLanes.noState", { lane: label })}
+        </Typography>
+      </Box>
+    );
+  }
+
+  const { config, replacementRequired, configRevision } = state;
+
+  const handleToggle = async (field: "textReadOnly" | "alignmentWritable", value: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.lanePatch(lane, configRevision, { [field]: value });
+      await refreshProjectConfig();
+      setSuccessMsg(t("preferences.scriptureLanes.saved"));
+      setTimeout(() => setSuccessMsg(null), 2000);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleValidateUrl = async () => {
+    if (!sourceUrl.trim()) return;
+    setValidating(true);
+    setError(null);
+    try {
+      const result = await api.laneValidate(lane, sourceUrl.trim());
+      const confirmMsg = t("preferences.scriptureLanes.confirmReplace", {
+        books: result.impactBooks,
+        verses: result.impactVerses,
+        owner: result.source.owner,
+        repo: result.source.repo,
+      });
+      if (!window.confirm(confirmMsg)) {
+        setValidating(false);
+        return;
+      }
+      // When the lane is in BSOJ transitional freeze, the mandatory pending
+      // target carries the correct AVD/NAV locks/export — do not inherit the
+      // quarantined LEGACY config's false locks / null export.
+      const base = replacementRequired && state.pendingTarget ? state.pendingTarget : config;
+      const exportCfg =
+        base.export ??
+        ({
+          owner: result.source.owner,
+          repo: result.source.repo,
+          baseRef: result.source.ref,
+          branchPolicy: "contributor_book_branch" as const,
+        });
+      await api.laneStartReplacement(lane, {
+        label: base.label === "LEGACY" ? `${result.source.repo}` : base.label,
+        source: result.source,
+        export: exportCfg,
+        textReadOnly: base.textReadOnly,
+        alignmentWritable: base.alignmentWritable,
+      }, true);
+      await refreshProjectConfig();
+      setSourceUrl("");
+      setSuccessMsg(t("preferences.scriptureLanes.replacementStarted"));
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e));
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!replacementJobId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.laneCancelJob(lane, replacementJobId);
+      await refreshProjectConfig();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleActivate = async () => {
+    if (!replacementJobId) return;
+    setActivating(true);
+    setError(null);
+    try {
+      // The fencing token guards against a split-brain export completing a
+      // stale render after the flip; a fresh UUID per activation is sufficient.
+      await api.laneActivate(lane, replacementJobId, crypto.randomUUID());
+      await refreshProjectConfig();
+      setSuccessMsg(t("preferences.scriptureLanes.replacementActivated"));
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e));
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  const handleRetryBook = async (book: string) => {
+    if (!replacementJobId) return;
+    setBusyBook(book);
+    setError(null);
+    try {
+      await api.laneRetryBook(lane, replacementJobId, book);
+      const res = await api.laneGetJob(lane, replacementJobId);
+      setJob(res);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusyBook(null);
+    }
+  };
+
+  const handleWaiveBook = async (book: string) => {
+    if (!replacementJobId) return;
+    if (!window.confirm(t("preferences.scriptureLanes.confirmWaiveBook", { book }))) {
+      return;
+    }
+    setBusyBook(book);
+    setError(null);
+    try {
+      await api.laneWaiveBook(lane, replacementJobId, book, true);
+      const res = await api.laneGetJob(lane, replacementJobId);
+      setJob(res);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusyBook(null);
+    }
+  };
+
+  const jobStatus = job?.job.status;
+  const jobBooks: LaneReplacementBook[] = job?.books ?? [];
+  const pendingBooks = jobBooks.filter(
+    (b) => b.status !== "artifact_ok" && b.status !== "absent_authorized",
+  );
+
+  return (
+    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2 }}>
+      <Stack spacing={1}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="subtitle1" fontWeight="bold">
+            {label}
+          </Typography>
+          <Chip size="small" label={`${config.source.owner}/${config.source.repo}`} />
+          {replacementRequired && (
+            <Chip size="small" color="warning" label={t("preferences.scriptureLanes.replacementRequired")} />
+          )}
+          {replacementJobId && (
+            <Chip size="small" color="info" label={t("preferences.scriptureLanes.replacementActive")} />
+          )}
+        </Stack>
+
+        {replacementRequired && !replacementJobId && state.pendingTarget != null && (
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            {t("preferences.scriptureLanes.pendingTargetBanner")}
+          </Alert>
+        )}
+
+        <Stack direction="row" spacing={2} alignItems="center">
+          <FormControlLabel
+            control={
+              <Switch
+                checked={config.textReadOnly}
+                onChange={(_, v) => handleToggle("textReadOnly", v)}
+                disabled={saving || !!replacementJobId}
+                size="small"
+              />
+            }
+            label={t("preferences.scriptureLanes.textReadOnly")}
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={config.alignmentWritable}
+                onChange={(_, v) => handleToggle("alignmentWritable", v)}
+                disabled={saving || !!replacementJobId}
+                size="small"
+              />
+            }
+            label={t("preferences.scriptureLanes.alignmentWritable")}
+          />
+        </Stack>
+
+        {replacementJobId && (
+          <Stack spacing={1}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              {jobStatus !== "ready" && <CircularProgress size={16} />}
+              <Typography variant="body2">
+                {jobStatus
+                  ? t(`preferences.scriptureLanes.jobStatus.${jobStatus}`)
+                  : t("preferences.scriptureLanes.jobRunning")}
+              </Typography>
+              {jobStatus === "ready" && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={handleActivate}
+                  disabled={activating}
+                >
+                  {activating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.activate")}
+                </Button>
+              )}
+              <Button size="small" color="error" onClick={handleCancel} disabled={saving}>
+                {t("preferences.scriptureLanes.cancel")}
+              </Button>
+            </Stack>
+
+            {jobBooks.length > 0 && (
+              <Stack spacing={0.5}>
+                <Typography variant="caption" color="text.secondary">
+                  {t("preferences.scriptureLanes.booksProgress", {
+                    done: jobBooks.length - pendingBooks.length,
+                    total: jobBooks.length,
+                  })}
+                </Typography>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                  {jobBooks.map((b) => {
+                    const retryable = b.status === "retryable_error" || b.status === "failed";
+                    const color =
+                      b.status === "artifact_ok"
+                        ? "success"
+                        : retryable
+                          ? "error"
+                          : b.status === "absent_authorized"
+                            ? "default"
+                            : "warning";
+                    return (
+                      <Tooltip
+                        key={b.book}
+                        title={
+                          retryable
+                            ? t("preferences.scriptureLanes.bookRetryHint", { book: b.book })
+                            : `${b.book}: ${b.status}`
+                        }
+                      >
+                        <Chip
+                          size="small"
+                          color={color}
+                          variant={b.status === "artifact_ok" ? "filled" : "outlined"}
+                          label={
+                            busyBook === b.book ? `${b.book}…` : b.book
+                          }
+                          onClick={retryable && busyBook !== b.book ? () => void handleRetryBook(b.book) : undefined}
+                          onDelete={retryable && busyBook !== b.book ? () => void handleWaiveBook(b.book) : undefined}
+                        />
+                      </Tooltip>
+                    );
+                  })}
+                </Box>
+              </Stack>
+            )}
+          </Stack>
+        )}
+
+        {!replacementJobId && (
+          <Stack direction="row" spacing={1} alignItems="flex-end">
+            <TextField
+              size="small"
+              label={t("preferences.scriptureLanes.sourceUrlLabel")}
+              placeholder="https://git.door43.org/owner/repo"
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              sx={{ flex: 1, maxWidth: 500 }}
+              disabled={validating}
+            />
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={handleValidateUrl}
+              disabled={!sourceUrl.trim() || validating}
+            >
+              {validating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.changeSource")}
+            </Button>
+          </Stack>
+        )}
+
+        {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+        {successMsg && <Alert severity="success" onClose={() => setSuccessMsg(null)}>{successMsg}</Alert>}
+      </Stack>
     </Box>
   );
 }

@@ -9,6 +9,7 @@
 
 import { openDB, type IDBPDatabase } from "idb";
 import { isReadOnly, type RowKind } from "./api";
+import { isLaneFrozen } from "./laneFreeze";
 import { onOutboxResult } from "./outbox";
 
 const DB_NAME = "bible-editor-drafts";
@@ -31,6 +32,10 @@ export interface DraftRecord {
   // "Save Num 20:1 ULT?" without parsing the key. Verse drafts carry
   // book/chapter/verse/bibleVersion; row drafts carry kind/id/book.
   meta: DraftMeta;
+  // Set when a scripture lane freezes for replacement. Quarantined drafts are
+  // kept for discard/export but must not restore into editors or count as
+  // active unsaved typing — the generation is about to flip.
+  quarantined?: string;
 }
 
 export type DraftMeta =
@@ -123,17 +128,31 @@ export const drafts = {
     payload: DraftPayload,
     expectedVersion: number,
     meta: DraftMeta,
+    opts?: { quarantined?: string },
   ): Promise<void> {
     if (isReadOnly()) return;
+    // While a lane is frozen, refuse new keystroke drafts — quarantine already
+    // scanned existing ones. Exception: an explicit `quarantined` write used
+    // by the freeze handler to serialize dirty aligner state before close.
+    if (
+      meta.kind === "verse" &&
+      isLaneFrozen(meta.bibleVersion) &&
+      !opts?.quarantined
+    ) {
+      return;
+    }
     // Mark dirty synchronously — before the async put — so the unload guard
-    // sees it during the commit window (see pendingKeys).
-    pendingKeys.add(key);
+    // sees it during the commit window (see pendingKeys). Quarantined writes
+    // are recovery copies, not active typing.
+    if (!opts?.quarantined) pendingKeys.add(key);
+    else pendingKeys.delete(key);
     const rec: DraftRecord = {
       key,
       payload,
       expectedVersion,
       updatedAt: Date.now(),
       meta,
+      ...(opts?.quarantined ? { quarantined: opts.quarantined } : {}),
     };
     await (await db()).put(STORE, rec);
     void notify();
@@ -142,7 +161,9 @@ export const drafts = {
   async get(key: string): Promise<DraftRecord | undefined> {
     const idb = await db();
     const rec = (await idb.get(STORE, key)) as DraftRecord | undefined;
-    if (rec) return rec;
+    // Quarantined drafts stay in IDB for discard/export but must not hydrate
+    // editors — restoring them would put superseded-generation text back in.
+    if (rec) return rec.quarantined ? undefined : rec;
     // One-time tolerance for the pre-book row key format ("row:{kind}:{id}").
     // On a miss, check whether a legacy record exists whose meta says it
     // belongs to this book; if so, migrate it under the new key. A legacy
@@ -174,6 +195,25 @@ export const drafts = {
   async list(): Promise<DraftRecord[]> {
     return listAll();
   },
+
+  // Quarantine every unsaved verse draft for a bible_version whose lane just
+  // froze for a replacement. Drafts are kept (exportable / discardable) but
+  // stopped from restoring into editors. Row drafts (tn/tq/twl) are
+  // lane-agnostic and left alone. Returns the count quarantined.
+  async quarantineByVersion(bibleVersion: string, reason: string): Promise<number> {
+    const idb = await db();
+    const all = (await idb.getAll(STORE)) as DraftRecord[];
+    let n = 0;
+    for (const rec of all) {
+      if (rec.meta.kind !== "verse" || rec.meta.bibleVersion !== bibleVersion) continue;
+      if (rec.quarantined) continue;
+      pendingKeys.delete(rec.key);
+      await idb.put(STORE, { ...rec, quarantined: reason, updatedAt: Date.now() });
+      n++;
+    }
+    if (n > 0) void notify();
+    return n;
+  },
 };
 
 // Emotion/sx fragment for the orange "you have unsaved typing here" border.
@@ -194,8 +234,14 @@ export function draftDirtyBorderSx() {
 // landed. Anything other than a 200 keeps the draft so the user can retry
 // or hand-edit. 409 is special — the user resolves via SyncStatusBar; the
 // draft survives so the next retry has the right payload.
+//
+// Quarantined drafts/ops must NOT clear on a late 200: an in-flight op can
+// still succeed after quarantineLaneOps marked it failed — clearing would
+// wipe the recovery copy the freeze handler just preserved. drainPass
+// re-reads the op and forwards the quarantined flag on the listener op.
 onOutboxResult((op, result) => {
   if (result.kind !== "ok") return;
+  if (op.quarantined) return;
   if (op.target.kind === "verse") {
     void drafts.clear(
       verseKey(op.target.book, op.target.chapter, op.target.verse, op.target.bibleVersion),

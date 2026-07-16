@@ -100,6 +100,11 @@ interface Props {
   // to one chapter so other chapters in view are still safe, but explaining
   // "chapter X is locked, others aren't" is more confusing than it's worth.
   locked?: boolean;
+  // Bible versions whose text is locked by their scripture lane (textReadOnly).
+  // A cell for one of these renders read-only even when `locked` is false and
+  // the version isn't UHB/UGNT. Referentially stable (a Set built once in
+  // ScriptureColumn) so the memoized subtrees still skip.
+  textLockedVersions?: Set<string>;
   // Optional per-verse Text-lane check. When present and canCheck, each verse
   // cell gets a small check control + a tinted verse-number underline. Wired
   // from Shell; absent in standalone use. Same value for every cell, so it
@@ -129,9 +134,12 @@ export function BookView({
   onOpenAligner,
   onEditSection,
   locked = false,
+  textLockedVersions,
   textCheck,
 }: Props) {
   const projectConfig = useProjectConfig();
+  const emptyLocked = useMemo(() => new Set<string>(), []);
+  const lockedVersions = textLockedVersions ?? emptyLocked;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRowRef = useRef<HTMLDivElement | null>(null);
   // Set on any deliberate scroll-to-active request (navigation or the
@@ -243,7 +251,7 @@ export function BookView({
         }}
       >
         {enabledVersions.map((v) => {
-          const isReadOnly = READ_ONLY.has(v) || locked;
+          const isReadOnly = READ_ONLY.has(v) || locked || lockedVersions.has(v);
           return (
             <Typography
               key={v}
@@ -305,6 +313,7 @@ export function BookView({
               onOpenAligner={onOpenAligner}
               onEditSection={onEditSection}
               locked={locked}
+              textLockedVersions={lockedVersions}
               textCheck={textCheck}
             />
           ))}
@@ -348,6 +357,7 @@ const ChapterBlock = memo(function ChapterBlock({
   onOpenAligner,
   onEditSection,
   locked,
+  textLockedVersions,
   textCheck,
 }: {
   book: string;
@@ -378,6 +388,7 @@ const ChapterBlock = memo(function ChapterBlock({
     base: VerseDto,
   ) => void;
   locked: boolean;
+  textLockedVersions: Set<string>;
   textCheck?: TextLaneCheck;
 }) {
   // Sentinel observed by IntersectionObserver — fires loadChapter when the
@@ -528,6 +539,7 @@ const ChapterBlock = memo(function ChapterBlock({
             onOpenAligner={onOpenAligner}
             onEditSection={onEditSection}
             locked={locked}
+            textLockedVersions={textLockedVersions}
             textCheck={textCheck}
           />
         );
@@ -560,6 +572,7 @@ const VerseRow = memo(function VerseRow({
   onOpenAligner,
   onEditSection,
   locked,
+  textLockedVersions,
   textCheck,
 }: {
   book: string;
@@ -589,6 +602,7 @@ const VerseRow = memo(function VerseRow({
     base: VerseDto,
   ) => void;
   locked: boolean;
+  textLockedVersions: Set<string>;
   textCheck?: TextLaneCheck;
 }) {
   // Render is intentionally a row of N independent cells driven by the same
@@ -648,6 +662,7 @@ const VerseRow = memo(function VerseRow({
               onSaveVerse={onSaveVerse}
               onEditSection={onEditSection}
               locked={locked}
+              textLockedVersions={textLockedVersions}
               textCheck={textCheck}
             />
           </Box>
@@ -679,6 +694,7 @@ const VerseCell = memo(function VerseCell({
   onSaveVerse,
   onEditSection,
   locked,
+  textLockedVersions,
   textCheck,
 }: {
   book: string;
@@ -713,9 +729,10 @@ const VerseCell = memo(function VerseCell({
     base: VerseDto,
   ) => void;
   locked: boolean;
+  textLockedVersions: Set<string>;
   textCheck?: TextLaneCheck;
 }) {
-  const readOnly = READ_ONLY.has(bibleVersion) || locked;
+  const readOnly = READ_ONLY.has(bibleVersion) || locked || textLockedVersions.has(bibleVersion);
   const rtl = bibleVersion === "UHB";
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
   // The active match is at most one cell; this is non-null only on that cell.

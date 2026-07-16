@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { backoffMs } from "./backoff";
 import { classifyRowPatchConflict } from "./rowConflict";
+import { isLaneFrozen, laneFreezeReason } from "./laneFreeze";
 
 const DB_NAME = "bible-editor-outbox";
 const DB_VERSION = 1;
@@ -123,6 +124,13 @@ export interface OutboxOp {
   // genuine one (the server changed a field we're also editing). Only set for
   // row patches; absent for verse/status/lane ops and pre-baseline records.
   baseline?: Record<string, unknown>;
+  // The source_generation the verse was loaded under. Sent as X-Source-Generation
+  // so the server can reject edits against a superseded generation.
+  sourceGeneration?: number;
+  // Set when a scripture lane freezes for replacement. Quarantined ops stay in
+  // IDB as failed recovery copies — a late 200 from an in-flight dispatch must
+  // not delete them (see drainPass).
+  quarantined?: string;
 }
 
 type Subscriber = (ops: OutboxOp[]) => void;
@@ -300,6 +308,7 @@ export const outbox = {
     bibleVersion: string,
     expectedVersion: number,
     patch: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
+    opts?: { sourceGeneration?: number },
   ): Promise<OutboxOp> {
     if (isReadOnly()) {
       return noopOp(
@@ -307,6 +316,29 @@ export const outbox = {
         "patch",
         patch as Record<string, unknown>,
       );
+    }
+    // Lane freeze: refuse to ship — park as a failed/quarantined recovery copy
+    // with no network attempt. Covers the window before projectConfig refresh.
+    if (isLaneFrozen(bibleVersion)) {
+      const reason =
+        laneFreezeReason(bibleVersion) ?? `Quarantined: ${bibleVersion} lane is frozen`;
+      const op: OutboxOp = {
+        id: uid(),
+        target: { kind: "verse", book, chapter, verse, bibleVersion },
+        action: "patch",
+        patch: patch as Record<string, unknown>,
+        expectedVersion,
+        queuedAt: Date.now(),
+        seq: nextSeq(),
+        attempts: 0,
+        status: "failed",
+        lastError: reason,
+        quarantined: reason,
+        ...(opts?.sourceGeneration != null ? { sourceGeneration: opts.sourceGeneration } : {}),
+      };
+      await (await db()).put(STORE, op);
+      void notify();
+      return op;
     }
     const op: OutboxOp = {
       id: uid(),
@@ -318,6 +350,7 @@ export const outbox = {
       seq: nextSeq(),
       attempts: 0,
       status: "pending",
+      ...(opts?.sourceGeneration != null ? { sourceGeneration: opts.sourceGeneration } : {}),
     };
     await (await db()).put(STORE, op);
     void notify();
@@ -505,10 +538,20 @@ export const outbox = {
       await tx.done;
       return;
     }
+    // Still-frozen lane: keep the quarantine — retrying would just re-fail.
+    if (
+      op.quarantined &&
+      op.target.kind === "verse" &&
+      isLaneFrozen(op.target.bibleVersion)
+    ) {
+      await tx.done;
+      return;
+    }
     op.status = "pending";
     op.attempts = 0;
     op.hardAttempts = 0;
     op.lastError = undefined;
+    op.quarantined = undefined;
     await tx.store.put(op);
     await tx.done;
     void notify();
@@ -517,6 +560,42 @@ export const outbox = {
 
   async list(): Promise<OutboxOp[]> {
     return listAll();
+  },
+
+  // Quarantine every queued verse op for a bible_version whose lane just froze
+  // for a replacement. The active generation is about to flip, so any still-
+  // queued edit is against a generation the server will reject (or, worse,
+  // would land on soon-to-be-superseded content). Mark them `failed` with a
+  // durable `quarantined` flag so they surface in the failed-ops drawer and a
+  // late 200 from an already-in-flight dispatch cannot delete the recovery
+  // copy. Touches pending / in_flight / conflict / failed (e.g. raced to
+  // http 403 before freeze landed) ops. Returns the count quarantined.
+  async quarantineLaneOps(bibleVersion: string, reason: string): Promise<number> {
+    const idb = await db();
+    const tx = idb.transaction(STORE, "readwrite");
+    const all = (await tx.store.getAll()) as OutboxOp[];
+    let n = 0;
+    for (const o of all) {
+      if (o.target.kind !== "verse") continue;
+      if (o.target.bibleVersion !== bibleVersion) continue;
+      if (o.quarantined) continue;
+      if (
+        o.status === "pending" ||
+        o.status === "in_flight" ||
+        o.status === "conflict" ||
+        o.status === "failed"
+      ) {
+        o.status = "failed";
+        o.lastError = reason;
+        o.quarantined = reason;
+        o.conflictCurrent = undefined;
+        await tx.store.put(o);
+        n++;
+      }
+    }
+    await tx.done;
+    void notify();
+    return n;
   },
 };
 
@@ -605,6 +684,7 @@ async function dispatch(op: OutboxOp): Promise<Result> {
         op.target.bibleVersion,
         op.expectedVersion,
         op.patch as { content: unknown; plain_text?: string | null },
+        { sourceGeneration: op.sourceGeneration },
       );
     }
     return { kind: "ok", updated };
@@ -617,6 +697,18 @@ async function dispatch(op: OutboxOp): Promise<Result> {
         const alignmentLoss = unexpectedAlignmentLossReason(e.body);
         if (alignmentLoss) {
           return { kind: "fatal", reason: alignmentLoss };
+        }
+        // Lane-specific terminal errors: the verse's generation is stale or a
+        // replacement is active — retrying won't help; quarantine immediately.
+        const errCode = (e.body as { error?: string } | null)?.error;
+        if (
+          errCode === "source_generation_mismatch" ||
+          errCode === "lane_replacement_required" ||
+          errCode === "lane_replacement_in_progress" ||
+          errCode === "scripture_text_read_only" ||
+          errCode === "scripture_fully_locked"
+        ) {
+          return { kind: "fatal", reason: errCode };
         }
         const body = e.body as { current?: unknown } | undefined;
         return { kind: "conflict", current: body?.current };
@@ -789,6 +881,23 @@ async function drainPass() {
       await tx.done;
       continue;
     }
+    // Local freeze may have landed after enqueue — park as quarantined recovery
+    // without sending another PATCH that would race the generation flip.
+    if (
+      fresh.target.kind === "verse" &&
+      isLaneFrozen(fresh.target.bibleVersion)
+    ) {
+      const reason =
+        laneFreezeReason(fresh.target.bibleVersion) ??
+        `Quarantined: ${fresh.target.bibleVersion} lane is frozen`;
+      fresh.status = "failed";
+      fresh.lastError = reason;
+      fresh.quarantined = reason;
+      await tx.store.put(fresh);
+      await tx.done;
+      void notify();
+      continue;
+    }
     fresh.status = "in_flight";
     fresh.attempts += 1;
     fresh.dispatchedAt = Date.now();
@@ -807,11 +916,46 @@ async function drainPass() {
     // Persist the new status *before* notifying listeners. If a put() or
     // delete() throws, the catch below resets the op to pending so it
     // doesn't strand at in_flight.
+    //
+    // Always re-read before mutating: quarantineLaneOps may have flipped this
+    // op to failed+quarantined while dispatch was in flight. Check + delete/put
+    // MUST share one readwrite transaction so a quarantine between get and
+    // delete cannot erase recovery. Mutate must be synchronous (no other awaits
+    // while the txn is open) so IndexedDB does not auto-commit early.
+    const settleAfterDispatch = async (
+      mutate: (stored: OutboxOp) => "delete" | "put",
+    ): Promise<"deleted" | "quarantined" | "kept" | "missing"> => {
+      if (!next) return "missing";
+      const idb = await db();
+      const tx = idb.transaction(STORE, "readwrite");
+      const stored = (await tx.store.get(next.id)) as OutboxOp | undefined;
+      if (!stored) {
+        await tx.done;
+        return "missing";
+      }
+      if (stored.quarantined) {
+        stored.status = "failed";
+        stored.lastError = stored.quarantined;
+        stored.dispatchedAt = undefined;
+        await tx.store.put(stored);
+        await tx.done;
+        next = stored;
+        return "quarantined";
+      }
+      const action = mutate(stored);
+      if (action === "delete") {
+        await tx.store.delete(stored.id);
+        await tx.done;
+        return "deleted";
+      }
+      await tx.store.put(stored);
+      await tx.done;
+      next = stored;
+      return "kept";
+    };
     try {
       if (result.kind === "ok") {
-        await (await db()).delete(STORE, next.id);
-        // Best-effort only, and outside the persist-recovery catch's reach:
-        // a threading failure must not resurrect the just-completed op.
+        await settleAfterDispatch(() => "delete");
         try {
           await threadVersionToSiblings(next, result.updated);
         } catch {
@@ -819,88 +963,95 @@ async function drainPass() {
         }
       } else if (result.kind === "locked") {
         // The chapter is mid-pipeline; the auto-apply will overwrite this
-        // row anyway. Drop the op and let the listener surface a toast.
-        await (await db()).delete(STORE, next.id);
+        // row anyway. Drop the op — unless quarantine already claimed it.
+        await settleAfterDispatch(() => "delete");
       } else if (result.kind === "conflict") {
-        const serverVersion = (result.current as { version?: unknown } | null | undefined)
-          ?.version;
-        // Two classes of 409 auto-heal against the server's version instead of
-        // prompting: (1) a reorder-only patch (sort_order is last-write-wins,
-        // positional metadata), and (2) a content patch whose change doesn't
-        // genuinely conflict with the server's current row — the version
-        // advanced for an unrelated reason (another field/tab, a bit-toggle, a
-        // reimport) or our edit already landed. Only true conflicts (the server
-        // changed a field we're also editing, to a different value) prompt.
-        const sortOrderOnly =
-          next.target.kind === "row" &&
-          next.action === "patch" &&
-          isSortOrderOnlyPatch(next.patch);
-        const nonConflictingContent =
-          next.target.kind === "row" &&
-          next.action === "patch" &&
-          !sortOrderOnly &&
-          classifyRowPatchConflict(
-            next.patch,
-            next.baseline,
-            result.current as Record<string, unknown>,
-          ) === "auto_heal";
-        if (
-          (sortOrderOnly || nonConflictingContent) &&
-          typeof serverVersion === "number" &&
-          (next.conflictRetries ?? 0) < MAX_CONFLICT_AUTOHEAL
-        ) {
-          // Spurious mismatch — re-arm against the server's version and retry
-          // silently rather than surfacing a conflict. Don't block the target:
-          // it stays drainable so this pass picks it straight back up. On retry
-          // the PATCH only rewrites our own fields, so an unrelated concurrent
-          // change on the same row is preserved (field-level merge).
-          next.status = "pending";
-          next.expectedVersion = serverVersion;
-          next.conflictRetries = (next.conflictRetries ?? 0) + 1;
-          next.conflictCurrent = undefined;
-          next.lastError = sortOrderOnly ? "sort_order_autoheal" : "nonconflict_autoheal";
-          await (await db()).put(STORE, next);
-        } else {
-          next.status = "conflict";
-          next.conflictCurrent = result.current;
-          next.lastError = "version_mismatch";
-          await (await db()).put(STORE, next);
-          blocked.add(targetKey(next.target));
+        const settled = await settleAfterDispatch((stored) => {
+          const serverVersion = (result.current as { version?: unknown } | null | undefined)
+            ?.version;
+          const sortOrderOnly =
+            stored.target.kind === "row" &&
+            stored.action === "patch" &&
+            isSortOrderOnlyPatch(stored.patch);
+          const nonConflictingContent =
+            stored.target.kind === "row" &&
+            stored.action === "patch" &&
+            !sortOrderOnly &&
+            classifyRowPatchConflict(
+              stored.patch,
+              stored.baseline,
+              result.current as Record<string, unknown>,
+            ) === "auto_heal";
+          if (
+            (sortOrderOnly || nonConflictingContent) &&
+            typeof serverVersion === "number" &&
+            (stored.conflictRetries ?? 0) < MAX_CONFLICT_AUTOHEAL
+          ) {
+            stored.status = "pending";
+            stored.expectedVersion = serverVersion;
+            stored.conflictRetries = (stored.conflictRetries ?? 0) + 1;
+            stored.conflictCurrent = undefined;
+            stored.lastError = sortOrderOnly ? "sort_order_autoheal" : "nonconflict_autoheal";
+          } else {
+            stored.status = "conflict";
+            stored.conflictCurrent = result.current;
+            stored.lastError = "version_mismatch";
+            blocked.add(targetKey(stored.target));
+          }
+          return "put";
+        });
+        if (settled === "quarantined") {
+          /* keep quarantine */
         }
       } else if (result.kind === "retry") {
-        // Only genuine server errors (`transient NNN`) consume the
-        // MAX_ATTEMPTS cap. Network failures (`network`, `dispatch_threw`)
-        // and auth retries (`auth 401`) recur for as long as the laptop is
-        // offline or the session is dead — parking those as `failed` would
-        // strand real edits behind a no-confirm discard button.
-        const capEligible = result.reason.startsWith("transient");
-        if (capEligible) next.hardAttempts = (next.hardAttempts ?? 0) + 1;
-        if (capEligible && (next.hardAttempts ?? 0) >= MAX_ATTEMPTS) {
-          // Out of retries — promote to `failed` so the UI can surface
-          // it. `attempts` carries the count so the drawer can show how
-          // long we tried before giving up.
-          next.status = "failed";
-          next.lastError = "max_attempts_exceeded";
-          await (await db()).put(STORE, next);
-        } else {
-          next.status = "pending";
-          next.lastError = result.reason;
-          await (await db()).put(STORE, next);
-          scheduleDrain(backoffMs(next.attempts));
-          blocked.add(targetKey(next.target));
+        const settled = await settleAfterDispatch((stored) => {
+          // Only genuine server errors (`transient NNN`) consume MAX_ATTEMPTS.
+          const capEligible = result.reason.startsWith("transient");
+          if (capEligible) stored.hardAttempts = (stored.hardAttempts ?? 0) + 1;
+          if (capEligible && (stored.hardAttempts ?? 0) >= MAX_ATTEMPTS) {
+            stored.status = "failed";
+            stored.lastError = "max_attempts_exceeded";
+          } else {
+            stored.status = "pending";
+            stored.lastError = result.reason;
+            scheduleDrain(backoffMs(stored.attempts));
+            blocked.add(targetKey(stored.target));
+          }
+          return "put";
+        });
+        if (settled === "quarantined") {
+          /* keep quarantine */
         }
       } else {
-        next.status = "failed";
-        next.lastError = result.reason;
-        await (await db()).put(STORE, next);
+        await settleAfterDispatch((stored) => {
+          stored.status = "failed";
+          stored.lastError = result.reason;
+          if (
+            stored.target.kind === "verse" &&
+            (result.reason === "source_generation_mismatch" ||
+              result.reason === "lane_replacement_required" ||
+              result.reason === "lane_replacement_in_progress" ||
+              result.reason === "scripture_text_read_only" ||
+              result.reason === "scripture_fully_locked" ||
+              isLaneFrozen(stored.target.bibleVersion) ||
+              /^http 403$/.test(result.reason))
+          ) {
+            stored.quarantined =
+              laneFreezeReason(stored.target.bibleVersion) ?? result.reason;
+          }
+          return "put";
+        });
       }
     } catch (persistErr) {
       // Best-effort recovery — if IndexedDB itself failed, the op may be
-      // half-written. Force pending so the next drain pass tries again.
+      // half-written. Force pending so the next drain pass tries again —
+      // unless quarantine already owns it.
       try {
-        next.status = "pending";
-        next.lastError = `persist_failed: ${String(persistErr)}`;
-        await (await db()).put(STORE, next);
+        await settleAfterDispatch((stored) => {
+          stored.status = "pending";
+          stored.lastError = `persist_failed: ${String(persistErr)}`;
+          return "put";
+        });
       } catch {
         /* nothing we can do; will be picked up by recoverInFlight on reload */
       }

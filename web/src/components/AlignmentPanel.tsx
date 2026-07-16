@@ -46,6 +46,7 @@ import {
 } from "../lib/alignment";
 import type { TwlRow, VerseDto } from "../sync/api";
 import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
+import { isLaneFrozen } from "../sync/laneFreeze";
 import { lostAlignedWords } from "../lib/alignmentDelta";
 import { useLexicon, type LexiconEntry } from "../hooks/useLexicon";
 import { useAlignmentSuggestions } from "../hooks/useAlignmentSuggestions";
@@ -125,6 +126,17 @@ export interface AlignmentPanelHandle {
   save: (afterCommit?: () => void) => boolean;
   reset: () => void;
   discard: () => void;
+  // Immediate flush of dirty in-memory alignment into the crash-draft store
+  // (skips the debounce). Used by lane-freeze so closing the panel doesn't
+  // drop unsaved drags that hadn't hit IndexedDB yet.
+  flushCrashDraft: () => void;
+  // Snapshot of dirty alignment for quarantine into the shared drafts store.
+  // Null when clean / missing verse.
+  getDirtySnapshot: () => {
+    content: unknown;
+    plainText: string;
+    expectedVersion: number;
+  } | null;
 }
 
 interface Props {
@@ -324,10 +336,24 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       if (!computedInitial || !verse) return;
       const key = alignmentDraftKey(book, chapter, verseNum, bibleVersion);
       const baseVersion = verse.version;
+      const baseGen = verse.source_generation;
       let cancelled = false;
       void alignmentDrafts.get(key).then((rec) => {
         if (cancelled || !rec) return;
+        // Quarantined crash drafts are recovery-only (shared drafts store);
+        // never restore them onto a replaced generation via the aligner path.
+        if (rec.quarantined || isLaneFrozen(bibleVersion)) {
+          void alignmentDrafts.clear(key);
+          return;
+        }
         if (rec.expectedVersion !== baseVersion) {
+          void alignmentDrafts.clear(key);
+          return;
+        }
+        if (
+          rec.sourceGeneration == null ||
+          (baseGen != null && rec.sourceGeneration !== baseGen)
+        ) {
           void alignmentDrafts.clear(key);
           return;
         }
@@ -369,7 +395,9 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       const baseVersion = verse.version;
       const t = setTimeout(() => {
         const content = { verseObjects: serializeAlignment(state) };
-        void alignmentDrafts.set(key, content, baseVersion);
+        void alignmentDrafts.set(key, content, baseVersion, {
+          sourceGeneration: verse.source_generation,
+        });
       }, 400);
       return () => clearTimeout(t);
     }, [state, dirty, verse, book, chapter, verseNum, bibleVersion]);
@@ -875,8 +903,24 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
         save: handleSave,
         reset: handleReset,
         discard: handleReset,
+        flushCrashDraft: () => {
+          if (!dirty || !state || !verse) return;
+          const key = alignmentDraftKey(book, chapter, verseNum, bibleVersion);
+          const content = { verseObjects: serializeAlignment(state) };
+          void alignmentDrafts.set(key, content, verse.version, {
+            sourceGeneration: verse.source_generation,
+          });
+        },
+        getDirtySnapshot: () => {
+          if (!dirty || !state || !verse) return null;
+          return {
+            content: { verseObjects: serializeAlignment(state) },
+            plainText: alignmentPlainText(state),
+            expectedVersion: verse.version,
+          };
+        },
       }),
-      [dirty, handleSave, handleReset],
+      [dirty, handleSave, handleReset, state, verse, book, chapter, verseNum, bibleVersion],
     );
 
 

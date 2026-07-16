@@ -46,6 +46,7 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
     const observers: IntersectionObserver[] = [];
     const initialVisible = new Set<string>();
     for (const d of draftList) {
+      if (d.quarantined) continue;
       if (d.meta.kind !== "verse") continue;
       const sel = `[data-find-cell="${d.meta.chapter}-${d.meta.verse}-${d.meta.bibleVersion}"]`;
       const el = document.querySelector<HTMLElement>(sel);
@@ -76,6 +77,7 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
   const offscreenDrafts = useMemo(() => {
     return draftList.filter(
       (d) =>
+        !d.quarantined &&
         d.meta.kind === "verse" &&
         d.meta.book === book &&
         !visibleKeys.has(d.key) &&

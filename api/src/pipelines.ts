@@ -25,6 +25,10 @@ import { buildTranslateOptions } from "./translateOptions.ts";
 import { applyAssistedContextRef } from "./assistedContextRef.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents";
+import {
+  assertLaneWritable,
+  type LaneKey,
+} from "./scriptureLane";
 
 export const pipelines = new Hono<{
   Bindings: Env;
@@ -200,6 +204,160 @@ function upstreamBase(env: Env): string {
   return env.PIPELINE_API_BASE || DEFAULT_BASE;
 }
 
+/** Source identity stamped onto a pipeline_jobs row at creation. */
+type PipelineSourceStamp = {
+  source_generation: number | null;
+  source_owner: string | null;
+  source_repo: string | null;
+  source_ref: string | null;
+};
+
+/** Per-lane stamps for dual-lane generate (lit/sim may diverge). */
+type PipelineLaneStamp = {
+  generation: number;
+  owner: string;
+  repo: string;
+  ref: string;
+};
+type PipelineSourceStamps = Partial<Record<LaneKey, PipelineLaneStamp>>;
+
+type ResolvedPipelineStamp = {
+  /** Legacy flat columns (first/primary lane) for older readers. */
+  legacy: PipelineSourceStamp;
+  /** Per-lane JSON persisted in source_stamps_json. */
+  stamps: PipelineSourceStamps;
+  stampsJson: string | null;
+};
+
+const EMPTY_SOURCE_STAMP: PipelineSourceStamp = {
+  source_generation: null,
+  source_owner: null,
+  source_repo: null,
+  source_ref: null,
+};
+
+const EMPTY_RESOLVED: ResolvedPipelineStamp = {
+  legacy: EMPTY_SOURCE_STAMP,
+  stamps: {},
+  stampsJson: null,
+};
+
+function laneStampToLegacy(stamp: PipelineLaneStamp): PipelineSourceStamp {
+  return {
+    source_generation: stamp.generation,
+    source_owner: stamp.owner,
+    source_repo: stamp.repo,
+    source_ref: stamp.ref,
+  };
+}
+
+function parseSourceStampsJson(raw: string | null | undefined): PipelineSourceStamps {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as PipelineSourceStamps;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * For generate pipelines that target ULT/UST, assert the lane(s) are writable
+ * and stamp each lane's active generation + source owner/repo/ref independently
+ * (GLT/GST and AVD/NAV routinely diverge). Non-scripture pipelines leave stamps null.
+ */
+async function resolvePipelineSourceStamp(
+  env: Env,
+  pipelineType: string,
+  options: z.infer<typeof PipelineOptions> | undefined | null,
+): Promise<ResolvedPipelineStamp> {
+  if (pipelineType !== "generate") return EMPTY_RESOLVED;
+  const contentTypes = options?.contentTypes ?? ["ult", "ust"];
+  const lanes: LaneKey[] = [];
+  if (contentTypes.includes("ult")) lanes.push("lit");
+  if (contentTypes.includes("ust")) lanes.push("sim");
+  if (lanes.length === 0) return EMPTY_RESOLVED;
+
+  const stamps: PipelineSourceStamps = {};
+  for (const lane of lanes) {
+    const gate = await assertLaneWritable(env, lane, "pipeline");
+    if (!gate.ok) {
+      throw Object.assign(new Error(gate.error), {
+        status: gate.status,
+        detail: gate.detail,
+      });
+    }
+    stamps[lane] = {
+      generation: gate.generation,
+      owner: gate.config.source.owner,
+      repo: gate.config.source.repo,
+      ref: gate.config.source.ref,
+    };
+  }
+  const primary = stamps.lit ?? stamps.sim!;
+  return {
+    stamps,
+    stampsJson: JSON.stringify(stamps),
+    legacy: laneStampToLegacy(primary),
+  };
+}
+
+/** Re-check stamped generate job still matches live per-lane identity. */
+async function assertPipelineStampStillValid(
+  env: Env,
+  resolved: ResolvedPipelineStamp,
+  contentTypes: string[] | undefined,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const lanes: LaneKey[] = [];
+  if ((contentTypes ?? ["ult", "ust"]).includes("ult")) lanes.push("lit");
+  if ((contentTypes ?? ["ult", "ust"]).includes("ust")) lanes.push("sim");
+  if (lanes.length === 0) return { ok: true };
+
+  for (const lane of lanes) {
+    const stamp = resolved.stamps[lane]
+      ?? (resolved.legacy.source_generation != null
+        ? {
+            generation: resolved.legacy.source_generation,
+            owner: resolved.legacy.source_owner!,
+            repo: resolved.legacy.source_repo!,
+            ref: resolved.legacy.source_ref!,
+          }
+        : null);
+    if (!stamp) return { ok: false, error: "pipeline_source_generation_required" };
+    const gate = await assertLaneWritable(env, lane, "pipeline");
+    if (!gate.ok) return { ok: false, error: gate.error };
+    if (
+      gate.generation !== stamp.generation ||
+      gate.config.source.owner !== stamp.owner ||
+      gate.config.source.repo !== stamp.repo ||
+      gate.config.source.ref !== stamp.ref
+    ) {
+      return { ok: false, error: "pipeline_source_generation_mismatch" };
+    }
+  }
+  return { ok: true };
+}
+
+function resolvedFromJobRow(job: {
+  source_generation: number | null;
+  source_owner: string | null;
+  source_repo: string | null;
+  source_ref: string | null;
+  source_stamps_json?: string | null;
+}): ResolvedPipelineStamp {
+  const stamps = parseSourceStampsJson(job.source_stamps_json);
+  const legacy: PipelineSourceStamp = {
+    source_generation: job.source_generation,
+    source_owner: job.source_owner,
+    source_repo: job.source_repo,
+    source_ref: job.source_ref,
+  };
+  return {
+    legacy,
+    stamps,
+    stampsJson: job.source_stamps_json ?? (Object.keys(stamps).length ? JSON.stringify(stamps) : null),
+  };
+}
+
 // Article translate jobs carry no book/chapter; they reuse the pipeline_jobs
 // scope columns via a stable per-article sentinel so dedup keys per article
 // while fitting the (64-bit) integer chapter column. The full 32-bit hash keeps
@@ -347,7 +505,8 @@ export async function dispatchNext(env: Env): Promise<void> {
   // claimed (the NOT EXISTS guard above prevents a second).
   const job = await env.DB.prepare(
     `SELECT job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-            session_key, options_json
+            session_key, options_json,
+            source_generation, source_owner, source_repo, source_ref, source_stamps_json
        FROM pipeline_jobs WHERE state = 'dispatching' LIMIT 1`,
   ).first<{
     job_id: string;
@@ -358,6 +517,11 @@ export async function dispatchNext(env: Env): Promise<void> {
     end_chapter: number;
     session_key: string;
     options_json: string | null;
+    source_generation: number | null;
+    source_owner: string | null;
+    source_repo: string | null;
+    source_ref: string | null;
+    source_stamps_json: string | null;
   }>();
   if (!job) return;
 
@@ -384,6 +548,21 @@ export async function dispatchNext(env: Env): Promise<void> {
       options = JSON.parse(job.options_json);
     } catch {
       /* corrupt snapshot — dispatch without options rather than wedge */
+    }
+  }
+
+  // Generate jobs that target scripture must still match the stamp captured at
+  // create. A freeze / activation mid-queue → fail closed (don't POST upstream).
+  if (job.pipeline_type === "generate") {
+    const contentTypes =
+      options && typeof options === "object" && "contentTypes" in options
+        ? (options as { contentTypes?: string[] }).contentTypes
+        : undefined;
+    const stamp = resolvedFromJobRow(job);
+    const check = await assertPipelineStampStillValid(env, stamp, contentTypes);
+    if (!check.ok) {
+      await fail("lane_fenced", check.error);
+      return;
     }
   }
 
@@ -984,6 +1163,24 @@ pipelines.post("/start", requireEditor, async (c) => {
     }
   }
 
+  // Stamp lane generation + source identity at create so a mid-run replacement
+  // cannot silently land applies onto a new generation.
+  let sourceStamp: ResolvedPipelineStamp = EMPTY_RESOLVED;
+  try {
+    sourceStamp = await resolvePipelineSourceStamp(
+      c.env,
+      parsed.data.pipelineType,
+      (mergedOptions ?? parsed.data.options) as z.infer<typeof PipelineOptions> | undefined,
+    );
+  } catch (e) {
+    const status = (e as { status?: number }).status;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (status === 403 || status === 409 || status === 422) {
+      return c.json({ error: msg, detail: (e as { detail?: unknown }).detail }, status as 403 | 409 | 422);
+    }
+    throw e;
+  }
+
   // Enqueue. The job goes to the bot only when dispatchNext claims the slot.
   const jobId = crypto.randomUUID();
   const optionsJson = mergedOptions ? JSON.stringify(mergedOptions) : null;
@@ -997,9 +1194,10 @@ pipelines.post("/start", requireEditor, async (c) => {
     `INSERT INTO pipeline_jobs (
        job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
        session_key, state, priority, options_json, follow_up_options,
-       follow_up_chain, created_at, updated_at
+       follow_up_chain, source_generation, source_owner, source_repo, source_ref,
+       source_stamps_json, created_at, updated_at
      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 0, ?8, ?9, ?10,
-               unixepoch(), unixepoch())`,
+               ?11, ?12, ?13, ?14, ?15, unixepoch(), unixepoch())`,
   )
     .bind(
       jobId,
@@ -1012,6 +1210,11 @@ pipelines.post("/start", requireEditor, async (c) => {
       optionsJson,
       followUpJson,
       followUpChainJson,
+      sourceStamp.legacy.source_generation,
+      sourceStamp.legacy.source_owner,
+      sourceStamp.legacy.source_repo,
+      sourceStamp.legacy.source_ref,
+      sourceStamp.stampsJson,
     )
     .run();
 
@@ -1162,6 +1365,15 @@ async function enqueueFollowUp(env: Env, input: FollowUpInput): Promise<void> {
   const childSessionKey = `${input.parentSessionKey}/followup`;
   const childJobId = `${input.parentJobId}:followup`;
 
+  // Inherit the parent's source stamp so the follow-up apply fences the same
+  // generation the parent was started against.
+  const parentStamp = await env.DB.prepare(
+    `SELECT source_generation, source_owner, source_repo, source_ref, source_stamps_json
+       FROM pipeline_jobs WHERE job_id = ?1`,
+  )
+    .bind(input.parentJobId)
+    .first<PipelineSourceStamp & { source_stamps_json: string | null }>();
+
   // Claim + insert as one atomic batch so a crash between them can't orphan
   // the child or lose the follow-up. The parent guard (follow_up_job_id IS
   // NULL) means only the first poll wins; the deterministic childJobId means a
@@ -1177,8 +1389,11 @@ async function enqueueFollowUp(env: Env, input: FollowUpInput): Promise<void> {
       .prepare(
         `INSERT INTO pipeline_jobs (
            job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
-           session_key, state, priority, options_json, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 1, ?8, unixepoch(), unixepoch())
+           session_key, state, priority, options_json,
+           source_generation, source_owner, source_repo, source_ref, source_stamps_json,
+           created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 1, ?8,
+                   ?9, ?10, ?11, ?12, ?13, unixepoch(), unixepoch())
          ON CONFLICT(job_id) DO NOTHING`,
       )
       .bind(
@@ -1190,6 +1405,11 @@ async function enqueueFollowUp(env: Env, input: FollowUpInput): Promise<void> {
         input.endChapter,
         childSessionKey,
         followUpOptions,
+        parentStamp?.source_generation ?? null,
+        parentStamp?.source_owner ?? null,
+        parentStamp?.source_repo ?? null,
+        parentStamp?.source_ref ?? null,
+        parentStamp?.source_stamps_json ?? null,
       ),
   ]);
 }
@@ -1233,6 +1453,20 @@ async function enqueueFollowUpFromChain(env: Env, input: FollowUpChainInput): Pr
   const childChainJson = rest.length > 0 ? JSON.stringify(rest) : null;
   const childOptionsJson = next.options ? JSON.stringify(next.options) : null;
 
+  // Re-stamp when the next chain link is a generate job; otherwise inherit.
+  let stamp: ResolvedPipelineStamp = EMPTY_RESOLVED;
+  if (next.pipelineType === "generate") {
+    stamp = await resolvePipelineSourceStamp(env, "generate", next.options ?? null);
+  } else {
+    const parent = await env.DB.prepare(
+      `SELECT source_generation, source_owner, source_repo, source_ref, source_stamps_json
+         FROM pipeline_jobs WHERE job_id = ?1`,
+    )
+      .bind(input.parentJobId)
+      .first<PipelineSourceStamp & { source_stamps_json: string | null }>();
+    if (parent) stamp = resolvedFromJobRow(parent);
+  }
+
   await env.DB.batch([
     env.DB
       .prepare(
@@ -1245,8 +1479,10 @@ async function enqueueFollowUpFromChain(env: Env, input: FollowUpChainInput): Pr
         `INSERT INTO pipeline_jobs (
            job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
            session_key, state, priority, options_json, follow_up_chain,
+           source_generation, source_owner, source_repo, source_ref, source_stamps_json,
            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 1, ?8, ?9, unixepoch(), unixepoch())
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', 1, ?8, ?9,
+                   ?10, ?11, ?12, ?13, ?14, unixepoch(), unixepoch())
          ON CONFLICT(job_id) DO NOTHING`,
       )
       .bind(
@@ -1259,6 +1495,11 @@ async function enqueueFollowUpFromChain(env: Env, input: FollowUpChainInput): Pr
         childSessionKey,
         childOptionsJson,
         childChainJson,
+        stamp.legacy.source_generation,
+        stamp.legacy.source_owner,
+        stamp.legacy.source_repo,
+        stamp.legacy.source_ref,
+        stamp.stampsJson,
       ),
   ]);
 }

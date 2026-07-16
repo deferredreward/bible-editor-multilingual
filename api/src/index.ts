@@ -103,7 +103,7 @@ app.use("*", (c, next) => {
   return cors({
     origin: (origin) => (origin && list.includes(origin) ? origin : null),
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token"],
+    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation"],
     exposeHeaders: ["ETag"],
   })(c, next);
 });
