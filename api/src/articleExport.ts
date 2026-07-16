@@ -13,6 +13,9 @@
 // module's private branch-reset/base64 helpers.
 
 import type { Env } from "./index";
+// .ts extension so articleExport.test.mjs keeps running under the node
+// strip-types runner (extensionless internal imports don't resolve there).
+import { gateArticleForExport } from "./preDraftSnapshot.ts";
 
 export const ARTICLE_RESOURCES = ["tw", "ta"] as const;
 export type ArticleResource = (typeof ARTICLE_RESOURCES)[number];
@@ -85,14 +88,31 @@ export async function renderArticleFiles(
   topDir: string,
 ): Promise<{ files: ArticleFile[]; count: number }> {
   const rs = await env.DB.prepare(
-    `SELECT path, target_md FROM article_units
+    `SELECT path, target_md, translation_state, pre_draft_json FROM article_units
       WHERE resource = ?1 AND deleted_at IS NULL AND target_md IS NOT NULL
         AND path LIKE ?2
       ORDER BY path`,
   )
     .bind(resource, topDirLikePrefix(topDir))
-    .all<{ path: string; target_md: string }>();
-  const files: ArticleFile[] = (rs.results ?? []).map((r) => ({ path: r.path, content: r.target_md }));
+    .all<{
+      path: string;
+      target_md: string;
+      translation_state: string | null;
+      pre_draft_json: string | null;
+    }>();
+  // Export gate (migration 0049): a non-validated AI draft never reaches DCS.
+  // Draft with a snapshot → render the last-published md; snapshot says
+  // "never previously translated" (target_md null) → omit the file entirely
+  // (additive export: nothing to keep alive on the branch); legacy draft with
+  // no snapshot → render current content, logged (accepted one-time exception).
+  const files: ArticleFile[] = [];
+  for (const r of rs.results ?? []) {
+    const { content, legacy } = gateArticleForExport(r.translation_state, r.pre_draft_json, r.target_md);
+    if (legacy) {
+      console.log(`export gate: ${resource} ${r.path} is ${r.translation_state} with no pre-draft snapshot (legacy) — exporting current content`);
+    }
+    if (content != null) files.push({ path: r.path, content });
+  }
   return { files, count: files.length };
 }
 

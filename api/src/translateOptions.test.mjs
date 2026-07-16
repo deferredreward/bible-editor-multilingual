@@ -40,7 +40,7 @@ console.log("[buildTranslateOptions] default (no overrides), ar-bsoj");
     !("contextRef" in opts),
     "contextRef is OMITTED by default — the §4 guard fix (no auto-derive)",
   );
-  assert(opts.delivery === "branch", "delivery defaults to branch");
+  assert(opts.delivery === "editor", "delivery defaults to editor (bot never pushes to Door43)");
   assert(opts.branchOnly === true, "branchOnly defaults to true");
   assert(opts.model === "opus", "model defaults to opus");
   assert(opts.direction === "rtl", "direction derived from config (ar → rtl)");
@@ -72,6 +72,8 @@ console.log("[buildTranslateOptions] other overrides fold in");
   });
   assert(opts.model === "sonnet", "model override applied");
   assert(opts.delivery === "path", "delivery override applied");
+  const branchOpts = buildTranslateOptions(arBsoj, { delivery: "branch" });
+  assert(branchOpts.delivery === "branch", "explicit 'branch' override still accepted (one-release compat)");
   assert(Array.isArray(opts.rowIds) && opts.rowIds.length === 2, "rowIds folded in");
   assert(opts.verseStart === 3 && opts.verseEnd === 5, "verse range folded in");
   assert(opts.sourceRef === "unfoldingWord/en_tn@abc1234", "sourceRef override (pinned SHA)");

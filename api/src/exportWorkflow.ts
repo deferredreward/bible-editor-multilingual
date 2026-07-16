@@ -80,6 +80,7 @@ import {
   verifyExportFencingToken,
 } from "./scriptureLaneReplacement";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
+import { gateTsvRowForExport } from "./preDraftSnapshot";
 import { lintUsfmVerses } from "./lint";
 import {
   renderContextPack,
@@ -1380,7 +1381,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TnRow>();
-      return { content: rs.results.length === 0 ? "" : buildTnTsv(rs.results), rowCount: rs.results.length, sortOrderUpdates: [] };
+      // Export gate (migration 0049): a non-validated AI draft must never reach
+      // DCS — emit the pre-draft snapshot instead. Row count is unchanged, so
+      // the shrink guard is unaffected.
+      const gated = rs.results.map((r) => {
+        const { row, legacy } = gateTsvRowForExport(r, ["note", "tags"]);
+        if (legacy) {
+          console.log(`export gate: tn ${book}/${r.id} is ${r.translation_state} with no pre-draft snapshot (legacy) — exporting current content`);
+        }
+        return row;
+      });
+      return { content: gated.length === 0 ? "" : buildTnTsv(gated), rowCount: gated.length, sortOrderUpdates: [] };
     }
     if (resource === "tq") {
       const rs = await db
@@ -1390,7 +1401,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         )
         .bind(book)
         .all<TqRow>();
-      return { content: rs.results.length === 0 ? "" : buildTqTsv(rs.results), rowCount: rs.results.length, sortOrderUpdates: [] };
+      // Same non-validated-draft export gate as tn above.
+      const gated = rs.results.map((r) => {
+        const { row, legacy } = gateTsvRowForExport(r, ["question", "response"]);
+        if (legacy) {
+          console.log(`export gate: tq ${book}/${r.id} is ${r.translation_state} with no pre-draft snapshot (legacy) — exporting current content`);
+        }
+        return row;
+      });
+      return { content: gated.length === 0 ? "" : buildTqTsv(gated), rowCount: gated.length, sortOrderUpdates: [] };
     }
     if (resource === "twl") {
       const rs = await db
