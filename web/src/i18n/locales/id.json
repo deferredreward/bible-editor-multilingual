@@ -626,12 +626,15 @@
         "cancelled": "Replacement cancelled"
       },
       "errors": {
-        "meta_missing_for_book": "Konten saat ini pada jalur ini untuk {{book}} tidak memiliki data header USFM, sehingga tidak dapat diambil snapshot-nya. Impor ulang {{book}} atau hubungi admin.",
-        "verses_missing_for_book": "Konten saat ini pada jalur ini untuk {{book}} memiliki data header tetapi tidak ada ayat.",
         "replacement_already_active": "Penggantian sudah berjalan untuk jalur ini.",
         "lane_lease_held": "Jalur ini sedang sibuk (sebuah impor atau ekspor sedang menahannya). Coba lagi sebentar lagi.",
         "confirmation_required": "Konfirmasi diperlukan untuk memulai penggantian.",
-        "lane_replacement_required": "Jalur ini memerlukan penggantian sumber sebelum dapat diedit."
+        "lane_replacement_required": "Jalur ini memerlukan penggantian sumber sebelum dapat diedit.",
+      "job_not_found": "Tugas penggantian ini tidak dapat ditemukan. Mungkin sudah dibatalkan atau selesai.",
+      "job_not_ready": "Penggantian ini belum siap untuk diaktifkan.",
+      "export_lease_held": "Tidak dapat mengaktifkan sekarang: ekspor sedang berlangsung untuk jalur ini. Coba lagi sebentar lagi.",
+      "export_lease_grace": "Tidak dapat mengaktifkan sekarang: menunggu ekspor yang sedang berlangsung selesai. Coba lagi sebentar lagi.",
+      "activation_cas_failed": "Aktivasi gagal karena jalur berubah di tengah proses. Segarkan dan coba lagi."
       },
       "saved": "Lane config saved."
     }

@@ -1756,12 +1756,14 @@ function d1Batch(db, fns) {
   console.log("  ✓ trigger blocks old lease INSERT after exclusive_owner claim");
 }
 
-// -- 30. snapshotRequiredBooks tolerates verses-without-meta ----------------
+// -- 30. snapshotRequiredBooks: verses-only, tolerant of missing meta -------
 // Regression: a preset switch quarantines existing content and requires a
 // replacement. Starting that replacement must NOT hard-fail just because the
 // content being replaced is internally inconsistent (e.g. ZEC has verses but no
-// book_usfm_meta row). The snapshot returns the union of books present in either
-// table so the workflow can proceed and re-fetch them from the new source.
+// book_usfm_meta row). The snapshot is based on `verses` alone -- the sole
+// authoritative "what's active" signal -- so a missing meta row no longer
+// blocks the replacement, and a stray meta-only row (no matching verses) is
+// NOT pulled in as a phantom required book.
 
 // Minimal D1-shaped shim over node:sqlite for the one async function under test.
 function d1EnvFor(db) {
@@ -1803,17 +1805,18 @@ await (async () => {
 
   const snap = await snapshotRequiredBooks(env, "ULT", 1);
   assert.ok(!("error" in snap), "no error returned for verses-without-meta");
-  assert.deepEqual(snap.books, ["PSA", "ZEC"], "union of books present, sorted");
+  assert.deepEqual(snap.books, ["PSA", "ZEC"], "verses-having books required, sorted");
 
-  // Reverse direction (meta-only book) is also tolerated and included.
+  // Meta-only book (OBA: header row, zero verses) must NOT become a phantom
+  // required book -- meta is enrichment, not an independent membership signal.
   db.prepare(
     `INSERT INTO book_usfm_meta (book, bible_version, source_generation, headers_json)
      VALUES ('OBA', 'ULT', 1, '[]')`,
   ).run();
   const snap2 = await snapshotRequiredBooks(env, "ULT", 1);
-  assert.deepEqual(snap2.books, ["OBA", "PSA", "ZEC"], "meta-only book also required");
+  assert.deepEqual(snap2.books, ["PSA", "ZEC"], "meta-only book excluded from required set");
 
-  console.log("  [ok] snapshotRequiredBooks tolerates verses/meta mismatch (union)");
+  console.log("  [ok] snapshotRequiredBooks: verses-only, ignores meta-only phantom books");
 })();
 
 console.log("\nscriptureLaneReplacement tests passed");

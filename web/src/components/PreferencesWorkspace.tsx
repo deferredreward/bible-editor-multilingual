@@ -68,25 +68,31 @@ const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
   dry_run: "preferences.exportStatus.dry_run",
 };
 
-// Lane replacement/activation errors arrive from the server as bare codes (some with a
-// `:book` suffix, e.g. `meta_missing_for_book:ZEC`). Map known codes to translated copy;
-// fall back to the raw string for anything unrecognized so nothing is hidden.
+// Lane replacement/activation errors arrive from the server as bare codes. A few
+// (e.g. `lane_busy:sim`) carry a `:detail` suffix; the split below tolerates that
+// shape generically. Map known codes to translated copy; fall back to the raw
+// string for anything unrecognized so nothing is hidden.
 const LANE_ERROR_CODES = new Set([
-  "meta_missing_for_book",
-  "verses_missing_for_book",
   "replacement_already_active",
   "lane_lease_held",
   "confirmation_required",
   "lane_replacement_required",
+  "job_not_found",
+  "job_not_ready",
+  "export_lease_held",
+  "export_lease_grace",
+  "activation_cas_failed",
 ]);
 
 function laneErrorMessage(
   t: (key: string, opts?: Record<string, unknown>) => string,
   raw: string,
 ): string {
-  const [code, book] = raw.split(/:(.*)/s, 2);
+  const sep = raw.indexOf(":");
+  const code = sep === -1 ? raw : raw.slice(0, sep);
+  const book = sep === -1 ? undefined : raw.slice(sep + 1);
   if (LANE_ERROR_CODES.has(code)) {
-    return t(`preferences.scriptureLanes.errors.${code}`, book ? { book } : undefined);
+    return t(`preferences.scriptureLanes.errors.${code}`, book !== undefined ? { book } : undefined);
   }
   return raw;
 }

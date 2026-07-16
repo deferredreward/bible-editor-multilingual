@@ -654,12 +654,15 @@
         "cancelled": "Replacement cancelled"
       },
       "errors": {
-        "meta_missing_for_book": "Le contenu actuel de cette voie pour {{book}} ne contient pas ses données d'en-tête USFM, il ne peut donc pas être capturé. Réimportez {{book}} ou contactez un administrateur.",
-        "verses_missing_for_book": "Le contenu actuel de cette voie pour {{book}} contient des données d'en-tête mais aucun verset.",
         "replacement_already_active": "Un remplacement est déjà en cours pour cette voie.",
         "lane_lease_held": "Cette voie est occupée (un import ou un export la verrouille). Réessayez sous peu.",
         "confirmation_required": "Une confirmation est requise pour lancer un remplacement.",
-        "lane_replacement_required": "Cette voie nécessite un remplacement de source avant de pouvoir être modifiée."
+        "lane_replacement_required": "Cette voie nécessite un remplacement de source avant de pouvoir être modifiée.",
+      "job_not_found": "Ce travail de remplacement est introuvable. Il a peut-être déjà été annulé ou terminé.",
+      "job_not_ready": "Ce remplacement n'est pas encore prêt à être activé.",
+      "export_lease_held": "Impossible d'activer pour le moment : un export est en cours pour cette voie. Réessayez sous peu.",
+      "export_lease_grace": "Impossible d'activer pour le moment : en attente de la fin d'un export en cours. Réessayez sous peu.",
+      "activation_cas_failed": "L'activation a échoué car la voie a changé entre-temps. Actualisez et réessayez."
       },
       "saved": "Lane config saved."
     }

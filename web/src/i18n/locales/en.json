@@ -213,12 +213,15 @@
         "cancelled": "Replacement cancelled"
       },
       "errors": {
-        "meta_missing_for_book": "This lane's current content for {{book}} is missing its USFM header data, so it can't be snapshotted. Re-import {{book}} or contact an admin.",
-        "verses_missing_for_book": "This lane's current content for {{book}} has header data but no verses.",
         "replacement_already_active": "A replacement is already running for this lane.",
         "lane_lease_held": "This lane is busy (an import or export is holding it). Try again shortly.",
         "confirmation_required": "Confirmation is required to start a replacement.",
-        "lane_replacement_required": "This lane needs a source replacement before it can be edited."
+        "lane_replacement_required": "This lane needs a source replacement before it can be edited.",
+        "job_not_found": "This replacement job could not be found. It may have already been cancelled or completed.",
+        "job_not_ready": "This replacement isn't ready to activate yet.",
+        "export_lease_held": "Cannot activate right now: an export is in progress for this lane. Try again shortly.",
+        "export_lease_grace": "Cannot activate right now: waiting for an in-progress export to finish. Try again shortly.",
+        "activation_cas_failed": "Activation failed because the lane changed underneath it. Refresh and try again."
       },
       "saved": "Lane config saved."
     }
