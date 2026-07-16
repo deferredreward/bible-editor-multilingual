@@ -589,6 +589,7 @@
     "projectModeSaved": "Hali ya mradi imesasishwa kwa kila mtu.",
     "projectModeForbidden": "Msimamizi pekee anaweza kubadilisha hali ya mradi.",
     "projectModeFailed": "Imeshindwa kusasisha hali ya mradi. Jaribu tena.",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "Hali ya usaidizi",
     "assistedModeHelp": "Ikiwashwa, utekelezaji wa tafsiri hutuma kifurushi cha muktadha wa timu (muhtasari, istilahi, mifano iliyothibitishwa) kwa AI.",
     "assistedModeDisabled": "Hamisha kifurushi cha muktadha kwa mafanikio kabla ya kuwasha hali ya usaidizi — kifurushi tupu kinashindwa kutekeleza AI.",

@@ -589,6 +589,7 @@
     "projectModeSaved": "سب کے لیے منصوبہ موڈ اپ ڈیٹ ہو گیا۔",
     "projectModeForbidden": "صرف ایک ایڈمن منصوبہ موڈ تبدیل کر سکتا ہے۔",
     "projectModeFailed": "منصوبہ موڈ اپ ڈیٹ نہ ہو سکا۔ دوبارہ کوشش کریں۔",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "معاون موڈ",
     "assistedModeHelp": "جب آن ہو، ترجمہ رنز ٹیم کا سیاق و سباق پیک (خلاصہ، اصطلاحات، تصدیق شدہ مثالیں) AI کو بھیجتے ہیں۔",
     "assistedModeDisabled": "معاون موڈ فعال کرنے سے پہلے سیاق و سباق پیک کامیابی سے برآمد کریں — خالی پیک AI رن ناکام کر دیتا ہے۔",

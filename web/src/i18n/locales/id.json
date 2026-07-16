@@ -575,6 +575,7 @@
     "projectModeSaved": "Mode proyek diperbarui untuk semua orang.",
     "projectModeForbidden": "Hanya admin yang dapat mengubah mode proyek.",
     "projectModeFailed": "Tidak dapat memperbarui mode proyek. Coba lagi.",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "Mode bantuan",
     "assistedModeHelp": "Saat aktif, proses terjemahan mengirim paket konteks tim (ringkasan, istilah, contoh tervalidasi) ke AI.",
     "assistedModeDisabled": "Ekspor paket konteks berhasil sebelum mengaktifkan mode bantuan — paket kosong membuat proses AI gagal.",

@@ -161,6 +161,7 @@
     "projectModeSaved": "Project mode updated for everyone.",
     "projectModeForbidden": "Only an admin can change the project mode.",
     "projectModeFailed": "Could not update the project mode. Try again.",
+    "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "assistedMode": "Assisted mode",
     "assistedModeHelp": "When on, translate runs send the team's context pack (brief, terms, validated examples) to the AI.",
     "assistedModeDisabled": "Export a context pack successfully before enabling assisted mode — an empty pack fails the AI run.",

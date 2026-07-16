@@ -593,10 +593,15 @@ function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Ro
     setMessage(null);
     try {
       await selectProjectPreset(selected);
+      // PUT now returns overlay laneState, but re-fetch so a partial/older
+      // worker response cannot leave the shared cache without lane rows.
+      await refreshProjectConfig().catch(() => {});
       setMessage({ severity: "success", text: t("preferences.projectModeSaved") });
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) {
         setMessage({ severity: "error", text: t("preferences.projectModeForbidden") });
+      } else if (e instanceof ApiError && e.status === 409) {
+        setMessage({ severity: "error", text: t("preferences.projectModeLaneBusy") });
       } else {
         setMessage({ severity: "error", text: t("preferences.projectModeFailed") });
       }

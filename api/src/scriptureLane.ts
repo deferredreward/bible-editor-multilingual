@@ -133,6 +133,49 @@ export async function getLaneState(env: Env, lane: LaneKey): Promise<LaneStateRo
  * sets replacement_required and stores mandatory AVD/NAV pending target;
  * active_config stays as provenance for quarantined gen-1 and reads are blocked.
  */
+/** Canonical active config for a lane under the given project preset. */
+export function desiredLaneConfig(cfg: ProjectConfig, lane: LaneKey): ScriptureLaneConfig {
+  return cfg.preset === "ar-bsoj" ? bsojLaneConfig(lane) : defaultLaneConfig(cfg, lane);
+}
+
+export function sameLaneSource(a: ScriptureLaneConfig, b: ScriptureLaneConfig): boolean {
+  return (
+    a.source.owner === b.source.owner &&
+    a.source.repo === b.source.repo &&
+    (a.source.ref || "master") === (b.source.ref || "master")
+  );
+}
+
+export type LaneReconcilePlan =
+  | { action: "install"; config: ScriptureLaneConfig }
+  | { action: "quarantine"; provenance: ScriptureLaneConfig; pending: ScriptureLaneConfig };
+
+/**
+ * Decide how an existing lane row should look after a project-preset change.
+ * Content under a mismatched source identity must not silently keep serving
+ * (or advertise) the previous org's repos — force replacement into `desired`.
+ */
+export function planLaneReconcile(
+  current: ScriptureLaneConfig,
+  desired: ScriptureLaneConfig,
+  verseCount: number,
+): LaneReconcilePlan {
+  if (verseCount === 0 || sameLaneSource(current, desired)) {
+    return { action: "install", config: desired };
+  }
+  return {
+    action: "quarantine",
+    provenance: {
+      label: "LEGACY",
+      source: current.source,
+      export: null,
+      textReadOnly: true,
+      alignmentWritable: false,
+    },
+    pending: desired,
+  };
+}
+
 export async function ensureLaneState(env: Env): Promise<void> {
   const cfg = await getProjectConfig(env);
   for (const lane of ["lit", "sim"] as LaneKey[]) {
@@ -164,7 +207,7 @@ export async function ensureLaneState(env: Env): Promise<void> {
       if (verseCount > 0) {
         // Populated under wrong glt/gst: quarantine gen-1; do not activate AVD/NAV yet.
         activeCfg = {
-          label: lane === "lit" ? "LEGACY" : "LEGACY",
+          label: "LEGACY",
           source: { owner: "BSOJ", repo: lane === "lit" ? "ar_glt" : "ar_gst", ref: "master" },
           export: null,
           textReadOnly: true,
@@ -190,6 +233,87 @@ export async function ensureLaneState(env: Env): Promise<void> {
       )
       .bind(lane, JSON.stringify(activeCfg), exportsBlocked, replacementRequired, pendingTarget)
       .run();
+  }
+}
+
+/**
+ * Rewrite both lane rows to match `cfg` after an admin project-mode switch.
+ * `ensureLaneState` only INSERT OR IGNOREs — without this, the first preset's
+ * quarantine (e.g. BSOJ LEGACY glt/gst + AVD/NAV pending) sticks forever and
+ * surfaces under every later preset.
+ *
+ * Throws `lane_busy:<lane>` when a replacement job or exclusive lease is held.
+ */
+export async function reconcileLaneStateForPreset(env: Env, cfg: ProjectConfig): Promise<void> {
+  await ensureLaneState(env);
+  for (const lane of ["lit", "sim"] as LaneKey[]) {
+    const row = await getLaneState(env, lane);
+    if (!row) throw new Error(`lane_state_missing:${lane}`);
+    if (row.replacement_job_id || row.exclusive_owner) {
+      throw new Error(`lane_busy:${lane}`);
+    }
+
+    const bv = bibleVersionForLane(lane);
+    let verseCount = 0;
+    try {
+      const countRow = await env.DB
+        .prepare(`SELECT COUNT(*) AS n FROM verses WHERE bible_version = ?1`)
+        .bind(bv)
+        .first<{ n: number }>();
+      verseCount = countRow?.n ?? 0;
+    } catch {
+      verseCount = 0;
+    }
+
+    const current = parseLaneConfig(row.active_config_json);
+    const desired = desiredLaneConfig(cfg, lane);
+    const plan = planLaneReconcile(current, desired, verseCount);
+
+    if (plan.action === "install") {
+      await env.DB
+        .prepare(
+          `UPDATE scripture_lane_state SET
+             active_config_json = ?2,
+             config_revision = config_revision + 1,
+             replacement_required = 0,
+             pending_target_json = NULL,
+             exports_blocked = 0,
+             updated_at = unixepoch()
+           WHERE lane = ?1
+             AND replacement_job_id IS NULL
+             AND exclusive_owner IS NULL`,
+        )
+        .bind(lane, JSON.stringify(plan.config))
+        .run();
+    } else {
+      await env.DB
+        .prepare(
+          `UPDATE scripture_lane_state SET
+             active_config_json = ?2,
+             config_revision = config_revision + 1,
+             replacement_required = 1,
+             pending_target_json = ?3,
+             exports_blocked = 1,
+             updated_at = unixepoch()
+           WHERE lane = ?1
+             AND replacement_job_id IS NULL
+             AND exclusive_owner IS NULL`,
+        )
+        .bind(lane, JSON.stringify(plan.provenance), JSON.stringify(plan.pending))
+        .run();
+    }
+
+    const after = await getLaneState(env, lane);
+    if (
+      !after ||
+      after.replacement_job_id ||
+      after.exclusive_owner ||
+      (plan.action === "install" && after.replacement_required) ||
+      (plan.action === "quarantine" && !after.replacement_required)
+    ) {
+      // Lost the race to a lease/job, or UPDATE matched 0 rows.
+      throw new Error(`lane_busy:${lane}`);
+    }
   }
 }
 
@@ -429,9 +553,35 @@ export function lanePublicState(row: LaneStateRow): Record<string, unknown> {
   };
 }
 
+/**
+ * Older Workers never rewrote lane rows on preset switch, so a BSOJ quarantine
+ * can stick under English presets. Heal when pending/active identity disagrees
+ * with the current preset and no job/lease is held.
+ */
+export async function maybeHealLaneStateForPreset(env: Env, cfg: ProjectConfig): Promise<void> {
+  await ensureLaneState(env);
+  for (const lane of ["lit", "sim"] as LaneKey[]) {
+    const row = await getLaneState(env, lane);
+    if (!row || row.replacement_job_id || row.exclusive_owner) return;
+    const desired = desiredLaneConfig(cfg, lane);
+    const reference = row.replacement_required && row.pending_target_json
+      ? (JSON.parse(row.pending_target_json) as ScriptureLaneConfig)
+      : parseLaneConfig(row.active_config_json);
+    if (!sameLaneSource(reference, desired)) {
+      await reconcileLaneStateForPreset(env, cfg);
+      return;
+    }
+  }
+}
+
 /** Materialize labels into ProjectConfig from active lane state (presentation). */
 export async function overlayLaneLabels(env: Env, cfg: ProjectConfig): Promise<ProjectConfig> {
   await ensureLaneState(env);
+  try {
+    await maybeHealLaneStateForPreset(env, cfg);
+  } catch {
+    // Busy lanes: leave sticky state; admin must finish the job first.
+  }
   const lit = await getLaneState(env, "lit");
   const sim = await getLaneState(env, "sim");
   if (!lit || !sim) return cfg;
