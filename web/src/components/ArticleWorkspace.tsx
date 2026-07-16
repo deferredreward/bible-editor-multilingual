@@ -262,7 +262,10 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
               <CircularProgress size={20} />
             </Stack>
           ) : articles.length === 0 ? (
-            // Empty workspace — offer to populate from the imported books.
+            // Empty workspace — offer to populate from the imported books, and
+            // (when the user has typed an id) to add that one article straight
+            // from source. Without the Add option here, manual seeding would be
+            // unreachable on a fresh resource — the case that needs it most.
             <Stack spacing={1.5} sx={{ p: 2 }} alignItems="flex-start">
               <Typography variant="body2" color="text.secondary">
                 {t("articles.noArticles")}
@@ -276,6 +279,17 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
               >
                 {t("articles.populateFromBooks")}
               </Button>
+              {query && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}
+                  onClick={handleAdd}
+                >
+                  {t("articles.addArticle", { id: query })}
+                </Button>
+              )}
             </Stack>
           ) : filtered.length === 0 ? (
             // No local match — offer to add the typed id straight from source.
