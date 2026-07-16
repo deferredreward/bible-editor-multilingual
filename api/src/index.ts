@@ -15,6 +15,7 @@ import { pipelines, pollAllNonTerminal } from "./pipelines";
 import { pendingImports } from "./pendingImports";
 import { alerts } from "./alerts";
 import { projectConfig } from "./projectConfigRoutes";
+import { orgRoutes } from "./orgRoutes";
 import { articles } from "./articles";
 import { translationMemory } from "./translationMemory";
 import { books } from "./bookImport";
@@ -191,6 +192,7 @@ app.route("/api/pipelines", pipelines);
 app.route("/api/pending-imports", pendingImports);
 app.route("/api/alerts", alerts);
 app.route("/api/project-config", projectConfig);
+app.route("/api/orgs", orgRoutes);
 app.route("/api/articles", articles);
 app.route("/api/translation-memory", translationMemory);
 

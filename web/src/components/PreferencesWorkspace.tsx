@@ -43,12 +43,14 @@ import {
   type Role,
   type LaneReplacementJobResponse,
   type LaneReplacementBook,
+  type InferredOrgConfigResponse,
 } from "../sync/api";
 import {
   useProjectConfig,
   useProjectPresets,
   isTranslationProject,
   selectProjectPreset,
+  applyProjectOverrides,
   refreshProjectConfig,
 } from "../hooks/useProjectConfig";
 import {
@@ -697,6 +699,183 @@ function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Ro
         )}
         {message && <Alert severity={message.severity}>{message.text}</Alert>}
       </Stack>
+      {canChange && <OrgDetectionSection />}
+    </Box>
+  );
+}
+
+const RESOURCE_ROLES = ["lit", "sim", "tn", "tq", "twl", "tw", "ta"] as const;
+
+// PR B: draft-first manifest inference. Detect an org's repos, complete any
+// missing/ambiguous roles, choose translationSource/exportOrg explicitly, then
+// apply via the custom-gl preset. Applies NOTHING until "Apply" is pressed.
+function OrgDetectionSection() {
+  const { t } = useTranslation();
+  const [org, setOrg] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [draft, setDraft] = useState<InferredOrgConfigResponse | null>(null);
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [translationSourceOn, setTranslationSourceOn] = useState(true);
+  const [exportOrg, setExportOrg] = useState("");
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ severity: "success" | "error"; text: string } | null>(null);
+
+  const detect = async () => {
+    const trimmed = org.trim();
+    if (!trimmed) return;
+    setLoading(true);
+    setError(null);
+    setDraft(null);
+    setMessage(null);
+    try {
+      const res = await api.getInferredOrgConfig(trimmed);
+      setDraft(res);
+      setExportOrg(res.proposal.suggestedExportOrg);
+      setSelections({});
+    } catch (e) {
+      if (e instanceof ApiError) {
+        const code = (e.body as { error?: string } | undefined)?.error;
+        const key = code === "org_not_found" ? "orgNotFound" : code === "dcs_forbidden" ? "forbidden" : null;
+        setError(key ? t(`preferences.detectOrg.${key}`) : e.message);
+      } else {
+        setError(String(e));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const complete =
+    !!draft &&
+    draft.missing.length === 0 &&
+    draft.ambiguous.every((a) => !!selections[a.role]);
+
+  const apply = async () => {
+    if (!draft || !complete) return;
+    setApplying(true);
+    setMessage(null);
+    try {
+      const repos: Record<string, string> = { ...(draft.proposal.repos as Record<string, string>) };
+      for (const a of draft.ambiguous) repos[a.role] = selections[a.role];
+      const overrides: Record<string, unknown> = {
+        org: draft.org,
+        exportOrg: exportOrg.trim() || draft.org,
+        languageCode: draft.proposal.languageCode ?? draft.org,
+        languageName: draft.proposal.languageName ?? draft.org,
+        languageTitle: draft.proposal.languageTitle ?? draft.org,
+        direction: draft.proposal.direction,
+        repos,
+        litLabel: draft.proposal.litLabel ?? repos.lit?.toUpperCase() ?? "LIT",
+        simLabel: draft.proposal.simLabel ?? repos.sim?.toUpperCase() ?? "SIM",
+        translationSource: translationSourceOn
+          ? {
+              org: "unfoldingWord",
+              languageCode: "en",
+              repos: { lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
+            }
+          : null,
+      };
+      await applyProjectOverrides("custom-gl", overrides);
+      await refreshProjectConfig().catch(() => {});
+      setMessage({ severity: "success", text: t("preferences.detectOrg.applied") });
+      setDraft(null);
+      setOrg("");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        setMessage({ severity: "error", text: t("preferences.detectOrg.projectNotEmpty") });
+      } else {
+        setMessage({ severity: "error", text: t("preferences.detectOrg.applyFailed") });
+      }
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <Box sx={{ borderTop: "1px dashed", borderColor: "divider", pt: 1.5, mt: 1.5 }}>
+      <Typography variant="subtitle2">{t("preferences.detectOrg.label")}</Typography>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+        <TextField
+          size="small"
+          placeholder="BibleEditorMLTest"
+          value={org}
+          onChange={(e) => setOrg(e.target.value)}
+          disabled={loading}
+        />
+        <Button size="small" variant="outlined" onClick={detect} disabled={loading || !org.trim()}>
+          {loading ? <CircularProgress size={16} /> : t("preferences.detectOrg.button")}
+        </Button>
+      </Stack>
+      {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
+      {draft && (
+        <Stack spacing={1} sx={{ mt: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
+          {!draft.manifestFound && (
+            <Alert severity="warning" variant="outlined">{t("preferences.detectOrg.manifestMissing")}</Alert>
+          )}
+          {RESOURCE_ROLES.map((role) => {
+            const verified = draft.proposal.repos[role];
+            const ambiguous = draft.ambiguous.find((a) => a.role === role);
+            const missing = draft.missing.includes(role);
+            return (
+              <Stack key={role} direction="row" spacing={1} alignItems="center">
+                <Chip size="small" label={role} sx={{ width: 48 }} />
+                {verified ? (
+                  <Typography variant="body2">{verified}</Typography>
+                ) : ambiguous ? (
+                  <TextField
+                    select
+                    size="small"
+                    value={selections[role] ?? ""}
+                    onChange={(e) => setSelections((s) => ({ ...s, [role]: e.target.value }))}
+                    sx={{ minWidth: 200 }}
+                    helperText={t("preferences.detectOrg.ambiguousRole")}
+                  >
+                    {ambiguous.candidates.map((cand) => (
+                      <MenuItem key={cand} value={cand}>
+                        {cand}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : missing ? (
+                  <Typography variant="body2" color="error.main">
+                    {t("preferences.detectOrg.missingRoles")}
+                  </Typography>
+                ) : null}
+              </Stack>
+            );
+          })}
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={translationSourceOn}
+                onChange={(_, v) => setTranslationSourceOn(v)}
+              />
+            }
+            label={t("preferences.detectOrg.translationSourceToggle")}
+          />
+          <TextField
+            size="small"
+            label={t("preferences.detectOrg.exportOrgLabel")}
+            value={exportOrg}
+            onChange={(e) => setExportOrg(e.target.value)}
+          />
+          <Typography variant="caption" color="text.secondary">
+            {t("preferences.detectOrg.laneHint")}
+          </Typography>
+          <Box>
+            <Button variant="contained" onClick={apply} disabled={!complete || applying}>
+              {applying ? t("preferences.detectOrg.applying") : t("preferences.detectOrg.apply")}
+            </Button>
+          </Box>
+        </Stack>
+      )}
+      {message && (
+        <Alert severity={message.severity} sx={{ mt: 1 }} onClose={() => setMessage(null)}>
+          {message.text}
+        </Alert>
+      )}
     </Box>
   );
 }
