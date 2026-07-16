@@ -17,7 +17,7 @@ export type TranslateClientOptions = {
   articleId?: string;
   articleUrl?: string;
   model?: "sonnet" | "opus";
-  delivery?: "path" | "branch";
+  delivery?: "path" | "branch" | "editor";
   branchOnly?: boolean;
   direction?: "ltr" | "rtl";
   rowIds?: string[];
@@ -64,9 +64,11 @@ export function buildTranslateOptions(
     // Once {org}/translation-context is created + populated (CONTEXT-REPO-CONTRACT.md),
     // a caller enables assisted output by passing translate.contextRef explicitly.
     ...(o.contextRef ? { contextRef: o.contextRef } : {}),
-    // Review branch, no auto-merge — the editor consumes the DCS branch and
-    // applies it as ai_draft rows (PLAN.md §1 delivery: branch, branchOnly).
-    delivery: o.delivery ?? "branch",
+    // Editor delivery — the bot never pushes to Door43; it records an output
+    // manifest and the editor pulls the files over the authenticated output
+    // endpoint, applying them as ai_draft rows (docs/plan Design 1). 'branch'
+    // remains accepted as an explicit expert override for one release.
+    delivery: o.delivery ?? "editor",
     branchOnly: o.branchOnly ?? true,
     model: o.model ?? "opus",
     direction: o.direction ?? cfg.direction,

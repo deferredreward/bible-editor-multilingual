@@ -119,7 +119,10 @@ const TranslateOptions = z
     articleId: z.string().min(1).max(200).optional(),
     articleUrl: z.string().url().max(400).optional(),
     model: z.enum(["sonnet", "opus"]).optional(),
-    delivery: z.enum(["path", "branch"]).optional(),
+    // Default 'editor' (bot never pushes to Door43; editor pulls the result
+    // files). 'branch' stays accepted as an explicit expert override for one
+    // release (docs/plan, rollout §3).
+    delivery: z.enum(["path", "branch", "editor"]).optional(),
     branchOnly: z.boolean().optional(),
     direction: z.enum(["ltr", "rtl"]).optional(),
     // Precise subset selection → bot switches to update-by-ID merge.
@@ -191,12 +194,17 @@ interface StatusResponse {
   output?: Array<{
     type: string;
     repo: string;
-    branch: string;
+    // Door43-branch delivery fields — absent for editor-delivery entries.
+    branch?: string;
     path: string;
-    rawUrl: string;
-    prNumber: number;
-    mergedAt: string;
-    commitSha: string;
+    rawUrl?: string;
+    prNumber?: number;
+    mergedAt?: string;
+    commitSha?: string;
+    // Editor delivery (docs/plan Design 1): 'editor' entries carry `file`, the
+    // retrieval key for the bot's authenticated output endpoint.
+    delivery?: string;
+    file?: string;
   }>;
 }
 
@@ -690,6 +698,9 @@ async function pollPipelineJob(
           startChapter: job.start_chapter,
           endChapter: job.end_chapter,
           cfg,
+          // Editor-delivery entries are fetched from the bot's output endpoint,
+          // keyed by the bot's own job id.
+          upstreamJobId: job.upstream_job_id ?? undefined,
         },
         data.output,
       );

@@ -27,6 +27,8 @@ import type { ProjectConfig } from "./projectConfig";
 import { newRowId, isValidRowId } from "./rowId";
 import { tnContentKey } from "./tnDedup";
 import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim";
+import { nextPreDraftJson } from "./preDraftSnapshot";
+import { fetchBotOutputWith } from "./botOutput";
 
 interface OutputEntry {
   type?: string;
@@ -37,6 +39,10 @@ interface OutputEntry {
   prNumber?: number;
   mergedAt?: string;
   commitSha?: string;
+  // Editor delivery (docs/plan Design 1): the bot never pushed to Door43;
+  // `file` is the retrieval key for its authenticated output endpoint.
+  delivery?: string;
+  file?: string;
 }
 
 interface ImportContext {
@@ -46,6 +52,9 @@ interface ImportContext {
   startChapter: number;
   endChapter: number;
   cfg: ProjectConfig;
+  // The bot's own job id (pipeline_jobs.upstream_job_id) — required to fetch
+  // editor-delivery output entries; absent/unused for Door43-branch delivery.
+  upstreamJobId?: string;
 }
 
 export interface ImportResult {
@@ -97,6 +106,17 @@ async function fetchText(rawUrl: string): Promise<string> {
     throw new Error(`fetch ${rawUrl} -> ${r.status}`);
   }
   return await r.text();
+}
+
+// Editor-delivery fetch: pull the result file from the bot's authenticated
+// output endpoint (429-aware retry lives in botOutput.ts). The Door43 rawUrl
+// path above stays fully intact for English pipelines / 'branch' delivery.
+const DEFAULT_BOT_BASE = "https://uw-bt-bot.fly.dev";
+
+async function fetchBotOutput(env: Env, upstreamJobId: string, file: string): Promise<string> {
+  if (!env.BT_API_TOKEN) throw new Error("fetch bot output: BT_API_TOKEN not configured");
+  const base = env.PIPELINE_API_BASE || DEFAULT_BOT_BASE;
+  return fetchBotOutputWith(fetch, base, env.BT_API_TOKEN, upstreamJobId, file);
 }
 
 interface StagedRow {
@@ -168,16 +188,34 @@ function versePayload(book: string, bibleVersion: "ULT" | "UST", v: VerseExtract
 }
 
 async function parseOutputEntry(
+  env: Env,
   ctx: ImportContext,
   entry: OutputEntry,
 ): Promise<{ staged: StagedRow[]; skipReason?: string }> {
-  if (!entry.rawUrl) return { staged: [], skipReason: "missing rawUrl" };
+  // Report sidecars (translate-report-*.json) aren't row content — skip them.
+  // Populating draft_meta_json from the report is a deferred follow-up.
+  if (entry.type === "report") {
+    return { staged: [], skipReason: "report sidecar (not imported)" };
+  }
+  const isEditorDelivery = entry.delivery === "editor";
+  if (!isEditorDelivery && !entry.rawUrl) return { staged: [], skipReason: "missing rawUrl" };
+  if (isEditorDelivery && !entry.file) {
+    return { staged: [], skipReason: "editor delivery entry missing file" };
+  }
   const cls = classify(entry, ctx.cfg);
   if (cls.kind === "unknown") {
     return { staged: [], skipReason: `unrecognized repo: ${entry.repo ?? "(none)"}` };
   }
 
-  const raw = await fetchText(entry.rawUrl);
+  let raw: string;
+  if (isEditorDelivery) {
+    if (!ctx.upstreamJobId) {
+      throw new Error(`editor delivery entry for job ${ctx.jobId} but no upstream_job_id`);
+    }
+    raw = await fetchBotOutput(env, ctx.upstreamJobId, entry.file!);
+  } else {
+    raw = await fetchText(entry.rawUrl!);
+  }
   const staged: StagedRow[] = [];
 
   if (cls.format === "md") {
@@ -333,7 +371,7 @@ async function stageJobOutput(
   const skipped: string[] = [];
   const allStaged: StagedRow[] = [];
   for (const entry of outputs) {
-    const { staged, skipReason } = await parseOutputEntry(job, entry);
+    const { staged, skipReason } = await parseOutputEntry(env, job, entry);
     if (skipReason) skipped.push(skipReason);
     allStaged.push(...staged);
   }
@@ -842,12 +880,19 @@ async function applyTranslateTnRow(
   if (!proposedId) return "no_match";
 
   const target = await env.DB.prepare(
-    `SELECT id, version FROM tn_rows
+    `SELECT id, version, note, tags, translation_state, pre_draft_json FROM tn_rows
       WHERE id = ?1 AND deleted_at IS NULL
         AND book = ?2 AND chapter BETWEEN ?3 AND ?4`,
   )
     .bind(proposedId, job.book, job.startChapter, job.endChapter)
-    .first<{ id: string; version: number }>();
+    .first<{
+      id: string;
+      version: number;
+      note: string | null;
+      tags: string | null;
+      translation_state: string | null;
+      pre_draft_json: string | null;
+    }>();
   if (!target) return "no_match";
 
   const now = Math.floor(Date.now() / 1000);
@@ -856,6 +901,13 @@ async function applyTranslateTnRow(
   const tags = (payload.tags as string | null | undefined) ?? null;
   const srcHash = (payload.source_row_hash as string | null | undefined) ?? null;
   const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+  // Snapshot of the last PUBLISHED content, so the export can keep shipping it
+  // until this draft is validated (docs/plan Design 2). Fresh on NULL/'validated'
+  // prior state; carried through unchanged on draft-over-draft.
+  const preDraftJson = nextPreDraftJson(target.translation_state, target.pre_draft_json, {
+    note: target.note,
+    tags: target.tags,
+  });
 
   const res = await env.DB.batch([
     env.DB
@@ -872,12 +924,13 @@ async function applyTranslateTnRow(
                 translation_state = 'ai_draft',
                 source_row_hash = ?3,
                 draft_meta_json = ?4,
+                pre_draft_json = ?10,
                 version = version + 1,
                 updated_at = ?5,
                 updated_by = ?6
           WHERE id = ?7 AND book = ?8 AND deleted_at IS NULL AND version = ?9`,
       )
-      .bind(note, tags, srcHash, draftMeta, now, userId, target.id, job.book, target.version),
+      .bind(note, tags, srcHash, draftMeta, now, userId, target.id, job.book, target.version, preDraftJson),
     env.DB
       .prepare(
         // Audit gated on the CAS having won (post-update fingerprint present).
@@ -925,12 +978,19 @@ async function applyTranslateTqRow(
   if (!proposedId) return "no_match";
 
   const target = await env.DB.prepare(
-    `SELECT id, version FROM tq_rows
+    `SELECT id, version, question, response, translation_state, pre_draft_json FROM tq_rows
       WHERE id = ?1 AND deleted_at IS NULL
         AND book = ?2 AND chapter BETWEEN ?3 AND ?4`,
   )
     .bind(proposedId, job.book, job.startChapter, job.endChapter)
-    .first<{ id: string; version: number }>();
+    .first<{
+      id: string;
+      version: number;
+      question: string | null;
+      response: string | null;
+      translation_state: string | null;
+      pre_draft_json: string | null;
+    }>();
   if (!target) return "no_match";
 
   const now = Math.floor(Date.now() / 1000);
@@ -939,6 +999,11 @@ async function applyTranslateTqRow(
   const response = (payload.response as string | null | undefined) ?? null;
   const srcHash = (payload.source_row_hash as string | null | undefined) ?? null;
   const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+  // Last-published snapshot for export gating — see applyTranslateTnRow.
+  const preDraftJson = nextPreDraftJson(target.translation_state, target.pre_draft_json, {
+    question: target.question,
+    response: target.response,
+  });
 
   const res = await env.DB.batch([
     env.DB
@@ -953,12 +1018,13 @@ async function applyTranslateTqRow(
                 translation_state = 'ai_draft',
                 source_row_hash = ?3,
                 draft_meta_json = ?4,
+                pre_draft_json = ?10,
                 version = version + 1,
                 updated_at = ?5,
                 updated_by = ?6
           WHERE id = ?7 AND book = ?8 AND deleted_at IS NULL AND version = ?9`,
       )
-      .bind(question, response, srcHash, draftMeta, now, userId, target.id, job.book, target.version),
+      .bind(question, response, srcHash, draftMeta, now, userId, target.id, job.book, target.version, preDraftJson),
     env.DB
       .prepare(
         // Audit gated on the CAS having won (post-update fingerprint present).
@@ -1004,16 +1070,27 @@ async function applyTranslateArticle(
   if (!resource || !path || targetMd == null) return "no_match";
 
   const target = await env.DB.prepare(
-    `SELECT version FROM article_units
+    `SELECT version, target_md, translation_state, pre_draft_json FROM article_units
       WHERE resource = ?1 AND path = ?2 AND deleted_at IS NULL`,
   )
     .bind(resource, path)
-    .first<{ version: number }>();
+    .first<{
+      version: number;
+      target_md: string | null;
+      translation_state: string | null;
+      pre_draft_json: string | null;
+    }>();
   if (!target) return "no_match";
 
   const now = Math.floor(Date.now() / 1000);
   const newVersion = target.version + 1;
   const draftMeta = payload.draft_meta != null ? JSON.stringify(payload.draft_meta) : null;
+  // Last-published snapshot for export gating — see applyTranslateTnRow. A
+  // null target_md snapshot means "never previously translated": the export
+  // then OMITS the file rather than shipping the unapproved draft.
+  const preDraftJson = nextPreDraftJson(target.translation_state, target.pre_draft_json, {
+    target_md: target.target_md,
+  });
 
   const res = await env.DB.batch([
     env.DB
@@ -1026,12 +1103,13 @@ async function applyTranslateArticle(
             SET target_md = ?1,
                 translation_state = 'ai_draft',
                 draft_meta_json = ?2,
+                pre_draft_json = ?8,
                 version = version + 1,
                 updated_at = ?3,
                 updated_by = ?4
           WHERE resource = ?5 AND path = ?6 AND deleted_at IS NULL AND version = ?7`,
       )
-      .bind(targetMd, draftMeta, now, userId, resource, path, target.version),
+      .bind(targetMd, draftMeta, now, userId, resource, path, target.version, preDraftJson),
     env.DB
       .prepare(
         // edit_log.kind carries the resource (tw|ta); row_key is the path.

@@ -56,6 +56,13 @@ export interface TnRow {
   /** translate-report.json entry for this row (confidence/fallback/terms); NULL if no sidecar. */
   draft_meta_json: string | null;
   /**
+   * Last PUBLISHED content ({note, tags}), snapshotted when the translate
+   * pipeline overwrites the row with an ai_draft (migration 0049). The nightly
+   * export emits this for non-validated rows; cleared on validate. NULL =
+   * never drafted, or drafted pre-migration (legacy — exports current content).
+   */
+  pre_draft_json: string | null;
+  /**
    * Source label from the row's most recent edit_log entry. 'ai_pipeline'
    * when the last write came from the AI auto-apply step (which means the
    * chip should show); NULL after any subsequent human edit/keep wipes it.
@@ -92,6 +99,8 @@ export interface TqRow {
   source_row_hash: string | null;
   /** translate-report.json entry for this row (confidence/fallback/terms); NULL if no sidecar. */
   draft_meta_json: string | null;
+  /** Last published {question, response}, snapshotted at draft apply — see TnRow.pre_draft_json. */
+  pre_draft_json: string | null;
   /** See TnRow.latest_source. */
   latest_source?: string | null;
 }
@@ -126,6 +135,8 @@ export interface ArticleUnit {
   target_md: string | null;  // the translation (NULL = not started)
   translation_state: "ai_draft" | "edited" | "validated" | null;
   draft_meta_json: string | null;
+  /** Last published {target_md} (null target_md = never translated), snapshotted at draft apply — see TnRow.pre_draft_json. */
+  pre_draft_json: string | null;
   version: number;
   updated_by: number | null;
   updated_at: number;

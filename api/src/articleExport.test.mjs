@@ -14,6 +14,7 @@ import {
   articleStepLabel,
   shrinkRefused,
   gitBlobSha,
+  renderArticleFiles,
 } from "./articleExport.ts";
 
 function assert(cond, msg) {
@@ -74,5 +75,36 @@ assert((await gitBlobSha("# God\n")) !== (await gitBlobSha("# god\n")), "one byt
 // Multi-byte UTF-8 length is BYTE length, not code-point count (Arabic sample).
 const ar = await gitBlobSha("الله\n");
 assert(/^[0-9a-f]{40}$/.test(ar), `utf-8 content yields a 40-hex sha (${ar})`);
+
+// --- renderArticleFiles export gate (migration 0049): non-validated drafts
+// never ship — snapshot substituted, never-published files omitted, legacy
+// (pre-migration) drafts pass through current content ---
+{
+  const rows = [
+    // validated → current (approved) content ships
+    { path: "bible/kt/god.md", target_md: "approved md", translation_state: "validated", pre_draft_json: null },
+    // ai_draft over a previously published file → snapshot ships
+    { path: "bible/kt/grace.md", target_md: "AI draft md", translation_state: "ai_draft", pre_draft_json: '{"target_md":"published md"}' },
+    // ai_draft, never previously published → file omitted entirely
+    { path: "bible/kt/mercy.md", target_md: "AI draft md", translation_state: "ai_draft", pre_draft_json: '{"target_md":null}' },
+    // legacy pre-migration draft (no snapshot) → current content ships (logged)
+    { path: "bible/kt/faith.md", target_md: "legacy AI md", translation_state: "edited", pre_draft_json: null },
+    // untouched by the translate pipeline → current content ships
+    { path: "bible/kt/hope.md", target_md: "human md", translation_state: null, pre_draft_json: null },
+  ];
+  const fakeEnv = {
+    DB: {
+      prepare: () => ({ bind: () => ({ all: async () => ({ results: rows }) }) }),
+    },
+  };
+  const { files, count } = await renderArticleFiles(fakeEnv, "tw", "bible/kt");
+  const byPath = new Map(files.map((f) => [f.path, f.content]));
+  assert(count === 4 && files.length === 4, "render gate: 5 units → 4 files (never-published draft omitted)");
+  assert(byPath.get("bible/kt/god.md") === "approved md", "validated unit ships current (approved) md");
+  assert(byPath.get("bible/kt/grace.md") === "published md", "ai_draft unit ships the pre-draft snapshot md");
+  assert(!byPath.has("bible/kt/mercy.md"), "never-published draft is omitted from the render");
+  assert(byPath.get("bible/kt/faith.md") === "legacy AI md", "legacy draft (no snapshot) ships current md");
+  assert(byPath.get("bible/kt/hope.md") === "human md", "state-NULL unit ships current md");
+}
 
 console.log("articleExport: all assertions passed");
