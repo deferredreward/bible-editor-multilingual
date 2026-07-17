@@ -129,10 +129,14 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     const { notes, report } = convertAquiferBook(aqItems as Parameters<typeof convertAquiferBook>[0], enRows);
 
     const existing = await env.DB.prepare(
-      `SELECT id, ref_raw, quote, note, translation_state FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL`,
-    ).bind(book).all<{ id: string; ref_raw: string; quote: string | null; note: string | null; translation_state: string | null }>();
+      `SELECT id, ref_raw, quote, occurrence, note, translation_state FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL`,
+    ).bind(book).all<{ id: string; ref_raw: string; quote: string | null; occurrence: number | null; note: string | null; translation_state: string | null }>();
 
-    const key = (ref: string, quote: string | null) => `${ref}\t${nfc(quote)}`;
+    // Dedup/replace key includes occurrence: a verse can carry the SAME quote at
+    // occurrence 1 and 2 (distinct notes). Keying on (ref,quote) alone would let
+    // an approved occ-1 suppress the occ-2 draft, and collide the two existing
+    // rows in replaceableByKey (Map.set overwrite → an orphaned leftover row).
+    const key = (ref: string, quote: string | null, occ: number | null) => `${ref}\t${nfc(quote)}\t${occ ?? ""}`;
     const protectedKeys = new Set<string>();
     const approveIds: string[] = [];
     const replaceableByKey = new Map<string, string>();
@@ -141,15 +145,16 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     for (const row of existing.results ?? []) {
       liveIds.add(row.id);
       const st = row.translation_state;
+      const k = key(row.ref_raw, row.quote, row.occurrence);
       if (st === "validated" || st === "edited") {
-        protectedKeys.add(key(row.ref_raw, row.quote));
+        protectedKeys.add(k);
       } else if (st === "ai_draft") {
-        replaceableByKey.set(key(row.ref_raw, row.quote), row.id);
+        replaceableByKey.set(k, row.id);
       } else if (isTranslatedNote(row.note, cfg.languageCode, enNoteById.get(row.id))) {
         approveIds.push(row.id);
-        protectedKeys.add(key(row.ref_raw, row.quote));
+        protectedKeys.add(k);
       } else {
-        replaceableByKey.set(key(row.ref_raw, row.quote), row.id);
+        replaceableByKey.set(k, row.id);
       }
     }
 
@@ -183,7 +188,7 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     const counts = { inserted: 0, replaced: 0, skippedApproved: 0 };
 
     for (const note of notes) {
-      const k = key(note.ref, note.quote);
+      const k = key(note.ref, note.quote, note.occurrence);
       if (protectedKeys.has(k)) { counts.skippedApproved++; continue; }
 
       const replacedId = replaceableByKey.get(k);

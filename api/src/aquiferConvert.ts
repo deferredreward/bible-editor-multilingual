@@ -142,10 +142,13 @@ export function htmlToMarkdown(html: string, opts?: { isIntro?: boolean }): stri
 
   if (!isIntro) {
     s = s.replace(/^\s*<p>\s*(?:<strong>)?\s*<span[^>]*direction:\s*(?:ltr|rtl)[\s\S]*?<\/span>\s*(?:<\/strong>)?\s*<\/p>/i, "");
+    // Strip trailing "(See: <TA>)" paragraph(s). Tempered `(?!</p>)` keeps each
+    // match inside one <p>…</p>, so a See-line with several TA links (or other
+    // inline tags) is still removed whole instead of leaking into the prose.
     let prev: string;
     do {
       prev = s;
-      s = s.replace(/<p>[^<]*<span[^>]*data-bnType="resourceReference"[\s\S]*?<\/span>[^<]*<\/p>\s*$/i, "");
+      s = s.replace(/<p>(?:(?!<\/p>)[\s\S])*?data-bnType="resourceReference"(?:(?!<\/p>)[\s\S])*?<\/p>\s*$/i, "");
     } while (s !== prev);
   }
 
