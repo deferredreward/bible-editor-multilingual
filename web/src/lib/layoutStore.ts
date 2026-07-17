@@ -5,7 +5,7 @@
 // this is SSR/test-safe (tests can stub globalThis.localStorage). The v1 key is
 // abandoned — dev-only, no migration.
 
-import { validateLayoutSpec, type LayoutSpec } from "./layoutSpec.ts";
+import { validateLayoutSpec, type LayoutSpec, type ScriptureMode } from "./layoutSpec.ts";
 
 const STORAGE_KEY = "be:layouts.v2";
 // Kept in sync with builtinLayouts.CLASSIC_LAYOUT_ID. Inlined (not imported)
@@ -19,7 +19,14 @@ export interface LayoutOverride {
   hidden?: Record<string, boolean>; // region id -> hidden
   minimized?: Record<string, boolean>; // panel id -> minimized
   activePanelByRegion?: Record<string, string>; // region id -> active tab panel id
+  // Scripture mode chosen while this (non-classic) layout is active. Classic
+  // keeps writing `be:scriptureMode`; every other layout persists its mode here
+  // so a mode toggle never mutates Classic's shared key (Phase 3, plan risk
+  // "scripture-mode double ownership").
+  mode?: ScriptureMode;
 }
+
+const SCRIPTURE_MODES: readonly ScriptureMode[] = ["stacked", "columns", "book"];
 
 export interface LayoutStore {
   v: 2;
@@ -83,6 +90,10 @@ function sanitizeOverride(x: unknown): LayoutOverride | null {
     const rec = sanitizeRecord(x.activePanelByRegion, "string");
     if (!rec) return null;
     out.activePanelByRegion = rec as Record<string, string>;
+  }
+  if (x.mode !== undefined) {
+    if (!SCRIPTURE_MODES.includes(x.mode as ScriptureMode)) return null;
+    out.mode = x.mode as ScriptureMode;
   }
   return out;
 }
@@ -179,6 +190,7 @@ export function mergeOverride(layoutId: string, partial: Partial<LayoutOverride>
   if (partial.activePanelByRegion) {
     merged.activePanelByRegion = { ...existing.activePanelByRegion, ...partial.activePanelByRegion };
   }
+  if (partial.mode) merged.mode = partial.mode;
   store.overrides[layoutId] = merged;
   saveLayoutStore(store);
   return store;

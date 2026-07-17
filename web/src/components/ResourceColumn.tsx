@@ -215,11 +215,18 @@ interface Props {
   alignmentBadge?: string;
   // Per-resource checkoff for the active verse (in-context "done" + bulk).
   checkoff?: ResourceCheckoff;
+  // Flexible-layout support (Phase 3). When set, only these resource tabs
+  // render (notes/words/questions) and the active tab is clamped into the set;
+  // `initialTab` seeds the first shown tab. Omitting BOTH is byte-identical to
+  // the classic all-tabs column. Alignment/Search tabs are orthogonal
+  // (panelMode) and unaffected.
+  visibleTabs?: ResourceTab[];
+  initialTab?: ResourceTab;
 }
 
 type PinKey = "notes" | "words" | "questions";
 type Pinned = Record<PinKey, boolean>;
-type ResourceTab = "notes" | "words" | "questions";
+export type ResourceTab = "notes" | "words" | "questions";
 
 const PINNED_KEY = "be:pinned";
 
@@ -346,6 +353,8 @@ export function ResourceColumn({
   alignmentProps,
   alignmentBadge,
   checkoff,
+  visibleTabs,
+  initialTab,
 }: Props) {
   const { t } = useTranslation();
   // Translation mode: only gateway-language projects (translationSource != null)
@@ -429,7 +438,16 @@ export function ResourceColumn({
   // Notes / Words / Questions into separate views keeps the Notes column free
   // of TWL/TQ clutter; the tabs now switch the view instead of scroll-jumping
   // within one stacked body.
-  const [resourceTab, setResourceTab] = useState<ResourceTab>("notes");
+  const [resourceTab, setResourceTab] = useState<ResourceTab>(() => {
+    const vt = visibleTabs && visibleTabs.length > 0 ? visibleTabs : (["notes", "words", "questions"] as ResourceTab[]);
+    return initialTab && vt.includes(initialTab) ? initialTab : vt[0];
+  });
+  // The resource tabs this layout exposes (classic = all three). Clamp the
+  // active tab into the set so a stale/last selection outside this layout
+  // (e.g. after a layout switch) falls back to the first visible tab.
+  const tabs: ResourceTab[] =
+    visibleTabs && visibleTabs.length > 0 ? visibleTabs : ["notes", "words", "questions"];
+  const activeResourceTab: ResourceTab = tabs.includes(resourceTab) ? resourceTab : tabs[0];
   const showResource = (tab: ResourceTab) => {
     if (panelMode !== "resources") onSetPanelMode?.("resources");
     setResourceTab(tab);
@@ -750,30 +768,36 @@ export function ResourceColumn({
           {t("shell.resources")} · {activeVerse === 0 ? "i" : activeVerse}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <PanelTab
-          label={t("shell.notes")}
-          count={totalTn}
-          countSuffix={pinned.notes ? " · ch" : ""}
-          active={panelMode === "resources" && resourceTab === "notes"}
-          accent={false}
-          onClick={() => showResource("notes")}
-        />
-        <PanelTab
-          label={t("shell.words")}
-          count={totalTwl}
-          countSuffix={pinned.words ? " · ch" : ""}
-          active={panelMode === "resources" && resourceTab === "words"}
-          accent={false}
-          onClick={() => showResource("words")}
-        />
-        <PanelTab
-          label={t("shell.questions")}
-          count={totalTq}
-          countSuffix={pinned.questions ? " · ch" : ""}
-          active={panelMode === "resources" && resourceTab === "questions"}
-          accent={false}
-          onClick={() => showResource("questions")}
-        />
+        {tabs.includes("notes") && (
+          <PanelTab
+            label={t("shell.notes")}
+            count={totalTn}
+            countSuffix={pinned.notes ? " · ch" : ""}
+            active={panelMode === "resources" && activeResourceTab === "notes"}
+            accent={false}
+            onClick={() => showResource("notes")}
+          />
+        )}
+        {tabs.includes("words") && (
+          <PanelTab
+            label={t("shell.words")}
+            count={totalTwl}
+            countSuffix={pinned.words ? " · ch" : ""}
+            active={panelMode === "resources" && activeResourceTab === "words"}
+            accent={false}
+            onClick={() => showResource("words")}
+          />
+        )}
+        {tabs.includes("questions") && (
+          <PanelTab
+            label={t("shell.questions")}
+            count={totalTq}
+            countSuffix={pinned.questions ? " · ch" : ""}
+            active={panelMode === "resources" && activeResourceTab === "questions"}
+            accent={false}
+            onClick={() => showResource("questions")}
+          />
+        )}
         <PanelTab
           label={t("shell.alignment")}
           countLabel={alignmentBadge}
@@ -834,7 +858,7 @@ export function ResourceColumn({
         // at its flex-wrap boundary can flip-flop a line as the gutter toggles.
         sx={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable", px: 2, py: 1 }}
       >
-        {resourceTab === "notes" && (
+        {activeResourceTab === "notes" && (
           <>
             <SectionHead
               title={t("shell.notes")}
@@ -928,7 +952,7 @@ export function ResourceColumn({
           </>
         )}
 
-        {resourceTab === "words" && (
+        {activeResourceTab === "words" && (
           // Flex column filling the scroll viewport so the suggestions block
           // (mt:auto) is pushed to the bottom even when the Words list is short.
           <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
@@ -1029,7 +1053,7 @@ export function ResourceColumn({
           </Box>
         )}
 
-        {resourceTab === "questions" && (
+        {activeResourceTab === "questions" && (
           <>
             <SectionHead
               title={t("shell.questions")}

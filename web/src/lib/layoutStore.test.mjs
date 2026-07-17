@@ -175,6 +175,26 @@ const userSpec = {
   const ov3 = loadLayoutStore().overrides["builtin:classic"];
   assert(ov3.minimized["notes-1"] === true, "minimized sub-record set");
   assert(ov3.sizes.scripture === 0.6 && ov3.hidden.resources === true, "prior sub-records intact");
+
+  // Scripture-mode override (Phase 3): persists per-layout without clobbering.
+  mergeOverride("builtin:classic", { mode: "columns" });
+  const ov4 = loadLayoutStore().overrides["builtin:classic"];
+  assert(ov4.mode === "columns", "mode sub-record set");
+  assert(ov4.sizes.scripture === 0.6 && ov4.minimized["notes-1"] === true, "mode merge keeps prior records");
+}
+{
+  console.log("\n[mode override] bad mode value is dropped on load");
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:classic",
+      userLayouts: [],
+      overrides: { good: { mode: "book" }, bad: { mode: "grid" } },
+    }),
+  });
+  const s = loadLayoutStore();
+  assert(s.overrides.good?.mode === "book", "valid mode kept");
+  assert(s.overrides.bad === undefined, "invalid mode override dropped");
 }
 
 if (failed > 0) {

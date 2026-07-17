@@ -31,12 +31,14 @@ import LanguageIcon from "@mui/icons-material/Language";
 import CheckIcon from "@mui/icons-material/Check";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
+import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
 import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
 import { api, type BookListEntry, type BookSummary } from "../sync/api";
+import type { LayoutSpec } from "../lib/layoutSpec";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
@@ -172,6 +174,58 @@ function UiLanguageControl() {
   );
 }
 
+// Workspace-layout switcher: a menu of the built-in layouts (Classic + presets).
+// The active layout is checked. Layout names render in English for now
+// (i18n Phase 3+). Selecting routes through Shell's dirty gate + mode/versions
+// sync (see selectLayout).
+function LayoutSwitcher({
+  layouts,
+  activeLayoutId,
+  onSelectLayout,
+}: {
+  layouts: LayoutSpec[];
+  activeLayoutId: string;
+  onSelectLayout: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  if (layouts.length === 0) return null;
+
+  return (
+    <>
+      <Tooltip title={t("topbar.layouts")}>
+        <IconButton
+          ref={anchorRef}
+          size="small"
+          onClick={() => setOpen(true)}
+          aria-label={t("topbar.layouts")}
+        >
+          <ViewQuiltIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Menu open={open} anchorEl={anchorRef.current} onClose={() => setOpen(false)}>
+        {layouts.map((l) => (
+          <MenuItem
+            key={l.id}
+            selected={l.id === activeLayoutId}
+            onClick={() => {
+              onSelectLayout(l.id);
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon sx={{ visibility: l.id === activeLayoutId ? "visible" : "hidden" }}>
+              <CheckIcon fontSize="small" />
+            </ListItemIcon>
+            {/* i18n Phase 3+ : layout names are English until localized. */}
+            <ListItemText>{l.name}</ListItemText>
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+}
+
 interface Props {
   book: string;
   chapter: number;
@@ -184,6 +238,10 @@ interface Props {
   railCollapsed?: boolean;
   onToggleRail?: () => void;
   onRequestReload?: () => void;
+  // Workspace-layout switcher (Phase 3). Omitted on the no-data branch.
+  layouts?: LayoutSpec[];
+  activeLayoutId?: string;
+  onSelectLayout?: (id: string) => void;
 }
 
 export function TopBar({
@@ -198,6 +256,9 @@ export function TopBar({
   railCollapsed,
   onToggleRail,
   onRequestReload,
+  layouts,
+  activeLayoutId,
+  onSelectLayout,
 }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
@@ -536,6 +597,13 @@ export function TopBar({
       <VersionIndicator onRequestReload={onRequestReload} />
       <SyncStatusBar onNavigate={onNavigate} />
       {exportMenu}
+      {layouts && activeLayoutId && onSelectLayout && (
+        <LayoutSwitcher
+          layouts={layouts}
+          activeLayoutId={activeLayoutId}
+          onSelectLayout={onSelectLayout}
+        />
+      )}
       <FontSizeControl />
       <UiLanguageControl />
       <Tooltip title={mode === "dark" ? t("topbar.switchToLight") : t("topbar.switchToDark")}>

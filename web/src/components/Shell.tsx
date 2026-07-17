@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Box,
@@ -62,8 +62,16 @@ import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { nfc } from "../lib/hebrew";
 import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
-import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane } from "./ResourceColumn";
+import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane, type ResourceTab } from "./ResourceColumn";
 import { WorkspaceLayout } from "./WorkspaceLayout";
+import { getBuiltinLayouts, CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
+import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
+import {
+  loadLayoutStore,
+  mergeOverride,
+  setActiveLayoutId as persistActiveLayoutId,
+} from "../lib/layoutStore";
+import type { LayoutNode, LayoutSpec, PanelInstance, PanelRegion } from "../lib/layoutSpec";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
 import {
   SideBySideAligner,
@@ -166,6 +174,20 @@ function saveToStorage<T>(key: string, value: T) {
 // scrolls to the note. Module-level so it survives the remount; cleared on
 // consume so a later same-location mount doesn't re-grab a stale note.
 let pendingNoteJump: { book: string; chapter: number; noteId: string } | null = null;
+
+// First scripture panel in a layout tree, depth-first — its `config` drives the
+// mode/versions sync when a layout is selected.
+function findScripturePanel(node: LayoutNode): PanelInstance | null {
+  if (node.kind === "region") return node.panels.find((p) => p.type === "scripture") ?? null;
+  for (const child of node.children) {
+    const found = findScripturePanel(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+// The resource tabs a layout region exposes, in panel order.
+const RESOURCE_PANEL_TYPES: readonly ResourceTab[] = ["notes", "words", "questions"];
 
 interface Props {
   book: string;
@@ -411,6 +433,25 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const requestScrollToActive = useCallback(() => setScrollNonce((n) => n + 1), []);
 
   const [splitRatio, setSplitRatio] = useState<number | null>(null);
+
+  // Active workspace layout (Phase 3). Seeded from the persisted store; resolved
+  // to a spec against the config-gated built-ins + the panel registry, falling
+  // back to Classic on any miss so a stale/unavailable id can never break the
+  // shell. Built-ins only this phase (user layouts land in Phase 5).
+  const [activeLayoutId, setActiveLayoutIdState] = useState<string>(
+    () => loadLayoutStore().activeLayoutId,
+  );
+  const builtinLayouts = useMemo(() => getBuiltinLayouts(projectConfig), [projectConfig]);
+  const activeLayout = useMemo<LayoutSpec>(() => {
+    const found = builtinLayouts.find((l) => l.id === activeLayoutId);
+    const validated = found ? validateLayoutAgainstRegistry(found, projectConfig) : null;
+    return (
+      validated ??
+      builtinLayouts.find((l) => l.id === CLASSIC_LAYOUT_ID) ??
+      builtinLayouts[0]
+    );
+  }, [builtinLayouts, activeLayoutId, projectConfig]);
+  const isClassic = activeLayout.id === CLASSIC_LAYOUT_ID;
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -2531,147 +2572,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     if (chapterNum === chapter) applyLocalVerse(newDto);
   };
 
-  return (
-    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <TopBar
-        book={book}
-        chapter={chapter}
-        onNavigate={(b, c, v) => {
-          runWithDirtyGate(() => {
-            setActiveVerse(v ?? 1);
-            setActiveNoteId(null);
-            setActiveWordId(null);
-            onNavigate?.(b, c, v);
-          });
-        }}
-        onRequestReload={reloadForUpdate}
-        pipelineMenu={
-          <PipelineMenu
-            book={book}
-            chapter={chapter}
-            onMessage={(msg) => pushPipelineToast(msg, "info")}
-            onImported={() => void refetch()}
-          />
-        }
-        pipelineStatus={
-          <PipelineStatusBar
-            toast={pipelineToast}
-            onToastClear={() => setPipelineToast(null)}
-          />
-        }
-        logosSyncToggle={
-          <LogosSyncToggle book={book} chapter={chapter} verse={activeVerse} />
-        }
-        lintIndicator={
-          <BookLintIndicator
-            book={book}
-            flagIssues={bookLint.flagIssues}
-            flagCount={bookLint.flagCount}
-            escalateCount={bookLint.escalateCount}
-            onGoToIssue={goToLintIssue}
-          />
-        }
-        exportMenu={
-          <ExportUsfmButton
-            book={book}
-            chapter={chapter}
-            enabledVersions={displayedVersions}
-            chapterVersesFor={(version) =>
-              data ? Object.values(data.verses[version] ?? {}) : []
-            }
-          />
-        }
-        railCollapsed={railCollapsed}
-        onToggleRail={toggleRail}
-      />
-      {chapterLock && (
-        <Alert
-          severity="info"
-          icon={false}
-          sx={{
-            borderRadius: 0,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            py: 0.5,
-            "& .MuiAlert-message": { width: "100%" },
-          }}
-        >
-          {t("shell.chapterLockBanner", {
-            pipelineType: chapterLock.pipelineType,
-            book,
-            chapter,
-            started: formatRelative(chapterLock.startedAt),
-          })}
-        </Alert>
-      )}
-      <WorkspaceLayout
-        railCollapsed={railCollapsed}
-        railWidth={railWidth}
-        effectiveSplit={effectiveSplit}
-        onSplitRatioChange={setSplitRatio}
-        railNode={
-          <>
-            <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
-              <Button
-                size="small"
-                startIcon={<GridViewIcon sx={{ fontSize: 16 }} />}
-                onClick={() => setBoardOpen(true)}
-                sx={{
-                  flexShrink: 0,
-                  m: 0.5,
-                  minWidth: 0,
-                  fontSize: 12,
-                  justifyContent: "flex-start",
-                  bgcolor: "grey.50",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 0.5,
-                  color: "text.secondary",
-                }}
-              >
-                {t("shell.board")}
-              </Button>
-            </Tooltip>
-            <TimelineRail
-              book={book}
-              chapter={chapter}
-              tiles={tileSet}
-              activeVerse={activeVerse}
-              showChapter={mode === "book"}
-              enabledLanes={enabledLanes}
-              onSelect={requestSelectVerse}
-              onToggleLane={toggleLane}
-              onHideLane={toggleLaneVisible}
-            />
-            <Box
-              sx={{
-                flexShrink: 0,
-                bgcolor: "grey.50",
-                borderRight: "1px solid",
-                borderColor: "divider",
-                borderTop: "1px solid",
-                borderTopColor: "divider",
-                p: 0.5,
-              }}
-            >
-              <Tooltip title={t("shell.signOut")} placement="right">
-                <IconButton
-                  size="small"
-                  onClick={onLogout}
-                  sx={{
-                    width: "100%",
-                    borderRadius: 0.5,
-                    color: "text.disabled",
-                    "&:hover": { color: "text.secondary" },
-                  }}
-                >
-                  <LogoutIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          </>
-        }
-        scriptureNode={
+  const scriptureNode = (
         <ScriptureColumn
           book={book}
           chapter={chapter}
@@ -2748,11 +2649,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           onSelectVerse={(v) => requestSelectVerse(v)}
           onModeChange={(m) => {
             setMode(m);
-            saveToStorage(SCRIPTURE_MODE_KEY, m);
+            // Classic owns be:scriptureMode; every other layout persists its
+            // mode into that layout's override so a toggle never mutates
+            // Classic's shared key (plan risk: scripture-mode double ownership).
+            if (isClassic) saveToStorage(SCRIPTURE_MODE_KEY, m);
+            else mergeOverride(activeLayout.id, { mode: m });
           }}
           onEnabledVersionsChange={(versions) => {
             setEnabledVersions(versions);
-            saveToStorage(ENABLED_VERSIONS_KEY, versions);
+            // Only Classic persists be:enabledVersions. Non-classic layouts pin
+            // versions from their spec (intersected with availableVersions each
+            // render) and are not persisted back this phase.
+            if (isClassic) saveToStorage(ENABLED_VERSIONS_KEY, versions);
           }}
           onEditVerse={(verseNum, bibleVersion, plain, base) => {
             stashVerseDraft(chapter, verseNum, bibleVersion, plain, base);
@@ -2780,9 +2688,12 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           twl={data.twl}
           locked={Boolean(chapterLock)}
         />
-        }
-        resourcesNode={
+  );
+
+  const renderResources = (visibleTabs?: ResourceTab[]) => (
         <ResourceColumn
+          visibleTabs={visibleTabs}
+          initialTab={visibleTabs?.[0]}
           book={book}
           chapter={chapter}
           activeVerse={activeVerse}
@@ -3080,6 +2991,222 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           alignmentProps={alignmentTabProps}
           alignmentBadge={alignmentBadge}
         />
+  );
+
+  const renderRegion = (region: PanelRegion): ReactNode => {
+    const types = region.panels.map((pp) => pp.type);
+    if (types.includes("scripture")) return scriptureNode;
+    const resourceTabs = region.panels
+      .map((pp) => pp.type)
+      .filter((tt): tt is ResourceTab =>
+        (RESOURCE_PANEL_TYPES as readonly string[]).includes(tt),
+      );
+    if (resourceTabs.length > 0) {
+      // Classic keeps the all-tabs column with no visibleTabs override so it is
+      // byte-identical to today; non-classic regions get only their subset.
+      // TODO Phase 6: taArticle/twArticle/original panels sharing a region are
+      // not yet rendered — only their notes/words/questions siblings appear.
+      return renderResources(isClassic ? undefined : resourceTabs);
+    }
+    // TODO Phase 6: real article / original-language / alignment / search panels.
+    const label = region.panels[0]?.type ?? "panel";
+    return (
+      <Box
+        sx={{
+          m: 2,
+          p: 2,
+          border: "1px dashed",
+          borderColor: "divider",
+          borderRadius: 1,
+          color: "text.secondary",
+        }}
+      >
+        <Typography variant="body2">{label} — panel coming in a later pass</Typography>
+      </Box>
+    );
+  };
+
+  // Persisted per-node sizes for the active (non-classic) layout. Classic uses
+  // the effectiveSplit divider path and ignores these.
+  const sizes = loadLayoutStore().overrides[activeLayout.id]?.sizes ?? {};
+  const onSizesChange = (patch: Record<string, number>) => {
+    mergeOverride(activeLayout.id, { sizes: { ...sizes, ...patch } });
+  };
+
+  // Switch the active layout. A switch can hide a dirty alignment panel, so it
+  // routes through the dirty gate; then it syncs scripture mode/versions from
+  // the target spec and persists the choice. Classic restores its legacy keys;
+  // other layouts read their scripture panel (and any saved mode override).
+  const selectLayout = (id: string) => {
+    runWithDirtyGate(() => {
+      const next = builtinLayouts.find((l) => l.id === id);
+      const resolved = next ? validateLayoutAgainstRegistry(next, projectConfig) : null;
+      const target =
+        resolved ?? builtinLayouts.find((l) => l.id === CLASSIC_LAYOUT_ID) ?? builtinLayouts[0];
+      if (target.id === CLASSIC_LAYOUT_ID) {
+        setMode(loadFromStorage<ScriptureMode>(SCRIPTURE_MODE_KEY, "stacked"));
+        setEnabledVersions(loadFromStorage<string[]>(ENABLED_VERSIONS_KEY, ["ULT", "UST"]));
+      } else {
+        const sp = findScripturePanel(target.root);
+        const overrideMode = loadLayoutStore().overrides[target.id]?.mode;
+        const nextMode = overrideMode ?? sp?.config?.mode;
+        if (nextMode) setMode(nextMode);
+        const versions = sp?.config?.versions;
+        if (versions && versions !== "inherit") {
+          setEnabledVersions(versions.filter((v) => availableVersions.includes(v)));
+        }
+      }
+      setActiveLayoutIdState(target.id);
+      persistActiveLayoutId(target.id);
+    });
+  };
+
+  return (
+    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <TopBar
+        book={book}
+        chapter={chapter}
+        onNavigate={(b, c, v) => {
+          runWithDirtyGate(() => {
+            setActiveVerse(v ?? 1);
+            setActiveNoteId(null);
+            setActiveWordId(null);
+            onNavigate?.(b, c, v);
+          });
+        }}
+        onRequestReload={reloadForUpdate}
+        pipelineMenu={
+          <PipelineMenu
+            book={book}
+            chapter={chapter}
+            onMessage={(msg) => pushPipelineToast(msg, "info")}
+            onImported={() => void refetch()}
+          />
+        }
+        pipelineStatus={
+          <PipelineStatusBar
+            toast={pipelineToast}
+            onToastClear={() => setPipelineToast(null)}
+          />
+        }
+        logosSyncToggle={
+          <LogosSyncToggle book={book} chapter={chapter} verse={activeVerse} />
+        }
+        lintIndicator={
+          <BookLintIndicator
+            book={book}
+            flagIssues={bookLint.flagIssues}
+            flagCount={bookLint.flagCount}
+            escalateCount={bookLint.escalateCount}
+            onGoToIssue={goToLintIssue}
+          />
+        }
+        exportMenu={
+          <ExportUsfmButton
+            book={book}
+            chapter={chapter}
+            enabledVersions={displayedVersions}
+            chapterVersesFor={(version) =>
+              data ? Object.values(data.verses[version] ?? {}) : []
+            }
+          />
+        }
+        railCollapsed={railCollapsed}
+        onToggleRail={toggleRail}
+        layouts={builtinLayouts}
+        activeLayoutId={activeLayout.id}
+        onSelectLayout={selectLayout}
+      />
+      {chapterLock && (
+        <Alert
+          severity="info"
+          icon={false}
+          sx={{
+            borderRadius: 0,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            py: 0.5,
+            "& .MuiAlert-message": { width: "100%" },
+          }}
+        >
+          {t("shell.chapterLockBanner", {
+            pipelineType: chapterLock.pipelineType,
+            book,
+            chapter,
+            started: formatRelative(chapterLock.startedAt),
+          })}
+        </Alert>
+      )}
+      <WorkspaceLayout
+        spec={activeLayout}
+        renderRegion={renderRegion}
+        sizes={sizes}
+        onSizesChange={onSizesChange}
+        railCollapsed={railCollapsed}
+        railWidth={railWidth}
+        effectiveSplit={effectiveSplit}
+        onSplitRatioChange={setSplitRatio}
+        railNode={
+          <>
+            <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
+              <Button
+                size="small"
+                startIcon={<GridViewIcon sx={{ fontSize: 16 }} />}
+                onClick={() => setBoardOpen(true)}
+                sx={{
+                  flexShrink: 0,
+                  m: 0.5,
+                  minWidth: 0,
+                  fontSize: 12,
+                  justifyContent: "flex-start",
+                  bgcolor: "grey.50",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 0.5,
+                  color: "text.secondary",
+                }}
+              >
+                {t("shell.board")}
+              </Button>
+            </Tooltip>
+            <TimelineRail
+              book={book}
+              chapter={chapter}
+              tiles={tileSet}
+              activeVerse={activeVerse}
+              showChapter={mode === "book"}
+              enabledLanes={enabledLanes}
+              onSelect={requestSelectVerse}
+              onToggleLane={toggleLane}
+              onHideLane={toggleLaneVisible}
+            />
+            <Box
+              sx={{
+                flexShrink: 0,
+                bgcolor: "grey.50",
+                borderRight: "1px solid",
+                borderColor: "divider",
+                borderTop: "1px solid",
+                borderTopColor: "divider",
+                p: 0.5,
+              }}
+            >
+              <Tooltip title={t("shell.signOut")} placement="right">
+                <IconButton
+                  size="small"
+                  onClick={onLogout}
+                  sx={{
+                    width: "100%",
+                    borderRadius: 0.5,
+                    color: "text.disabled",
+                    "&:hover": { color: "text.secondary" },
+                  }}
+                >
+                  <LogoutIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </>
         }
       />
       <ChapterBoard
