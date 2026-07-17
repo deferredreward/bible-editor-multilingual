@@ -640,7 +640,8 @@
       "laneHint": "Changing an already-active project's lit/sim source later goes through the scripture repositories section below.",
       "exportOrgLabel": "Export org",
       "translationSourceToggle": "Translate from unfoldingWord's English source",
-      "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org."
+      "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
+      "applyFailed": "Could not apply the configuration. Please try again."
     },
     "exportAdminOnly": "Only an admin can export the context pack.",
     "exportForce": "Force export (accept content loss)",
@@ -700,5 +701,51 @@
       },
       "saved": "Lane config saved."
     }
+  },
+  "setup": {
+    "railLabel": "Setup",
+    "back": "Back",
+    "next": "Next",
+    "title": "Set up a new org",
+    "intro": "Point the editor at a Door43 org's repositories, then import a first book and fill its translationWords and translationAcademy areas. One database serves one org.",
+    "step": {
+      "gatewayAdmin": "Create your repositories",
+      "detectOrg": "Detect your org",
+      "confirmLanes": "Confirm literal & simplified",
+      "apply": "Apply configuration",
+      "importBook": "Import your first book",
+      "done": "Done"
+    },
+    "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
+    "gatewayAdminChecklist": "• {lang}_tn — translationNotes\n• {lang}_glt / {lang}_gst — literal & simplified text\n• {lang}_twl — translationWords links\n• {lang}_tw — translationWords\n• {lang}_ta — translationAcademy\n• {lang}_tq — translationQuestions",
+    "gatewayAdminLink": "Open Door43",
+    "reposReady": "My repositories are set up",
+    "detectIntro": "Enter your Door43 org. We'll read its manifests and propose a configuration — resolve anything missing or ambiguous below.",
+    "confirmLanesIntro": "Confirm the literal and simplified scripture repositories. These are installed directly when you apply. To change a lane's source after onboarding, use the scripture repositories section in Project mode.",
+    "litRepoLabel": "Literal text repository",
+    "simRepoLabel": "Simplified text repository",
+    "applyIntro": "Apply this configuration for {{org}}. This installs the scripture lanes and points the editor at your repositories.",
+    "applyButton": "Apply configuration",
+    "applying": "Applying…",
+    "applied": "Configuration applied.",
+    "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
+    "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
+    "applyFailed": "Could not apply the configuration. Please try again.",
+    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
+    "bookLabel": "Book",
+    "importButton": "Import book",
+    "importing": "Importing…",
+    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
+    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
+    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
+    "unknownBook": "That book isn't recognized.",
+    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
+    "importFailed": "Could not import the book. Please try again.",
+    "doneTitle": "You're all set",
+    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
+    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
+    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
+    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
+    "goToScripture": "Go to the scripture view"
   }
 }
