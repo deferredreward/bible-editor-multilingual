@@ -41,9 +41,25 @@ function portInUse(port) {
   });
 }
 
+// Momentarily grab the port with an exclusive bind. This serializes two
+// launchers that start at the same instant and both saw the port as free: the
+// OS grants the exclusive bind to only one, so the loser moves on and the two
+// pick different ports instead of colliding. We close it right away and let
+// Wrangler take it — the sub-millisecond gap is not worth a cross-process lock.
+function claimPort(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false)); // EADDRINUSE → a racer won it
+    srv.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      srv.close(() => resolve(true));
+    });
+  });
+}
+
 async function firstFreePort(start) {
   for (let port = start; port < start + 50; port++) {
-    if (!(await portInUse(port))) return port;
+    if (await portInUse(port)) continue; // an established server is already there
+    if (await claimPort(port)) return port; // and we won the race for it
   }
   throw new Error(`No free port found in [${start}, ${start + 50}).`);
 }
