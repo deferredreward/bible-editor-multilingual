@@ -3,7 +3,12 @@
 // useWorkMode.ts. No React, no api.ts, no DOM. Run from web/:
 //   node --experimental-strip-types --no-warnings src/hooks/workModeCore.test.mjs
 
-import { effectiveMode, applyOptimisticSet, reconcileFailure } from "./workModeCore.ts";
+import {
+  effectiveMode,
+  applyOptimisticSet,
+  reconcileFailure,
+  reconcileFailureForUser,
+} from "./workModeCore.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -89,6 +94,42 @@ console.log("[reconcileFailure] different userId (cache moved on) is untouched r
   // stale request's failure handler entirely once clearWorkMode()/reseed has
   // run for a different user (cache identity, not just seq, changes then).
   assert(result.mode === "translate", "seq-only reconciliation rolls back when seq matches (by design)");
+}
+
+console.log("[reconcileFailureForUser] a stale failure from a PRIOR user does NOT clobber the current user");
+{
+  // User A toggled (captured userId=1, seq=1), then signed out and user B
+  // signed in and toggled — cache is now {userId:2, seq:1} (seedWorkMode resets
+  // seq to 0, B's first toggle brings it to 1, colliding with A's captured seq).
+  const cacheNowUserB = { userId: 2, mode: "author", seq: 1 };
+  const { entry, rolledBack } = reconcileFailureForUser(cacheNowUserB, /*capturedUserId A*/ 1, 1, "translate");
+  assert(rolledBack === false, "cross-user stale failure is discarded (rolledBack=false)");
+  assert(entry === cacheNowUserB, "current user's cache entry is returned untouched");
+}
+
+console.log("[reconcileFailureForUser] same-user, non-superseded failure rolls back");
+{
+  const initial = { userId: 7, mode: "translate", seq: 0 };
+  const set1 = applyOptimisticSet(initial, "author"); // seq=1
+  const { entry, rolledBack } = reconcileFailureForUser(set1.next, 7, set1.seq, set1.prevMode);
+  assert(rolledBack === true, "same-user, seq-matching failure rolls back");
+  assert(entry.mode === "translate" && entry.seq === 1, "rolled back to pre-request mode, seq stable");
+}
+
+console.log("[reconcileFailureForUser] same-user but superseded by a newer set is NOT rolled back");
+{
+  const initial = { userId: 7, mode: "translate", seq: 0 };
+  const set1 = applyOptimisticSet(initial, "author"); // captured seq=1
+  const set2 = applyOptimisticSet(set1.next, "translate"); // newer set, seq=2
+  const { entry, rolledBack } = reconcileFailureForUser(set2.next, 7, set1.seq, set1.prevMode);
+  assert(rolledBack === false, "superseded (seq mismatch) failure is discarded");
+  assert(entry === set2.next, "the newer set survives untouched");
+}
+
+console.log("[reconcileFailureForUser] no cache (signed out) is a no-op");
+{
+  const { entry, rolledBack } = reconcileFailureForUser(null, 1, 1, "translate");
+  assert(rolledBack === false && entry === null, "null cache → no-op");
 }
 
 if (failed > 0) {

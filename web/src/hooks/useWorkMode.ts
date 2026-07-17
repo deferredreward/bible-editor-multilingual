@@ -3,7 +3,7 @@ import { putMyPrefs, type ProjectConfig, type WorkMode } from "../sync/api";
 import {
   effectiveMode,
   applyOptimisticSet,
-  reconcileFailure,
+  reconcileFailureForUser,
   type StoredWorkMode,
   type WorkModeCacheEntry,
 } from "./workModeCore";
@@ -73,12 +73,20 @@ export function useWorkMode(): UseWorkMode {
 
   const setWorkMode = (mode: WorkMode) => {
     if (!entry) return; // not signed in yet — nothing to toggle
+    const capturedUserId = entry.userId;
     const { next, prevMode, seq } = applyOptimisticSet(entry, mode);
     setFailed(false);
     publish(next);
     putMyPrefs(mode).catch(() => {
-      if (cache) publish(reconcileFailure(cache, seq, prevMode));
-      setFailed(true);
+      // Guard on the captured userId AND seq: a failure is only ours to roll
+      // back if the current cache still belongs to the same user and hasn't
+      // been superseded (a stale cross-session failure must NOT clobber a
+      // different signed-in user's cache or flash them a failure banner).
+      const { entry: rolled, rolledBack } = reconcileFailureForUser(cache, capturedUserId, seq, prevMode);
+      if (rolledBack) {
+        publish(rolled);
+        setFailed(true);
+      }
     });
   };
 

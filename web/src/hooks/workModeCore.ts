@@ -52,3 +52,26 @@ export function reconcileFailure(
   if (current.seq !== failedSeq) return current;
   return { userId: current.userId, mode: prevMode, seq: current.seq };
 }
+
+// userId-AWARE rollback for the React wrapper. `seq` alone is unsafe across a
+// sign-out/sign-in: `seedWorkMode` resets every user to seq 0, so a stale
+// failure from user A can collide with user B's later toggle at the same seq
+// and roll B's cache back to A's mode. Guard on the userId captured when the
+// request was fired: if the cache is gone or now belongs to a different user,
+// the failure is not ours — return unchanged with rolledBack=false so the
+// wrapper neither publishes nor shows the failure banner to the wrong user.
+export function reconcileFailureForUser(
+  current: WorkModeCacheEntry | null,
+  capturedUserId: number,
+  failedSeq: number,
+  prevMode: StoredWorkMode,
+): { entry: WorkModeCacheEntry | null; rolledBack: boolean } {
+  if (!current || current.userId !== capturedUserId) {
+    return { entry: current, rolledBack: false };
+  }
+  const entry = reconcileFailure(current, failedSeq, prevMode);
+  // reconcileFailure returns the SAME ref when seq didn't match (superseded by
+  // a newer set) and a NEW object when it rolled back — so identity tells us
+  // whether a rollback actually happened.
+  return { entry, rolledBack: entry !== current };
+}
