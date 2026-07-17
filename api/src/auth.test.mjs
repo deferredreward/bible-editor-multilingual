@@ -408,6 +408,24 @@ console.log("[org pagination] full pages continue, short page terminates, any pa
   const capped = await fetchCurrentUserOrgs(env, "tok", { fetch: alwaysFull });
   assert(capped.ok === false, "page-cap exhaustion with full pages -> ok:false (never a truncated ok)");
   assert(capCalls === 20, "stops at the 20-page ceiling, not an unbounded loop");
+
+  // Gitea returns 404 once pagination runs PAST the last page. A full page 1
+  // followed by a 404 on page 2 is a clean end-of-list, NOT a failure — the
+  // page-1 orgs must be returned ok (else a user whose orgs exactly fill a
+  // page would fail sign-in).
+  const fullThen404 = async (url) => {
+    const p = Number(new URL(String(url)).searchParams.get("page"));
+    return p === 1 ? page(fiftyNames) : new Response("not found", { status: 404 });
+  };
+  const pastEnd = await fetchCurrentUserOrgs(env, "tok", { fetch: fullThen404 });
+  assert(pastEnd.ok === true && pastEnd.orgs.length === 50, "404 past the last page = end-of-list, page-1 orgs returned");
+
+  // But a 404 on page 1 is a real failure (bad token / missing endpoint).
+  const fourOhFourPage1 = async () => new Response("not found", { status: 404 });
+  assert(
+    (await fetchCurrentUserOrgs(env, "tok", { fetch: fourOhFourPage1 })).ok === false,
+    "404 on page 1 -> ok:false (fail closed)",
+  );
 }
 
 console.log("[refreshToken] viewer org-membership check fails closed on a page-2 pagination failure");

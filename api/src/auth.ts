@@ -99,6 +99,14 @@ async function fetchPaginatedOrgNames(
     } catch {
       return { ok: false };
     }
+    // A 404 on a LATER page means "past the end of the listing" on the Gitea
+    // pagination API (listOrgRepos relies on the same behavior) — that's a
+    // clean end-of-list, not a failure. A 404 on page 1 is a real problem
+    // (missing endpoint / bad token) and falls through to fail closed below.
+    if (res.status === 404 && page > 1) {
+      complete = true;
+      break;
+    }
     if (!res.ok) return { ok: false };
     let body: unknown;
     try {
