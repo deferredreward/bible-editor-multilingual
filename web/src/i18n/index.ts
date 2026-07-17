@@ -90,6 +90,12 @@ void i18n.use(initReactI18next).init({
     escapeValue: false,
   },
   returnEmptyString: false,
+  react: {
+    // Re-render mounted components when runtime string overrides are applied
+    // via addResourceBundle (Localization tab; see i18n/overrides.ts). Without
+    // this, live edits and the boot-time override fetch wouldn't repaint.
+    bindI18nStore: "added removed",
+  },
 });
 
 export default i18n;

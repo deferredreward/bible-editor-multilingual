@@ -876,6 +876,10 @@ export interface ArticleUnit {
   latest_source?: string | null;
 }
 
+// ── UI localization overrides (migration 0052) ──
+// A nested {namespace:{key:"text"}} bag mirroring the i18next resource shape.
+export type L10nBag = { [k: string]: string | L10nBag };
+
 // ── Translation preferences & memory (migration 0040) ──
 export const TERM_STATUSES = ["preferred", "admitted", "deprecated", "forbidden", "do_not_translate"] as const;
 export type TermStatus = (typeof TERM_STATUSES)[number];
@@ -1581,6 +1585,16 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(opts ?? {}),
+    }),
+
+  // ── UI localization overrides (migration 0052) ──
+  getL10nOverrides: () =>
+    request<{ overrides: Record<string, L10nBag>; versions: Record<string, number> }>(`/api/l10n/overrides`),
+  putL10nOverrides: (lang: string, expectedVersion: number, overrides: L10nBag) =>
+    request<{ version: number }>(`/api/l10n/overrides/${lang}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+      body: JSON.stringify(overrides),
     }),
 
   // ── Translation preferences & memory (migration 0040) ──
