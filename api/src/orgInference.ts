@@ -40,6 +40,7 @@ export async function listOrgRepos(
   const doFetch = deps?.fetch ?? fetch;
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const all: OrgRepo[] = [];
+  let complete = false;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const url = `${base}/api/v1/orgs/${encodeURIComponent(org)}/repos?limit=${PAGE_LIMIT}&page=${page}`;
     let r: Response;
@@ -55,6 +56,7 @@ export async function listOrgRepos(
       // versions) just means "past the end" — treat as end-of-list, not
       // org-not-found, UNLESS it's page 1 with zero repos collected so far.
       if (page === 1) return { ok: false, error: "org_not_found" };
+      complete = true; // reached the end of the listing
       break;
     }
     if (r.status === 403) return { ok: false, error: "dcs_forbidden" };
@@ -72,8 +74,15 @@ export async function listOrgRepos(
         : null))
       .filter((n): n is string => n != null);
     all.push(...names.map((name) => ({ name })));
-    if (body.length < PAGE_LIMIT) break; // last page
+    if (body.length < PAGE_LIMIT) {
+      complete = true; // short page = last page
+      break;
+    }
   }
+  // Exhausted the page budget with every page full → the repo list may be
+  // truncated. Drafting a project config from a partial list could silently
+  // miss the real lit/sim/tn repos, so fail rather than infer from half an org.
+  if (!complete) return { ok: false, error: "dcs_unreachable" };
   return { ok: true, repos: all };
 }
 

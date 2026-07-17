@@ -396,6 +396,18 @@ console.log("[org pagination] full pages continue, short page terminates, any pa
     (await fetchCurrentUserOrgs(env, "tok", { fetch: badJson })).ok === false,
     "non-JSON 200 body -> ok:false",
   );
+
+  // Every page full up to the page-count cap → we can't prove we saw the whole
+  // list, so fail closed rather than return a silently-truncated one (a viewer
+  // org past the cap would otherwise read as absent).
+  let capCalls = 0;
+  const alwaysFull = async () => {
+    capCalls++;
+    return page(fiftyNames); // always exactly PAGE_LIMIT → "there might be more"
+  };
+  const capped = await fetchCurrentUserOrgs(env, "tok", { fetch: alwaysFull });
+  assert(capped.ok === false, "page-cap exhaustion with full pages -> ok:false (never a truncated ok)");
+  assert(capCalls === 20, "stops at the 20-page ceiling, not an unbounded loop");
 }
 
 console.log("[refreshToken] viewer org-membership check fails closed on a page-2 pagination failure");

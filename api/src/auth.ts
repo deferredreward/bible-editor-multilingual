@@ -91,6 +91,7 @@ async function fetchPaginatedOrgNames(
 ): Promise<OrgsFetchResult> {
   const doFetch = deps?.fetch ?? fetch;
   const all: string[] = [];
+  let complete = false;
   for (let page = 1; page <= ORG_MAX_PAGES; page++) {
     let res: Response;
     try {
@@ -114,8 +115,15 @@ async function fetchPaginatedOrgNames(
       )
       .filter((n): n is string => n != null);
     all.push(...names);
-    if (body.length < ORG_PAGE_LIMIT) break; // last page
+    if (body.length < ORG_PAGE_LIMIT) {
+      complete = true; // a short page is the last page — the list is whole
+      break;
+    }
   }
+  // Ran the full page budget with every page full → there may be more we never
+  // saw. Returning a truncated list as `ok` would silently drop memberships
+  // (a viewer org past the cap would read as absent), so fail closed.
+  if (!complete) return { ok: false };
   return { ok: true, orgs: all };
 }
 
