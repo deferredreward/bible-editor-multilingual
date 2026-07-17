@@ -70,7 +70,7 @@ export function normalizeDoor43RepoUrl(
   return { ok: true, ref: { owner, repo, ref } };
 }
 
-function isIdent(s: string): boolean {
+export function isIdent(s: string): boolean {
   return /^[A-Za-z0-9._~-]+$/.test(s);
 }
 

@@ -16,11 +16,13 @@
   "dependencies": {
     "hono": "^4.12.23",
     "jose": "^5.9.0",
+    "js-yaml": "^4.1.0",
     "usfm-js": "^3.4.3",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
+    "@types/js-yaml": "^4.0.9",
     "typescript": "^5.5.0",
     "wrangler": "^4.90.0"
   }

@@ -1301,6 +1301,31 @@ export interface ProjectConfigResponse {
   presets: ProjectPreset[];
 }
 
+// PR B: draft-only manifest inference response — applies nothing.
+export interface InferredOrgProposal {
+  languageCode: string | null;
+  languageName: string | null;
+  languageTitle: string | null;
+  direction: "ltr" | "rtl";
+  repos: Partial<Record<string, string>>; // verified roles only
+  litLabel: string | null;
+  simLabel: string | null;
+  suggestedTranslationSource: "UW_SOURCE";
+  suggestedExportOrg: string;
+}
+export interface InferredOrgAmbiguousRole {
+  role: "lit" | "sim";
+  candidates: string[];
+}
+export interface InferredOrgConfigResponse {
+  org: string;
+  proposal: InferredOrgProposal;
+  missing: string[];
+  ambiguous: InferredOrgAmbiguousRole[];
+  manifestFound: boolean;
+  warnings: string[];
+}
+
 export const api = {
   getBookSummary: (book: string, signal?: AbortSignal) =>
     request<BookSummary>(`/api/chapters/${encodeURIComponent(book)}`, { signal }),
@@ -1348,6 +1373,19 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ preset }),
     }),
+  // PR B: apply a full override set (custom-gl activation, or any explicit
+  // org/repo/translationSource change). Unlike putProjectConfig above, this
+  // always supplies `overrides` explicitly — the server's override-lifecycle
+  // rule only preserves stored overrides when the field is OMITTED.
+  putProjectConfigWithOverrides: (preset: string, overrides: Record<string, unknown> | null) =>
+    request<{ config: ProjectConfig }>(`/api/project-config`, {
+      method: "PUT",
+      body: JSON.stringify({ preset, overrides }),
+    }),
+
+  // PR B: draft-only manifest inference for a Door43 org. Applies nothing.
+  getInferredOrgConfig: (org: string) =>
+    request<InferredOrgConfigResponse>(`/api/orgs/${encodeURIComponent(org)}/inferred-config`),
 
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 

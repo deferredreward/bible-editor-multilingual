@@ -6,8 +6,21 @@ test("preset catalog identifies authoring and translation projects", () => {
   assert.equal(PRESETS["en-unfoldingword"].translationSource, null);
   for (const [id, preset] of Object.entries(PRESETS)) {
     if (id === "en-unfoldingword") continue;
+    // custom-gl (PR B) is a blank template — every field, including
+    // translationSource, is filled in via overrides at apply time, never a
+    // preset default. It's excluded from this "every non-English preset
+    // translates from English" assumption by design.
+    if (id === "custom-gl") continue;
     assert.equal(preset.translationSource?.languageCode, "en", `${id} translates from English`);
   }
+});
+
+test("custom-gl is a hidden blank template with no translation-source default", () => {
+  const preset = PRESETS["custom-gl"];
+  assert.equal(preset.hidden, true);
+  assert.equal(preset.translationSource, null);
+  assert.equal(preset.org, "");
+  assert.equal(preset.exportOwnerFromConfig, true);
 });
 
 test("BibleEditorMLTest preset targets its verified English GL repositories", () => {

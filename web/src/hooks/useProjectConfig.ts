@@ -117,6 +117,17 @@ export async function selectProjectPreset(preset: string): Promise<ProjectConfig
   return res.config;
 }
 
+// PR B: apply a custom-gl draft (or any explicit override set) — always sends
+// `overrides` explicitly, unlike selectProjectPreset above.
+export async function applyProjectOverrides(
+  preset: string,
+  overrides: Record<string, unknown> | null,
+): Promise<ProjectConfig> {
+  const res = await api.putProjectConfigWithOverrides(preset, overrides);
+  publish({ config: res.config, presets: cache?.presets ?? [] });
+  return res.config;
+}
+
 // Publish an externally-obtained config update (e.g. from a lane PATCH
 // response) through the shared cache so every subscriber re-renders.
 export function updateProjectConfig(cfg: ProjectConfig): void {

@@ -104,6 +104,15 @@ export interface ProjectConfig {
     lit: Record<string, unknown>;
     sim: Record<string, unknown>;
   };
+  /**
+   * PR B: true for a preset that can never pass the completeness guard on its
+   * own (custom-gl — every field is empty and MUST be supplied via overrides).
+   * Hidden presets are dropped from the GET /presets *selectable* list, but
+   * when a hidden preset is the ACTIVE preset it is still included (as the
+   * synthetic "Custom — {org}" current option) so the UI's Select always has
+   * a matching value.
+   */
+  hidden?: boolean;
 }
 
 const EN_REPOS: Record<ResourceKey, string> = {
@@ -235,6 +244,33 @@ export const PRESETS: Record<string, ProjectConfig> = {
     translationSource: UW_SOURCE,
     reposVerified: false,
   },
+  // PR B: manifest-inference draft target. Every field starts empty/blank —
+  // it can NEVER pass the PUT completeness guard on its own; an admin must
+  // supply a full override (org, exportOrg, all seven repos, explicit
+  // translationSource) to activate it. Not offered as a selectable alternative
+  // (hidden: true) but returned by GET when it IS the active preset, so the
+  // client can render a synthetic "Custom — {org}" current option.
+  "custom-gl": {
+    preset: "custom-gl",
+    org: "",
+    exportOrg: "",
+    languageCode: "",
+    languageName: "",
+    languageTitle: "",
+    direction: "ltr",
+    repos: { lit: "", sim: "", tn: "", tq: "", twl: "", tw: "", ta: "" },
+    litLabel: "",
+    simLabel: "",
+    origHebrewLabel: "UHB",
+    origGreekLabel: "UGNT",
+    glBibles: [],
+    translationSource: null,
+    reposVerified: false,
+    hidden: true,
+    // Its exports must land on the org it was set up for, never the shared
+    // DCS_EXPORT_OWNER service account.
+    exportOwnerFromConfig: true,
+  },
 };
 
 export const DEFAULT_PRESET = "en-unfoldingword";
@@ -257,7 +293,10 @@ interface ConfigRow {
 // Merge stored overrides over the preset. Only known top-level keys are
 // honored; unknown keys are dropped (forward-compat: an old worker reading a
 // newer overrides blob must not crash).
-function materialize(preset: string, overridesJson: string | null): ProjectConfig {
+// Exported for the PR B atomic-apply path (projectConfigApply.ts), which must
+// compute the "would-be" materialized config from a direct uncached D1 read
+// BEFORE writing, to plan the empty-project guard and lane reconciliation.
+export function materialize(preset: string, overridesJson: string | null): ProjectConfig {
   const base = PRESETS[preset] ?? PRESETS[DEFAULT_PRESET];
   if (!overridesJson) return base;
   try {
@@ -291,6 +330,11 @@ function materialize(preset: string, overridesJson: string | null): ProjectConfi
       ...(o.origHebrewLabel ? { origHebrewLabel: o.origHebrewLabel } : {}),
       ...(o.origGreekLabel ? { origGreekLabel: o.origGreekLabel } : {}),
       ...(Array.isArray(o.glBibles) ? { glBibles: o.glBibles } : {}),
+      // translationSource: explicitly object-or-null. `undefined` (key absent
+      // from the overrides blob) preserves the base preset's value; an
+      // explicit `null` clears it (author-only project); an object replaces
+      // it wholesale (PR B apply always supplies a complete object).
+      ...(o.translationSource !== undefined ? { translationSource: o.translationSource } : {}),
       preset: base.preset,
     };
   } catch {
