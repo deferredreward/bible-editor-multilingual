@@ -642,12 +642,8 @@
       "translationSourceToggle": "Translate from unfoldingWord's English source",
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org."
     },
-    "assistedMode": "Режим с поддержкой",
-    "assistedModeHelp": "Когда включён, запуски перевода отправляют контекстный пакет команды (краткое описание, термины, проверенные примеры) в AI.",
-    "assistedModeDisabled": "Успешно экспортируйте контекстный пакет перед включением режима с поддержкой — пустой пакет приводит к сбою запуска AI.",
-    "assistedModeAdminOnly": "Только администратор может менять режим с поддержкой или экспортировать контекстный пакет.",
-    "assistedModeOn": "С поддержкой",
-    "assistedModeOff": "Базовый уровень",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "Экспортировать контекст сейчас",
     "exportQueued": "Экспорт контекста поставлен в очередь",
     "exportStatusNever": "Экспорт контекста ещё не выполнялся",
@@ -663,7 +659,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Передаётся AI",
-    "notFeedingAi": "Пока не передаётся AI — включите режим с поддержкой после успешного экспорта",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -696,11 +692,11 @@
         "lane_lease_held": "Эта дорожка занята (её удерживает импорт или экспорт). Повторите попытку чуть позже.",
         "confirmation_required": "Для запуска замены требуется подтверждение.",
         "lane_replacement_required": "Перед редактированием этой дорожки требуется замена источника.",
-      "job_not_found": "Не удалось найти это задание замены. Возможно, оно уже отменено или завершено.",
-      "job_not_ready": "Эта замена еще не готова к активации.",
-      "export_lease_held": "Невозможно активировать сейчас: для этой дорожки выполняется экспорт. Повторите попытку чуть позже.",
-      "export_lease_grace": "Невозможно активировать сейчас: ожидание завершения текущего экспорта. Повторите попытку чуть позже.",
-      "activation_cas_failed": "Активация не удалась, поскольку дорожка изменилась. Обновите страницу и попробуйте снова."
+        "job_not_found": "Не удалось найти это задание замены. Возможно, оно уже отменено или завершено.",
+        "job_not_ready": "Эта замена еще не готова к активации.",
+        "export_lease_held": "Невозможно активировать сейчас: для этой дорожки выполняется экспорт. Повторите попытку чуть позже.",
+        "export_lease_grace": "Невозможно активировать сейчас: ожидание завершения текущего экспорта. Повторите попытку чуть позже.",
+        "activation_cas_failed": "Активация не удалась, поскольку дорожка изменилась. Обновите страницу и попробуйте снова."
       },
       "saved": "Lane config saved."
     }

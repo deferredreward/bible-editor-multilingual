@@ -901,7 +901,7 @@ export async function commitFilesToDcs(
   // namespaces. Article callers pass nothing and are unaffected.
   opts?: { deletePaths?: readonly string[] },
 ): Promise<DcsBatchCommitResult> {
-  if (files.length === 0) {
+  if (files.length === 0 && !opts?.deletePaths?.length) {
     return { commitSha: "", changed: false, branchTouched: false, committedCount: 0 };
   }
   const headers: Record<string, string> = {

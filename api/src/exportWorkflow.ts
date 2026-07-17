@@ -494,6 +494,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // CAS retry loop: re-render from D1 on parent conflict (max 3).
     const maxAttempts = 3;
     let lastReason: string | null = null;
+    // Repo existence is invariant across CAS retries — probe/create at most once.
+    let repoEnsured = false;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const rendered = renderContextPack({
         cfg,
@@ -596,10 +598,23 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           owner,
           repo: contextRepoName(),
         };
-        // First-ever export for this org: create the context repo silently so
+        // Tip-first: on the steady-state path (repo + master exist) this is the
+        // only pre-commit read. Only a null tip triggers the repo probe/create —
+        // first-ever export for this org creates the context repo silently so
         // the translator never has to provision anything on DCS themselves.
-        await ensureContextRepoExists(dcsCfg);
-        const tip = await getBranchTipSha(dcsCfg, "master");
+        let tip = await getBranchTipSha(dcsCfg, "master");
+        if (tip == null && !repoEnsured) {
+          const ensured = await ensureContextRepoExists(dcsCfg);
+          repoEnsured = true;
+          tip = await getBranchTipSha(dcsCfg, "master");
+          if (tip == null && !ensured.created) {
+            // Repo exists but has no master branch (created out-of-band without
+            // auto_init) — the commit path can't self-heal that; name it.
+            throw new Error(
+              `context_repo_uninitialized: ${owner}/${contextRepoName()} exists but has no master branch`,
+            );
+          }
+        }
         const commit = await commitContextPackToMaster(
           dcsCfg,
           files,

@@ -600,12 +600,8 @@
       "translationSourceToggle": "Translate from unfoldingWord's English source",
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org."
     },
-    "assistedMode": "Mode bantuan",
-    "assistedModeHelp": "Saat aktif, proses terjemahan mengirim paket konteks tim (ringkasan, istilah, contoh tervalidasi) ke AI.",
-    "assistedModeDisabled": "Ekspor paket konteks berhasil sebelum mengaktifkan mode bantuan — paket kosong membuat proses AI gagal.",
-    "assistedModeAdminOnly": "Hanya admin yang dapat mengubah mode bantuan atau mengekspor paket konteks.",
-    "assistedModeOn": "Bantuan",
-    "assistedModeOff": "Dasar mentah",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "Ekspor konteks sekarang",
     "exportQueued": "Ekspor konteks dalam antrean",
     "exportStatusNever": "Belum ada ekspor konteks",
@@ -621,7 +617,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Mengumpankan AI",
-    "notFeedingAi": "Belum mengumpankan AI — aktifkan mode bantuan setelah ekspor berhasil",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -654,11 +650,11 @@
         "lane_lease_held": "Jalur ini sedang sibuk (sebuah impor atau ekspor sedang menahannya). Coba lagi sebentar lagi.",
         "confirmation_required": "Konfirmasi diperlukan untuk memulai penggantian.",
         "lane_replacement_required": "Jalur ini memerlukan penggantian sumber sebelum dapat diedit.",
-      "job_not_found": "Tugas penggantian ini tidak dapat ditemukan. Mungkin sudah dibatalkan atau selesai.",
-      "job_not_ready": "Penggantian ini belum siap untuk diaktifkan.",
-      "export_lease_held": "Tidak dapat mengaktifkan sekarang: ekspor sedang berlangsung untuk jalur ini. Coba lagi sebentar lagi.",
-      "export_lease_grace": "Tidak dapat mengaktifkan sekarang: menunggu ekspor yang sedang berlangsung selesai. Coba lagi sebentar lagi.",
-      "activation_cas_failed": "Aktivasi gagal karena jalur berubah di tengah proses. Segarkan dan coba lagi."
+        "job_not_found": "Tugas penggantian ini tidak dapat ditemukan. Mungkin sudah dibatalkan atau selesai.",
+        "job_not_ready": "Penggantian ini belum siap untuk diaktifkan.",
+        "export_lease_held": "Tidak dapat mengaktifkan sekarang: ekspor sedang berlangsung untuk jalur ini. Coba lagi sebentar lagi.",
+        "export_lease_grace": "Tidak dapat mengaktifkan sekarang: menunggu ekspor yang sedang berlangsung selesai. Coba lagi sebentar lagi.",
+        "activation_cas_failed": "Aktivasi gagal karena jalur berubah di tengah proses. Segarkan dan coba lagi."
       },
       "saved": "Lane config saved."
     }

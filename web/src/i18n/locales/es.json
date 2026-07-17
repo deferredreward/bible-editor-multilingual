@@ -628,12 +628,8 @@
       "translationSourceToggle": "Translate from unfoldingWord's English source",
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org."
     },
-    "assistedMode": "Modo asistido",
-    "assistedModeHelp": "Cuando está activado, las ejecuciones de traducción envían el paquete de contexto del equipo (resumen, términos, ejemplos validados) a la AI.",
-    "assistedModeDisabled": "Exporta un paquete de contexto con éxito antes de activar el modo asistido — un paquete vacío hace fallar la ejecución de AI.",
-    "assistedModeAdminOnly": "Solo un administrador puede cambiar el modo asistido o exportar el paquete de contexto.",
-    "assistedModeOn": "Asistido",
-    "assistedModeOff": "Línea base sin contexto",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "Exportar contexto ahora",
     "exportQueued": "Exportación de contexto en cola",
     "exportStatusNever": "Aún no hay exportación de contexto",
@@ -649,7 +645,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Alimentando la AI",
-    "notFeedingAi": "Aún no alimenta la AI — activa el modo asistido tras una exportación exitosa",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -682,11 +678,11 @@
         "lane_lease_held": "Esta vía está ocupada (una importación o exportación la tiene retenida). Inténtalo de nuevo en breve.",
         "confirmation_required": "Se requiere confirmación para iniciar un reemplazo.",
         "lane_replacement_required": "Esta vía necesita un reemplazo de fuente antes de poder editarse.",
-      "job_not_found": "No se pudo encontrar este trabajo de reemplazo. Puede que ya se haya cancelado o completado.",
-      "job_not_ready": "Este reemplazo aún no está listo para activarse.",
-      "export_lease_held": "No se puede activar ahora mismo: hay una exportación en curso para esta vía. Inténtalo de nuevo en breve.",
-      "export_lease_grace": "No se puede activar ahora mismo: esperando a que finalice una exportación en curso. Inténtalo de nuevo en breve.",
-      "activation_cas_failed": "La activación falló porque la vía cambió mientras tanto. Actualiza e inténtalo de nuevo."
+        "job_not_found": "No se pudo encontrar este trabajo de reemplazo. Puede que ya se haya cancelado o completado.",
+        "job_not_ready": "Este reemplazo aún no está listo para activarse.",
+        "export_lease_held": "No se puede activar ahora mismo: hay una exportación en curso para esta vía. Inténtalo de nuevo en breve.",
+        "export_lease_grace": "No se puede activar ahora mismo: esperando a que finalice una exportación en curso. Inténtalo de nuevo en breve.",
+        "activation_cas_failed": "La activación falló porque la vía cambió mientras tanto. Actualiza e inténtalo de nuevo."
       },
       "saved": "Lane config saved."
     }

@@ -24,6 +24,7 @@ import {
   type TermImport,
 } from "./translationMemoryLib.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
+import { workflowRunId } from "./exports.ts";
 
 export const translationMemory = new Hono<{
   Bindings: Env;
@@ -42,17 +43,24 @@ function isUniqueConstraintError(err: unknown): boolean {
 // queues a context-only export so the {org}/translation-context repo tracks D1
 // without the translator ever thinking about git. Deterministic second-
 // precision id dedupes same-second bursts (distinct `context-save-` prefix so
-// it can't collide with the manual route's `context-` ids); cross-second runs
-// serialize via the commit-path CAS and byte-identical re-runs no-op. The
-// catch swallows duplicate-id rejections and queue failures — a sync hiccup
-// must never fail the save (the nightly export is the backstop).
+// it can't collide with the manual route's `context-` ids). Known limitation:
+// two DISTINCT writes in the same second dedupe to one workflow, and if that
+// instance reads D1 before the second write commits, the second change waits
+// for the next edit / manual export / nightly backstop — accepted, since every
+// later write re-queues. The try/catch swallows everything (duplicate-id
+// rejections, a missing binding, queue failures) — a sync hiccup must never
+// fail the save; the nightly export is the backstop.
 type TmContext = { env: Env; executionCtx: { waitUntil(p: Promise<unknown>): void } };
 function queueContextExport(c: TmContext): void {
-  const id = `context-save-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`;
-  const p = c.env.EXPORT_WORKFLOW.create({ id, params: { contextOnly: true } }).catch((e: unknown) => {
-    console.log("context export queue skipped", id, e instanceof Error ? e.message : String(e));
-  });
-  c.executionCtx.waitUntil(p);
+  const id = workflowRunId("context-save-");
+  try {
+    const p = c.env.EXPORT_WORKFLOW.create({ id, params: { contextOnly: true } }).catch((e: unknown) => {
+      console.log("context export queue skipped", id, e instanceof Error ? e.message : String(e));
+    });
+    c.executionCtx.waitUntil(p);
+  } catch (e) {
+    console.log("context export queue unavailable", id, e instanceof Error ? e.message : String(e));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,14 +175,13 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
     instructions_md:
       parsed.data.instructions_md !== undefined ? parsed.data.instructions_md : existing.instructions_md,
     notes: parsed.data.notes !== undefined ? parsed.data.notes : existing.notes,
-    assisted_mode: existing.assisted_mode,
   };
   const res = await c.env.DB.prepare(
     `UPDATE translation_prefs
         SET audience = ?1, purpose = ?2, register = ?3, script_notes = ?4,
-            instructions_md = ?5, notes = ?6, assisted_mode = ?7,
-            version = version + 1, updated_at = ?8, updated_by = ?9
-      WHERE id = 1 AND version = ?10`,
+            instructions_md = ?5, notes = ?6,
+            version = version + 1, updated_at = ?7, updated_by = ?8
+      WHERE id = 1 AND version = ?9`,
   )
     .bind(
       merged.audience,
@@ -183,7 +190,6 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
       merged.script_notes,
       merged.instructions_md,
       merged.notes,
-      merged.assisted_mode,
       now,
       userId ?? null,
       expected,
