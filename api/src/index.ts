@@ -127,9 +127,15 @@ app.use("*", requireCsrf);
 // into a different MIME than what we send. Applied to every response.
 app.use("*", async (c, next) => {
   await next();
+  // connect-src pins WebSockets to this deployment's own host instead of the
+  // bare wss:/ws: schemes (any host — which would have handed an XSS a free
+  // exfiltration channel). The explicit wss://host + ws://host entries cover
+  // browsers that don't extend 'self' to WebSocket upgrades; the only WS the
+  // SPA opens is same-host (wsClient.ts builds it from location.host).
+  const host = new URL(c.req.url).host;
   c.res.headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss: ws: https://git.door43.org; frame-src 'self' https://swunrow.pythonanywhere.com",
+    `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://${host} ws://${host} https://git.door43.org; frame-src 'self' https://swunrow.pythonanywhere.com`,
   );
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   c.res.headers.set("X-Content-Type-Options", "nosniff");
