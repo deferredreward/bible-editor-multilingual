@@ -2379,6 +2379,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             setActiveWordId(null);
             onNavigate?.(b, c, v);
           }}
+          // Layout switcher is available even with no chapter data — it's a
+          // workspace-level control, and an empty/new project should still show
+          // it. No scripture/alignment to sync here, so the handler just sets +
+          // persists the active id; the data branch's selectLayout takes over
+          // once a chapter loads.
+          layouts={builtinLayouts}
+          userLayouts={userLayouts}
+          activeLayoutId={activeLayout.id}
+          onSelectLayout={(id) => {
+            setActiveLayoutIdState(id);
+            persistActiveLayoutId(id);
+          }}
         />
         <Box sx={{ p: 4, display: "flex", alignItems: "center", gap: 2 }}>
           {status === "error" ? (
