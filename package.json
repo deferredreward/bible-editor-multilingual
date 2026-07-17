@@ -8,7 +8,7 @@
     "web"
   ],
   "scripts": {
-    "dev": "npm-run-all --parallel dev:api dev:web",
+    "dev": "node scripts/dev.mjs",
     "dev:api": "npm --workspace api run dev",
     "dev:web": "npm --workspace web run dev",
     "build": "npm-run-all build:api build:web",
