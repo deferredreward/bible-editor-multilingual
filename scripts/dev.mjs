@@ -20,8 +20,26 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// The Worker signs dev JWTs with JWT_SIGNING_KEY, read from api/.dev.vars at
+// startup. That file is gitignored, so a fresh checkout (or one where it got
+// cleaned up) has no key and POST /api/auth/dev returns a 500
+// (jwt_signing_key_not_configured), which cascades into 401s everywhere. Mint a
+// throwaway local key on first run so `npm run dev` just works. Dev-only — this
+// launcher is never used for prod, whose key is a real Cloudflare secret.
+function ensureDevVars() {
+  const devVars = path.join(repoRoot, "api", ".dev.vars");
+  if (fs.existsSync(devVars)) return;
+  const key = crypto.randomBytes(32).toString("hex");
+  fs.writeFileSync(devVars, `JWT_SIGNING_KEY=${key}\n`);
+  console.log(`[dev] created api/.dev.vars with a generated JWT_SIGNING_KEY (local dev only).`);
+}
+
+ensureDevVars();
 
 // Is something already accepting connections on this port? We probe by
 // connecting rather than by binding: a plain bind test can report "free" for a
