@@ -75,15 +75,28 @@ const web = spawn("npm", ["--workspace", "web", "run", "dev"], {
   env: { ...process.env, VITE_API_PROXY: apiTarget },
 });
 
+// Kill a child and everything it spawned. child.kill() only signals the top
+// process — and on Windows that's the cmd.exe shell (shell: true), leaving the
+// real workerd/vite alive still holding the port. Orphaned port-holders are the
+// exact failure this launcher exists to prevent, so tear down the whole tree.
+function killTree(child) {
+  if (!child.pid || child.killed) return;
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    child.kill();
+  }
+}
+
 // If either server dies, tear down the other and exit with its code so the
-// failure is visible (mirrors npm-run-all --parallel's fail-fast behaviour).
+// failure is visible. (Unlike `npm-run-all --parallel`, which leaves the
+// surviving server running, we fail fast — a half-up dev stack is a trap.)
 let shuttingDown = false;
 function shutdown(code) {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const child of [api, web]) {
-    if (!child.killed) child.kill();
-  }
+  killTree(api);
+  killTree(web);
   process.exit(code ?? 0);
 }
 
