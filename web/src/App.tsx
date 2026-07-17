@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
-import { PreferencesWorkspace, SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
+import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
 import {

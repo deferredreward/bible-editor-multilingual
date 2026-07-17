@@ -74,7 +74,9 @@ export interface ArticleFile {
 // natural no-op there.
 //
 // ADDITIVE BY DESIGN (v1): this returns only the files that still render, and
-// the commit path (commitFilesToDcs) only creates/updates — it never deletes.
+// the article commit only creates/updates — it never deletes (commitFilesToDcs
+// CAN delete, but only for callers that explicitly pass deletePaths; article
+// callers never do, keeping this invariant).
 // So clearing a target_md back to NULL, soft-deleting an article_unit, or moving
 // an article to another dir removes it from the render but leaves the previously
 // exported .md stale on the long-lived branch until the publisher prunes it.

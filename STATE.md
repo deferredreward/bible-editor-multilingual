@@ -22,6 +22,37 @@
 - **⚠ HONEST GAP (user feedback after live view): what shipped is the FOUNDATION only — it rearranges existing monolithic components. Missing: (1) movable panels + the Flexible·Columns/Nested layouts (not in menu), (2) side-by-side source→target note translation, (3) simpler review-oriented scripture panes. Closing them needs decomposing the columns into standalone placeable panels first.**
 - **NEXT (user chose "foundation first, then all three"): read `docs/flexible-layouts-handoff.md` — it has the full brief, the plan, key files, and dev-env gotchas (real node_modules — don't re-junction; wrangler local-D1 persistence quirk).** Classic MUST stay byte-identical. Handoff intended for a FRESH session on this worktree (context grew too large to continue in-thread).
 
+2026-07-17 · **claude/dev-server-errors-main-562d66** — **Diagnosed the "npm run dev 401/500 + can't-switch-org" report: two root causes, one shipped fix + one user-owned remote step.**
+- Symptom: `npm run dev` off main threw 401/500s and org-switching was blocked by a "scripture source import in progress." Both were **intermittent** — the tell.
+- Root cause (local): parallel worktrees each run `npm run dev`, which hardwired the Worker to `:8787` and pointed every worktree's Vite `/api` proxy at that fixed port. Two Workers bound 8787; on Windows the OS routes to whichever bound last, so a frontend hit the *other* worktree's Worker — a different local D1 + different auth. The sibling `bem-flexible-layouts` backend had **no `api/.dev.vars`** (→ `/api/auth/dev` 500 `jwt_signing_key_not_configured`, cascading 401s) and broken lane state (→ stuck org). Flapping between backends = intermittent errors.
+- Shipped: (1) created main's missing `api/.dev.vars` (gitignored; random `JWT_SIGNING_KEY`) — immediate unblock. (2) **PR #38** `scripts/dev.mjs` (new `dev` script): connect-probe for the first free API port from 8787, launch `wrangler dev --port <n>`, set `VITE_API_PROXY` so Vite follows. Lone worktree still gets 8787/5173 (Playwright `webServer` unaffected); a 2nd worktree slides to 8788+. Race fix: `claimPort()` exclusive-binds each candidate before selecting (two simultaneous launches diverge). Shutdown: `killTree()` uses `taskkill /T /F` on Windows (child.kill only signals the cmd.exe shell → orphaned workerd, the exact thing this prevents).
+- Verified: `/verify` PASS (8787 held → 2nd dev picked 8788, Vite proxied there, original 8787 stack independent; `DEV_API_PORT=9100` free-path; tree-kill frees ports). Review protocol clean: Claude high `--fix` + Codex gpt-5.5 review (caught the TOCTOU race → fixed) + gpt-5.4-mini verify → FIXED.
+- **Remote dev site (user-owned, NOT done by agent):** deployed `bible-editor-api-dev` is half-switched to `en-bible-editor-ml-test` — config=English but both scripture lanes still hold LEGACY BSOJ Arabic (gen 2) flagged `replacement_required=1`, no job, scripture hidden; tn/tq/twl resources present. **Agent cannot finish it:** dev-auth is DISABLED on the deployed dev worker (`/api/auth/dev` → 404 `disabled`), so the only way in is DCS OAuth (user's to do), and no cron/SQL path stages a lane replacement. User will complete via Preferences → Scripture repositories → per lane, Change source to `https://git.door43.org/BibleEditorMLTest/en_glt` (lit) and `en_gst` (sim) → wait ready → Activate. (Both repos verified live 200.) Confirms the known no-auto-recovery gap for a wedged replacement.
+
+2026-07-17 · **claude/prefs-to-ai-translation-1b7f4f** — **Prefs → AI translation: auto-create context repo, save-triggered sync, assisted_mode gate removed.**
+- Why: user's test failed — instructions saved in the Preferences pane never reached the bot. Two broken links: `BibleEditorMLTest/translation-context` didn't exist (nothing anywhere created DCS repos, so the context export could never succeed) and `contextRef` was only injected when `assisted_mode=1` AND a successful export existed.
+- Shipped: (1) `ensureContextRepoExists` (`contextExportDcs.ts`) — GET repo → 404 → `POST /orgs/{org}/repos` `auto_init`+master, poll tip, called from `exportContextPack` before the commit (covers nightly + manual + save-triggered; org-only by design, no /user/repos fallback). (2) Save-triggered sync: `queueContextExport` in `translationMemory.ts` fires `EXPORT_WORKFLOW.create({contextOnly:true})` via `waitUntil` after every successful prefs PUT / term create/patch/delete / CSV import (never dryRun); second-precision `context-save-` ids dedupe bursts; failures can't affect the save. (3) Gate removed: `applyAssistedContextRef` → `applyContextRef(options, latest)` — contextRef injected whenever a successful export exists; `assisted_mode` dropped from PutPrefsBody/pipelines read (column stays, unread). (4) Deletion gap fixed: `commitFilesToDcs` gained `deletePaths` (Gitea ChangeFiles `delete` op); `commitContextPackToMaster` deletes `stalePackPaths(files)` (only the 5 `PACK_MANAGED_PATHS`; runs/, candidates/, README untouchable); shrink guard's `contentFiles` metric removed (it made every intentional clear permanently refused) — terms/examples/totalBytes metrics stay, `shrinkOverride` UI added for the totalBytes edge. (5) Frontend: `AssistedModeControls` → `ContextPackStatusControls` (toggle gone; status + Export now + shrink_refused force button); `feedingAi` = successful export.
+- Verified: typecheck api+web clean, web build ok, all 34 api strip-types suites pass (contextExport tests rewritten for ungated `applyContextRef` + `stalePackPaths` + shrink-allows-file-drop). **Live e2e on deployed dev worker** (`bible-editor-api-dev`, preset en-bible-editor-ml-test): edited instructions in the browser → save 200 (version bumped) → export auto-queued → workflow rendered pack (2 content files) → attempted repo creation → clean failure surfaced in `/export-status`: `context_repo_create_forbidden: token lacks repo-create permission for org BibleEditorMLTest`.
+- **Unblock (decided 2026-07-17):** do NOT grant the service token repo-create rights. Benjamin creates `BibleEditorMLTest/translation-context` manually (initialized, so a `master` branch exists — a bare/branchless repo makes the new code throw `context_repo_uninitialized`). Once it exists, `ensureContextRepoExists` GETs 200, skips creation, and the commit uses the write access `BibleEditorService` (uid 53473) already has — so the current write-only token completes the chain with no permission change. Still to verify live after the repo exists: stale-file deletion on DCS and a translate run showing `contextRef` in the built options.
+- **Future direction (decided 2026-07-17):** repo provisioning belongs in **gatewayadmin** — the separate tool that seeds a new org with the empty book-package repos and is the first step of the onboarding wizard. `translation-context` should be added to gatewayadmin's standard seed set (it's just one more repo in the org's standard set, same as `en_glt`/`en_tn`/…, which the app already assumes are provisioned externally). Rationale: we won't deploy an org-create-scoped token in a Worker secret — write-only is a far smaller blast radius. Consequence for cleanup: once gatewayadmin owns creation and the token stays write-only, the app's `ensureContextRepoExists` POST will always 403, so the eventual change is to replace the create attempt with a clean "context repo not provisioned — run gatewayadmin" degrade rather than an attempted create. **Keep auto-create as-is for now** (Benjamin's call) — don't rip it out this PR.
+- Note: bot-side (`bp-bot`) needed NO changes — `options.contextRef` → `loadContextPack` → `instructions.md`/brief/terms injected into every translate prompt already ships; its default `{targetOrg}/translation-context@master` allowEmpty explains why the failed test was silent.
+- **PR #34 review protocol (Claude high pass + Codex gpt-5.5 review + gpt-5.4-mini verify → FIXED, clean):**
+  - Claude pass fixed: i18n parity (removed 6 stale `assistedMode*` keys from all 13 non-en locales, added `exportAdminOnly`/`exportForce` — `check-i18n` now has no new STALE/MISSING; two remaining failures `detectOrg.applyFailed` + `confirmWaiveBook`/`sync.*` are pre-existing on main); `queueContextExport` wrapped in try/catch (a missing binding/executionCtx can no longer 500 the save); shared `workflowRunId()` in exports.ts (was duplicated); tip-first ordering + `repoEnsured` hoist so the repo probe/create runs at most once (not per CAS retry) and only when master tip is null; named `context_repo_uninitialized` error; deletion-only commits no longer short-circuit; dead `assisted_mode` write-back removed from the UPDATE.
+  - Codex High (real, same as two Claude finders): a pack **cleared to empty after a prior successful export** returned `no_content` before the commit → stale `instructions.md`/`terms.csv` never deleted AND `getLatestSuccessfulContextExport` (filters `status='success'`) kept returning the old SHA, so translate kept injecting the cleared content. Fixed: `no_content` early-return now gated on `!prevStats` (genuine first-time-empty only); a scaffold-only render after a prior export flows through the commit (deletes stale files, records a fresh SHA). Large clears still trip the shrink guard → admin `shrinkOverride`.
+  - Judged NOT-blocking (design tradeoffs the plan accepted, not defects): per-edit export storm on rapid terminology edits and the 6-call-site `queueContextExport` sprinkle vs a D1-mutation hook (both bounded by same-second dedup + CAS + nightly backstop; validated-example writes outside translationMemory.ts stay nightly-only by design); removal of the assisted opt-out (the user explicitly chose to remove the gate). A debounce and a post-write hook are reasonable future refinements, not merge blockers.
+
+2026-07-17 · **claude/suspicious-leavitt-fef15c (Onboarding wizard, Phase 3 — stacked on PR A #31 + PR B #32)** — **Admin-only guided "Setup" wizard: UI orchestration over the inference/apply/import/populate routes.**
+- Prereq gate passed: PR A (#31, `POST /api/articles/populate`) and PR B (#32, `GET /api/orgs/:org/inferred-config` + `custom-gl` + atomic `PUT /api/project-config`) both merged to `main` (worktree rebased onto `origin/main` @ `0b190f4`). No backend changed — the wizard is a pure UI layer.
+- New `web/src/components/OrgConfigDraftEditor.tsx`: shared `useOrgDraft()` hook + `<OrgDraftFields>` + `<LaneRepoFields>`, extracted from PR B's inline `OrgDetectionSection` so the override-building logic (`buildOverrides` → custom-gl `{org, exportOrg, repos{7}, translationSource|null, …}`) is a single source of truth. `OrgDetectionSection` in `PreferencesWorkspace.tsx` rewritten as a thin wrapper over the hook (net −70 lines there; behavior preserved — regression-verified in browser).
+- New `web/src/components/SetupWizard.tsx`: MUI vertical `Stepper` (not a popup), 6 steps — gatewayAdmin checklist+link → detect org (`api.getInferredOrgConfig`, reuses `<OrgDraftFields>`) → confirm lit/sim (`<LaneRepoFields>`, editable, feeds the SAME override) → apply (`applyProjectOverrides("custom-gl", …)`, 409 `project_not_empty`/`lane_busy` mapped) → import first book (`api.importBook` + loop `api.populateArticles({book})` until `remaining===0`, handles `skipped`/`aborted`) → done + link to scripture.
+- **Deviation from the original task wording (LaneCard reuse), user-confirmed:** step 3 does NOT reuse `LaneCard` — `LaneCard` has no `initialUrl` prop (PR B never shipped it) and reads `cfg.laneState`, which doesn't exist before `custom-gl` is applied (on an empty DB the apply installs both lanes directly via `planLaneReconcile`'s install branch). So step 3 confirms/edits the proposed lit/sim repos *within the custom-gl override* applied in step 4; the existing Scripture Lanes / `LaneCard` flow stays the post-onboarding path for swapping an active lane's source.
+- `PreferencesWorkspace.tsx`: `Section` union gains `"setup"` (kept out of the memory `SECTIONS` list; new `ALL_SECTIONS` export for route validation); rail shows a Setup item for `role === "admin"` (independent of the `memoryAvailable` gate); main pane renders `<SetupWizard/>` when `section === "setup" && role === "admin"`. `App.tsx` now validates the hash section against `ALL_SECTIONS` (was `SECTIONS`) so `#/preferences/setup` resolves (the plan's "App.tsx needs no change" assumption was wrong).
+- i18n ×14: new `setup.*` namespace (English base; English placeholder in the other 13, per `fallbackLng:"en"` convention). Also **fixed a latent dangling key from PR B** — `preferences.detectOrg.applyFailed` was referenced in code but never defined (rendered the raw key); added to all 14. Raw-text insertion (not re-stringify) kept the diff purely additive and avoided normalizing a pre-existing indentation quirk in ar/ru/th.
+- Verified: `npm run typecheck` (api+web) clean; `npm run build` clean; `npm --workspace web run test` 13/13. **Browser smoke** (dev worker + fresh migrated local D1, dev-admin): wizard renders admin-gated; all 6 steps navigate; **detect `BibleEditorMLTest` → 200, draft rendered all 7 verified roles (en_glt/en_gst/en_tn/…), toggle + exportOrg prefilled**; **apply → `PUT /api/project-config` 200 on empty DB → custom-gl active (org/exportOrg=BibleEditorMLTest, lit=en_glt, sim=en_gst, translationSource.org=unfoldingWord), advanced to import step**; import fires `importBook` and correctly surfaces `import_failed` (the test org has no book USFM on master — environmental, not a wizard bug); regression: Project Mode + refactored `OrgDetectionSection` intact. **Browser smoke caught a real bug** — missing `setup.back`/`setup.next` keys (rendered "SETUP.BACK") — fixed and re-audited (all 52 `t()` keys resolve).
+- **Not observable in this env (documented gaps):** the happy import→populate-loop drain (no importable book in `BibleEditorMLTest` on master — every `/raw/branch/master/<book>` 404s) and the live 409 `project_not_empty` path (empty DB had no live data to trip the guard). Both are thin wiring over PR-A/B-tested routes; the 502/409 mappings are code-verified.
+- **Owed:** `setup.*` still English in the 13 non-English locales — needs a native-reviewed i18n pass (same follow-up class as PR B's `preferences.detectOrg.*`).
+- **Next infra step (flagged, NOT built):** true per-user org *switching* across databases needs **per-org D1 routing** — N D1 bindings + an org→binding map + an `org` JWT claim + a `dbFor(c)` accessor — and a **whole-project replacement workflow** to re-point a populated D1 at a new org. PR B's empty-project (`project_not_empty`) guard is the interim one-org-per-database stance; the wizard onboards onto a fresh DB only. Seams already present: `orgs` on MeResponse, `dcs_orgs_json`, `custom-gl` + explicit source/exportOrg.
+
 2026-07-16 · **feat/manifest-inference (PR B, stacked on feat/tw-ta-article-population / PR A #31)** — **Manifest inference: draft-first org detection + atomic custom-gl activation.**
 - `api/src/orgInference.ts`: `listOrgRepos` (paginated Gitea org-repos, service-token auth, 404 vs empty distinguished), `parseManifestFacts` (js-yaml, `?v=` stripped), `inferFromRepoList` (pure: tn-repo regex with multiple-match ambiguity, two-tier lit/sim resolution — standard ult/glt/ust/gst identifiers auto-assign only when their OWN manifest verifies both a Bible-ish subject AND that role's explicit identifier table `{lit:[ult,glt],sim:[ust,gst]}`; any OTHER `{lang}_*` repo whose manifest verifies a Bible subject but carries a nonstandard identifier — avd/nav-style — becomes an ambiguous fallback candidate for both roles, never auto-picked). `translationSource` is never inferred from language equality — the route returns a `UW_SOURCE` suggestion only.
 - `api/src/orgRoutes.ts`: `GET /api/orgs/:org/inferred-config` (requireAdmin, `isIdent`-validated `:org`, now exported from `repoUrl.ts`). Errors: 404 `org_not_found` / 403 `dcs_forbidden` / 422 `no_tn_repo` / 502 `dcs_unreachable`. Draft only — applies nothing.
@@ -1439,6 +1470,99 @@ cleanly on nav with no stuck gate, back/forward + deep-link land correctly. type
 Not yet PR'd.
 
 ## In progress
+
+- **aquifer-arabic-draft-notes** (2026-07-16) — **DONE + LIVE-E2E VERIFIED; rebased onto origin/main (`0b190f4`),
+  ready for PR.** Goal: pull Aquifer tN as unapproved *drafts* merged onto the current `unfoldingWord/en_tn` skeleton,
+  language-parameterized (Arabic pilot → Hindi etc.). Full design detail in memory [[project-aquifer-tn-source]]; plan
+  `C:\Users\benja\.claude\plans\write-up-a-plan-ethereal-tiger.md`. Branch commits `5fb837c` (feat) + `8204be8` (docs)
+  on top of `0b190f4`.
+  - **LIVE E2E PASSED (2026-07-16, local wrangler dev + real D1).** Ran from the MAIN checkout (worktree's fresh npm
+    install has a broken workerd; junction breaks esbuild — main's node_modules is the only healthy wrangler here).
+    Set project ar-bsoj, then: **PHM (Arabic in ar_tn):** import→93 NULL rows; aquifer-drafts→ **approved 93** (existing
+    Arabic marked `validated`, `pre_draft_json` set), **skippedApproved 86** (deduped, not overwritten), **inserted 6**
+    new drafts; `edit_log.source=aquifer` ×6, `draft_meta.source=aquifer` ×6, `book_imports.tn_source='aquifer:arb'`;
+    a tn **reimport was skipped** (all-zero, rows unchanged) → clobber-protection confirmed. **RUT (English placeholder):**
+    aquifer-drafts→ **approved 0** (English correctly NOT target-script), **replaced 262** placeholders, **inserted 293**
+    drafts (248 quote / 40 ordinal / 5 intro), **40 flagged** `aquifer_unverified`, 31 uncovered placeholders left NULL.
+  - Cosmetic follow-up: the bold-gloss line renders as `**"****word**` (adjacent bolds) — harmless, tidy later.
+  - **Not runtime-verified:** the browser badge render (its data `draft_meta.source=aquifer` IS confirmed).
+  - **Code-review pass (Claude + Codex, on PR #36):** fixed — dedup/replace key now includes `occurrence`;
+    trailing See-link strip handles multi-Tag lines; **export SKIPS tn for `aquifer:*` books** (was: `pre_draft_json=''`
+    → nightly export would ship blank notes over the tn repo — data corruption) mirroring the reimport skip; and the
+    id set for collision-avoidance now includes soft-deleted rows (PK `(book,id)` collision → 500). **KNOWN DEFERRAL
+    (intentional, flagged by Codex):** `book_imports.tn_source='aquifer:*'` is never cleared, so an Aquifer book's tn is
+    held out of DCS export *permanently for now* — validated Aquifer Arabic won't reach DCS until the export-direction
+    feature is built AND a `tn_source`-clearing path is added. That's the deferred export work, not a regression.
+  - **Shipped (commit fa3daf0):** `scripts/aquifer-join-census.mjs` (Phase-0 diagnostic, all 47 books arb+hin);
+    `api/src/aquiferConvert.ts` + `.test.mjs` (quote-primary/ordinal-fallback/unmatched converter, 10 tests green,
+    real 3JN 57/57); `api/src/aquiferSources.ts` (lang→dir + canonical book# + URL); `api/src/aquiferImport.ts`
+    (`POST /api/books/:book/aquifer-drafts`, admin, MERGE-and-preserve: validate existing target-lang notes, dedup by
+    (ref,NFC quote), overlay placeholders, mint unmatched; `edit_log.source='aquifer'`, `draft_meta_json.source`,
+    `preserve=1`, flagged `review_kind='aquifer_unverified'`); route in `bookImport.ts`; migration `0050`; reimport
+    skip in `bookReimport.ts`; NoteCard "Aquifer draft" badge + i18n en/ar/hi. typecheck/build/api-tests green.
+  - **⚠ Data-loss + recovery:** an npm "repair" ran `git clean`, deleting all untracked files + reverting tracked
+    edits (branch went clean). Recovered from conversation history and **committed immediately** (`fa3daf0`). Lesson:
+    on this branch, commit early — untracked work is one `git clean` away from gone.
+  - **Env note:** worktree `node_modules` is now a REAL `npm install` (junction removed — it broke wrangler dev's
+    esbuild; and the fresh install's workerd crashes, so run dev from main). Re-run `scripts/worktree-init.ps1` to
+    restore the junction + reclaim disk when done.
+  - (Below: original reconnaissance, still valid.)
+  - **Aquifer source:** `github.com/BibleAquifer/UWTranslationNotes/tree/main/arb` — NOT a DCS repo. Per-book files
+    in 4 formats (`docx/ json/ md/ pdf/`) named by USFM book number `NN.content.json` (01=GEN … 66=REV, verified:
+    64=3JN). **47 books present** (full NT + wisdom/some minor prophets); **19 OT books MISSING** incl. NUM, DEU, PSA,
+    ISA, JER, EZK, DAN (nums 04,05,10-14,19,21,23-28,30,33,35,38). There's also a 35 MB `arb/metadata.json`.
+  - **Coverage measured by what's ACTUALLY in Arabic (user: "the only thing that matters is what's in arabic").**
+    BSOJ/ar_tn has all 66 books as *files* but **most are still English placeholder** — Arabic-script ratio per book
+    across all 66 TSVs shows BSOJ is genuinely Arabic in only **~19 books** (JON 63% + GAL/EPH/PHP/COL/1TH/2TH/1TI/
+    2TI/TIT/PHM/JAS/1PE/2PE/1JN/2JN/3JN/JUD/REV ~100%); **everything else is 0% Arabic** (all OT except Jonah, all
+    Gospels, ACT, ROM, 1–2CO, HEB). Aquifer arb is **100% Arabic** in every sampled book (RUT/JOB/JOL/OBA/NAM/HAG/
+    MAT/ROM/HEB/GAL), counts ≈ BSOJ (JOB 3320/3320, MAT 5286/5315) — same note base, actually translated.
+    - **Aquifer ADDS Arabic for 28 books** BSOJ has only in English: GEN EXO LEV JOS JDG RUT 1SA EZR NEH EST JOB PRO
+      SNG JOL OBA NAM ZEP HAG MAL MAT MRK LUK JHN ACT ROM 1CO 2CO HEB.
+    - **Both Arabic (19, overlap):** JON GAL EPH PHP COL 1TH 2TH 1TI 2TI TIT PHM JAS 1PE 2PE 1JN 2JN 3JN JUD REV —
+      Aquifer is a **superset** of BSOJ's real Arabic content (loses nothing).
+    - **NO Arabic in either source (19, real gap, mostly OT):** NUM DEU 2SA 1KI 2KI 1CH 2CH PSA ECC ISA JER LAM EZK
+      DAN HOS AMO MIC HAB ZEC.
+    - Net: adding Aquifer roughly **triples** available Arabic tN (≈19 → 47 books). User's original instinct was right;
+      my earlier book-count comparison was the wrong metric.
+  - **Format gap = the hard part.** Aquifer `json` is a flat **list** of items, each: `content_id`, `reference_id`,
+    `title`, `index_reference` (BBCCCVVV), `language:"arb"`, `content` (**HTML**), `associations{passage[],resource[],
+    acai[]}`. `passage[].start_ref_usfm`/`end_ref_usfm` = the verse ref (ranges supported). Original-language quote is
+    **embedded inline in the HTML** (e.g. `<span dir=ltr>ὁ πρεσβύτερος</span>`), NOT a separate Quote/Occurrence field.
+    TA links are `<span data-bnType="resourceReference" data-resourceType="UWTranslationManual">` inline, not a
+    SupportReference column. IDs are numeric, not DCS 4-char sticky IDs.
+    → Our `tn_rows` schema + editor need TSV columns **Reference/ID/Tags/SupportReference/Quote/Occurrence/Note** and
+    depend on **Quote+Occurrence** for alignment. Aquifer→our-schema requires an HTML→markdown transform, quote
+    *extraction* from prose (hardest — no structured Quote/Occurrence, so alignment won't work out of the box),
+    SupportReference recovery from embedded links, and minted sticky IDs.
+  - **Where "aquifer" must appear (the source-config map):** `api/src/projectConfig.ts` PRESETS (currently every preset
+    is a DCS `org` + `{lang}_tn` repo — Aquifer needs a new *source-kind* concept, not just an org string) →
+    `api/src/dcsSources.ts` / `api/src/importParsers.ts` (hardcode DCS raw-URL shape + TSV columns; need a parallel
+    fetch/parse path) → `book_resource_syncs` watermark (`0028`/`0036`, keyed on `source_org`) → web preset picker
+    (`web/src/components/PreferencesWorkspace.tsx`, `useProjectConfig.ts`) surfaces automatically once a preset exists.
+  - **"Draft" fit:** existing target-lang draft machinery is `translation_state` (`NULL|ai_draft|edited|validated`,
+    migration `0037`) + `pre_draft_json` (`0049`); export ships only `validated`. Aquifer-sourced draft notes most
+    naturally land as `ai_draft` (or a new `source='aquifer'` provenance) so they never auto-export unreviewed.
+  - **Provenance — NO AI/human/review signal in the data (checked all 47 books + 35 MB metadata.json).** Every one
+    of **65,738** items has `review_level: "None"` (uniform) and `version` "1.0.4"; item schema carries no author/
+    method/model field. metadata.json adds only license (CC BY-SA 4.0), Scripture Burrito `category:"source"`, a file
+    manifest, and a localization map. Keyword sweep (machine/ai/gpt/llm/model/openai/anthropic/claude/confidence/
+    reviewer/generated) = zero hits. Only attribution: "adapted … by Mission Mutual", method unspecified.
+    (`associations.acai[].confidence` = entity-linking confidence, not translation provenance.) **→ Cannot tell AI vs
+    human from the files; treat ALL as unapproved drafts** — the chosen default. Land as `translation_state='ai_draft'`
+    (or `source='aquifer'`) so they never auto-export unreviewed.
+  - **KEY STRATEGY (Benjamin's idea, VALIDATED 2026-07-16): graft Aquifer Arabic onto the `unfoldingWord/en_tn`
+    skeleton** instead of extracting Quote/Occurrence/SupportReference from Aquifer's HTML. Join each Aquifer note to
+    its en_tn row and inherit clean ID/Quote/Occurrence/SupportReference/Tags; keep only Aquifer's Arabic Note prose.
+    No literal shared ID (Aquifer has numeric content_id, not uW 4-char) → join is **(reference + per-verse ordinal
+    `(#N)`)** cross-validated by the **embedded orig-lang quote** (Greek=ltr span, Hebrew=rtl span, compare via NFC).
+    **Measured:** ordinal-row quote == Aquifer quote at OT RUT/JOB/NAM 100%, OBA 99.3%, JOL 97.9%; NT GAL 100%,
+    ROM 99.4%, REV 99.8%, MAT 98.7%, MRK 97.4% (order preserved; OT count parity exact, NT drops <0.5%/book).
+    Residual ~1–3% → flag for review (mid-verse drop/add shifts ordinal, multi-occurrence resolved by ordinal→adopt
+    en_tn Occurrence, en_tn version drift → pin the commit). Payoff: **alignment + DCS export work for free** (Quote/
+    Occurrence from en_tn) and IDs stay in the DCS ecosystem. Note-body: strip embedded quote/gloss/"(انظر: TA)" so
+    they don't duplicate inherited columns. Supersedes the earlier "Quote/Occurrence is the hard part" worry.
+  - Detail also in memory [[project-aquifer-tn-source]].
 
 - **dreamy-leakey** (2026-07-09) — **Fix C: crash-safe persistence of in-progress alignment work — [PR #330](https://github.com/unfoldingWord/bible-editor/pull/330) open.**
   Closes the hole PR #329's beforeunload guard can't: a CRASH loses AlignmentPanel drags (React-state-only until save).

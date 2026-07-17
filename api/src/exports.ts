@@ -11,6 +11,14 @@ import { ALL_RESOURCES, type Resource } from "./export";
 
 export const exports = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
+// Deterministic second-precision Workflow instance id. Shared by every spawn
+// site (manual `manual-`/`context-` here, save-triggered `context-save-` in
+// translationMemory.ts) so the no-collision-across-prefixes and same-second
+// dedup guarantees rest on ONE timestamp format, not parallel copies.
+export function workflowRunId(prefix: string): string {
+  return `${prefix}${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`;
+}
+
 const RunBody = z.object({
   book: z.string().min(1).max(8).optional(),
   resource: z.enum(["tn", "tq", "twl", "ult", "ust"]).optional(),
@@ -56,9 +64,7 @@ exports.post("/run", requireAdmin, async (c) => {
   // uses `nightly-${day}` ids — see scheduled() in index.ts. Context-only
   // runs use a distinct prefix so they don't collide with a full manual run
   // in the same second.
-  const id = parsed.data.contextOnly
-    ? `context-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`
-    : `manual-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`;
+  const id = workflowRunId(parsed.data.contextOnly ? "context-" : "manual-");
   try {
     const instance = await c.env.EXPORT_WORKFLOW.create({ id, params });
     return c.json({ id: instance.id, status: "queued" }, 202);
