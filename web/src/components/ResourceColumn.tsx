@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next";
 import { Box, Stack, Typography, Chip, Button, Tooltip, LinearProgress } from "@mui/material";
 import { api, isReadOnly, type TnRow, type TqRow, type TwlRow, type VerseDto, type TwlSuggestion } from "../sync/api";
 import { NoteCard, type DropPosition } from "./NoteCard";
-import { WordsTable, type WordDropPosition } from "./WordsTable";
-import { TwlSuggestions } from "./TwlSuggestions";
+import { type WordDropPosition } from "./WordsTable";
 import { QuestionsTable } from "./QuestionsTable";
+import { WordsPanelBody } from "./WordsPanel";
 import { QuestionCard } from "./QuestionCard";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
@@ -919,104 +919,36 @@ export function ResourceColumn({
         )}
 
         {activeResourceTab === "words" && (
-          // Flex column filling the scroll viewport so the suggestions block
-          // (mt:auto) is pushed to the bottom even when the Words list is short.
-          <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
-            <SectionHead
-              title={t("shell.words")}
-              count={totalTwl}
-              pinned={pinned.words}
-              onTogglePin={() => togglePinned("words")}
-              onAdd={onWordCreate}
-              sticky
-              hideAdd={locked}
-              lane="tw"
-              checkoff={checkoff}
-            />
-            {twlGroups ? (
-              twlGroups.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("shell.noWordsInChapter")}
-                </Typography>
-              ) : (
-                twlGroups.map(([verse, rows]) => (
-                  <Fragment key={`twl-${verse}`}>
-                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="words" />
-                    <WordsTable
-                      rows={rows}
-                      activeId={activeWordId}
-                      onSave={onWordSave}
-                      onDelete={onWordDelete}
-                      onFocus={onWordFocus}
-                      onReorder={onWordReorder}
-                      onHoverPreview={onWordHoverPreview}
-                      locked={locked}
-                      onTranslateQuote={onWordTranslateQuote}
-                      onWordGloss={onWordGloss}
-                      suggestionAlternatives={twlRowAlternatives}
-                      activeQuoteBuildId={quoteBuildActiveWordId}
-                      quoteBuildSelectionCount={quoteBuildSelectionCount}
-                      onStartQuoteBuild={onStartWordQuoteBuild}
-                    />
-                  </Fragment>
-                ))
-              )
-            ) : (
-              <WordsTable
-                rows={twlForVerse}
-                activeId={activeWordId}
-                onSave={onWordSave}
-                onDelete={onWordDelete}
-                onFocus={onWordFocus}
-                onReorder={onWordReorder}
-                onHoverPreview={onWordHoverPreview}
-                locked={locked}
-                onTranslateQuote={onWordTranslateQuote}
-                onWordGloss={onWordGloss}
-                suggestionAlternatives={twlRowAlternatives}
-                activeQuoteBuildId={quoteBuildActiveWordId}
-                quoteBuildSelectionCount={quoteBuildSelectionCount}
-                onStartQuoteBuild={onStartWordQuoteBuild}
-              />
-            )}
-            {/* Per-verse suggestions — only in the active-verse (unpinned) view.
-                refreshKey is the verse's current link set so adding/removing a
-                link re-scans and drops/recovers it. */}
-            {!twlGroups && onAddTwlSuggestion && (
-              // Pin the suggestions to the bottom of the scroll viewport: mt:auto
-              // pushes it to the bottom of the flex column (so it stays there even
-              // when the Words list is short), and sticky bottom:-8 keeps it pinned
-              // while scrolling a long list. mx/px:2 + pb:1 extend the paper
-              // background; bottom:-8 sits it flush against the scroll body's py:1.
-              <Box
-                sx={{
-                  mt: "auto",
-                  position: "sticky",
-                  bottom: -8,
-                  zIndex: 1,
-                  bgcolor: "background.paper",
-                  mx: -2,
-                  px: 2,
-                  pb: 1,
-                  boxShadow: "0 -6px 8px -6px rgba(0,0,0,0.12)",
-                }}
-              >
-                <TwlSuggestions
-                  book={book}
-                  chapter={chapter}
-                  verse={activeVerse}
-                  refreshKey={twlForVerse.map((r) => `${r.tw_link ?? ""}|${r.orig_words ?? ""}|${r.occurrence ?? 1}`).join("~")}
-                  onAdd={onAddTwlSuggestion}
-                  isExcluded={isTwlSuggestionExcluded}
-                  onSuggestions={onTwlSuggestions}
-                  blockedArticleIds={twlBlockedArticleIds}
-                  filtersReady={twlFiltersReady}
-                  locked={locked}
-                  paused={!!checkoff && checkoff.applicable("tw") && checkoff.shade("tw") !== "open"}
-                />
-              </Box>
-            )}
-          </Box>
+          <WordsPanelBody
+            book={book}
+            chapter={chapter}
+            activeVerse={activeVerse}
+            twlForVerse={twlForVerse}
+            twlGroups={twlGroups}
+            totalTwl={totalTwl}
+            pinned={pinned.words}
+            onTogglePin={() => togglePinned("words")}
+            onWordCreate={onWordCreate}
+            locked={locked}
+            checkoff={checkoff}
+            activeWordId={activeWordId}
+            onWordSave={onWordSave}
+            onWordDelete={onWordDelete}
+            onWordFocus={onWordFocus}
+            onWordReorder={onWordReorder}
+            onWordHoverPreview={onWordHoverPreview}
+            onWordTranslateQuote={onWordTranslateQuote}
+            onWordGloss={onWordGloss}
+            twlRowAlternatives={twlRowAlternatives}
+            quoteBuildActiveWordId={quoteBuildActiveWordId}
+            quoteBuildSelectionCount={quoteBuildSelectionCount}
+            onStartWordQuoteBuild={onStartWordQuoteBuild}
+            onAddTwlSuggestion={onAddTwlSuggestion}
+            isTwlSuggestionExcluded={isTwlSuggestionExcluded}
+            onTwlSuggestions={onTwlSuggestions}
+            twlBlockedArticleIds={twlBlockedArticleIds}
+            twlFiltersReady={twlFiltersReady}
+          />
         )}
 
         {activeResourceTab === "questions" && (
