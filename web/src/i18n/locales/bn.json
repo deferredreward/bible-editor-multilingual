@@ -366,7 +366,14 @@
     "aiOutputApplied": "AI আউটপুট {{book}} {{chapter}}-তে প্রয়োগ করা হয়েছে।",
     "refreshing": "রিফ্রেশ করা হচ্ছে…",
     "refresh": "রিফ্রেশ করুন",
-    "dismissAll": "সব খারিজ করুন"
+    "dismissAll": "সব খারিজ করুন",
+    "aquiferPull": "Pull Aquifer drafts",
+    "aquiferPullDesc": "Import Aquifer translation notes as drafts to review. Existing translated notes are kept and marked approved.",
+    "aquiferStarting": "Pulling Aquifer drafts for {{book}}…",
+    "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
+    "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
+    "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
+    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}"
   },
   "noteCard": {
     "clickToEdit": "সম্পাদনা করতে ক্লিক করুন",

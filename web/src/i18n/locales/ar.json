@@ -617,7 +617,14 @@
     "aiOutputApplied": "طُبِّقت مخرجات الذكاء الاصطناعي على {{book}} {{chapter}}.",
     "refreshing": "جارٍ التحديث…",
     "refresh": "تحديث",
-    "dismissAll": "تجاهل الكل"
+    "dismissAll": "تجاهل الكل",
+    "aquiferPull": "Pull Aquifer drafts",
+    "aquiferPullDesc": "Import Aquifer translation notes as drafts to review. Existing translated notes are kept and marked approved.",
+    "aquiferStarting": "Pulling Aquifer drafts for {{book}}…",
+    "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
+    "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
+    "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
+    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}"
   },
   "noteCard": {
     "clickToEdit": "انقر للتحرير",

@@ -561,6 +561,25 @@ export interface AdminUser {
   addedBy: string | null;
 }
 
+export interface AquiferDraftsResponse {
+  ok: true;
+  book: string;
+  aqLang: string;
+  approved: number;
+  inserted: number;
+  replaced: number;
+  skippedApproved: number;
+  report: {
+    enRows: number;
+    aqItems: number;
+    matchedQuote: number;
+    matchedOrdinal: number;
+    matchedIntro: number;
+    unmatched: number;
+    flagged: number;
+  };
+}
+
 export interface MeResponse {
   userId: number;
   username: string | null;
@@ -1626,6 +1645,10 @@ export const api = {
         dryDcs: opts?.dryDcs,
         shrinkOverride: opts?.shrinkOverride,
       }),
+    }),
+  aquiferDrafts: (book: string) =>
+    request<AquiferDraftsResponse>(`/api/books/${encodeURIComponent(book)}/aquifer-drafts`, {
+      method: "POST",
     }),
   getTerms: (opts?: { status?: string; q?: string }) => {
     const qs = new URLSearchParams();

@@ -367,7 +367,14 @@
     "aiOutputApplied": "AI आउटपुट {{book}} {{chapter}} पर लागू किया गया।",
     "refreshing": "रीफ़्रेश हो रहा है…",
     "refresh": "रीफ़्रेश करें",
-    "dismissAll": "सभी खारिज करें"
+    "dismissAll": "सभी खारिज करें",
+    "aquiferPull": "Pull Aquifer drafts",
+    "aquiferPullDesc": "Import Aquifer translation notes as drafts to review. Existing translated notes are kept and marked approved.",
+    "aquiferStarting": "Pulling Aquifer drafts for {{book}}…",
+    "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
+    "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
+    "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
+    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}"
   },
   "noteCard": {
     "clickToEdit": "संपादित करने के लिए क्लिक करें",
