@@ -187,9 +187,12 @@ function tsvToDisplay(s: string | null): string {
 }
 
 // Detect the primary script of a string for directing RTL/LTR rendering and
-// showing the translate icon. Only Hebrew (U+0590–U+05FF) is RTL; Greek is
-// LTR and is grouped with Latin for detection purposes.
-const RTL_CHAR = /[֐-׿]/;
+// showing the translate icon. RTL covers the Hebrew, Arabic (incl. supplement /
+// extended-A / presentation forms), Syriac, Thaana and N'Ko blocks — so an
+// Arabic quote or draft reads RTL even when the UI chrome is LTR. Greek is LTR
+// and is grouped with Latin for detection purposes.
+const RTL_CHAR =
+  /[֐-׿؀-ۿ܀-ݏݐ-ݿހ-޿߀-߿ࢠ-ࣿיִ-﷿ﹰ-﻿]/;
 const LTR_CHAR = /[a-zA-ZͰ-Ͽἀ-῿]/;
 
 type QuoteScript = "empty" | "rtl" | "ltr";

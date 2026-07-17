@@ -732,9 +732,14 @@ const VerseCell = memo(function VerseCell({
   textLockedVersions: Set<string>;
   textCheck?: TextLaneCheck;
 }) {
+  const projectConfig = useProjectConfig();
   const readOnly = READ_ONLY.has(bibleVersion) || locked || textLockedVersions.has(bibleVersion);
-  const rtl = bibleVersion === "UHB";
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
+  // Hebrew original keeps its enlarged SBL-Hebrew treatment; every other pane
+  // follows the project's own direction, so an Arabic AVD/NAV pane reads RTL in
+  // the normal reading font even when the UI chrome is LTR.
+  const hebrewSource = bibleVersion === "UHB";
+  const rtl = hebrewSource || (!isSource && projectConfig?.direction === "rtl");
   // The active match is at most one cell; this is non-null only on that cell.
   const activeRange = useMemo<{ start: number; end: number } | null>(() => {
     if (!findActiveMatch) return null;
@@ -933,7 +938,7 @@ const VerseCell = memo(function VerseCell({
   const showTextCheck = !!textCheck?.canCheck && !readOnly;
 
   return (
-    <Box sx={{ lineHeight: 1.6 }}>
+    <Box sx={{ lineHeight: 1.6, ...(rtl ? { direction: "rtl", textAlign: "right" } : {}) }}>
       <Typography
         component="span"
         variant="caption"
@@ -1032,11 +1037,11 @@ const VerseCell = memo(function VerseCell({
           </IconButton>
         </Tooltip>
       )}{" "}
-      {readOnly && rtl ? (
+      {readOnly && hebrewSource ? (
         <span
           style={{
             fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
-            fontSize: rtl ? 19 : 14.5,
+            fontSize: 19,
             direction: "rtl",
             unicodeBidi: "isolate",
           }}
@@ -1081,8 +1086,8 @@ const VerseCell = memo(function VerseCell({
         style={{
           outline: "none",
           background: "transparent",
-          fontSize: `calc(${rtl ? 19 : 14.5}px * var(--be-reading-scale, 1))`,
-          fontFamily: rtl
+          fontSize: `calc(${hebrewSource ? 19 : 14.5}px * var(--be-reading-scale, 1))`,
+          fontFamily: hebrewSource
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',
         }}

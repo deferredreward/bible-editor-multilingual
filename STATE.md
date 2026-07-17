@@ -1787,6 +1787,17 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **RTL scripture font choice is provisional.** As of the RTL-display fix (branch
+  `claude/rtl-language-display-bee8f4`), non-original RTL panes (e.g. Arabic AVD/NAV) render in the
+  normal reading stack `"Source Serif Pro","Cambria","Times New Roman",serif` at the standard reading
+  size — deliberately NOT the Hebrew original's enlarged SBL-Hebrew treatment (that stays keyed to
+  `bibleVersion === "UHB"` alone). Source Serif Pro lacks Arabic glyphs, so Arabic falls back to
+  Cambria/Times, which do cover it. **If native Arabic (or other RTL) speakers find the rendering
+  ugly/unreadable, switch to an SIL font with real Arabic coverage** (e.g. Lateef, Scheherazade New,
+  Harmattan) — bundle it and prepend it to the non-Hebrew branch of the font stacks in
+  `web/src/components/{DocColumn,BookView,ScriptureColumn}.tsx` (the `hebrewSource ? SBL : reading`
+  ternaries). Direction/alignment are already correct and language-driven (`versionIsRtl` in
+  `web/src/lib/versionLabels.ts`); this is purely a glyph-quality follow-up.
 - **Fresh worktree:** run `scripts/worktree-init.ps1` to junction `node_modules` from main —
   never reflexively `npm install` on a branch (it leaks deps into main). Only `npm install` in MAIN.
 - **Don't kill shared dev servers.** Multiple worktrees share Chrome MCP + dev ports (5173/5174/8787).

@@ -19,7 +19,7 @@ import {
 } from "../sync/laneFreeze";
 import { DocColumn } from "./DocColumn";
 import { useProjectConfig } from "../hooks/useProjectConfig";
-import { versionLabel } from "../lib/versionLabels";
+import { versionLabel, versionIsRtl } from "../lib/versionLabels";
 import type { TextLaneCheck } from "../lib/laneChecks";
 import type { FindMatch } from "./FindReplaceOverlay";
 import { HebrewLine } from "./HebrewLine";
@@ -602,7 +602,7 @@ function ScriptureColumnInner({
                 activeVerse={activeVerse}
                 readOnly={READ_ONLY_VERSIONS.has(v) || locked || textLockedVersions.has(v)}
                 textCheck={READ_ONLY_VERSIONS.has(v) || textLockedVersions.has(v) ? undefined : textCheck}
-                rtl={v === "UHB"}
+                rtl={versionIsRtl(projectConfig, v)}
                 activeNoteQuote={activeNoteQuote}
                 activeNoteOccurrence={activeNoteOccurrence}
                 reorderHighlight={reorderHighlight ?? null}
@@ -834,6 +834,7 @@ function StackedBody({
               <ActiveLine
                 book={book}
                 bibleVersion="ULT"
+                rtl={versionIsRtl(projectConfig, "ULT")}
                 label={ultV && isRangeRow(ultV) ? `${ultDisplay} ${formatVerseLabel(ultV)}` : ultDisplay}
                 chapter={chapter}
                 verseNum={ultStart}
@@ -873,6 +874,7 @@ function StackedBody({
               <ActiveLine
                 book={book}
                 bibleVersion="UST"
+                rtl={versionIsRtl(projectConfig, "UST")}
                 label={ustV && isRangeRow(ustV) ? `${ustDisplay} ${formatVerseLabel(ustV)}` : ustDisplay}
                 chapter={chapter}
                 verseNum={ustStart}
@@ -981,6 +983,9 @@ const InactiveVerseRow = memo(
     const projectConfig = useProjectConfig();
     const ultDisplay = versionLabel(projectConfig, "ULT");
     const ustDisplay = versionLabel(projectConfig, "UST");
+    // ULT/UST are the project's own language, so an RTL project reads these
+    // inactive rows right-to-left too.
+    const targetRtl = projectConfig?.direction === "rtl";
     const ultV = ult[v];
     const ustV = ust[v];
     // Only render this version's cell when it's the start of its row's span —
@@ -1074,6 +1079,7 @@ const InactiveVerseRow = memo(
                 gridColumn: 2,
                 gridRow: 2,
                 minWidth: 0,
+                ...(targetRtl ? { direction: "rtl", textAlign: "right" } : {}),
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
@@ -1117,6 +1123,7 @@ const InactiveVerseRow = memo(
                 gridColumn: 2,
                 gridRow: 3,
                 minWidth: 0,
+                ...(targetRtl ? { direction: "rtl", textAlign: "right" } : {}),
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
@@ -1230,6 +1237,10 @@ function ActiveLine({
 }) {
   const { t } = useTranslation();
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
+  // Hebrew original: enlarged SBL-Hebrew font + read-only lexicon line, and no
+  // editing chrome. RTL direction alone (an Arabic ULT/UST) keeps the normal
+  // reading font and full editing toolbar.
+  const hebrewSource = bibleVersion === "UHB";
   const [historyOpen, setHistoryOpen] = useState(false);
   // The version chip + history are editable-ULT/UST only — read-only source
   // lines and any line without a known version/restore handler get nothing.
@@ -1507,10 +1518,10 @@ function ActiveLine({
           </Tooltip>
         )}
       </Stack>
-      {editable && !readOnly && !rtl && (
+      {editable && !readOnly && !hebrewSource && (
         <ParagraphToolbar elRef={elRef} onEditPlain={onEditPlain} />
       )}
-      {driftedMarkers.length > 0 && !rtl && (
+      {driftedMarkers.length > 0 && !hebrewSource && (
         <Stack spacing={0} sx={{ mb: 0.25 }}>
           {driftedMarkers.map((m, i) => (
             <Tooltip
@@ -1546,7 +1557,7 @@ function ActiveLine({
           ))}
         </Stack>
       )}
-      {rtl && lexiconMap ? (
+      {hebrewSource && lexiconMap ? (
         <Box
           data-find-cell={`${chapter}-${verseNum}-${bibleVersion}`}
           sx={{
@@ -1605,11 +1616,11 @@ function ActiveLine({
             borderRadius: 0.5,
             px: 1,
             py: 0.5,
-            fontSize: `calc(${rtl ? 21 : 14.5}px * var(--be-reading-scale, 1))`,
+            fontSize: `calc(${hebrewSource ? 21 : 14.5}px * var(--be-reading-scale, 1))`,
             lineHeight: 1.5,
             direction: rtl ? "rtl" : "ltr",
             textAlign: rtl ? "right" : "left",
-            fontFamily: rtl
+            fontFamily: hebrewSource
               ? '"Times New Roman","SBL Hebrew","Cardo",serif'
               : '"Source Serif Pro","Cambria","Times New Roman",serif',
             outline: "none",

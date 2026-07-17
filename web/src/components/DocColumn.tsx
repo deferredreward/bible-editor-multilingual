@@ -129,6 +129,9 @@ export function DocColumn({
   textCheck,
 }: Props) {
   const projectConfig = useProjectConfig();
+  // Hebrew original gets the enlarged SBL-Hebrew treatment; RTL direction alone
+  // (e.g. an Arabic pane) keeps the normal reading font.
+  const hebrewSource = bibleVersion === "UHB";
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLSpanElement | null>(null);
 
@@ -193,8 +196,8 @@ export function DocColumn({
           px: 1.5,
           py: 1,
           lineHeight: 1.7,
-          fontSize: `calc(${rtl ? 21 : 15}px * var(--be-reading-scale, 1))`,
-          fontFamily: rtl
+          fontSize: `calc(${hebrewSource ? 21 : 15}px * var(--be-reading-scale, 1))`,
+          fontFamily: hebrewSource
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',
           direction: rtl ? "rtl" : "ltr",
