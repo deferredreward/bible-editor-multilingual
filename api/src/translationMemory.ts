@@ -444,7 +444,9 @@ translationMemory.get("/terms/export", requireEditor, async (c) => {
     `SELECT concept_id, source_term, target_term, status, replacement, comment, tw_link
        FROM terminology WHERE deleted_at IS NULL ORDER BY concept_id, source_term, id`,
   ).all<TermImport>();
-  const csv = serializeTermsCsv(rows.results ?? []);
+  // excelSafe: this CSV's whole purpose is to be opened in a spreadsheet, so
+  // formula-leading cells get the quote guard (stripped again on re-import).
+  const csv = serializeTermsCsv(rows.results ?? [], { excelSafe: true });
   return c.body(csv, 200, {
     "Content-Type": "text/csv; charset=utf-8",
     "Content-Disposition": 'attachment; filename="terminology.csv"',
