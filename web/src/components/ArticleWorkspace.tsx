@@ -24,7 +24,8 @@ import EditIcon from "@mui/icons-material/Edit";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../sync/api";
 import { pipelineStore, getSessionKey } from "../sync/pipelineStore";
-import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { useWorkMode, effectiveModeFor } from "../hooks/useWorkMode";
 import { useArticles } from "../hooks/useArticles";
 import { MarkdownView } from "./MarkdownView";
 
@@ -97,7 +98,11 @@ interface Props {
 export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
-  const isTranslation = isTranslationProject(cfg);
+  const { workMode } = useWorkMode();
+  // Author mode hides the article workspace entirely (same as a non-
+  // translation project); TopBar's showArticles gate already keeps the
+  // entry point out of the way, this covers a direct hash navigation.
+  const isTranslation = effectiveModeFor(workMode, cfg) === "translate";
 
   const { units, loading, refetch } = useArticles(isTranslation ? resource : null);
 

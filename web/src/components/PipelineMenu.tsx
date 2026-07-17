@@ -39,7 +39,8 @@ import { getSessionKey, pipelineStore, type PipelineJob } from "../sync/pipeline
 import { currentPipelineUserId } from "../sync/pipelineSession";
 import { parseChapterRange } from "../lib/refParser";
 import { useTranslation } from "react-i18next";
-import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { useWorkMode, effectiveModeFor } from "../hooks/useWorkMode";
 
 interface Props {
   book: string;
@@ -214,15 +215,17 @@ function relativeMinutes(seconds: number): string {
 export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
+  const { workMode } = useWorkMode();
   // Gateway-language projects also offer "Translate chapter" (drafts the whole
-  // chapter's tN). The English root project (translationSource == null) sees
-  // exactly the original three options.
+  // chapter's tN) — but only in Translate mode. The English root project
+  // (translationSource == null) and Author mode both see exactly the
+  // original three options.
   const visibleOptions = useMemo(
     () =>
-      isTranslationProject(projectConfig)
+      effectiveModeFor(workMode, projectConfig) === "translate"
         ? [...OPTIONS, TRANSLATE_OPTION, TRANSLATE_TQ_OPTION]
         : OPTIONS,
-    [projectConfig],
+    [projectConfig, workMode],
   );
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [confirm, setConfirm] = useState<PipelineOption | null>(null);

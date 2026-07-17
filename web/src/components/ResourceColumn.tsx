@@ -16,7 +16,8 @@ import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import CheckIcon from "@mui/icons-material/Check";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
-import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { useWorkMode, effectiveModeFor } from "../hooks/useWorkMode";
 import { useSourceNotes } from "../hooks/useSourceNotes";
 import { useSourceQuestions } from "../hooks/useSourceQuestions";
 
@@ -352,7 +353,11 @@ export function ResourceColumn({
   // show state-based cards, the source pane, and Approve/Translate affordances.
   // The English root project sees the unchanged card.
   const projectConfig = useProjectConfig();
-  const translationMode = isTranslationProject(projectConfig);
+  const { workMode } = useWorkMode();
+  // Effective mode: a non-translation project is always "author" (unchanged
+  // UI); a translation project defaults to "translate" until the user picks
+  // Author via WorkModeControl in Preferences.
+  const translationMode = effectiveModeFor(workMode, projectConfig) === "translate";
   const sourceProjection = useMemo(
     () =>
       projectConfig?.translationSource
@@ -961,12 +966,12 @@ export function ResourceColumn({
                       onReorder={onWordReorder}
                       onHoverPreview={onWordHoverPreview}
                       locked={locked}
-                      onTranslateQuote={onWordTranslateQuote}
+                      onTranslateQuote={translationMode ? onWordTranslateQuote : undefined}
                       onWordGloss={onWordGloss}
                       suggestionAlternatives={twlRowAlternatives}
                       activeQuoteBuildId={quoteBuildActiveWordId}
                       quoteBuildSelectionCount={quoteBuildSelectionCount}
-                      onStartQuoteBuild={onStartWordQuoteBuild}
+                      onStartQuoteBuild={translationMode ? onStartWordQuoteBuild : undefined}
                     />
                   </Fragment>
                 ))
@@ -981,12 +986,12 @@ export function ResourceColumn({
                 onReorder={onWordReorder}
                 onHoverPreview={onWordHoverPreview}
                 locked={locked}
-                onTranslateQuote={onWordTranslateQuote}
+                onTranslateQuote={translationMode ? onWordTranslateQuote : undefined}
                 onWordGloss={onWordGloss}
                 suggestionAlternatives={twlRowAlternatives}
                 activeQuoteBuildId={quoteBuildActiveWordId}
                 quoteBuildSelectionCount={quoteBuildSelectionCount}
-                onStartQuoteBuild={onStartWordQuoteBuild}
+                onStartQuoteBuild={translationMode ? onStartWordQuoteBuild : undefined}
               />
             )}
             {/* Per-verse suggestions — only in the active-verse (unpinned) view.
@@ -1263,7 +1268,9 @@ export function ResourceColumn({
           }
           onSetHint={onSetNoteHint ? (value) => onSetNoteHint(r.id, value) : undefined}
           onTranslateQuote={
-            onNoteTranslateQuote ? (english) => onNoteTranslateQuote(r, english) : undefined
+            translationMode && onNoteTranslateQuote
+              ? (english) => onNoteTranslateQuote(r, english)
+              : undefined
           }
           quoteBuildMode={quoteBuildActiveNoteId === r.id}
           quoteBuildSelectionCount={
@@ -1272,7 +1279,9 @@ export function ResourceColumn({
           quoteBuildAppliedAt={
             quoteBuildAppliedTo?.noteId === r.id ? quoteBuildAppliedTo.nonce : null
           }
-          onStartQuoteBuild={onStartQuoteBuild ? () => onStartQuoteBuild(r.id) : undefined}
+          onStartQuoteBuild={
+            translationMode && onStartQuoteBuild ? () => onStartQuoteBuild(r.id) : undefined
+          }
           translationMode={translationMode}
           sourceNote={translationMode ? (sourceNotes.get(r.id) ?? null) : null}
           onApprove={onNoteApprove ? () => onNoteApprove(r.id, true) : undefined}

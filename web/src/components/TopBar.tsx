@@ -33,7 +33,8 @@ import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
 import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
 import { useTranslation } from "react-i18next";
-import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import { useProjectConfig } from "../hooks/useProjectConfig";
+import { useWorkMode, effectiveModeFor } from "../hooks/useWorkMode";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
 import { api, type BookListEntry, type BookSummary } from "../sync/api";
@@ -208,7 +209,8 @@ export function TopBar({
   const [importError, setImportError] = useState<string | null>(null);
   const { mode, toggle } = useContext(ThemeModeContext);
   const projectConfig = useProjectConfig();
-  const showArticles = isTranslationProject(projectConfig);
+  const { workMode } = useWorkMode();
+  const showArticles = effectiveModeFor(workMode, projectConfig) === "translate";
 
   useEffect(() => {
     api.getBooks().then((r) => setBooks(r.books)).catch(() => setBooks([]));

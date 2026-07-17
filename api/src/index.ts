@@ -20,7 +20,7 @@ import { articles } from "./articles";
 import { translationMemory } from "./translationMemory";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
-import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId, verifyToken } from "./auth";
+import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, updateWorkModePrefs, currentUserId, verifyToken } from "./auth";
 
 export interface Env {
   DB: D1Database;
@@ -152,6 +152,7 @@ app.post("/api/auth/refresh", refreshToken);
 // gets us to the session row for revocation).
 app.post("/api/auth/logout", authLogout);
 app.put("/api/users/me/location", requireAuth, updateLastLocation);
+app.put("/api/users/me/prefs", requireAuth, updateWorkModePrefs);
 
 // Dev-only: mint a JWT against a known/created users.id. Gated by
 // DEV_AUTH_ENABLED so it can't be left on in prod, AND restricted to
