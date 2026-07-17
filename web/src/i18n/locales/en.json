@@ -113,9 +113,7 @@
       "introEnglish": "You are editing the English source strings themselves. Switch to another language via the top-bar language menu to localize it.",
       "searchPlaceholder": "Search keys or English text…",
       "export": "Export file",
-      "save": "Save",
-      "saveCount_one": "Save {{count}} change",
-      "saveCount_other": "Save {{count}} changes",
+      "saveCount": "Save changes ({{count}})",
       "noMatches": "No strings match your search.",
       "placeholderWarning": "Missing placeholder(s): {{tokens}} — keep these so values fill in correctly."
     },
