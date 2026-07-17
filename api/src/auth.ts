@@ -117,7 +117,7 @@ type AppContext = Context<{
 // COLLATE NOCASE on user_roles.dcs_username means the WHERE compare is case-
 // insensitive without us having to lowercase anywhere. Returns null when the
 // user isn't on the allowlist — callers translate that to a denial.
-async function lookupUserRole(env: Env, dcsUsername: string): Promise<Role | null> {
+export async function lookupUserRole(env: Env, dcsUsername: string): Promise<Role | null> {
   const row = await env.DB.prepare(
     `SELECT role FROM user_roles WHERE dcs_username = ?1`,
   )
