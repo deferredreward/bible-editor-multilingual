@@ -24,7 +24,8 @@ import {
 } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
-import { ApiError } from "../sync/api";
+import AutoStoriesIcon from "@mui/icons-material/AutoStories";
+import { ApiError, api, isAdmin } from "../sync/api";
 import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
 import type {
   PipelineChainStep,
@@ -232,6 +233,8 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   const [conflict, setConflict] = useState<PipelineConflictExisting | null>(null);
   const [refInput, setRefInput] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [aquiferBusy, setAquiferBusy] = useState(false);
+  const canPullAquifer = isAdmin() && isTranslationProject(projectConfig);
 
   useEffect(() => pipelineStore.subscribe(setActiveJobs), []);
 
@@ -353,6 +356,34 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
     }
   };
 
+  // Aquifer is tN-only and matches by quote+reference, so it works even where
+  // the imported rows' IDs don't line up with the current source (unlike the
+  // AI translate pipeline). Admin-only; the book must already be imported.
+  const runAquifer = async () => {
+    close();
+    if (aquiferBusy) return;
+    setAquiferBusy(true);
+    onMessage?.(t("pipeline.aquiferStarting", { book }));
+    try {
+      const res = await api.aquiferDrafts(book);
+      onMessage?.(
+        t("pipeline.aquiferDone", { book, approved: res.approved, inserted: res.inserted }),
+      );
+      onImported?.();
+    } catch (e) {
+      const code = e instanceof ApiError ? (e.body as { error?: string } | undefined)?.error : undefined;
+      if (code === "aquifer_book_not_available") {
+        onMessage?.(t("pipeline.aquiferNotAvailable", { book }));
+      } else if (code === "book_not_imported") {
+        onMessage?.(t("pipeline.aquiferNotImported", { book }));
+      } else {
+        onMessage?.(t("pipeline.aquiferFailed", { error: code ?? (e instanceof Error ? e.message : String(e)) }));
+      }
+    } finally {
+      setAquiferBusy(false);
+    }
+  };
+
   return (
     <>
       <Button
@@ -399,6 +430,19 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
             secondary={t("pipeline.importFromDoor43Desc")}
           />
         </MenuItem>
+        {canPullAquifer && (
+          <MenuItem onClick={runAquifer} disabled={aquiferBusy}>
+            {aquiferBusy ? (
+              <CircularProgress size={16} sx={{ mr: 1 }} />
+            ) : (
+              <AutoStoriesIcon fontSize="small" sx={{ mr: 1, color: "text.secondary" }} />
+            )}
+            <ListItemText
+              primary={t("pipeline.aquiferPull")}
+              secondary={t("pipeline.aquiferPullDesc")}
+            />
+          </MenuItem>
+        )}
       </Menu>
       <ImportFromDoor43Dialog
         open={importOpen}

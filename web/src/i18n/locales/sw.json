@@ -366,7 +366,14 @@
     "aiOutputApplied": "Matokeo ya AI yametumika kwa {{book}} {{chapter}}.",
     "refreshing": "Inaonyesha upya…",
     "refresh": "Onyesha upya",
-    "dismissAll": "Ondoa zote"
+    "dismissAll": "Ondoa zote",
+    "aquiferPull": "Pull Aquifer drafts",
+    "aquiferPullDesc": "Import Aquifer translation notes as drafts to review. Existing translated notes are kept and marked approved.",
+    "aquiferStarting": "Pulling Aquifer drafts for {{book}}…",
+    "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
+    "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
+    "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
+    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}"
   },
   "noteCard": {
     "clickToEdit": "bofya ili kuhariri",
