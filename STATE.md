@@ -14,6 +14,11 @@
 
 ## Last run
 
+2026-07-17 · **claude/fix-409-project-not-empty-msg** — **Fixed the misleading org-switch error (the "real bug worth fixing" flagged in the entry below).**
+- `ProjectModeControl` (PreferencesWorkspace.tsx) mapped *every* 409 to "a scripture source replacement is in progress" — so `project_not_empty` (target org already has data) told users to "finish or cancel" a replacement job that doesn't exist. This sent a whole debugging session hunting for a phantom job. Now reads the 409 error code and shows `project_not_empty` its own message (`preferences.projectModeNotEmpty`, added to all 14 locales, English placeholder in the 13 non-en per fallback convention), mirroring the SetupWizard/OrgDetectionSection pattern.
+- Verified end-to-end (/verify PASS): seeded a non-empty project on an isolated dev instance, selected a different org → Apply → backend `409 project_not_empty` (confirmed via the app's own CSRF'd request) → alert rendered the NEW message, not "replacement in progress". Review clean: Claude pass (no fixes) + Codex gpt-5.5 → APPROVE. **PR #40.**
+- Note: the `project_not_empty` guard is intended (interim one-org-per-database) — the fix is only the *message*, not the guard. Reset both dev DBs (remote + main local) to clean onboarding via `scripts/reset-dev-content.sql` so the user can set up a new org.
+
 2026-07-17 · **claude/dev-server-errors-main-562d66** — **Diagnosed the "npm run dev 401/500 + can't-switch-org" report: two root causes, one shipped fix + one user-owned remote step.**
 - Symptom: `npm run dev` off main threw 401/500s and org-switching was blocked by a "scripture source import in progress." Both were **intermittent** — the tell.
 - Root cause (local): parallel worktrees each run `npm run dev`, which hardwired the Worker to `:8787` and pointed every worktree's Vite `/api` proxy at that fixed port. Two Workers bound 8787; on Windows the OS routes to whichever bound last, so a frontend hit the *other* worktree's Worker — a different local D1 + different auth. The sibling `bem-flexible-layouts` backend had **no `api/.dev.vars`** (→ `/api/auth/dev` 500 `jwt_signing_key_not_configured`, cascading 401s) and broken lane state (→ stuck org). Flapping between backends = intermittent errors.
