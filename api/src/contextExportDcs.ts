@@ -3,7 +3,7 @@
 // SHA that does not represent the rendered D1 snapshot they just produced.
 
 import { commitFilesToDcs, type DcsCommitConfig } from "./export.ts";
-import type { ContextFile } from "./contextExportLib.ts";
+import { stalePackPaths, type ContextFile } from "./contextExportLib.ts";
 
 export type ContextDcsConfig = {
   baseUrl: string;
@@ -18,6 +18,67 @@ export type CommitContextResult = {
   changed: boolean;
   committedCount: number;
 };
+
+/**
+ * Ensure {owner}/translation-context exists, creating it when missing so the
+ * translator never has to know a git repo is involved. auto_init is required:
+ * commitFilesToDcs needs a master branch to exist before it can commit.
+ *
+ * Assumption (by design): the export owner is always an ORG (BibleEditorMLTest,
+ * BSOJ, DCS_EXPORT_OWNER…) — there is deliberately no POST /user/repos
+ * fallback, because the service token's own account is never the export owner.
+ */
+export async function ensureContextRepoExists(cfg: ContextDcsConfig): Promise<{ created: boolean }> {
+  const headers: Record<string, string> = {
+    Authorization: `token ${cfg.token}`,
+    Accept: "application/json",
+  };
+  const repoUrl = `${cfg.baseUrl}/api/v1/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`;
+  const probe = await fetch(repoUrl, { headers });
+  if (probe.ok) return { created: false };
+  if (probe.status !== 404) {
+    throw new Error(`context_repo_probe_failed: GET ${probe.status} ${await probe.text()}`);
+  }
+
+  const createRes = await fetch(
+    `${cfg.baseUrl}/api/v1/orgs/${encodeURIComponent(cfg.owner)}/repos`,
+    {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: cfg.repo,
+        auto_init: true,
+        default_branch: "master",
+        private: false,
+        description: "Translation context pack (managed by bible-editor; brief/instructions/terminology exported from the editor's preferences)",
+      }),
+    },
+  );
+  if (createRes.status === 403) {
+    throw new Error(`context_repo_create_forbidden: token lacks repo-create permission for org ${cfg.owner}`);
+  }
+  if (createRes.status === 404) {
+    throw new Error(`context_repo_owner_not_org_or_missing: ${cfg.owner}`);
+  }
+  if (createRes.status === 409 || createRes.status === 422) {
+    // Lost a creation race — fine as long as the repo now exists.
+    const recheck = await fetch(repoUrl, { headers });
+    if (recheck.ok) return { created: false };
+    throw new Error(`context_repo_create_conflict_unresolved: ${createRes.status} ${await createRes.text()}`);
+  }
+  if (!createRes.ok) {
+    throw new Error(`context_repo_create_failed: POST ${createRes.status} ${await createRes.text()}`);
+  }
+
+  // Wait for the auto_init commit so the immediate pack commit doesn't race
+  // Gitea's async repo initialization.
+  for (let i = 0; i < 5; i++) {
+    const tip = await getBranchTipSha(cfg, "master").catch(() => null);
+    if (tip) return { created: true };
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error(`context_repo_init_timeout: ${cfg.owner}/${cfg.repo} master not visible after create`);
+}
 
 async function getBranchTipSha(cfg: ContextDcsConfig, branch: string): Promise<string | null> {
   const url =
@@ -68,7 +129,12 @@ export async function commitContextPackToMaster(
     branch: "master",
   };
 
-  const result = await commitFilesToDcs(dcsCfg, files, message);
+  // Pack-managed files omitted from this render have an empty D1 source —
+  // delete any stale copy in the same commit (never touches runs/, candidates/
+  // or README.md; see PACK_MANAGED_PATHS).
+  const result = await commitFilesToDcs(dcsCfg, files, message, {
+    deletePaths: stalePackPaths(files),
+  });
 
   if (!result.changed) {
     // Byte-identical to tip — the trustworthy SHA is the current tip.

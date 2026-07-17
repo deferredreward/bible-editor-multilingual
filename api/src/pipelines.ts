@@ -22,7 +22,7 @@ import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
 import { getProjectConfig } from "./projectConfig.ts";
 import { buildTranslateOptions } from "./translateOptions.ts";
-import { applyAssistedContextRef } from "./assistedContextRef.ts";
+import { applyContextRef } from "./assistedContextRef.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents";
 import {
@@ -1125,21 +1125,15 @@ pipelines.post("/start", requireEditor, async (c) => {
         400,
       );
     }
-    // Assisted mode: inject contextRef from the latest successful context-pack
-    // export when translation_prefs.assisted_mode=1. Owner comes from the
-    // export result (DCS_EXPORT_OWNER ?? exportOrg at export time), never from
-    // cfg.exportOrg alone. No successful SHA → stay raw baseline (omit).
-    const prefs = await c.env.DB.prepare(
-      `SELECT assisted_mode FROM translation_prefs WHERE id = 1`,
-    ).first<{ assisted_mode: number }>();
+    // Inject the pinned contextRef from the latest successful context-pack
+    // export (prefs/terminology reach the bot through that repo). Owner comes
+    // from the export result (DCS_EXPORT_OWNER ?? exportOrg at export time),
+    // never from cfg.exportOrg alone. No successful SHA → stay raw baseline
+    // (omit; the bot's own default is allowEmpty).
     const latest = await getLatestSuccessfulContextExport(c.env);
-    translateOptions = applyAssistedContextRef(
-      translateOptions,
-      prefs?.assisted_mode === 1,
-      latest,
-    );
-    if (prefs?.assisted_mode === 1 && !latest) {
-      console.warn("assisted_mode on but no successful context export; omitting contextRef");
+    translateOptions = applyContextRef(translateOptions, latest);
+    if (!latest) {
+      console.warn("no successful context export; translate runs raw baseline (contextRef omitted)");
     }
     mergedOptions = translateOptions;
   } else if (parsed.data.pipelineType === "notes") {

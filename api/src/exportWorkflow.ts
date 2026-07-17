@@ -92,7 +92,7 @@ import {
 } from "./contextExport.ts";
 import { contextShrinkRefused, shrinkDetailCode, hasSemanticContent } from "./contextExportLib.ts";
 import { fetchEnSourceMaps } from "./contextSourceFetch.ts";
-import { commitContextPackToMaster, getBranchTipSha } from "./contextExportDcs.ts";
+import { commitContextPackToMaster, ensureContextRepoExists, getBranchTipSha } from "./contextExportDcs.ts";
 import {
   insertContextExportQueued,
   finalizeContextExport,
@@ -590,22 +590,18 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
 
       try {
-        const tip = await getBranchTipSha(
-          {
-            baseUrl: this.env.DCS_BASE_URL,
-            token: this.env.DCS_SERVICE_TOKEN!,
-            owner,
-            repo: contextRepoName(),
-          },
-          "master",
-        );
+        const dcsCfg = {
+          baseUrl: this.env.DCS_BASE_URL,
+          token: this.env.DCS_SERVICE_TOKEN!,
+          owner,
+          repo: contextRepoName(),
+        };
+        // First-ever export for this org: create the context repo silently so
+        // the translator never has to provision anything on DCS themselves.
+        await ensureContextRepoExists(dcsCfg);
+        const tip = await getBranchTipSha(dcsCfg, "master");
         const commit = await commitContextPackToMaster(
-          {
-            baseUrl: this.env.DCS_BASE_URL,
-            token: this.env.DCS_SERVICE_TOKEN!,
-            owner,
-            repo: contextRepoName(),
-          },
+          dcsCfg,
           files,
           `bible-editor context-pack export (${stats.contentFiles} files, ${stats.terms} terms) → master (${instanceId})`,
           tip,

@@ -165,7 +165,7 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
           <Typography variant="caption" color="text.secondary">
             {cfg?.languageTitle ?? cfg?.languageName ?? cfg?.languageCode}
           </Typography>
-          <AssistedModeControls />
+          <ContextPackStatusControls />
         </Stack>
         <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0, py: 0.5 }}>
           {memoryAvailable && SECTIONS.map((s) => {
@@ -880,42 +880,23 @@ function OrgDetectionSection() {
   );
 }
 
-function AssistedModeControls() {
+// Context-pack sync status. Saves auto-queue an export (the API does this),
+// so there is no toggle any more — the pack feeds the AI whenever a successful
+// export exists. The manual "Export now" button remains for admins, plus a
+// force option when the shrink guard refused an intentional reduction.
+function ContextPackStatusControls() {
   const { t } = useTranslation();
-  const { prefs, refetch: refetchPrefs } = useTranslationPrefs(true);
   const { status, refetch: refetchStatus } = useContextExportStatus(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const admin = isAdmin();
 
-  const canEnable = admin && status?.status === "success" && !!status.sha;
-  const assistedOn = prefs?.assisted_mode === 1;
-
-  const onToggle = async (next: boolean) => {
-    if (!admin || !prefs) return;
-    if (next && !canEnable) return;
-    setBusy(true);
-    try {
-      await api.putTranslationPrefs(prefs.version, { assisted_mode: next });
-      refetchPrefs();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 403) setMsg(t("preferences.saveForbidden"));
-      else if (e instanceof ApiError && e.status === 409) {
-        setMsg(t("preferences.conflict"));
-        refetchPrefs();
-      } else setMsg(t("preferences.saveFailed"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onExport = async () => {
+  const onExport = async (shrinkOverride = false) => {
     if (!admin) return;
     setBusy(true);
     try {
-      await api.runContextExport();
+      await api.runContextExport(shrinkOverride ? { shrinkOverride: true } : undefined);
       setMsg(t("preferences.exportQueued"));
-      // Poll status a few times so the toggle can enable after success.
       for (let i = 0; i < 8; i++) {
         await new Promise((r) => setTimeout(r, 1500));
         refetchStatus();
@@ -938,43 +919,36 @@ function AssistedModeControls() {
           ? t(statusKey)
           : t("preferences.exportStatusOther", { status: status.status });
 
-  const toggleTooltip = !admin
-    ? t("preferences.assistedModeAdminOnly")
-    : canEnable
-      ? t("preferences.assistedModeHelp")
-      : t("preferences.assistedModeDisabled");
-
   return (
     <Stack spacing={0.75}>
-      <Tooltip title={toggleTooltip}>
-        <span>
-          <FormControlLabel
-            control={
-              <Switch
-                size="small"
-                checked={assistedOn}
-                disabled={!admin || busy || (!canEnable && !assistedOn)}
-                onChange={(_, checked) => void onToggle(checked)}
-              />
-            }
-            label={
-              <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                {assistedOn ? t("preferences.assistedModeOn") : t("preferences.assistedModeOff")}
-              </Typography>
-            }
-            sx={{ m: 0, alignItems: "center" }}
-          />
-        </span>
-      </Tooltip>
       <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
         {statusLabel}
       </Typography>
+      {status?.status === "shrink_refused" && admin && (
+        <>
+          {status.failureReason && (
+            <Typography variant="caption" color="warning.main" sx={{ lineHeight: 1.3 }}>
+              {status.failureReason}
+            </Typography>
+          )}
+          <Button
+            size="small"
+            variant="outlined"
+            color="warning"
+            disabled={busy}
+            onClick={() => void onExport(true)}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            {t("preferences.exportForce")}
+          </Button>
+        </>
+      )}
       {!admin && (
         <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
-          {t("preferences.assistedModeAdminOnly")}
+          {t("preferences.exportAdminOnly")}
         </Typography>
       )}
-      <Tooltip title={admin ? "" : t("preferences.assistedModeAdminOnly")}>
+      <Tooltip title={admin ? "" : t("preferences.exportAdminOnly")}>
         <span>
           <Button
             size="small"
@@ -1614,7 +1588,6 @@ function ExamplesSection() {
   const [query, setQuery] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const { examples, loading, refetch } = useExamples(true, { resource, q: debouncedQ || undefined, limit: 200 });
-  const { prefs } = useTranslationPrefs(true);
   const { status } = useContextExportStatus(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const save = useSaveState();
@@ -1641,7 +1614,7 @@ function ExamplesSection() {
   };
 
   const count = examples.length;
-  const feedingAi = prefs?.assisted_mode === 1 && status?.status === "success" && !!status.sha;
+  const feedingAi = status?.status === "success" && !!status.sha;
 
   return (
     <Stack spacing={2}>

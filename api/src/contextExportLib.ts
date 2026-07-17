@@ -85,7 +85,7 @@ export function hasSemanticContent(input: {
 }
 
 export type ShrinkDetail = {
-  metric: "terms" | "examples" | "totalBytes" | "contentFiles";
+  metric: "terms" | "examples" | "totalBytes";
   previous: number;
   next: number;
 };
@@ -93,8 +93,12 @@ export type ShrinkDetail = {
 /**
  * Semantic shrink guard vs the prior successful pack.
  * Refuse a substantial reduction unless shrinkOverride is set.
- * Thresholds from the plan: terms >5% AND >5; examples >5% AND >3;
- * bytes >10%; contentFiles strictly fewer.
+ * Thresholds from the plan: terms >5% AND >5; examples >5% AND >3; bytes >10%.
+ * There is deliberately NO contentFiles metric: the renderer omits a pack file
+ * iff its D1 source is empty, so a file-count drop is always an intentional
+ * clear (e.g. instructions_md emptied) that must be allowed to land — the
+ * stale file is then deleted from the repo. Bulk data loss is still covered
+ * by the terms/examples/totalBytes metrics.
  */
 export function contextShrinkRefused(
   next: ContextPackStats,
@@ -121,14 +125,29 @@ export function contextShrinkRefused(
       return { metric: "totalBytes", previous: previous.totalBytes, next: next.totalBytes };
     }
   }
-  if (previous.contentFiles > 0 && next.contentFiles < previous.contentFiles) {
-    return {
-      metric: "contentFiles",
-      previous: previous.contentFiles,
-      next: next.contentFiles,
-    };
-  }
   return null;
+}
+
+/**
+ * Pack files the export owns on {owner}/translation-context@master. Only
+ * these may ever be deleted by an export commit — bot-owned namespaces
+ * (runs/, candidates/) and the auto_init README.md are untouchable.
+ */
+export const PACK_MANAGED_PATHS = [
+  "manifest.yaml",
+  "brief.md",
+  "instructions.md",
+  "terminology/terms.csv",
+  "examples/validated.jsonl",
+] as const;
+
+/**
+ * Pack-managed paths absent from this render — i.e. their D1 source is now
+ * empty, so any copy still on the branch is stale and must be deleted.
+ */
+export function stalePackPaths(files: readonly ContextFile[]): string[] {
+  const rendered = new Set(files.map((f) => f.path));
+  return PACK_MANAGED_PATHS.filter((p) => !rendered.has(p));
 }
 
 export function shrinkDetailCode(d: ShrinkDetail): string {

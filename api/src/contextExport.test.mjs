@@ -19,8 +19,9 @@ import {
   nfc,
   contentFileCount,
   briefHasSemanticValue,
+  stalePackPaths,
 } from "./contextExportLib.ts";
-import { applyAssistedContextRef } from "./assistedContextRef.ts";
+import { applyContextRef } from "./assistedContextRef.ts";
 import { tsvLooksTruncated } from "./contextSourceFetch.ts";
 import { PRESETS } from "./projectConfig.ts";
 
@@ -276,6 +277,36 @@ console.log("contextExportLib — shrink + content count");
     { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
   );
   assert(bytes && bytes.metric === "totalBytes", "bytes shrink refused");
+
+  // Intentional clears (fewer content files) are allowed — the stale file is
+  // deleted from the repo instead of the export being refused forever.
+  assert(
+    !contextShrinkRefused(
+      { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 2, totalBytes: 950 },
+      { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+    ),
+    "content-file drop alone is not refused",
+  );
+
+  assert(
+    JSON.stringify(
+      stalePackPaths([
+        { path: "manifest.yaml", content: "x" },
+        { path: "brief.md", content: "x" },
+      ]),
+    ) === JSON.stringify(["instructions.md", "terminology/terms.csv", "examples/validated.jsonl"]),
+    "stalePackPaths lists omitted pack files only",
+  );
+  assert(
+    stalePackPaths([
+      { path: "manifest.yaml", content: "x" },
+      { path: "brief.md", content: "x" },
+      { path: "instructions.md", content: "x" },
+      { path: "terminology/terms.csv", content: "x" },
+      { path: "examples/validated.jsonl", content: "x" },
+    ]).length === 0,
+    "full pack has no stale paths",
+  );
 }
 
 console.log("assistedContextRef + owner + tsv truncation");
@@ -291,7 +322,7 @@ console.log("assistedContextRef + owner + tsv truncation");
   );
   assert(buildContextRef("BSOJ", "abc") === "BSOJ/translation-context@abc", "contextRef shape");
 
-  const injected = applyAssistedContextRef({ sourceRef: "x" }, true, {
+  const latestExport = {
     sha: "deadbeef",
     completedAt: 1,
     owner: "BSOJ",
@@ -300,34 +331,14 @@ console.log("assistedContextRef + owner + tsv truncation");
     examplesTq: 0,
     contentFiles: 1,
     totalBytes: 10,
-  });
-  assert(injected.contextRef === "BSOJ/translation-context@deadbeef", "injects when assisted+success");
+  };
+  const injected = applyContextRef({ sourceRef: "x" }, latestExport);
+  assert(injected.contextRef === "BSOJ/translation-context@deadbeef", "injects whenever a successful export exists (no assisted gate)");
 
-  const raw = applyAssistedContextRef({ sourceRef: "x" }, false, {
-    sha: "deadbeef",
-    completedAt: 1,
-    owner: "BSOJ",
-    terms: 1,
-    examplesTn: 0,
-    examplesTq: 0,
-    contentFiles: 1,
-    totalBytes: 10,
-  });
-  assert(raw.contextRef == null, "no inject when assisted_mode=0");
-
-  const noSha = applyAssistedContextRef({ sourceRef: "x" }, true, null);
+  const noSha = applyContextRef({ sourceRef: "x" }, null);
   assert(noSha.contextRef == null, "no inject without successful export");
 
-  const override = applyAssistedContextRef({ contextRef: "other/repo@1" }, true, {
-    sha: "deadbeef",
-    completedAt: 1,
-    owner: "BSOJ",
-    terms: 1,
-    examplesTn: 0,
-    examplesTq: 0,
-    contentFiles: 1,
-    totalBytes: 10,
-  });
+  const override = applyContextRef({ contextRef: "other/repo@1" }, latestExport);
   assert(override.contextRef === "other/repo@1", "caller override wins");
 
   assert(tsvLooksTruncated("ID\tNote\n"), "header-only TSV truncated");

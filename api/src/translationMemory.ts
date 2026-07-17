@@ -38,6 +38,23 @@ function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /UNIQUE constraint failed/i.test(err.message);
 }
 
+// Fire-and-forget context-pack sync: every successful prefs/terminology write
+// queues a context-only export so the {org}/translation-context repo tracks D1
+// without the translator ever thinking about git. Deterministic second-
+// precision id dedupes same-second bursts (distinct `context-save-` prefix so
+// it can't collide with the manual route's `context-` ids); cross-second runs
+// serialize via the commit-path CAS and byte-identical re-runs no-op. The
+// catch swallows duplicate-id rejections and queue failures — a sync hiccup
+// must never fail the save (the nightly export is the backstop).
+type TmContext = { env: Env; executionCtx: { waitUntil(p: Promise<unknown>): void } };
+function queueContextExport(c: TmContext): void {
+  const id = `context-save-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}`;
+  const p = c.env.EXPORT_WORKFLOW.create({ id, params: { contextOnly: true } }).catch((e: unknown) => {
+    console.log("context export queue skipped", id, e instanceof Error ? e.message : String(e));
+  });
+  c.executionCtx.waitUntil(p);
+}
+
 // ---------------------------------------------------------------------------
 // Preferences singleton (brief + instructions + register + assisted flag).
 // ---------------------------------------------------------------------------
@@ -85,7 +102,9 @@ const PutPrefsBody = z.object({
   script_notes: z.string().max(8000).nullable().optional(),
   instructions_md: z.string().max(20000).nullable().optional(),
   notes: z.string().max(20000).nullable().optional(),
-  assisted_mode: z.boolean().optional(),
+  // assisted_mode is no longer accepted: the contextRef is injected whenever a
+  // successful context export exists (the gate was removed). Column stays in
+  // D1 for compatibility but is never read.
 });
 
 // PUT /prefs — admin-only. If-Match version CAS. Upserts the singleton: on the
@@ -123,7 +142,7 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
         d.script_notes ?? null,
         d.instructions_md ?? null,
         d.notes ?? null,
-        d.assisted_mode ? 1 : 0,
+        0,
         now,
         userId ?? null,
       )
@@ -135,6 +154,7 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
       return c.json({ error: "version_mismatch", current }, 409);
     }
     const row = await c.env.DB.prepare(`SELECT * FROM translation_prefs WHERE id = 1`).first<PrefsRow>();
+    queueContextExport(c);
     return c.json({ prefs: row });
   }
 
@@ -147,7 +167,7 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
     instructions_md:
       parsed.data.instructions_md !== undefined ? parsed.data.instructions_md : existing.instructions_md,
     notes: parsed.data.notes !== undefined ? parsed.data.notes : existing.notes,
-    assisted_mode: parsed.data.assisted_mode !== undefined ? (parsed.data.assisted_mode ? 1 : 0) : existing.assisted_mode,
+    assisted_mode: existing.assisted_mode,
   };
   const res = await c.env.DB.prepare(
     `UPDATE translation_prefs
@@ -171,6 +191,7 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
     .run();
   if (!res.meta.changes) return c.json({ error: "version_mismatch", current: existing }, 409);
   const row = await c.env.DB.prepare(`SELECT * FROM translation_prefs WHERE id = 1`).first<PrefsRow>();
+  queueContextExport(c);
   return c.json({ prefs: row });
 });
 
@@ -296,6 +317,7 @@ translationMemory.post("/terms", requireEditor, async (c) => {
   const row = await c.env.DB.prepare(`SELECT ${TERM_COLS} FROM terminology WHERE id = ?1`)
     .bind(id)
     .first<TermRow>();
+  queueContextExport(c);
   return c.json(row, 201);
 });
 
@@ -391,6 +413,7 @@ translationMemory.patch("/terms/:id", requireEditor, async (c) => {
     return c.json({ error: "version_mismatch", current: cur }, 409);
   }
   const row = await c.env.DB.prepare(`SELECT ${TERM_COLS} FROM terminology WHERE id = ?1`).bind(id).first<TermRow>();
+  queueContextExport(c);
   return c.json(row);
 });
 
@@ -405,6 +428,7 @@ translationMemory.delete("/terms/:id", requireEditor, async (c) => {
     .bind(now, id)
     .run();
   if (!res.meta.changes) return c.json({ error: "not_found" }, 404);
+  queueContextExport(c);
   return c.json({ ok: true });
 });
 
@@ -496,6 +520,7 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
       }
     }
   }
+  queueContextExport(c);
   return c.json({ dryRun: false, added, updated, parseErrors: errors, total: deduped.length });
 });
 

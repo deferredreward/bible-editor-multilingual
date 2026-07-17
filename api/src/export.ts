@@ -814,7 +814,7 @@ export async function commitToDcs(
 // paginated (a tw repo has ~1,000 files). 404 (missing ref / empty repo) → an
 // empty map; any other non-OK status THROWS so a transient failure retries the
 // step (commit) or is caught and treated as "unreadable" (the shrink guard).
-async function listDcsTree(
+export async function listDcsTree(
   config: Omit<DcsCommitConfig, "branch">,
   ref: string,
 ): Promise<Map<string, string>> {
@@ -895,6 +895,11 @@ export async function commitFilesToDcs(
   config: DcsCommitConfig,
   files: ArticleFile[],
   message: string,
+  // deletePaths: files to REMOVE in the same commit if present on the branch
+  // (silently skipped when absent). Callers own the safety of this list — the
+  // context-pack export passes only its own managed paths, never bot-owned
+  // namespaces. Article callers pass nothing and are unaffected.
+  opts?: { deletePaths?: readonly string[] },
 ): Promise<DcsBatchCommitResult> {
   if (files.length === 0) {
     return { commitSha: "", changed: false, branchTouched: false, committedCount: 0 };
@@ -914,7 +919,7 @@ export async function commitFilesToDcs(
   await ensureExportBranchExists(config);
   const existing = await listDcsTree(config, config.branch);
 
-  type ChangeFile = { operation: "create" | "update"; path: string; content: string; sha?: string };
+  type ChangeFile = { operation: "create" | "update" | "delete"; path: string; content?: string; sha?: string };
   const changeFiles: ChangeFile[] = [];
   for (const f of files) {
     const blobSha = await gitBlobSha(f.content);
@@ -927,6 +932,14 @@ export async function commitFilesToDcs(
     };
     if (existingSha) entry.sha = existingSha;
     changeFiles.push(entry);
+  }
+  // Deletions ride in the same ChangeFiles commit (Gitea requires the current
+  // blob sha). Counting them in changeFiles means a deletion-only run is a real
+  // commit, not a byte-identical no-op.
+  for (const p of opts?.deletePaths ?? []) {
+    const existingSha = existing.get(p);
+    if (!existingSha) continue; // already absent
+    changeFiles.push({ operation: "delete", path: p, sha: existingSha });
   }
 
   if (changeFiles.length === 0) {

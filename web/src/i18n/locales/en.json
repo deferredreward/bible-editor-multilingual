@@ -186,12 +186,8 @@
       "translationSourceToggle": "Translate from unfoldingWord's English source",
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org."
     },
-    "assistedMode": "Assisted mode",
-    "assistedModeHelp": "When on, translate runs send the team's context pack (brief, terms, validated examples) to the AI.",
-    "assistedModeDisabled": "Export a context pack successfully before enabling assisted mode — an empty pack fails the AI run.",
-    "assistedModeAdminOnly": "Only an admin can change assisted mode or export the context pack.",
-    "assistedModeOn": "Assisted",
-    "assistedModeOff": "Raw baseline",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "Export context now",
     "exportQueued": "Context export queued",
     "exportStatusNever": "No context export yet",
@@ -207,7 +203,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Feeding AI",
-    "notFeedingAi": "Not yet feeding the AI — enable assisted mode after a successful export",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
