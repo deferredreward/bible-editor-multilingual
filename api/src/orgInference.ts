@@ -47,6 +47,12 @@ export async function listOrgRepos(
       const headers: Record<string, string> = { Accept: "application/json" };
       if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
       r = await doFetch(url, { headers });
+      // A scoped service token (e.g. write-only) can be rejected on read
+      // endpoints where anonymous access would succeed — public orgs must not
+      // be blocked by the token, so retry the page unauthenticated.
+      if ((r.status === 401 || r.status === 403) && headers.Authorization) {
+        r = await doFetch(url, { headers: { Accept: "application/json" } });
+      }
     } catch {
       return { ok: false, error: "dcs_unreachable" };
     }

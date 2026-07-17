@@ -283,3 +283,50 @@ test("inferFromRepoList: tn repo without a langCode match yields no lane/presenc
   assert.equal(inf.languageCode, "weird");
   assert.equal(inf.tqRepo, null);
 });
+
+// ── listOrgRepos: scoped-token fallback ──────────────────────────────────────
+
+import { listOrgRepos } from "./orgInference.ts";
+
+function repoResponse(names) {
+  return new Response(JSON.stringify(names.map((name) => ({ name }))), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+test("listOrgRepos: 403 with a service token retries anonymously (public org)", async () => {
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    const authed = Boolean(init?.headers?.Authorization);
+    calls.push({ url, authed });
+    if (authed) return new Response("forbidden", { status: 403 });
+    return repoResponse(["ar_avd", "ar_tn"]);
+  };
+  const env = { DCS_SERVICE_TOKEN: "write-only-token" };
+  const res = await listOrgRepos(env, "BSOJ", { fetch: fakeFetch });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.repos.map((r) => r.name), ["ar_avd", "ar_tn"]);
+  assert.equal(calls[0].authed, true);
+  assert.equal(calls[1].authed, false);
+});
+
+test("listOrgRepos: 403 on both authed and anonymous stays dcs_forbidden", async () => {
+  const fakeFetch = async () => new Response("forbidden", { status: 403 });
+  const env = { DCS_SERVICE_TOKEN: "write-only-token" };
+  const res = await listOrgRepos(env, "PrivateOrg", { fetch: fakeFetch });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, "dcs_forbidden");
+});
+
+test("listOrgRepos: no token means no retry — anonymous 403 is dcs_forbidden", async () => {
+  let count = 0;
+  const fakeFetch = async () => {
+    count += 1;
+    return new Response("forbidden", { status: 403 });
+  };
+  const res = await listOrgRepos({}, "PrivateOrg", { fetch: fakeFetch });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, "dcs_forbidden");
+  assert.equal(count, 1);
+});
