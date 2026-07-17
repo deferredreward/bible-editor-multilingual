@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { chapters } from "./chapters";
 import { rows } from "./rows";
 import { verses } from "./verses";
@@ -21,7 +22,7 @@ import { translationMemory } from "./translationMemory";
 import { l10n } from "./l10n";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
-import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId, verifyToken } from "./auth";
+import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
 
 export interface Env {
   DB: D1Database;
@@ -134,6 +135,22 @@ app.use("*", async (c, next) => {
   c.res.headers.set("X-Content-Type-Options", "nosniff");
 });
 
+// Global error handler. Without it, an unexpected throw in any handler returns
+// Hono's default plain-text 500 — inconsistent with this API's JSON error
+// shape and leaking the stack in some runtimes. HTTPException instances carry
+// their own intended response, so honor those; everything else becomes a
+// generic JSON 500 (details go to the log, not the client).
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
+  console.error(
+    "unhandled error",
+    c.req.method,
+    c.req.path,
+    err instanceof Error ? (err.stack ?? err.message) : String(err),
+  );
+  return c.json({ error: "internal_error" }, 500);
+});
+
 app.get("/api/health", (c) =>
   c.json({
     ok: true,
@@ -199,32 +216,17 @@ app.route("/api/translation-memory", translationMemory);
 app.route("/api/l10n", l10n);
 
 // WebSocket upgrade into the ChapterRoom DO. WS handshakes are normal HTTP
-// upgrades, so they carry the Access cookie (same-origin) and attachAuth has
-// already stamped userId on the context. Old bearer.<jwt> subprotocol path
-// remains read here only for the cutover window — drop once all clients are
-// on cookies. Forward the raw request to the DO; it echoes the subprotocol
-// back so the handshake completes.
+// upgrades, so they carry the be_access cookie (same-origin) and attachAuth
+// has already stamped userId on the context — that cookie is the only auth
+// path (wsClient.ts opens the socket with no subprotocol). The earlier
+// bearer.<jwt> subprotocol fallback has been removed alongside the HTTP Bearer
+// fallback. Forward the raw request to the DO; it echoes any subprotocol back
+// so the handshake completes.
 app.get("/api/ws/chapter/:book/:chapter", async (c) => {
   if (c.req.header("upgrade") !== "websocket") {
     return c.text("expected websocket", 426);
   }
-  // Cookie path: attachAuth has already stamped userId for browser clients.
-  // Subprotocol bearer.<jwt> fallback covers cutover-era clients that still
-  // hold a localStorage token; drop once we're confident nobody does.
-  let authed = currentUserId(c) !== null;
-  if (!authed) {
-    const protoHeader = c.req.header("sec-websocket-protocol") ?? "";
-    const proto = protoHeader
-      .split(",")
-      .map((s) => s.trim())
-      .find((s) => s.startsWith("bearer."));
-    const token = proto ? proto.slice("bearer.".length) : "";
-    if (token) {
-      const claims = await verifyToken(token, c.env);
-      if (claims) authed = true;
-    }
-  }
-  if (!authed) return c.text("unauthorized", 401);
+  if (currentUserId(c) === null) return c.text("unauthorized", 401);
 
   const book = c.req.param("book").toUpperCase();
   const chapter = parseInt(c.req.param("chapter"), 10);

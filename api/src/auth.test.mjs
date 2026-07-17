@@ -151,7 +151,7 @@ console.log("[requireCsrf] double-submit on writes; reads and exempt paths pass"
   assert(refresh.status === 401, "refresh is CSRF-exempt (401 from handler, not 403)");
 }
 
-console.log("[attachAuth + role gates] cookie and bearer paths, role escalation blocked");
+console.log("[attachAuth + role gates] cookie-only auth, role escalation blocked");
 {
   const app = buildApp();
   const env = baseEnv(fakeDb());
@@ -164,9 +164,11 @@ console.log("[attachAuth + role gates] cookie and bearer paths, role escalation 
     (await app.request("/authed", { headers: { cookie: `be_access=${editorTok}` } }, env)).status === 200,
     "access cookie accepted",
   );
+  // The Authorization: Bearer fallback was removed (cookie-only auth); a valid
+  // JWT presented only as a bearer header must no longer authenticate.
   assert(
-    (await app.request("/authed", { headers: { authorization: `Bearer ${editorTok}` } }, env)).status === 200,
-    "bearer fallback accepted",
+    (await app.request("/authed", { headers: { authorization: `Bearer ${editorTok}` } }, env)).status === 401,
+    "bearer header no longer accepted (cookie-only)",
   );
   assert(
     (await app.request("/authed", { headers: { cookie: "be_access=tampered.jwt.value" } }, env)).status === 401,
