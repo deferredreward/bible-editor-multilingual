@@ -63,6 +63,7 @@ import { nfc } from "../lib/hebrew";
 import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane } from "./ResourceColumn";
+import { WorkspaceLayout } from "./WorkspaceLayout";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
 import {
   SideBySideAligner,
@@ -410,8 +411,6 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const requestScrollToActive = useCallback(() => setScrollNonce((n) => n + 1), []);
 
   const [splitRatio, setSplitRatio] = useState<number | null>(null);
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-  const isDraggingRef = useRef(false);
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -1086,29 +1085,6 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
     [bookHook, mode, bookHook?.summary],
   );
   useEffect(() => { setSplitRatio(null); }, [colsVisible, mode]);
-  useEffect(() => () => { document.body.style.cursor = ""; document.body.style.userSelect = ""; }, []);
-  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDraggingRef.current = true;
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-    const onMouseMove = (ev: MouseEvent) => {
-      if (!isDraggingRef.current || !splitContainerRef.current) return;
-      const rect = splitContainerRef.current.getBoundingClientRect();
-      const available = rect.width - railWidth;
-      const offset = ev.clientX - rect.left - railWidth;
-      setSplitRatio(Math.min(0.8, Math.max(0.2, offset / available)));
-    };
-    const onMouseUp = () => {
-      isDraggingRef.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-  }, [railWidth]);
 
   // Pre-load lexicon entries for every UHB Strong's in the loaded chapter
   // AND every loaded chapter in book mode, so the per-word tooltips in the
@@ -2628,9 +2604,13 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           })}
         </Alert>
       )}
-      <Box ref={splitContainerRef} sx={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {!railCollapsed && (
-          <Box sx={{ width: railWidth, flexShrink: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <WorkspaceLayout
+        railCollapsed={railCollapsed}
+        railWidth={railWidth}
+        effectiveSplit={effectiveSplit}
+        onSplitRatioChange={setSplitRatio}
+        railNode={
+          <>
             <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
               <Button
                 size="small"
@@ -2689,17 +2669,9 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
                 </IconButton>
               </Tooltip>
             </Box>
-          </Box>
-        )}
-        <Box
-          sx={{
-            width: `${effectiveSplit * 100}%`,
-            flexShrink: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
+          </>
+        }
+        scriptureNode={
         <ScriptureColumn
           book={book}
           chapter={chapter}
@@ -2808,37 +2780,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           twl={data.twl}
           locked={Boolean(chapterLock)}
         />
-        </Box>
-        <Box
-          onMouseDown={handleDividerMouseDown}
-          sx={{
-            width: "8px",
-            flexShrink: 0,
-            cursor: "ew-resize",
-            position: "relative",
-            "&::after": {
-              content: '""',
-              position: "absolute",
-              left: "50%",
-              top: 0,
-              bottom: 0,
-              width: "1px",
-              bgcolor: "divider",
-              transform: "translateX(-50%)",
-              transition: "background-color 0.15s",
-            },
-            "&:hover::after": { bgcolor: "primary.main" },
-          }}
-        />
-        <Box
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
+        }
+        resourcesNode={
         <ResourceColumn
           book={book}
           chapter={chapter}
@@ -3137,8 +3080,8 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
           alignmentProps={alignmentTabProps}
           alignmentBadge={alignmentBadge}
         />
-        </Box>
-      </Box>
+        }
+      />
       <ChapterBoard
         open={boardOpen}
         onClose={() => setBoardOpen(false)}
