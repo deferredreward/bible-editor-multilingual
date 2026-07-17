@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
   Button,
   Chip,
   CircularProgress,
+  Divider,
   FormControlLabel,
   IconButton,
+  InputAdornment,
   MenuItem,
   Snackbar,
   Stack,
@@ -61,6 +63,18 @@ import {
 import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
 import { SetupWizard } from "./SetupWizard";
+import { UI_LANGUAGES, dirForLang } from "../i18n";
+import {
+  flattenEn,
+  currentValue,
+  bagFromFlat,
+  flatFromBag,
+  mergedLocale,
+  placeholdersOf,
+  applyOverrides,
+  type StringRow,
+} from "../i18n/overrides";
+import SearchIcon from "@mui/icons-material/Search";
 
 const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
   running: "preferences.exportStatus.running",
@@ -100,14 +114,14 @@ function laneErrorMessage(
   return raw;
 }
 
-export type Section = "brief" | "instructions" | "terminology" | "examples" | "setup";
+export type Section = "brief" | "instructions" | "terminology" | "examples" | "setup" | "localization";
 // Memory sections shown in the rail when a translation project + memory are
-// available. "setup" is admin-only and gated separately (it must show even on a
-// fresh/empty/author-only DB), so it is not part of this list.
+// available. "setup" and "localization" are admin-only and gated separately
+// (they must show regardless of project type / memory), so they aren't listed.
 export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
-// Every routable section (memory + the admin-only setup wizard) — used for
-// hash-route validation in App.tsx.
-export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup"];
+// Every routable section (memory + the admin-only setup wizard + localization
+// editor) — used for hash-route validation in App.tsx.
+export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup", "localization"];
 
 // Term-status → semantic palette (design §10). Not the violet AI identity —
 // status is not an AI-draft state.
@@ -215,6 +229,25 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
               </Typography>
             </Box>
           )}
+          {role === "admin" && (
+            <Box
+              onClick={() => onNavigate("localization")}
+              sx={{
+                px: 1.5,
+                py: 0.9,
+                cursor: "pointer",
+                borderInlineStart: "3px solid",
+                borderColor: section === "localization" ? "primary.main" : "transparent",
+                bgcolor:
+                  section === "localization" ? (theme) => alpha(theme.palette.primary.main, 0.08) : "transparent",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: section === "localization" ? 700 : 400 }}>
+                {t("preferences.section.localization")}
+              </Typography>
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -223,6 +256,8 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
           {section === "setup" && role === "admin" ? (
             <SetupWizard />
+          ) : section === "localization" && role === "admin" ? (
+            <LocalizationSection />
           ) : (
           <>
           <ProjectModeControl cfg={cfg} role={role} />
@@ -904,6 +939,245 @@ function useSaveState() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   return { saving, setSaving, msg, setMsg, clear: () => setMsg(null) };
+}
+
+// ── Localization editor (admin-only; migration 0052) ────────────────────────
+// Edits the CURRENTLY-selected UI language against the English source. English
+// column is read-only reference; the right column is the editable translation.
+// Saves the whole language bag to the server (If-Match CAS) and applies it live
+// via i18next, so the edit shows immediately and reaches other users on their
+// next load. Export downloads the merged locale JSON for committing back.
+function LocalizationSection() {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const langLabel = UI_LANGUAGES.find((l) => l.code === lang)?.label ?? lang;
+  const isEnglish = lang === "en";
+
+  const rows = useMemo<StringRow[]>(() => flattenEn(), []);
+  const save = useSaveState();
+  const [version, setVersion] = useState<number | null>(null);
+  const [stored, setStored] = useState<Record<string, string>>({}); // saved overrides, path→text
+  const [draft, setDraft] = useState<Record<string, string>>({}); // unsaved edits, path→text
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  // Load this language's stored overrides + version so the first save sends the
+  // right If-Match and untouched overrides aren't wiped on a whole-bag PUT.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setDraft({});
+    api
+      .getL10nOverrides()
+      .then(({ overrides, versions }) => {
+        if (cancelled) return;
+        setStored(flatFromBag(overrides[lang] ?? {}));
+        setVersion(versions[lang] ?? 0);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStored({});
+          setVersion(0);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.path.toLowerCase().includes(q) || r.english.toLowerCase().includes(q));
+  }, [rows, query]);
+
+  // Group rows by top-level namespace, preserving en.json order.
+  const groups = useMemo(() => {
+    const m = new Map<string, StringRow[]>();
+    for (const r of filtered) {
+      const list = m.get(r.ns);
+      if (list) list.push(r);
+      else m.set(r.ns, [r]);
+    }
+    return [...m.entries()];
+  }, [filtered]);
+
+  const valueFor = (path: string): string =>
+    path in draft ? draft[path] : (currentValue(lang, path) ?? "");
+  const dirtyCount = Object.keys(draft).length;
+
+  const onSave = async () => {
+    if (version == null || dirtyCount === 0) return;
+    save.setSaving(true);
+    // Whole-bag replace = prior stored overrides + this session's edits.
+    const mergedFlat = { ...stored, ...draft };
+    const bag = bagFromFlat(mergedFlat);
+    try {
+      const { version: next } = await api.putL10nOverrides(lang, version, bag);
+      applyOverrides({ [lang]: bag }); // live effect for this editor
+      setStored(mergedFlat);
+      setVersion(next);
+      setDraft({});
+      save.setMsg(t("preferences.saved"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // Another admin's write won — reload their overrides + version so the
+        // next save has the right If-Match. Unsaved draft is kept.
+        save.setMsg(t("preferences.conflict"));
+        try {
+          const { overrides, versions } = await api.getL10nOverrides();
+          setStored(flatFromBag(overrides[lang] ?? {}));
+          setVersion(versions[lang] ?? 0);
+        } catch {
+          /* leave state; user can retry */
+        }
+      } else if (e instanceof ApiError && e.status === 403) {
+        save.setMsg(t("preferences.saveForbidden"));
+      } else {
+        save.setMsg(t("preferences.saveFailed"));
+      }
+    } finally {
+      save.setSaving(false);
+    }
+  };
+
+  const onExport = () => {
+    const json = JSON.stringify(mergedLocale(lang), null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${lang}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+        <Typography variant="h6">{t("preferences.section.localization")}</Typography>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" size="small" startIcon={<DownloadIcon />} onClick={onExport}>
+            {t("preferences.localization.export")}
+          </Button>
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<SaveIcon />}
+            disabled={save.saving || dirtyCount === 0}
+            onClick={onSave}
+          >
+            {dirtyCount > 0
+              ? t("preferences.localization.saveCount", { count: dirtyCount })
+              : t("preferences.save")}
+          </Button>
+        </Stack>
+      </Stack>
+      <Typography variant="body2" color="text.secondary">
+        {isEnglish
+          ? t("preferences.localization.introEnglish")
+          : t("preferences.localization.intro", { language: langLabel })}
+      </Typography>
+
+      <TextField
+        size="small"
+        fullWidth
+        placeholder={t("preferences.localization.searchPlaceholder")}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon fontSize="small" />
+            </InputAdornment>
+          ),
+        }}
+      />
+
+      {loading ? (
+        <CircularProgress size={22} />
+      ) : filtered.length === 0 ? (
+        <Alert severity="info" variant="outlined">
+          {t("preferences.localization.noMatches")}
+        </Alert>
+      ) : (
+        <Stack spacing={2.5}>
+          {groups.map(([ns, list]) => (
+            <Box key={ns}>
+              <Typography variant="overline" color="text.secondary">
+                {ns}
+              </Typography>
+              <Divider sx={{ mb: 1 }} />
+              <Stack spacing={1.5}>
+                {list.map((r) => {
+                  const value = valueFor(r.path);
+                  const dropped =
+                    r.path in draft &&
+                    placeholdersOf(r.english).filter((p) => !value.includes(p));
+                  const hasWarning = Array.isArray(dropped) && dropped.length > 0;
+                  return (
+                    <Box key={r.path}>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontFamily: "monospace", display: "block", mb: 0.25 }}
+                      >
+                        {r.path}
+                      </Typography>
+                      <Stack
+                        direction={{ xs: "column", sm: "row" }}
+                        spacing={1}
+                        alignItems={{ sm: "flex-start" }}
+                      >
+                        <TextField
+                          size="small"
+                          fullWidth
+                          value={r.english}
+                          InputProps={{ readOnly: true }}
+                          variant="filled"
+                          multiline
+                          maxRows={6}
+                        />
+                        <TextField
+                          size="small"
+                          fullWidth
+                          dir={dirForLang(lang)}
+                          value={value}
+                          onChange={(e) => setDraft((d) => ({ ...d, [r.path]: e.target.value }))}
+                          placeholder={isEnglish ? undefined : r.english}
+                          multiline
+                          maxRows={6}
+                          error={hasWarning}
+                          helperText={
+                            hasWarning
+                              ? t("preferences.localization.placeholderWarning", {
+                                  tokens: (dropped as string[]).join(", "),
+                                })
+                              : undefined
+                          }
+                        />
+                      </Stack>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            </Box>
+          ))}
+        </Stack>
+      )}
+
+      <Snackbar
+        open={!!save.msg}
+        autoHideDuration={4000}
+        onClose={save.clear}
+        message={save.msg ?? ""}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
+    </Stack>
+  );
 }
 
 // ── Brief ──────────────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ import { projectConfig } from "./projectConfigRoutes";
 import { orgRoutes } from "./orgRoutes";
 import { articles } from "./articles";
 import { translationMemory } from "./translationMemory";
+import { l10n } from "./l10n";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId, verifyToken } from "./auth";
@@ -195,6 +196,7 @@ app.route("/api/project-config", projectConfig);
 app.route("/api/orgs", orgRoutes);
 app.route("/api/articles", articles);
 app.route("/api/translation-memory", translationMemory);
+app.route("/api/l10n", l10n);
 
 // WebSocket upgrade into the ChapterRoom DO. WS handshakes are normal HTTP
 // upgrades, so they carry the Access cookie (same-origin) and attachAuth has
