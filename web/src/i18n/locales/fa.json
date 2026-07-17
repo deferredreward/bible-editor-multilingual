@@ -607,6 +607,7 @@
     "projectModeSaved": "حالت پروژه برای همه به‌روزرسانی شد.",
     "projectModeForbidden": "فقط مدیر می‌تواند حالت پروژه را تغییر دهد.",
     "projectModeFailed": "به‌روزرسانی حالت پروژه ممکن نشد. دوباره تلاش کنید.",
+    "projectModeNotEmpty": "This database already holds project data for a different org. Empty it (start from a fresh database) before switching project mode.",
     "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "detectOrg": {
       "label": "Set up a new org (draft)",

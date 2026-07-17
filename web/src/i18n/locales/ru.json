@@ -635,6 +635,7 @@
     "projectModeSaved": "Режим проекта обновлён для всех.",
     "projectModeForbidden": "Только администратор может менять режим проекта.",
     "projectModeFailed": "Не удалось обновить режим проекта. Попробуйте снова.",
+    "projectModeNotEmpty": "This database already holds project data for a different org. Empty it (start from a fresh database) before switching project mode.",
     "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "detectOrg": {
       "label": "Set up a new org (draft)",

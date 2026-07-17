@@ -700,7 +700,18 @@ function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Ro
       if (e instanceof ApiError && e.status === 403) {
         setMessage({ severity: "error", text: t("preferences.projectModeForbidden") });
       } else if (e instanceof ApiError && e.status === 409) {
-        setMessage({ severity: "error", text: t("preferences.projectModeLaneBusy") });
+        // Two distinct 409s reach here: lane_busy (a real replacement job) and
+        // project_not_empty (the target org already has data). Show the actual
+        // reason — a blanket "replacement in progress" sent people hunting for
+        // a job that doesn't exist.
+        const code = (e.body as { error?: string } | undefined)?.error;
+        setMessage({
+          severity: "error",
+          text:
+            code === "project_not_empty"
+              ? t("preferences.projectModeNotEmpty")
+              : t("preferences.projectModeLaneBusy"),
+        });
       } else {
         setMessage({ severity: "error", text: t("preferences.projectModeFailed") });
       }

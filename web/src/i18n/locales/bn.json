@@ -607,6 +607,7 @@
     "projectModeSaved": "সবার জন্য প্রকল্প মোড আপডেট হয়েছে।",
     "projectModeForbidden": "শুধু প্রশাসক প্রকল্প মোড পরিবর্তন করতে পারেন।",
     "projectModeFailed": "প্রকল্প মোড আপডেট করা যায়নি। আবার চেষ্টা করুন।",
+    "projectModeNotEmpty": "This database already holds project data for a different org. Empty it (start from a fresh database) before switching project mode.",
     "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "detectOrg": {
       "label": "Set up a new org (draft)",
