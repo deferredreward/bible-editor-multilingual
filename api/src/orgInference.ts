@@ -340,6 +340,44 @@ export function inferFromRepoList(
   };
 }
 
+// ── Candidate manifest selection (which repos the route fetches manifests for) ─
+
+const CANDIDATE_NON_LANE_SUFFIXES = new Set(["tn", "tq", "twl", "tw", "ta"]);
+// Standard lane identifiers, reserved BEFORE the cap so they can never be
+// starved behind nonstandard {lang}_* repos that happen to list earlier.
+const STANDARD_LANE_IDENTS = ["glt", "ult", "gst", "ust"];
+
+// Pick which repos to fetch a manifest for, capped at `max`. Order:
+//   1. every *_tn repo (needed for language + relation)
+//   2. the standard lane candidates {lang}_(glt|ult|gst|ust) — reserved so a
+//      repo-heavy org can't push them past the cap and falsely report lit/sim
+//      missing
+//   3. any other {lang}_* repo that isn't a known non-lane resource (BSOJ-style
+//      ar_avd/ar_nav), filling the remaining budget in listing order
+export function selectCandidateRepos(
+  langCode: string | null,
+  names: string[],
+  tnMatches: string[],
+  max: number,
+): string[] {
+  const out = new Set<string>(tnMatches);
+  if (langCode) {
+    const prefix = `${langCode}_`;
+    const nameSet = new Set(names);
+    for (const ident of STANDARD_LANE_IDENTS) {
+      const n = `${prefix}${ident}`;
+      if (nameSet.has(n)) out.add(n);
+    }
+    for (const name of names) {
+      if (out.size >= max) break;
+      if (!name.startsWith(prefix)) continue;
+      if (CANDIDATE_NON_LANE_SUFFIXES.has(name.slice(prefix.length))) continue;
+      out.add(name);
+    }
+  }
+  return Array.from(out);
+}
+
 // ── Repo -> resource key mapping helper (used by the route to build repos{}) ──
 
 export function repoRoleMap(inf: InferenceResult): Partial<Record<ResourceKey, string>> {

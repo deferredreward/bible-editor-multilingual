@@ -16,7 +16,7 @@
 // POINTER/METADATA state, matching the plan's scope.
 
 import type { Env } from "./index";
-import { PRESETS, DEFAULT_PRESET, materialize, clearProjectConfigCache, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
+import { PRESETS, DEFAULT_PRESET, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
 import { isIdent } from "./repoUrl.ts";
 import {
   configHash,
@@ -125,6 +125,28 @@ export function resolveOverridesIntent(
 }
 
 // ── Empty-project (tenancy) guard ───────────────────────────────────────────
+
+// Non-lane resource repos whose change repoints EXISTING D1 rows (tn/tq/twl
+// rows, article_units) or their exports at a different DCS repo. lit/sim are
+// deliberately excluded — scripture-source changes are the lane-replacement
+// flow's job, not a hard tenancy stop.
+const NON_LANE_REPO_KEYS: ResourceKey[] = ["tn", "tq", "twl", "tw", "ta"];
+
+/**
+ * The effective data/export identity of a config: the org, the resolved export
+ * owner, and the non-lane repo mapping. A change to ANY of these on a populated
+ * D1 would repoint existing content or its export target — the one-org-per-
+ * database tenancy model treats that as a hard stop, not just a bare `org`
+ * rename. (A bare `org` check misses custom-gl PUTs that keep `org` but change
+ * `exportOrg` or a non-lane repo.)
+ */
+export function dataExportIdentity(
+  env: { DCS_EXPORT_OWNER?: string },
+  cfg: ProjectConfig,
+): string {
+  const repos = NON_LANE_REPO_KEYS.map((k) => `${k}=${cfg.repos[k] ?? ""}`).join(",");
+  return `org=${cfg.org}|export=${exportOwnerFor(env, cfg)}|${repos}`;
+}
 
 /**
  * True when the D1 already holds project data: any live (non-soft-deleted)
@@ -317,10 +339,13 @@ export async function applyProjectConfig(
         : null;
   const desiredCfg = materialize(preset, overridesJsonForWrite);
 
-  // Empty-project (tenancy) guard: applies to EVERY effective org change,
-  // however it arises (named-preset switch, custom-gl activation, or an
-  // org-only override on the same preset) — not just custom-gl.
-  if (beforeCfg.org !== desiredCfg.org) {
+  // Empty-project (tenancy) guard: applies to EVERY effective data/export
+  // identity change, however it arises (named-preset switch, custom-gl
+  // activation, or an override on the same preset that changes org, exportOrg,
+  // or a non-lane repo). A bare `org` comparison would miss a custom-gl PUT
+  // that keeps `org` but repoints `exportOrg` or a tn/tq/twl/tw/ta repo — which
+  // would silently redirect existing rows / exports at a different target.
+  if (dataExportIdentity(env, beforeCfg) !== dataExportIdentity(env, desiredCfg)) {
     if (await hasLiveProjectData(env)) {
       return { ok: false, status: 409, error: "project_not_empty" };
     }

@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   parseManifestFacts,
   inferFromRepoList,
+  selectCandidateRepos,
 } from "./orgInference.ts";
 
 // ── Manifest fixtures ────────────────────────────────────────────────────────
@@ -132,6 +133,26 @@ test("inferFromRepoList: full GL set resolves lit/sim/tn/tq/twl/tw/ta cleanly", 
   assert.equal(inf.taRepo, "en_ta");
   assert.deepEqual(inf.missing, []);
   assert.deepEqual(inf.ambiguous, []);
+});
+
+test("selectCandidateRepos: standard lane names are reserved before the cap (no starvation)", () => {
+  // An org with many nonstandard {lang}_* repos listed BEFORE the standard
+  // lane repos: with a tight cap, the standard glt/gst must still be fetched.
+  const names = ["en_tn"];
+  for (let i = 0; i < 30; i++) names.push(`en_extra${i}`);
+  names.push("en_glt", "en_gst");
+  const picked = selectCandidateRepos("en", names, ["en_tn"], 5);
+  assert.ok(picked.includes("en_tn"), "tn repo always included");
+  assert.ok(picked.includes("en_glt"), "standard lit reserved despite the cap");
+  assert.ok(picked.includes("en_gst"), "standard sim reserved despite the cap");
+  assert.ok(picked.length <= 5, "respects the cap");
+});
+
+test("selectCandidateRepos: fills remaining budget with nonstandard {lang}_* repos", () => {
+  const names = ["ar_tn", "ar_avd", "ar_nav", "ar_tq"];
+  const picked = selectCandidateRepos("ar", names, ["ar_tn"], 20);
+  assert.ok(picked.includes("ar_avd") && picked.includes("ar_nav"), "nonstandard Bible panes included");
+  assert.ok(!picked.includes("ar_tq"), "known non-lane resource excluded");
 });
 
 test("inferFromRepoList: languageName/direction come from the tn manifest, not the heuristic", () => {

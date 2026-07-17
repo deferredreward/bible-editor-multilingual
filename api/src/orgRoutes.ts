@@ -11,6 +11,7 @@ import {
   fetchManifest,
   inferFromRepoList,
   repoRoleMap,
+  selectCandidateRepos,
   type RepoManifestInfo,
 } from "./orgInference.ts";
 
@@ -22,7 +23,6 @@ export const orgRoutes = new Hono<{
 orgRoutes.use("*", requireAuth, requireAdmin);
 
 const TN_REPO_RE = /^([a-z0-9-]+)_tn$/;
-const NON_LANE_SUFFIXES = new Set(["tn", "tq", "twl", "tw", "ta"]);
 // Cap manifest fetches per org so a runaway org (hundreds of repos) can't
 // blow the subrequest budget on a single draft-inference GET.
 const MAX_CANDIDATE_FETCHES = 20;
@@ -57,17 +57,7 @@ orgRoutes.get("/:org/inferred-config", async (c) => {
   // suffixes — BSOJ-style orgs name their Bible panes ar_avd/ar_nav — so any
   // {lang}_* repo not already a known non-lane resource is a candidate,
   // verified by its own manifest's subject/identifier).
-  const toFetch = new Set<string>(tnMatches);
-  if (langCode) {
-    const prefix = `${langCode}_`;
-    for (const name of names) {
-      if (!name.startsWith(prefix)) continue;
-      const suffix = name.slice(prefix.length);
-      if (NON_LANE_SUFFIXES.has(suffix)) continue;
-      toFetch.add(name);
-      if (toFetch.size >= MAX_CANDIDATE_FETCHES) break;
-    }
-  }
+  const toFetch = new Set<string>(selectCandidateRepos(langCode, names, tnMatches, MAX_CANDIDATE_FETCHES));
 
   const manifests = new Map<string, RepoManifestInfo>();
   let manifestFound = false;

@@ -16,6 +16,7 @@ import {
   validateCustomGlOverrides,
   resolveOverridesIntent,
   hasLiveProjectData,
+  dataExportIdentity,
   applyProjectConfig,
 } from "./projectConfigApply.ts";
 import { clearProjectConfigCache } from "./projectConfig.ts";
@@ -361,6 +362,55 @@ test("applyProjectConfig: org change on a DB with only TQ/TWL data also rejects 
   db.prepare(`INSERT INTO twl_rows (id, book, deleted_at) VALUES ('a','GEN',NULL)`).run();
   const env = makeEnv(db);
   const result = await applyProjectConfig(env, "ar-bsoj", undefined);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "project_not_empty");
+});
+
+test("dataExportIdentity: differs on org, exportOrg, or a non-lane repo; ignores lit/sim", () => {
+  const env = {};
+  const base = {
+    org: "MyOrg", exportOrg: "MyOrg", exportOwnerFromConfig: true,
+    repos: { lit: "a", sim: "b", tn: "t", tq: "q", twl: "l", tw: "w", ta: "c" },
+  };
+  const id = (cfg) => dataExportIdentity(env, cfg);
+  assert.equal(id(base), id({ ...base }), "identical config -> identical identity");
+  assert.notEqual(id(base), id({ ...base, exportOrg: "OtherOrg" }), "exportOrg change -> different");
+  assert.notEqual(id(base), id({ ...base, org: "Other" }), "org change -> different");
+  assert.notEqual(id(base), id({ ...base, repos: { ...base.repos, tn: "t2" } }), "non-lane repo change -> different");
+  assert.equal(
+    id(base),
+    id({ ...base, repos: { ...base.repos, lit: "z", sim: "y" } }),
+    "lit/sim change alone -> SAME (lane-managed, not a tenancy stop)",
+  );
+});
+
+test("applyProjectConfig: exportOrg change (same org) on a populated custom-gl DB rejects (409)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  // Activate custom-gl on the empty DB, then populate it.
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  db.prepare(`INSERT INTO tn_rows (id, book, deleted_at) VALUES ('a','GEN',NULL)`).run();
+  const before = db.prepare(`SELECT * FROM project_config WHERE id=1`).get();
+  // Same org (MyOrg), different exportOrg -> the bare-org check would MISS this;
+  // the identity guard must still 409.
+  const result = await applyProjectConfig(env, "custom-gl", { ...VALID_CUSTOM_GL, exportOrg: "OtherOrg" });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.equal(result.error, "project_not_empty");
+  assert.deepEqual(db.prepare(`SELECT * FROM project_config WHERE id=1`).get(), before, "zero writes");
+});
+
+test("applyProjectConfig: non-lane repo change (same org) on a populated custom-gl DB rejects (409)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  db.prepare(`INSERT INTO tn_rows (id, book, deleted_at) VALUES ('a','GEN',NULL)`).run();
+  const changed = { ...VALID_CUSTOM_GL, repos: { ...VALID_CUSTOM_GL.repos, tn: "MyOrg_tn_v2" } };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
   assert.equal(result.ok, false);
   assert.equal(result.error, "project_not_empty");
 });
