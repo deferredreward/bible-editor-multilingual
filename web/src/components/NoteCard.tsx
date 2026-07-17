@@ -397,6 +397,17 @@ function NoteCardInner({
   // English root project, which never passes translationMode, so the card
   // below renders exactly as before.
   const translationState = translationMode ? (row.translation_state ?? null) : null;
+  // Distinct provenance: an ai_draft sourced from Aquifer (not the AI bot). Kept
+  // in draft_meta_json so it survives the round-trip; drives a distinct badge.
+  const isAquiferDraft =
+    translationState === "ai_draft" &&
+    (() => {
+      try {
+        return JSON.parse(row.draft_meta_json ?? "null")?.source === "aquifer";
+      } catch {
+        return false;
+      }
+    })();
   const isDraftState = translationState === "ai_draft" || translationState === "edited";
   const isValidated = translationState === "validated";
   // A GL-project row the translate pipeline never touched AND with no target
@@ -882,7 +893,9 @@ function NoteCardInner({
   const stateChip: { label: string; color: string } | null = !translationMode
     ? null
     : translationState === "ai_draft"
-      ? { label: t("translation.stateAiDraft"), color: "warning.main" }
+      ? isAquiferDraft
+        ? { label: t("translation.stateAquiferDraft"), color: "#70C9CC" }
+        : { label: t("translation.stateAiDraft"), color: "warning.main" }
       : translationState === "edited"
         ? { label: t("translation.stateEdited"), color: "info.main" }
         : isValidated

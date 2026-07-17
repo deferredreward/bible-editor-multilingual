@@ -79,6 +79,7 @@
     "draftLabel": "مسودة",
     "template": "قالب",
     "stateAiDraft": "مسودة ذكاء اصطناعي",
+    "stateAquiferDraft": "مسودة أكوافير",
     "stateApproved": "معتمد",
     "stateUntranslated": "غير مترجم",
     "stateEdited": "محرَّر",

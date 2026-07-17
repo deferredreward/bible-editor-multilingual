@@ -79,6 +79,7 @@
     "draftLabel": "Draft",
     "template": "Template",
     "stateAiDraft": "AI draft",
+    "stateAquiferDraft": "Aquifer draft",
     "stateApproved": "Approved",
     "stateUntranslated": "Untranslated",
     "stateEdited": "Edited",

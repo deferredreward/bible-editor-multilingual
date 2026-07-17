@@ -271,6 +271,17 @@ async function runReimport(
   // are whole-book files; chapter filtering happens after parse.
   const want = new Set(resources);
 
+  // Aquifer-sourced tn: this book's tn was rebuilt on the current en_tn skeleton
+  // (POST /aquifer-drafts). A DCS reimport from the configured tn repo (e.g. an
+  // older BSOJ/ar_tn) would clobber/prune those en_tn-based draft rows, so skip
+  // tn entirely for the book. Other resources (verses/tq/twl) reimport normally.
+  if (want.has("tn")) {
+    const prov = await env.DB.prepare(`SELECT tn_source FROM book_imports WHERE book = ?1`)
+      .bind(book)
+      .first<{ tn_source: string | null }>();
+    if (prov?.tn_source?.startsWith("aquifer:")) want.delete("tn");
+  }
+
   // Scripture-lane guard: a frozen lane (open replacement) or a lane that still
   // requires a replacement must not accept a scripture reimport — it would
   // clobber the generation the replacement is staging/superseding. TSV
