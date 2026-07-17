@@ -360,22 +360,33 @@ export function selectCandidateRepos(
   tnMatches: string[],
   max: number,
 ): string[] {
-  const out = new Set<string>(tnMatches);
+  // Build a priority-ordered, deduped list, then hard-slice to `max`. Priority
+  // (tn → standard lanes → other {lang}_*) decides who survives the cap, so the
+  // cap is a real ceiling on the subrequest budget AND the standard lanes still
+  // win over nonstandard fillers.
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const push = (n: string) => {
+    if (!seen.has(n)) {
+      seen.add(n);
+      ordered.push(n);
+    }
+  };
+  for (const n of tnMatches) push(n);
   if (langCode) {
     const prefix = `${langCode}_`;
     const nameSet = new Set(names);
     for (const ident of STANDARD_LANE_IDENTS) {
       const n = `${prefix}${ident}`;
-      if (nameSet.has(n)) out.add(n);
+      if (nameSet.has(n)) push(n);
     }
     for (const name of names) {
-      if (out.size >= max) break;
       if (!name.startsWith(prefix)) continue;
       if (CANDIDATE_NON_LANE_SUFFIXES.has(name.slice(prefix.length))) continue;
-      out.add(name);
+      push(name);
     }
   }
-  return Array.from(out);
+  return ordered.slice(0, Math.max(0, max));
 }
 
 // ── Repo -> resource key mapping helper (used by the route to build repos{}) ──

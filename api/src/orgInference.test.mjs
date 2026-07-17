@@ -155,6 +155,16 @@ test("selectCandidateRepos: fills remaining budget with nonstandard {lang}_* rep
   assert.ok(!picked.includes("ar_tq"), "known non-lane resource excluded");
 });
 
+test("selectCandidateRepos: the cap is a HARD ceiling even with many tn matches + lanes", () => {
+  // 10 *_tn matches + 4 standard lanes would be 14 before any cap check; a
+  // max of 3 must still yield exactly 3 (priority order: tn first).
+  const tnMatches = Array.from({ length: 10 }, (_, i) => `l${i}_tn`);
+  const names = [...tnMatches, "en_glt", "en_gst", "en_ult", "en_ust"];
+  const picked = selectCandidateRepos("en", names, tnMatches, 3);
+  assert.equal(picked.length, 3, "never exceeds max");
+  assert.deepEqual(picked, ["l0_tn", "l1_tn", "l2_tn"], "highest-priority (tn) survive the cap");
+});
+
 test("inferFromRepoList: languageName/direction come from the tn manifest, not the heuristic", () => {
   // A language NOT in the RTL heuristic set whose tn manifest declares rtl +
   // a human title: both must come from the manifest, overriding the code and
