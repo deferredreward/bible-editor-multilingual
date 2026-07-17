@@ -170,6 +170,7 @@
     "projectModeSaved": "تم تحديث وضع المشروع للجميع.",
     "projectModeForbidden": "يمكن للمسؤول فقط تغيير وضع المشروع.",
     "projectModeFailed": "تعذّر تحديث وضع المشروع. حاول مرة أخرى.",
+    "projectModeNotEmpty": "This database already holds project data for a different org. Empty it (start from a fresh database) before switching project mode.",
     "projectModeLaneBusy": "استبدال مصدر للكتاب المقدس قيد التنفيذ. أنهِه أو ألغِه قبل تبديل وضع المشروع.",
     "detectOrg": {
       "label": "إعداد منظمة جديدة (مسودة)",

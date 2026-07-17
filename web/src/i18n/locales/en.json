@@ -170,6 +170,7 @@
     "projectModeSaved": "Project mode updated for everyone.",
     "projectModeForbidden": "Only an admin can change the project mode.",
     "projectModeFailed": "Could not update the project mode. Try again.",
+    "projectModeNotEmpty": "This database already holds project data for a different org. Empty it (start from a fresh database) before switching project mode.",
     "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "detectOrg": {
       "label": "Set up a new org (draft)",
