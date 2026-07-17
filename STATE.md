@@ -1444,6 +1444,99 @@ Not yet PR'd.
 
 ## In progress
 
+- **aquifer-arabic-draft-notes** (2026-07-16) — **DONE + LIVE-E2E VERIFIED; rebased onto origin/main (`0b190f4`),
+  ready for PR.** Goal: pull Aquifer tN as unapproved *drafts* merged onto the current `unfoldingWord/en_tn` skeleton,
+  language-parameterized (Arabic pilot → Hindi etc.). Full design detail in memory [[project-aquifer-tn-source]]; plan
+  `C:\Users\benja\.claude\plans\write-up-a-plan-ethereal-tiger.md`. Branch commits `5fb837c` (feat) + `8204be8` (docs)
+  on top of `0b190f4`.
+  - **LIVE E2E PASSED (2026-07-16, local wrangler dev + real D1).** Ran from the MAIN checkout (worktree's fresh npm
+    install has a broken workerd; junction breaks esbuild — main's node_modules is the only healthy wrangler here).
+    Set project ar-bsoj, then: **PHM (Arabic in ar_tn):** import→93 NULL rows; aquifer-drafts→ **approved 93** (existing
+    Arabic marked `validated`, `pre_draft_json` set), **skippedApproved 86** (deduped, not overwritten), **inserted 6**
+    new drafts; `edit_log.source=aquifer` ×6, `draft_meta.source=aquifer` ×6, `book_imports.tn_source='aquifer:arb'`;
+    a tn **reimport was skipped** (all-zero, rows unchanged) → clobber-protection confirmed. **RUT (English placeholder):**
+    aquifer-drafts→ **approved 0** (English correctly NOT target-script), **replaced 262** placeholders, **inserted 293**
+    drafts (248 quote / 40 ordinal / 5 intro), **40 flagged** `aquifer_unverified`, 31 uncovered placeholders left NULL.
+  - Cosmetic follow-up: the bold-gloss line renders as `**"****word**` (adjacent bolds) — harmless, tidy later.
+  - **Not runtime-verified:** the browser badge render (its data `draft_meta.source=aquifer` IS confirmed).
+  - **Code-review pass (Claude + Codex, on PR #36):** fixed — dedup/replace key now includes `occurrence`;
+    trailing See-link strip handles multi-Tag lines; **export SKIPS tn for `aquifer:*` books** (was: `pre_draft_json=''`
+    → nightly export would ship blank notes over the tn repo — data corruption) mirroring the reimport skip; and the
+    id set for collision-avoidance now includes soft-deleted rows (PK `(book,id)` collision → 500). **KNOWN DEFERRAL
+    (intentional, flagged by Codex):** `book_imports.tn_source='aquifer:*'` is never cleared, so an Aquifer book's tn is
+    held out of DCS export *permanently for now* — validated Aquifer Arabic won't reach DCS until the export-direction
+    feature is built AND a `tn_source`-clearing path is added. That's the deferred export work, not a regression.
+  - **Shipped (commit fa3daf0):** `scripts/aquifer-join-census.mjs` (Phase-0 diagnostic, all 47 books arb+hin);
+    `api/src/aquiferConvert.ts` + `.test.mjs` (quote-primary/ordinal-fallback/unmatched converter, 10 tests green,
+    real 3JN 57/57); `api/src/aquiferSources.ts` (lang→dir + canonical book# + URL); `api/src/aquiferImport.ts`
+    (`POST /api/books/:book/aquifer-drafts`, admin, MERGE-and-preserve: validate existing target-lang notes, dedup by
+    (ref,NFC quote), overlay placeholders, mint unmatched; `edit_log.source='aquifer'`, `draft_meta_json.source`,
+    `preserve=1`, flagged `review_kind='aquifer_unverified'`); route in `bookImport.ts`; migration `0050`; reimport
+    skip in `bookReimport.ts`; NoteCard "Aquifer draft" badge + i18n en/ar/hi. typecheck/build/api-tests green.
+  - **⚠ Data-loss + recovery:** an npm "repair" ran `git clean`, deleting all untracked files + reverting tracked
+    edits (branch went clean). Recovered from conversation history and **committed immediately** (`fa3daf0`). Lesson:
+    on this branch, commit early — untracked work is one `git clean` away from gone.
+  - **Env note:** worktree `node_modules` is now a REAL `npm install` (junction removed — it broke wrangler dev's
+    esbuild; and the fresh install's workerd crashes, so run dev from main). Re-run `scripts/worktree-init.ps1` to
+    restore the junction + reclaim disk when done.
+  - (Below: original reconnaissance, still valid.)
+  - **Aquifer source:** `github.com/BibleAquifer/UWTranslationNotes/tree/main/arb` — NOT a DCS repo. Per-book files
+    in 4 formats (`docx/ json/ md/ pdf/`) named by USFM book number `NN.content.json` (01=GEN … 66=REV, verified:
+    64=3JN). **47 books present** (full NT + wisdom/some minor prophets); **19 OT books MISSING** incl. NUM, DEU, PSA,
+    ISA, JER, EZK, DAN (nums 04,05,10-14,19,21,23-28,30,33,35,38). There's also a 35 MB `arb/metadata.json`.
+  - **Coverage measured by what's ACTUALLY in Arabic (user: "the only thing that matters is what's in arabic").**
+    BSOJ/ar_tn has all 66 books as *files* but **most are still English placeholder** — Arabic-script ratio per book
+    across all 66 TSVs shows BSOJ is genuinely Arabic in only **~19 books** (JON 63% + GAL/EPH/PHP/COL/1TH/2TH/1TI/
+    2TI/TIT/PHM/JAS/1PE/2PE/1JN/2JN/3JN/JUD/REV ~100%); **everything else is 0% Arabic** (all OT except Jonah, all
+    Gospels, ACT, ROM, 1–2CO, HEB). Aquifer arb is **100% Arabic** in every sampled book (RUT/JOB/JOL/OBA/NAM/HAG/
+    MAT/ROM/HEB/GAL), counts ≈ BSOJ (JOB 3320/3320, MAT 5286/5315) — same note base, actually translated.
+    - **Aquifer ADDS Arabic for 28 books** BSOJ has only in English: GEN EXO LEV JOS JDG RUT 1SA EZR NEH EST JOB PRO
+      SNG JOL OBA NAM ZEP HAG MAL MAT MRK LUK JHN ACT ROM 1CO 2CO HEB.
+    - **Both Arabic (19, overlap):** JON GAL EPH PHP COL 1TH 2TH 1TI 2TI TIT PHM JAS 1PE 2PE 1JN 2JN 3JN JUD REV —
+      Aquifer is a **superset** of BSOJ's real Arabic content (loses nothing).
+    - **NO Arabic in either source (19, real gap, mostly OT):** NUM DEU 2SA 1KI 2KI 1CH 2CH PSA ECC ISA JER LAM EZK
+      DAN HOS AMO MIC HAB ZEC.
+    - Net: adding Aquifer roughly **triples** available Arabic tN (≈19 → 47 books). User's original instinct was right;
+      my earlier book-count comparison was the wrong metric.
+  - **Format gap = the hard part.** Aquifer `json` is a flat **list** of items, each: `content_id`, `reference_id`,
+    `title`, `index_reference` (BBCCCVVV), `language:"arb"`, `content` (**HTML**), `associations{passage[],resource[],
+    acai[]}`. `passage[].start_ref_usfm`/`end_ref_usfm` = the verse ref (ranges supported). Original-language quote is
+    **embedded inline in the HTML** (e.g. `<span dir=ltr>ὁ πρεσβύτερος</span>`), NOT a separate Quote/Occurrence field.
+    TA links are `<span data-bnType="resourceReference" data-resourceType="UWTranslationManual">` inline, not a
+    SupportReference column. IDs are numeric, not DCS 4-char sticky IDs.
+    → Our `tn_rows` schema + editor need TSV columns **Reference/ID/Tags/SupportReference/Quote/Occurrence/Note** and
+    depend on **Quote+Occurrence** for alignment. Aquifer→our-schema requires an HTML→markdown transform, quote
+    *extraction* from prose (hardest — no structured Quote/Occurrence, so alignment won't work out of the box),
+    SupportReference recovery from embedded links, and minted sticky IDs.
+  - **Where "aquifer" must appear (the source-config map):** `api/src/projectConfig.ts` PRESETS (currently every preset
+    is a DCS `org` + `{lang}_tn` repo — Aquifer needs a new *source-kind* concept, not just an org string) →
+    `api/src/dcsSources.ts` / `api/src/importParsers.ts` (hardcode DCS raw-URL shape + TSV columns; need a parallel
+    fetch/parse path) → `book_resource_syncs` watermark (`0028`/`0036`, keyed on `source_org`) → web preset picker
+    (`web/src/components/PreferencesWorkspace.tsx`, `useProjectConfig.ts`) surfaces automatically once a preset exists.
+  - **"Draft" fit:** existing target-lang draft machinery is `translation_state` (`NULL|ai_draft|edited|validated`,
+    migration `0037`) + `pre_draft_json` (`0049`); export ships only `validated`. Aquifer-sourced draft notes most
+    naturally land as `ai_draft` (or a new `source='aquifer'` provenance) so they never auto-export unreviewed.
+  - **Provenance — NO AI/human/review signal in the data (checked all 47 books + 35 MB metadata.json).** Every one
+    of **65,738** items has `review_level: "None"` (uniform) and `version` "1.0.4"; item schema carries no author/
+    method/model field. metadata.json adds only license (CC BY-SA 4.0), Scripture Burrito `category:"source"`, a file
+    manifest, and a localization map. Keyword sweep (machine/ai/gpt/llm/model/openai/anthropic/claude/confidence/
+    reviewer/generated) = zero hits. Only attribution: "adapted … by Mission Mutual", method unspecified.
+    (`associations.acai[].confidence` = entity-linking confidence, not translation provenance.) **→ Cannot tell AI vs
+    human from the files; treat ALL as unapproved drafts** — the chosen default. Land as `translation_state='ai_draft'`
+    (or `source='aquifer'`) so they never auto-export unreviewed.
+  - **KEY STRATEGY (Benjamin's idea, VALIDATED 2026-07-16): graft Aquifer Arabic onto the `unfoldingWord/en_tn`
+    skeleton** instead of extracting Quote/Occurrence/SupportReference from Aquifer's HTML. Join each Aquifer note to
+    its en_tn row and inherit clean ID/Quote/Occurrence/SupportReference/Tags; keep only Aquifer's Arabic Note prose.
+    No literal shared ID (Aquifer has numeric content_id, not uW 4-char) → join is **(reference + per-verse ordinal
+    `(#N)`)** cross-validated by the **embedded orig-lang quote** (Greek=ltr span, Hebrew=rtl span, compare via NFC).
+    **Measured:** ordinal-row quote == Aquifer quote at OT RUT/JOB/NAM 100%, OBA 99.3%, JOL 97.9%; NT GAL 100%,
+    ROM 99.4%, REV 99.8%, MAT 98.7%, MRK 97.4% (order preserved; OT count parity exact, NT drops <0.5%/book).
+    Residual ~1–3% → flag for review (mid-verse drop/add shifts ordinal, multi-occurrence resolved by ordinal→adopt
+    en_tn Occurrence, en_tn version drift → pin the commit). Payoff: **alignment + DCS export work for free** (Quote/
+    Occurrence from en_tn) and IDs stay in the DCS ecosystem. Note-body: strip embedded quote/gloss/"(انظر: TA)" so
+    they don't duplicate inherited columns. Supersedes the earlier "Quote/Occurrence is the hard part" worry.
+  - Detail also in memory [[project-aquifer-tn-source]].
+
 - **dreamy-leakey** (2026-07-09) — **Fix C: crash-safe persistence of in-progress alignment work — [PR #330](https://github.com/unfoldingWord/bible-editor/pull/330) open.**
   Closes the hole PR #329's beforeunload guard can't: a CRASH loses AlignmentPanel drags (React-state-only until save).
   New dedicated IndexedDB store `web/src/sync/alignmentDrafts.ts` (DB `bible-editor-alignment-drafts`, key

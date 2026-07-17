@@ -18,7 +18,8 @@ import {
   parseTsv,
   refParts,
 } from "./importParsers";
-import { requireAuth, requireEditor, currentUserId } from "./auth";
+import { requireAuth, requireEditor, requireAdmin, currentUserId } from "./auth";
+import { aquiferDrafts } from "./aquiferImport.ts";
 import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText, type LaneRepoOverrides } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
 import { populateReferencedArticles } from "./articlePopulate";
@@ -95,6 +96,10 @@ books.get("/:book/lint", requireAuth, async (c) => {
   const escalateCount = issues.filter((i) => i.bucket === "escalate").length;
   return c.json({ book, total: issues.length, flagCount, escalateCount, issues });
 });
+
+// POST /api/books/:book/aquifer-drafts — re-source this book's tN from Aquifer as
+// unapproved drafts merged onto the en_tn skeleton (admin-only).
+books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
 
 books.post("/:book/import", requireEditor, async (c) => {
   const userId = currentUserId(c);
