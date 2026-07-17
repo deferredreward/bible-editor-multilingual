@@ -29,7 +29,7 @@ import type { FindMatch } from "./FindReplaceOverlay";
 import type { FindQuery } from "./ScriptureColumn";
 import { HebrewLine } from "./HebrewLine";
 import { useProjectConfig } from "../hooks/useProjectConfig";
-import { versionLabel } from "../lib/versionLabels";
+import { versionLabel, versionIsRtl } from "../lib/versionLabels";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import { formatVerseLabel, isRangeRow } from "../lib/verseRange";
 import {
@@ -736,10 +736,10 @@ const VerseCell = memo(function VerseCell({
   const readOnly = READ_ONLY.has(bibleVersion) || locked || textLockedVersions.has(bibleVersion);
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
   // Hebrew original keeps its enlarged SBL-Hebrew treatment; every other pane
-  // follows the project's own direction, so an Arabic AVD/NAV pane reads RTL in
-  // the normal reading font even when the UI chrome is LTR.
+  // follows the project's own direction (via versionIsRtl), so an Arabic AVD/NAV
+  // pane reads RTL in the normal reading font even when the UI chrome is LTR.
   const hebrewSource = bibleVersion === "UHB";
-  const rtl = hebrewSource || (!isSource && projectConfig?.direction === "rtl");
+  const rtl = versionIsRtl(projectConfig, bibleVersion);
   // The active match is at most one cell; this is non-null only on that cell.
   const activeRange = useMemo<{ start: number; end: number } | null>(() => {
     if (!findActiveMatch) return null;
