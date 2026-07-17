@@ -215,6 +215,21 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       ? [params.resource]
       : ALL_RESOURCES;
 
+    // Books whose tn was re-sourced from Aquifer (POST /aquifer-drafts) are held
+    // out of tn EXPORT: their rows are en_tn-based drafts, and until validated
+    // their export snapshot is empty — exporting would push blank/unapproved
+    // notes over the DCS tn repo. Export-direction handling for Aquifer books is
+    // deferred (see STATE.md); until then, skip tn for them. Other resources
+    // (verses/tq/twl) export normally. Mirrors the reimport skip in bookReimport.
+    const aquiferTnBooks = new Set(
+      await step.do("list-aquifer-tn-books", async () => {
+        const rs = await this.env.DB.prepare(
+          `SELECT book FROM book_imports WHERE tn_source LIKE 'aquifer:%'`,
+        ).all<{ book: string }>();
+        return rs.results.map((r) => r.book);
+      }),
+    );
+
     // 1b. Sync D1 from current master before rendering. Pulls out-of-band master
     //     edits (other tooling, manual USFM cleanup, the bp-assistant bot) into
     //     D1's *pristine* rows so the export doesn't silently revert them on the
@@ -269,6 +284,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const results: StepResult[] = [];
     for (const resource of resources) {
       for (const book of books) {
+        if (resource === "tn" && aquiferTnBooks.has(book)) continue; // Aquifer-sourced tn: not exported yet (see above)
         const stepName = `export-${book}-${resource}`;
         try {
           const result = await step.do(

@@ -132,6 +132,15 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
       `SELECT id, ref_raw, quote, occurrence, note, translation_state FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL`,
     ).bind(book).all<{ id: string; ref_raw: string; quote: string | null; occurrence: number | null; note: string | null; translation_state: string | null }>();
 
+    // Ids in use for this book INCLUDING soft-deleted rows: the PK is (book,id)
+    // and a tombstoned row keeps its slot, so minting/pickId must avoid those ids
+    // or the INSERT hits a primary-key constraint. (deleted_at-filtered `existing`
+    // is only for classification.)
+    const usedIds = new Set(
+      ((await env.DB.prepare(`SELECT id FROM tn_rows WHERE book = ?1`).bind(book).all<{ id: string }>()).results ?? [])
+        .map((r) => r.id),
+    );
+
     // Dedup/replace key includes occurrence: a verse can carry the SAME quote at
     // occurrence 1 and 2 (distinct notes). Keying on (ref,quote) alone would let
     // an approved occ-1 suppress the occ-2 draft, and collide the two existing
@@ -140,10 +149,8 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     const protectedKeys = new Set<string>();
     const approveIds: string[] = [];
     const replaceableByKey = new Map<string, string>();
-    const liveIds = new Set<string>();
 
     for (const row of existing.results ?? []) {
-      liveIds.add(row.id);
       const st = row.translation_state;
       const k = key(row.ref_raw, row.quote, row.occurrence);
       if (st === "validated" || st === "edited") {
@@ -194,12 +201,12 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
       const replacedId = replaceableByKey.get(k);
       if (replacedId) {
         stmts.push(env.DB.prepare(`DELETE FROM tn_rows WHERE book = ?1 AND id = ?2`).bind(book, replacedId));
-        liveIds.delete(replacedId);
+        usedIds.delete(replacedId);
         replaceableByKey.delete(k);
         counts.replaced++;
       }
 
-      const id = pickId(note.enId, liveIds);
+      const id = pickId(note.enId, usedIds);
       const [ch, v] = refParts(note.ref);
       const draftMeta = JSON.stringify({
         source: AQUIFER_SOURCE, aqLang, aquiferContentId: note.aquiferContentId, joinMethod: note.joinMethod,
