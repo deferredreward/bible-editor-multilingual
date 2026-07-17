@@ -33,9 +33,11 @@ const L10nBagSchema: z.ZodType<L10nBag> = z.lazy(() =>
 );
 const MAX_BAG_BYTES = 512 * 1024; // generous: whole en.json is ~40KB
 
-// GET /overrides — no role gate; the whole point is that every reader picks up
-// overrides at boot. Returns a stable empty shape when nothing is stored yet.
+// GET /overrides — any authenticated user (no role gate: every reader picks up
+// overrides at boot, but we don't serve them anonymously). Returns a stable
+// empty shape when nothing is stored yet.
 l10n.get("/overrides", async (c) => {
+  if (!currentUserId(c)) return c.json({ error: "unauthorized" }, 401);
   const rows = await c.env.DB.prepare(
     `SELECT lang, overrides_json, version FROM l10n_overrides`,
   ).all<OverrideRow>();
