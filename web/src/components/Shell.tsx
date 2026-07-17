@@ -62,8 +62,9 @@ import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { nfc } from "../lib/hebrew";
 import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
-import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane, type ResourceTab } from "./ResourceColumn";
+import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceColumnProps, type ResourceLane, type ResourceTab } from "./ResourceColumn";
 import { WorkspaceLayout } from "./WorkspaceLayout";
+import { StackedResourcePanel } from "./StackedResourcePanel";
 import { LayoutMenu } from "./LayoutMenu";
 import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
 import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
@@ -2748,337 +2749,367 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         />
   );
 
+  const resourceColumnProps: Omit<ResourceColumnProps, "visibleTabs" | "initialTab"> = {
+    book,
+    chapter,
+    activeVerse,
+    checkoff: resourceCheckoff,
+    displayVerseRange,
+    tn: data.tn,
+    tq: data.tq,
+    twl: data.twl,
+    ultVerseObjectsFor,
+    onWordHoverPreview: handleWordHoverPreview,
+    activeNoteId,
+    activeWordId,
+    findNoteQuery,
+    activeNoteMatch,
+    scrollNonce,
+    onNoteChange: (id, patch) => {
+      applyLocalRowPatch("tn", id, patch);
+    },
+    onNoteSave: (id, patch, opts) => {
+      const row = data.tn.find((r) => r.id === id);
+      if (row) enqueueRow("tn", row, patch, opts);
+    },
+    onNoteFocus: (row) => {
+      setActiveNoteId(row.id);
+      setActiveWordId(null);
+      if (row.verse !== activeVerse) setActiveVerse(row.verse);
+    },
+    onNoteStartAi: (row, live) => {
+      // Build from the live (unsaved) note fields so SUGGEST works
+      // before an explicit save — the cached data.tn row can lag the
+      // box (quote propagates on a debounce; a freshly-built note may
+      // not be flushed at all), which is what produced the bogus "AI
+      // prerequisites missing." id/version/book/verse stay from the
+      // cached row so the outbox If-Match and toast targeting hold.
+      const aiRow: TnRow = {
+        ...row,
+        quote: live.quote,
+        note: live.note,
+        support_reference: live.support_reference,
+      };
+      const built = buildTnQuickRequest(aiRow, data);
+      if (!built.ok) {
+        // NoteCard gates on quote + support_reference. The remaining
+        // reasons (missing ULT/UST or unalignable English) need a
+        // user-actionable message.
+        const message =
+          built.error.reason === "missing_ult_verse"
+            ? "ULT verse text unavailable for this verse."
+            : built.error.reason === "missing_ust_verse"
+              ? "UST verse text unavailable for this verse."
+              : built.error.reason === "hebrew_not_found"
+                ? "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT."
+                : "AI prerequisites missing.";
+        aiDrafts.pushError(aiRow, message);
+        return;
+      }
+      aiDrafts.start(aiRow, built.request, {
+        getIsVisible: (id) => visibleRowIdsRef.current.has(id),
+        onSuccess: (r, res) => {
+          // Carry the support_reference the request was built from
+          // along with this save. It may still be unsaved on the
+          // server (e.g. picked on a brand-new note right before
+          // hitting Suggest) — without this, this PATCH's own version
+          // bump can make NoteCard's resync effect stamp the pending
+          // pick back to the server's stale/null value before the
+          // user gets a chance to save it themselves.
+          const patch = { quote: res.quote, note: res.note, support_reference: r.support_reference };
+          // Re-running the suggestion on an already-drafted note can
+          // return a quote+note identical to what's stored; skip the
+          // save so we don't bump the row version with a no-op (mirror
+          // of the commitQuoteBuild guard). res.quote may be
+          // source-derived Hebrew in a different combining-mark order
+          // than the stored value, so NFC-normalize the quote compare;
+          // the note is plain TSV text stored verbatim, so compare raw.
+          const changed =
+            nfc(res.quote) !== nfc(r.quote ?? "") || res.note !== (r.note ?? "");
+          if (!changed) return;
+          applyLocalRowPatch("tn", r.id, patch);
+          void outbox.enqueueRow("tn", r.id, r.version, patch, { book: r.book });
+        },
+      });
+    },
+    isNoteAiPending: aiDrafts.isPending,
+    noteAiRecentlyCompletedAt: aiDrafts.recentlyCompletedAt,
+    onNoteVisibilityChange: handleNoteVisibilityChange,
+    onNoteTranslateQuote: (row, english) => {
+      const vo = (
+        verseIndexByVersion["ULT"]?.[row.verse]?.content as
+          | { verseObjects?: unknown[] }
+          | null
+          | undefined
+      )?.verseObjects;
+      if (!Array.isArray(vo)) return null;
+      return findSourceForTargetText(vo, english) || null;
+    },
+    onWordTranslateQuote: (row, english) => {
+      const vo = (
+        verseIndexByVersion["ULT"]?.[row.verse]?.content as
+          | { verseObjects?: unknown[] }
+          | null
+          | undefined
+      )?.verseObjects;
+      if (!Array.isArray(vo)) return null;
+      return findSourceForTargetText(vo, english) || null;
+    },
+    onWordGloss: (row) => {
+      // English (ULT) words aligned to this row's saved orig_words.
+      // OL-anchored via the UHB/UGNT verse, mirroring the highlighter.
+      if (!row.orig_words) return "";
+      const ult = (
+        verseIndexByVersion["ULT"]?.[row.verse]?.content as
+          | { verseObjects?: unknown[] }
+          | null
+          | undefined
+      )?.verseObjects;
+      if (!Array.isArray(ult)) return "";
+      const src = (
+        (verseIndexByVersion["UHB"]?.[row.verse] ?? verseIndexByVersion["UGNT"]?.[row.verse])
+          ?.content as { verseObjects?: unknown[] } | null | undefined
+      )?.verseObjects;
+      return extractTargetSelectionText(
+        ult,
+        row.orig_words,
+        row.occurrence ?? 1,
+        Array.isArray(src) ? src : undefined,
+      );
+    },
+    onWordFocus: (row) => {
+      setActiveWordId(row.id);
+      setActiveNoteId(null);
+      if (row.verse !== activeVerse) setActiveVerse(row.verse);
+    },
+    onNoteCreate: async () => {
+      const list = sortedForVerse(data.tn, activeVerse);
+      const sort_order = pickSortOrder(list, null, "after");
+      const created = (await api.createRow<TnRow>("tn", {
+        book,
+        chapter,
+        verse: activeVerse,
+        ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+        note: "",
+        sort_order,
+      }));
+      applyLocalRowInsert("tn", created);
+      setActiveNoteId(created.id);
+      setActiveWordId(null);
+    },
+    onNoteInsertAfter: async (refId) => {
+      const ref = data.tn.find((r) => r.id === refId);
+      if (!ref) return;
+      const list = sortedForVerse(data.tn, ref.verse);
+      const sort_order = pickSortOrder(list, refId, "after");
+      // No inherited support_reference — fresh notes get an empty
+      // chip so the user can typeahead in immediately.
+      const created = (await api.createRow<TnRow>("tn", {
+        book,
+        chapter,
+        verse: ref.verse,
+        ref_raw: ref.ref_raw,
+        note: "",
+        sort_order,
+      }));
+      applyLocalRowInsert("tn", created, { afterId: refId });
+      setActiveNoteId(created.id);
+      setActiveWordId(null);
+    },
+    onNoteReorder: (draggedId, refId, position) => {
+      // Read the live (ref) row list, not the render-scoped `data`
+      // closure: a rapid burst of arrow clicks fires several handlers
+      // before React re-renders, and a stale closure would renumber from
+      // an outdated order and enqueue ops carrying a stale version.
+      const tn = dataRef.current?.tn ?? [];
+      const dragged = tn.find((r) => r.id === draggedId);
+      if (!dragged) return;
+      const sorted = sortedForVerse(tn, dragged.verse);
+      const changes = reorderSequential(sorted, draggedId, refId, position);
+      for (const { row, sort_order } of changes) {
+        enqueueRow("tn", row, { sort_order });
+      }
+    },
+    verseOptions: verseNumbers,
+    onNoteChangeVerse: (id, verse, verseEnd) => {
+      // Retarget a note to another verse in this chapter, or extend it to
+      // span a range (verseEnd > verse => ref_raw "chapter:start-end").
+      // Read the live row (dataRef, not the render closure) so a rapid
+      // move carries the current version. Recompute ref_raw + a fresh
+      // sort_order (end of the leading verse) so the note lands in order
+      // there; enqueueRow applies it optimistically and PATCHes. `verse`
+      // is sent explicitly, which rows.ts treats as authoritative — so a
+      // range ref_raw keeps this leading verse for grouping.
+      const tn = dataRef.current?.tn ?? [];
+      const row = tn.find((r) => r.id === id);
+      if (!row) return;
+      const isRange = verseEnd != null && verseEnd > verse;
+      const ref_raw =
+        verse === 0
+          ? `${chapter}:intro`
+          : isRange
+            ? `${chapter}:${verse}-${verseEnd}`
+            : `${chapter}:${verse}`;
+      if (row.verse === verse && row.ref_raw === ref_raw) return;
+      const sort_order = pickSortOrder(sortedForVerse(tn, verse), null, "after");
+      enqueueRow("tn", row, { verse, ref_raw, sort_order });
+      // Follow the note to its new verse: the resource column only renders
+      // notes in displayVerseRange, so without this the moved card vanishes
+      // from view. Navigating there confirms the move landed.
+      setActiveVerse(verse);
+      setActiveNoteId(id);
+    },
+    onReorderPreview: handleReorderPreview,
+    onWordCreate: async () => {
+      const list = sortedForVerse(data.twl, activeVerse);
+      const sort_order = pickSortOrder(list, null, "after");
+      const created = (await api.createRow<TwlRow>("twl", {
+        book,
+        chapter,
+        verse: activeVerse,
+        ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+        orig_words: "",
+        tw_link: "",
+        sort_order,
+      }));
+      applyLocalRowInsert("twl", created);
+      setActiveWordId(created.id);
+      setActiveNoteId(null);
+    },
+    onWordReorder: (draggedId, refId, position) => {
+      // See onNoteReorder: live ref list, not the stale render closure.
+      const twl = dataRef.current?.twl ?? [];
+      const dragged = twl.find((r) => r.id === draggedId);
+      if (!dragged) return;
+      const sorted = sortedForVerse(twl, dragged.verse);
+      const changes = reorderSequential(sorted, draggedId, refId, position);
+      for (const { row, sort_order } of changes) {
+        enqueueRow("twl", row, { sort_order });
+      }
+    },
+    onQuestionCreate: async () => {
+      const created = (await api.createRow<TqRow>("tq", {
+        book,
+        chapter,
+        verse: activeVerse,
+        ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+        question: "",
+        response: "",
+      }));
+      applyLocalRowInsert("tq", created);
+    },
+    onNoteDelete: handleTrashNote,
+    onNoteRestore: handleRestoreNote,
+    onWordSave: (id, patch) => {
+      const row = data.twl.find((r) => r.id === id);
+      if (row) enqueueRow("twl", row, patch);
+    },
+    onWordDelete: (id) => {
+      const row = data.twl.find((r) => r.id === id);
+      if (!row) return;
+      applyLocalRowDelete("twl", id);
+      if (activeWordId === id) setActiveWordId(null);
+      void outbox.enqueueDeleteRow("twl", id, row.version, row.book);
+    },
+    onQuestionSave: (id, patch) => {
+      const row = data.tq.find((r) => r.id === id);
+      if (row) enqueueRow("tq", row, patch);
+    },
+    onQuestionDelete: (id) => {
+      const row = data.tq.find((r) => r.id === id);
+      if (!row) return;
+      applyLocalRowDelete("tq", id);
+      void outbox.enqueueDeleteRow("tq", id, row.version, row.book);
+    },
+    locked: Boolean(chapterLock),
+    onSetNotePreserve: handleSetNotePreserve,
+    onSetNoteHint: handleSetNoteHint,
+    onNoteApprove: handleApproveNote,
+    onNoteTranslate: handleTranslateNote,
+    translatingNoteIds: translatingRowIds,
+    onQuestionApprove: handleApproveQuestion,
+    onQuestionTranslate: handleTranslateQuestion,
+    translatingQuestionIds,
+    quoteBuildActiveNoteId: quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null,
+    quoteBuildActiveWordId: quoteBuildTarget?.kind === "twl" ? quoteBuildTarget.id : null,
+    quoteBuildSelectionCount: quoteBuildSelectedKeys.size,
+    quoteBuildAppliedTo,
+    onStartQuoteBuild: (noteId) => startQuoteBuild({ kind: "tn", id: noteId }),
+    onStartWordQuoteBuild: (wordId) => startQuoteBuild({ kind: "twl", id: wordId }),
+    onAddTwlSuggestion: handleAddTwlSuggestion,
+    isTwlSuggestionExcluded,
+    onTwlSuggestions: setVerseTwlSuggestions,
+    twlRowAlternatives,
+    twlBlockedArticleIds,
+    twlFiltersReady: twlFilters.settled,
+    panelMode,
+    onSetPanelMode: handleSetPanelMode,
+    alignmentProps: alignmentTabProps,
+    alignmentBadge,
+  };
+
   const renderResources = (visibleTabs?: ResourceTab[]) => (
-        <ResourceColumn
-          visibleTabs={visibleTabs}
-          initialTab={visibleTabs?.[0]}
-          book={book}
-          chapter={chapter}
-          activeVerse={activeVerse}
-          checkoff={resourceCheckoff}
-          displayVerseRange={displayVerseRange}
-          tn={data.tn}
-          tq={data.tq}
-          twl={data.twl}
-          ultVerseObjectsFor={ultVerseObjectsFor}
-          onWordHoverPreview={handleWordHoverPreview}
-          activeNoteId={activeNoteId}
-          activeWordId={activeWordId}
-          findNoteQuery={findNoteQuery}
-          activeNoteMatch={activeNoteMatch}
-          scrollNonce={scrollNonce}
-          onNoteChange={(id, patch) => {
-            applyLocalRowPatch("tn", id, patch);
-          }}
-          onNoteSave={(id, patch, opts) => {
-            const row = data.tn.find((r) => r.id === id);
-            if (row) enqueueRow("tn", row, patch, opts);
-          }}
-          onNoteFocus={(row) => {
-            setActiveNoteId(row.id);
-            setActiveWordId(null);
-            if (row.verse !== activeVerse) setActiveVerse(row.verse);
-          }}
-          onNoteStartAi={(row, live) => {
-            // Build from the live (unsaved) note fields so SUGGEST works
-            // before an explicit save — the cached data.tn row can lag the
-            // box (quote propagates on a debounce; a freshly-built note may
-            // not be flushed at all), which is what produced the bogus "AI
-            // prerequisites missing." id/version/book/verse stay from the
-            // cached row so the outbox If-Match and toast targeting hold.
-            const aiRow: TnRow = {
-              ...row,
-              quote: live.quote,
-              note: live.note,
-              support_reference: live.support_reference,
-            };
-            const built = buildTnQuickRequest(aiRow, data);
-            if (!built.ok) {
-              // NoteCard gates on quote + support_reference. The remaining
-              // reasons (missing ULT/UST or unalignable English) need a
-              // user-actionable message.
-              const message =
-                built.error.reason === "missing_ult_verse"
-                  ? "ULT verse text unavailable for this verse."
-                  : built.error.reason === "missing_ust_verse"
-                    ? "UST verse text unavailable for this verse."
-                    : built.error.reason === "hebrew_not_found"
-                      ? "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT."
-                      : "AI prerequisites missing.";
-              aiDrafts.pushError(aiRow, message);
-              return;
-            }
-            aiDrafts.start(aiRow, built.request, {
-              getIsVisible: (id) => visibleRowIdsRef.current.has(id),
-              onSuccess: (r, res) => {
-                // Carry the support_reference the request was built from
-                // along with this save. It may still be unsaved on the
-                // server (e.g. picked on a brand-new note right before
-                // hitting Suggest) — without this, this PATCH's own version
-                // bump can make NoteCard's resync effect stamp the pending
-                // pick back to the server's stale/null value before the
-                // user gets a chance to save it themselves.
-                const patch = { quote: res.quote, note: res.note, support_reference: r.support_reference };
-                // Re-running the suggestion on an already-drafted note can
-                // return a quote+note identical to what's stored; skip the
-                // save so we don't bump the row version with a no-op (mirror
-                // of the commitQuoteBuild guard). res.quote may be
-                // source-derived Hebrew in a different combining-mark order
-                // than the stored value, so NFC-normalize the quote compare;
-                // the note is plain TSV text stored verbatim, so compare raw.
-                const changed =
-                  nfc(res.quote) !== nfc(r.quote ?? "") || res.note !== (r.note ?? "");
-                if (!changed) return;
-                applyLocalRowPatch("tn", r.id, patch);
-                void outbox.enqueueRow("tn", r.id, r.version, patch, { book: r.book });
-              },
-            });
-          }}
-          isNoteAiPending={aiDrafts.isPending}
-          noteAiRecentlyCompletedAt={aiDrafts.recentlyCompletedAt}
-          onNoteVisibilityChange={handleNoteVisibilityChange}
-          onNoteTranslateQuote={(row, english) => {
-            const vo = (
-              verseIndexByVersion["ULT"]?.[row.verse]?.content as
-                | { verseObjects?: unknown[] }
-                | null
-                | undefined
-            )?.verseObjects;
-            if (!Array.isArray(vo)) return null;
-            return findSourceForTargetText(vo, english) || null;
-          }}
-          onWordTranslateQuote={(row, english) => {
-            const vo = (
-              verseIndexByVersion["ULT"]?.[row.verse]?.content as
-                | { verseObjects?: unknown[] }
-                | null
-                | undefined
-            )?.verseObjects;
-            if (!Array.isArray(vo)) return null;
-            return findSourceForTargetText(vo, english) || null;
-          }}
-          onWordGloss={(row) => {
-            // English (ULT) words aligned to this row's saved orig_words.
-            // OL-anchored via the UHB/UGNT verse, mirroring the highlighter.
-            if (!row.orig_words) return "";
-            const ult = (
-              verseIndexByVersion["ULT"]?.[row.verse]?.content as
-                | { verseObjects?: unknown[] }
-                | null
-                | undefined
-            )?.verseObjects;
-            if (!Array.isArray(ult)) return "";
-            const src = (
-              (verseIndexByVersion["UHB"]?.[row.verse] ?? verseIndexByVersion["UGNT"]?.[row.verse])
-                ?.content as { verseObjects?: unknown[] } | null | undefined
-            )?.verseObjects;
-            return extractTargetSelectionText(
-              ult,
-              row.orig_words,
-              row.occurrence ?? 1,
-              Array.isArray(src) ? src : undefined,
-            );
-          }}
-          onWordFocus={(row) => {
-            setActiveWordId(row.id);
-            setActiveNoteId(null);
-            if (row.verse !== activeVerse) setActiveVerse(row.verse);
-          }}
-          onNoteCreate={async () => {
-            const list = sortedForVerse(data.tn, activeVerse);
-            const sort_order = pickSortOrder(list, null, "after");
-            const created = (await api.createRow<TnRow>("tn", {
-              book,
-              chapter,
-              verse: activeVerse,
-              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
-              note: "",
-              sort_order,
-            }));
-            applyLocalRowInsert("tn", created);
-            setActiveNoteId(created.id);
-            setActiveWordId(null);
-          }}
-          onNoteInsertAfter={async (refId) => {
-            const ref = data.tn.find((r) => r.id === refId);
-            if (!ref) return;
-            const list = sortedForVerse(data.tn, ref.verse);
-            const sort_order = pickSortOrder(list, refId, "after");
-            // No inherited support_reference — fresh notes get an empty
-            // chip so the user can typeahead in immediately.
-            const created = (await api.createRow<TnRow>("tn", {
-              book,
-              chapter,
-              verse: ref.verse,
-              ref_raw: ref.ref_raw,
-              note: "",
-              sort_order,
-            }));
-            applyLocalRowInsert("tn", created, { afterId: refId });
-            setActiveNoteId(created.id);
-            setActiveWordId(null);
-          }}
-          onNoteReorder={(draggedId, refId, position) => {
-            // Read the live (ref) row list, not the render-scoped `data`
-            // closure: a rapid burst of arrow clicks fires several handlers
-            // before React re-renders, and a stale closure would renumber from
-            // an outdated order and enqueue ops carrying a stale version.
-            const tn = dataRef.current?.tn ?? [];
-            const dragged = tn.find((r) => r.id === draggedId);
-            if (!dragged) return;
-            const sorted = sortedForVerse(tn, dragged.verse);
-            const changes = reorderSequential(sorted, draggedId, refId, position);
-            for (const { row, sort_order } of changes) {
-              enqueueRow("tn", row, { sort_order });
-            }
-          }}
-          verseOptions={verseNumbers}
-          onNoteChangeVerse={(id, verse, verseEnd) => {
-            // Retarget a note to another verse in this chapter, or extend it to
-            // span a range (verseEnd > verse => ref_raw "chapter:start-end").
-            // Read the live row (dataRef, not the render closure) so a rapid
-            // move carries the current version. Recompute ref_raw + a fresh
-            // sort_order (end of the leading verse) so the note lands in order
-            // there; enqueueRow applies it optimistically and PATCHes. `verse`
-            // is sent explicitly, which rows.ts treats as authoritative — so a
-            // range ref_raw keeps this leading verse for grouping.
-            const tn = dataRef.current?.tn ?? [];
-            const row = tn.find((r) => r.id === id);
-            if (!row) return;
-            const isRange = verseEnd != null && verseEnd > verse;
-            const ref_raw =
-              verse === 0
-                ? `${chapter}:intro`
-                : isRange
-                  ? `${chapter}:${verse}-${verseEnd}`
-                  : `${chapter}:${verse}`;
-            if (row.verse === verse && row.ref_raw === ref_raw) return;
-            const sort_order = pickSortOrder(sortedForVerse(tn, verse), null, "after");
-            enqueueRow("tn", row, { verse, ref_raw, sort_order });
-            // Follow the note to its new verse: the resource column only renders
-            // notes in displayVerseRange, so without this the moved card vanishes
-            // from view. Navigating there confirms the move landed.
-            setActiveVerse(verse);
-            setActiveNoteId(id);
-          }}
-          onReorderPreview={handleReorderPreview}
-          onWordCreate={async () => {
-            const list = sortedForVerse(data.twl, activeVerse);
-            const sort_order = pickSortOrder(list, null, "after");
-            const created = (await api.createRow<TwlRow>("twl", {
-              book,
-              chapter,
-              verse: activeVerse,
-              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
-              orig_words: "",
-              tw_link: "",
-              sort_order,
-            }));
-            applyLocalRowInsert("twl", created);
-            setActiveWordId(created.id);
-            setActiveNoteId(null);
-          }}
-          onWordReorder={(draggedId, refId, position) => {
-            // See onNoteReorder: live ref list, not the stale render closure.
-            const twl = dataRef.current?.twl ?? [];
-            const dragged = twl.find((r) => r.id === draggedId);
-            if (!dragged) return;
-            const sorted = sortedForVerse(twl, dragged.verse);
-            const changes = reorderSequential(sorted, draggedId, refId, position);
-            for (const { row, sort_order } of changes) {
-              enqueueRow("twl", row, { sort_order });
-            }
-          }}
-          onQuestionCreate={async () => {
-            const created = (await api.createRow<TqRow>("tq", {
-              book,
-              chapter,
-              verse: activeVerse,
-              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
-              question: "",
-              response: "",
-            }));
-            applyLocalRowInsert("tq", created);
-          }}
-          onNoteDelete={handleTrashNote}
-          onNoteRestore={handleRestoreNote}
-          onWordSave={(id, patch) => {
-            const row = data.twl.find((r) => r.id === id);
-            if (row) enqueueRow("twl", row, patch);
-          }}
-          onWordDelete={(id) => {
-            const row = data.twl.find((r) => r.id === id);
-            if (!row) return;
-            applyLocalRowDelete("twl", id);
-            if (activeWordId === id) setActiveWordId(null);
-            void outbox.enqueueDeleteRow("twl", id, row.version, row.book);
-          }}
-          onQuestionSave={(id, patch) => {
-            const row = data.tq.find((r) => r.id === id);
-            if (row) enqueueRow("tq", row, patch);
-          }}
-          onQuestionDelete={(id) => {
-            const row = data.tq.find((r) => r.id === id);
-            if (!row) return;
-            applyLocalRowDelete("tq", id);
-            void outbox.enqueueDeleteRow("tq", id, row.version, row.book);
-          }}
-          locked={Boolean(chapterLock)}
-          onSetNotePreserve={handleSetNotePreserve}
-          onSetNoteHint={handleSetNoteHint}
-          onNoteApprove={handleApproveNote}
-          onNoteTranslate={handleTranslateNote}
-          translatingNoteIds={translatingRowIds}
-          onQuestionApprove={handleApproveQuestion}
-          onQuestionTranslate={handleTranslateQuestion}
-          translatingQuestionIds={translatingQuestionIds}
-          quoteBuildActiveNoteId={quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null}
-          quoteBuildActiveWordId={quoteBuildTarget?.kind === "twl" ? quoteBuildTarget.id : null}
-          quoteBuildSelectionCount={quoteBuildSelectedKeys.size}
-          quoteBuildAppliedTo={quoteBuildAppliedTo}
-          onStartQuoteBuild={(noteId) => startQuoteBuild({ kind: "tn", id: noteId })}
-          onStartWordQuoteBuild={(wordId) => startQuoteBuild({ kind: "twl", id: wordId })}
-          onAddTwlSuggestion={handleAddTwlSuggestion}
-          isTwlSuggestionExcluded={isTwlSuggestionExcluded}
-          onTwlSuggestions={setVerseTwlSuggestions}
-          twlRowAlternatives={twlRowAlternatives}
-          twlBlockedArticleIds={twlBlockedArticleIds}
-          twlFiltersReady={twlFilters.settled}
-          panelMode={panelMode}
-          onSetPanelMode={handleSetPanelMode}
-          alignmentProps={alignmentTabProps}
-          alignmentBadge={alignmentBadge}
-        />
+    <ResourceColumn {...resourceColumnProps} visibleTabs={visibleTabs} initialTab={visibleTabs?.[0]} />
   );
 
+  const renderPanelContent = (panel: PanelInstance): ReactNode => {
+    switch (panel.type) {
+      case "scripture":
+        return scriptureNode;
+      case "notes":
+      case "words":
+      case "questions":
+        return <StackedResourcePanel {...resourceColumnProps} panelType={panel.type} />;
+      default:
+        // TODO follow-on PRs: original-language / article / alignment / search panels.
+        return (
+          <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
+            <Typography variant="body2">{panel.type} — panel coming in a later pass</Typography>
+          </Box>
+        );
+    }
+  };
+
   const renderRegion = (region: PanelRegion): ReactNode => {
+    // Multi-panel STACKED region → stack each panel separately (the new
+    // capability). Tabbed regions (display:"tabs", e.g. Classic's resources
+    // column with its notes/words/questions tabs) are EXCLUDED here and fall
+    // through to the unchanged tabbed ResourceColumn path below — that guard is
+    // what keeps builtin:classic byte-identical.
+    if (region.display !== "tabs" && region.panels.length > 1) {
+      return (
+        <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {region.panels.map((p) => (
+            <Box
+              key={p.id}
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "&:last-of-type": { borderBottom: 0 },
+              }}
+            >
+              {renderPanelContent(p)}
+            </Box>
+          ))}
+        </Box>
+      );
+    }
+    // Single-panel (or empty) region → CURRENT behavior, unchanged (keeps Classic
+    // + translate-notes/words byte-identical).
     const types = region.panels.map((pp) => pp.type);
     if (types.includes("scripture")) return scriptureNode;
     const resourceTabs = region.panels
       .map((pp) => pp.type)
-      .filter((tt): tt is ResourceTab =>
-        (RESOURCE_PANEL_TYPES as readonly string[]).includes(tt),
-      );
-    if (resourceTabs.length > 0) {
-      // Classic keeps the all-tabs column with no visibleTabs override so it is
-      // byte-identical to today; non-classic regions get only their subset.
-      // TODO Phase 6: taArticle/twArticle/original panels sharing a region are
-      // not yet rendered — only their notes/words/questions siblings appear.
-      return renderResources(isClassic ? undefined : resourceTabs);
-    }
-    // TODO Phase 6: real article / original-language / alignment / search panels.
+      .filter((tt): tt is ResourceTab => (RESOURCE_PANEL_TYPES as readonly string[]).includes(tt));
+    if (resourceTabs.length > 0) return renderResources(isClassic ? undefined : resourceTabs);
     const label = region.panels[0]?.type ?? "panel";
     return (
-      <Box
-        sx={{
-          m: 2,
-          p: 2,
-          border: "1px dashed",
-          borderColor: "divider",
-          borderRadius: 1,
-          color: "text.secondary",
-        }}
-      >
+      <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
         <Typography variant="body2">{label} — panel coming in a later pass</Typography>
       </Box>
     );

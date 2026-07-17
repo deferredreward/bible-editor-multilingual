@@ -63,6 +63,8 @@ export interface AlignmentTabProps {
   onRestoreVersion?: (content: unknown, plainText: string | null) => void;
 }
 
+export type ResourceColumnProps = Props;
+
 interface Props {
   // Active location — needed by the per-verse TWL suggestions fetch.
   book: string;
