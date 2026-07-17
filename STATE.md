@@ -1432,9 +1432,26 @@ Not yet PR'd.
 
 ## In progress
 
-- **aquifer-arabic-draft-notes** (2026-07-16) — **EXPLORATION ONLY (no code changes). Goal: add "Aquifer" as a
-  selectable tN source for pulling *draft* Arabic notes, alongside the existing DCS `BSOJ/ar_tn` source.** User is
-  building the actual integration separately; this entry records the reconnaissance.
+- **aquifer-arabic-draft-notes** (2026-07-16) — **COMMITTED `fa3daf0`; Phases 0–3 + merge rework done; live e2e
+  blocked by env; main diverged → REBASE before PR.** Goal: pull Aquifer tN as unapproved *drafts* merged onto the
+  current `unfoldingWord/en_tn` skeleton, language-parameterized (Arabic pilot → Hindi etc.). Full design detail in
+  memory [[project-aquifer-tn-source]]; plan `C:\Users\benja\.claude\plans\write-up-a-plan-ethereal-tiger.md`.
+  - **Shipped (commit fa3daf0):** `scripts/aquifer-join-census.mjs` (Phase-0 diagnostic, all 47 books arb+hin);
+    `api/src/aquiferConvert.ts` + `.test.mjs` (quote-primary/ordinal-fallback/unmatched converter, 10 tests green,
+    real 3JN 57/57); `api/src/aquiferSources.ts` (lang→dir + canonical book# + URL); `api/src/aquiferImport.ts`
+    (`POST /api/books/:book/aquifer-drafts`, admin, MERGE-and-preserve: validate existing target-lang notes, dedup by
+    (ref,NFC quote), overlay placeholders, mint unmatched; `edit_log.source='aquifer'`, `draft_meta_json.source`,
+    `preserve=1`, flagged `review_kind='aquifer_unverified'`); route in `bookImport.ts`; migration `0050`; reimport
+    skip in `bookReimport.ts`; NoteCard "Aquifer draft" badge + i18n en/ar/hi. typecheck/build/api-tests green.
+  - **⚠ Data-loss + recovery:** an npm "repair" ran `git clean`, deleting all untracked files + reverting tracked
+    edits (branch went clean). Recovered from conversation history and **committed immediately** (`fa3daf0`). Lesson:
+    on this branch, commit early — untracked work is one `git clean` away from gone.
+  - **Live e2e still UNRUN (environment):** worktree `node_modules` is a junction to main; wrangler dev's esbuild
+    can't resolve deps through the Windows junction (`Cannot find package '@cloudflare/unenv-preset'`) — dev boots only
+    from a REAL node_modules. Main diverged to `0b190f4` + dirty, unsafe to borrow. The runtime merge path
+    (validate-approved / dedup / delete+insert / mint id / batch) is NOT yet exercised against a live D1. Also unhandled:
+    export-direction gating (unvalidated Aquifer drafts vs BSOJ export) — safe on dev (no crons).
+  - (Below: original reconnaissance, still valid.)
   - **Aquifer source:** `github.com/BibleAquifer/UWTranslationNotes/tree/main/arb` — NOT a DCS repo. Per-book files
     in 4 formats (`docx/ json/ md/ pdf/`) named by USFM book number `NN.content.json` (01=GEN … 66=REV, verified:
     64=3JN). **47 books present** (full NT + wisdom/some minor prophets); **19 OT books MISSING** incl. NUM, DEU, PSA,
