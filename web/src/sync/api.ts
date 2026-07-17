@@ -902,7 +902,8 @@ export type TranslationPrefsInput = {
   script_notes: string | null;
   instructions_md: string | null;
   notes: string | null;
-  assisted_mode: boolean;
+  // assisted_mode removed: the server injects contextRef whenever a successful
+  // context export exists — there is no client-settable gate any more.
 };
 
 export interface ContextExportStatus {

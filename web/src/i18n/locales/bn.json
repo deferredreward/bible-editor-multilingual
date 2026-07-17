@@ -615,12 +615,8 @@
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
-    "assistedMode": "সহায়তা মোড",
-    "assistedModeHelp": "চালু থাকলে, অনুবাদ রান দলের প্রসঙ্গ প্যাক (সংক্ষিপ্ত বিবরণ, শব্দ, যাচাইকৃত উদাহরণ) AI-তে পাঠায়।",
-    "assistedModeDisabled": "সহায়তা মোড সক্রিয় করার আগে প্রসঙ্গ প্যাক সফলভাবে রপ্তানি করুন — খালি প্যাক AI রান ব্যর্থ করে।",
-    "assistedModeAdminOnly": "শুধু প্রশাসক সহায়তা মোড পরিবর্তন বা প্রসঙ্গ প্যাক রপ্তানি করতে পারেন।",
-    "assistedModeOn": "সহায়তা",
-    "assistedModeOff": "কাঁচা বেসলাইন",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "এখনই প্রসঙ্গ রপ্তানি করুন",
     "exportQueued": "প্রসঙ্গ রপ্তানি সারিতে",
     "exportStatusNever": "এখনও কোনো প্রসঙ্গ রপ্তানি হয়নি",
@@ -636,7 +632,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "AI-তে ফিড করা হচ্ছে",
-    "notFeedingAi": "এখনও AI-তে ফিড হচ্ছে না — সফল রপ্তানির পর সহায়তা মোড সক্রিয় করুন",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -669,11 +665,11 @@
         "lane_lease_held": "এই লেনটি ব্যস্ত (একটি ইমপোর্ট বা এক্সপোর্ট এটি ধরে রেখেছে)। শীঘ্রই আবার চেষ্টা করুন।",
         "confirmation_required": "প্রতিস্থাপন শুরু করতে নিশ্চিতকরণ প্রয়োজন।",
         "lane_replacement_required": "সম্পাদনা করার আগে এই লেনের একটি উৎস প্রতিস্থাপন প্রয়োজন।",
-      "job_not_found": "এই প্রতিস্থাপন কাজটি খুঁজে পাওয়া যায়নি। এটি ইতিমধ্যে বাতিল বা সম্পন্ন হয়ে থাকতে পারে।",
-      "job_not_ready": "এই প্রতিস্থাপনটি এখনও সক্রিয় করার জন্য প্রস্তুত নয়।",
-      "export_lease_held": "এখনই সক্রিয় করা যাচ্ছে না: এই লেনের জন্য একটি এক্সপোর্ট চলছে। শীঘ্রই আবার চেষ্টা করুন।",
-      "export_lease_grace": "এখনই সক্রিয় করা যাচ্ছে না: চলমান এক্সপোর্ট শেষ হওয়ার অপেক্ষায় আছে। শীঘ্রই আবার চেষ্টা করুন।",
-      "activation_cas_failed": "সক্রিয়করণ ব্যর্থ হয়েছে কারণ লেনটি এর মধ্যে পরিবর্তিত হয়েছে। রিফ্রেশ করে আবার চেষ্টা করুন।"
+        "job_not_found": "এই প্রতিস্থাপন কাজটি খুঁজে পাওয়া যায়নি। এটি ইতিমধ্যে বাতিল বা সম্পন্ন হয়ে থাকতে পারে।",
+        "job_not_ready": "এই প্রতিস্থাপনটি এখনও সক্রিয় করার জন্য প্রস্তুত নয়।",
+        "export_lease_held": "এখনই সক্রিয় করা যাচ্ছে না: এই লেনের জন্য একটি এক্সপোর্ট চলছে। শীঘ্রই আবার চেষ্টা করুন।",
+        "export_lease_grace": "এখনই সক্রিয় করা যাচ্ছে না: চলমান এক্সপোর্ট শেষ হওয়ার অপেক্ষায় আছে। শীঘ্রই আবার চেষ্টা করুন।",
+        "activation_cas_failed": "সক্রিয়করণ ব্যর্থ হয়েছে কারণ লেনটি এর মধ্যে পরিবর্তিত হয়েছে। রিফ্রেশ করে আবার চেষ্টা করুন।"
       },
       "saved": "Lane config saved."
     }

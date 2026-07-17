@@ -615,12 +615,8 @@
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
-    "assistedMode": "सहायता मोड",
-    "assistedModeHelp": "चालु हुँदा, अनुवाद रनले टोलीको सन्दर्भ प्याक (संक्षिप्त विवरण, शब्द, प्रमाणित उदाहरण) AI लाई पठाउँछ।",
-    "assistedModeDisabled": "सहायता मोड सक्षम गर्नुअघि सन्दर्भ प्याक सफलतापूर्वक निर्यात गर्नुहोस् — खाली प्याकले AI रन असफल बनाउँछ।",
-    "assistedModeAdminOnly": "प्रशासक मात्र सहायता मोड परिवर्तन वा सन्दर्भ प्याक निर्यात गर्न सक्छ।",
-    "assistedModeOn": "सहायता",
-    "assistedModeOff": "कच्चा आधार",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "अहिले सन्दर्भ निर्यात गर्नुहोस्",
     "exportQueued": "सन्दर्भ निर्यात पङ्क्तिमा",
     "exportStatusNever": "अहिलेसम्म कुनै सन्दर्भ निर्यात छैन",
@@ -636,7 +632,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "AI लाई फिड गर्दै",
-    "notFeedingAi": "अहिलेसम्म AI लाई फिड भएको छैन — सफल निर्यातपछि सहायता मोड सक्षम गर्नुहोस्",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -669,11 +665,11 @@
         "lane_lease_held": "यो लेन व्यस्त छ (आयात वा निर्यातले यसलाई रोकेको छ)। केही बेरमा पुनः प्रयास गर्नुहोस्।",
         "confirmation_required": "प्रतिस्थापन सुरु गर्न पुष्टि आवश्यक छ।",
         "lane_replacement_required": "सम्पादन गर्नुअघि यस लेनलाई स्रोत प्रतिस्थापन आवश्यक छ।",
-      "job_not_found": "यो प्रतिस्थापन कार्य फेला पार्न सकिएन। यो पहिले नै रद्द वा पूरा भइसकेको हुन सक्छ।",
-      "job_not_ready": "यो प्रतिस्थापन अझै सक्रिय गर्न तयार छैन।",
-      "export_lease_held": "अहिले सक्रिय गर्न सकिँदैन: यस लेनका लागि निर्यात प्रगतिमा छ। केही बेरमा पुनः प्रयास गर्नुहोस्।",
-      "export_lease_grace": "अहिले सक्रिय गर्न सकिँदैन: चलिरहेको निर्यात पूरा हुने पर्खाइमा। केही बेरमा पुनः प्रयास गर्नुहोस्।",
-      "activation_cas_failed": "सक्रियकरण असफल भयो किनभने बीचमा लेन परिवर्तन भयो। रिफ्रेश गरेर फेरि प्रयास गर्नुहोस्।"
+        "job_not_found": "यो प्रतिस्थापन कार्य फेला पार्न सकिएन। यो पहिले नै रद्द वा पूरा भइसकेको हुन सक्छ।",
+        "job_not_ready": "यो प्रतिस्थापन अझै सक्रिय गर्न तयार छैन।",
+        "export_lease_held": "अहिले सक्रिय गर्न सकिँदैन: यस लेनका लागि निर्यात प्रगतिमा छ। केही बेरमा पुनः प्रयास गर्नुहोस्।",
+        "export_lease_grace": "अहिले सक्रिय गर्न सकिँदैन: चलिरहेको निर्यात पूरा हुने पर्खाइमा। केही बेरमा पुनः प्रयास गर्नुहोस्।",
+        "activation_cas_failed": "सक्रियकरण असफल भयो किनभने बीचमा लेन परिवर्तन भयो। रिफ्रेश गरेर फेरि प्रयास गर्नुहोस्।"
       },
       "saved": "Lane config saved."
     }

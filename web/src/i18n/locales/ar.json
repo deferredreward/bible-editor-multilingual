@@ -188,12 +188,8 @@
       "projectNotEmpty": "تحتوي قاعدة البيانات هذه بالفعل على بيانات مشروع لمنظمة مختلفة. تخدم كل قاعدة بيانات منظمة/مشروعاً واحداً في كل مرة.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
-    "assistedMode": "الوضع المُساعَد",
-    "assistedModeHelp": "عند التفعيل، تُرسل حزمة السياق (الموجز والمصطلحات والأمثلة المعتمدة) مع كل تشغيل ترجمة للذكاء الاصطناعي.",
-    "assistedModeDisabled": "صدِّر حزمة سياق بنجاح قبل تفعيل الوضع المُساعَد — الحزمة الفارغة تفشل تشغيل الذكاء الاصطناعي.",
-    "assistedModeAdminOnly": "يمكن للمسؤول فقط تغيير الوضع المُساعَد أو تصدير حزمة السياق.",
-    "assistedModeOn": "مُساعَد",
-    "assistedModeOff": "أساسي",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "تصدير السياق الآن",
     "exportQueued": "تم وضع تصدير السياق في قائمة الانتظار",
     "exportStatusNever": "لا يوجد تصدير سياق بعد",
@@ -209,7 +205,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "يُغذي الذكاء الاصطناعي",
-    "notFeedingAi": "لا يغذي الذكاء الاصطناعي بعد — فعِّل الوضع المُساعَد بعد تصدير ناجح",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -242,11 +238,11 @@
         "lane_lease_held": "هذا المسار مشغول (عملية استيراد أو تصدير تحتجزه). حاول مرة أخرى بعد قليل.",
         "confirmation_required": "التأكيد مطلوب لبدء عملية الاستبدال.",
         "lane_replacement_required": "يحتاج هذا المسار إلى استبدال المصدر قبل أن يصبح قابلاً للتحرير.",
-      "job_not_found": "تعذر العثور على مهمة الاستبدال هذه. ربما تم إلغاؤها أو إكمالها بالفعل.",
-      "job_not_ready": "هذا الاستبدال ليس جاهزًا للتفعيل بعد.",
-      "export_lease_held": "تعذر التفعيل الآن: عملية تصدير جارية لهذا المسار. حاول مرة أخرى بعد قليل.",
-      "export_lease_grace": "تعذر التفعيل الآن: في انتظار انتهاء عملية تصدير جارية. حاول مرة أخرى بعد قليل.",
-      "activation_cas_failed": "فشل التفعيل لأن المسار تغيّر أثناء ذلك. أعد تحميل الصفحة وحاول مرة أخرى."
+        "job_not_found": "تعذر العثور على مهمة الاستبدال هذه. ربما تم إلغاؤها أو إكمالها بالفعل.",
+        "job_not_ready": "هذا الاستبدال ليس جاهزًا للتفعيل بعد.",
+        "export_lease_held": "تعذر التفعيل الآن: عملية تصدير جارية لهذا المسار. حاول مرة أخرى بعد قليل.",
+        "export_lease_grace": "تعذر التفعيل الآن: في انتظار انتهاء عملية تصدير جارية. حاول مرة أخرى بعد قليل.",
+        "activation_cas_failed": "فشل التفعيل لأن المسار تغيّر أثناء ذلك. أعد تحميل الصفحة وحاول مرة أخرى."
       },
       "saved": "Lane config saved."
     }

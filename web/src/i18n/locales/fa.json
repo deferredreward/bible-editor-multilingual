@@ -615,12 +615,8 @@
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
-    "assistedMode": "حالت کمکی",
-    "assistedModeHelp": "وقتی فعال است، اجراهای ترجمه بستهٔ سیاق تیم (موجز، اصطلاحات، نمونه‌های معتبر) را به AI می‌فرستند.",
-    "assistedModeDisabled": "پیش از فعال‌سازی حالت کمکی، یک بستهٔ سیاق را با موفقیت صادر کنید — بستهٔ خالی اجرای AI را ناموفق می‌کند.",
-    "assistedModeAdminOnly": "فقط مدیر می‌تواند حالت کمکی را تغییر دهد یا بستهٔ سیاق را صادر کند.",
-    "assistedModeOn": "کمکی",
-    "assistedModeOff": "خط پایهٔ خام",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "صدور سیاق اکنون",
     "exportQueued": "صدور سیاق در صف قرار گرفت",
     "exportStatusNever": "هنوز صدور سیاقی انجام نشده",
@@ -636,7 +632,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "در حال تغذیهٔ AI",
-    "notFeedingAi": "هنوز AI تغذیه نمی‌شود — پس از صدور موفق، حالت کمکی را فعال کنید",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -669,11 +665,11 @@
         "lane_lease_held": "این خط مشغول است (یک وارد کردن یا برون‌بری آن را در اختیار دارد). کمی بعد دوباره تلاش کنید.",
         "confirmation_required": "برای شروع جایگزینی، تأیید لازم است.",
         "lane_replacement_required": "این خط پیش از قابل‌ویرایش شدن به جایگزینی منبع نیاز دارد.",
-      "job_not_found": "این کار جایگزینی پیدا نشد. ممکن است قبلاً لغو یا تکمیل شده باشد.",
-      "job_not_ready": "این جایگزینی هنوز برای فعال‌سازی آماده نیست.",
-      "export_lease_held": "اکنون نمی‌توان فعال کرد: یک برون‌بری برای این خط در حال انجام است. کمی بعد دوباره تلاش کنید.",
-      "export_lease_grace": "اکنون نمی‌توان فعال کرد: در انتظار پایان یک برون‌بری در حال انجام. کمی بعد دوباره تلاش کنید.",
-      "activation_cas_failed": "فعال‌سازی ناموفق بود زیرا خط در این میان تغییر کرد. صفحه را تازه کنید و دوباره تلاش کنید."
+        "job_not_found": "این کار جایگزینی پیدا نشد. ممکن است قبلاً لغو یا تکمیل شده باشد.",
+        "job_not_ready": "این جایگزینی هنوز برای فعال‌سازی آماده نیست.",
+        "export_lease_held": "اکنون نمی‌توان فعال کرد: یک برون‌بری برای این خط در حال انجام است. کمی بعد دوباره تلاش کنید.",
+        "export_lease_grace": "اکنون نمی‌توان فعال کرد: در انتظار پایان یک برون‌بری در حال انجام. کمی بعد دوباره تلاش کنید.",
+        "activation_cas_failed": "فعال‌سازی ناموفق بود زیرا خط در این میان تغییر کرد. صفحه را تازه کنید و دوباره تلاش کنید."
       },
       "saved": "Lane config saved."
     }

@@ -601,12 +601,8 @@
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
-    "assistedMode": "โหมดช่วยเหลือ",
-    "assistedModeHelp": "เมื่อเปิด การรันแปลจะส่งชุดบริบทของทีม (สรุปย่อ คำศัพท์ ตัวอย่างที่ตรวจสอบแล้ว) ไปยัง AI",
-    "assistedModeDisabled": "ส่งออกชุดบริบทสำเร็จก่อนเปิดโหมดช่วยเหลือ — ชุดว่างจะทำให้การรัน AI ล้มเหลว",
-    "assistedModeAdminOnly": "มีเพียงผู้ดูแลระบบเท่านั้นที่เปลี่ยนโหมดช่วยเหลือหรือส่งออกชุดบริบทได้",
-    "assistedModeOn": "ช่วยเหลือ",
-    "assistedModeOff": "พื้นฐานดิบ",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "ส่งออกบริบทตอนนี้",
     "exportQueued": "จัดคิวส่งออกบริบทแล้ว",
     "exportStatusNever": "ยังไม่เคยส่งออกบริบท",
@@ -622,7 +618,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "กำลังป้อนข้อมูลให้ AI",
-    "notFeedingAi": "ยังไม่ได้ป้อนข้อมูลให้ AI — เปิดโหมดช่วยเหลือหลังส่งออกสำเร็จ",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -655,11 +651,11 @@
         "lane_lease_held": "เลนนี้กำลังไม่ว่าง (การนำเข้าหรือส่งออกกำลังใช้งานอยู่) โปรดลองอีกครั้งในไม่ช้า",
         "confirmation_required": "ต้องยืนยันเพื่อเริ่มการแทนที่",
         "lane_replacement_required": "เลนนี้ต้องมีการแทนที่แหล่งที่มาก่อนจึงจะแก้ไขได้",
-      "job_not_found": "ไม่พบงานการแทนที่นี้ อาจถูกยกเลิกหรือเสร็จสมบูรณ์ไปแล้ว",
-      "job_not_ready": "การแทนที่นี้ยังไม่พร้อมที่จะเปิดใช้งาน",
-      "export_lease_held": "ไม่สามารถเปิดใช้งานได้ในขณะนี้: กำลังมีการส่งออกสำหรับเลนนี้อยู่ โปรดลองอีกครั้งในไม่ช้า",
-      "export_lease_grace": "ไม่สามารถเปิดใช้งานได้ในขณะนี้: กำลังรอให้การส่งออกที่กำลังดำเนินอยู่เสร็จสิ้น โปรดลองอีกครั้งในไม่ช้า",
-      "activation_cas_failed": "การเปิดใช้งานล้มเหลวเนื่องจากเลนเปลี่ยนแปลงไประหว่างนั้น โปรดรีเฟรชแล้วลองอีกครั้ง"
+        "job_not_found": "ไม่พบงานการแทนที่นี้ อาจถูกยกเลิกหรือเสร็จสมบูรณ์ไปแล้ว",
+        "job_not_ready": "การแทนที่นี้ยังไม่พร้อมที่จะเปิดใช้งาน",
+        "export_lease_held": "ไม่สามารถเปิดใช้งานได้ในขณะนี้: กำลังมีการส่งออกสำหรับเลนนี้อยู่ โปรดลองอีกครั้งในไม่ช้า",
+        "export_lease_grace": "ไม่สามารถเปิดใช้งานได้ในขณะนี้: กำลังรอให้การส่งออกที่กำลังดำเนินอยู่เสร็จสิ้น โปรดลองอีกครั้งในไม่ช้า",
+        "activation_cas_failed": "การเปิดใช้งานล้มเหลวเนื่องจากเลนเปลี่ยนแปลงไประหว่างนั้น โปรดรีเฟรชแล้วลองอีกครั้ง"
       },
       "saved": "Lane config saved."
     }

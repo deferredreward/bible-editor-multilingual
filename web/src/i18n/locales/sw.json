@@ -615,12 +615,8 @@
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
-    "assistedMode": "Hali ya usaidizi",
-    "assistedModeHelp": "Ikiwashwa, utekelezaji wa tafsiri hutuma kifurushi cha muktadha wa timu (muhtasari, istilahi, mifano iliyothibitishwa) kwa AI.",
-    "assistedModeDisabled": "Hamisha kifurushi cha muktadha kwa mafanikio kabla ya kuwasha hali ya usaidizi — kifurushi tupu kinashindwa kutekeleza AI.",
-    "assistedModeAdminOnly": "Msimamizi pekee anaweza kubadilisha hali ya usaidizi au kuhamisha kifurushi cha muktadha.",
-    "assistedModeOn": "Na usaidizi",
-    "assistedModeOff": "Kiwango cha msingi",
+    "exportAdminOnly": "Only an admin can export the context pack.",
+    "exportForce": "Force export (accept content loss)",
     "exportNow": "Hamisha muktadha sasa",
     "exportQueued": "Uhamishaji wa muktadha umeorodheshwa",
     "exportStatusNever": "Hakuna uhamishaji wa muktadha bado",
@@ -636,7 +632,7 @@
     "noRendering": "—",
     "termArrow": "→",
     "feedingAi": "Inalisha AI",
-    "notFeedingAi": "Bado haifaidi AI — washa hali ya usaidizi baada ya uhamishaji uliofanikiwa",
+    "notFeedingAi": "Not yet feeding the AI — preferences sync automatically after the first successful export",
     "scriptureLanes": {
       "title": "Scripture repositories",
       "intro": "Source URLs and permission switches for each scripture lane. Changing the source triggers a full replacement workflow.",
@@ -669,11 +665,11 @@
         "lane_lease_held": "Njia hii ina shughuli (uingizaji au usafirishaji unaishikilia). Jaribu tena hivi karibuni.",
         "confirmation_required": "Uthibitisho unahitajika kuanza ubadilishaji.",
         "lane_replacement_required": "Njia hii inahitaji ubadilishaji wa chanzo kabla ya kuhaririwa.",
-      "job_not_found": "Kazi hii ya ubadilishaji haikuweza kupatikana. Huenda tayari imesitishwa au kukamilika.",
-      "job_not_ready": "Ubadilishaji huu bado haujawa tayari kuamilishwa.",
-      "export_lease_held": "Haiwezekani kuamilisha sasa hivi: usafirishaji unaendelea kwa njia hii. Jaribu tena hivi karibuni.",
-      "export_lease_grace": "Haiwezekani kuamilisha sasa hivi: inasubiri usafirishaji unaoendelea ukamilike. Jaribu tena hivi karibuni.",
-      "activation_cas_failed": "Uamilishaji umeshindwa kwa sababu njia imebadilika. Onyesha upya kisha ujaribu tena."
+        "job_not_found": "Kazi hii ya ubadilishaji haikuweza kupatikana. Huenda tayari imesitishwa au kukamilika.",
+        "job_not_ready": "Ubadilishaji huu bado haujawa tayari kuamilishwa.",
+        "export_lease_held": "Haiwezekani kuamilisha sasa hivi: usafirishaji unaendelea kwa njia hii. Jaribu tena hivi karibuni.",
+        "export_lease_grace": "Haiwezekani kuamilisha sasa hivi: inasubiri usafirishaji unaoendelea ukamilike. Jaribu tena hivi karibuni.",
+        "activation_cas_failed": "Uamilishaji umeshindwa kwa sababu njia imebadilika. Onyesha upya kisha ujaribu tena."
       },
       "saved": "Lane config saved."
     }
