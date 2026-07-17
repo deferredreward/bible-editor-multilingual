@@ -4,9 +4,8 @@ import { Box, Stack, Typography, Chip, Button, Tooltip, LinearProgress } from "@
 import { api, isReadOnly, type TnRow, type TqRow, type TwlRow, type VerseDto, type TwlSuggestion } from "../sync/api";
 import { NoteCard, type DropPosition } from "./NoteCard";
 import { type WordDropPosition } from "./WordsTable";
-import { QuestionsTable } from "./QuestionsTable";
 import { WordsPanelBody } from "./WordsPanel";
-import { QuestionCard } from "./QuestionCard";
+import { QuestionsPanelBody } from "./QuestionsPanel";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
@@ -952,99 +951,25 @@ export function ResourceColumn({
         )}
 
         {activeResourceTab === "questions" && (
-          <>
-            <SectionHead
-              title={t("shell.questions")}
-              count={totalTq}
-              pinned={pinned.questions}
-              onTogglePin={() => togglePinned("questions")}
-              onAdd={onQuestionCreate}
-              sticky
-              hideAdd={locked}
-              lane="tq"
-              checkoff={checkoff}
-            />
-            {translationMode && (
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{
-                  px: 0.5,
-                  py: 0.75,
-                  mb: 0.5,
-                  flexWrap: "wrap",
-                  rowGap: 0.75,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Chip
-                  size="small"
-                  color="secondary"
-                  variant="outlined"
-                  icon={<AutoAwesomeIcon sx={{ fontSize: "13px !important" }} />}
-                  label={t("translation.translationMode")}
-                  sx={{ height: 22, fontSize: 11, fontWeight: 600 }}
-                />
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 120, flex: 1 }}>
-                  <LinearProgress
-                    variant="determinate"
-                    color="success"
-                    value={tqStats.total ? (tqStats.validated / tqStats.total) * 100 : 0}
-                    sx={{ flex: 1, height: 6, borderRadius: 99, minWidth: 60 }}
-                  />
-                  <Typography variant="caption" sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-                    {tqStats.validated} / {tqStats.total}
-                  </Typography>
-                </Box>
-                <Box sx={{ flex: 1 }} />
-                {onQuestionApprove && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="success"
-                    startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
-                    disabled={tqStats.draftIds.length === 0}
-                    onClick={() => {
-                      for (const id of tqStats.draftIds) onQuestionApprove(id, true);
-                    }}
-                    sx={{ minWidth: 0, fontSize: 11 }}
-                  >
-                    {t("common.approveAll")} ({tqStats.draftIds.length})
-                  </Button>
-                )}
-              </Stack>
-            )}
-            {tqGroups ? (
-              tqGroups.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("shell.noQuestionsInChapter")}
-                </Typography>
-              ) : (
-                tqGroups.map(([verse, rows]) => (
-                  <Fragment key={`tq-${verse}`}>
-                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="questions" />
-                    {translationMode ? (
-                      rows.map((r) => renderQuestionCard(r))
-                    ) : (
-                      <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
-                    )}
-                  </Fragment>
-                ))
-              )
-            ) : translationMode ? (
-              tqForVerse.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("questions.noQuestionsForVerse")}
-                </Typography>
-              ) : (
-                tqForVerse.map((r) => renderQuestionCard(r))
-              )
-            ) : (
-              <QuestionsTable rows={tqForVerse} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
-            )}
-          </>
+          <QuestionsPanelBody
+            activeVerse={activeVerse}
+            tqForVerse={tqForVerse}
+            tqGroups={tqGroups}
+            totalTq={totalTq}
+            pinned={pinned.questions}
+            onTogglePin={() => togglePinned("questions")}
+            onQuestionCreate={onQuestionCreate}
+            locked={locked}
+            checkoff={checkoff}
+            translationMode={translationMode}
+            tqStats={tqStats}
+            sourceQuestions={sourceQuestions}
+            onQuestionSave={onQuestionSave}
+            onQuestionDelete={onQuestionDelete}
+            onQuestionApprove={onQuestionApprove}
+            onQuestionTranslate={onQuestionTranslate}
+            translatingQuestionIds={translatingQuestionIds}
+          />
         )}
       </Box>
       ) : null}
@@ -1068,23 +993,6 @@ export function ResourceColumn({
       )}
     </Box>
   );
-
-  function renderQuestionCard(r: TqRow) {
-    return (
-      <QuestionCard
-        key={r.id}
-        row={r}
-        sourceQuestion={sourceQuestions.get(r.id) ?? null}
-        onSave={(p) => onQuestionSave(r.id, p)}
-        onDelete={() => onQuestionDelete(r.id)}
-        onApprove={onQuestionApprove ? () => onQuestionApprove(r.id, true) : undefined}
-        onUnapprove={onQuestionApprove ? () => onQuestionApprove(r.id, false) : undefined}
-        onTranslate={onQuestionTranslate ? () => onQuestionTranslate(r.id) : undefined}
-        isTranslating={translatingQuestionIds?.has(r.id) ?? false}
-        locked={locked}
-      />
-    );
-  }
 
   function renderNoteCard(r: TnRow, peers: TnRow[]) {
     const showBefore =
