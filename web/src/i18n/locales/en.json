@@ -66,6 +66,20 @@
     "uiLanguage": "Interface language",
     "layouts": "Layouts"
   },
+  "layout": {
+    "myLayouts": "My layouts",
+    "saveAs": "Save current as…",
+    "manage": "Manage layouts…",
+    "saveDialogTitle": "Save layout",
+    "nameLabel": "Layout name",
+    "manageDialogTitle": "Manage layouts",
+    "noUserLayouts": "You haven't saved any layouts yet.",
+    "active": "Active",
+    "duplicate": "Duplicate",
+    "copySuffix": "copy",
+    "deleteConfirmTitle": "Delete layout?",
+    "deleteConfirmBody": "\"{{name}}\" will be removed. This can't be undone."
+  },
   "translation": {
     "translationMode": "Translation mode",
     "translateChapter": "Translate chapter",

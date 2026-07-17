@@ -32,7 +32,9 @@ import CheckIcon from "@mui/icons-material/Check";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
 import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
-import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
+import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
+import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import { Menu, MenuItem, ListItemIcon, ListItemText, ListSubheader } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
@@ -174,23 +176,48 @@ function UiLanguageControl() {
   );
 }
 
-// Workspace-layout switcher: a menu of the built-in layouts (Classic + presets).
-// The active layout is checked. Layout names render in English for now
-// (i18n Phase 3+). Selecting routes through Shell's dirty gate + mode/versions
-// sync (see selectLayout).
+// Workspace-layout switcher: a menu of the built-in layouts (Classic + presets),
+// then a "My layouts" section for user-saved layouts (Phase 5), then the
+// "Save current as…" / "Manage layouts…" actions. The active layout is checked.
+// Built-in layout names render in English for now (i18n Phase 3+); user layout
+// names stay in whatever language the user typed. Selecting routes through
+// Shell's dirty gate + mode/versions sync (see selectLayout).
 function LayoutSwitcher({
   layouts,
+  userLayouts = [],
   activeLayoutId,
   onSelectLayout,
+  onSaveLayoutAs,
+  onManageLayouts,
 }: {
   layouts: LayoutSpec[];
+  userLayouts?: LayoutSpec[];
   activeLayoutId: string;
   onSelectLayout: (id: string) => void;
+  onSaveLayoutAs?: () => void;
+  onManageLayouts?: () => void;
 }) {
   const { t } = useTranslation();
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   if (layouts.length === 0) return null;
+
+  const renderLayoutItem = (l: LayoutSpec) => (
+    <MenuItem
+      key={l.id}
+      selected={l.id === activeLayoutId}
+      onClick={() => {
+        onSelectLayout(l.id);
+        setOpen(false);
+      }}
+    >
+      <ListItemIcon sx={{ visibility: l.id === activeLayoutId ? "visible" : "hidden" }}>
+        <CheckIcon fontSize="small" />
+      </ListItemIcon>
+      {/* i18n Phase 3+ : built-in layout names are English until localized. */}
+      <ListItemText>{l.name}</ListItemText>
+    </MenuItem>
+  );
 
   return (
     <>
@@ -205,22 +232,40 @@ function LayoutSwitcher({
         </IconButton>
       </Tooltip>
       <Menu open={open} anchorEl={anchorRef.current} onClose={() => setOpen(false)}>
-        {layouts.map((l) => (
+        {layouts.map(renderLayoutItem)}
+        {userLayouts.length > 0 && (
+          <ListSubheader sx={{ lineHeight: 2, bgcolor: "transparent" }}>
+            {t("layout.myLayouts")}
+          </ListSubheader>
+        )}
+        {userLayouts.map(renderLayoutItem)}
+        {onSaveLayoutAs && <Divider />}
+        {onSaveLayoutAs && (
           <MenuItem
-            key={l.id}
-            selected={l.id === activeLayoutId}
             onClick={() => {
-              onSelectLayout(l.id);
+              onSaveLayoutAs();
               setOpen(false);
             }}
           >
-            <ListItemIcon sx={{ visibility: l.id === activeLayoutId ? "visible" : "hidden" }}>
-              <CheckIcon fontSize="small" />
+            <ListItemIcon>
+              <SaveOutlinedIcon fontSize="small" />
             </ListItemIcon>
-            {/* i18n Phase 3+ : layout names are English until localized. */}
-            <ListItemText>{l.name}</ListItemText>
+            <ListItemText>{t("layout.saveAs")}</ListItemText>
           </MenuItem>
-        ))}
+        )}
+        {onManageLayouts && (
+          <MenuItem
+            onClick={() => {
+              onManageLayouts();
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon>
+              <SettingsOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{t("layout.manage")}</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
     </>
   );
@@ -242,6 +287,10 @@ interface Props {
   layouts?: LayoutSpec[];
   activeLayoutId?: string;
   onSelectLayout?: (id: string) => void;
+  // User-saved layouts + their actions (Phase 5). Also omitted on the no-data branch.
+  userLayouts?: LayoutSpec[];
+  onSaveLayoutAs?: () => void;
+  onManageLayouts?: () => void;
 }
 
 export function TopBar({
@@ -259,6 +308,9 @@ export function TopBar({
   layouts,
   activeLayoutId,
   onSelectLayout,
+  userLayouts,
+  onSaveLayoutAs,
+  onManageLayouts,
 }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
@@ -600,8 +652,11 @@ export function TopBar({
       {layouts && activeLayoutId && onSelectLayout && (
         <LayoutSwitcher
           layouts={layouts}
+          userLayouts={userLayouts}
           activeLayoutId={activeLayoutId}
           onSelectLayout={onSelectLayout}
+          onSaveLayoutAs={onSaveLayoutAs}
+          onManageLayouts={onManageLayouts}
         />
       )}
       <FontSizeControl />

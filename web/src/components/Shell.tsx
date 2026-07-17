@@ -64,13 +64,17 @@ import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane, type ResourceTab } from "./ResourceColumn";
 import { WorkspaceLayout } from "./WorkspaceLayout";
+import { LayoutMenu } from "./LayoutMenu";
 import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
 import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
 import {
   loadLayoutStore,
   mergeOverride,
+  upsertUserLayout,
+  deleteUserLayout,
   setActiveLayoutId as persistActiveLayoutId,
 } from "../lib/layoutStore";
+import { validateLayoutSpec } from "../lib/layoutSpec";
 import type { LayoutNode, LayoutSpec, PanelInstance, PanelRegion } from "../lib/layoutSpec";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
 import {
@@ -184,6 +188,29 @@ function findScripturePanel(node: LayoutNode): PanelInstance | null {
     if (found) return found;
   }
   return null;
+}
+
+// Bake the active layout's live size overrides into a cloned tree's node `size`
+// fields (Phase 5 "Save current as…"). Mirrors WorkspaceLayout's childId path
+// scheme so the persisted sizes line up: split children use their region id, or
+// a `split:<path>` synthetic id. `path` seeds from the source layout id (as
+// WorkspaceLayout seeds `renderNode(spec.root, spec.id)`). Mutates `node`, which
+// must be a deep clone — never a built-in spec's tree. Because sizes land in the
+// tree itself (not a fresh override), the saved layout reproduces the current
+// proportions without depending on the source layout's override id.
+function applyEffectiveSizes(
+  node: LayoutNode,
+  sizes: Record<string, number>,
+  path: string,
+): void {
+  if (node.kind !== "split") return;
+  node.children.forEach((child, i) => {
+    const cpath = `${path}.${i}`;
+    const id = child.kind === "region" ? child.id : `split:${cpath}`;
+    const eff = sizes[id];
+    if (eff !== undefined) child.size = eff;
+    applyEffectiveSizes(child, sizes, cpath);
+  });
 }
 
 // The resource tabs a layout region exposes, in panel order.
@@ -441,19 +468,35 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const [activeLayoutId, setActiveLayoutIdState] = useState<string>(
     () => loadLayoutStore().activeLayoutId,
   );
+  // User-saved layouts (Phase 5), held in state so a save / rename / delete
+  // re-renders the switcher and active-layout resolution. The store is the
+  // source of truth; every mutation writes it and mirrors the result here.
+  const [userLayouts, setUserLayouts] = useState<LayoutSpec[]>(
+    () => loadLayoutStore().userLayouts,
+  );
+  // Save-current-as… / Manage-layouts… dialog visibility (mounted via LayoutMenu).
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   // Server-shipped built-in layouts (with a bundled fallback when the server
   // omits them or a spec fails validation). Was a direct getBuiltinLayouts call
   // in Phase 3; the switcher list + active-layout resolution below are unchanged.
   const builtinLayouts = useWorkflowLayouts();
+  // The full switcher list: built-ins first, then user layouts. `.find` below
+  // therefore prefers a built-in on an id collision (ids never actually collide —
+  // "builtin:*" vs "user:*").
+  const allLayouts = useMemo<LayoutSpec[]>(
+    () => [...builtinLayouts, ...userLayouts],
+    [builtinLayouts, userLayouts],
+  );
   const activeLayout = useMemo<LayoutSpec>(() => {
-    const found = builtinLayouts.find((l) => l.id === activeLayoutId);
+    const found = allLayouts.find((l) => l.id === activeLayoutId);
     const validated = found ? validateLayoutAgainstRegistry(found, projectConfig) : null;
     return (
       validated ??
-      builtinLayouts.find((l) => l.id === CLASSIC_LAYOUT_ID) ??
-      builtinLayouts[0]
+      allLayouts.find((l) => l.id === CLASSIC_LAYOUT_ID) ??
+      allLayouts[0]
     );
-  }, [builtinLayouts, activeLayoutId, projectConfig]);
+  }, [allLayouts, activeLayoutId, projectConfig]);
   const isClassic = activeLayout.id === CLASSIC_LAYOUT_ID;
 
   // Toast state shared between the pipeline trigger menu and the status bar.
@@ -3040,12 +3083,15 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   // routes through the dirty gate; then it syncs scripture mode/versions from
   // the target spec and persists the choice. Classic restores its legacy keys;
   // other layouts read their scripture panel (and any saved mode override).
+  // Resolves against built-ins + user layouts read fresh from the store so a
+  // just-saved layout is selectable before its state update has flushed.
   const selectLayout = (id: string) => {
     runWithDirtyGate(() => {
-      const next = builtinLayouts.find((l) => l.id === id);
+      const candidates = [...builtinLayouts, ...loadLayoutStore().userLayouts];
+      const next = candidates.find((l) => l.id === id);
       const resolved = next ? validateLayoutAgainstRegistry(next, projectConfig) : null;
       const target =
-        resolved ?? builtinLayouts.find((l) => l.id === CLASSIC_LAYOUT_ID) ?? builtinLayouts[0];
+        resolved ?? candidates.find((l) => l.id === CLASSIC_LAYOUT_ID) ?? candidates[0];
       if (target.id === CLASSIC_LAYOUT_ID) {
         setMode(loadFromStorage<ScriptureMode>(SCRIPTURE_MODE_KEY, "stacked"));
         setEnabledVersions(loadFromStorage<string[]>(ENABLED_VERSIONS_KEY, ["ULT", "UST"]));
@@ -3062,6 +3108,71 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       setActiveLayoutIdState(target.id);
       persistActiveLayoutId(target.id);
     });
+  };
+
+  // Save the CURRENT arrangement as a new user layout. Approach: bake the live
+  // look into the saved spec (not copy-overrides) — deep-clone the active tree,
+  // bake the live size overrides into node `size` fields (applyEffectiveSizes),
+  // and bake the live scripture `mode` + `enabledVersions` into the scripture
+  // panel's config. The spec is self-contained: re-selecting it reproduces
+  // today's proportions, mode, and version pins with no override needed. A
+  // Classic-derived save renders through the generic (non-classic) path, which
+  // is visually equivalent. validateLayoutSpec sanitizes + guards the clone.
+  const handleSaveLayout = (name: string) => {
+    const clonedRoot = JSON.parse(JSON.stringify(activeLayout.root)) as LayoutNode;
+    applyEffectiveSizes(clonedRoot, sizes, activeLayout.id);
+    const sp = findScripturePanel(clonedRoot);
+    if (sp) sp.config = { ...(sp.config ?? {}), mode, versions: [...enabledVersions] };
+    const candidate: LayoutSpec = {
+      v: 2,
+      id: "user:" + crypto.randomUUID(),
+      name,
+      builtin: false,
+      rail: { visible: activeLayout.rail.visible },
+      root: clonedRoot,
+    };
+    const validated = validateLayoutSpec(candidate);
+    setSaveAsOpen(false);
+    if (!validated) return; // malformed clone — abort rather than persist junk
+    const store = upsertUserLayout(validated);
+    setUserLayouts([...store.userLayouts]);
+    // The saved look matches the current one, so mode/versions need no re-sync;
+    // still route the switch through the dirty gate (it can remount panels).
+    runWithDirtyGate(() => {
+      setActiveLayoutIdState(validated.id);
+      persistActiveLayoutId(validated.id);
+    });
+  };
+
+  const handleRenameLayout = (id: string, newName: string) => {
+    const existing = loadLayoutStore().userLayouts.find((l) => l.id === id);
+    if (!existing) return;
+    const store = upsertUserLayout({ ...existing, name: newName });
+    setUserLayouts([...store.userLayouts]);
+  };
+
+  const handleDeleteLayout = (id: string) => {
+    const wasActive = activeLayout.id === id;
+    const store = deleteUserLayout(id); // also resets persisted active → Classic if it was active
+    setUserLayouts([...store.userLayouts]);
+    // Restore Classic's scripture mode/versions + Shell state when the deleted
+    // layout was the active one.
+    if (wasActive) selectLayout(CLASSIC_LAYOUT_ID);
+  };
+
+  const handleDuplicateLayout = (id: string) => {
+    const existing = loadLayoutStore().userLayouts.find((l) => l.id === id);
+    if (!existing) return;
+    const copy: LayoutSpec = {
+      ...existing,
+      id: "user:" + crypto.randomUUID(),
+      name: `${existing.name} ${t("layout.copySuffix")}`,
+      root: JSON.parse(JSON.stringify(existing.root)) as LayoutNode,
+    };
+    const validated = validateLayoutSpec(copy);
+    if (!validated) return;
+    const store = upsertUserLayout(validated);
+    setUserLayouts([...store.userLayouts]);
   };
 
   return (
@@ -3117,8 +3228,11 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         railCollapsed={railCollapsed}
         onToggleRail={toggleRail}
         layouts={builtinLayouts}
+        userLayouts={userLayouts}
         activeLayoutId={activeLayout.id}
         onSelectLayout={selectLayout}
+        onSaveLayoutAs={() => setSaveAsOpen(true)}
+        onManageLayouts={() => setManageOpen(true)}
       />
       {chapterLock && (
         <Alert
@@ -3386,6 +3500,18 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             }
           });
         }}
+      />
+      <LayoutMenu
+        saveAsOpen={saveAsOpen}
+        onCloseSaveAs={() => setSaveAsOpen(false)}
+        onSave={handleSaveLayout}
+        manageOpen={manageOpen}
+        onCloseManage={() => setManageOpen(false)}
+        userLayouts={userLayouts}
+        activeLayoutId={activeLayout.id}
+        onRename={handleRenameLayout}
+        onDelete={handleDeleteLayout}
+        onDuplicate={handleDuplicateLayout}
       />
       {quoteBuildContext && (
         <QuoteBuilderPopper
