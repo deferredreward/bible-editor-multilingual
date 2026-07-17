@@ -23,6 +23,10 @@ export { effectiveMode } from "./workModeCore";
 // network wrapper around it.
 
 let cache: WorkModeCacheEntry | null = null;
+// Session generation, bumped on every seed. Stamped onto the cache entry so a
+// failed PUT from a prior session (which reset seq to 0) can't roll back the
+// current one — see reconcileFailureForUser.
+let epochCounter = 0;
 const subscribers = new Set<(entry: WorkModeCacheEntry | null) => void>();
 
 function publish(entry: WorkModeCacheEntry | null): void {
@@ -37,7 +41,7 @@ function publish(entry: WorkModeCacheEntry | null): void {
 // in-flight optimistic set from a previous session is moot (sign-out/sign-in
 // also calls clearWorkMode, so this is mostly a defensive reset).
 export function seedWorkMode(userId: number, mode: StoredWorkMode): void {
-  publish({ userId, mode, seq: 0 });
+  publish({ userId, mode, seq: 0, epoch: ++epochCounter });
 }
 
 // Clear on sign-out, on landing in an unauthenticated/denied state, or
@@ -74,15 +78,23 @@ export function useWorkMode(): UseWorkMode {
   const setWorkMode = (mode: WorkMode) => {
     if (!entry) return; // not signed in yet — nothing to toggle
     const capturedUserId = entry.userId;
+    const capturedEpoch = entry.epoch;
     const { next, prevMode, seq } = applyOptimisticSet(entry, mode);
     setFailed(false);
     publish(next);
     putMyPrefs(mode).catch(() => {
-      // Guard on the captured userId AND seq: a failure is only ours to roll
-      // back if the current cache still belongs to the same user and hasn't
-      // been superseded (a stale cross-session failure must NOT clobber a
-      // different signed-in user's cache or flash them a failure banner).
-      const { entry: rolled, rolledBack } = reconcileFailureForUser(cache, capturedUserId, seq, prevMode);
+      // Guard on the captured epoch + userId + seq: a failure is only ours to
+      // roll back if the current cache is the same session generation and user
+      // and hasn't been superseded. A stale failure from a prior session (even
+      // the same user re-logging-in, where seq resets to 0) must NOT clobber
+      // the current cache or flash a failure banner.
+      const { entry: rolled, rolledBack } = reconcileFailureForUser(
+        cache,
+        capturedEpoch,
+        capturedUserId,
+        seq,
+        prevMode,
+      );
       if (rolledBack) {
         publish(rolled);
         setFailed(true);

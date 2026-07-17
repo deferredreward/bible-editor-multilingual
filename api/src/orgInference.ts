@@ -251,7 +251,13 @@ export function inferFromRepoList(
         const info = manifests.get(repoName);
         const facts = info?.facts ?? null;
         const bibleOk = isBibleSubject(facts?.subject ?? null);
-        const identOk = facts?.identifier ? idents.includes(facts.identifier) : true;
+        // Require the identifier to be PRESENT and match the role's table. A
+        // missing identifier must NOT auto-verify (it previously defaulted to
+        // true) — a malformed manifest carrying only a Bible subject would
+        // otherwise be trusted as the lane, bypassing the admin's explicit
+        // selection. Absent or mismatched → not verified → reported missing,
+        // same as the mismatched-identifier case.
+        const identOk = typeof facts?.identifier === "string" && idents.includes(facts.identifier);
         if (bibleOk && identOk) {
           if (role === "lit") litVerified.push(repoName);
           else simVerified.push(repoName);

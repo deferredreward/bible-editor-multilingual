@@ -98,37 +98,59 @@ console.log("[reconcileFailure] different userId (cache moved on) is untouched r
 
 console.log("[reconcileFailureForUser] a stale failure from a PRIOR user does NOT clobber the current user");
 {
-  // User A toggled (captured userId=1, seq=1), then signed out and user B
-  // signed in and toggled — cache is now {userId:2, seq:1} (seedWorkMode resets
-  // seq to 0, B's first toggle brings it to 1, colliding with A's captured seq).
-  const cacheNowUserB = { userId: 2, mode: "author", seq: 1 };
-  const { entry, rolledBack } = reconcileFailureForUser(cacheNowUserB, /*capturedUserId A*/ 1, 1, "translate");
+  // User A toggled in epoch 1 (captured seq=1), then signed out and user B
+  // signed in (epoch 2) and toggled — cache is {userId:2, seq:1, epoch:2}.
+  const cacheNowUserB = { userId: 2, mode: "author", seq: 1, epoch: 2 };
+  const { entry, rolledBack } = reconcileFailureForUser(
+    cacheNowUserB,
+    /*capturedEpoch A*/ 1,
+    /*capturedUserId A*/ 1,
+    1,
+    "translate",
+  );
   assert(rolledBack === false, "cross-user stale failure is discarded (rolledBack=false)");
   assert(entry === cacheNowUserB, "current user's cache entry is returned untouched");
 }
 
-console.log("[reconcileFailureForUser] same-user, non-superseded failure rolls back");
+console.log("[reconcileFailureForUser] a stale failure from the SAME user's PRIOR session (re-login) is discarded");
 {
-  const initial = { userId: 7, mode: "translate", seq: 0 };
-  const set1 = applyOptimisticSet(initial, "author"); // seq=1
-  const { entry, rolledBack } = reconcileFailureForUser(set1.next, 7, set1.seq, set1.prevMode);
-  assert(rolledBack === true, "same-user, seq-matching failure rolls back");
-  assert(entry.mode === "translate" && entry.seq === 1, "rolled back to pre-request mode, seq stable");
+  // User 7 toggled in epoch 1 (captured seq=1), signed out and back in as the
+  // SAME account (epoch 2, seq reset to 0), then toggled once → {seq:1,epoch:2}.
+  // seq AND userId both collide with the old request; only epoch tells them apart.
+  const cacheAfterRelogin = { userId: 7, mode: "author", seq: 1, epoch: 2 };
+  const { entry, rolledBack } = reconcileFailureForUser(
+    cacheAfterRelogin,
+    /*capturedEpoch prior session*/ 1,
+    7,
+    1,
+    "translate",
+  );
+  assert(rolledBack === false, "same-user prior-session failure is discarded via epoch (rolledBack=false)");
+  assert(entry === cacheAfterRelogin, "the re-logged-in session's cache is untouched");
 }
 
-console.log("[reconcileFailureForUser] same-user but superseded by a newer set is NOT rolled back");
+console.log("[reconcileFailureForUser] same-session, non-superseded failure rolls back");
 {
-  const initial = { userId: 7, mode: "translate", seq: 0 };
+  const initial = { userId: 7, mode: "translate", seq: 0, epoch: 3 };
+  const set1 = applyOptimisticSet(initial, "author"); // seq=1, epoch preserved=3
+  const { entry, rolledBack } = reconcileFailureForUser(set1.next, 3, 7, set1.seq, set1.prevMode);
+  assert(rolledBack === true, "same epoch+user+seq failure rolls back");
+  assert(entry.mode === "translate" && entry.seq === 1 && entry.epoch === 3, "rolled back, seq+epoch stable");
+}
+
+console.log("[reconcileFailureForUser] same-session but superseded by a newer set is NOT rolled back");
+{
+  const initial = { userId: 7, mode: "translate", seq: 0, epoch: 3 };
   const set1 = applyOptimisticSet(initial, "author"); // captured seq=1
   const set2 = applyOptimisticSet(set1.next, "translate"); // newer set, seq=2
-  const { entry, rolledBack } = reconcileFailureForUser(set2.next, 7, set1.seq, set1.prevMode);
+  const { entry, rolledBack } = reconcileFailureForUser(set2.next, 3, 7, set1.seq, set1.prevMode);
   assert(rolledBack === false, "superseded (seq mismatch) failure is discarded");
   assert(entry === set2.next, "the newer set survives untouched");
 }
 
 console.log("[reconcileFailureForUser] no cache (signed out) is a no-op");
 {
-  const { entry, rolledBack } = reconcileFailureForUser(null, 1, 1, "translate");
+  const { entry, rolledBack } = reconcileFailureForUser(null, 1, 1, 1, "translate");
   assert(rolledBack === false && entry === null, "null cache → no-op");
 }
 

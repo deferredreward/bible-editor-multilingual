@@ -14,6 +14,12 @@ export interface WorkModeCacheEntry {
   // (older) PUT failure arriving after a newer successful set can recognize
   // it's stale and skip the rollback — see reconcileFailure.
   seq: number;
+  // Session generation. Bumped on every seed (sign-in) — see seedWorkMode.
+  // seq alone is unsafe across sign-out/sign-in because seedWorkMode resets
+  // seq to 0, so the SAME user re-logging-in quickly would collide at seq 1
+  // with an old session's in-flight failure. epoch changes on every session,
+  // so a failure captured in a prior session never matches the current one.
+  epoch: number;
 }
 
 // Effective mode shown/enforced across the app. Defaults are byte-identical
@@ -36,7 +42,7 @@ export interface OptimisticSetResult {
 // without performing the PUT or touching any shared cache.
 export function applyOptimisticSet(state: WorkModeCacheEntry, mode: WorkMode): OptimisticSetResult {
   const seq = state.seq + 1;
-  return { next: { userId: state.userId, mode, seq }, prevMode: state.mode, seq };
+  return { next: { userId: state.userId, mode, seq, epoch: state.epoch }, prevMode: state.mode, seq };
 }
 
 // Given the CURRENT cache entry, a failed request's captured seq, and the
@@ -50,23 +56,25 @@ export function reconcileFailure(
   prevMode: StoredWorkMode,
 ): WorkModeCacheEntry {
   if (current.seq !== failedSeq) return current;
-  return { userId: current.userId, mode: prevMode, seq: current.seq };
+  return { userId: current.userId, mode: prevMode, seq: current.seq, epoch: current.epoch };
 }
 
-// userId-AWARE rollback for the React wrapper. `seq` alone is unsafe across a
-// sign-out/sign-in: `seedWorkMode` resets every user to seq 0, so a stale
-// failure from user A can collide with user B's later toggle at the same seq
-// and roll B's cache back to A's mode. Guard on the userId captured when the
-// request was fired: if the cache is gone or now belongs to a different user,
-// the failure is not ours — return unchanged with rolledBack=false so the
-// wrapper neither publishes nor shows the failure banner to the wrong user.
+// Session-AWARE rollback for the React wrapper. A failed PUT is only ours to
+// roll back if the cache still belongs to the same session generation (epoch)
+// AND user AND the set hasn't been superseded (seq). epoch is the load-bearing
+// guard: seq resets to 0 on every seed, so without epoch a quick sign-out/in
+// — even as the SAME user — would collide at seq 1 with a prior session's
+// in-flight failure. If epoch/user don't match (a different session or user is
+// now cached, or the cache is gone), the failure is stale — return unchanged
+// with rolledBack=false so the wrapper neither publishes nor shows the banner.
 export function reconcileFailureForUser(
   current: WorkModeCacheEntry | null,
+  capturedEpoch: number,
   capturedUserId: number,
   failedSeq: number,
   prevMode: StoredWorkMode,
 ): { entry: WorkModeCacheEntry | null; rolledBack: boolean } {
-  if (!current || current.userId !== capturedUserId) {
+  if (!current || current.epoch !== capturedEpoch || current.userId !== capturedUserId) {
     return { entry: current, rolledBack: false };
   }
   const entry = reconcileFailure(current, failedSeq, prevMode);

@@ -240,6 +240,21 @@ test("inferFromRepoList: a sim candidate whose manifest identifier doesn't match
   assert.ok(inf.missing.includes("sim"));
 });
 
+test("inferFromRepoList: a standard-named repo with a Bible subject but NO identifier is NOT auto-verified", () => {
+  // en_glt's manifest has a Bible subject but omits dublin_core.identifier —
+  // it must not be trusted as the lit lane on the naming convention alone
+  // (a malformed manifest shouldn't bypass explicit verification).
+  const repos = [{ name: "en_tn" }, { name: "en_glt" }, { name: "en_gst" }];
+  const manifests = manifestMap({
+    en_glt: { language: "en", relation: [], identifier: null, subject: "Aligned Bible" },
+    en_gst: { language: "en", relation: [], identifier: "gst", subject: "Aligned Bible" },
+  });
+  const inf = inferFromRepoList("Org", repos, manifests);
+  assert.equal(inf.litRepo, null); // absent identifier → not verified
+  assert.ok(inf.missing.includes("lit"));
+  assert.equal(inf.simRepo, "en_gst"); // sim still verifies normally
+});
+
 test("inferFromRepoList: multiple *_tn repos -> ambiguous, no order-based tiebreak", () => {
   const repos = [{ name: "en_tn" }, { name: "en2_tn" }];
   const inf = inferFromRepoList("Org", repos, new Map());
