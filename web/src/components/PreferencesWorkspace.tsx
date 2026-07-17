@@ -44,6 +44,7 @@ import {
   type LaneReplacementJobResponse,
   type LaneReplacementBook,
   type InferredOrgConfigResponse,
+  type WorkMode,
 } from "../sync/api";
 import {
   useProjectConfig,
@@ -53,6 +54,7 @@ import {
   applyProjectOverrides,
   refreshProjectConfig,
 } from "../hooks/useProjectConfig";
+import { useWorkMode, effectiveModeFor } from "../hooks/useWorkMode";
 import {
   useTranslationPrefs,
   useTerms,
@@ -128,8 +130,14 @@ interface Props {
 export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
+  const { workMode } = useWorkMode();
+  // isTranslation = project CAN translate (capability; unchanged semantics of
+  // isTranslationProject). authorMode = the user has switched the per-user
+  // toggle to Author on a project that CAN translate — a different case from
+  // "this project can't translate at all", so it gets its own copy below.
   const isTranslation = isTranslationProject(cfg);
-  const memoryAvailable = isTranslation && !isReadOnly();
+  const authorMode = isTranslation && effectiveModeFor(workMode, cfg) === "author";
+  const memoryAvailable = isTranslation && !authorMode && !isReadOnly();
 
   return (
     <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
@@ -196,11 +204,16 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
+          <WorkModeControl cfg={cfg} role={role} />
           <ProjectModeControl cfg={cfg} role={role} />
           {role === "admin" && cfg && <ScriptureLanesSection cfg={cfg} />}
           {cfg === null ? null : !isTranslation ? (
             <Alert severity="info" variant="outlined">
               {t("preferences.glOnly")}
+            </Alert>
+          ) : authorMode ? (
+            <Alert severity="info" variant="outlined">
+              {t("preferences.workMode.hiddenInAuthor")}
             </Alert>
           ) : !memoryAvailable ? (
             <Alert severity="info" variant="outlined">
@@ -603,6 +616,51 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
 
         {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
         {successMsg && <Alert severity="success" onClose={() => setSuccessMsg(null)}>{successMsg}</Alert>}
+      </Stack>
+    </Box>
+  );
+}
+
+// Per-user Translate/Author toggle (PR C) — "Saved for you", in contrast to
+// ProjectModeControl below which is an admin-only, project-wide setting.
+// Shown for any non-viewer on a project that CAN translate (isTranslationProject);
+// viewers have no write access to the preference and the toggle is
+// meaningless on a non-translation project (effective mode is always author).
+function WorkModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Role }) {
+  const { t } = useTranslation();
+  const { workMode, setWorkMode, failed } = useWorkMode();
+
+  if (role === "viewer" || !isTranslationProject(cfg)) return null;
+
+  const mode: WorkMode = effectiveModeFor(workMode, cfg);
+
+  return (
+    <Box
+      component="section"
+      aria-labelledby="work-mode-heading"
+      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, mb: 3 }}
+    >
+      <Stack spacing={1.5}>
+        <Box>
+          <Typography id="work-mode-heading" variant="h6">
+            {t("preferences.workMode.title")}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {t("preferences.workMode.intro")}
+          </Typography>
+        </Box>
+        <ToggleButtonGroup
+          value={mode}
+          exclusive
+          size="small"
+          onChange={(_, next: WorkMode | null) => {
+            if (next) setWorkMode(next);
+          }}
+        >
+          <ToggleButton value="translate">{t("preferences.workMode.translate")}</ToggleButton>
+          <ToggleButton value="author">{t("preferences.workMode.author")}</ToggleButton>
+        </ToggleButtonGroup>
+        {failed && <Alert severity="error">{t("preferences.workMode.failed")}</Alert>}
       </Stack>
     </Box>
   );

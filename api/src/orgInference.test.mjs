@@ -6,6 +6,7 @@ import {
   parseManifestFacts,
   inferFromRepoList,
   selectCandidateRepos,
+  listOrgRepos,
 } from "./orgInference.ts";
 
 // ── Manifest fixtures ────────────────────────────────────────────────────────
@@ -155,6 +156,38 @@ test("selectCandidateRepos: fills remaining budget with nonstandard {lang}_* rep
   assert.ok(!picked.includes("ar_tq"), "known non-lane resource excluded");
 });
 
+test("selectCandidateRepos: langCode null (ambiguous/multiple tn) fetches only the tn repos, no lane expansion", () => {
+  const names = ["en_tn", "es_tn", "en_glt", "en_gst", "es_glt"];
+  const picked = selectCandidateRepos(null, names, ["en_tn", "es_tn"], 20);
+  assert.deepEqual(picked, ["en_tn", "es_tn"], "no lane candidates added when langCode is null");
+});
+
+test("listOrgRepos: full pages up to the cap fail closed (never a truncated ok)", async () => {
+  const env = { DCS_BASE_URL: "https://git.door43.org" };
+  const fiftyRepos = Array.from({ length: 50 }, (_, i) => ({ name: `r${i}` }));
+  let calls = 0;
+  const alwaysFull = async () => {
+    calls++;
+    return new Response(JSON.stringify(fiftyRepos), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const res = await listOrgRepos(env, "HugeOrg", { fetch: alwaysFull });
+  assert.equal(res.ok, false, "cap exhaustion with full pages -> ok:false");
+  assert.equal(calls, 20, "stops at the 20-page ceiling");
+});
+
+test("listOrgRepos: a short final page returns ok with the concatenated list", async () => {
+  const env = { DCS_BASE_URL: "https://git.door43.org" };
+  const fetchTwo = async (url) => {
+    const p = Number(new URL(String(url)).searchParams.get("page"));
+    const body = p === 1 ? Array.from({ length: 50 }, (_, i) => ({ name: `r${i}` })) : [{ name: "last" }];
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const res = await listOrgRepos(env, "Org", { fetch: fetchTwo });
+  assert.equal(res.ok, true);
+  assert.equal(res.repos.length, 51);
+  assert.equal(res.repos[50].name, "last");
+});
+
 test("selectCandidateRepos: the cap is a HARD ceiling even with many tn matches + lanes", () => {
   // 10 *_tn matches + 4 standard lanes would be 14 before any cap check; a
   // max of 3 must still yield exactly 3 (priority order: tn first).
@@ -238,6 +271,21 @@ test("inferFromRepoList: a sim candidate whose manifest identifier doesn't match
   assert.equal(inf.litRepo, "en_glt");
   assert.equal(inf.simRepo, null);
   assert.ok(inf.missing.includes("sim"));
+});
+
+test("inferFromRepoList: a standard-named repo with a Bible subject but NO identifier is NOT auto-verified", () => {
+  // en_glt's manifest has a Bible subject but omits dublin_core.identifier —
+  // it must not be trusted as the lit lane on the naming convention alone
+  // (a malformed manifest shouldn't bypass explicit verification).
+  const repos = [{ name: "en_tn" }, { name: "en_glt" }, { name: "en_gst" }];
+  const manifests = manifestMap({
+    en_glt: { language: "en", relation: [], identifier: null, subject: "Aligned Bible" },
+    en_gst: { language: "en", relation: [], identifier: "gst", subject: "Aligned Bible" },
+  });
+  const inf = inferFromRepoList("Org", repos, manifests);
+  assert.equal(inf.litRepo, null); // absent identifier → not verified
+  assert.ok(inf.missing.includes("lit"));
+  assert.equal(inf.simRepo, "en_gst"); // sim still verifies normally
 });
 
 test("inferFromRepoList: multiple *_tn repos -> ambiguous, no order-based tiebreak", () => {

@@ -551,6 +551,8 @@ async function request<T>(
 
 export type Role = "admin" | "editor" | "viewer";
 
+export type WorkMode = "translate" | "author";
+
 export interface MeResponse {
   userId: number;
   username: string | null;
@@ -560,6 +562,12 @@ export interface MeResponse {
   lastBook: string | null;
   lastChapter: number | null;
   lastVerse: number | null;
+  // Per-user Translate/Author view toggle. `null` = no stored preference; the
+  // effective mode then falls back to the active project's translationSource.
+  workMode: WorkMode | null;
+  // Cached DCS org memberships (seam for future per-org routing). Always []
+  // for dev sign-ins.
+  orgs: string[];
 }
 
 export type AlertSeverity = "error" | "warning" | "info";
@@ -633,6 +641,16 @@ export async function updateLastLocation(
   } catch {
     /* non-critical */
   }
+}
+
+// PUT /api/users/me/prefs — persist the per-user work-mode toggle. `null`
+// clears the stored preference back to "no explicit choice". Throws on
+// failure — callers (useWorkMode) handle the optimistic rollback.
+export async function putMyPrefs(workMode: WorkMode | null): Promise<void> {
+  await request<{ ok: true; workMode: WorkMode | null }>(`/api/users/me/prefs`, {
+    method: "PUT",
+    body: JSON.stringify({ workMode }),
+  });
 }
 
 // Dev-only sign-in. Sets the session cookies for `username`, creating a

@@ -45,12 +45,14 @@ orgRoutes.get("/:org/inferred-config", async (c) => {
     return c.json({ error: "no_tn_repo" }, 422);
   }
 
-  // Determine candidate langCode from an unambiguous tn match (if ambiguous,
-  // inferFromRepoList reports it; we still need SOME langCode to build the
-  // {lang}_{ult|glt|ust|gst|tq|twl|tw|ta} candidate set — use the first match
-  // for candidate discovery only; the ambiguity itself is still surfaced).
-  const firstMatch = TN_REPO_RE.exec(tnMatches[0]);
-  const langCode = firstMatch ? firstMatch[1] : null;
+  // Derive the candidate langCode ONLY from an unambiguous single tn repo.
+  // With multiple *_tn repos the language is genuinely ambiguous — picking the
+  // first would make candidate discovery order-dependent (and could fetch a
+  // whole lane set for the wrong language). inferFromRepoList independently
+  // detects the multiple-tn case and returns an ambiguous/missing draft, so we
+  // just skip lane-candidate fetching here (langCode null → only the tn
+  // manifests are fetched).
+  const langCode = tnMatches.length === 1 ? (TN_REPO_RE.exec(tnMatches[0])?.[1] ?? null) : null;
 
   // Fetch manifests for the tn repo(s) and every other {lang}_* repo under
   // this org (lane candidates aren't limited to the standard ult/glt/ust/gst

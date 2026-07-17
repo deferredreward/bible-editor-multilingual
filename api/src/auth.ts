@@ -23,6 +23,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
+import { z } from "zod";
 import type { Env } from "./index";
 
 const ACCESS_COOKIE = "be_access";
@@ -71,42 +72,120 @@ function viewerOrgName(env: Env): string {
   return (env.VIEWER_ORG ?? "unfoldingWord").trim() || "unfoldingWord";
 }
 
-// Calls the Gitea API to check whether `dcsUsername` is a member of the
-// viewer-eligible org. `accessToken` (the user's OAuth token, when present)
-// picks up private memberships; otherwise the unauthenticated call only sees
-// public memberships. Returns false on any network/parse failure — we'd
-// rather deny ambiguously than mint a token by accident.
+// ── DCS org-membership listing (paginated, fail-closed) ─────────────────────
+//
+// Gitea paginates org listings; a partial page-2+ failure must never be
+// treated as "the complete list" — that would let a transient network blip
+// silently shrink a user's apparent org memberships (and, downstream, wrongly
+// deny/grant viewer access from an incomplete page). `ok: false` means
+// "discard everything fetched so far"; callers must fail closed on it.
+export type OrgsFetchResult = { ok: true; orgs: string[] } | { ok: false };
+
+const ORG_PAGE_LIMIT = 50;
+const ORG_MAX_PAGES = 20; // 1000 orgs — generous ceiling against a runaway account
+
+async function fetchPaginatedOrgNames(
+  urlFor: (page: number) => string,
+  headers: Record<string, string>,
+  deps?: { fetch?: typeof fetch },
+): Promise<OrgsFetchResult> {
+  const doFetch = deps?.fetch ?? fetch;
+  const all: string[] = [];
+  let complete = false;
+  for (let page = 1; page <= ORG_MAX_PAGES; page++) {
+    let res: Response;
+    try {
+      res = await doFetch(urlFor(page), { headers });
+    } catch {
+      return { ok: false };
+    }
+    // A 404 on a LATER page means "past the end of the listing" on the Gitea
+    // pagination API (listOrgRepos relies on the same behavior) — that's a
+    // clean end-of-list, not a failure. A 404 on page 1 is a real problem
+    // (missing endpoint / bad token) and falls through to fail closed below.
+    if (res.status === 404 && page > 1) {
+      complete = true;
+      break;
+    }
+    if (!res.ok) return { ok: false };
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false };
+    }
+    if (!Array.isArray(body)) return { ok: false };
+    const names = body
+      .map((o) =>
+        o && typeof o === "object" && typeof (o as { username?: unknown }).username === "string"
+          ? (o as { username: string }).username
+          : null,
+      )
+      .filter((n): n is string => n != null);
+    all.push(...names);
+    if (body.length < ORG_PAGE_LIMIT) {
+      complete = true; // a short page is the last page — the list is whole
+      break;
+    }
+  }
+  // Ran the full page budget with every page full → there may be more we never
+  // saw. Returning a truncated list as `ok` would silently drop memberships
+  // (a viewer org past the cap would read as absent), so fail closed.
+  if (!complete) return { ok: false };
+  return { ok: true, orgs: all };
+}
+
+// Authenticated: lists the signed-in user's own orgs (including private
+// memberships) via their OAuth access token. Used on the OAuth callback path.
+export async function fetchCurrentUserOrgs(
+  env: Env,
+  accessToken: string,
+  deps?: { fetch?: typeof fetch },
+): Promise<OrgsFetchResult> {
+  const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+  return fetchPaginatedOrgNames(
+    (page) => `${base}/api/v1/user/orgs?limit=${ORG_PAGE_LIMIT}&page=${page}`,
+    { Authorization: `token ${accessToken}` },
+    deps,
+  );
+}
+
+// Unauthenticated-by-user path (refresh): lists `username`'s orgs. Only sees
+// public memberships unless DCS_SERVICE_TOKEN is configured, in which case it
+// also catches private ones. Used by the session-refresh re-check.
+export async function fetchUserOrgsByLogin(
+  env: Env,
+  username: string,
+  deps?: { fetch?: typeof fetch },
+): Promise<OrgsFetchResult> {
+  const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+  const headers: Record<string, string> = {};
+  if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+  return fetchPaginatedOrgNames(
+    (page) => `${base}/api/v1/users/${encodeURIComponent(username)}/orgs?limit=${ORG_PAGE_LIMIT}&page=${page}`,
+    headers,
+    deps,
+  );
+}
+
+// Checks whether `dcsUsername` is a member of the viewer-eligible org.
+// `accessToken` (the user's OAuth token, when present) picks up private
+// memberships via fetchCurrentUserOrgs; otherwise falls back to
+// fetchUserOrgsByLogin. Fails closed (false) on any fetch/parse failure or a
+// partial/incomplete page — we'd rather deny ambiguously than mint access
+// from a partial org list.
 async function isViewerOrgMember(
   env: Env,
   dcsUsername: string,
   accessToken: string | null,
+  deps?: { fetch?: typeof fetch },
 ): Promise<boolean> {
   const orgName = viewerOrgName(env).toLowerCase();
-  try {
-    if (accessToken) {
-      // Authenticated: lists current user's orgs including private memberships.
-      const res = await fetch(`${env.DCS_BASE_URL}/api/v1/user/orgs`, {
-        headers: { Authorization: `token ${accessToken}` },
-      });
-      if (!res.ok) return false;
-      const orgs = (await res.json()) as Array<{ username?: string }>;
-      return orgs.some((o) => (o.username ?? "").toLowerCase() === orgName);
-    }
-    // Unauthenticated path (refresh): only sees public memberships, but the
-    // uW org membership is public so this is sufficient in practice. If the
-    // DCS_SERVICE_TOKEN is configured, use it to also catch private members.
-    const headers: Record<string, string> = {};
-    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
-    const res = await fetch(
-      `${env.DCS_BASE_URL}/api/v1/users/${encodeURIComponent(dcsUsername)}/orgs`,
-      { headers },
-    );
-    if (!res.ok) return false;
-    const orgs = (await res.json()) as Array<{ username?: string }>;
-    return orgs.some((o) => (o.username ?? "").toLowerCase() === orgName);
-  } catch {
-    return false;
-  }
+  const result = accessToken
+    ? await fetchCurrentUserOrgs(env, accessToken, deps)
+    : await fetchUserOrgsByLogin(env, dcsUsername, deps);
+  if (!result.ok) return false;
+  return result.orgs.some((o) => o.toLowerCase() === orgName);
 }
 
 type AppContext = Context<{
@@ -462,8 +541,13 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // Anything else hits the denied screen.
   const origin = new URL(c.req.url).origin;
   let role: Role | null = await lookupUserRole(c.env, dcsUser.login);
+  // Fetch the user's org list ONCE (paginated, fail-closed) and reuse it for
+  // both the viewer-membership gate below and the cached-orgs store further
+  // down — sign-in previously fetched the same list twice.
+  const orgsResult = await fetchCurrentUserOrgs(c.env, accessToken);
   if (!role) {
-    const isMember = await isViewerOrgMember(c.env, dcsUser.login, accessToken);
+    const viewerOrg = viewerOrgName(c.env).toLowerCase();
+    const isMember = orgsResult.ok && orgsResult.orgs.some((o) => o.toLowerCase() === viewerOrg);
     if (isMember) {
       role = "viewer";
     } else {
@@ -493,6 +577,18 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     .first<{ id: number }>();
   if (!userRow) return c.json({ error: "user_create_failed" }, 500);
 
+  // Best-effort cache of the org list fetched above (seam for future per-org
+  // routing; also feeds MeResponse.orgs). A fetch failure is NOT the same as
+  // "zero orgs" — leave both columns untouched so a transient DCS blip never
+  // clobbers a previously-known-good list. Never blocks sign-in either way.
+  if (orgsResult.ok) {
+    await c.env.DB.prepare(
+      `UPDATE users SET dcs_orgs_json = ?1, dcs_orgs_fetched_at = ?2 WHERE id = ?3`,
+    )
+      .bind(JSON.stringify(orgsResult.orgs), Math.floor(Date.now() / 1000), userRow.id)
+      .run();
+  }
+
   const token = await mintToken(c, userRow.id, dcsUser.login, role);
   const { sessionId, csrfToken } = await startSession(c, userRow.id);
   setSessionCookies(c, token, sessionId, csrfToken);
@@ -504,19 +600,44 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   return c.redirect(`${origin}/`, 302);
 }
 
+export type WorkMode = "translate" | "author";
+
+function parseWorkMode(raw: unknown): WorkMode | null {
+  return raw === "translate" || raw === "author" ? raw : null;
+}
+
+// Defensive parse of the cached org-list JSON: malformed/missing → `[]`,
+// never throws. A malformed column shouldn't take down /api/auth/me.
+function parseOrgsJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 // GET /api/auth/me — returns identity from the bearer token plus the user's
 // last-visited location (used by the SPA to restore where they left off when
-// the URL hash is missing — e.g. after the OAuth callback round-trip).
+// the URL hash is missing — e.g. after the OAuth callback round-trip) and
+// per-user prefs (workMode, cached DCS org memberships).
 export async function authMe(c: AppContext): Promise<Response> {
   const userId = (c as AppContext).get("userId");
   const username = (c as AppContext).get("username");
   const role = (c as AppContext).get("role");
   if (!userId) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.DB.prepare(
-    `SELECT last_book, last_chapter, last_verse FROM users WHERE id = ?1`,
+    `SELECT last_book, last_chapter, last_verse, work_mode, dcs_orgs_json FROM users WHERE id = ?1`,
   )
     .bind(userId)
-    .first<{ last_book: string | null; last_chapter: number | null; last_verse: number | null }>();
+    .first<{
+      last_book: string | null;
+      last_chapter: number | null;
+      last_verse: number | null;
+      work_mode: string | null;
+      dcs_orgs_json: string | null;
+    }>();
   return c.json({
     userId,
     username: username ?? null,
@@ -524,6 +645,8 @@ export async function authMe(c: AppContext): Promise<Response> {
     lastBook: row?.last_book ?? null,
     lastChapter: row?.last_chapter ?? null,
     lastVerse: row?.last_verse ?? null,
+    workMode: parseWorkMode(row?.work_mode),
+    orgs: parseOrgsJson(row?.dcs_orgs_json),
   });
 }
 
@@ -632,11 +755,18 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
   // Return MeResponse shape — same as /api/auth/me — so the client can take
   // a single round-trip path through devSignIn() without a separate /me
   // follow-up. lastBook/lastChapter/lastVerse are NULL for fresh dev users.
+  // Dev users have no real DCS org memberships, so orgs is always [] here
+  // (dcs_orgs_json is never populated on the dev-mint path).
   const loc = await c.env.DB.prepare(
-    `SELECT last_book, last_chapter, last_verse FROM users WHERE id = ?1`,
+    `SELECT last_book, last_chapter, last_verse, work_mode FROM users WHERE id = ?1`,
   )
     .bind(userId)
-    .first<{ last_book: string | null; last_chapter: number | null; last_verse: number | null }>();
+    .first<{
+      last_book: string | null;
+      last_chapter: number | null;
+      last_verse: number | null;
+      work_mode: string | null;
+    }>();
   return c.json({
     userId,
     username,
@@ -644,6 +774,8 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     lastBook: loc?.last_book ?? null,
     lastChapter: loc?.last_chapter ?? null,
     lastVerse: loc?.last_verse ?? null,
+    workMode: parseWorkMode(loc?.work_mode),
+    orgs: [],
   });
 }
 
@@ -745,4 +877,32 @@ export async function updateLastLocation(c: AppContext): Promise<Response> {
     .run();
 
   return c.json({ ok: true });
+}
+
+// ── Per-user work-mode preference ───────────────────────────────────────────
+
+const PrefsBody = z.object({ workMode: z.enum(["translate", "author"]).nullable() });
+
+// PUT /api/users/me/prefs — persist the per-user Translate/Author view
+// toggle. `null` clears the stored preference back to "no explicit choice"
+// (the effective mode then falls back to the project default). Covered by
+// the global requireCsrf middleware like every other write route.
+export async function updateWorkModePrefs(c: AppContext): Promise<Response> {
+  const userId = (c as AppContext).get("userId");
+  if (!userId) return c.json({ error: "unauthorized" }, 401);
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const parsed = PrefsBody.safeParse(body);
+  if (!parsed.success) return c.json({ error: "validation_failed", issues: parsed.error.issues }, 400);
+
+  await c.env.DB.prepare(`UPDATE users SET work_mode = ?1 WHERE id = ?2`)
+    .bind(parsed.data.workMode, userId)
+    .run();
+
+  return c.json({ ok: true, workMode: parsed.data.workMode });
 }

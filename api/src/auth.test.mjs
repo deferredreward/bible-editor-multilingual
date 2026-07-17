@@ -24,7 +24,13 @@ import {
   verifyToken,
   refreshToken,
   updateLastLocation,
+  updateWorkModePrefs,
   authMe,
+  startDcsAuth,
+  callbackDcsAuth,
+  mintDevToken,
+  fetchCurrentUserOrgs,
+  fetchUserOrgsByLogin,
 } from "./auth.ts";
 
 function assert(cond, msg) {
@@ -42,7 +48,16 @@ const ISSUER = "bible-editor";
 
 // Minimal Env. DB is per-test via fakeDb; routes under test touch nothing else.
 function baseEnv(db) {
-  return { JWT_SIGNING_KEY: SIGNING, JWT_ISSUER: ISSUER, DCS_BASE_URL: "https://git.door43.org", DB: db };
+  return {
+    JWT_SIGNING_KEY: SIGNING,
+    JWT_ISSUER: ISSUER,
+    DCS_BASE_URL: "https://git.door43.org",
+    DCS_OAUTH_AUTHORIZE_URL: "https://git.door43.org/login/oauth/authorize",
+    DCS_OAUTH_TOKEN_URL: "https://git.door43.org/login/oauth/access_token",
+    DCS_CLIENT_ID: "test-client-id",
+    DCS_CLIENT_SECRET: "test-client-secret",
+    DB: db,
+  };
 }
 
 // D1 stub: the test hands in (sql, args, op) → result. run() defaults to
@@ -113,6 +128,13 @@ function buildApp() {
   app.post("/api/auth/refresh", refreshToken);
   app.get("/api/auth/me", authMe);
   app.put("/loc", requireAuth, updateLastLocation);
+  app.put("/prefs", requireAuth, updateWorkModePrefs);
+  app.get("/api/auth/dcs/start", startDcsAuth);
+  app.get("/api/auth/dcs/callback", callbackDcsAuth);
+  app.post("/api/auth/dev", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    return mintDevToken(c, body.username ?? "dev");
+  });
   return app;
 }
 
@@ -319,6 +341,367 @@ console.log("[authMe] identity echo, 401 without a token");
     body.userId === 1 && body.username === "alice" && body.role === "editor" && body.lastBook === "ZEC",
     "/me echoes claims + stored location",
   );
+}
+
+// ── fetchCurrentUserOrgs / fetchUserOrgsByLogin: pagination, fail-closed ────
+
+console.log("[org pagination] full pages continue, short page terminates, any page failure discards the whole result");
+{
+  const env = baseEnv(fakeDb());
+  const page = (names) =>
+    new Response(JSON.stringify(names.map((n) => ({ username: n }))), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const fiftyNames = Array.from({ length: 50 }, (_, i) => `org${i}`);
+
+  let calls = 0;
+  const twoPageFetch = async (url) => {
+    calls++;
+    const p = Number(new URL(String(url)).searchParams.get("page"));
+    if (p === 1) return page(fiftyNames);
+    if (p === 2) return page(["orgLast"]);
+    throw new Error(`unexpected page ${p}`);
+  };
+  const result = await fetchCurrentUserOrgs(env, "tok", { fetch: twoPageFetch });
+  assert(result.ok === true, "two-page fetch succeeds");
+  assert(
+    result.orgs.length === 51 && result.orgs[50] === "orgLast",
+    "pages concatenated in order across the boundary",
+  );
+  assert(calls === 2, "stops after the short (final) page — no unnecessary page 3 request");
+
+  // A full page-1 (50 items, i.e. "there might be more") followed by a
+  // page-2 failure must discard EVERYTHING fetched so far, not just page 2.
+  const failOnPage2 = async (url) => {
+    const p = Number(new URL(String(url)).searchParams.get("page"));
+    if (p === 1) return page(fiftyNames);
+    return new Response("boom", { status: 500 });
+  };
+  const failed = await fetchCurrentUserOrgs(env, "tok", { fetch: failOnPage2 });
+  assert(failed.ok === false, "page-2 failure -> ok:false (partial page-1 result discarded, not returned)");
+
+  const byLoginFailed = await fetchUserOrgsByLogin(env, "alice", { fetch: failOnPage2 });
+  assert(byLoginFailed.ok === false, "the service-token by-login path fails closed on page-2 error too");
+
+  const networkError = async () => {
+    throw new Error("network down");
+  };
+  assert(
+    (await fetchCurrentUserOrgs(env, "tok", { fetch: networkError })).ok === false,
+    "network throw -> ok:false",
+  );
+  const badJson = async () => new Response("not json", { status: 200 });
+  assert(
+    (await fetchCurrentUserOrgs(env, "tok", { fetch: badJson })).ok === false,
+    "non-JSON 200 body -> ok:false",
+  );
+
+  // Every page full up to the page-count cap → we can't prove we saw the whole
+  // list, so fail closed rather than return a silently-truncated one (a viewer
+  // org past the cap would otherwise read as absent).
+  let capCalls = 0;
+  const alwaysFull = async () => {
+    capCalls++;
+    return page(fiftyNames); // always exactly PAGE_LIMIT → "there might be more"
+  };
+  const capped = await fetchCurrentUserOrgs(env, "tok", { fetch: alwaysFull });
+  assert(capped.ok === false, "page-cap exhaustion with full pages -> ok:false (never a truncated ok)");
+  assert(capCalls === 20, "stops at the 20-page ceiling, not an unbounded loop");
+
+  // Gitea returns 404 once pagination runs PAST the last page. A full page 1
+  // followed by a 404 on page 2 is a clean end-of-list, NOT a failure — the
+  // page-1 orgs must be returned ok (else a user whose orgs exactly fill a
+  // page would fail sign-in).
+  const fullThen404 = async (url) => {
+    const p = Number(new URL(String(url)).searchParams.get("page"));
+    return p === 1 ? page(fiftyNames) : new Response("not found", { status: 404 });
+  };
+  const pastEnd = await fetchCurrentUserOrgs(env, "tok", { fetch: fullThen404 });
+  assert(pastEnd.ok === true && pastEnd.orgs.length === 50, "404 past the last page = end-of-list, page-1 orgs returned");
+
+  // But a 404 on page 1 is a real failure (bad token / missing endpoint).
+  const fourOhFourPage1 = async () => new Response("not found", { status: 404 });
+  assert(
+    (await fetchCurrentUserOrgs(env, "tok", { fetch: fourOhFourPage1 })).ok === false,
+    "404 on page 1 -> ok:false (fail closed)",
+  );
+}
+
+console.log("[refreshToken] viewer org-membership check fails closed on a page-2 pagination failure");
+{
+  // A user with NO user_roles row, whose true org membership (the viewer org)
+  // sits on page 2. If page 2 fails, the partial page-1 list (which doesn't
+  // contain the viewer org) must NOT be treated as the complete list — the
+  // refresh must deny (403), not silently grant viewer from an incomplete page.
+  const realFetch = globalThis.fetch;
+  const fiftyOtherOrgs = Array.from({ length: 50 }, (_, i) => ({ username: `other-org-${i}` }));
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url));
+    const page = Number(u.searchParams.get("page"));
+    if (page === 1) {
+      return new Response(JSON.stringify(fiftyOtherOrgs), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    // page 2 (which would have contained "unfoldingWord") fails.
+    return new Response("boom", { status: 500 });
+  };
+
+  const app = buildApp();
+  const now = Math.floor(Date.now() / 1000);
+  const db = fakeDb(({ sql }) => {
+    if (sql.includes("FROM sessions")) {
+      return { id: "sess1", user_id: 7, expires_at: now + 1000, revoked_at: null, dcs_username: "alice" };
+    }
+    if (sql.includes("FROM user_roles")) return null; // not on the allowlist
+    return null;
+  });
+  const res = await app.request(
+    "/api/auth/refresh",
+    { method: "POST", headers: { cookie: "be_refresh=sess1" } },
+    baseEnv(db),
+  );
+  assert(res.status === 403, "page-2 pagination failure -> viewer auth fails closed, not granted from a partial list");
+
+  globalThis.fetch = realFetch;
+}
+
+// ── updateWorkModePrefs ──────────────────────────────────────────────────────
+
+console.log("[updateWorkModePrefs] enum validation, NULL round-trip, requires auth");
+{
+  const app = new Hono();
+  app.use("*", attachAuth);
+  app.use("*", requireCsrf);
+  app.put("/api/users/me/prefs", requireAuth, updateWorkModePrefs);
+
+  const writes = [];
+  const db = fakeDb(({ sql, args, op }) => {
+    if (op === "run" && sql.includes("UPDATE users SET work_mode")) {
+      writes.push(args);
+      return null;
+    }
+    return null;
+  });
+  const env = baseEnv(db);
+  const tok = await makeToken({});
+  const put = (body, headers = {}) =>
+    app.request(
+      "/api/users/me/prefs",
+      {
+        method: "PUT",
+        headers: {
+          cookie: `be_access=${tok}; be_csrf=t`,
+          "x-csrf-token": "t",
+          "content-type": "application/json",
+          ...headers,
+        },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      },
+      env,
+    );
+
+  assert((await put({ workMode: "admin" })).status === 400, "unrecognized enum value -> 400");
+  assert((await put({ workMode: 123 })).status === 400, "non-string workMode -> 400");
+  assert((await put("{not json")).status === 400, "malformed JSON -> 400");
+  assert(writes.length === 0, "no DB write happened for any rejected body");
+
+  const okAuthor = await put({ workMode: "author" });
+  assert(okAuthor.status === 200, "valid workMode('author') accepted");
+  assert(writes[0][0] === "author" && writes[0][1] === 1, "stores the workMode value for the authed user");
+
+  const okNull = await put({ workMode: null });
+  assert(okNull.status === 200, "NULL is a valid workMode (clears the stored preference)");
+  assert(writes[1][0] === null, "NULL round-trips to the DB, not coerced to a string");
+
+  const noAuth = await app.request(
+    "/api/users/me/prefs",
+    {
+      method: "PUT",
+      headers: { cookie: "be_csrf=t", "x-csrf-token": "t", "content-type": "application/json" },
+      body: JSON.stringify({ workMode: "translate" }),
+    },
+    env,
+  );
+  assert(noAuth.status === 401, "no access token -> 401 (requireAuth gates the route)");
+}
+
+// ── authMe: workMode + orgs ───────────────────────────────────────────────────
+
+console.log("[authMe] workMode + orgs passthrough; malformed dcs_orgs_json fails safe to []");
+{
+  const app = buildApp();
+
+  const malformed = fakeDb(({ sql }) =>
+    sql.includes("FROM users")
+      ? { last_book: null, last_chapter: null, last_verse: null, work_mode: "author", dcs_orgs_json: "not json{" }
+      : null,
+  );
+  const res1 = await app.request(
+    "/api/auth/me",
+    { headers: { cookie: `be_access=${await makeToken({})}` } },
+    baseEnv(malformed),
+  );
+  const body1 = await res1.json();
+  assert(body1.workMode === "author", "workMode passed through from the users row");
+  assert(Array.isArray(body1.orgs) && body1.orgs.length === 0, "malformed dcs_orgs_json -> orgs: []");
+
+  const wellFormed = fakeDb(({ sql }) =>
+    sql.includes("FROM users")
+      ? { last_book: null, last_chapter: null, last_verse: null, work_mode: null, dcs_orgs_json: '["orga","orgb"]' }
+      : null,
+  );
+  const res2 = await app.request(
+    "/api/auth/me",
+    { headers: { cookie: `be_access=${await makeToken({})}` } },
+    baseEnv(wellFormed),
+  );
+  const body2 = await res2.json();
+  assert(body2.workMode === null, "NULL work_mode -> workMode: null (no stored preference)");
+  assert(body2.orgs.length === 2 && body2.orgs[0] === "orga", "well-formed dcs_orgs_json parses through");
+}
+
+console.log("[mintDevToken] OAuth vs dev MeResponse parity: workMode passthrough, orgs always []");
+{
+  const app = new Hono();
+  app.post("/api/auth/dev", (c) => mintDevToken(c, "devuser"));
+  const db = fakeDb(({ sql }) => {
+    if (sql.includes("FROM user_roles")) return { role: "editor" };
+    if (sql.includes("SELECT id FROM users WHERE dcs_username")) return { id: 5 };
+    if (sql.includes("SELECT last_book")) {
+      return { last_book: null, last_chapter: null, last_verse: null, work_mode: "translate" };
+    }
+    return null;
+  });
+  const res = await app.request("/api/auth/dev", { method: "POST" }, baseEnv(db));
+  const body = await res.json();
+  assert(
+    body.workMode === "translate" && Array.isArray(body.orgs) && body.orgs.length === 0,
+    "dev sign-in returns the stored workMode + orgs: [] — same MeResponse shape as OAuth",
+  );
+}
+
+// ── callbackDcsAuth: best-effort org cache (failure preserves, success stores) ─
+
+console.log("[callbackDcsAuth] org-cache: fetch failure leaves prior cache untouched; success (incl. empty) always stores fresh");
+{
+  const app = new Hono();
+  app.get("/api/auth/dcs/start", startDcsAuth);
+  app.get("/api/auth/dcs/callback", callbackDcsAuth);
+
+  const orgCacheWrites = [];
+  const db = fakeDb(({ sql, args, op }) => {
+    if (sql.includes("FROM user_roles")) return { role: "editor" };
+    if (op === "run" && sql.includes("UPDATE users SET dcs_orgs_json")) {
+      orgCacheWrites.push(args);
+      return null;
+    }
+    if (op === "run" && sql.includes("INSERT INTO users")) return null;
+    if (sql.includes("SELECT id FROM users WHERE dcs_user_id")) return { id: 42 };
+    return null;
+  });
+  const env = {
+    ...baseEnv(db),
+    DCS_CLIENT_ID: "cid",
+    DCS_CLIENT_SECRET: "secret",
+    DCS_OAUTH_AUTHORIZE_URL: "https://git.door43.org/login/oauth/authorize",
+    DCS_OAUTH_TOKEN_URL: "https://git.door43.org/login/oauth/access_token",
+  };
+
+  const startRes = await app.request("/api/auth/dcs/start", {}, env);
+  const setCookieHeader = startRes.headers.get("set-cookie") ?? "";
+  const stateCookieVal = /dcs_auth_state=([^;]+)/.exec(setCookieHeader)?.[1];
+  const stateParam = new URL(startRes.headers.get("location")).searchParams.get("state");
+  assert(stateCookieVal && stateParam, "start endpoint issued a state cookie + redirect state param");
+
+  let orgFetchMode = "fail";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/login/oauth/access_token")) {
+      return new Response(JSON.stringify({ access_token: "tok123" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (u.endsWith("/api/v1/user")) {
+      return new Response(JSON.stringify({ id: 999, login: "alice" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (u.includes("/api/v1/user/orgs")) {
+      if (orgFetchMode === "fail") return new Response("boom", { status: 500 });
+      if (orgFetchMode === "empty") {
+        return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+      }
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  const runCallback = () =>
+    app.request(
+      `/api/auth/dcs/callback?state=${stateParam}&code=abc`,
+      { headers: { cookie: `dcs_auth_state=${stateCookieVal}` } },
+      env,
+    );
+
+  orgFetchMode = "fail";
+  const res1 = await runCallback();
+  assert(res1.status === 302, "sign-in succeeds (redirect) even when the org fetch fails");
+  assert(orgCacheWrites.length === 0, "failed org fetch never issues the cache UPDATE — old cache/timestamp left untouched");
+
+  orgFetchMode = "empty";
+  const res2 = await runCallback();
+  assert(res2.status === 302, "sign-in succeeds on the empty-orgs path too");
+  assert(
+    orgCacheWrites.length === 1 && orgCacheWrites[0][0] === "[]",
+    "a successful EMPTY org list still stores '[]' + a fresh timestamp (failure != empty)",
+  );
+
+  globalThis.fetch = realFetch;
+}
+
+// ── Regression: edits demote validated -> edited in BOTH work modes ─────────
+//
+// The Translate/Author toggle is a per-user CLIENT-side view preference
+// (users.work_mode); rows.ts's demotion CASE has no awareness of it at all —
+// it keys purely on the row's own translation_state. This runs the actual
+// literal CASE clause from rows.ts (copied verbatim, not reimplemented) against
+// a real SQLite table via node:sqlite, with users.work_mode set to each of
+// 'translate', 'author', and NULL, to prove the demotion is identical in every
+// case: Author mode hides the review UI client-side, it does not change what
+// the server does to the row on edit.
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  console.log("[regression] validated -> edited demotion fires identically regardless of the user's work_mode");
+
+  // Exact fragment from rows.ts's PATCH handler (kind === "tn" / "tq" arm) —
+  // kept in sync by inspection; the point is this SQL never mentions work_mode.
+  const DEMOTION_CASE =
+    "translation_state = CASE WHEN translation_state IN ('ai_draft','validated') THEN 'edited' ELSE translation_state END";
+
+  for (const workMode of ["translate", "author", null]) {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, work_mode TEXT);
+      CREATE TABLE tn_rows (id TEXT PRIMARY KEY, translation_state TEXT, version INTEGER NOT NULL DEFAULT 1);
+      INSERT INTO users (id, work_mode) VALUES (1, ${workMode === null ? "NULL" : `'${workMode}'`});
+      INSERT INTO tn_rows (id, translation_state, version) VALUES ('row1', 'validated', 1);
+    `);
+    // Simulate a content-field edit: bump version + apply the same literal
+    // demotion CASE rows.ts appends for kind==='tn'. No reference to users or
+    // work_mode anywhere in this statement — demotion is row-state-only.
+    db.exec(`UPDATE tn_rows SET ${DEMOTION_CASE}, version = version + 1 WHERE id = 'row1'`);
+    const row = db.prepare("SELECT translation_state, version FROM tn_rows WHERE id = 'row1'").get();
+    assert(
+      row.translation_state === "edited" && row.version === 2,
+      `edit demotes validated -> edited under users.work_mode=${workMode} (server has no mode awareness)`,
+    );
+    db.close();
+  }
 }
 
 console.log("auth: all assertions passed");

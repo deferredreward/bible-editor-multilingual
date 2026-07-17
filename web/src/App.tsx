@@ -17,6 +17,7 @@ import {
   type Role,
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
+import { seedWorkMode, clearWorkMode } from "./hooks/useWorkMode";
 
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
@@ -126,15 +127,22 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
           clearSignedOutFlag();
           setReadOnly(me.role === "viewer");
           setIsAdmin(me.role === "admin");
+          // Seed the work-mode cache synchronously BEFORE marking auth ready
+          // — components mounted by the "ready" render must see the real
+          // stored mode on their very first render, not a default-Translate
+          // value that fires a source request and gets thrown away.
+          seedWorkMode(me.userId, me.workMode);
           setState({ kind: "ready", me, role: me.role });
           return;
         }
         if (me && !me.role) {
+          clearWorkMode();
           setState({ kind: "denied", username: me.username });
           return;
         }
         // me === null → 401, no cookie. Decide whether to silent-mint (dev)
         // or land on the sign-in screen.
+        clearWorkMode();
         if (isSignedOut() || !import.meta.env.DEV) {
           setState({ kind: "missing" });
           return;
@@ -149,6 +157,7 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
           clearSignedOutFlag();
           setReadOnly(devMe.role === "viewer");
           setIsAdmin(devMe.role === "admin");
+          seedWorkMode(devMe.userId, devMe.workMode);
           setState({ kind: "ready", me: devMe, role: devMe.role });
         } catch (err: unknown) {
           if (cancelled) return;
@@ -318,6 +327,7 @@ export function App() {
     // session row, and best-effort revokes the DCS access token. Set the
     // local UX flag so the next boot doesn't silent-mint in dev.
     await authLogout();
+    clearWorkMode();
     try {
       localStorage.setItem(SIGNED_OUT_KEY, "1");
     } catch {
