@@ -420,12 +420,18 @@ export async function fetchManifest(
   env: Env,
   org: string,
   repo: string,
-  deps?: { fetch?: (env: Env, url: string) => Promise<FetchTextResult> },
+  deps?: { fetch?: (env: Env, url: string, opts?: { noAuth?: boolean }) => Promise<FetchTextResult> },
 ): Promise<ManifestFetchResult> {
   const doFetch = deps?.fetch ?? fetchTextWithStatus;
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const url = `${base}/${org}/${repo}/raw/branch/master/manifest.yaml`;
-  const res = await doFetch(env, url);
+  let res = await doFetch(env, url);
+  // A write-scoped service token can be rejected on public raw endpoints where
+  // anonymous access succeeds — retry unauthenticated so public orgs resolve
+  // (matches the fallback in listOrgRepos).
+  if ((res.status === 401 || res.status === 403) && env.DCS_SERVICE_TOKEN) {
+    res = await doFetch(env, url, { noAuth: true });
+  }
   if (res.status === 404) return { status: "not_found" };
   if (res.status !== 200 || res.text == null || res.truncated) return { status: "error" };
   return { status: "ok", facts: parseManifestFacts(res.text) };
