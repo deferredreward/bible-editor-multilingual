@@ -91,6 +91,7 @@ export function SetupWizard() {
       // (or the driver skips/aborts).
       let totalProcessed = 0;
       let totalWarnings = 0;
+      let settled = false;
       for (let round = 0; round < POPULATE_MAX_ROUNDS; round++) {
         const r = await api.populateArticles({ book });
         totalProcessed += r.processed;
@@ -99,14 +100,22 @@ export function SetupWizard() {
         setWarnings(totalWarnings);
         if (r.skipped) {
           setPopulateNote(t("setup.populateSkipped"));
+          settled = true;
           break;
         }
         if (r.aborted) {
           setPopulateNote(t("setup.populateAborted"));
+          settled = true;
           break;
         }
-        if (r.remaining === 0) break;
+        if (r.remaining === 0) {
+          settled = true;
+          break;
+        }
       }
+      // Backstop hit with work still queued — surface it rather than reporting a
+      // clean finish. The user can re-run population from the articles workspace.
+      if (!settled) setPopulateNote(t("setup.populateIncomplete"));
       setImportedBook(book);
       setActiveStep(5);
     } catch (e) {

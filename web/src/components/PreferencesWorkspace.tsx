@@ -781,7 +781,10 @@ function OrgDetectionSection() {
         <Button
           size="small"
           variant="outlined"
-          onClick={draft.detect}
+          onClick={() => {
+            setMessage(null);
+            void draft.detect();
+          }}
           disabled={draft.loading || !draft.org.trim()}
         >
           {draft.loading ? <CircularProgress size={16} /> : t("preferences.detectOrg.button")}
