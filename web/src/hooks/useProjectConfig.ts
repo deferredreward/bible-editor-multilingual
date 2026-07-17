@@ -5,6 +5,9 @@ import {
   type ProjectConfigResponse,
   type ProjectPreset,
 } from "../sync/api";
+import { getBuiltinLayouts } from "../lib/builtinLayouts";
+import { validateLayoutSpec, type LayoutSpec } from "../lib/layoutSpec";
+import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
 
 // The active per-project source config (org/language/direction/labels +
 // translationSource). Mirrors useNoteTemplates: one shared fetch, a
@@ -96,6 +99,54 @@ export function useProjectPresets(): ProjectPreset[] {
         /* keep cached value */
       });
     const subscriber = (res: ProjectConfigResponse) => setVal(res.presets);
+    subscribers.add(subscriber);
+    return () => {
+      mounted = false;
+      subscribers.delete(subscriber);
+    };
+  }, []);
+  return val;
+}
+
+// Resolve the workspace layout list for a config-response: prefer the
+// server-shipped `layouts` (each validated structurally, then against the panel
+// registry, dropping any invalid/drifted spec) when present and non-empty;
+// otherwise fall back to the client's bundled built-ins. This gives offline
+// resilience (the localStorage cache stores only `config`, so its responses
+// have no `layouts` and fall through) and drift safety (a bad server spec is
+// dropped, never fatal — worst case the whole set falls back to bundled).
+function resolveWorkflowLayouts(res: ProjectConfigResponse): LayoutSpec[] {
+  const cfg = res.config;
+  if (Array.isArray(res.layouts) && res.layouts.length > 0) {
+    const valid: LayoutSpec[] = [];
+    for (const raw of res.layouts) {
+      const structural = validateLayoutSpec(raw);
+      if (!structural) continue;
+      const available = validateLayoutAgainstRegistry(structural, cfg);
+      if (available) valid.push(available);
+    }
+    if (valid.length > 0) return valid;
+  }
+  return getBuiltinLayouts(cfg);
+}
+
+// The workspace layouts the switcher offers: server-shipped defaults when
+// available, otherwise the bundled built-ins. Same subscribe-to-shared-cache
+// pattern as useProjectPresets.
+export function useWorkflowLayouts(): LayoutSpec[] {
+  const [val, setVal] = useState<LayoutSpec[]>(() =>
+    cache ? resolveWorkflowLayouts(cache) : getBuiltinLayouts(null),
+  );
+  useEffect(() => {
+    let mounted = true;
+    load()
+      .then((res) => {
+        if (mounted) setVal(resolveWorkflowLayouts(res));
+      })
+      .catch(() => {
+        /* keep cached value */
+      });
+    const subscriber = (res: ProjectConfigResponse) => setVal(resolveWorkflowLayouts(res));
     subscribers.add(subscriber);
     return () => {
       mounted = false;

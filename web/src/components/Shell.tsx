@@ -27,7 +27,7 @@ import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox } from "../sync/outbox";
 import { api, CHECK_LANES } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion, LaneReplacementEvent } from "../sync/api";
-import { refreshProjectConfig, useProjectConfig } from "../hooks/useProjectConfig";
+import { refreshProjectConfig, useProjectConfig, useWorkflowLayouts } from "../hooks/useProjectConfig";
 import {
   indexLaneChecks,
   laneKey,
@@ -64,7 +64,7 @@ import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane, type ResourceTab } from "./ResourceColumn";
 import { WorkspaceLayout } from "./WorkspaceLayout";
-import { getBuiltinLayouts, CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
+import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
 import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
 import {
   loadLayoutStore,
@@ -441,7 +441,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const [activeLayoutId, setActiveLayoutIdState] = useState<string>(
     () => loadLayoutStore().activeLayoutId,
   );
-  const builtinLayouts = useMemo(() => getBuiltinLayouts(projectConfig), [projectConfig]);
+  // Server-shipped built-in layouts (with a bundled fallback when the server
+  // omits them or a spec fails validation). Was a direct getBuiltinLayouts call
+  // in Phase 3; the switcher list + active-layout resolution below are unchanged.
+  const builtinLayouts = useWorkflowLayouts();
   const activeLayout = useMemo<LayoutSpec>(() => {
     const found = builtinLayouts.find((l) => l.id === activeLayoutId);
     const validated = found ? validateLayoutAgainstRegistry(found, projectConfig) : null;
