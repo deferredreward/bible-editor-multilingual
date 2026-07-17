@@ -133,7 +133,7 @@ function FontSizeControl() {
 // UI-chrome language switcher. Changing the language re-renders every t()
 // string AND flips the whole chrome's direction when the language is RTL
 // (document.dir + MUI theme.direction + the emotion RTL cache — see main.tsx).
-function UiLanguageControl() {
+export function UiLanguageControl() {
   const { t } = useTranslation();
   const { lang, setLang } = useContext(UiLangContext);
   const anchorRef = useRef<HTMLButtonElement>(null);
