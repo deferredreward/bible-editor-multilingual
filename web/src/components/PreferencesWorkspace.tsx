@@ -64,6 +64,7 @@ import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
 import { SetupWizard } from "./SetupWizard";
 import { UserManagementSection } from "./UserManagementSection";
+import { UiLanguageControl } from "./TopBar";
 import { UI_LANGUAGES, dirForLang } from "../i18n";
 import {
   flattenEn,
@@ -188,9 +189,10 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
                 <ArrowBackIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }}>
               {t("preferences.title")}
             </Typography>
+            <UiLanguageControl />
           </Stack>
           <Typography variant="caption" color="text.secondary">
             {cfg?.languageTitle ?? cfg?.languageName ?? cfg?.languageCode}

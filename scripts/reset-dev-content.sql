@@ -1,6 +1,11 @@
 -- Clean-slate reset of DEV D1 — wipes all book/package/pipeline/project data
--- but KEEPS the lexicon (lexicon_entries, tw_articles, article_units), the
--- migration ledger (d1_migrations), and auth (users, sessions, user_roles).
+-- but KEEPS the lexicon (lexicon_entries, tw_articles), the migration ledger
+-- (d1_migrations), and auth (users, sessions, user_roles). article_units is
+-- NOT kept lexicon data — since migration 0050 it is org-scoped project data
+-- (populated per-org from a book's imported notes) and counted by the
+-- project_not_empty guard (api/src/projectConfigApply.ts hasLiveProjectData),
+-- so it must be wiped along with the rest of the project for onboarding to
+-- restart cleanly.
 --
 -- After this runs, project_config is empty → the app is back at the
 -- "no project configured" onboarding entry point.
@@ -38,6 +43,9 @@ DELETE FROM pending_imports;
 DELETE FROM pipeline_jobs;
 DELETE FROM export_snapshots;
 DELETE FROM context_export_results;
+
+DELETE FROM article_units;
+DELETE FROM article_fetch_state;
 
 DELETE FROM align_freq;
 DELETE FROM align_freq_morph;
