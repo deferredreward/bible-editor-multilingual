@@ -175,10 +175,14 @@ export interface FetchTextResult {
   truncated?: boolean;
 }
 
-export async function fetchTextWithStatus(env: Env, url: string): Promise<FetchTextResult> {
+export async function fetchTextWithStatus(
+  env: Env,
+  url: string,
+  opts?: { noAuth?: boolean },
+): Promise<FetchTextResult> {
   try {
     const headers: Record<string, string> = {};
-    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+    if (env.DCS_SERVICE_TOKEN && !opts?.noAuth) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
     const r = await fetch(url, Object.keys(headers).length ? { headers } : undefined);
     if (!r.ok) return { status: r.status, text: null };
     const buf = await r.arrayBuffer();
