@@ -525,8 +525,13 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // Anything else hits the denied screen.
   const origin = new URL(c.req.url).origin;
   let role: Role | null = await lookupUserRole(c.env, dcsUser.login);
+  // Fetch the user's org list ONCE (paginated, fail-closed) and reuse it for
+  // both the viewer-membership gate below and the cached-orgs store further
+  // down — sign-in previously fetched the same list twice.
+  const orgsResult = await fetchCurrentUserOrgs(c.env, accessToken);
   if (!role) {
-    const isMember = await isViewerOrgMember(c.env, dcsUser.login, accessToken);
+    const viewerOrg = viewerOrgName(c.env).toLowerCase();
+    const isMember = orgsResult.ok && orgsResult.orgs.some((o) => o.toLowerCase() === viewerOrg);
     if (isMember) {
       role = "viewer";
     } else {
@@ -556,11 +561,10 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     .first<{ id: number }>();
   if (!userRow) return c.json({ error: "user_create_failed" }, 500);
 
-  // Best-effort refresh of the cached org list (seam for future per-org
+  // Best-effort cache of the org list fetched above (seam for future per-org
   // routing; also feeds MeResponse.orgs). A fetch failure is NOT the same as
   // "zero orgs" — leave both columns untouched so a transient DCS blip never
   // clobbers a previously-known-good list. Never blocks sign-in either way.
-  const orgsResult = await fetchCurrentUserOrgs(c.env, accessToken);
   if (orgsResult.ok) {
     await c.env.DB.prepare(
       `UPDATE users SET dcs_orgs_json = ?1, dcs_orgs_fetched_at = ?2 WHERE id = ?3`,
