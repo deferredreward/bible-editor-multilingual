@@ -515,17 +515,23 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
 
       const { files, stats } = rendered;
-      // Scaffold brief.md alone (— + Register: default) is not enough — refuse
-      // so assisted mode can't flip on an empty pack that still passes the bot's
-      // file-presence check.
-      if (
-        !hasSemanticContent({
-          prefs,
-          terms: stats.terms,
-          examplesTn: stats.examplesTn,
-          examplesTq: stats.examplesTq,
-        })
-      ) {
+      const prevStats = await getLatestContextExportStats(this.env);
+      const semantic = hasSemanticContent({
+        prefs,
+        terms: stats.terms,
+        examplesTn: stats.examplesTn,
+        examplesTq: stats.examplesTq,
+      });
+      // Scaffold-only (brief.md alone — + Register: default) with NO prior
+      // successful export is a genuine first-time-empty pack: nothing to
+      // publish and no repo to create. But scaffold-only AFTER a prior export
+      // is an intentional CLEAR — it must flow through the commit below so the
+      // stale instructions.md/terms.csv are deleted from master AND a new SHA
+      // is recorded, otherwise getLatestSuccessfulContextExport keeps returning
+      // the old SHA and the bot keeps injecting the content the user cleared.
+      // (A large clear still trips the shrink guard → admin confirms via
+      // shrinkOverride; a small clear commits straight through.)
+      if (!semantic && !prevStats) {
         await finalizeContextExport(this.env, resultId, {
           status: "no_content",
           stats,
@@ -535,7 +541,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         return empty("no_content", "scaffold_only");
       }
 
-      const prevStats = await getLatestContextExportStats(this.env);
       const shrink = contextShrinkRefused(stats, prevStats);
       if (shrink && !shrinkOverride) {
         const code = shrinkDetailCode(shrink);
