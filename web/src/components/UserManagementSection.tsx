@@ -17,6 +17,11 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type AdminUser } from "../sync/api";
 
+const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; labelKey: string }> = [
+  { value: "editor", labelKey: "preferences.users.roleEditor" },
+  { value: "admin", labelKey: "preferences.users.roleAdmin" },
+];
+
 // Bare allowlist error codes (api/src/adminUserRoutes.ts). Anything else
 // (network failure, unexpected 5xx) falls back to the generic message —
 // same "unknown code" fallback shape as laneErrorMessage in
@@ -143,8 +148,11 @@ export function UserManagementSection() {
             onChange={(e) => setNewRole(e.target.value as "admin" | "editor")}
             sx={{ width: 160 }}
           >
-            <MenuItem value="editor">{t("preferences.users.roleEditor")}</MenuItem>
-            <MenuItem value="admin">{t("preferences.users.roleAdmin")}</MenuItem>
+            {ROLE_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {t(opt.labelKey)}
+              </MenuItem>
+            ))}
           </TextField>
           <Button
             variant="contained"
@@ -221,8 +229,11 @@ export function UserManagementSection() {
                 onChange={(e) => void handleRoleChange(u.username, e.target.value as "admin" | "editor")}
                 disabled={rowBusy === u.username}
               >
-                <MenuItem value="editor">{t("preferences.users.roleEditor")}</MenuItem>
-                <MenuItem value="admin">{t("preferences.users.roleAdmin")}</MenuItem>
+                {ROLE_OPTIONS.map((opt) => (
+                  <MenuItem key={opt.value} value={opt.value}>
+                    {t(opt.labelKey)}
+                  </MenuItem>
+                ))}
               </TextField>
               <Typography variant="body2" color="text.secondary">
                 {u.addedAt != null ? new Date(u.addedAt * 1000).toLocaleDateString() : "—"}

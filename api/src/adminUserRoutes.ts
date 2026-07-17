@@ -10,7 +10,7 @@ import type { Env } from "./index";
 // module can also be loaded directly by node's strip-types test runner —
 // see adminUsers.test.mjs, which imports this file rather than re-testing
 // its logic in isolation.
-import { requireAuth, requireAdmin, currentUserId } from "./auth.ts";
+import { requireAuth, requireAdmin, currentUserId, lookupUserRole } from "./auth.ts";
 
 export const adminUsers = new Hono<{
   Bindings: Env;
@@ -21,16 +21,21 @@ adminUsers.use("*", requireAuth, requireAdmin);
 
 const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
+type UserRow = { username: string; role: string; addedAt: number; addedBy: string | null };
+
+// Shared shape for both the list and the single-row post-write fetch.
+const USER_ROW_SELECT = `SELECT ur.dcs_username AS username, ur.role AS role, ur.added_at AS addedAt,
+         u.dcs_username AS addedBy
+    FROM user_roles ur
+    LEFT JOIN users u ON u.id = ur.added_by`;
+
 // GET /api/admin/users — the allowlist, admins first then alpha (COLLATE
 // NOCASE matches the PK's collation so casing doesn't affect sort order).
 adminUsers.get("/", async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT ur.dcs_username AS username, ur.role AS role, ur.added_at AS addedAt,
-            u.dcs_username AS addedBy
-       FROM user_roles ur
-       LEFT JOIN users u ON u.id = ur.added_by
+    `${USER_ROW_SELECT}
       ORDER BY CASE ur.role WHEN 'admin' THEN 0 ELSE 1 END, ur.dcs_username COLLATE NOCASE`,
-  ).all<{ username: string; role: string; addedAt: number; addedBy: string | null }>();
+  ).all<UserRow>();
 
   return c.json({
     users: results.map((r) => ({
@@ -95,40 +100,35 @@ adminUsers.put("/:username", async (c) => {
     dcsVerified = false;
   }
 
-  // Last-admin guard: refuse to demote the sole remaining admin.
-  const current = await c.env.DB.prepare(
-    `SELECT role FROM user_roles WHERE dcs_username = ?1`,
-  )
-    .bind(canonicalUsername)
-    .first<{ role: string }>();
-
-  if (current?.role === "admin" && newRole === "editor") {
-    const count = await c.env.DB.prepare(
-      `SELECT COUNT(*) as n FROM user_roles WHERE role = 'admin'`,
-    ).first<{ n: number }>();
-    if ((count?.n ?? 0) <= 1) {
-      return c.json({ error: "last_admin" }, 409);
-    }
-  }
-
+  // Last-admin guard: refuse to demote the sole remaining admin. The count
+  // check and the write happen inside ONE atomic SQL statement (the UPSERT's
+  // WHERE clause) instead of a separate read-then-write round trip — two
+  // concurrent demote requests can no longer both observe "count > 1" and
+  // both write, since there's no gap between the check and the mutation for
+  // them to interleave in. `role` (unqualified) refers to the pre-update row
+  // being conflicted into; `excluded.role` is the incoming value. If the
+  // WHERE evaluates false, the UPDATE is skipped and meta.changes is 0.
+  //
   // added_by is only set on first insert; ON CONFLICT only touches role, so
   // re-promoting/demoting an existing user preserves who originally added them.
-  await c.env.DB.prepare(
+  const upsert = await c.env.DB.prepare(
     `INSERT INTO user_roles (dcs_username, role, added_by) VALUES (?1, ?2, ?3)
-     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role`,
+     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role
+     WHERE NOT (
+       role = 'admin' AND excluded.role = 'editor'
+       AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1
+     )`,
   )
     .bind(canonicalUsername, newRole, currentUserId(c))
     .run();
 
-  const row = await c.env.DB.prepare(
-    `SELECT ur.dcs_username AS username, ur.role AS role, ur.added_at AS addedAt,
-            u.dcs_username AS addedBy
-       FROM user_roles ur
-       LEFT JOIN users u ON u.id = ur.added_by
-      WHERE ur.dcs_username = ?1`,
-  )
+  if (upsert.meta.changes === 0) {
+    return c.json({ error: "last_admin" }, 409);
+  }
+
+  const row = await c.env.DB.prepare(`${USER_ROW_SELECT} WHERE ur.dcs_username = ?1`)
     .bind(canonicalUsername)
-    .first<{ username: string; role: string; addedAt: number; addedBy: string | null }>();
+    .first<UserRow>();
 
   return c.json({
     user: {
@@ -146,27 +146,27 @@ adminUsers.put("/:username", async (c) => {
 adminUsers.delete("/:username", async (c) => {
   const username = c.req.param("username");
 
-  const row = await c.env.DB.prepare(
-    `SELECT role FROM user_roles WHERE dcs_username = ?1`,
+  // Same atomic-guard shape as PUT: the admin-COUNT check and the DELETE
+  // happen in one statement, so two concurrent deletes of the last two
+  // admins can't both pass a stale count and both succeed.
+  const del = await c.env.DB.prepare(
+    `DELETE FROM user_roles
+      WHERE dcs_username = ?1
+        AND NOT (role = 'admin' AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)`,
   )
-    .bind(username)
-    .first<{ role: string }>();
-  if (!row) {
-    return c.json({ error: "not_found" }, 404);
-  }
-
-  if (row.role === "admin") {
-    const count = await c.env.DB.prepare(
-      `SELECT COUNT(*) as n FROM user_roles WHERE role = 'admin'`,
-    ).first<{ n: number }>();
-    if ((count?.n ?? 0) <= 1) {
-      return c.json({ error: "last_admin" }, 409);
-    }
-  }
-
-  await c.env.DB.prepare(`DELETE FROM user_roles WHERE dcs_username = ?1`)
     .bind(username)
     .run();
 
-  return c.json({ ok: true });
+  if (del.meta.changes > 0) {
+    return c.json({ ok: true });
+  }
+
+  // Zero changes means either the row never existed, or it existed but was
+  // blocked by the guard — distinguish for the error code (UX only; the
+  // admin-count invariant itself was already enforced atomically above).
+  const stillRole = await lookupUserRole(c.env, username);
+  return c.json(
+    { error: stillRole === "admin" ? "last_admin" : "not_found" },
+    stillRole === "admin" ? 409 : 404,
+  );
 });
