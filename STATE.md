@@ -1432,10 +1432,22 @@ Not yet PR'd.
 
 ## In progress
 
-- **aquifer-arabic-draft-notes** (2026-07-16) — **COMMITTED `fa3daf0`; Phases 0–3 + merge rework done; live e2e
-  blocked by env; main diverged → REBASE before PR.** Goal: pull Aquifer tN as unapproved *drafts* merged onto the
-  current `unfoldingWord/en_tn` skeleton, language-parameterized (Arabic pilot → Hindi etc.). Full design detail in
-  memory [[project-aquifer-tn-source]]; plan `C:\Users\benja\.claude\plans\write-up-a-plan-ethereal-tiger.md`.
+- **aquifer-arabic-draft-notes** (2026-07-16) — **DONE + LIVE-E2E VERIFIED; rebased onto origin/main (`0b190f4`),
+  ready for PR.** Goal: pull Aquifer tN as unapproved *drafts* merged onto the current `unfoldingWord/en_tn` skeleton,
+  language-parameterized (Arabic pilot → Hindi etc.). Full design detail in memory [[project-aquifer-tn-source]]; plan
+  `C:\Users\benja\.claude\plans\write-up-a-plan-ethereal-tiger.md`. Branch commits `5fb837c` (feat) + `8204be8` (docs)
+  on top of `0b190f4`.
+  - **LIVE E2E PASSED (2026-07-16, local wrangler dev + real D1).** Ran from the MAIN checkout (worktree's fresh npm
+    install has a broken workerd; junction breaks esbuild — main's node_modules is the only healthy wrangler here).
+    Set project ar-bsoj, then: **PHM (Arabic in ar_tn):** import→93 NULL rows; aquifer-drafts→ **approved 93** (existing
+    Arabic marked `validated`, `pre_draft_json` set), **skippedApproved 86** (deduped, not overwritten), **inserted 6**
+    new drafts; `edit_log.source=aquifer` ×6, `draft_meta.source=aquifer` ×6, `book_imports.tn_source='aquifer:arb'`;
+    a tn **reimport was skipped** (all-zero, rows unchanged) → clobber-protection confirmed. **RUT (English placeholder):**
+    aquifer-drafts→ **approved 0** (English correctly NOT target-script), **replaced 262** placeholders, **inserted 293**
+    drafts (248 quote / 40 ordinal / 5 intro), **40 flagged** `aquifer_unverified`, 31 uncovered placeholders left NULL.
+  - Cosmetic follow-up: the bold-gloss line renders as `**"****word**` (adjacent bolds) — harmless, tidy later.
+  - **Not runtime-verified:** the browser badge render (its data `draft_meta.source=aquifer` IS confirmed) and
+    export-direction gating (unvalidated Aquifer drafts vs BSOJ export; safe on dev — no crons).
   - **Shipped (commit fa3daf0):** `scripts/aquifer-join-census.mjs` (Phase-0 diagnostic, all 47 books arb+hin);
     `api/src/aquiferConvert.ts` + `.test.mjs` (quote-primary/ordinal-fallback/unmatched converter, 10 tests green,
     real 3JN 57/57); `api/src/aquiferSources.ts` (lang→dir + canonical book# + URL); `api/src/aquiferImport.ts`
@@ -1446,11 +1458,9 @@ Not yet PR'd.
   - **⚠ Data-loss + recovery:** an npm "repair" ran `git clean`, deleting all untracked files + reverting tracked
     edits (branch went clean). Recovered from conversation history and **committed immediately** (`fa3daf0`). Lesson:
     on this branch, commit early — untracked work is one `git clean` away from gone.
-  - **Live e2e still UNRUN (environment):** worktree `node_modules` is a junction to main; wrangler dev's esbuild
-    can't resolve deps through the Windows junction (`Cannot find package '@cloudflare/unenv-preset'`) — dev boots only
-    from a REAL node_modules. Main diverged to `0b190f4` + dirty, unsafe to borrow. The runtime merge path
-    (validate-approved / dedup / delete+insert / mint id / batch) is NOT yet exercised against a live D1. Also unhandled:
-    export-direction gating (unvalidated Aquifer drafts vs BSOJ export) — safe on dev (no crons).
+  - **Env note:** worktree `node_modules` is now a REAL `npm install` (junction removed — it broke wrangler dev's
+    esbuild; and the fresh install's workerd crashes, so run dev from main). Re-run `scripts/worktree-init.ps1` to
+    restore the junction + reclaim disk when done.
   - (Below: original reconnaissance, still valid.)
   - **Aquifer source:** `github.com/BibleAquifer/UWTranslationNotes/tree/main/arb` — NOT a DCS repo. Per-book files
     in 4 formats (`docx/ json/ md/ pdf/`) named by USFM book number `NN.content.json` (01=GEN … 66=REV, verified:
