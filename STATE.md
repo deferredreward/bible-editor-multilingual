@@ -1446,8 +1446,14 @@ Not yet PR'd.
     aquifer-drafts→ **approved 0** (English correctly NOT target-script), **replaced 262** placeholders, **inserted 293**
     drafts (248 quote / 40 ordinal / 5 intro), **40 flagged** `aquifer_unverified`, 31 uncovered placeholders left NULL.
   - Cosmetic follow-up: the bold-gloss line renders as `**"****word**` (adjacent bolds) — harmless, tidy later.
-  - **Not runtime-verified:** the browser badge render (its data `draft_meta.source=aquifer` IS confirmed) and
-    export-direction gating (unvalidated Aquifer drafts vs BSOJ export; safe on dev — no crons).
+  - **Not runtime-verified:** the browser badge render (its data `draft_meta.source=aquifer` IS confirmed).
+  - **Code-review pass (Claude + Codex, on PR #36):** fixed — dedup/replace key now includes `occurrence`;
+    trailing See-link strip handles multi-Tag lines; **export SKIPS tn for `aquifer:*` books** (was: `pre_draft_json=''`
+    → nightly export would ship blank notes over the tn repo — data corruption) mirroring the reimport skip; and the
+    id set for collision-avoidance now includes soft-deleted rows (PK `(book,id)` collision → 500). **KNOWN DEFERRAL
+    (intentional, flagged by Codex):** `book_imports.tn_source='aquifer:*'` is never cleared, so an Aquifer book's tn is
+    held out of DCS export *permanently for now* — validated Aquifer Arabic won't reach DCS until the export-direction
+    feature is built AND a `tn_source`-clearing path is added. That's the deferred export work, not a regression.
   - **Shipped (commit fa3daf0):** `scripts/aquifer-join-census.mjs` (Phase-0 diagnostic, all 47 books arb+hin);
     `api/src/aquiferConvert.ts` + `.test.mjs` (quote-primary/ordinal-fallback/unmatched converter, 10 tests green,
     real 3JN 57/57); `api/src/aquiferSources.ts` (lang→dir + canonical book# + URL); `api/src/aquiferImport.ts`
