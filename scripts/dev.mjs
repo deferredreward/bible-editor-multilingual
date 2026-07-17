@@ -28,15 +28,53 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 // The Worker signs dev JWTs with JWT_SIGNING_KEY, read from api/.dev.vars at
 // startup. That file is gitignored, so a fresh checkout (or one where it got
 // cleaned up) has no key and POST /api/auth/dev returns a 500
-// (jwt_signing_key_not_configured), which cascades into 401s everywhere. Mint a
-// throwaway local key on first run so `npm run dev` just works. Dev-only — this
-// launcher is never used for prod, whose key is a real Cloudflare secret.
+// (jwt_signing_key_not_configured), which cascades into 401s everywhere. Seed
+// the file from api/.dev.vars.example with a throwaway local key on first run so
+// `npm run dev` just works — and so the generated file keeps the template's
+// other keys (BT_API_TOKEN, DCS_*) and their docs. Dev-only — this launcher is
+// never used for prod, whose key is a real Cloudflare secret.
 function ensureDevVars() {
   const devVars = path.join(repoRoot, "api", ".dev.vars");
-  if (fs.existsSync(devVars)) return;
+  const example = path.join(repoRoot, "api", ".dev.vars.example");
+
+  // Already present: don't touch it, but warn if it can't actually sign JWTs —
+  // otherwise the 500/401 cascade this helper prevents returns silently.
+  if (fs.existsSync(devVars)) {
+    if (!/^JWT_SIGNING_KEY=.+/m.test(fs.readFileSync(devVars, "utf8"))) {
+      console.warn(
+        `[dev] api/.dev.vars exists but has no JWT_SIGNING_KEY — sign-in will 500. ` +
+          `Add 'JWT_SIGNING_KEY=<32+ random chars>' (see api/.dev.vars.example).`,
+      );
+    }
+    return;
+  }
+
   const key = crypto.randomBytes(32).toString("hex");
-  fs.writeFileSync(devVars, `JWT_SIGNING_KEY=${key}\n`);
-  console.log(`[dev] created api/.dev.vars with a generated JWT_SIGNING_KEY (local dev only).`);
+  let contents = `JWT_SIGNING_KEY=${key}\n`;
+  try {
+    const template = fs.readFileSync(example, "utf8");
+    contents = /^JWT_SIGNING_KEY=/m.test(template)
+      ? template.replace(/^JWT_SIGNING_KEY=.*$/m, `JWT_SIGNING_KEY=${key}`)
+      : `${template.replace(/\n?$/, "\n")}JWT_SIGNING_KEY=${key}\n`;
+  } catch {
+    // No template (unexpected) — fall back to the minimal key-only file.
+  }
+
+  try {
+    // wx = exclusive create: if a concurrent launcher already wrote the file
+    // between our existsSync check and here, this throws EEXIST instead of
+    // clobbering its key (which would desync the two Workers' JWT signing).
+    fs.writeFileSync(devVars, contents, { flag: "wx" });
+    console.log(
+      `[dev] created api/.dev.vars from api/.dev.vars.example with a generated JWT_SIGNING_KEY (local dev only).`,
+    );
+  } catch (err) {
+    if (err.code === "EEXIST") return; // a racer won — its file is fine
+    console.warn(
+      `[dev] could not create api/.dev.vars (${err.code || err.message}). ` +
+        `Copy api/.dev.vars.example to api/.dev.vars and set JWT_SIGNING_KEY manually.`,
+    );
+  }
 }
 
 ensureDevVars();
