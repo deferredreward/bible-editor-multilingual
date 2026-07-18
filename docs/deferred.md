@@ -4,6 +4,108 @@ These are items from the original plan / red-team review that intentionally
 weren't shipped in the current pass. Each carries enough context to pick up
 cold. The fixes that *did* land are summarized at the bottom.
 
+## Scripture-translation demo prep (2026-07-17)
+
+Deferred during the Monday-demo unblock session (org BSOJ, `ar-bsoj` preset).
+Context: `STATE.md` entries `claude/scripture-translation-demo-unblock-b59d07`,
+`feat/admin-user-management`, `feat/onboard-translate-smoke`,
+`feat/aquifer-pull-button`.
+
+### Import fallback to latest en_tn when the org repo is stale/absent
+
+**Status:** IN PROGRESS — Benjamin kicked this off as a separate background
+session on 2026-07-17 (spawned task `task_2058a458`). Check for a branch/PR
+before starting fresh work here.
+
+**The problem:** book import always fetches from the configured org's own
+repos (`api/src/dcsSources.ts:79-95`, `const org = cfg.org` — no fallback to
+`cfg.translationSource`). For org BSOJ, several books' `ar_tn`/`ar_tq` were
+generated from an *old* `en_tn` and no longer share row IDs with the current
+`unfoldingWord/en_tn` (measured ~2% overlap for MAL). Consequence: (a)
+translators see stale English notes with no way to refresh them, and (b) the
+AI-translate pipeline drafts against *current* `en_tn` IDs, so applied output
+can't correlate to the imported rows — the "bot translates new English, no ID
+match" failure mode.
+
+**Why it's not trivial:** the fix touches import, reimport (self-heal),
+and export-provenance tracking together — see the task's own investigation
+brief for the design questions (trigger heuristic, reimport consistency,
+translation_state on fallback rows, export provenance so unfoldingWord
+English doesn't get pushed back to the org's own repo).
+
+### Door43 teams as role source (read-side)
+
+**Status:** not started. In-app user management (`user_roles` table +
+Preferences panel, `feat/admin-user-management`) shipped instead for the demo;
+this is the deferred richer version.
+
+**What's missing:** at OAuth callback, call `GET /api/v1/user/teams` with the
+*user's own* access token (no elevated service-token scope needed — this is
+the read-only half of what was actually asked for: "groups on Door43 orgs that
+BibleEditor can see"). Map `BE-Admins`/`BE-Editors` team membership in the
+configured org to `admin`/`editor` roles, and cache the result into
+`user_roles` on login so token refresh (which re-reads that table,
+`api/src/auth.ts`) keeps working without a DCS round-trip on every request.
+Teams themselves are created/managed in Door43's own team UI — the app never
+writes team membership, only reads it.
+
+### Per-user org switching (membership-scoped)
+
+**Status:** not started. Today one D1 database holds exactly one org (the
+interim tenancy model); switching orgs on a populated database 409s
+`project_not_empty` (`api/src/projectConfigApply.ts:159`) and requires an
+admin-run reset + re-onboard.
+
+**What's wanted:** a non-admin user should be able to switch between orgs
+they are a Door43 member of (not arbitrary orgs), without wiping the shared
+database. This is a bigger architectural change than the read-side teams
+item above — it implies either per-org D1 routing or a different
+data-partitioning model, since today's "one org per DB" assumption is baked
+into `project_config`, the lane tables, and the export-owner resolution.
+Needs its own design pass; don't attempt as a quick patch.
+
+### Admin-controlled per-user translate/edit toggle
+
+**Status:** not started. Today "translate vs. author" is a *project*-level
+property (`translationSource` set/unset by the preset,
+`isTranslationProject()` in `api/src/projectConfig.ts`), not a per-user
+setting.
+
+**What's wanted:** a toggle a user can flip between translate-review mode
+(source pinned above editable AI drafts, approve buttons) and direct-edit
+mode, where an *admin* controls whether a given user is allowed to see/use
+that toggle at all. This is distinct from the role system (admin/editor/
+viewer) — it's a permission on a capability, not an identity role. No
+schema or UI exists for this yet.
+
+### Clear the Aquifer export hold after approval
+
+**Status:** not started. `POST /api/books/:book/aquifer-drafts`
+(`api/src/aquiferImport.ts:229-231`) stamps
+`book_imports.tn_source = 'aquifer:arb'` so the nightly DCS reimport skips
+tN for that book (it would otherwise clobber the just-imported Aquifer
+drafts with a re-fetch of the org's own stale tN). That flag is never
+cleared, so **validated Aquifer-derived Arabic tN can never reach DCS export**
+even after a translator approves every row.
+
+**What's missing:** once all Aquifer-sourced rows for a book reach
+`translation_state = 'validated'` (or some other signal the team is happy
+with), clear `tn_source` back to null/the normal source so the book
+re-joins the export pipeline. Needs a decision on the trigger (all-approved?
+an explicit admin action?) and a check that the export path doesn't need to
+know the *provenance* was Aquifer once it's approved — only that it's
+validated.
+
+### Live AI-translate bot round-trip (verification gap, not a code gap)
+
+**Status:** the pipeline code (queue → dispatch → poll → import → review →
+approve) is fully wired and unit-tested, but the actual live round-trip
+against `uw-bt-bot.fly.dev` for org BSOJ was **not exercised in this
+session** — it requires a DCS OAuth-authenticated browser session, which
+only Benjamin can drive (dev-auth is disabled on the deployed dev worker).
+Do this before Monday, not during: sign in, import PHM, translate a tQ row
+live, confirm the job reaches `done` and the applied row lands correctly.
+
 ## Auth cleanup
 
 **Status:** DCS OAuth, `/api/auth/me`, `/api/auth/refresh`, `/api/auth/logout`,

@@ -8,11 +8,18 @@
 > [`docs/plan.md`](docs/plan.md) / [`docs/handoff.md`](docs/handoff.md) (where the project is going).
 > **State tells you where you are; the spec tells you where to go.**
 >
+> Deliberately-postponed work lives in [`docs/deferred.md`](docs/deferred.md), not here —
+> when a session decides *not* to build something, record it there with enough context
+> to pick up cold, and leave only a one-line pointer in the entry below.
+>
 > Many worktrees edit this file in parallel. Keep the dated sections (**Completed**,
 > **Lessons learned**) append-only and newest-first, so a merge conflict resolves by
 > keeping both sides. The canonical copy lives on `main` — rebase before relying on it.
 
 ## Last run
+
+2026-07-17 · **feat/aquifer-pull-button** (follow-up) — **Deferred items from the demo-prep session moved to `docs/deferred.md`.**
+- The scripture-translation-demo-unblock session surfaced six deferred items (import-fallback-to-en_tn — now in progress separately as task `task_2058a458`, Door43 teams read-side, per-user org switching, admin-controlled translate/edit toggle, clearing the Aquifer export hold, and the still-unverified live bot round-trip). Written up with full context under a new "Scripture-translation demo prep (2026-07-17)" section in [`docs/deferred.md`](docs/deferred.md) rather than left only in chat history. Intro block above now points there.
 
 2026-07-17 · **feat/aquifer-pull-button** — **One-click "Pull Aquifer drafts" button in the AI menu (was console-only).**
 - Aquifer import (`POST /api/books/:book/aquifer-drafts`, PR #36) had no UI — admins had to POST from DevTools. Added an admin-only `MenuItem` in `PipelineMenu.tsx` (beside "Import from Door43"), visible only for translation projects (`isTranslationProject`), that calls a new `api.aquiferDrafts(book)` client method and surfaces `approved`/`inserted` counts (or a mapped error) via the existing `pushPipelineToast`. tN-only, matches by quote (immune to the stale-ID problem that breaks AI-translate-tN on old ar_tn).
