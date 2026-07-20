@@ -204,6 +204,19 @@ if ($Remove) {
   if ((Norm $target) -eq (Norm $mainRoot)) {
     throw "Refusing to remove the MAIN checkout: $target"
   }
+  # Only ever remove a KNOWN worktree: a registered worktree (not main) or a
+  # discovered orphan worktree directory. This refuses arbitrary paths -- e.g.
+  # '..' or the parent folder that CONTAINS main and all siblings -- so a stray
+  # -Remove argument can never recursively delete outside the worktree set.
+  $regForGuard = Get-RegisteredWorktrees
+  $orphForGuard = Get-OrphanDirs ($regForGuard | ForEach-Object { $_.path })
+  $known = @()
+  $known += ($regForGuard | Where-Object { (Norm $_.path) -ne (Norm $mainRoot) } | ForEach-Object { Norm $_.path })
+  $known += ($orphForGuard | ForEach-Object { Norm $_ })
+  if ($known -notcontains (Norm $target)) {
+    throw "Refusing: '$target' is not a registered worktree or a known orphan worktree directory. Run the script with no arguments to see the eligible list."
+  }
+  $isRegistered = ($regForGuard | ForEach-Object { Norm $_.path }) -contains (Norm $target)
   $junctions = Find-Junctions $target
   Write-Host "Worktree: $target"
   Write-Host "Junctions to unlink first ($($junctions.Count)):"
@@ -219,8 +232,7 @@ if ($Remove) {
   Write-Host "Unlinked $n junction(s)."
 
   # 2) remove the worktree. Junctions are gone, so recursive delete is now safe.
-  $registered = (Get-RegisteredWorktrees | ForEach-Object { Norm $_.path }) -contains (Norm $target)
-  if ($registered) {
+  if ($isRegistered) {
     & git -C $mainRoot worktree remove --force $target
     Write-Host "git worktree remove: done."
   } else {
