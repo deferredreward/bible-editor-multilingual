@@ -100,7 +100,10 @@ export function UserManagementSection() {
     setRowBusy(username);
     try {
       const res = await api.adminSetUserRole(username, role);
-      if (!res.dcsVerified) setMsg(t("preferences.users.unverified"));
+      // A team-derived row stays team-managed, so this edit is undone at the
+      // user's next team check. Say so rather than letting it look permanent.
+      if (res.user.source === "dcs_team") setMsg(t("preferences.users.teamManagedEdit"));
+      else if (!res.dcsVerified) setMsg(t("preferences.users.unverified"));
     } catch (e) {
       setMsg(errorMessage(t, e));
     } finally {
@@ -113,7 +116,10 @@ export function UserManagementSection() {
     if (!window.confirm(t("preferences.users.confirmRemove", { username }))) return;
     setRowBusy(username);
     try {
-      await api.adminRemoveUser(username);
+      const res = await api.adminRemoveUser(username);
+      // Removing a team-derived row does NOT revoke access on its own — the
+      // next team check re-creates it. Never let that look like a clean revoke.
+      if (res.wasTeamDerived) setMsg(t("preferences.users.teamManagedRemove", { username }));
     } catch (e) {
       setMsg(errorMessage(t, e));
     } finally {

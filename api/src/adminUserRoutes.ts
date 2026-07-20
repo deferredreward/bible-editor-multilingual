@@ -123,8 +123,14 @@ adminUsers.put("/:username", async (c) => {
   // added_by is only set on first insert; ON CONFLICT only touches role, so
   // re-promoting/demoting an existing user preserves who originally added them.
   const upsert = await c.env.DB.prepare(
+    // `source` is set on INSERT only and deliberately NOT touched on conflict:
+    // a row stays owned by whoever created it. Flipping a team-derived row to
+    // 'manual' here would detach it from team sync, so later removing the user
+    // from the Door43 team — the documented way to revoke — would silently stop
+    // working. The trade-off is that an admin edit to a team-derived row is
+    // re-synced away at that user's next team check; the UI says so.
     `INSERT INTO user_roles (dcs_username, role, added_by, source) VALUES (?1, ?2, ?3, 'manual')
-     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role, source = 'manual'
+     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role
      WHERE NOT (
        role = 'admin' AND excluded.role = 'editor'
        AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1
@@ -157,6 +163,16 @@ adminUsers.put("/:username", async (c) => {
 adminUsers.delete("/:username", async (c) => {
   const username = c.req.param("username");
 
+  // Read the source BEFORE deleting so the response can warn that removing a
+  // team-derived row is only temporary — the user's next team check re-creates
+  // it. Without this the API reports a plain success for an action that does
+  // not actually revoke access, which is the more dangerous failure.
+  const existing = await c.env.DB.prepare(
+    `SELECT source FROM user_roles WHERE dcs_username = ?1`,
+  )
+    .bind(username)
+    .first<{ source: string | null }>();
+
   // Same atomic-guard shape as PUT: the admin-COUNT check and the DELETE
   // happen in one statement, so two concurrent deletes of the last two
   // admins can't both pass a stale count and both succeed.
@@ -169,7 +185,7 @@ adminUsers.delete("/:username", async (c) => {
     .run();
 
   if (del.meta.changes > 0) {
-    return c.json({ ok: true });
+    return c.json({ ok: true, wasTeamDerived: existing?.source === "dcs_team" });
   }
 
   // Zero changes means either the row never existed, or it existed but was

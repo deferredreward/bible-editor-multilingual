@@ -1877,7 +1877,11 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ role }) },
     ),
   adminRemoveUser: (username: string) =>
-    request<{ ok: true }>(`/api/admin/users/${encodeURIComponent(username)}`, {
-      method: "DELETE",
-    }),
+    // wasTeamDerived: the removed row came from a Door43 team, so the user's
+    // next team check re-creates it — removal only sticks once they're taken
+    // out of the team on Door43.
+    request<{ ok: true; wasTeamDerived?: boolean }>(
+      `/api/admin/users/${encodeURIComponent(username)}`,
+      { method: "DELETE" },
+    ),
 };

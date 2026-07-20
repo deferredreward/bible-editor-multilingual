@@ -24,8 +24,12 @@ import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
-import { getProjectConfig } from "./projectConfig.ts";
-import { resolveTeamRole, syncTeamRole } from "./dcsTeams.ts";
+import {
+  resolveTeamRole,
+  syncTeamRole,
+  orgForTeamSync,
+  RESYNC_AFTER_SECONDS,
+} from "./dcsTeams.ts";
 
 const ACCESS_COOKIE = "be_access";
 const REFRESH_COOKIE = "be_refresh";
@@ -126,6 +130,59 @@ export async function lookupUserRole(env: Env, dcsUsername: string): Promise<Rol
     .bind(dcsUsername)
     .first<{ role: Role }>();
   return row?.role ?? null;
+}
+
+// Refresh the caller's cached Door43-team role, if any.
+//
+// NOTHING here may break sign-in. Every failure mode — DCS unreachable, the
+// project org unknown, a D1 error (notably `no such column: source` in the
+// window between deploying this worker and applying migration 0053, since code
+// normally ships before migrations) — must leave the existing allowlist exactly
+// as it was and let the caller fall through to the pre-existing gate. A thrown
+// error here would 500 the OAuth callback and lock EVERY user out, admins
+// included, which is strictly worse than the feature silently not applying.
+async function syncTeamRoleForUser(
+  env: Env,
+  dcsUsername: string,
+  accessToken: string,
+): Promise<void> {
+  try {
+    const org = await orgForTeamSync(env);
+    if (!org) return; // project never onboarded, or the config read failed
+    const team = await resolveTeamRole(env, org, accessToken);
+    if (!team.known) return; // DCS didn't answer — never read that as "no teams"
+    await syncTeamRole(env, dcsUsername, team.role);
+  } catch (err) {
+    console.warn(`[auth] team role sync failed for ${dcsUsername}: ${String(err)}`);
+  }
+}
+
+// Re-check a cached team role on refresh, at most once per RESYNC_AFTER_SECONDS.
+//
+// Without this, the documented way to revoke access (remove the user from the
+// Door43 team) wouldn't take effect until their next *full* OAuth sign-in —
+// refresh only re-reads user_roles — so a departed or compromised account could
+// keep renewing its session for the whole 14-day refresh window. We reuse the
+// DCS access token already stored on the users row for logout revocation; if
+// it's missing or no longer valid, listUserTeams reports "unknown" and the
+// cached row is left alone.
+async function maybeResyncTeamRole(env: Env, dcsUsername: string): Promise<void> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT ur.synced_at AS syncedAt, u.dcs_access_token AS token
+         FROM user_roles ur
+         LEFT JOIN users u ON u.dcs_username = ur.dcs_username
+        WHERE ur.dcs_username = ?1 AND ur.source = 'dcs_team'`,
+    )
+      .bind(dcsUsername)
+      .first<{ syncedAt: number | null; token: string | null }>();
+    if (!row?.token) return;
+    const age = Math.floor(Date.now() / 1000) - (row.syncedAt ?? 0);
+    if (age < RESYNC_AFTER_SECONDS) return;
+    await syncTeamRoleForUser(env, dcsUsername, row.token);
+  } catch (err) {
+    console.warn(`[auth] team role re-sync failed for ${dcsUsername}: ${String(err)}`);
+  }
 }
 
 function signingKey(env: Env): Uint8Array | null {
@@ -452,13 +509,8 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
 
   // Door43 teams as role source (read-side). Membership of the configured
   // org's BE-Admins / BE-Editors teams grants admin / editor, and is cached
-  // into user_roles so /api/auth/refresh needs no DCS round-trip. Failure to
-  // reach DCS leaves the cached rows alone — an outage must not revoke anyone.
-  const cfg = await getProjectConfig(c.env);
-  const team = await resolveTeamRole(c.env, cfg.org, accessToken);
-  if (team.known) {
-    await syncTeamRole(c.env, dcsUser.login, team.role);
-  }
+  // into user_roles so /api/auth/refresh needs no DCS round-trip.
+  await syncTeamRoleForUser(c.env, dcsUser.login, accessToken);
 
   // Allowlist gate. user_roles is the source of truth for edit access; an
   // account missing from it falls through to a DCS org-membership check so
@@ -562,6 +614,10 @@ export async function refreshToken(c: AppContext): Promise<Response> {
   // Viewers (org-only access) re-verify org membership via the service token
   // (or public org listing) each refresh so removal from the org also revokes.
   const lookupName = session.dcs_username ?? "";
+  // Re-check Door43 team membership if the cached row has gone stale, so that
+  // removing someone from a team revokes within the hour rather than at their
+  // next full sign-in (which may never come).
+  await maybeResyncTeamRole(c.env, lookupName);
   let role: Role | null = await lookupUserRole(c.env, lookupName);
   if (!role) {
     const isMember = await isViewerOrgMember(c.env, lookupName, null);

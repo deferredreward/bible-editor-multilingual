@@ -48,16 +48,39 @@ a `source` column: `'manual'` vs `'dcs_team'`) so `/api/auth/refresh` keeps
 working off a plain D1 read. Teams are still created/managed only in Door43's
 own team UI — the app never writes membership.
 
-Precedence rules, all covered by `api/src/dcsTeams.test.mjs`:
-- Manual grants win. A row an admin created in the Preferences panel is never
-  overwritten or deleted by team sync; conversely, editing a team-derived row
-  in that panel converts it to `'manual'` (pins it).
-- Team rows re-sync on every login, including removal when the user has left
-  the team — except that the *last remaining admin* is never deleted, matching
-  the existing guard in `adminUserRoutes.ts`.
-- A DCS failure (network, non-2xx, unparseable body) is treated as "unknown"
-  and skips the sync entirely, so an outage can never mass-revoke roles.
+Precedence, one rule: **a row belongs to whoever created it, and Door43 teams
+may only ever raise access on rows they don't own.** All covered by
+`api/src/dcsTeams.test.mjs`:
+- `dcs_team` rows track their team exactly, in both directions, including
+  removal once the user leaves the team.
+- `manual` rows belong to the admin who added them. A team can *promote* such a
+  user (editor → admin — this is how a pre-0053 legacy allowlist entry gets
+  handed to team control) but can never demote or delete them.
+- `source` never changes after insert, so a row stays managed by whoever
+  created it. An admin edit to a team-derived row is therefore re-synced away
+  at that user's next team check; the Preferences panel says so explicitly, and
+  removing such a row warns that it only sticks once they're out of the team.
+- The last remaining admin is never demoted *or* deleted, matching the guards
+  in `adminUserRoutes.ts` — `/api/admin/users` is itself admin-gated, so a
+  zero-admin project could only be repaired with raw SQL against D1.
+- Anything that leaves membership *unknown* — network error, non-2xx,
+  unparseable body, or a paginated list truncated at the page cap — skips the
+  sync entirely rather than being read as "on no teams". Failures are logged
+  (`wrangler tail`) so a permanently broken lookup, e.g. an OAuth grant lacking
+  org-read scope, is distinguishable from a user genuinely being on no team.
+- The org is read straight from `project_config`, NOT via `getProjectConfig`,
+  which silently falls back to the default unfoldingWord preset on a read error
+  — that fallback would revoke every GL project's team roles on a transient D1
+  hiccup. If the org can't be established, the sync is skipped.
+- Revocation latency: `/api/auth/refresh` re-checks a cached team role once it
+  is older than an hour (`RESYNC_AFTER_SECONDS`), reusing the DCS token already
+  stored on the users row. Without that, removing someone from a team wouldn't
+  take effect until their next full sign-in — up to the 14-day refresh window.
 - `viewer` is still dynamic (org membership), never cached in `user_roles`.
+- Nothing in this path may break sign-in: the whole block is wrapped so that a
+  D1 error (notably `no such column: source`, in the window between deploying
+  the worker and applying migration 0053) leaves the allowlist untouched
+  instead of 500-ing the OAuth callback for every user.
 
 **Not verified:** the live round-trip against
 `https://git.door43.org/org/BibleEditorMLTest/teams` — the teams API needs an

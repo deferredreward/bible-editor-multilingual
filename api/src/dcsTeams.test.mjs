@@ -16,6 +16,7 @@ import {
   listUserTeams,
   roleFromTeams,
   resolveTeamRole,
+  orgForTeamSync,
   syncTeamRole,
   teamRoleNames,
   DEFAULT_ADMIN_TEAM,
@@ -44,7 +45,13 @@ function freshDb() {
       role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
       added_at INTEGER NOT NULL DEFAULT (unixepoch()),
       added_by INTEGER,
-      source TEXT NOT NULL DEFAULT 'manual'
+      source TEXT NOT NULL DEFAULT 'manual',
+      synced_at INTEGER
+    );
+    CREATE TABLE project_config (
+      id INTEGER PRIMARY KEY,
+      preset TEXT NOT NULL,
+      overrides_json TEXT
     );
   `);
   return db;
@@ -61,7 +68,13 @@ function makeD1(db) {
               const r = st.run(...params);
               return { meta: { changes: Number(r.changes) } };
             },
+            async first() {
+              return db.prepare(sql).get(...params) ?? null;
+            },
           };
+        },
+        async first() {
+          return db.prepare(sql).get() ?? null;
         },
       };
     },
@@ -70,7 +83,7 @@ function makeD1(db) {
 
 function rolesIn(db) {
   return db
-    .prepare("SELECT dcs_username, role, source FROM user_roles ORDER BY dcs_username")
+    .prepare("SELECT dcs_username, role, source, synced_at FROM user_roles ORDER BY dcs_username")
     .all();
 }
 
@@ -159,6 +172,24 @@ console.log("listUserTeams");
   assert(teams.length === 103 && calls === 3, "follows pagination until a short page");
 }
 
+{
+  // Every page full → the cap is hit with the list still possibly incomplete.
+  // Returning the partial list would make a user whose BE-Editors entry sits
+  // past the cap look like they're on no teams, and revoke them.
+  const page = (n) => Array.from({ length: n }, (_, i) => team(`T${i}`, "Org"));
+  let calls = 0;
+  const teams = await listUserTeams({}, "tok", {
+    fetch: async () => {
+      calls++;
+      return { ok: true, json: async () => page(50) };
+    },
+  });
+  assert(
+    teams === null && calls === 5,
+    "exhausting the page cap → null (truncated ≠ complete), after MAX_PAGES requests",
+  );
+}
+
 assert(
   (await listUserTeams({}, "tok", { fetch: async () => ({ ok: false, json: async () => ({}) }) })) === null,
   "non-2xx → null (unknown), not an empty list",
@@ -202,9 +233,13 @@ console.log("syncTeamRole — grants");
   );
   await syncTeamRole(env, "alice", "admin");
   assert(rolesIn(db)[0].role === "admin", "promotion in Door43 updates the cached role");
+  // A second admin, so the demotion below isn't refused by the last-admin guard
+  // (which is exercised on its own further down).
+  db.exec("INSERT INTO user_roles (dcs_username, role, source) VALUES ('zoe','admin','manual')");
   await syncTeamRole(env, "ALICE", "editor");
+  const alice = rolesIn(db).filter((r) => r.dcs_username.toLowerCase() === "alice");
   assert(
-    rolesIn(db).length === 1 && rolesIn(db)[0].role === "editor",
+    alice.length === 1 && alice[0].role === "editor",
     "username match is case-insensitive (no duplicate row)",
   );
 }
@@ -222,7 +257,7 @@ console.log("syncTeamRole — revocation");
   );
 }
 
-console.log("syncTeamRole — manual rows are authoritative");
+console.log("syncTeamRole — manual rows: teams may raise, never lower");
 {
   const db = freshDb();
   const env = { DB: makeD1(db) };
@@ -234,6 +269,16 @@ console.log("syncTeamRole — manual rows are authoritative");
     rolesIn(db).length === 1 && rolesIn(db)[0].role === "admin",
     "and never deletes a manual grant",
   );
+  assert(rolesIn(db)[0].source === "manual", "the row stays manual — source never flips");
+
+  // The legacy-allowlist promotion case: every row predating migration 0053 is
+  // 'manual', so without this a pre-existing editor could never be promoted by
+  // adding them to BE-Admins.
+  db.exec("INSERT INTO user_roles (dcs_username, role, source) VALUES ('legacy','editor','manual')");
+  await syncTeamRole(env, "legacy", "admin");
+  const legacy = rolesIn(db).find((r) => r.dcs_username === "legacy");
+  assert(legacy.role === "admin", "a team CAN promote a manual editor to admin");
+  assert(legacy.source === "manual", "...and the promoted row is still manual-owned");
 }
 
 console.log("syncTeamRole — last-admin guard");
@@ -244,13 +289,85 @@ console.log("syncTeamRole — last-admin guard");
   await syncTeamRole(env, "dave", null);
   assert(
     rolesIn(db).length === 1 && rolesIn(db)[0].role === "admin",
-    "removing the SOLE admin from the team does not lock everyone out",
+    "DELETE path: removing the SOLE admin from the team does not lock everyone out",
+  );
+  // Regression: the UPDATE path used to lack this guard entirely, so moving the
+  // only admin from BE-Admins to BE-Editors emptied the admin set — and
+  // /api/admin/users is admin-gated, so recovery needed raw SQL.
+  await syncTeamRole(env, "dave", "editor");
+  assert(
+    rolesIn(db)[0].role === "admin",
+    "UPDATE path: demoting the SOLE admin to editor is refused too",
   );
   await syncTeamRole(env, "erin", "admin");
+  await syncTeamRole(env, "dave", "editor");
+  assert(
+    rolesIn(db).find((r) => r.dcs_username === "dave").role === "editor",
+    "with a second admin present, the demotion goes through",
+  );
   await syncTeamRole(env, "dave", null);
   assert(
-    rolesIn(db).length === 1 && rolesIn(db)[0].dcs_username === "erin",
-    "with a second admin present, the revocation goes through",
+    !rolesIn(db).some((r) => r.dcs_username === "dave"),
+    "and so does the deletion",
+  );
+}
+
+console.log("syncTeamRole — synced_at freshness stamp");
+{
+  const db = freshDb();
+  const env = { DB: makeD1(db) };
+  await syncTeamRole(env, "fred", "editor");
+  assert(rolesIn(db)[0].synced_at > 0, "a successful sync stamps synced_at");
+  db.exec("UPDATE user_roles SET synced_at = 1 WHERE dcs_username = 'fred'");
+  await syncTeamRole(env, "fred", "editor");
+  assert(
+    rolesIn(db)[0].synced_at > 1,
+    "an unchanged role still refreshes synced_at (else refresh re-hits DCS forever)",
+  );
+  // A refused change must ALSO restamp, for the same reason.
+  const db2 = freshDb();
+  const env2 = { DB: makeD1(db2) };
+  await syncTeamRole(env2, "sole", "admin");
+  db2.exec("UPDATE user_roles SET synced_at = 1 WHERE dcs_username = 'sole'");
+  await syncTeamRole(env2, "sole", "editor");
+  assert(
+    rolesIn(db2)[0].role === "admin" && rolesIn(db2)[0].synced_at > 1,
+    "a guard-refused demotion still refreshes synced_at",
+  );
+}
+
+console.log("orgForTeamSync");
+{
+  const db = freshDb();
+  const env = { DB: makeD1(db) };
+  assert(
+    (await orgForTeamSync(env)) === null,
+    "no project_config row (never onboarded) → null, so the caller skips the sync",
+  );
+  db.exec(
+    "INSERT INTO project_config (id, preset, overrides_json) VALUES (1, 'en-unfoldingword', NULL)",
+  );
+  assert(
+    (await orgForTeamSync(env)) === "unfoldingWord",
+    "reads the org from the active preset",
+  );
+  db.exec(`UPDATE project_config SET overrides_json = '{"org":"BibleEditorMLTest"}' WHERE id = 1`);
+  assert(
+    (await orgForTeamSync(env)) === "BibleEditorMLTest",
+    "an org override wins over the preset",
+  );
+  // The whole point: unlike getProjectConfig, a read failure must NOT silently
+  // resolve to unfoldingWord — that would revoke every GL project's team roles.
+  const broken = {
+    DB: {
+      prepare() {
+        throw new Error("no such table: project_config");
+      },
+    },
+  };
+  assert(
+    (await orgForTeamSync(broken)) === null,
+    "a D1 error → null, NOT a silent fallback to the default preset's org",
   );
 }
 
