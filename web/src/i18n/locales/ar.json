@@ -638,7 +638,7 @@
     "resourceConfirmBody": "This re-downloads the entire {{book}} book — scripture, notes, questions and word links — and replaces it from DCS. Any local edits to this book will be lost.",
     "resourceContinue": "Re-source",
     "resourceEditsTitle": "Local edits will be discarded",
-    "resourceEditsBody": "{{tn}} notes, {{tq}} questions, {{twl}} word links and {{verses}} verses in {{book}} have been edited or validated — these will be permanently discarded.",
+    "resourceEditsBody": "{{tn}} notes, {{tq}} questions, {{twl}} word links and {{verses}} verses in {{book}} carry local work — human edits, approvals, or AI drafts. All of it will be permanently discarded.",
     "resourceDiscardConfirm": "Discard and re-source",
     "resourceStarting": "Re-sourcing {{book}} from the English source…",
     "resourceDone": "{{book}} re-sourced from {{sources}}.",
