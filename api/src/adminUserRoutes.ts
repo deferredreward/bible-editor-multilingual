@@ -153,6 +153,10 @@ adminUsers.put("/:username", async (c) => {
       role: row?.role ?? newRole,
       addedAt: row?.addedAt ?? null,
       addedBy: row?.addedBy ?? null,
+      // Must be returned: the panel keys its "this edit will be undone at the
+      // next team check" warning off it. Dropping it here silently disabled
+      // that warning for exactly the rows that need it.
+      source: row?.source ?? "manual",
     },
     dcsVerified,
   });

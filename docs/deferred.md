@@ -76,11 +76,30 @@ may only ever raise access on rows they don't own.** All covered by
   is older than an hour (`RESYNC_AFTER_SECONDS`), reusing the DCS token already
   stored on the users row. Without that, removing someone from a team wouldn't
   take effect until their next full sign-in — up to the 14-day refresh window.
+  **This is best-effort, not a guarantee — see the follow-up below.**
 - `viewer` is still dynamic (org membership), never cached in `user_roles`.
 - Nothing in this path may break sign-in: the whole block is wrapped so that a
   D1 error (notably `no such column: source`, in the window between deploying
   the worker and applying migration 0053) leaves the allowlist untouched
   instead of 500-ing the OAuth callback for every user.
+
+**Follow-up — persist the OAuth refresh token so team revocation is reliable.**
+The refresh-time re-check above uses `users.dcs_access_token`, captured at
+sign-in. We never store the OAuth `refresh_token`, and Gitea's access tokens are
+short-lived, so in practice that token is usually dead by the time the hourly
+re-check wants it: `/user/teams` 401s, the result is "unknown", and the cached
+role survives until the user's next full sign-in. **Net effect: removing someone
+from a Door43 team is not a prompt revocation.** For anything time-critical,
+remove the row in the Preferences panel *and* take them out of the team.
+
+To close it: store `refresh_token` (+ expiry) from the token exchange in
+`callbackDcsAuth`, and in `maybeResyncTeamRole` exchange it for a fresh access
+token when the teams call returns 401 before giving up. Deliberately not done in
+the shipping PR — it is new code in the sign-in path that can't be exercised
+without a live Door43 OAuth session, and getting it wrong locks everyone out.
+Failing closed (dropping a role that can't be re-verified) was considered and
+rejected: a structurally broken lookup, e.g. an OAuth grant lacking org-read
+scope, would then escalate from "feature does nothing" to "nobody can work".
 
 **Not verified:** the live round-trip against
 `https://git.door43.org/org/BibleEditorMLTest/teams` — the teams API needs an

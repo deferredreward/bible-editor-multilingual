@@ -161,11 +161,24 @@ async function syncTeamRoleForUser(
 //
 // Without this, the documented way to revoke access (remove the user from the
 // Door43 team) wouldn't take effect until their next *full* OAuth sign-in —
-// refresh only re-reads user_roles — so a departed or compromised account could
-// keep renewing its session for the whole 14-day refresh window. We reuse the
-// DCS access token already stored on the users row for logout revocation; if
-// it's missing or no longer valid, listUserTeams reports "unknown" and the
-// cached row is left alone.
+// refresh only re-reads user_roles — so a departed account could keep renewing
+// its session for the whole 14-day refresh window.
+//
+// BEST-EFFORT, and deliberately so. It reuses the DCS access token stored on
+// the users row for logout revocation, and we do NOT persist the OAuth
+// refresh_token, so once that access token expires (Gitea's default OAuth2
+// access-token lifetime is short) /user/teams answers 401, listUserTeams
+// reports "unknown", and the cached row is left alone — revocation then falls
+// back to taking effect at the user's next full sign-in. That is strictly
+// better than no re-check, but it is NOT an hourly revocation guarantee; do
+// not describe it as one. Closing the gap means persisting refresh_token and
+// exchanging it here — written up in docs/deferred.md.
+//
+// Failing CLOSED instead (dropping a team role we can't re-verify) was
+// considered and rejected: we can't distinguish "token expired" from "the
+// teams lookup is structurally broken here" (e.g. an OAuth grant without
+// org-read scope), and in the latter case failing closed would turn a feature
+// that silently does nothing into a project-wide lockout.
 async function maybeResyncTeamRole(env: Env, dcsUsername: string): Promise<void> {
   try {
     const row = await env.DB.prepare(
