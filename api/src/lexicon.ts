@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
+import { sharedDb } from "./workspaces.ts";
 
 export const lexicon = new Hono<{ Bindings: Env }>();
 
@@ -38,7 +39,7 @@ lexicon.get("/:strong", async (c) => {
   const raw = c.req.param("strong");
   const candidates = strongLookupKeys(raw);
   for (const k of candidates) {
-    const row = await c.env.DB.prepare(
+    const row = await sharedDb(c.env).prepare(
       `SELECT * FROM lexicon_entries WHERE strong = ?1`,
     )
       .bind(k)
@@ -76,7 +77,7 @@ lexicon.get("/", async (c) => {
   for (let i = 0; i < uniqueKeys.length; i += CHUNK) {
     const chunk = uniqueKeys.slice(i, i + CHUNK);
     const placeholders = chunk.map((_v, j) => `?${j + 1}`).join(",");
-    const rs = await c.env.DB.prepare(
+    const rs = await sharedDb(c.env).prepare(
       `SELECT * FROM lexicon_entries WHERE strong IN (${placeholders})`,
     )
       .bind(...chunk)

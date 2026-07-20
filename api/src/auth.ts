@@ -24,6 +24,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
+import { sharedDb } from "./workspaces.ts";
 
 const ACCESS_COOKIE = "be_access";
 const REFRESH_COOKIE = "be_refresh";
@@ -320,7 +321,7 @@ async function startSession(c: AppContext, userId: number): Promise<SessionMintR
     c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
     null;
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `INSERT INTO sessions (id, user_id, csrf_token, expires_at, user_agent, ip, last_seen_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())`,
   )
@@ -469,7 +470,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // Upsert users row keyed by dcs_user_id. We stash the DCS access_token so
   // /api/auth/logout can revoke it server-side (RFC 7009) — without it, the
   // next sign-in silently re-auths against a live DCS cookie session.
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `INSERT INTO users (dcs_user_id, dcs_username, dcs_full_name, dcs_access_token)
      VALUES (?1, ?2, ?3, ?4)
      ON CONFLICT(dcs_user_id) DO UPDATE SET
@@ -478,7 +479,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     .bind(dcsUser.id, dcsUser.login, dcsUser.full_name ?? dcsUser.login, accessToken)
     .run();
 
-  const userRow = await c.env.DB.prepare(
+  const userRow = await sharedDb(c.env).prepare(
     `SELECT id FROM users WHERE dcs_user_id = ?1`,
   )
     .bind(dcsUser.id)
@@ -504,7 +505,7 @@ export async function authMe(c: AppContext): Promise<Response> {
   const username = (c as AppContext).get("username");
   const role = (c as AppContext).get("role");
   if (!userId) return c.json({ error: "unauthorized" }, 401);
-  const row = await c.env.DB.prepare(
+  const row = await sharedDb(c.env).prepare(
     `SELECT last_book, last_chapter, last_verse FROM users WHERE id = ?1`,
   )
     .bind(userId)
@@ -516,6 +517,7 @@ export async function authMe(c: AppContext): Promise<Response> {
     lastBook: row?.last_book ?? null,
     lastChapter: row?.last_chapter ?? null,
     lastVerse: row?.last_verse ?? null,
+    workspace: c.env.WORKSPACE_SLUG ?? "default",
   });
 }
 
@@ -531,7 +533,7 @@ export async function refreshToken(c: AppContext): Promise<Response> {
   const sessionId = getCookie(c, REFRESH_COOKIE);
   if (!sessionId) return c.json({ error: "unauthorized" }, 401);
 
-  const session = await c.env.DB.prepare(
+  const session = await sharedDb(c.env).prepare(
     `SELECT s.id, s.user_id, s.expires_at, s.revoked_at, u.dcs_username
        FROM sessions s
        JOIN users u ON u.id = s.user_id
@@ -561,7 +563,7 @@ export async function refreshToken(c: AppContext): Promise<Response> {
 
   const newToken = await mintToken(c, session.user_id, lookupName, role);
   rotateAccessCookie(c, newToken);
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `UPDATE sessions SET last_seen_at = unixepoch() WHERE id = ?1`,
   )
     .bind(sessionId)
@@ -592,7 +594,7 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     role = "admin";
   }
 
-  const existing = await c.env.DB.prepare(
+  const existing = await sharedDb(c.env).prepare(
     `SELECT id FROM users WHERE dcs_username = ?1`,
   )
     .bind(username)
@@ -605,12 +607,12 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     // two dev usernames — the lookup above is by `dcs_username` anyway, so
     // stability across runs isn't required.
     const fakeDcsId = -(Math.floor(Math.random() * 0x7fffffff) + 1);
-    await c.env.DB.prepare(
+    await sharedDb(c.env).prepare(
       `INSERT INTO users (dcs_user_id, dcs_username, dcs_full_name) VALUES (?1, ?2, ?2)`,
     )
       .bind(fakeDcsId, username)
       .run();
-    const row = await c.env.DB.prepare(
+    const row = await sharedDb(c.env).prepare(
       `SELECT id FROM users WHERE dcs_username = ?1`,
     )
       .bind(username)
@@ -624,7 +626,7 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
   // Return MeResponse shape — same as /api/auth/me — so the client can take
   // a single round-trip path through devSignIn() without a separate /me
   // follow-up. lastBook/lastChapter/lastVerse are NULL for fresh dev users.
-  const loc = await c.env.DB.prepare(
+  const loc = await sharedDb(c.env).prepare(
     `SELECT last_book, last_chapter, last_verse FROM users WHERE id = ?1`,
   )
     .bind(userId)
@@ -659,7 +661,7 @@ export async function authLogout(c: AppContext): Promise<Response> {
   // We still try to revoke the session if we can identify it.
   const sessionId = getCookie(c, REFRESH_COOKIE);
   if (sessionId) {
-    await c.env.DB.prepare(
+    await sharedDb(c.env).prepare(
       `UPDATE sessions SET revoked_at = unixepoch() WHERE id = ?1 AND revoked_at IS NULL`,
     )
       .bind(sessionId)
@@ -667,7 +669,7 @@ export async function authLogout(c: AppContext): Promise<Response> {
   }
 
   if (userId) {
-    const row = await c.env.DB.prepare(
+    const row = await sharedDb(c.env).prepare(
       `SELECT dcs_access_token FROM users WHERE id = ?1`,
     )
       .bind(userId)
@@ -694,7 +696,7 @@ export async function authLogout(c: AppContext): Promise<Response> {
 
     // Clear stored token regardless of revoke outcome — keeping a stale
     // token around would do nothing but accumulate sensitive material.
-    await c.env.DB.prepare(
+    await sharedDb(c.env).prepare(
       `UPDATE users SET dcs_access_token = NULL WHERE id = ?1`,
     )
       .bind(userId)
@@ -730,7 +732,7 @@ export async function updateLastLocation(c: AppContext): Promise<Response> {
     return c.json({ error: "invalid_location" }, 400);
   }
 
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `UPDATE users SET last_book = ?1, last_chapter = ?2, last_verse = ?3 WHERE id = ?4`,
   )
     .bind(book, chapter, verse, userId)

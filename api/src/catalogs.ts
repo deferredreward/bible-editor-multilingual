@@ -65,9 +65,14 @@ function buildDisambiguation(articles: TwArticleLite[]) {
 // so the rebuild is worth avoiding per-request. The usage-derived twLinks below
 // stay live each request (a bounded GROUP BY) so a freshly-added link still
 // autocompletes immediately.
-let disambigCache:
-  | { sig: string; value: ReturnType<typeof buildDisambiguation> }
-  | null = null;
+//
+// Keyed by workspace slug: the Worker isolate is shared across every
+// workspace, and tw_articles is per-workspace D1 content, so a single cache
+// entry would serve workspace A's disambiguation groups to workspace B.
+const disambigCache = new Map<
+  string,
+  { sig: string; value: ReturnType<typeof buildDisambiguation> }
+>();
 
 // Support references are served from the curated canonical TA list
 // (taSupportReferences.ts) — the notes picker restricts to these. TW links prefer
@@ -114,12 +119,14 @@ catalogs.get("/", async (c) => {
     }
   }
 
-  let disambiguation = disambigCache && disambigCache.sig === sig ? disambigCache.value : null;
+  const wsKey = c.env.WORKSPACE_SLUG ?? "default";
+  const wsCache = disambigCache.get(wsKey);
+  let disambiguation = wsCache && wsCache.sig === sig ? wsCache.value : null;
   if (!disambiguation) {
     disambiguation = buildDisambiguation(
       canonical.results.map((r) => ({ id: r.id, title: r.title })),
     );
-    disambigCache = { sig, value: disambiguation };
+    disambigCache.set(wsKey, { sig, value: disambiguation });
   }
 
   return c.json({

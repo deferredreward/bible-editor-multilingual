@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
+import { sharedDb } from "./workspaces.ts";
 
 // Alignment suggestions over the precomputed alignment-memory frequency table
 // (align_freq, populated offline by scripts/train-aligner.mjs from the gold
@@ -156,7 +157,7 @@ align.get("/suggest", async (c) => {
   for (let i = 0; i < keys.length; i += STRONG_CHUNK) {
     const chunk = keys.slice(i, i + STRONG_CHUNK);
     const placeholders = chunk.map((_v, j) => `?${j + 2}`).join(",");
-    const rs = await c.env.DB.prepare(
+    const rs = await sharedDb(c.env).prepare(
       `SELECT strong, surface, count FROM align_freq WHERE bible = ?1 AND strong IN (${placeholders})`,
     )
       .bind(bible, ...chunk)
@@ -176,7 +177,7 @@ align.get("/suggest", async (c) => {
     for (let i = 0; i < keys.length; i += STRONG_CHUNK) {
       const chunk = keys.slice(i, i + STRONG_CHUNK);
       const placeholders = chunk.map((_v, j) => `?${j + 2}`).join(",");
-      const rs = await c.env.DB.prepare(
+      const rs = await sharedDb(c.env).prepare(
         `SELECT strong, morph_class, surface, count FROM align_freq_morph WHERE bible = ?1 AND strong IN (${placeholders})`,
       )
         .bind(bible, ...chunk)
@@ -209,7 +210,7 @@ align.get("/suggest", async (c) => {
     const chunk = lexKeys.slice(i, i + STRONG_CHUNK);
     if (chunk.length === 0) break;
     const placeholders = chunk.map((_v, j) => `?${j + 1}`).join(",");
-    const rs = await c.env.DB.prepare(
+    const rs = await sharedDb(c.env).prepare(
       `SELECT strong, gloss, definition FROM lexicon_entries WHERE strong IN (${placeholders})`,
     )
       .bind(...chunk)

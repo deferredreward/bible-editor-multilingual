@@ -18,6 +18,16 @@
 
 ## Last run
 
+2026-07-20 · **worktree-feat-org-workspaces** — **Per-user org switching shipped: one D1 database per org, a cookie picks which one, ~494 `env.DB` call sites untouched.**
+- **Why:** switching orgs 409'd `project_not_empty` and required an admin reset + re-onboard, which blocked checking PR #50 (Door43 teams as role source) against the test org.
+- **Shipped:** `api/src/workspaces.ts` (registry/parse/resolve/`workspaceEnv`/`sharedDb`/cookie helpers), `api/src/workspaceRoutes.ts` (`GET /api/workspaces`, `POST /api/workspaces/:slug`), the `fetch`-wrapper swap + per-workspace `scheduled()` loop + workspace-scoped ChapterRoom DO names in `index.ts`, shared-DB split in `auth.ts`/`lexicon.ts`/`align.ts`/`l10n.ts` (+ the `adminUserRoutes.ts` join split that forced), `ExportWorkflow` re-pointing `this.env` from `params.workspace`, workspace-keyed isolate caches, and the frontend `WorkspaceSwitcher` + per-workspace outbox database name + `App.tsx` boot reconciliation.
+- **Two real bugs found only by running it, both fixed in-branch** (see Lessons learned):
+  1. Isolate-level module caches (`getProjectConfig`'s 60s cache, plus `catalogs`/`twlFilters`/`twlSuggest`) are per-*isolate*, shared across all workspaces — after a switch, `GET /api/project-config` returned the *other* org's config, which could point an export at the wrong DCS repo. Fixed by keying every such cache by `WORKSPACE_SLUG`.
+  2. Cloudflare Workflows don't inherit the per-request env clone — `ExportWorkflow` read raw `this.env`, so a nightly export queued for org B would have rendered org A's D1 into B's repos, and `nightly-${day}` instance ids collided so only the first org would export at all. Fixed by carrying the workspace in params and re-pointing `this.env` once at the top of `run()`.
+- **How verified:** 114 api tests + 14 web tests + typecheck + build; live two-workspace `wrangler dev` on port 8823 with two real D1 databases (`bible_editor_dev` = BSOJ, new `bible_editor_mltest_dev` = BibleEditorMLTest, id `52e0b62e-8720-4024-ab4e-2898d2c94ac7`, all migrations applied) — switched both directions in-browser confirming a seeded BSOJ-only note is visible in BSOJ and absent in the test org, the session survives the switch, the config-cache leak no longer reproduces, the unsaved-edits guard blocks a switch with a pending outbox op, and blanking `WORKSPACES` hides the switcher and restores exactly today's single-org behavior.
+- **Escalated / needs Benjamin:** production `WORKSPACES` is deliberately empty and there is no production second database — this is dev-only until he decides to roll it out; and he should confirm whether his Door43 account is a member of both orgs (that membership, not `SUPER_ADMINS`, is what grants the switch on the deployed worker).
+- Remaining gaps (self-serve org provisioning, new-workspace role bootstrapping, shared `last_book/chapter/verse`, a first-load outbox race, shared R2 keyspace) are written up in `docs/deferred.md` under "Per-user org switching (membership-scoped)" — now marked SHIPPED (core) with those five items listed as still open.
+
 2026-07-20 · **worktree-tn-source-fallback** — **Import can now pull tN/tQ from the English source (unfoldingWord) when the org's own notes are stale machine-English.** (This is the `import-fallback-to-en_tn` deferred item from `docs/deferred.md` — the durable fix the Monday demo routed around.)
 - **The problem, plainly:** book import always read tN/tQ from the configured org's own repos (`const org = cfg.org` in `dcsSources.ts`, no fallback to `cfg.translationSource`). For BSOJ, many books' `ar_tn`/`ar_tq` are stale machine-English generated from an OLD `en_tn`, so their row IDs no longer match current `unfoldingWord/en_tn` — measured **2.6% ID overlap for MAL** (5 of 195). Two consequences: translators saw outdated English notes, and the AI-translate pipeline (which translates CURRENT en_tn and keys drafts by current IDs) produced drafts that couldn't correlate to the imported rows. Aquifer import was the only path that surfaced current en_tn, and only for books Aquifer's arb repo covers.
 - **Product decisions taken with Benjamin** (three-way, recorded so a later session doesn't re-litigate): (1) trigger is an **explicit per-book opt-in at import**, plus an automatic fallback only on a genuine **404** — NOT an ID-overlap heuristic, which would silently discard real translation work on books that legitimately diverge; (2) scope is **tN + tQ only** — tWL is language-neutral and out of scope (it still needs regular upstream updates, just not this mechanism); (3) source-pulled books are **held out of the nightly DCS export**, exactly like the Aquifer precedent, so we never push unfoldingWord English back into the org's repo. Export-direction handling is deferred with the Aquifer books.
@@ -1847,6 +1857,17 @@ Highlights that bite repeatedly:
   CREATE TABLE/TRIGGER statements to unit-test schema invariants without Miniflare. Wrap multi-statement batches in
   `BEGIN`/`COMMIT` with try/catch `ROLLBACK` to match D1 batch atomicity (SQLite's `RAISE(ABORT)` only rolls back
   the current statement, not the whole transaction).
+- **Any new module-level cache in `api/src` must be workspace-keyed.** With per-org workspaces
+  (`worktree-feat-org-workspaces`), a cache keyed only by e.g. `"project-config"` is shared across every org
+  because it lives at the Worker *isolate* level, not per-request. `getProjectConfig`'s 60s cache (and
+  `catalogs`/`twlFilters`/`twlSuggest`) leaked another org's config — including `org`/`exportOrg` — after a
+  switch until keyed by `WORKSPACE_SLUG`.
+- **Cloudflare Workflows do not inherit the per-request env clone** — they read the raw Worker `env` via
+  `this.env`, not whatever `workspaceEnv()` swapped in for the triggering request. `ExportWorkflow` rendering
+  the wrong org's D1 into the wrong org's DCS repos (plus colliding `nightly-${day}` instance ids masking a
+  second org's export entirely) was only caught by actually running two workspaces side by side. Same caution
+  applies to anything else handed to a Workflow/Queue/alarm rather than a request closure — re-point `this.env`
+  explicitly from params at the top of the handler.
 
 ## Stop conditions / goals
 

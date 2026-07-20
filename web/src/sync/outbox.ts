@@ -21,8 +21,23 @@ import {
 import { backoffMs } from "./backoff";
 import { classifyRowPatchConflict } from "./rowConflict";
 import { isLaneFrozen, laneFreezeReason } from "./laneFreeze";
+import { getWorkspaceSlug } from "./workspace";
 
-const DB_NAME = "bible-editor-outbox";
+// Namespaced per workspace so switching Door43 orgs can never drain one org's
+// queued edits into another org's D1 database — without this, an edit queued
+// offline while in org A would ship to org B after a workspace switch. Do NOT
+// "simplify" this back to a fixed name.
+//
+// Back-compat: pre-workspaces installs have a populated unsuffixed
+// "bible-editor-outbox" database with real unsynced edits. The "default"
+// slug (single-org deployments, and anyone who hasn't switched) keeps using
+// that original name so no queued edit is orphaned by this deploy — only
+// non-default slugs get the "-{slug}" suffix.
+function outboxDbName(): string {
+  const slug = getWorkspaceSlug();
+  return slug === "default" ? "bible-editor-outbox" : `bible-editor-outbox-${slug}`;
+}
+
 const DB_VERSION = 1;
 const STORE = "ops";
 
@@ -133,12 +148,22 @@ export interface OutboxOp {
   quarantined?: string;
 }
 
+// Ops still awaiting a settled outcome — either queued or on the wire. Shared
+// by SyncStatusBar's "saving N" pill and WorkspaceSwitcher's pre-switch guard
+// (an unsaved edit must finish syncing before a workspace switch, since the
+// outbox is about to be renamed to the new org's database).
+export function isOpPending(op: OutboxOp): boolean {
+  return op.status === "pending" || op.status === "in_flight";
+}
+
 type Subscriber = (ops: OutboxOp[]) => void;
 
 let dbp: Promise<IDBPDatabase> | null = null;
 function db() {
   if (!dbp) {
-    dbp = openDB(DB_NAME, DB_VERSION, {
+    // Resolved at first-open time (not module load) so it picks up a slug
+    // written during boot reconciliation (see App.tsx) before any op is queued.
+    dbp = openDB(outboxDbName(), DB_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains(STORE)) {
           const store = db.createObjectStore(STORE, { keyPath: "id" });

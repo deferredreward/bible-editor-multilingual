@@ -589,6 +589,28 @@ export interface MeResponse {
   lastBook: string | null;
   lastChapter: number | null;
   lastVerse: number | null;
+  // The server's active workspace slug for this session's be_ws cookie.
+  // Absent on an older/cached response — callers treat that as "no reconciliation
+  // needed" (see App.tsx boot reconciliation).
+  workspace?: string;
+}
+
+// One org-per-D1 workspace the switcher can offer. `allowed` reflects Door43
+// org membership (or super-admin status) as of the last GET /api/workspaces —
+// disallowed entries render disabled in the UI.
+export interface WorkspaceInfo {
+  slug: string;
+  label: string;
+  org: string;
+  allowed: boolean;
+}
+
+export interface WorkspacesResponse {
+  current: string;
+  workspaces: WorkspaceInfo[];
+  // Set when the server couldn't confirm Door43 org membership (no token, or
+  // the DCS lookup failed) — the `allowed` flags may be stale/incomplete.
+  membershipUnknown?: boolean;
 }
 
 export type AlertSeverity = "error" | "warning" | "info";
@@ -1922,5 +1944,14 @@ export const api = {
   adminRemoveUser: (username: string) =>
     request<{ ok: true }>(`/api/admin/users/${encodeURIComponent(username)}`, {
       method: "DELETE",
+    }),
+
+  // ── Workspaces (org-per-D1) ──
+  listWorkspaces: () => request<WorkspacesResponse>(`/api/workspaces`),
+  // Sets the be_ws cookie server-side. 404 unknown_workspace / 403
+  // workspace_forbidden are surfaced to callers as ApiError.
+  switchWorkspace: (slug: string) =>
+    request<{ ok: true; slug: string }>(`/api/workspaces/${encodeURIComponent(slug)}`, {
+      method: "POST",
     }),
 };
