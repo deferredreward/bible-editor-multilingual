@@ -231,18 +231,28 @@ async function syncTeamRoleForUser(
 // that silently does nothing into a project-wide lockout.
 async function maybeResyncTeamRole(env: Env, dcsUsername: string): Promise<void> {
   try {
+    // Two databases, so two statements: user_roles is per-org (env.DB), while
+    // the OAuth token lives ONLY in the shared users table — ensureWorkspaceUser
+    // deliberately never copies dcs_access_token into a per-org users row. The
+    // original single LEFT JOIN against env.DB therefore read the mirrored row
+    // and always saw token = NULL in any non-default workspace, which silently
+    // disabled this whole re-check there: a user removed from a Door43 team kept
+    // renewing an editor/admin session in that org for the full refresh window.
     const row = await env.DB.prepare(
-      `SELECT ur.synced_at AS syncedAt, u.dcs_access_token AS token
-         FROM user_roles ur
-         LEFT JOIN users u ON u.dcs_username = ur.dcs_username
-        WHERE ur.dcs_username = ?1 AND ur.source = 'dcs_team'`,
+      `SELECT synced_at AS syncedAt FROM user_roles
+        WHERE dcs_username = ?1 AND source = 'dcs_team'`,
     )
       .bind(dcsUsername)
-      .first<{ syncedAt: number | null; token: string | null }>();
-    if (!row?.token) return;
+      .first<{ syncedAt: number | null }>();
+    if (!row) return;
     const age = Math.floor(Date.now() / 1000) - (row.syncedAt ?? 0);
     if (age < RESYNC_AFTER_SECONDS) return;
-    await syncTeamRoleForUser(env, dcsUsername, row.token);
+    const tokenRow = await sharedDb(env)
+      .prepare(`SELECT dcs_access_token AS token FROM users WHERE dcs_username = ?1`)
+      .bind(dcsUsername)
+      .first<{ token: string | null }>();
+    if (!tokenRow?.token) return;
+    await syncTeamRoleForUser(env, dcsUsername, tokenRow.token);
   } catch (err) {
     console.warn(`[auth] team role re-sync failed for ${dcsUsername}: ${String(err)}`);
   }
