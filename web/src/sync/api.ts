@@ -833,6 +833,8 @@ export interface ImportHasLocalEditsBody {
   book: string;
   tn: number;
   tq: number;
+  twl: number;
+  verses: number;
 }
 
 // Display form of the import response's note-source provenance: the stored
@@ -1455,8 +1457,8 @@ export const api = {
   // own because the org's file is missing), e.g. "source:unfoldingWord/en_tn".
   // `force` (admin-only) bypasses the already-imported short-circuit and does a
   // full wipe-and-reload; the server answers 403 `forbidden` for non-admins and
-  // 409 `has_local_edits` (with tn/tq counts) unless `confirmDiscardEdits` is
-  // also set. See ImportHasLocalEditsBody for those bodies.
+  // 409 `has_local_edits` (with tn/tq/twl/verses counts) unless `confirmDiscardEdits`
+  // is also set. See ImportHasLocalEditsBody for those bodies.
   importBook: (
     book: string,
     opts?: { translateFromSource?: boolean; force?: boolean; confirmDiscardEdits?: boolean },

@@ -688,6 +688,8 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
                   book,
                   tn: resourceConfirm?.tn ?? 0,
                   tq: resourceConfirm?.tq ?? 0,
+                  twl: resourceConfirm?.twl ?? 0,
+                  verses: resourceConfirm?.verses ?? 0,
                 })}
           </DialogContentText>
         </DialogContent>

@@ -144,25 +144,39 @@ books.post("/:book/import", requireEditor, async (c) => {
   }
 
   if (force) {
-    // Safety gate: the forced import DELETEs every tn/tq row for the book and
-    // re-inserts from DCS, so any translated/edited note is destroyed. Count the
-    // rows that represent real human work — translation_state 'edited'/'validated'
-    // (migrations 0037/0038) or any row a user has touched (updated_by non-NULL,
-    // the same pristine predicate the reimport uses) — and refuse unless the
-    // caller has explicitly acknowledged the loss.
+    // Safety gate: importBookFromDcs wipes tn_rows, tq_rows, twl_rows, verses
+    // (ULT/UST + original-language) and book_usfm_meta for the book, then
+    // re-inserts from DCS — so ANY of those tables can hold destroyed human
+    // work, not just tn/tq. (This gap — twl/verses edits sailing through with
+    // no 409 — is exactly what review of PR #54 flagged as a HIGH-severity
+    // data-loss bug: the UI's "Re-source notes from English" label gives an
+    // admin no reason to expect scripture loss.) Count rows that represent
+    // real human work in every wiped table — translation_state
+    // 'edited'/'validated' (migrations 0037/0038, tn/tq only — twl/verses have
+    // no translation_state column) or any row a user has touched (updated_by
+    // non-NULL, the same pristine predicate the reimport uses) — and refuse
+    // unless the caller has explicitly acknowledged the loss.
     const edits = await c.env.DB.prepare(
       `SELECT
          (SELECT COUNT(*) FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL
             AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tn,
          (SELECT COUNT(*) FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
-            AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tq`,
+            AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tq,
+         (SELECT COUNT(*) FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND updated_by IS NOT NULL) AS twl,
+         (SELECT COUNT(*) FROM verses WHERE book = ?1 AND updated_by IS NOT NULL) AS verses`,
     )
       .bind(book)
-      .first<{ tn: number; tq: number }>();
+      .first<{ tn: number; tq: number; twl: number; verses: number }>();
     const tnEdits = edits?.tn ?? 0;
     const tqEdits = edits?.tq ?? 0;
-    if (tnEdits + tqEdits > 0 && body?.confirmDiscardEdits !== true) {
-      return c.json({ error: "has_local_edits", book, tn: tnEdits, tq: tqEdits }, 409);
+    const twlEdits = edits?.twl ?? 0;
+    const verseEdits = edits?.verses ?? 0;
+    if (tnEdits + tqEdits + twlEdits + verseEdits > 0 && body?.confirmDiscardEdits !== true) {
+      return c.json(
+        { error: "has_local_edits", book, tn: tnEdits, tq: tqEdits, twl: twlEdits, verses: verseEdits },
+        409,
+      );
     }
     // Destructive + irreversible from the app's side: leave a trace of who did
     // it, to what, and how much work it discarded.
@@ -170,7 +184,7 @@ books.post("/:book/import", requireEditor, async (c) => {
       book,
       userId,
       translateFromSource,
-      discardedEdits: { tn: tnEdits, tq: tqEdits },
+      discardedEdits: { tn: tnEdits, tq: tqEdits, twl: twlEdits, verses: verseEdits },
     });
   }
 
