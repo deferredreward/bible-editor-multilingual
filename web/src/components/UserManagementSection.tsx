@@ -239,7 +239,7 @@ export function UserManagementSection() {
                 {u.addedAt != null ? new Date(u.addedAt * 1000).toLocaleDateString() : "—"}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {u.addedBy ?? "—"}
+                {u.source === "dcs_team" ? t("preferences.users.fromTeam") : (u.addedBy ?? "—")}
               </Typography>
               <Tooltip title={t("preferences.users.remove")}>
                 <span>

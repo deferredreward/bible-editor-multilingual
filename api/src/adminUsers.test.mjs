@@ -50,7 +50,8 @@ function freshDb() {
       dcs_username TEXT PRIMARY KEY COLLATE NOCASE,
       role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
       added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      added_by INTEGER REFERENCES users(id)
+      added_by INTEGER REFERENCES users(id),
+      source TEXT NOT NULL DEFAULT 'manual'
     );
   `);
   return db;

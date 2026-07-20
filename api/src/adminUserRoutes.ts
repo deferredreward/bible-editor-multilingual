@@ -21,11 +21,21 @@ adminUsers.use("*", requireAuth, requireAdmin);
 
 const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
-type UserRow = { username: string; role: string; addedAt: number; addedBy: string | null };
+type UserRow = {
+  username: string;
+  role: string;
+  addedAt: number;
+  addedBy: string | null;
+  source: string | null;
+};
 
 // Shared shape for both the list and the single-row post-write fetch.
+// `source` is 'manual' (granted here) or 'dcs_team' (derived from Door43 team
+// membership at sign-in — see api/src/dcsTeams.ts). Deleting a 'dcs_team' row
+// only lasts until that user's next login; remove them from the Door43 team to
+// make it stick.
 const USER_ROW_SELECT = `SELECT ur.dcs_username AS username, ur.role AS role, ur.added_at AS addedAt,
-         u.dcs_username AS addedBy
+         u.dcs_username AS addedBy, ur.source AS source
     FROM user_roles ur
     LEFT JOIN users u ON u.id = ur.added_by`;
 
@@ -43,6 +53,7 @@ adminUsers.get("/", async (c) => {
       role: r.role,
       addedAt: r.addedAt ?? null,
       addedBy: r.addedBy ?? null,
+      source: r.source ?? "manual",
     })),
   });
 });
@@ -112,8 +123,8 @@ adminUsers.put("/:username", async (c) => {
   // added_by is only set on first insert; ON CONFLICT only touches role, so
   // re-promoting/demoting an existing user preserves who originally added them.
   const upsert = await c.env.DB.prepare(
-    `INSERT INTO user_roles (dcs_username, role, added_by) VALUES (?1, ?2, ?3)
-     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role
+    `INSERT INTO user_roles (dcs_username, role, added_by, source) VALUES (?1, ?2, ?3, 'manual')
+     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role, source = 'manual'
      WHERE NOT (
        role = 'admin' AND excluded.role = 'editor'
        AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1

@@ -559,6 +559,8 @@ export interface AdminUser {
   role: Role;
   addedAt: number | null;
   addedBy: string | null;
+  /** "manual" = granted in this panel; "dcs_team" = derived from Door43 team membership. */
+  source?: "manual" | "dcs_team";
 }
 
 export interface AquiferDraftsResponse {

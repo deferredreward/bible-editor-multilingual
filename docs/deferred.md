@@ -35,19 +35,35 @@ English doesn't get pushed back to the org's own repo).
 
 ### Door43 teams as role source (read-side)
 
-**Status:** not started. In-app user management (`user_roles` table +
-Preferences panel, `feat/admin-user-management`) shipped instead for the demo;
-this is the deferred richer version.
+**Status:** SHIPPED 2026-07-20. At OAuth callback we now read the signing-in
+user's Door43 teams and grant admin/editor from them.
 
-**What's missing:** at OAuth callback, call `GET /api/v1/user/teams` with the
-*user's own* access token (no elevated service-token scope needed — this is
-the read-only half of what was actually asked for: "groups on Door43 orgs that
-BibleEditor can see"). Map `BE-Admins`/`BE-Editors` team membership in the
-configured org to `admin`/`editor` roles, and cache the result into
-`user_roles` on login so token refresh (which re-reads that table,
-`api/src/auth.ts`) keeps working without a DCS round-trip on every request.
-Teams themselves are created/managed in Door43's own team UI — the app never
-writes team membership, only reads it.
+**How it works:** `api/src/dcsTeams.ts` calls `GET /api/v1/user/teams` with the
+*user's own* access token (no elevated service-token scope), keeps only teams
+inside the configured project org (`getProjectConfig().org`), and maps team
+name → role. Defaults are `BE-Admins` → `admin` and `BE-Editors` → `editor`,
+overridable per environment via `DCS_TEAM_ADMIN` / `DCS_TEAM_EDITOR`. The
+result is cached into `user_roles` (migration `0053_user_roles_source.sql` adds
+a `source` column: `'manual'` vs `'dcs_team'`) so `/api/auth/refresh` keeps
+working off a plain D1 read. Teams are still created/managed only in Door43's
+own team UI — the app never writes membership.
+
+Precedence rules, all covered by `api/src/dcsTeams.test.mjs`:
+- Manual grants win. A row an admin created in the Preferences panel is never
+  overwritten or deleted by team sync; conversely, editing a team-derived row
+  in that panel converts it to `'manual'` (pins it).
+- Team rows re-sync on every login, including removal when the user has left
+  the team — except that the *last remaining admin* is never deleted, matching
+  the existing guard in `adminUserRoutes.ts`.
+- A DCS failure (network, non-2xx, unparseable body) is treated as "unknown"
+  and skips the sync entirely, so an outage can never mass-revoke roles.
+- `viewer` is still dynamic (org membership), never cached in `user_roles`.
+
+**Not verified:** the live round-trip against
+`https://git.door43.org/org/BibleEditorMLTest/teams` — the teams API needs an
+authenticated session, so the *actual* team names in that org were never read.
+If they aren't literally `BE-Admins`/`BE-Editors`, set `DCS_TEAM_ADMIN` /
+`DCS_TEAM_EDITOR` rather than changing code.
 
 ### Per-user org switching (membership-scoped)
 

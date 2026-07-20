@@ -24,6 +24,8 @@ import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
+import { getProjectConfig } from "./projectConfig.ts";
+import { resolveTeamRole, syncTeamRole } from "./dcsTeams.ts";
 
 const ACCESS_COOKIE = "be_access";
 const REFRESH_COOKIE = "be_refresh";
@@ -447,6 +449,16 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   });
   if (!userRes.ok) return c.json({ error: "user_fetch_failed" }, 502);
   const dcsUser = (await userRes.json()) as { id: number; login: string; full_name?: string };
+
+  // Door43 teams as role source (read-side). Membership of the configured
+  // org's BE-Admins / BE-Editors teams grants admin / editor, and is cached
+  // into user_roles so /api/auth/refresh needs no DCS round-trip. Failure to
+  // reach DCS leaves the cached rows alone — an outage must not revoke anyone.
+  const cfg = await getProjectConfig(c.env);
+  const team = await resolveTeamRole(c.env, cfg.org, accessToken);
+  if (team.known) {
+    await syncTeamRole(c.env, dcsUser.login, team.role);
+  }
 
   // Allowlist gate. user_roles is the source of truth for edit access; an
   // account missing from it falls through to a DCS org-membership check so
