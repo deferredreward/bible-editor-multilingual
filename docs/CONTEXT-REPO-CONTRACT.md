@@ -77,6 +77,8 @@ Free markdown, UTF-8. The editor renders `brief.md` from its `translation_prefs`
 
 `instructions.md` is the `instructions_md` field verbatim. **Bot consumption:** both are prompt-layer context, injected into every drafting call (PIPELINE-SPEC §2.2 items 2–3). `register` is the one machine-readable line — if the skill can honor a formality signal, parse it from the `**Register:**` line (values are a closed enum); otherwise treat the file as prose.
 
+As of migration 0053, `instructions.md` is the concatenation of the editor's `instructions_md` field and, when present, its `common_issues_md` field under a `## Common issues` heading (recurring translation problems for this language — false friends, grammar traps, formatting habits). Still free markdown to the reader — no schema change, no `format` bump (§5, additive).
+
 ### 3.3 `terminology/terms.csv` — **CHANGED from PIPELINE-SPEC §3**
 
 PIPELINE-SPEC sketched `source_term, target_term, status(approved|candidate), added_by, notes`. The as-built model is concept-oriented with a TBX-derived status vocabulary (research: [`translation-preferences-research.md`](translation-preferences-research.md) §2; design §5). The export writes exactly what `GET /api/translation-memory/terms/export` already emits today:
@@ -155,7 +157,8 @@ The bot never writes to this repo.
 
 1. tq line shape in `validated.jsonl` (§3.4) — finalize when tq validation volume exists.
 2. Where `standards.md` lands when it splits back out of `instructions.md` (needs a `format` note, not a bump).
-3. Export cadence vs. bot caching — if the skill caches by SHA (it should), no issue; if by repo name, stale reads are possible within a day.
+3. Whether `common_issues_md` should split into its own pack file (e.g. `common-issues.md`) once the bot grows a reader for it — same shape as the `standards.md` question above.
+4. Export cadence vs. bot caching — if the skill caches by SHA (it should), no issue; if by repo name, stale reads are possible within a day.
 
 ---
 

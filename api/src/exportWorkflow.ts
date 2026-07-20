@@ -466,7 +466,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     // Load prefs / terms / validated rows from D1.
     const prefsRow = await this.env.DB.prepare(
-      `SELECT audience, purpose, register, script_notes, instructions_md
+      `SELECT audience, purpose, register, script_notes, instructions_md, common_issues_md
          FROM translation_prefs WHERE id = 1`,
     ).first<TranslationPrefsForRender>();
     const prefs: TranslationPrefsForRender = prefsRow ?? {
@@ -475,6 +475,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       register: "default",
       script_notes: null,
       instructions_md: null,
+      common_issues_md: null,
     };
 
     const termRs = await this.env.DB.prepare(

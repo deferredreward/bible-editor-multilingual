@@ -119,6 +119,7 @@ function laneErrorMessage(
 export type Section =
   | "brief"
   | "instructions"
+  | "commonIssues"
   | "terminology"
   | "examples"
   | "setup"
@@ -128,7 +129,7 @@ export type Section =
 // available. "setup", "localization", and "users" are admin-only and gated
 // separately (they must show regardless of project type / memory), so they
 // aren't listed.
-export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
+export const SECTIONS: Section[] = ["brief", "instructions", "commonIssues", "terminology", "examples"];
 // Every routable section (memory + the admin-only setup wizard, localization
 // editor, and user management) — used for hash-route validation in App.tsx.
 export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup", "localization", "users"];
@@ -304,6 +305,7 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
             <>
               {section === "brief" && <BriefSection />}
               {section === "instructions" && <InstructionsSection />}
+              {section === "commonIssues" && <CommonIssuesSection />}
               {section === "terminology" && <TerminologySection direction={cfg?.direction ?? "ltr"} />}
               {section === "examples" && <ExamplesSection />}
             </>
@@ -1390,6 +1392,84 @@ function InstructionsSection() {
           minRows={10}
           fullWidth
           placeholder={t("preferences.instructionsPlaceholder")}
+          slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
+        />
+      )}
+      <Box>
+        <Button variant="contained" startIcon={<SaveIcon />} onClick={onSave} disabled={save.saving}>
+          {t("preferences.save")}
+        </Button>
+      </Box>
+      <Snackbar open={!!save.msg} autoHideDuration={3000} onClose={save.clear} message={save.msg ?? ""} />
+    </Stack>
+  );
+}
+
+// ── Common issues ────────────────────────────────────────────────────────────
+function CommonIssuesSection() {
+  const { t } = useTranslation();
+  const { prefs, loading, refetch } = useTranslationPrefs(true);
+  const [value, setValue] = useState("");
+  const [preview, setPreview] = useState(false);
+  const save = useSaveState();
+
+  useEffect(() => {
+    if (prefs) setValue(prefs.common_issues_md ?? "");
+  }, [prefs]);
+
+  const onSave = async () => {
+    if (!prefs) return;
+    save.setSaving(true);
+    try {
+      await api.putTranslationPrefs(prefs.version, { common_issues_md: value || null });
+      save.setMsg(t("preferences.saved"));
+      refetch();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        save.setMsg(t("preferences.conflict"));
+        refetch();
+      } else if (e instanceof ApiError && e.status === 403) {
+        save.setMsg(t("preferences.saveForbidden"));
+      } else {
+        save.setMsg(t("preferences.saveFailed"));
+      }
+    } finally {
+      save.setSaving(false);
+    }
+  };
+
+  if (loading && !prefs) return <CircularProgress size={22} />;
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography variant="h6">{t("preferences.section.commonIssues")}</Typography>
+        <ToggleButton
+          size="small"
+          value="preview"
+          selected={preview}
+          onChange={() => setPreview((p) => !p)}
+          sx={{ textTransform: "none", py: 0.25 }}
+        >
+          <VisibilityIcon fontSize="small" sx={{ mr: 0.5 }} />
+          {t("preferences.preview")}
+        </ToggleButton>
+      </Stack>
+      <Alert severity="info" variant="outlined" sx={{ py: 0.25 }}>
+        {t("preferences.commonIssuesIntro")}
+      </Alert>
+      {preview ? (
+        <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, minHeight: 200 }}>
+          <MarkdownView markdown={value || "_" + t("preferences.empty") + "_"} />
+        </Box>
+      ) : (
+        <TextField
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          multiline
+          minRows={10}
+          fullWidth
+          placeholder={t("preferences.commonIssuesPlaceholder")}
           slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
         />
       )}

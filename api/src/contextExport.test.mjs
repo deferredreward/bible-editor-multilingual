@@ -5,6 +5,7 @@ import {
   renderManifestYaml,
   renderBriefMd,
   renderContextPack,
+  renderInstructionsMd,
   buildValidatedExamples,
   renderValidatedJsonl,
   hasMinimumContent,
@@ -56,7 +57,7 @@ console.log("contextExport — manifest / brief");
   assert(m.includes("exported_at: 2026-07-14T12:00:00Z"), "manifest ISO time without ms");
 
   const brief = renderBriefMd(
-    { audience: "teams", purpose: "notes", register: "formal", script_notes: "RTL", instructions_md: null },
+    { audience: "teams", purpose: "notes", register: "formal", script_notes: "RTL", instructions_md: null, common_issues_md: null },
     "العربية",
     "ar",
   );
@@ -154,6 +155,7 @@ console.log("contextExport — full pack + omission rules");
       register: "default",
       script_notes: null,
       instructions_md: null,
+      common_issues_md: null,
     },
     terms: [],
     tnRows: [],
@@ -228,6 +230,7 @@ console.log("contextExport — full pack + omission rules");
       register: "informal",
       script_notes: null,
       instructions_md: "Do the thing\n",
+      common_issues_md: null,
     },
     terms: [
       {
@@ -252,6 +255,63 @@ console.log("contextExport — full pack + omission rules");
   assert(
     withTerms.ok && withTerms.files.some((f) => f.path === "instructions.md"),
     "emits instructions when present",
+  );
+}
+
+console.log("contextExport — renderInstructionsMd");
+{
+  const basePrefs = { audience: null, purpose: null, register: "default", script_notes: null };
+
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: null, common_issues_md: null }) === null,
+    "both empty → null",
+  );
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: "  ", common_issues_md: "   " }) === null,
+    "both whitespace-only → null",
+  );
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: "Do the thing", common_issues_md: null }) ===
+      "Do the thing\n",
+    "only instructions_md → its text + trailing newline, no heading",
+  );
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: null, common_issues_md: "Watch for false friends." }) ===
+      "## Common issues\n\nWatch for false friends.\n",
+    "only common_issues_md → heading followed by the text",
+  );
+  assert(
+    renderInstructionsMd({
+      ...basePrefs,
+      instructions_md: "Do the thing",
+      common_issues_md: "Watch for false friends.",
+    }) === "Do the thing\n\n## Common issues\n\nWatch for false friends.\n",
+    "both → instructions first, blank line, then heading + issues",
+  );
+
+  // Regression: common_issues_md alone must not be silently dropped from the
+  // rendered pack — instructions.md must still be emitted.
+  const onlyCommonIssues = renderContextPack({
+    cfg,
+    prefs: {
+      audience: null,
+      purpose: null,
+      register: "default",
+      script_notes: null,
+      instructions_md: null,
+      common_issues_md: "Avoid the colloquial future particle in narrative.",
+    },
+    terms: [],
+    tnRows: [],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+    exportedAt: new Date("2026-07-14T12:00:00Z"),
+  });
+  assert(
+    onlyCommonIssues.ok &&
+      onlyCommonIssues.files.find((f) => f.path === "instructions.md")?.content ===
+        "## Common issues\n\nAvoid the colloquial future particle in narrative.\n",
+    "renderContextPack emits instructions.md when only common_issues_md is set",
   );
 }
 
