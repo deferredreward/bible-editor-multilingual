@@ -12,8 +12,19 @@ import type { Env } from "./index";
 // edge cache rather than a scheduled refresh.
 export const noteTemplates = new Hono<{ Bindings: Env }>();
 
-const SHEET_CSV_URL =
+// Exported for templateSync.ts (migration 0053) — the D1-backed translation
+// sync reuses this same sheet, parser, and fetch so the two paths can never
+// drift out of sync on CSV quirks.
+export const SHEET_CSV_URL =
   "https://docs.google.com/spreadsheets/d/1ot6A7RxcsxM_Wv94sauoTAaRPO5Q-gynFqMHeldnM64/export?format=csv&gid=1419396008";
+
+// Raw upstream fetch, no caching — callers (this route's memo/edge-cache path,
+// and templateSync's periodic sync) each own their own caching strategy.
+export async function fetchSheetCsv(): Promise<string> {
+  const upstream = await fetch(SHEET_CSV_URL, { headers: { accept: "text/csv" } });
+  if (!upstream.ok) throw new Error(`templates_unavailable (${upstream.status})`);
+  return upstream.text();
+}
 
 // ET wall-clock hours at which the cache rolls over to a fresh fetch.
 const BOUNDARY_HOURS_ET = [8, 12, 16];
@@ -27,8 +38,8 @@ export interface NoteTemplate {
 
 // Minimal RFC-4180-ish CSV parser: handles quoted fields containing commas,
 // newlines, and "" escapes. Sufficient for the sheet export. Returns rows of
-// string cells.
-function parseCsv(text: string): string[][] {
+// string cells. Exported for templateSync.ts — do not duplicate this parser.
+export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cur = "";
@@ -169,9 +180,7 @@ noteTemplates.get("/", async (c) => {
 
   let csv: string;
   try {
-    const upstream = await fetch(SHEET_CSV_URL, { headers: { accept: "text/csv" } });
-    if (!upstream.ok) return c.json({ error: "templates_unavailable" }, 502);
-    csv = await upstream.text();
+    csv = await fetchSheetCsv();
   } catch {
     return c.json({ error: "templates_unavailable" }, 502);
   }

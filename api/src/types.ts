@@ -145,6 +145,28 @@ export interface ArticleUnit {
   latest_source?: string | null;
 }
 
+// Translatable note template (template_units, migration 0053). Keyed by
+// template_id (sheet column D, or a positional fallback). Mirrors ArticleUnit,
+// including its unix-epoch timestamp / user-FK conventions.
+export interface TemplateUnit {
+  template_id: string;
+  support_ref: string;
+  sheet_order: number | null;
+  type: string | null;
+  source_md: string;
+  source_hash: string;
+  target_md: string | null;
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  draft_meta_json: string | null;
+  pre_draft_json: string | null;
+  version: number;
+  updated_by: number | null;
+  updated_at: number;
+  deleted_at: number | null;
+  /** See TnRow.latest_source (computed at read time from edit_log). */
+  latest_source?: string | null;
+}
+
 export interface VerseRow {
   book: string;
   chapter: number;
