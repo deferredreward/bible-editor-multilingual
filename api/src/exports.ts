@@ -58,13 +58,15 @@ exports.post("/run", requireAdmin, async (c) => {
     validateAndMerge: parsed.data.validateAndMerge,
     contextOnly: parsed.data.contextOnly,
     shrinkOverride: parsed.data.shrinkOverride,
+    workspace: c.env.WORKSPACE_SLUG,
   };
   // Deterministic id (second precision) so a double-submitted manual run
   // rejects on the duplicate instead of racing the first. The nightly cron
-  // uses `nightly-${day}` ids — see scheduled() in index.ts. Context-only
-  // runs use a distinct prefix so they don't collide with a full manual run
-  // in the same second.
-  const id = workflowRunId(parsed.data.contextOnly ? "context-" : "manual-");
+  // uses `nightly-${slug}-${day}` ids — see scheduled() in index.ts. Context-
+  // only runs use a distinct prefix so they don't collide with a full manual
+  // run in the same second; the workspace slug in the prefix keeps a manual
+  // run in one org from colliding with one in another in the same second.
+  const id = workflowRunId(`${parsed.data.contextOnly ? "context-" : "manual-"}${c.env.WORKSPACE_SLUG ?? "default"}-`);
   try {
     const instance = await c.env.EXPORT_WORKFLOW.create({ id, params });
     return c.json({ id: instance.id, status: "queued" }, 202);

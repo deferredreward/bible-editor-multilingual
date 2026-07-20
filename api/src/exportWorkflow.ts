@@ -99,8 +99,14 @@ import {
   getLatestContextExportStats,
 } from "./contextExportResults.ts";
 import type { TermImport } from "./translationMemoryLib.ts";
+import { workspaceEnv, resolveWorkspace } from "./workspaces.ts";
 
 export interface ExportParams {
+  // Workspace slug this run belongs to. Workflows don't inherit the
+  // per-request env clone (see run() below), so this is how a queued run
+  // knows which org's D1 binding to use. Absent = the default workspace
+  // (pre-workspaces behavior).
+  workspace?: string;
   // Restrict the run to one book. Useful for manual /api/exports/run.
   book?: string;
   // Restrict the run to one resource family.
@@ -181,7 +187,24 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     contextResult: ContextPackStepResult | null;
   }> {
     const params = event.payload ?? {};
-    const instanceId = `export-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
+
+    // Workflows don't inherit the per-request env clone that index.ts's fetch
+    // wrapper builds, so this.env is the RAW Worker env — this.env.DB would be
+    // the default binding regardless of which org queued the run. Re-point it
+    // once, here, so the ~60 `this.env` reads below are all workspace-correct.
+    // With WORKSPACES unset this resolves to the same default binding as before.
+    (this as unknown as { env: Env }).env = workspaceEnv(this.env, resolveWorkspace(this.env, params.workspace ?? null));
+
+    // Folds the resolved workspace slug in so two orgs starting in the same
+    // millisecond can't share an R2 staging prefix — instanceId is used as the
+    // key prefix for both export snapshots (exports/<instanceId>/...) and
+    // reimport staging (reimport-stage/<instanceId>/...), and the latter is
+    // read back and applied to D1, so a collision would let one org import
+    // another org's staged content. This is NOT the Workflow instance id
+    // passed to EXPORT_WORKFLOW.create() (that's `nightly-${slug}-${day}` in
+    // index.ts, already workspace-scoped for its own dedup purpose) — just the
+    // R2 key prefix, which had no such scoping before.
+    const instanceId = `export-${this.env.WORKSPACE_SLUG ?? "default"}-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
 
     const dcsAllowed = !params.dryDcs && !!this.env.DCS_SERVICE_TOKEN;
 

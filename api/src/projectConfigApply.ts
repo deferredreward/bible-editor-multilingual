@@ -386,6 +386,6 @@ export async function applyProjectConfig(
     if (isAbortError(e)) return { ok: false, status: 409, error: "lane_conflict" };
     throw e;
   }
-  clearProjectConfigCache();
+  clearProjectConfigCache(env);
   return { ok: true, config: desiredCfg };
 }

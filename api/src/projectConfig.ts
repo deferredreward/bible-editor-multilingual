@@ -278,11 +278,31 @@ export const DEFAULT_PRESET = "en-unfoldingword";
 // Per-isolate cache. Config changes are rare admin actions; a 60s TTL keeps
 // every request path from paying a D1 read while still converging quickly
 // after a PUT (which also clears the cache in-isolate).
-let cached: { cfg: ProjectConfig; at: number } | null = null;
+//
+// Keyed by workspace slug: the Worker isolate — and therefore this module-
+// level cache — is SHARED across every workspace a request might be routed
+// to (index.ts swaps env.DB per request, but this cache lives above that
+// swap). A single `cached` value would let workspace B's request read
+// workspace A's project config (org/exportOrg/repos) straight out of cache,
+// which can point an export at the wrong DCS repo. Keying by
+// env.WORKSPACE_SLUG keeps each workspace's entry isolated.
+const cached = new Map<string, { cfg: ProjectConfig; at: number }>();
 const CACHE_TTL_MS = 60_000;
 
-export function clearProjectConfigCache(): void {
-  cached = null;
+function workspaceKey(env: { WORKSPACE_SLUG?: string }): string {
+  return env.WORKSPACE_SLUG ?? "default";
+}
+
+// Clears one workspace's entry when called with an env (or slug); clears
+// every workspace's entry when called with no argument (existing callers
+// that predate workspaces rely on this no-arg behavior).
+export function clearProjectConfigCache(envOrSlug?: { WORKSPACE_SLUG?: string } | string): void {
+  if (envOrSlug === undefined) {
+    cached.clear();
+    return;
+  }
+  const key = typeof envOrSlug === "string" ? envOrSlug : workspaceKey(envOrSlug);
+  cached.delete(key);
 }
 
 interface ConfigRow {
@@ -343,8 +363,10 @@ export function materialize(preset: string, overridesJson: string | null): Proje
 }
 
 export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
+  const key = workspaceKey(env);
   const now = Date.now();
-  if (cached && now - cached.at < CACHE_TTL_MS) return cached.cfg;
+  const entry = cached.get(key);
+  if (entry && now - entry.at < CACHE_TTL_MS) return entry.cfg;
   let row: ConfigRow | null;
   try {
     row = await env.DB
@@ -359,7 +381,7 @@ export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
     return PRESETS[DEFAULT_PRESET];
   }
   const cfg = row ? materialize(row.preset, row.overrides_json) : PRESETS[DEFAULT_PRESET];
-  cached = { cfg, at: now };
+  cached.set(key, { cfg, at: now });
   return cfg;
 }
 
@@ -392,7 +414,7 @@ export async function writeProjectConfig(
     )
     .bind(preset, overridesJson)
     .run();
-  clearProjectConfigCache();
+  clearProjectConfigCache(env);
   return materialize(preset, overridesJson);
 }
 

@@ -181,6 +181,7 @@ interface Props {
   logosSyncToggle?: ReactNode;
   lintIndicator?: ReactNode;
   exportMenu?: ReactNode;
+  workspaceSwitcher?: ReactNode;
   railCollapsed?: boolean;
   onToggleRail?: () => void;
   onRequestReload?: () => void;
@@ -195,6 +196,7 @@ export function TopBar({
   logosSyncToggle,
   lintIndicator,
   exportMenu,
+  workspaceSwitcher,
   railCollapsed,
   onToggleRail,
   onRequestReload,
@@ -510,6 +512,7 @@ export function TopBar({
           <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
         </Box>
       )}
+      {workspaceSwitcher}
       {showArticles && (
         <Tooltip title={t("articles.title")}>
           <Button
