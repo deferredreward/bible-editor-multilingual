@@ -61,7 +61,7 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
-import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
+import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
 import {
   laneForBibleVersion,
@@ -215,18 +215,24 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       ? [params.resource]
       : ALL_RESOURCES;
 
-    // Books whose tn was re-sourced from Aquifer (POST /aquifer-drafts) are held
-    // out of tn EXPORT: their rows are en_tn-based drafts, and until validated
-    // their export snapshot is empty — exporting would push blank/unapproved
-    // notes over the DCS tn repo. Export-direction handling for Aquifer books is
-    // deferred (see STATE.md); until then, skip tn for them. Other resources
-    // (verses/tq/twl) export normally. Mirrors the reimport skip in bookReimport.
-    const aquiferTnBooks = new Set(
-      await step.do("list-aquifer-tn-books", async () => {
+    // Books whose tn/tq did NOT come from the configured org repo — re-sourced
+    // from Aquifer (POST /aquifer-drafts) or imported from the English
+    // translationSource — are held out of that resource's EXPORT: their rows are
+    // source-keyed drafts, and until validated their export snapshot is empty —
+    // exporting would push blank/unapproved notes over the DCS tn/tq repo.
+    // Export-direction handling for these books is deferred (see STATE.md);
+    // until then, skip the held-out resource. Other resources (verses/twl)
+    // export normally. Mirrors the reimport skip in bookReimport.
+    const heldOutNotes = new Set(
+      await step.do("list-held-out-note-books", async () => {
         const rs = await this.env.DB.prepare(
-          `SELECT book FROM book_imports WHERE tn_source LIKE 'aquifer:%'`,
-        ).all<{ book: string }>();
-        return rs.results.map((r) => r.book);
+          `SELECT book, tn_source, tq_source FROM book_imports
+            WHERE tn_source IS NOT NULL OR tq_source IS NOT NULL`,
+        ).all<{ book: string; tn_source: string | null; tq_source: string | null }>();
+        // step.do must return a JSON-serializable value → "BOOK:resource" strings.
+        return rs.results.flatMap((r) =>
+          [...heldOutNoteResources(r)].map((res) => `${r.book}:${res}`),
+        );
       }),
     );
 
@@ -284,7 +290,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const results: StepResult[] = [];
     for (const resource of resources) {
       for (const book of books) {
-        if (resource === "tn" && aquiferTnBooks.has(book)) continue; // Aquifer-sourced tn: not exported yet (see above)
+        // Aquifer- / English-source-sourced tn or tq: not exported yet (see above)
+        if ((resource === "tn" || resource === "tq") && heldOutNotes.has(`${book}:${resource}`)) continue;
         const stepName = `export-${book}-${resource}`;
         try {
           const result = await step.do(

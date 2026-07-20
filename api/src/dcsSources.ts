@@ -52,23 +52,28 @@ export interface DcsUrlSet {
 // same UHB/UGNT under the unfoldingWord org, regardless of its own org.
 export const ORIG_OWNER = "unfoldingWord";
 
-// Optional per-resource RepoRef overrides from lane state. When provided,
-// the lit/sim URL uses the lane source ref instead of hardcoding master.
-export interface LaneRepoOverrides {
+// Optional per-resource RepoRef overrides. lit/sim come from lane state (the
+// lane source ref instead of hardcoding master); tn/tq come from the project's
+// English translationSource when a book is imported/translated from source
+// instead of the org's own (possibly stale) note repos.
+export interface DcsRepoOverrides {
   lit?: RepoRef;
   sim?: RepoRef;
+  tn?: RepoRef;
+  tq?: RepoRef;
 }
 
 // Build the set of DCS raw-content URLs for a given book. `book` is the
 // uppercase 3-char canonical id (e.g. "ZEC", "1CO"). Returns null if the
 // book id isn't in BOOK_NUMBERS (unknown book). Owner + repo names come
 // from the project config (roles lit/sim → internal ULT/UST labels).
-// Optional `overrides` lets callers supply lane-specific source refs.
+// Optional `overrides` lets callers supply lane-specific (lit/sim) or
+// translation-source (tn/tq) source refs.
 export function dcsUrls(
   env: Env,
   cfg: ProjectConfig,
   book: string,
-  overrides?: LaneRepoOverrides,
+  overrides?: DcsRepoOverrides,
 ): DcsUrlSet | null {
   const num = BOOK_NUMBERS[book];
   if (!num) return null;
@@ -78,22 +83,78 @@ export function dcsUrls(
   const origRepo = isNt ? "el-x-koine_ugnt" : "hbo_uhb";
   const org = cfg.org;
 
-  const litOwner = overrides?.lit?.owner ?? org;
-  const litRepo = overrides?.lit?.repo ?? cfg.repos.lit;
-  const litRef = overrides?.lit?.ref ?? "master";
-  const simOwner = overrides?.sim?.owner ?? org;
-  const simRepo = overrides?.sim?.repo ?? cfg.repos.sim;
-  const simRef = overrides?.sim?.ref ?? "master";
+  const at = (k: keyof DcsRepoOverrides, repo: string) => ({
+    owner: overrides?.[k]?.owner ?? org,
+    repo: overrides?.[k]?.repo ?? repo,
+    ref: overrides?.[k]?.ref ?? "master",
+  });
+  const lit = at("lit", cfg.repos.lit);
+  const sim = at("sim", cfg.repos.sim);
+  const tn = at("tn", cfg.repos.tn);
+  const tq = at("tq", cfg.repos.tq);
 
   return {
-    ult: `${base}/${litOwner}/${litRepo}/raw/branch/${litRef}/${usfmName}`,
-    ust: `${base}/${simOwner}/${simRepo}/raw/branch/${simRef}/${usfmName}`,
+    ult: `${base}/${lit.owner}/${lit.repo}/raw/branch/${lit.ref}/${usfmName}`,
+    ust: `${base}/${sim.owner}/${sim.repo}/raw/branch/${sim.ref}/${usfmName}`,
     orig: `${base}/${ORIG_OWNER}/${origRepo}/raw/branch/master/${usfmName}`,
     origVersion: isNt ? "UGNT" : "UHB",
-    tn: `${base}/${org}/${cfg.repos.tn}/raw/branch/master/tn_${book}.tsv`,
-    tq: `${base}/${org}/${cfg.repos.tq}/raw/branch/master/tq_${book}.tsv`,
+    tn: `${base}/${tn.owner}/${tn.repo}/raw/branch/${tn.ref}/tn_${book}.tsv`,
+    tq: `${base}/${tq.owner}/${tq.repo}/raw/branch/${tq.ref}/tq_${book}.tsv`,
+    // twl is language-neutral (orig-word links), so it always comes from the
+    // project's own org — never from the English translation source.
     twl: `${base}/${org}/${cfg.repos.twl}/raw/branch/master/twl_${book}.tsv`,
   };
+}
+
+// ── Note-source provenance (book_imports.tn_source / tq_source) ──
+// A note resource that did NOT come from the project's own org repo carries a
+// provenance marker, and such a book is held out of BOTH the nightly DCS
+// reimport and the nightly DCS export: reimporting from the org repo would
+// clobber the source-keyed rows, and exporting would push them over the org's
+// own file. 'aquifer:<lang>' is the existing marker (POST /aquifer-drafts);
+// 'source:<owner>/<repo>' is the English-translationSource one.
+export const SOURCE_PROVENANCE_PREFIX = "source:";
+
+export function sourceProvenance(owner: string, repo: string): string {
+  return `${SOURCE_PROVENANCE_PREFIX}${owner}/${repo}`;
+}
+
+// The repo ref for a note resource when translating from the English source.
+// Returns null when cfg.translationSource is absent (an authored, not
+// translated, project — there is nothing to translate from).
+export function translationSourceRepoRef(
+  cfg: ProjectConfig,
+  resource: "tn" | "tq",
+): RepoRef | null {
+  const src = cfg.translationSource;
+  if (!src) return null;
+  return { owner: src.org, repo: src.repos[resource], ref: "master" };
+}
+
+// Does a failed org-repo note fetch mean "this file genuinely does not exist"
+// (→ safe to fall back to the English translation source) or "we couldn't read
+// it right now" (→ must NOT substitute English)? Only a hard 404 is terminal.
+// A 5xx, a network error (status 0), or a truncated 200 are transient: falling
+// back on those would silently import English notes during a DCS outage AND
+// permanently mark the book held out of the nightly reimport + export. Those
+// cases must fall through to the import's missing/throw path and be retried.
+// (fetchText alone can't make this call — it collapses every failure to null;
+// fetchTextWithStatus is what preserves the distinction.)
+export function shouldFallBackOnStatus(status: number): boolean {
+  return status === 404;
+}
+
+// Which note resources this book must NOT sync with the configured org repo.
+// Any non-null provenance marker (aquifer:… or source:…) means "held out" —
+// the single shared predicate for the reimport and export skips.
+export function heldOutNoteResources(
+  prov: { tn_source?: string | null; tq_source?: string | null } | null | undefined,
+): Set<"tn" | "tq"> {
+  const out = new Set<"tn" | "tq">();
+  if (!prov) return out;
+  if (prov.tn_source) out.add("tn");
+  if (prov.tq_source) out.add("tq");
+  return out;
 }
 
 // Best-effort text fetch. 404 / network failure → null, so callers can warn

@@ -18,9 +18,21 @@ import {
   parseTsv,
   refParts,
 } from "./importParsers";
-import { requireAuth, requireEditor, requireAdmin, currentUserId } from "./auth";
+import { requireAuth, requireEditor, requireAdmin, currentUserId, currentUserRole } from "./auth";
 import { aquiferDrafts } from "./aquiferImport.ts";
-import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText, type LaneRepoOverrides } from "./dcsSources";
+import {
+  BOOK_NUMBERS,
+  dcsUrls,
+  dcsResourceFile,
+  fileCommitSha,
+  fetchText,
+  fetchTextWithStatus,
+  shouldFallBackOnStatus,
+  sourceProvenance,
+  translationSourceRepoRef,
+  type DcsRepoOverrides,
+} from "./dcsSources";
+import type { RepoRef } from "./repoUrl";
 import { getProjectConfig } from "./projectConfig.ts";
 import { populateReferencedArticles } from "./articlePopulate";
 import type { Context } from "hono";
@@ -109,13 +121,80 @@ books.post("/:book/import", requireEditor, async (c) => {
   const num = BOOK_NUMBERS[book];
   if (!num) return c.json({ error: "unknown_book", book }, 400);
 
-  // Idempotency: already imported → fast path.
+  // Optional body: { translateFromSource?, force?, confirmDiscardEdits? }. A
+  // missing/invalid/empty body is normal (the UI's plain import posts nothing),
+  // so never 4xx on it. Parsed up here because `force` gates the two early
+  // returns below.
+  let body: { translateFromSource?: unknown; force?: unknown; confirmDiscardEdits?: unknown } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* no body → default options */
+  }
+  const translateFromSource = body?.translateFromSource === true;
+  const force = body?.force === true;
+
+  // force re-imports a book that is ALREADY imported — the only way to reach
+  // the translate-from-source path for a book that was bootstrapped before the
+  // feature existed (e.g. BSOJ/MAL). It wipes and re-loads the book, so it is
+  // admin-only; the normal (non-forced) import stays editor-accessible, hence
+  // the check lives here rather than on the route.
+  if (force && currentUserRole(c) !== "admin") {
+    return c.json({ error: "forbidden", detail: "force requires admin" }, 403);
+  }
+
+  if (force) {
+    // Safety gate: importBookFromDcs wipes tn_rows, tq_rows, twl_rows, verses
+    // (ULT/UST + original-language) and book_usfm_meta for the book, then
+    // re-inserts from DCS — so ANY of those tables can hold destroyed human
+    // work, not just tn/tq. (This gap — twl/verses edits sailing through with
+    // no 409 — is exactly what review of PR #54 flagged as a HIGH-severity
+    // data-loss bug: the UI's "Re-source notes from English" label gives an
+    // admin no reason to expect scripture loss.) Count rows that represent
+    // real human work in every wiped table — translation_state
+    // 'edited'/'validated' (migrations 0037/0038, tn/tq only — twl/verses have
+    // no translation_state column) or any row a user has touched (updated_by
+    // non-NULL, the same pristine predicate the reimport uses) — and refuse
+    // unless the caller has explicitly acknowledged the loss.
+    const edits = await c.env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tn,
+         (SELECT COUNT(*) FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tq,
+         (SELECT COUNT(*) FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND updated_by IS NOT NULL) AS twl,
+         (SELECT COUNT(*) FROM verses WHERE book = ?1 AND updated_by IS NOT NULL) AS verses`,
+    )
+      .bind(book)
+      .first<{ tn: number; tq: number; twl: number; verses: number }>();
+    const tnEdits = edits?.tn ?? 0;
+    const tqEdits = edits?.tq ?? 0;
+    const twlEdits = edits?.twl ?? 0;
+    const verseEdits = edits?.verses ?? 0;
+    if (tnEdits + tqEdits + twlEdits + verseEdits > 0 && body?.confirmDiscardEdits !== true) {
+      return c.json(
+        { error: "has_local_edits", book, tn: tnEdits, tq: tqEdits, twl: twlEdits, verses: verseEdits },
+        409,
+      );
+    }
+    // Destructive + irreversible from the app's side: leave a trace of who did
+    // it, to what, and how much work it discarded.
+    console.warn("forced book import: wiping and re-loading from DCS", {
+      book,
+      userId,
+      translateFromSource,
+      discardedEdits: { tn: tnEdits, tq: tqEdits, twl: twlEdits, verses: verseEdits },
+    });
+  }
+
+  // Idempotency: already imported → fast path (skipped by force).
   const existing = await c.env.DB.prepare(
     `SELECT book, imported_at FROM book_imports WHERE book = ?1`,
   )
     .bind(book)
     .first<{ book: string; imported_at: number }>();
-  if (existing) {
+  if (existing && !force) {
     schedulePopulate(c, book);
     return c.json({ ok: true, book, alreadyImported: true, imported_at: existing.imported_at });
   }
@@ -133,6 +212,9 @@ books.post("/:book/import", requireEditor, async (c) => {
   // its UHB/UGNT source got stamped source_url='recovered' and could never be
   // re-imported — the marker made every later POST hit the alreadyImported fast
   // path above. This is exactly how ISA got stuck with Hebrew-only content.)
+  //
+  // force skips this too: a forced caller wants a real re-fetch, not a marker
+  // that re-registers whatever rows happen to be lying around.
   const present = await c.env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM verses   WHERE book = ?1 AND bible_version = 'ULT') AS ult,
@@ -150,7 +232,7 @@ books.post("/:book/import", requireEditor, async (c) => {
     present.tn > 0 &&
     present.tq > 0 &&
     present.twl > 0;
-  if (looksComplete) {
+  if (looksComplete && !force) {
     await c.env.DB.prepare(
       `INSERT OR IGNORE INTO book_imports (book, source_url, imported_at, imported_by)
        VALUES (?1, 'recovered', unixepoch(), ?2)`,
@@ -178,9 +260,9 @@ books.post("/:book/import", requireEditor, async (c) => {
   }
 
   try {
-    const result = await importBookFromDcs(c.env, book, num, userId);
+    const result = await importBookFromDcs(c.env, book, num, userId, { translateFromSource });
     schedulePopulate(c, book);
-    return c.json({ ok: true, book, ...result });
+    return c.json({ ok: true, book, ...result, ...(force ? { forced: true } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ error: "import_failed", book, message: msg }, 502);
@@ -250,6 +332,9 @@ interface ImportCounts {
   tq: number;
   twl: number;
   fetched: { ult: boolean; ust: boolean; orig: boolean; tn: boolean; tq: boolean; twl: boolean };
+  /** Note-source provenance: 'source:<owner>/<repo>' when tn/tq came from the
+   *  English translationSource instead of the org's own repo, else null. */
+  sources: { tn: string | null; tq: string | null };
 }
 
 async function importBookFromDcs(
@@ -257,6 +342,7 @@ async function importBookFromDcs(
   book: string,
   _num: string,
   userId: number,
+  opts: { translateFromSource?: boolean } = {},
 ): Promise<ImportCounts> {
   // Assert lanes not frozen before starting import. A frozen lane (an open
   // replacement job) or a lane that still requires a replacement (BSOJ
@@ -272,14 +358,31 @@ async function importBookFromDcs(
 
   const cfg = await getProjectConfig(env);
 
+  // Opting in to translate-from-source only makes sense on a translation
+  // project; without a configured translationSource there is nothing to pull.
+  if (opts.translateFromSource && !cfg.translationSource) {
+    throw new Error("not_a_translation_project");
+  }
+
+  // Per-resource note provenance: non-null = this resource came from the
+  // English translationSource, not the org's own repo. Drives the book_imports
+  // marker (which holds the book out of the nightly reimport + export) and the
+  // watermark identity below.
+  const noteSource: { tn: RepoRef | null; tq: RepoRef | null } = {
+    tn: opts.translateFromSource ? translationSourceRepoRef(cfg, "tn") : null,
+    tq: opts.translateFromSource ? translationSourceRepoRef(cfg, "tq") : null,
+  };
+
   // Use lane source refs from active config for scripture USFM URLs
   const litCfg = activeLaneConfig(litState);
   const simCfg = activeLaneConfig(simState);
-  const laneOverrides: LaneRepoOverrides = {
+  const overrides: DcsRepoOverrides = {
     lit: litCfg.source,
     sim: simCfg.source,
+    ...(noteSource.tn ? { tn: noteSource.tn } : {}),
+    ...(noteSource.tq ? { tq: noteSource.tq } : {}),
   };
-  const urls = dcsUrls(env, cfg, book, laneOverrides);
+  const urls = dcsUrls(env, cfg, book, overrides);
   if (!urls) throw new Error(`unknown book: ${book}`);
   const origVersion = urls.origVersion;
 
@@ -289,7 +392,8 @@ async function importBookFromDcs(
   // a critical resource missing leaves it silently broken — see the ZEC
   // bootstrap that landed without TWLs. Fail loudly so the next attempt
   // succeeds cleanly.
-  const [ultRaw, ustRaw, origRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
+  // `let`: tn/tq may be replaced by the translation-source fallback below.
+  let [ultRaw, ustRaw, origRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
     fetchText(urls.ult),
     fetchText(urls.ust),
     fetchText(urls.orig),
@@ -298,12 +402,62 @@ async function importBookFromDcs(
     fetchText(urls.twl),
   ]);
 
+  // Automatic fallback: the org GENUINELY has no tn/tq file for this book. On a
+  // translation project the English source always carries one, so pull it from
+  // there rather than failing the whole import, and mark the provenance so the
+  // nightly reimport/export hold that resource out.
+  //
+  // 404-ONLY, deliberately. fetchText above collapses 404 / 5xx / network error
+  // / truncated read all into null, and substituting English on a transient
+  // failure would import the wrong language during a DCS outage AND permanently
+  // hold the book out of reimport+export. So we re-probe the org URL with
+  // fetchTextWithStatus and fall back only on a hard 404 (shouldFallBackOnStatus);
+  // anything else falls through to the missing/throw path below and is retried.
+  const noteUrls: Record<"tn" | "tq", string> = { tn: urls.tn, tq: urls.tq };
+  // tn and tq are independent (disjoint noteSource/noteUrls keys), so run both
+  // fallback probes concurrently rather than serially — a book missing both
+  // files otherwise pays for 4 sequential DCS round-trips instead of 2 pairs
+  // in parallel. Each resource still does its OWN probe (fetchTextWithStatus)
+  // then its own primary-shaped fetch (fetchText, which retries once on
+  // network-error/truncation — that retry is the twl_PSA / HAB truncation
+  // guard, so it must stay fetchText and not be swapped for fetchTextWithStatus).
+  const [tnFallback, tqFallback] = await Promise.all(
+    (["tn", "tq"] as const).map(async (resource) => {
+      const raw = resource === "tn" ? tnRaw : tqRaw;
+      if (raw != null || noteSource[resource]) return null;
+      const ref = translationSourceRepoRef(cfg, resource);
+      if (!ref) return null;
+      const probe = await fetchTextWithStatus(env, noteUrls[resource]);
+      if (!shouldFallBackOnStatus(probe.status)) return null;
+      const fallbackUrls = dcsUrls(env, cfg, book, { ...overrides, [resource]: ref })!;
+      const url = fallbackUrls[resource];
+      const fetched = await fetchText(url);
+      if (fetched == null) return null;
+      console.warn("import: org note file absent; falling back to translation source", {
+        book,
+        resource,
+        url,
+      });
+      return { ref, url, fetched };
+    }),
+  );
+  if (tnFallback) {
+    noteSource.tn = tnFallback.ref;
+    noteUrls.tn = tnFallback.url;
+    tnRaw = tnFallback.fetched;
+  }
+  if (tqFallback) {
+    noteSource.tq = tqFallback.ref;
+    noteUrls.tq = tqFallback.url;
+    tqRaw = tqFallback.fetched;
+  }
+
   const missing: string[] = [];
   if (!ultRaw) missing.push(`ult (${urls.ult})`);
   if (!ustRaw) missing.push(`ust (${urls.ust})`);
   if (!origRaw) missing.push(`${origVersion.toLowerCase()} (${urls.orig})`);
-  if (!tnRaw) missing.push(`tn (${urls.tn})`);
-  if (!tqRaw) missing.push(`tq (${urls.tq})`);
+  if (!tnRaw) missing.push(`tn (${noteUrls.tn})`);
+  if (!tqRaw) missing.push(`tq (${noteUrls.tq})`);
   if (!twlRaw) missing.push(`twl (${urls.twl})`);
   if (missing.length > 0) {
     throw new Error(`DCS fetch failed for ${missing.length} resource(s); retry: ${missing.join("; ")}`);
@@ -426,6 +580,10 @@ async function importBookFromDcs(
         tq: !!tqRaw,
         twl: !!twlRaw,
       },
+      sources: {
+        tn: noteSource.tn ? sourceProvenance(noteSource.tn.owner, noteSource.tn.repo) : null,
+        tq: noteSource.tq ? sourceProvenance(noteSource.tq.owner, noteSource.tq.repo) : null,
+      },
     };
 
     const renewBoth = async () => {
@@ -453,8 +611,8 @@ async function importBookFromDcs(
       .map(([k]) => k)
       .join(",");
     const marker = await env.DB.prepare(
-      `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by)
-       SELECT ?1, ?2, unixepoch(), ?3
+      `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by, tn_source, tq_source)
+       SELECT ?1, ?2, unixepoch(), ?3, ?6, ?7
         WHERE EXISTS (
               SELECT 1 FROM scripture_lane_state
                WHERE lane = 'lit' AND replacement_job_id IS NULL
@@ -466,7 +624,7 @@ async function importBookFromDcs(
                  AND replacement_required = 0 AND active_generation = ?5
             )`,
     )
-      .bind(book, `dcs:${sources}`, userId, litGen, simGen)
+      .bind(book, `dcs:${sources}`, userId, litGen, simGen, counts.sources.tn, counts.sources.tq)
       .run();
     if ((marker.meta?.changes ?? 0) !== 1) {
       throw new Error("lane_state_changed_during_import");
@@ -478,6 +636,14 @@ async function importBookFromDcs(
     // nightly reimports that resource.
     for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
       if (!counts.fetched[resource]) continue;
+      // Skip source-pulled tn/tq: they're already held out of the nightly
+      // reimport (heldOutNoteResources), so a watermark here is write-only —
+      // nothing ever reads it. Recording one under the org's identity would
+      // also be a lie (resourceSourceRef no longer takes an override to say
+      // otherwise). An absent watermark correctly fails open to a refetch if
+      // provenance is later cleared.
+      if (resource === "tn" && noteSource.tn) continue;
+      if (resource === "tq" && noteSource.tq) continue;
       const file = dcsResourceFile(cfg, book, resource);
       if (!file) continue;
       const src = await resourceSourceRef(env, resource, cfg);
