@@ -153,7 +153,16 @@ export function planTemplateSync(sheetRows: SheetRow[], dbRows: DbTemplateRow[])
 
     const hashChanged = existing.source_hash !== row.sourceHash;
     const wasDeleted = existing.deleted_at != null;
-    if (!hashChanged && !wasDeleted) {
+    // Metadata can move without the body changing — a corrected support ref in
+    // column A, a retyped column B, or a row inserted above shifting the order.
+    // Those still need writing through or the catalog drifts from the sheet
+    // forever, but they are NOT an English revision: no version bump, no
+    // history row, no demotion of an approved translation.
+    const metaChanged =
+      existing.support_ref !== row.supportRef ||
+      (existing.type ?? "") !== row.type ||
+      existing.sheet_order !== row.sheetOrder;
+    if (!hashChanged && !wasDeleted && !metaChanged) {
       unchanged++;
       continue;
     }

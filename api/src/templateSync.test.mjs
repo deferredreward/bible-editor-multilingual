@@ -105,6 +105,18 @@ test("planTemplateSync restores a soft-deleted row that reappears in the sheet",
   assert.equal(u.hashChanged, false); // body unchanged, only restore
 });
 
+test("a metadata-only change upserts without bumping version or demoting", () => {
+  const existing = dbRow({ support_ref: "figs-metaphor", translation_state: "validated" });
+  const moved = { ...sheetRow(), supportRef: "figs-simile", sourceHash: existing.source_hash };
+  const plan = planTemplateSync([moved], [existing]);
+  assert.equal(plan.unchanged, 0);
+  assert.equal(plan.upserts.length, 1);
+  const u = plan.upserts[0];
+  assert.equal(u.supportRef, "figs-simile");
+  assert.equal(u.hashChanged, false); // no version bump, no history row
+  assert.equal(u.demote, false); // an approved translation survives a ref correction
+});
+
 test("parseTemplateRows skips an individual row whose id cell is blank", () => {
   const rows = [
     ["ref", "type", "body", "id"], // header
