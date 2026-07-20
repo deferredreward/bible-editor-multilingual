@@ -41,7 +41,8 @@
 
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
-import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, NT_BOOKS } from "./dcsSources";
+import type { RepoRef } from "./repoUrl";
+import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, heldOutNoteResources, NT_BOOKS } from "./dcsSources";
 import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
 import {
   collectSourceWords,
@@ -271,15 +272,18 @@ async function runReimport(
   // are whole-book files; chapter filtering happens after parse.
   const want = new Set(resources);
 
-  // Aquifer-sourced tn: this book's tn was rebuilt on the current en_tn skeleton
-  // (POST /aquifer-drafts). A DCS reimport from the configured tn repo (e.g. an
-  // older BSOJ/ar_tn) would clobber/prune those en_tn-based draft rows, so skip
-  // tn entirely for the book. Other resources (verses/tq/twl) reimport normally.
-  if (want.has("tn")) {
-    const prov = await env.DB.prepare(`SELECT tn_source FROM book_imports WHERE book = ?1`)
+  // Held-out note resources: this book's tn/tq did not come from the configured
+  // org repo — either rebuilt on the current en_tn skeleton from Aquifer (POST
+  // /aquifer-drafts) or imported straight from the English translationSource
+  // because the org's own file was stale/absent. Either way a DCS reimport from
+  // the configured tn/tq repo (e.g. an older BSOJ/ar_tn) would clobber/prune
+  // those source-keyed rows, so skip that resource entirely for the book. Other
+  // resources (verses/twl) reimport normally.
+  if (want.has("tn") || want.has("tq")) {
+    const prov = await env.DB.prepare(`SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`)
       .bind(book)
-      .first<{ tn_source: string | null }>();
-    if (prov?.tn_source?.startsWith("aquifer:")) want.delete("tn");
+      .first<{ tn_source: string | null; tq_source: string | null }>();
+    for (const r of heldOutNoteResources(prov)) want.delete(r);
   }
 
   // Scripture-lane guard: a frozen lane (open replacement) or a lane that still
@@ -1730,11 +1734,24 @@ export interface ResourceSourceRef {
 // read live lane state (active generation + the lane's source owner/repo/ref);
 // tn/tq/twl use the project config org + role repo on master at generation 1
 // (origSourceGeneration — also the sentinel used for UHB/UGNT originals).
+//
+// `override` (tn/tq only) records the TRUE upstream when a book's notes were
+// imported from the English translationSource rather than the org's own repo —
+// the watermark must not claim an identity we never fetched from.
 export async function resourceSourceRef(
   env: Env,
   resource: Resource,
   cfg: ProjectConfig,
+  override?: RepoRef,
 ): Promise<ResourceSourceRef> {
+  if (override && (resource === "tn" || resource === "tq")) {
+    return {
+      generation: origSourceGeneration(),
+      owner: override.owner,
+      repo: override.repo,
+      ref: override.ref,
+    };
+  }
   const lane = laneForBibleVersion(resource === "ult" ? "ULT" : resource === "ust" ? "UST" : resource);
   if (lane) {
     const row = await requireLaneState(env, lane);
@@ -2032,8 +2049,24 @@ async function planAndStageBookResources(
   if (maxChapter < 1) return { maxChapter, entries: [] };
 
   const cfg = await getProjectConfig(env);
+  // Same held-out guard runReimport applies: a book whose tn/tq came from
+  // Aquifer or the English translationSource must never be re-fetched from the
+  // configured org repo. This chunked path had NO provenance check, so the
+  // nightly self-heal would have clobbered those rows — treat a held-out
+  // resource as a no-op entry (never fetch, never watermark).
+  const prov = await env.DB.prepare(`SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`)
+    .bind(book)
+    .first<{ tn_source: string | null; tq_source: string | null }>();
+  const heldOut = heldOutNoteResources(prov);
+
   const entries: StagedResource[] = [];
   for (const resource of resources) {
+    if (resource === "tn" || resource === "tq") {
+      if (heldOut.has(resource)) {
+        entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null });
+        continue;
+      }
+    }
     const file = dcsResourceFile(cfg, book, resource);
     if (!file) { entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null }); continue; }
 
