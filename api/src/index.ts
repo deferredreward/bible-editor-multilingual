@@ -25,7 +25,7 @@ import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
 import { workspaceRoutes } from "./workspaceRoutes";
-import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie } from "./workspaces";
+import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch } from "./workspaces";
 
 export interface Env {
   DB: D1Database;
@@ -84,6 +84,10 @@ export interface Env {
   // Set per-request by the fetch() wrapper below to the resolved workspace's
   // slug ("default" when WORKSPACES is unset) — never configured directly.
   WORKSPACE_SLUG?: string;
+  // The original, never-swapped env, stamped by workspaceEnv(). Bindings must
+  // always be looked up here so resolving a second workspace from an already-
+  // swapped env can't hand back the currently-active database.
+  BASE_ENV?: Env;
   // Comma-separated DCS usernames (case-insensitive) who may switch to any
   // workspace regardless of DCS org membership.
   SUPER_ADMINS?: string;
@@ -133,12 +137,13 @@ app.use("*", (c, next) => {
   return cors({
     origin: (origin) => (origin && list.includes(origin) ? origin : null),
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation"],
+    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation", "X-Workspace"],
     exposeHeaders: ["ETag"],
   })(c, next);
 });
 
 app.use("*", attachAuth);
+app.use("*", requireWorkspaceMatch);
 app.use("*", requireCsrf);
 
 // Defense-in-depth response headers. CSP locks the SPA to its own bundle

@@ -11,6 +11,7 @@
 // workspaceEnv() before handing the request to the Hono app. Every route file
 // still just reads `c.env.DB` — it has no idea a swap happened.
 
+import type { MiddlewareHandler } from "hono";
 import type { Env } from "./index";
 import { isIdent } from "./repoUrl.ts";
 
@@ -123,13 +124,21 @@ export function resolveWorkspace(env: Env, slug: string | null): Workspace {
 // ORIGINAL default DB binding (must be read before DB is overwritten below),
 // and stamps VIEWER_ORG / WORKSPACE_SLUG / DCS_EXPORT_OWNER for this request.
 export function workspaceEnv(env: Env, ws: Workspace): Env {
-  const originalDb = env.DB;
+  // Bindings are always resolved from the ORIGINAL (never-swapped) env, kept on
+  // BASE_ENV. This function can legitimately be called on an already-swapped
+  // env — the workspace-switch route resolves the *target* workspace's DB from
+  // the current request's env — and the first workspace's binding is literally
+  // named "DB". Reading `env[ws.binding]` off a swapped env would then hand
+  // back whichever database is currently active instead of the target's, which
+  // silently reads the wrong org (it looked up roles in the wrong workspace).
+  const base = env.BASE_ENV ?? env;
   return {
-    ...env,
-    DB: (env as unknown as Record<string, unknown>)[ws.binding] as D1Database,
-    SHARED_DB: env.SHARED_DB ?? originalDb,
+    ...base,
+    BASE_ENV: base,
+    DB: (base as unknown as Record<string, unknown>)[ws.binding] as D1Database,
+    SHARED_DB: base.SHARED_DB ?? base.DB,
     VIEWER_ORG: ws.org,
-    DCS_EXPORT_OWNER: ws.exportOwner ?? env.DCS_EXPORT_OWNER,
+    DCS_EXPORT_OWNER: ws.exportOwner ?? base.DCS_EXPORT_OWNER,
     WORKSPACE_SLUG: ws.slug,
   };
 }
@@ -158,7 +167,18 @@ export function parseWorkspaceCookie(request: Request): string | null {
     if (eq === -1) continue;
     const name = part.slice(0, eq).trim();
     if (name === WORKSPACE_COOKIE) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
+      // A malformed percent-escape (e.g. a stray "%" from a hand-edited or
+      // corrupted cookie) throws a URIError out of decodeURIComponent — left
+      // uncaught, that turns into an uncaught throw inside the fetch()
+      // wrapper (this runs before Hono's onError handler exists), 500ing
+      // every request from that browser. Treat an undecodable value the same
+      // as an absent cookie — resolveWorkspace() already handles null by
+      // falling back to the first/default workspace.
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return null;
+      }
     }
   }
   return null;
@@ -169,3 +189,41 @@ export function serializeWorkspaceCookie(slug: string, secure: boolean): string 
   if (secure) attrs.push("Secure");
   return attrs.join("; ");
 }
+
+// ── Cross-tab workspace-mismatch guard ──────────────────────────────────────
+
+// Paths exempt from the check below regardless of the header's value:
+// /api/auth/* is hit by raw fetch() calls that never set X-Workspace (the
+// refresh/dev-mint/OAuth-callback flows in web/src/sync/api.ts) AND by
+// fetchAuthMe()/authLogout(), which DO go through the shared request() helper
+// and so DO carry the client's (possibly stale, pre-reconciliation) slug —
+// rejecting those would break the exact boot-time reconciliation this guard
+// is meant to support. /api/ws/* is the WebSocket upgrade route; browsers
+// don't allow custom headers on a WS handshake, so this is defensive rather
+// than load-bearing.
+function isWorkspaceMismatchExempt(path: string): boolean {
+  return path.startsWith("/api/auth/") || path.startsWith("/api/ws/");
+}
+
+// Detects a stale tab: web/src/sync/api.ts stamps every request with an
+// X-Workspace header holding its client-side notion of the active org
+// (getWorkspaceSlug()). If a SIBLING tab switches orgs, THIS tab's requests
+// still carry the old slug — which won't match the workspace this request
+// resolved to (index.ts's fetch() wrapper already picked the D1 binding from
+// the be_ws cookie before Hono ever saw the request). Reject so api.ts can
+// force this tab to reconcile instead of silently reading/writing the wrong
+// org's data — see outbox.ts's dispatch() for why a queued edit must survive
+// this (it stays queued; it belongs to the OTHER workspace's outbox and drains
+// fine once the user is back there).
+//
+// Absent header ALWAYS passes — older clients, curl, and the exempt paths
+// above never send it. This is detection of a known-stale claim, not
+// enforcement that the header be present.
+export const requireWorkspaceMatch: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const claimed = c.req.header("x-workspace");
+  const resolved = c.env.WORKSPACE_SLUG ?? "default";
+  if (claimed && claimed !== resolved && !isWorkspaceMismatchExempt(c.req.path)) {
+    return c.json({ error: "workspace_mismatch", expected: resolved }, 409);
+  }
+  await next();
+};

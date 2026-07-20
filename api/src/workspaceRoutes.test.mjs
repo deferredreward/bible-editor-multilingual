@@ -8,8 +8,8 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
-import { SignJWT } from "jose";
-import { attachAuth, requireCsrf } from "./auth.ts";
+import { SignJWT, jwtVerify } from "jose";
+import { attachAuth, requireCsrf, isSuperAdmin } from "./auth.ts";
 import { workspaceRoutes } from "./workspaceRoutes.ts";
 
 function assert(cond, msg) {
@@ -311,6 +311,142 @@ console.log("[POST] missing CSRF token -> 403 (same global gate as every other w
   const res = await req(app, env, "POST", "/api/workspaces/org2", { token: tok, skipCsrf: true });
   assert(res.status === 403, "POST without CSRF header/cookie -> 403");
   assert((await res.json()).error === "csrf_mismatch", "403 body is csrf_mismatch");
+}
+
+// ── BLOCKER 1 regression: role re-resolved against the TARGET workspace ────
+
+console.log("[POST] switching workspace re-mints the access cookie's role from the TARGET workspace's DB");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    // Two independent D1s: "uw" (binding DB) has the user as admin; "org2"
+    // (binding DB2) has no user_roles row for them at all — a plain member.
+    const dbUw = freshDb();
+    dbUw.exec(`CREATE TABLE user_roles (dcs_username TEXT COLLATE NOCASE, role TEXT);`);
+    dbUw.exec(`INSERT INTO user_roles (dcs_username, role) VALUES ('ivy', 'admin');`);
+    seedUser(dbUw, { id: 9, username: "ivy", token: "ivy-token" });
+
+    const dbOrg2 = freshDb();
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT COLLATE NOCASE, role TEXT);`);
+    // deliberately no user_roles row for ivy — she's never been granted a
+    // role in org2, only a plain DCS member.
+
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify([{ username: "unfoldingWord" }, { username: "OrgTwo" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const app = buildApp();
+    const env = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: makeD1(dbUw),
+      DB2: makeD1(dbOrg2),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+      WORKSPACE_SLUG: "uw",
+      SUPER_ADMINS: "",
+    };
+    // The JWT itself carries role: admin (as minted while in "uw") — the
+    // whole point of this test is that the re-mint must NOT trust this claim
+    // for the target workspace.
+    const tok = await makeToken({ sub: "9", role: "admin", username: "ivy" });
+    const res = await req(app, env, "POST", "/api/workspaces/org2", { token: tok });
+    assert(res.status === 200, "switch to org2 -> 200");
+
+    const setCookies =
+      typeof res.headers.getSetCookie === "function"
+        ? res.headers.getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    assert(
+      setCookies.some((h) => /^be_ws=org2/.test(h)),
+      "workspace cookie carries org2",
+    );
+    const accessCookie = setCookies.find((h) => /^be_access=/.test(h));
+    assert(!!accessCookie, "a new be_access cookie was minted alongside the workspace cookie");
+
+    const newToken = accessCookie.match(/^be_access=([^;]+)/)[1];
+    const { payload } = await jwtVerify(newToken, KEY, { algorithms: ["HS256"], issuer: ISSUER });
+    assert(
+      payload.role === "viewer",
+      `re-minted token's role is 'viewer' (org2 has no role row for ivy), got ${payload.role}`,
+    );
+    assert(payload.role !== "admin", "re-minted token must NOT carry the stale org-A admin role");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── super admin bootstraps a brand-new workspace as admin ──────────────────
+
+console.log("[POST] super-admin switching into a workspace with no user_roles row -> re-minted as admin");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    // Fresh workspace: no user_roles row for the super admin at all — this
+    // is the chicken-and-egg case (a just-created org's user_roles table
+    // only has whatever migration 0016 seeds).
+    const dbUw = freshDb();
+    dbUw.exec(`CREATE TABLE user_roles (dcs_username TEXT COLLATE NOCASE, role TEXT);`);
+    seedUser(dbUw, { id: 10, username: "kim", token: "kim-token" });
+
+    const dbOrg2 = freshDb();
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT COLLATE NOCASE, role TEXT);`);
+    // deliberately no user_roles row for kim in org2 either.
+
+    globalThis.fetch = async () => {
+      throw new Error("DCS should not be called for a super-admin");
+    };
+
+    const app = buildApp();
+    const env = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: makeD1(dbUw),
+      DB2: makeD1(dbOrg2),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+      WORKSPACE_SLUG: "uw",
+      SUPER_ADMINS: "kim",
+    };
+    const tok = await makeToken({ sub: "10", role: "viewer", username: "kim" });
+    const res = await req(app, env, "POST", "/api/workspaces/org2", { token: tok });
+    assert(res.status === 200, "super-admin switch to org2 -> 200");
+
+    const setCookies =
+      typeof res.headers.getSetCookie === "function"
+        ? res.headers.getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    const accessCookie = setCookies.find((h) => /^be_access=/.test(h));
+    assert(!!accessCookie, "a new be_access cookie was minted alongside the workspace cookie");
+
+    const newToken = accessCookie.match(/^be_access=([^;]+)/)[1];
+    const { payload } = await jwtVerify(newToken, KEY, { algorithms: ["HS256"], issuer: ISSUER });
+    assert(
+      payload.role === "admin",
+      `super-admin with no user_roles row in the target workspace still comes out 'admin', got ${payload.role}`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── isSuperAdmin parsing ─────────────────────────────────────────────────
+
+console.log("[isSuperAdmin] parsing: empty, whitespace, case-insensitivity, non-listed user");
+{
+  assert(isSuperAdmin({ SUPER_ADMINS: "" }, "anyone") === false, "empty string -> nobody is super admin");
+  assert(isSuperAdmin({ SUPER_ADMINS: "  Ada , bob  ,, carol " }, "ada") === true, "whitespace-padded entry matches");
+  assert(isSuperAdmin({ SUPER_ADMINS: "Ada" }, "ADA") === true, "case-insensitive match");
+  assert(isSuperAdmin({ SUPER_ADMINS: "Ada" }, "ada") === true, "case-insensitive match (lowercase input)");
+  assert(isSuperAdmin({ SUPER_ADMINS: "Ada, bob" }, "dave") === false, "non-listed user -> false");
 }
 
 console.log("workspaceRoutes: all assertions passed");

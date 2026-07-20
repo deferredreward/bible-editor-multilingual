@@ -4,6 +4,7 @@
 // imports from api.ts).
 
 const STORAGE_KEY = "bible-editor.workspace";
+const FALLBACK_KEY = "bible-editor.workspace-is-fallback";
 
 export function getWorkspaceSlug(): string {
   try {
@@ -18,6 +19,39 @@ export function getWorkspaceSlug(): string {
 export function setWorkspaceSlug(slug: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, slug);
+  } catch {
+    /* private mode — nothing we can do, next boot re-derives from the server */
+  }
+}
+
+// Whether the current workspace slug is the FALLBACK one — the first entry
+// in WORKSPACES (or the sole implicit "default" workspace when WORKSPACES is
+// unset). outbox.ts's outboxDbName() keeps the legacy unsuffixed
+// "bible-editor-outbox" IndexedDB name for the fallback workspace specifically
+// (not for whichever slug happens to be literally "default") so pre-
+// workspaces installs' queued edits are never orphaned by the first real
+// WORKSPACES deploy — see outbox.ts for the full rationale.
+//
+// Unknown (never persisted — a pre-this-feature localStorage, or a boot
+// before the first /api/auth/me response lands) is treated as fallback ONLY
+// when the slug is itself "default", preserving today's behavior. A real but
+// not-yet-confirmed slug conservatively suffixes: a wrongly-suffixed outbox
+// just opens a fresh empty database, where a wrongly-unsuffixed one could
+// mix two different orgs' queued edits into the legacy database.
+export function getWorkspaceIsFallback(): boolean {
+  try {
+    const raw = localStorage.getItem(FALLBACK_KEY);
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+  } catch {
+    /* private mode */
+  }
+  return getWorkspaceSlug() === "default";
+}
+
+export function setWorkspaceIsFallback(isFallback: boolean): void {
+  try {
+    localStorage.setItem(FALLBACK_KEY, isFallback ? "1" : "0");
   } catch {
     /* private mode — nothing we can do, next boot re-derives from the server */
   }

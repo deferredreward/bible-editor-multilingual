@@ -24,7 +24,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
-import { sharedDb } from "./workspaces.ts";
+import { sharedDb, listWorkspaces } from "./workspaces.ts";
 
 const ACCESS_COOKIE = "be_access";
 const REFRESH_COOKIE = "be_refresh";
@@ -125,6 +125,30 @@ export async function lookupUserRole(env: Env, dcsUsername: string): Promise<Rol
     .bind(dcsUsername)
     .first<{ role: Role }>();
   return row?.role ?? null;
+}
+
+// SUPER_ADMINS (api/wrangler.toml vars) is comma-separated DCS usernames,
+// case-insensitive, whitespace trimmed, empty entries ignored. Empty/unset
+// var = nobody.
+export function isSuperAdmin(env: Env, dcsUsername: string): boolean {
+  const list = (env.SUPER_ADMINS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(dcsUsername.toLowerCase());
+}
+
+// A super admin resolves to 'admin' in every workspace — this is what makes
+// bootstrapping a brand-new org possible: a fresh workspace's user_roles
+// table only has whatever migration 0016 seeds, so without this the first
+// person to switch into it would land as a plain viewer org member and be
+// unable to run the Setup wizard. Deliberately NOT folded into
+// lookupUserRole: adminUserRoutes.ts's last-admin guard asks specifically
+// about the user_roles row, not effective access, and must keep meaning
+// that.
+export async function effectiveRole(env: Env, dcsUsername: string): Promise<Role | null> {
+  if (isSuperAdmin(env, dcsUsername)) return "admin";
+  return lookupUserRole(env, dcsUsername);
 }
 
 function signingKey(env: Env): Uint8Array | null {
@@ -288,7 +312,11 @@ async function verifyStateCookie(token: string, key: Uint8Array): Promise<string
 // Mints a short-lived (1h) Access JWT for the cookie session. The refresh
 // path mints a new one each hour via the be_refresh cookie; revocation lands
 // within that hour even though the JWT itself is stateless.
-async function mintToken(
+//
+// Exported so workspaceRoutes.ts's POST /api/workspaces/:slug can re-mint the
+// Access cookie with a role re-resolved against the TARGET workspace's DB
+// after a switch — reusing this rather than re-implementing the signing.
+export async function mintToken(
   c: AppContext,
   userId: number,
   username: string,
@@ -362,9 +390,10 @@ function setSessionCookies(
   });
 }
 
-// Only rotates the Access cookie (called by refreshToken). The Refresh + CSRF
+// Only rotates the Access cookie (called by refreshToken, and by
+// workspaceRoutes.ts's workspace-switch role re-mint). The Refresh + CSRF
 // cookies stay bound to the same session row.
-function rotateAccessCookie(c: AppContext, accessJwt: string) {
+export function rotateAccessCookie(c: AppContext, accessJwt: string) {
   setCookie(c, ACCESS_COOKIE, accessJwt, {
     httpOnly: true,
     sameSite: "Lax",
@@ -372,6 +401,15 @@ function rotateAccessCookie(c: AppContext, accessJwt: string) {
     maxAge: ACCESS_COOKIE_TTL_SECONDS,
     secure: isSecureRequest(c),
   });
+}
+
+// Clears ONLY the Access cookie. Used when a workspace switch can't cleanly
+// re-mint a role-correct token (see workspaceRoutes.ts) — forces the client
+// through /api/auth/refresh, which re-resolves the role against the
+// per-request (by-then target-workspace) DB, rather than leaving a stale,
+// wrong-org role live for the rest of the old token's TTL.
+export function clearAccessCookie(c: AppContext) {
+  deleteCookie(c, ACCESS_COOKIE, { path: "/" });
 }
 
 function clearSessionCookies(c: AppContext) {
@@ -454,7 +492,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // members of the viewer org (default: unfoldingWord) get read-only access.
   // Anything else hits the denied screen.
   const origin = new URL(c.req.url).origin;
-  let role: Role | null = await lookupUserRole(c.env, dcsUser.login);
+  let role: Role | null = await effectiveRole(c.env, dcsUser.login);
   if (!role) {
     const isMember = await isViewerOrgMember(c.env, dcsUser.login, accessToken);
     if (isMember) {
@@ -510,6 +548,13 @@ export async function authMe(c: AppContext): Promise<Response> {
   )
     .bind(userId)
     .first<{ last_book: string | null; last_chapter: number | null; last_verse: number | null }>();
+  const currentWsSlug = c.env.WORKSPACE_SLUG ?? "default";
+  // The FALLBACK workspace (first entry in WORKSPACES, or the sole implicit
+  // "default" one) is the one whose outbox keeps the legacy unsuffixed
+  // IndexedDB name — see web/src/sync/outbox.ts's outboxDbName(). The client
+  // persists this alongside the slug so it can pick the right outbox name
+  // without depending on the slug literally being "default".
+  const workspaceIsFallback = currentWsSlug === (listWorkspaces(c.env)[0]?.slug ?? "default");
   return c.json({
     userId,
     username: username ?? null,
@@ -517,7 +562,8 @@ export async function authMe(c: AppContext): Promise<Response> {
     lastBook: row?.last_book ?? null,
     lastChapter: row?.last_chapter ?? null,
     lastVerse: row?.last_verse ?? null,
-    workspace: c.env.WORKSPACE_SLUG ?? "default",
+    workspace: currentWsSlug,
+    workspaceIsFallback,
   });
 }
 
@@ -552,7 +598,7 @@ export async function refreshToken(c: AppContext): Promise<Response> {
   // Viewers (org-only access) re-verify org membership via the service token
   // (or public org listing) each refresh so removal from the org also revokes.
   const lookupName = session.dcs_username ?? "";
-  let role: Role | null = await lookupUserRole(c.env, lookupName);
+  let role: Role | null = await effectiveRole(c.env, lookupName);
   if (!role) {
     const isMember = await isViewerOrgMember(c.env, lookupName, null);
     if (isMember) role = "viewer";
@@ -584,7 +630,7 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     return c.json({ error: "jwt_signing_key_not_configured" }, 500);
   }
 
-  let role = await lookupUserRole(c.env, username);
+  let role = await effectiveRole(c.env, username);
   if (!role) {
     await c.env.DB.prepare(
       `INSERT OR IGNORE INTO user_roles (dcs_username, role) VALUES (?1, 'admin')`,

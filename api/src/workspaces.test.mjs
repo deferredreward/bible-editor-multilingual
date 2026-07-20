@@ -5,6 +5,7 @@
 // Run from api/:
 //   node --experimental-strip-types --no-warnings --test src/workspaces.test.mjs
 
+import { Hono } from "hono";
 import {
   listWorkspaces,
   resolveWorkspace,
@@ -13,6 +14,7 @@ import {
   WORKSPACE_COOKIE,
   parseWorkspaceCookie,
   serializeWorkspaceCookie,
+  requireWorkspaceMatch,
 } from "./workspaces.ts";
 
 function assert(cond, msg) {
@@ -188,6 +190,31 @@ console.log("[workspaceEnv] swaps DB, resolves SHARED_DB to the ORIGINAL default
   assert(wsEnv3.SHARED_DB === preSetShared, "existing SHARED_DB is preserved, not overwritten");
 }
 
+console.log("[workspaceEnv] is re-entrant: resolving a second workspace from an already-swapped env");
+{
+  // Regression: the workspace-switch route resolves the TARGET workspace from
+  // the current request's (already-swapped) env, and the first workspace's
+  // binding is literally "DB". Resolving off the swapped env handed back the
+  // *currently active* database instead of the target's, so switching back to
+  // the first workspace looked up roles in the wrong org's D1 and demoted the
+  // user to viewer.
+  const defaultDb = fakeD1("default-DB");
+  const otherDb = fakeD1("other-DB");
+  const env = { DB: defaultDb, DB_OTHER: otherDb };
+  const first = { slug: "first", label: "First", org: "First", binding: "DB" };
+  const other = { slug: "other", label: "Other", org: "Other", binding: "DB_OTHER" };
+
+  const inOther = workspaceEnv(env, other);
+  assert(inOther.DB === otherDb, "first swap lands on the other workspace's DB");
+
+  const backToFirst = workspaceEnv(inOther, first);
+  assert(backToFirst.DB === defaultDb, "re-resolving the 'DB'-bound workspace from a swapped env returns the ORIGINAL DB");
+  assert(backToFirst.WORKSPACE_SLUG === "first", "slug re-stamped on the second swap");
+  assert(backToFirst.SHARED_DB === defaultDb, "SHARED_DB still resolves to the original default binding");
+  // And a third hop must not degrade either.
+  assert(workspaceEnv(backToFirst, other).DB === otherDb, "third swap still resolves from the base env");
+}
+
 // ── sharedDb ─────────────────────────────────────────────────────────────────
 
 console.log("[sharedDb] falls back to DB when SHARED_DB unset");
@@ -219,6 +246,12 @@ console.log("[workspace cookie] parse/serialize incl. Secure and multi-cookie he
   const encoded = new Request("http://x/", { headers: { cookie: "be_ws=org%2Dtwo" } });
   assert(parseWorkspaceCookie(encoded) === "org-two", "URI-encoded cookie value decoded");
 
+  // ISSUE 5 regression: a malformed percent-escape must not throw a URIError
+  // out of the fetch() wrapper (which would 500 every request from that
+  // browser) — treat it the same as an absent cookie.
+  const malformedPercent = new Request("http://x/", { headers: { cookie: "be_ws=%" } });
+  assert(parseWorkspaceCookie(malformedPercent) === null, "undecodable percent-escape -> null, does not throw");
+
   const insecure = serializeWorkspaceCookie("uw", false);
   assert(insecure.includes("be_ws=uw"), "serialized cookie carries the slug");
   assert(insecure.includes("Path=/"), "Path=/ present");
@@ -229,6 +262,67 @@ console.log("[workspace cookie] parse/serialize incl. Secure and multi-cookie he
 
   const secure = serializeWorkspaceCookie("uw", true);
   assert(secure.includes("Secure"), "Secure present when the request is https");
+}
+
+// ── requireWorkspaceMatch (BLOCKER 2) ───────────────────────────────────────
+
+console.log("[requireWorkspaceMatch] header matching -> passes; mismatching -> 409; absent -> passes");
+{
+  function buildApp() {
+    const app = new Hono();
+    app.use("*", requireWorkspaceMatch);
+    app.get("/api/whatever", (c) => c.json({ ok: true }));
+    app.get("/api/auth/me", (c) => c.json({ ok: true }));
+    app.get("/api/ws/chapter/GEN/1", (c) => c.json({ ok: true }));
+    return app;
+  }
+  const env = { WORKSPACE_SLUG: "org2" };
+
+  const noHeader = await buildApp().request("/api/whatever", {}, env);
+  assert(noHeader.status === 200, "absent X-Workspace header -> passes");
+
+  const matching = await buildApp().request(
+    "/api/whatever",
+    { headers: { "x-workspace": "org2" } },
+    env,
+  );
+  assert(matching.status === 200, "X-Workspace matching the resolved workspace -> passes");
+
+  const mismatching = await buildApp().request(
+    "/api/whatever",
+    { headers: { "x-workspace": "uw" } },
+    env,
+  );
+  assert(mismatching.status === 409, "X-Workspace mismatching the resolved workspace -> 409");
+  const body = await mismatching.json();
+  assert(body.error === "workspace_mismatch", "409 body carries error: workspace_mismatch");
+  assert(body.expected === "org2", "409 body's `expected` is the server-resolved slug");
+
+  // Exempt paths pass even with a mismatching header — /api/auth/* is hit by
+  // fetchAuthMe()/authLogout() (which DO send X-Workspace) during the exact
+  // boot-time reconciliation window this guard must not block.
+  const authExempt = await buildApp().request(
+    "/api/auth/me",
+    { headers: { "x-workspace": "uw" } },
+    env,
+  );
+  assert(authExempt.status === 200, "/api/auth/* exempt from the mismatch check");
+
+  const wsExempt = await buildApp().request(
+    "/api/ws/chapter/GEN/1",
+    { headers: { "x-workspace": "uw" } },
+    env,
+  );
+  assert(wsExempt.status === 200, "/api/ws/* exempt from the mismatch check");
+
+  // WORKSPACE_SLUG unset (WORKSPACES unset) -> resolved slug is "default".
+  const defaultEnv = {};
+  const defaultMatch = await buildApp().request(
+    "/api/whatever",
+    { headers: { "x-workspace": "default" } },
+    defaultEnv,
+  );
+  assert(defaultMatch.status === 200, "unset WORKSPACE_SLUG resolves to 'default' for the comparison");
 }
 
 console.log("workspaces: all assertions passed");

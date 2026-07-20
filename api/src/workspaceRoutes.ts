@@ -4,24 +4,18 @@
 
 import { Hono } from "hono";
 import type { Env } from "./index";
-import { requireAuth, currentUserId } from "./auth.ts";
-import { listWorkspaces, sharedDb, serializeWorkspaceCookie, type Workspace } from "./workspaces.ts";
+import { requireAuth, currentUserId, effectiveRole, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
+import { listWorkspaces, sharedDb, serializeWorkspaceCookie, workspaceEnv, type Workspace } from "./workspaces.ts";
 
 export const workspaceRoutes = new Hono<{
   Bindings: Env;
-  Variables: { userId?: number; username?: string };
+  // Variables shape matches auth.ts's AppContext exactly (see mintToken /
+  // rotateAccessCookie / clearAccessCookie) so `c` can be passed straight
+  // through to those helpers without a cast.
+  Variables: { userId?: number; username?: string; role?: Role };
 }>();
 
 workspaceRoutes.use("*", requireAuth);
-
-function superAdminSet(env: Env): Set<string> {
-  return new Set(
-    (env.SUPER_ADMINS ?? "")
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
 
 // Fetches the stored DCS access token for the current user from the SHARED
 // db (users is shared, not per-workspace). Null when there's no session/user
@@ -58,11 +52,22 @@ workspaceRoutes.get("/", async (c) => {
   const workspaces = listWorkspaces(c.env);
   const current = c.env.WORKSPACE_SLUG ?? "default";
   const username = c.get("username");
+  // The FALLBACK workspace (first entry in WORKSPACES, or the sole implicit
+  // "default" one) is the one whose outbox keeps the legacy unsuffixed
+  // IndexedDB name (see web/src/sync/outbox.ts's outboxDbName()). Surfaced
+  // per-entry so the client can persist it alongside the slug it switches to.
+  const fallbackSlug = workspaces[0]?.slug ?? "default";
 
-  if (username && superAdminSet(c.env).has(username.toLowerCase())) {
+  if (username && isSuperAdmin(c.env, username)) {
     return c.json({
       current,
-      workspaces: workspaces.map((w) => ({ slug: w.slug, label: w.label, org: w.org, allowed: true })),
+      workspaces: workspaces.map((w) => ({
+        slug: w.slug,
+        label: w.label,
+        org: w.org,
+        allowed: true,
+        isFallback: w.slug === fallbackSlug,
+      })),
     });
   }
 
@@ -74,7 +79,13 @@ workspaceRoutes.get("/", async (c) => {
     // user: they keep the workspace they're already in.
     return c.json({
       current,
-      workspaces: workspaces.map((w) => ({ slug: w.slug, label: w.label, org: w.org, allowed: w.slug === current })),
+      workspaces: workspaces.map((w) => ({
+        slug: w.slug,
+        label: w.label,
+        org: w.org,
+        allowed: w.slug === current,
+        isFallback: w.slug === fallbackSlug,
+      })),
       membershipUnknown: true,
     });
   }
@@ -86,6 +97,7 @@ workspaceRoutes.get("/", async (c) => {
       label: w.label,
       org: w.org,
       allowed: memberOrgs.has(w.org.toLowerCase()),
+      isFallback: w.slug === fallbackSlug,
     })),
   });
 });
@@ -99,7 +111,7 @@ workspaceRoutes.post("/:slug", async (c) => {
   if (!ws) return c.json({ error: "unknown_workspace" }, 404);
 
   const username = c.get("username");
-  let allowed = !!username && superAdminSet(c.env).has(username.toLowerCase());
+  let allowed = !!username && isSuperAdmin(c.env, username);
   if (!allowed) {
     const accessToken = await currentAccessToken(c.env, currentUserId(c));
     const memberOrgs = accessToken ? await fetchMemberOrgs(c.env, accessToken) : null;
@@ -108,6 +120,45 @@ workspaceRoutes.post("/:slug", async (c) => {
   if (!allowed) return c.json({ error: "workspace_forbidden" }, 403);
 
   const secure = !c.req.url.startsWith("http://");
-  c.header("Set-Cookie", serializeWorkspaceCookie(ws.slug, secure));
+  // append: true — a second Set-Cookie (the re-minted be_access below) must
+  // land alongside this one, not replace it. c.header()'s default (no
+  // {append}) uses Headers.set, which clobbers any prior Set-Cookie.
+  c.header("Set-Cookie", serializeWorkspaceCookie(ws.slug, secure), { append: true });
+
+  // user_roles is per-org, but the Access JWT's `role` claim is what
+  // requireAdmin/requireEditor read off the request — without this, the old
+  // token (minted for the PREVIOUS workspace) keeps its old-org role for up
+  // to its 1h TTL after the switch above, so e.g. an admin in org A who is
+  // merely a member of org B could use that stale role against org B's DB
+  // until the token naturally expired. Re-resolve the role against the
+  // TARGET workspace's DB and re-mint the Access cookie so the new token can
+  // never carry a role that doesn't apply to the org it's now scoped to.
+  //
+  // `allowed` above already established the caller is either a super admin
+  // or a confirmed DCS member of the target org — so a missing user_roles
+  // row here means "plain org member", i.e. the same 'viewer' default the
+  // OAuth callback / refresh flow grants for org-only access (see
+  // isViewerOrgMember in auth.ts). It is NOT "deny" — they were just cleared
+  // to switch here.
+  if (username) {
+    try {
+      const targetEnv = workspaceEnv(c.env, ws);
+      const role: Role = (await effectiveRole(targetEnv, username)) ?? "viewer";
+      const userId = currentUserId(c);
+      if (userId !== null) {
+        const newAccessToken = await mintToken(c, userId, username, role);
+        rotateAccessCookie(c, newAccessToken);
+      }
+    } catch {
+      // Couldn't cleanly re-mint (e.g. the target workspace's D1 binding is
+      // unreachable) — fail safe by clearing the Access cookie rather than
+      // leaving the stale, wrong-org role live. The client is forced through
+      // /api/auth/refresh, which re-resolves the role against the
+      // per-request DB — now the target workspace's, since the be_ws cookie
+      // set above has already taken effect for that follow-up request.
+      clearAccessCookie(c);
+    }
+  }
+
   return c.json({ ok: true, slug: ws.slug });
 });

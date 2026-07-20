@@ -2,6 +2,8 @@
 // dev proxy points /api/* at the local Worker; production serves the SPA
 // from the same origin as the Worker).
 
+import { getWorkspaceSlug, setWorkspaceSlug } from "./workspace";
+
 export type RowKind = "tn" | "tq" | "twl";
 
 export interface TnRow {
@@ -261,6 +263,12 @@ export interface PipelineConflictBody {
 
 const CSRF_COOKIE_NAME = "be_csrf";
 
+// Guards the workspace-mismatch reload below from looping forever if the
+// server keeps disagreeing with what we just reconciled to (shouldn't
+// happen, but must never reload-loop the tab). Mirrors App.tsx's
+// WS_RECONCILED_KEY for the boot-time reconciliation path.
+const WS_MISMATCH_RELOAD_KEY = "bible-editor.ws-mismatch-reloaded";
+
 function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
   const prefix = `${name}=`;
@@ -441,6 +449,13 @@ async function request<T>(
     const csrf = getCsrfToken();
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
+  // Stamp this tab's own notion of the active workspace on every request.
+  // The server (requireWorkspaceMatch in api/src/workspaces.ts) compares it
+  // against the workspace it actually resolved the request against (from the
+  // be_ws cookie) and 409s workspace_mismatch on a mismatch — the signal that
+  // a SIBLING tab switched orgs and this tab is now stale. See the 409
+  // handling below and outbox.ts's dispatch().
+  headers["X-Workspace"] = getWorkspaceSlug();
 
   const timeoutMs = init?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   let signal = init?.signal ?? undefined;
@@ -507,6 +522,39 @@ async function request<T>(
         body = await res.json();
       } catch {
         /* ignore — status alone is enough to classify the error */
+      }
+      // workspace_mismatch: the server resolved this request against a
+      // different org than the X-Workspace header claimed (see
+      // requireWorkspaceMatch in api/src/workspaces.ts) — a SIBLING tab
+      // switched orgs and this tab's localStorage slug is now stale.
+      // Reconcile onto the server's slug and reload so this tab re-derives
+      // its outbox database + config from the org it's actually talking to.
+      // Guarded by a sessionStorage flag (same shape as App.tsx's boot
+      // reconciliation) so a persistent disagreement can't reload-loop.
+      //
+      // Do NOT treat this as fatal here: still throw ApiError below so
+      // outbox.ts's dispatch() can classify it distinctly from a version
+      // conflict (409 + `current`) — the op stays queued, it belongs to the
+      // OTHER workspace's outbox and will drain once the user is back there.
+      if ((body as { error?: string } | null)?.error === "workspace_mismatch") {
+        const expected = (body as { expected?: string }).expected;
+        if (expected && expected !== getWorkspaceSlug()) {
+          let alreadyReloaded = false;
+          try {
+            alreadyReloaded = sessionStorage.getItem(WS_MISMATCH_RELOAD_KEY) === "1";
+          } catch {
+            /* private mode */
+          }
+          if (!alreadyReloaded) {
+            setWorkspaceSlug(expected);
+            try {
+              sessionStorage.setItem(WS_MISMATCH_RELOAD_KEY, "1");
+            } catch {
+              /* private mode */
+            }
+            location.reload();
+          }
+        }
       }
       // csrf_mismatch is recoverable, not fatal: the be_csrf cookie expired
       // (or was cleared) while the session itself is still valid. A refresh
@@ -593,6 +641,11 @@ export interface MeResponse {
   // Absent on an older/cached response — callers treat that as "no reconciliation
   // needed" (see App.tsx boot reconciliation).
   workspace?: string;
+  // Whether `workspace` is the FALLBACK workspace (first entry in WORKSPACES,
+  // or the sole implicit "default" one) — see workspace.ts's
+  // getWorkspaceIsFallback / outbox.ts's outboxDbName. Absent alongside
+  // `workspace` on an older/cached response.
+  workspaceIsFallback?: boolean;
 }
 
 // One org-per-D1 workspace the switcher can offer. `allowed` reflects Door43
@@ -603,6 +656,9 @@ export interface WorkspaceInfo {
   label: string;
   org: string;
   allowed: boolean;
+  // Whether this is the FALLBACK workspace (first entry in WORKSPACES, or the
+  // sole implicit "default" one) — see workspace.ts's getWorkspaceIsFallback.
+  isFallback: boolean;
 }
 
 export interface WorkspacesResponse {

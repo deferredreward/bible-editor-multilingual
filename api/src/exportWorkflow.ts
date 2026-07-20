@@ -195,7 +195,16 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // With WORKSPACES unset this resolves to the same default binding as before.
     (this as unknown as { env: Env }).env = workspaceEnv(this.env, resolveWorkspace(this.env, params.workspace ?? null));
 
-    const instanceId = `export-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
+    // Folds the resolved workspace slug in so two orgs starting in the same
+    // millisecond can't share an R2 staging prefix — instanceId is used as the
+    // key prefix for both export snapshots (exports/<instanceId>/...) and
+    // reimport staging (reimport-stage/<instanceId>/...), and the latter is
+    // read back and applied to D1, so a collision would let one org import
+    // another org's staged content. This is NOT the Workflow instance id
+    // passed to EXPORT_WORKFLOW.create() (that's `nightly-${slug}-${day}` in
+    // index.ts, already workspace-scoped for its own dedup purpose) — just the
+    // R2 key prefix, which had no such scoping before.
+    const instanceId = `export-${this.env.WORKSPACE_SLUG ?? "default"}-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
 
     const dcsAllowed = !params.dryDcs && !!this.env.DCS_SERVICE_TOKEN;
 

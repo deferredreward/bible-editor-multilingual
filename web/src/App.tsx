@@ -17,7 +17,7 @@ import {
   type Role,
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
-import { getWorkspaceSlug, setWorkspaceSlug } from "./sync/workspace";
+import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "./sync/workspace";
 
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
@@ -254,7 +254,12 @@ export function App() {
     if (auth.kind !== "ready") return;
     const serverWs = auth.me?.workspace;
     if (serverWs === undefined) return;
+    const serverIsFallback = auth.me?.workspaceIsFallback;
     if (serverWs === getWorkspaceSlug()) {
+      // Slug already agrees — still sync the fallback flag (it's cheap and
+      // keeps outbox.ts's outboxDbName() correct even if it was never set,
+      // e.g. an install that predates the fallback flag).
+      if (serverIsFallback !== undefined) setWorkspaceIsFallback(serverIsFallback);
       try { sessionStorage.removeItem(WS_RECONCILED_KEY); } catch { /* private mode */ }
       return;
     }
@@ -262,6 +267,7 @@ export function App() {
     try { alreadyTried = sessionStorage.getItem(WS_RECONCILED_KEY) === "1"; } catch { /* private mode */ }
     if (alreadyTried) return; // already reloaded once this session — don't loop
     setWorkspaceSlug(serverWs);
+    if (serverIsFallback !== undefined) setWorkspaceIsFallback(serverIsFallback);
     try { sessionStorage.setItem(WS_RECONCILED_KEY, "1"); } catch { /* private mode */ }
     location.reload();
   }, [auth]);
