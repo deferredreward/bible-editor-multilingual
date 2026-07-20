@@ -155,6 +155,7 @@ export interface TemplateUnit {
   type: string | null;
   source_md: string;
   source_hash: string;
+  origin: string;
   target_md: string | null;
   translation_state: "ai_draft" | "edited" | "validated" | null;
   draft_meta_json: string | null;

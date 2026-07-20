@@ -16,6 +16,38 @@ const WRITE_ITEM_BATCH = 20; // mirrors articlePopulate.ts's subrequest-budget b
 
 export { SHEET_CSV_URL };
 
+// ── Built-in (non-sheet) templates ───────────────────────────────────────────
+//
+// TCM and buildSH() are hardcoded English strings in the frontend
+// (web/src/lib/noteTemplates.ts) — they don't come from the Google Sheet, but
+// still need to be translatable, so they're synced into template_units as
+// origin='builtin' rows alongside the 191 sheet-sourced ones. See syncTemplates
+// for why they're planned/applied as a separate set from the sheet rows.
+export interface BuiltinTemplate {
+  templateId: string;
+  supportRef: string;
+  type: string;
+  body: string;
+}
+
+export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
+  {
+    templateId: "builtin-tcm",
+    supportRef: "(built-in)",
+    type: "quick-fill",
+    body: "This could mean: (1) NOTE Alternate translation: [ALT] (2) NOTE Alternate translation: [ALT]",
+  },
+  {
+    // buildSH(bookCode) interpolates an English book name (web/src/lib/bookNames.ts
+    // — currently English-only) into this template at render time. {book} is a
+    // literal placeholder substituted by the frontend, not sheet/template syntax.
+    templateId: "builtin-sh",
+    supportRef: "(built-in)",
+    type: "quick-fill",
+    body: "See how you translated these same phrases in [{book} 1:1](../01/01.md). Alternate translation: [ALT]",
+  },
+];
+
 // ── Pure row parsing (sync — safe to unit test without D1 or crypto) ────────
 
 export interface ParsedTemplateRow {
@@ -98,6 +130,7 @@ export interface DbTemplateRow {
   type: string | null;
   source_md: string;
   source_hash: string;
+  origin: string;
   translation_state: string | null;
   draft_meta_json: string | null;
   deleted_at: number | null;
@@ -110,6 +143,7 @@ export interface UpsertAction {
   sheetOrder: number;
   sourceMd: string;
   sourceHash: string;
+  origin: "sheet" | "builtin";
   isNew: boolean;
   hashChanged: boolean; // drives version bump + history row
   clearDeletedAt: boolean;
@@ -126,7 +160,11 @@ export interface TemplateSyncPlan {
 
 // Diff the freshly-parsed sheet rows against the current template_units table.
 // Pure — no D1, no crypto — so it's directly unit-testable.
-export function planTemplateSync(sheetRows: SheetRow[], dbRows: DbTemplateRow[]): TemplateSyncPlan {
+export function planTemplateSync(
+  sheetRows: SheetRow[],
+  dbRows: DbTemplateRow[],
+  origin: "sheet" | "builtin" = "sheet",
+): TemplateSyncPlan {
   const dbById = new Map(dbRows.map((r) => [r.template_id, r]));
   const sheetIds = new Set(sheetRows.map((r) => r.templateId));
   const upserts: UpsertAction[] = [];
@@ -142,6 +180,7 @@ export function planTemplateSync(sheetRows: SheetRow[], dbRows: DbTemplateRow[])
         sheetOrder: row.sheetOrder,
         sourceMd: row.body,
         sourceHash: row.sourceHash,
+        origin,
         isNew: true,
         hashChanged: true,
         clearDeletedAt: false,
@@ -192,6 +231,7 @@ export function planTemplateSync(sheetRows: SheetRow[], dbRows: DbTemplateRow[])
       sheetOrder: row.sheetOrder,
       sourceMd: row.body,
       sourceHash: row.sourceHash,
+      origin,
       isNew: false,
       hashChanged,
       clearDeletedAt: wasDeleted,
@@ -229,8 +269,8 @@ export interface SyncTemplatesOptions {
 function upsertStmt(env: Env, u: UpsertAction, now: number): D1PreparedStatement {
   return env.DB.prepare(
     `INSERT INTO template_units
-       (template_id, support_ref, sheet_order, type, source_md, source_hash, version, translation_state, draft_meta_json, updated_at, deleted_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, NULL, NULL, ?7, NULL)
+       (template_id, support_ref, sheet_order, type, source_md, source_hash, origin, version, translation_state, draft_meta_json, updated_at, deleted_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?11, 1, NULL, NULL, ?7, NULL)
      ON CONFLICT(template_id) DO UPDATE SET
        support_ref = excluded.support_ref,
        sheet_order = excluded.sheet_order,
@@ -253,6 +293,7 @@ function upsertStmt(env: Env, u: UpsertAction, now: number): D1PreparedStatement
     u.hashChanged ? 1 : 0,
     u.demote ? 1 : 0,
     u.draftMetaJson,
+    u.origin,
   );
 }
 
@@ -271,27 +312,90 @@ function removeStmt(env: Env, templateId: string, now: number): D1PreparedStatem
     .bind(now, templateId);
 }
 
+interface PlanCounts {
+  inserted: number;
+  revised: number;
+  restored: number;
+  removed: number;
+  unchanged: number;
+}
+
+// Turn a plan into D1 statements (appended to `stmts`) and tally counts.
+function collectPlanStmts(env: Env, plan: TemplateSyncPlan, now: number, stmts: D1PreparedStatement[]): PlanCounts {
+  const counts: PlanCounts = { inserted: 0, revised: 0, restored: 0, removed: plan.removeIds.length, unchanged: plan.unchanged };
+  for (const u of plan.upserts) {
+    if (u.isNew) counts.inserted++;
+    else {
+      if (u.hashChanged) counts.revised++;
+      if (u.clearDeletedAt) counts.restored++;
+    }
+    stmts.push(upsertStmt(env, u, now));
+    if (u.hashChanged) stmts.push(historyStmt(env, u, now));
+  }
+  for (const id of plan.removeIds) stmts.push(removeStmt(env, id, now));
+  return counts;
+}
+
 // Fetch + parse the sheet, diff against template_units, and write the result.
 // Never throws on a malformed row (blank id / duplicate id) — those become
 // warnings. Writes are batched (WRITE_ITEM_BATCH) to stay under D1's
 // subrequest budget for a large sheet.
+//
+// Built-in templates (BUILTIN_TEMPLATES — TCM/buildSH, hardcoded in the
+// frontend, not in the sheet) are planned and applied SEPARATELY from the
+// sheet rows, against only the origin='builtin' slice of the db rows. This is
+// load-bearing: if built-ins were mixed into the sheet's plan, the sheet-diff
+// soft-delete pass ("in the DB but not in the current sheet rows") would
+// soft-delete them every sync, and conversely a sheet row could never be
+// mistaken for a missing built-in. Built-ins seed even when the sheet parse
+// aborts (no id column) — they don't depend on the sheet at all.
 export async function syncTemplates(
   env: Env,
   opts: SyncTemplatesOptions = {},
 ): Promise<SyncTemplatesResult> {
   const doFetch = opts.deps?.fetchCsv ?? fetchSheetCsv;
+
+  const builtinRows: SheetRow[] = await Promise.all(
+    BUILTIN_TEMPLATES.map(async (b, i) => ({ ...b, sheetOrder: i, sourceHash: await sha256Hex(b.body) })),
+  );
+
+  const dbRs = await env.DB.prepare(
+    `SELECT template_id, support_ref, sheet_order, type, source_md, source_hash, origin, translation_state, draft_meta_json, deleted_at
+       FROM template_units`,
+  ).all<DbTemplateRow>();
+  const dbRows = dbRs.results ?? [];
+
+  const builtinPlan = planTemplateSync(
+    builtinRows,
+    dbRows.filter((r) => r.origin === "builtin"),
+    "builtin",
+  );
+
+  const now = Math.floor(Date.now() / 1000);
+  const stmts: D1PreparedStatement[] = [];
+  const builtinCounts = collectPlanStmts(env, builtinPlan, now, stmts);
+
   const csv = await doFetch();
   const { rows: parsed, warnings: parseWarnings, aborted } = parseTemplateRows(parseCsv(csv));
 
-  // No id column -> write NOTHING. Falling through would hand planTemplateSync an
-  // empty sheet and soft-delete every existing unit. Still stamp the watermark so
-  // the 6h cron gate doesn't re-fetch the sheet every five minutes.
+  // No id column -> write nothing from the sheet. Falling through would hand
+  // planTemplateSync an empty sheet and soft-delete every existing sheet unit.
+  // Built-ins still apply (queued above) and the watermark still stamps so the
+  // 6h cron gate doesn't re-fetch the sheet every five minutes.
   if (aborted) {
+    for (let i = 0; i < stmts.length; i += WRITE_ITEM_BATCH) {
+      await env.DB.batch(stmts.slice(i, i + WRITE_ITEM_BATCH));
+    }
     const result: SyncTemplatesResult = {
-      inserted: 0, revised: 0, removed: 0, restored: 0, unchanged: 0,
-      warnings: parseWarnings, aborted: true,
+      inserted: builtinCounts.inserted,
+      revised: builtinCounts.revised,
+      removed: builtinCounts.removed,
+      restored: builtinCounts.restored,
+      unchanged: builtinCounts.unchanged,
+      warnings: parseWarnings,
+      aborted: true,
     };
-    await writeSyncState(env, Math.floor(Date.now() / 1000), result);
+    await writeSyncState(env, now, result);
     return result;
   }
 
@@ -299,41 +403,24 @@ export async function syncTemplates(
     parsed.map(async (p) => ({ ...p, sourceHash: await sha256Hex(p.body) })),
   );
 
-  const dbRs = await env.DB.prepare(
-    `SELECT template_id, support_ref, sheet_order, type, source_md, source_hash, translation_state, draft_meta_json, deleted_at
-       FROM template_units`,
-  ).all<DbTemplateRow>();
-  const dbRows = dbRs.results ?? [];
-
-  const plan = planTemplateSync(sheetRows, dbRows);
-
-  const now = Math.floor(Date.now() / 1000);
-  let inserted = 0;
-  let revised = 0;
-  let restored = 0;
-  const stmts: D1PreparedStatement[] = [];
-  for (const u of plan.upserts) {
-    if (u.isNew) inserted++;
-    else {
-      if (u.hashChanged) revised++;
-      if (u.clearDeletedAt) restored++;
-    }
-    stmts.push(upsertStmt(env, u, now));
-    if (u.hashChanged) stmts.push(historyStmt(env, u, now));
-  }
-  for (const id of plan.removeIds) stmts.push(removeStmt(env, id, now));
+  const sheetPlan = planTemplateSync(
+    sheetRows,
+    dbRows.filter((r) => r.origin !== "builtin"),
+    "sheet",
+  );
+  const sheetCounts = collectPlanStmts(env, sheetPlan, now, stmts);
 
   for (let i = 0; i < stmts.length; i += WRITE_ITEM_BATCH) {
     await env.DB.batch(stmts.slice(i, i + WRITE_ITEM_BATCH));
   }
 
   const result: SyncTemplatesResult = {
-    inserted,
-    revised,
-    removed: plan.removeIds.length,
-    restored,
-    unchanged: plan.unchanged,
-    warnings: [...parseWarnings, ...plan.warnings],
+    inserted: builtinCounts.inserted + sheetCounts.inserted,
+    revised: builtinCounts.revised + sheetCounts.revised,
+    removed: builtinCounts.removed + sheetCounts.removed,
+    restored: builtinCounts.restored + sheetCounts.restored,
+    unchanged: builtinCounts.unchanged + sheetCounts.unchanged,
+    warnings: [...parseWarnings, ...sheetPlan.warnings],
     aborted: false,
   };
 

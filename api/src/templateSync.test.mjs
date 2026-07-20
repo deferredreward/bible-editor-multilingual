@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseTemplateRows, planTemplateSync } from "./templateSync.ts";
+import { parseTemplateRows, planTemplateSync, BUILTIN_TEMPLATES } from "./templateSync.ts";
 
 function dbRow(overrides = {}) {
   return {
@@ -168,6 +168,55 @@ test("parseTemplateRows keeps the first occurrence of a duplicate id and warns",
   assert.equal(parsed[0].body, "First body");
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /duplicate template id/);
+});
+
+test("planTemplateSync stamps the origin it was given", () => {
+  const sheetPlan = planTemplateSync([sheetRow()], []);
+  assert.equal(sheetPlan.upserts[0].origin, "sheet"); // default
+
+  const builtinPlan = planTemplateSync([sheetRow({ templateId: "builtin-tcm" })], [], "builtin");
+  assert.equal(builtinPlan.upserts[0].origin, "builtin");
+});
+
+test("a built-in row is never soft-deleted when sheet rows are planned separately", () => {
+  // Simulates syncTemplates: dbRows filtered to origin='sheet' before being
+  // handed to the sheet's planTemplateSync call, so a built-in row already in
+  // the db (but absent from sheetRows, since it's never on the sheet) must not
+  // show up in removeIds.
+  const dbRows = [
+    dbRow({ template_id: "builtin-tcm", origin: "builtin" }),
+    dbRow({ template_id: "figs-metaphor-01", origin: "sheet" }),
+  ];
+  const sheetOnlyDbRows = dbRows.filter((r) => r.origin !== "builtin");
+  const plan = planTemplateSync([sheetRow()], sheetOnlyDbRows, "sheet");
+  assert.deepEqual(plan.removeIds, []);
+  assert.equal(plan.unchanged, 1);
+});
+
+test("a changed built-in body produces hashChanged + demote just like a sheet change", () => {
+  const existing = dbRow({
+    template_id: "builtin-tcm",
+    origin: "builtin",
+    translation_state: "validated",
+    source_hash: "hash-original",
+  });
+  const changed = sheetRow({ templateId: "builtin-tcm", body: "New body", sourceHash: "hash-new" });
+  const plan = planTemplateSync([changed], [existing], "builtin");
+  assert.equal(plan.upserts.length, 1);
+  const u = plan.upserts[0];
+  assert.equal(u.origin, "builtin");
+  assert.equal(u.hashChanged, true);
+  assert.equal(u.demote, true);
+});
+
+test("BUILTIN_TEMPLATES has the two expected quick-fill entries", () => {
+  assert.equal(BUILTIN_TEMPLATES.length, 2);
+  const ids = BUILTIN_TEMPLATES.map((t) => t.templateId).sort();
+  assert.deepEqual(ids, ["builtin-sh", "builtin-tcm"]);
+  for (const t of BUILTIN_TEMPLATES) {
+    assert.equal(t.supportRef, "(built-in)");
+    assert.equal(t.type, "quick-fill");
+  }
 });
 
 test("parseTemplateRows skips rows with a blank ref or blank body", () => {

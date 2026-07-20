@@ -13,6 +13,13 @@ CREATE TABLE template_units (
   type TEXT,                          -- sheet column B
   source_md TEXT NOT NULL,            -- sheet column C (English template body)
   source_hash TEXT NOT NULL,          -- sha256 hex of source_md, for change detection
+  -- 'sheet' rows come from the Google Sheet diff (templateSync.ts); 'builtin'
+  -- rows are the two hardcoded frontend quick-fill templates (TCM, buildSH in
+  -- web/src/lib/noteTemplates.ts) that don't live in the sheet at all. Kept
+  -- distinct so the sheet-diff soft-delete pass (anything in the DB but not in
+  -- the current sheet rows) never touches built-ins — they're planned and
+  -- applied as a separate set in syncTemplates.
+  origin TEXT NOT NULL DEFAULT 'sheet' CHECK (origin IN ('sheet', 'builtin')),
   target_md TEXT,                     -- the translation (NULL = not started)
   translation_state TEXT,             -- NULL | 'ai_draft' | 'edited' | 'validated'
   draft_meta_json TEXT,               -- translate-report entry; may carry stale_source flag

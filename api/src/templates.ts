@@ -25,7 +25,7 @@ function parseIfMatch(header: string | undefined): number | null {
 templates.get("/", requireEditor, async (c) => {
   const includeDeleted = c.req.query("includeDeleted") === "1";
   const rows = await c.env.DB.prepare(
-    `SELECT template_id, support_ref, type, sheet_order,
+    `SELECT template_id, support_ref, type, sheet_order, origin,
             (target_md IS NOT NULL) AS has_target,
             translation_state, version,
             COALESCE(json_extract(draft_meta_json, '$.stale_source'), 0) AS stale_source
