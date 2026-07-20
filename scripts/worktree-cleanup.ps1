@@ -38,6 +38,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Keep cmdlet errors terminating (above) BUT never let a native command's
+# nonzero exit throw: git merge-base --is-ancestor returns exit 1 as a NORMAL
+# "not an ancestor" result, and rev-parse/rev-list exit nonzero for orphan
+# dirs. Under pwsh configs where $PSNativeCommandUseErrorActionPreference is
+# $true (the 7.3+ default), those would abort the whole classification.
+$PSNativeCommandUseErrorActionPreference = $false
 
 # --- locate the main checkout from git (correct from any worktree) ---
 $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -47,7 +53,7 @@ if (-not [IO.Path]::IsPathRooted($gitCommon)) { $gitCommon = Join-Path $scriptDi
 $mainRoot   = (Resolve-Path (Join-Path $gitCommon '..')).Path
 
 # Normalize a path for case/slash-insensitive equality comparison.
-function Norm([string]$p) { if (-not $p) { return '' } $p.TrimEnd('\','/').Replace('/','\').ToLower() }
+function Norm([string]$p) { if (-not $p) { return '' }; return $p.TrimEnd('\','/').Replace('/','\').ToLower() }
 
 function Test-Reparse([string]$p) {
   try {
