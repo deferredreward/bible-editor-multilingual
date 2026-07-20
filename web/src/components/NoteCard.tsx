@@ -1457,7 +1457,7 @@ function NoteCardInner({
               fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
               whiteSpace: "pre-wrap",
               overflowWrap: "break-word",
-              textAlign: "left",
+              textAlign: "start",
             }}
           >
             {sourceNote.note}
