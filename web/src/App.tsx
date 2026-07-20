@@ -204,6 +204,22 @@ export function App() {
         : `#/${book}/${chapter}`;
   };
 
+  // Remember the last scripture location so leaving preferences/articles
+  // returns here instead of the default landing book (Obadiah). Only tracks
+  // chapter views; a fresh load straight into preferences keeps the default.
+  const lastScriptureRef = useRef<{ book: string; chapter: number; verse: number }>({
+    book: DEFAULT_BOOK,
+    chapter: 1,
+    verse: 1,
+  });
+  if (loc.view === "chapter") {
+    lastScriptureRef.current = { book: loc.book, chapter: loc.chapter, verse: loc.verse };
+  }
+  const backToScripture = () => {
+    const { book, chapter, verse } = lastScriptureRef.current;
+    navigate(book, chapter, verse);
+  };
+
   // Hydrate from server-side last-position. Fires once per auth session,
   // only when `loc` is the default book — a bookmarked deep link (which
   // makes `loc` non-default on mount) always wins. Reset on sign-out so the
@@ -401,6 +417,7 @@ export function App() {
           <PreferencesWorkspace
             section={loc.section}
             role={auth.role}
+            onBack={backToScripture}
             onNavigate={(s) => {
               location.hash = `#/preferences/${s}`;
             }}
@@ -409,6 +426,7 @@ export function App() {
           <ArticleWorkspace
             resource={loc.resource}
             articleId={loc.articleId}
+            onBack={backToScripture}
             onNavigate={(r, a) => {
               // Empty articleId (e.g. switching resource with nothing selected)
               // must not emit a trailing slash — `#/articles/ta/` fails the

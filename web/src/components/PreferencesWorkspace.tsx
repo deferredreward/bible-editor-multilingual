@@ -152,11 +152,12 @@ function statusColor(status: TermStatus): string {
 
 interface Props {
   onNavigate: (section: Section) => void;
+  onBack: () => void;
   section: Section;
   role: Role;
 }
 
-export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
+export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Props) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
@@ -181,9 +182,7 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
             <Tooltip title={t("preferences.backToScripture")}>
               <IconButton
                 size="small"
-                onClick={() => {
-                  location.hash = "#/";
-                }}
+                onClick={onBack}
                 sx={{ ml: -0.5 }}
               >
                 <ArrowBackIcon fontSize="small" />
