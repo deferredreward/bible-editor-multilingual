@@ -38,6 +38,25 @@ database_name = "bible_editor_dev"
 database_id = "ceb458bf-4608-4696-a087-9026618a6cef"
 migrations_dir = "migrations"
 
+# Second binding to the SAME database as DB (same database_id — zero data
+# migration). Holds org-independent state (accounts, sessions, lexicon,
+# alignment frequencies, UI-string overrides) so it isn't affected by the
+# workspace switch — see workspaces.ts's sharedDb().
+[[d1_databases]]
+binding = "SHARED_DB"
+database_name = "bible_editor_dev"
+database_id = "ceb458bf-4608-4696-a087-9026618a6cef"
+
+# Per-org content database for the BibleEditorMLTest workspace (dev only —
+# there is no production counterpart, so [env.production] deliberately has no
+# DB_MLTEST binding and its WORKSPACES stays empty). Referenced by name from
+# the WORKSPACES var below.
+[[d1_databases]]
+binding = "DB_MLTEST"
+database_name = "bible_editor_mltest_dev"
+database_id = "52e0b62e-8720-4024-ab4e-2898d2c94ac7"
+migrations_dir = "migrations"
+
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "bible-editor-blobs-dev"
@@ -73,6 +92,24 @@ class_name = "ExportWorkflow"
 # derived per-book from contributors, not configured).
 # BT_API_TOKEN (secret) authorizes /api/tn-quick + /api/pipelines/*.
 # TN_QUICK_URL / PIPELINE_API_BASE override the bot endpoints.
+#
+# WORKSPACES: JSON array of per-org workspaces, e.g.
+#   [{"slug":"uw","label":"unfoldingWord","org":"unfoldingWord","binding":"DB"}]
+# Empty/unset (the default) means exactly one implicit workspace using the
+# DB binding above — today's single-org behavior, unchanged. To add an org:
+#   1. wrangler d1 create <name>
+#   2. add a [[d1_databases]] binding for it (here and in [env.production])
+#   3. add its JSON entry to WORKSPACES (here and in [env.production.vars])
+#   4. deploy
+#   5. wrangler d1 migrations apply <name> --remote
+#   6. onboard the org via the Setup wizard
+#
+# SUPER_ADMINS: comma-separated DCS usernames (case-insensitive) who may
+# switch to any workspace regardless of DCS org membership, and are treated
+# as admin in every workspace regardless of that workspace's user_roles table
+# — this is what makes bootstrapping a brand-new org possible (a fresh
+# workspace's user_roles only has whatever migration 0016 seeds, so the first
+# person in would otherwise be locked out of the Setup wizard). Empty = nobody.
 [vars]
 DCS_BASE_URL = "https://git.door43.org"
 DCS_OAUTH_AUTHORIZE_URL = "https://git.door43.org/login/oauth/authorize"
@@ -84,6 +121,18 @@ DEV_AUTH_ENABLED = "true"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
+# Dev has two workspaces: the existing dev database (BSOJ, and also the
+# SHARED_DB holding accounts/sessions/lexicon) plus an empty database for the
+# test org. The FIRST entry is the fallback when no be_ws cookie is present,
+# so it must stay pointed at the DB binding — that keeps a cookie-less request
+# behaving exactly as it did before workspaces existed.
+WORKSPACES = '[{"slug":"bsoj","label":"BSOJ (العربية)","org":"BSOJ","binding":"DB"},{"slug":"mltest","label":"BibleEditorMLTest","org":"BibleEditorMLTest","binding":"DB_MLTEST"}]'
+# "dev" is the username `/api/auth/dev` mints, which has no DCS access token
+# and therefore no checkable org membership — without this, local dev-auth can
+# never switch workspaces. Signing in through real Door43 OAuth doesn't need
+# it: membership in the org is what grants the switch. Dev only; production
+# below keeps this empty.
+SUPER_ADMINS = "dev"
 
 # ── PRODUCTION ENV ──────────────────────────────────────────────────────────
 # Activated by `wrangler deploy --env production` (which is what `npm run
@@ -106,6 +155,13 @@ binding = "DB"
 database_name = "bible_editor"
 database_id = "7e566abf-454d-43d6-b24e-11df74f1c0ed"
 migrations_dir = "migrations"
+
+# See the [vars] block above for what this binding is for — same database_id
+# as DB, so this is zero data migration, not a second database.
+[[env.production.d1_databases]]
+binding = "SHARED_DB"
+database_name = "bible_editor"
+database_id = "7e566abf-454d-43d6-b24e-11df74f1c0ed"
 
 [[env.production.r2_buckets]]
 binding = "BLOBS"
@@ -134,6 +190,9 @@ class_name = "ExportWorkflow"
 # export → DCS git-action merge loop is verified end-to-end.
 crons = ["30 5 * * *", "*/5 * * * *"]
 
+# WORKSPACES / SUPER_ADMINS: see the [vars] block above for format + the
+# steps to add an org. SUPER_ADMINS users can switch to any workspace and are
+# treated as admin in every workspace.
 [env.production.vars]
 DCS_BASE_URL = "https://git.door43.org"
 DCS_OAUTH_AUTHORIZE_URL = "https://git.door43.org/login/oauth/authorize"
@@ -145,3 +204,5 @@ DEV_AUTH_ENABLED = "false"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
+WORKSPACES = ""
+SUPER_ADMINS = ""

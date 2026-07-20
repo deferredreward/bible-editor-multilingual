@@ -70,6 +70,7 @@ import {
   type ReadingLineHandle,
 } from "./SideBySideAligner";
 import { TopBar } from "./TopBar";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ExportUsfmButton } from "./ExportUsfmButton";
 import { BookLintIndicator } from "./BookLintIndicator";
 import { LogosSyncToggle } from "./LogosSyncToggle";
@@ -2586,6 +2587,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         logosSyncToggle={
           <LogosSyncToggle book={book} chapter={chapter} verse={activeVerse} />
         }
+        workspaceSwitcher={<WorkspaceSwitcher />}
         lintIndicator={
           <BookLintIndicator
             book={book}

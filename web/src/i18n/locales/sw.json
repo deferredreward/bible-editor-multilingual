@@ -186,6 +186,15 @@
     "buildSha": "toleo {{commit}}",
     "onLatestVersion": "Uko kwenye toleo jipya zaidi ulilopakia."
   },
+  "workspace": {
+    "switchTooltip": "switch which Door43 organization you're editing",
+    "membershipUnknownHint": "Couldn't confirm your Door43 org memberships — this list may be incomplete. Sign in again to refresh.",
+    "notMemberTooltip": "you need Door43 membership in this org to switch to it",
+    "notAMember": "You're not a member of that organization.",
+    "noLongerAvailable": "That workspace is no longer available.",
+    "switchFailed": "Couldn't switch workspaces — try again.",
+    "unsavedEditsBlock": "Unsaved edits are still syncing ({{n}}) — wait for them to finish before switching workspaces."
+  },
   "shell": {
     "scripture": "Maandiko",
     "rows": "safu",

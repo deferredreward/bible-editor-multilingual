@@ -22,17 +22,23 @@ export const twlSuggest = new Hono<{ Bindings: Env }>();
 // at module scope and rebuild only when the catalog changes (count or newest
 // last_synced). The Worker isolate is reused across requests, so most calls hit
 // the cache.
-let trieCache: { sig: string; trie: ReturnType<typeof buildTermTrie> } | null = null;
+//
+// Keyed by workspace slug: the isolate is shared across every workspace, and
+// tw_articles is per-workspace D1 content, so an unkeyed cache would serve
+// workspace A's trie (and its suggestions) to workspace B.
+const trieCache = new Map<string, { sig: string; trie: ReturnType<typeof buildTermTrie> }>();
 
 async function getTrie(env: Env) {
   const meta = await env.DB.prepare(
     `SELECT COUNT(*) AS c, COALESCE(MAX(last_synced), 0) AS m FROM tw_articles`,
   ).first<{ c: number; m: number }>();
   const sig = `${meta?.c ?? 0}:${meta?.m ?? 0}`;
-  if (trieCache && trieCache.sig === sig) return trieCache.trie;
+  const wsKey = env.WORKSPACE_SLUG ?? "default";
+  const cached = trieCache.get(wsKey);
+  if (cached && cached.sig === sig) return cached.trie;
   const rows = await env.DB.prepare(`SELECT id, title FROM tw_articles`).all<TwArticleLite>();
   const trie = buildTermTrie(buildTermMapFromArticles(rows.results));
-  trieCache = { sig, trie };
+  trieCache.set(wsKey, { sig, trie });
   return trie;
 }
 

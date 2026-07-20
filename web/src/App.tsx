@@ -17,6 +17,7 @@ import {
   type Role,
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
+import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "./sync/workspace";
 
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
@@ -34,6 +35,13 @@ const DEFAULT_BOOK = "OBA";
 // This is a UX flag only — auth state lives in HttpOnly cookies and is
 // gone by the time we read this. Cleared on next successful sign-in.
 const SIGNED_OUT_KEY = "bible-editor.signed_out";
+
+// Guards the boot-time workspace reconciliation below from looping forever
+// if the server and localStorage can never agree (shouldn't happen, but a
+// persistent mismatch must not reload-loop the tab). Cleared once the two
+// agree so a later genuine mismatch (e.g. a stale cookie from another tab)
+// still gets one reconciliation attempt.
+const WS_RECONCILED_KEY = "bible-editor.ws-reconciled";
 
 function parseHash(): Location {
   const pm = location.hash.match(/^#\/preferences(?:\/(\w+))?$/);
@@ -233,6 +241,36 @@ export function App() {
     if (!isDefaultLoc(loc)) return;
     navigate(me.lastBook, me.lastChapter, me.lastVerse);
   }, [auth, loc]);
+
+  // Workspace reconciliation. The server's be_ws cookie is the source of
+  // truth for which org's D1 database we're talking to; localStorage is just
+  // the client's mirror, and the outbox's IndexedDB name is derived from it
+  // (see sync/outbox.ts). If they disagree — e.g. localStorage predates this
+  // feature, or was left over from a different session on this device — pull
+  // the server's value into localStorage and reload ONCE so the outbox opens
+  // under the correct name from a cold start. Absent `me.workspace` means an
+  // older cached /api/auth/me response; do nothing.
+  useEffect(() => {
+    if (auth.kind !== "ready") return;
+    const serverWs = auth.me?.workspace;
+    if (serverWs === undefined) return;
+    const serverIsFallback = auth.me?.workspaceIsFallback;
+    if (serverWs === getWorkspaceSlug()) {
+      // Slug already agrees — still sync the fallback flag (it's cheap and
+      // keeps outbox.ts's outboxDbName() correct even if it was never set,
+      // e.g. an install that predates the fallback flag).
+      if (serverIsFallback !== undefined) setWorkspaceIsFallback(serverIsFallback);
+      try { sessionStorage.removeItem(WS_RECONCILED_KEY); } catch { /* private mode */ }
+      return;
+    }
+    let alreadyTried = false;
+    try { alreadyTried = sessionStorage.getItem(WS_RECONCILED_KEY) === "1"; } catch { /* private mode */ }
+    if (alreadyTried) return; // already reloaded once this session — don't loop
+    setWorkspaceSlug(serverWs);
+    if (serverIsFallback !== undefined) setWorkspaceIsFallback(serverIsFallback);
+    try { sessionStorage.setItem(WS_RECONCILED_KEY, "1"); } catch { /* private mode */ }
+    location.reload();
+  }, [auth]);
 
   // Debounced push of the current location to the server so the next sign-in
   // on a different device / after a logout can land back here.
