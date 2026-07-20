@@ -47,8 +47,17 @@ $PSNativeCommandUseErrorActionPreference = $false
 
 # --- locate the main checkout from git (correct from any worktree) ---
 $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$gitCommon  = (& git -C $scriptDir rev-parse --git-common-dir 2>$null)
-if (-not $gitCommon) { throw "Not inside a git repo: $scriptDir" }
+$gitCommon  = (& git -C $scriptDir rev-parse --git-common-dir 2>&1)
+if ($LASTEXITCODE -ne 0 -or -not "$gitCommon".Trim()) {
+  # Fail closed with an actionable message: without a resolved main root we
+  # cannot identify which worktrees are safe, so we must not touch anything.
+  # The usual culprit is git's 'detected dubious ownership' guard when the
+  # main checkout is owned by a different account than the caller.
+  throw ("Could not resolve the git repository from '$scriptDir'. git said:`n$gitCommon`n" +
+         "If this is a 'dubious ownership' error, mark the main checkout trusted, e.g.:`n" +
+         "  git config --global --add safe.directory '<path to main checkout>'")
+}
+$gitCommon  = "$gitCommon".Trim()
 if (-not [IO.Path]::IsPathRooted($gitCommon)) { $gitCommon = Join-Path $scriptDir $gitCommon }
 $mainRoot   = (Resolve-Path (Join-Path $gitCommon '..')).Path
 
