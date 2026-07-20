@@ -23,6 +23,8 @@ import { translationMemory } from "./translationMemory";
 import { l10n } from "./l10n";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
+import { templates } from "./templates";
+import { syncTemplates } from "./templateSync";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
 import { workspaceRoutes } from "./workspaceRoutes";
 import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch } from "./workspaces";
@@ -251,6 +253,7 @@ app.route("/api/orgs", orgRoutes);
 app.route("/api/workspaces", workspaceRoutes);
 app.route("/api/admin/users", adminUsers);
 app.route("/api/articles", articles);
+app.route("/api/templates", templates);
 app.route("/api/translation-memory", translationMemory);
 app.route("/api/l10n", l10n);
 
@@ -388,6 +391,21 @@ async function runScheduledTick(controller: ScheduledController, env: Env, _ctx:
         await populateReferencedArticles(env, { maxFetches: 200 });
       } catch (e) {
         console.error("cron populateReferencedArticles failed", e instanceof Error ? e.message : String(e));
+      }
+      // Note-template sync backstop: refresh template_units from the Google
+      // Sheet at most every 6 hours. Isolated from both the pipeline poll and
+      // article population above — a sync failure (sheet down, etc.) must not
+      // break either.
+      try {
+        const state = await env.DB.prepare(
+          `SELECT last_synced_at FROM template_sync_state WHERE id = 1`,
+        ).first<{ last_synced_at: number | null }>();
+        const staleSeconds = 6 * 60 * 60;
+        if (state?.last_synced_at == null || Math.floor(Date.now() / 1000) - state.last_synced_at > staleSeconds) {
+          await syncTemplates(env);
+        }
+      } catch (e) {
+        console.error("cron syncTemplates failed", e instanceof Error ? e.message : String(e));
       }
       // Stale-lock sweep for book_import_locks. Imports take 5-60s in
       // practice; anything past 10 minutes is a Worker that died mid-import
