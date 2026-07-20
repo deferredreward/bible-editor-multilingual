@@ -54,6 +54,7 @@ Left rail = section nav; main pane = the active section. Six sections, in the or
 Preferences & Memory  ·  <language name>              [ assisted mode ▾ ]
 ├── Brief              the who/why/register of this language's translation
 ├── Instructions       standing guidance injected into every AI draft
+├── Common issues      recurring translation problems (false friends, grammar traps) — rides in instructions.md
 ├── Terminology        preferred / forbidden→use-instead / do-not-translate  (+ tW links)
 ├── Examples           validated source→target pairs the AI learns from
 ├── QA rules           deterministic checks + severities
@@ -91,6 +92,8 @@ The header carries a single **assisted-mode toggle** — the one control that de
 **Shape:** a single markdown field on the `translation_prefs` singleton (`instructions_md`). Rendered with the existing shared `MarkdownView` (preview toggle), edited as plain multiline — same treatment as article bodies **[VERIFIED — `docs/design/tw-ta-translation-modules.md:78`]**.
 
 **Guardrail copy in the UI:** a short reminder that instructions ride *every* prompt, so they should be terse and durable (per-segment nuance belongs in examples/terminology, not here) — this operationalizes the research's layered-stack finding.
+
+**Common issues (migration 0053):** a second free-markdown field, `common_issues_md`, for recurring problems translators hit in this language (false friends, grammar traps, formatting habits) — often a document the team already maintains and wants pasted in wholesale. Same editing treatment as Instructions (own section, own field), but at export it rides *inside* `instructions.md` under a `## Common issues` heading rather than as a separate pack file, since the bot only reads `instructions.md` verbatim today (`CONTEXT-REPO-CONTRACT.md` §3.2, §7).
 
 ---
 

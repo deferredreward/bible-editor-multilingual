@@ -922,6 +922,7 @@ export interface TranslationPrefs {
   register: Register;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   assisted_mode: 0 | 1;
   version: number;
@@ -934,6 +935,7 @@ export type TranslationPrefsInput = {
   register: Register;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   // assisted_mode removed: the server injects contextRef whenever a successful
   // context export exists — there is no client-settable gate any more.
