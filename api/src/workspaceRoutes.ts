@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "./index";
-import { requireAuth, currentUserId, effectiveRole, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
+import { requireAuth, currentUserId, effectiveRole, ensureWorkspaceUser, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
 import { listWorkspaces, sharedDb, serializeWorkspaceCookie, workspaceEnv, type Workspace } from "./workspaces.ts";
 
 export const workspaceRoutes = new Hono<{
@@ -143,8 +143,15 @@ workspaceRoutes.post("/:slug", async (c) => {
   if (username) {
     try {
       const targetEnv = workspaceEnv(c.env, ws);
-      const role: Role = (await effectiveRole(targetEnv, username)) ?? "viewer";
       const userId = currentUserId(c);
+      // Mirror the user's row into the TARGET workspace's local `users`
+      // table before responding, so the very first request after the
+      // switch (which will carry the new be_ws cookie) can't race this and
+      // find no local row to satisfy tn_rows/tq_rows/etc.'s FK.
+      if (userId !== null) {
+        await ensureWorkspaceUser(targetEnv, userId);
+      }
+      const role: Role = (await effectiveRole(targetEnv, username)) ?? "viewer";
       if (userId !== null) {
         const newAccessToken = await mintToken(c, userId, username, role);
         rotateAccessCookie(c, newAccessToken);

@@ -75,26 +75,36 @@ Unset/empty `WORKSPACES` = exactly today's single-org behavior.
    instead of a native binding (losing local-dev parity and needing its own
    migration runner) — deliberately not attempted. Needs its own design
    pass; don't attempt as a quick patch.
-2. **Bootstrapping a brand-new org's roles.** `user_roles` is per-org, so a
-   freshly created workspace database only has whatever migration `0016`
-   seeds. Someone switching into a new empty org may land without an admin
-   role and be unable to run the Setup wizard. `SUPER_ADMINS` is the current
-   escape hatch. Needs a real answer (e.g. seed the switching user as admin
-   on first entry into an empty workspace, or derive it from Door43 teams —
-   see the Door43-teams item above).
-3. **`users.last_book/last_chapter/last_verse` is shared, not per-org**, so
+2. **`users.last_book/last_chapter/last_verse` is shared, not per-org**, so
    the "resume where you left off" position follows you across orgs. Minor,
    but wrong.
-4. **Narrow outbox race on very first load.** The outbox database name
+3. **Narrow outbox race on very first load.** The outbox database name
    depends on the workspace slug, which is only known once
    `/api/auth/me` returns. `App.tsx` reconciles and reloads once, but an edit
    queued in that sub-second window lands in the pre-reconciliation database
    and is not drained. Fix would be to defer outbox opening until the slug is
    known.
-5. **Per-workspace R2.** `BLOBS` is still a single bucket shared by all
+4. **Per-workspace R2.** `BLOBS` is still a single bucket shared by all
    workspaces. Export snapshots/USFM originals from different orgs share a
    keyspace — check for key collisions before running a second org's export
    in production.
+5. **`GET /api/exports/instance/:id` resolves Workflow instances globally.**
+   Instance ids are predictable (`nightly-<slug>-<date>`), and the route
+   doesn't check that the id belongs to the caller's current workspace —
+   an admin in one org can read another org's export status/errors by
+   guessing the id. Admin-only information leak, low severity, not fixed in
+   this PR.
+
+**Bootstrapping a brand-new org's roles — partially answered, still blunt.**
+A freshly created workspace database only has whatever migration `0016`
+seeds, so the first person to switch into an empty org used to land as
+`viewer` and couldn't run the Setup wizard. The review round fixed the
+onboarding deadlock: `SUPER_ADMINS` members now resolve to `admin` in
+*every* workspace (`effectiveRole()`), so a super admin can always bootstrap
+a new org. But this is a blunt instrument — a super admin is admin
+everywhere, not just in the org being onboarded — and the finer-grained
+answer is still open: deriving a new org's first admin from Door43 team
+membership, which ties into the Door43-teams item above.
 
 ### Admin-controlled per-user translate/edit toggle
 

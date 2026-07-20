@@ -26,6 +26,55 @@ import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
 import { sharedDb, listWorkspaces } from "./workspaces.ts";
 
+// Isolate-level memoization for ensureWorkspaceUser (below), keyed
+// `${WORKSPACE_SLUG}:${userId}` — once mirrored this isolate, never repeat
+// the INSERT OR IGNORE for that pair. A cold isolate just re-populates this
+// lazily; the only cost of a cache miss is one harmless extra
+// INSERT OR IGNORE, never a correctness problem.
+const mirroredWorkspaceUsers = new Set<string>();
+
+// Per-org D1 databases each keep their own `users` table — tn_rows,
+// tq_rows, twl_rows, verses, edit_log, user_roles, etc. all have FKs
+// pointing at the LOCAL users(id) (see api/migrations/0001_init.sql and
+// friends) — but sign-in now writes the canonical row to SHARED_DB only.
+// A user whose first write in a session lands in a non-default workspace
+// has no matching local row, so those foreign keys fail:
+// `D1_ERROR: FOREIGN KEY constraint failed`. Mirror the row (same explicit
+// id, so the FK actually resolves) into the workspace's local `users`
+// table. Never copy dcs_access_token — that's shared-DB-only and must
+// never be duplicated into a per-org database.
+export async function ensureWorkspaceUser(env: Env, userId: number): Promise<void> {
+  // Default/single-workspace case: SHARED_DB and DB are the same database,
+  // so the row is already there. Checked first — this is the overwhelmingly
+  // common case and must be free.
+  if (sharedDb(env) === env.DB) return;
+
+  const cacheKey = `${env.WORKSPACE_SLUG ?? "default"}:${userId}`;
+  if (mirroredWorkspaceUsers.has(cacheKey)) return;
+
+  // Must never throw into the request path — a failure here should not
+  // 500 an otherwise-fine read/write.
+  try {
+    const row = await sharedDb(env)
+      .prepare(`SELECT id, dcs_user_id, dcs_username, dcs_full_name FROM users WHERE id = ?1`)
+      .bind(userId)
+      .first<{ id: number; dcs_user_id: number; dcs_username: string; dcs_full_name: string | null }>();
+    if (!row) return;
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO users (id, dcs_user_id, dcs_username, dcs_full_name) VALUES (?1, ?2, ?3, ?4)`,
+    )
+      .bind(row.id, row.dcs_user_id, row.dcs_username, row.dcs_full_name)
+      .run();
+    mirroredWorkspaceUsers.add(cacheKey);
+  } catch (e) {
+    console.error("ensureWorkspaceUser failed", {
+      workspace: env.WORKSPACE_SLUG,
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
 const ACCESS_COOKIE = "be_access";
 const REFRESH_COOKIE = "be_refresh";
 const CSRF_COOKIE = "be_csrf";
@@ -197,6 +246,10 @@ export const attachAuth: MiddlewareHandler = async (c, next) => {
       (c as AppContext).set("userId", claims.userId);
       if (claims.username) (c as AppContext).set("username", claims.username);
       if (claims.role) (c as AppContext).set("role", claims.role);
+      // Covers every authenticated route, including sessions that predate a
+      // workspace switch — not just the switch route itself (see
+      // workspaceRoutes.ts for the switch-time call against the TARGET env).
+      await ensureWorkspaceUser(c.env as Env, claims.userId);
     }
   }
   await next();
