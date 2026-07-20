@@ -35,19 +35,77 @@ English doesn't get pushed back to the org's own repo).
 
 ### Door43 teams as role source (read-side)
 
-**Status:** not started. In-app user management (`user_roles` table +
-Preferences panel, `feat/admin-user-management`) shipped instead for the demo;
-this is the deferred richer version.
+**Status:** SHIPPED 2026-07-20. At OAuth callback we now read the signing-in
+user's Door43 teams and grant admin/editor from them.
 
-**What's missing:** at OAuth callback, call `GET /api/v1/user/teams` with the
-*user's own* access token (no elevated service-token scope needed — this is
-the read-only half of what was actually asked for: "groups on Door43 orgs that
-BibleEditor can see"). Map `BE-Admins`/`BE-Editors` team membership in the
-configured org to `admin`/`editor` roles, and cache the result into
-`user_roles` on login so token refresh (which re-reads that table,
-`api/src/auth.ts`) keeps working without a DCS round-trip on every request.
-Teams themselves are created/managed in Door43's own team UI — the app never
-writes team membership, only reads it.
+**How it works:** `api/src/dcsTeams.ts` calls `GET /api/v1/user/teams` with the
+*user's own* access token (no elevated service-token scope), keeps only teams
+inside the configured project org (`getProjectConfig().org`), and maps team
+name → role. Defaults are `BE-Admins` → `admin` and `BE-Editors` → `editor`,
+overridable per environment via `DCS_TEAM_ADMIN` / `DCS_TEAM_EDITOR`. The
+result is cached into `user_roles` (migration `0055_user_roles_source.sql` adds
+a `source` column: `'manual'` vs `'dcs_team'`) so `/api/auth/refresh` keeps
+working off a plain D1 read. Teams are still created/managed only in Door43's
+own team UI — the app never writes membership.
+
+Precedence, one rule: **a row belongs to whoever created it, and Door43 teams
+may only ever raise access on rows they don't own.** All covered by
+`api/src/dcsTeams.test.mjs`:
+- `dcs_team` rows track their team exactly, in both directions, including
+  removal once the user leaves the team.
+- `manual` rows belong to the admin who added them. A team can *promote* such a
+  user (editor → admin — this is how a pre-0053 legacy allowlist entry gets
+  handed to team control) but can never demote or delete them.
+- `source` never changes after insert, so a row stays managed by whoever
+  created it. An admin edit to a team-derived row is therefore re-synced away
+  at that user's next team check; the Preferences panel says so explicitly, and
+  removing such a row warns that it only sticks once they're out of the team.
+- The last remaining admin is never demoted *or* deleted, matching the guards
+  in `adminUserRoutes.ts` — `/api/admin/users` is itself admin-gated, so a
+  zero-admin project could only be repaired with raw SQL against D1.
+- Anything that leaves membership *unknown* — network error, non-2xx,
+  unparseable body, or a paginated list truncated at the page cap — skips the
+  sync entirely rather than being read as "on no teams". Failures are logged
+  (`wrangler tail`) so a permanently broken lookup, e.g. an OAuth grant lacking
+  org-read scope, is distinguishable from a user genuinely being on no team.
+- The org is read straight from `project_config`, NOT via `getProjectConfig`,
+  which silently falls back to the default unfoldingWord preset on a read error
+  — that fallback would revoke every GL project's team roles on a transient D1
+  hiccup. If the org can't be established, the sync is skipped.
+- Revocation latency: `/api/auth/refresh` re-checks a cached team role once it
+  is older than an hour (`RESYNC_AFTER_SECONDS`), reusing the DCS token already
+  stored on the users row. Without that, removing someone from a team wouldn't
+  take effect until their next full sign-in — up to the 14-day refresh window.
+  **This is best-effort, not a guarantee — see the follow-up below.**
+- `viewer` is still dynamic (org membership), never cached in `user_roles`.
+- Nothing in this path may break sign-in: the whole block is wrapped so that a
+  D1 error (notably `no such column: source`, in the window between deploying
+  the worker and applying migration 0055) leaves the allowlist untouched
+  instead of 500-ing the OAuth callback for every user.
+
+**Follow-up — persist the OAuth refresh token so team revocation is reliable.**
+The refresh-time re-check above uses `users.dcs_access_token`, captured at
+sign-in. We never store the OAuth `refresh_token`, and Gitea's access tokens are
+short-lived, so in practice that token is usually dead by the time the hourly
+re-check wants it: `/user/teams` 401s, the result is "unknown", and the cached
+role survives until the user's next full sign-in. **Net effect: removing someone
+from a Door43 team is not a prompt revocation.** For anything time-critical,
+remove the row in the Preferences panel *and* take them out of the team.
+
+To close it: store `refresh_token` (+ expiry) from the token exchange in
+`callbackDcsAuth`, and in `maybeResyncTeamRole` exchange it for a fresh access
+token when the teams call returns 401 before giving up. Deliberately not done in
+the shipping PR — it is new code in the sign-in path that can't be exercised
+without a live Door43 OAuth session, and getting it wrong locks everyone out.
+Failing closed (dropping a role that can't be re-verified) was considered and
+rejected: a structurally broken lookup, e.g. an OAuth grant lacking org-read
+scope, would then escalate from "feature does nothing" to "nobody can work".
+
+**Not verified:** the live round-trip against
+`https://git.door43.org/org/BibleEditorMLTest/teams` — the teams API needs an
+authenticated session, so the *actual* team names in that org were never read.
+If they aren't literally `BE-Admins`/`BE-Editors`, set `DCS_TEAM_ADMIN` /
+`DCS_TEAM_EDITOR` rather than changing code.
 
 ### Per-user org switching (membership-scoped)
 

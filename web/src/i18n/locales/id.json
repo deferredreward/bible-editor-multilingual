@@ -582,7 +582,10 @@
         "dcs_user_not_found": "No Door43 user found with that username.",
         "last_admin": "Can't remove or demote the last remaining admin.",
         "not_found": "That user isn't in the allowlist."
-      }
+      },
+      "fromTeam": "Door43 team",
+      "teamManagedEdit": "This user's role comes from a Door43 team, so this change will be undone the next time their membership is checked. Change their team on Door43 to make it stick.",
+      "teamManagedRemove": "Removed for now — but {{username}} is in a Door43 team, so they will regain access the next time they sign in. Remove them from the team on Door43 to revoke access."
     },
     "save": "Simpan",
     "cancel": "Batal",

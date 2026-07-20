@@ -23,13 +23,24 @@ adminUsers.use("*", requireAuth, requireAdmin);
 const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
 // Raw user_roles row before the added_by user id is resolved to a username.
-type RoleRow = { username: string; role: string; addedAt: number; addedBy: number | null };
+// `source` is 'manual' (granted here) or 'dcs_team' (derived from Door43 team
+// membership at sign-in — see api/src/dcsTeams.ts). Deleting a 'dcs_team' row
+// only lasts until that user's next login; remove them from the Door43 team to
+// make it stick.
+type RoleRow = {
+  username: string;
+  role: string;
+  addedAt: number;
+  addedBy: number | null;
+  source: string | null;
+};
 
 // user_roles is per-org (env.DB); the users table it used to LEFT JOIN for
 // added_by's display name is shared across workspaces (SHARED_DB) — the two
 // can no longer live in one SQL statement, so this fetches user_roles rows
 // first and resolves added_by usernames from the shared DB as a second step.
-const ROLE_ROW_SELECT = `SELECT dcs_username AS username, role AS role, added_at AS addedAt, added_by AS addedBy
+const ROLE_ROW_SELECT = `SELECT dcs_username AS username, role AS role, added_at AS addedAt, added_by AS addedBy,
+         source AS source
     FROM user_roles`;
 
 // Batch-resolves a set of users.id -> dcs_username from the shared DB. Used to
@@ -63,6 +74,7 @@ adminUsers.get("/", async (c) => {
       role: r.role,
       addedAt: r.addedAt ?? null,
       addedBy: r.addedBy != null ? (addedByUsernames.get(r.addedBy) ?? null) : null,
+      source: r.source ?? "manual",
     })),
   });
 });
@@ -132,7 +144,13 @@ adminUsers.put("/:username", async (c) => {
   // added_by is only set on first insert; ON CONFLICT only touches role, so
   // re-promoting/demoting an existing user preserves who originally added them.
   const upsert = await c.env.DB.prepare(
-    `INSERT INTO user_roles (dcs_username, role, added_by) VALUES (?1, ?2, ?3)
+    // `source` is set on INSERT only and deliberately NOT touched on conflict:
+    // a row stays owned by whoever created it. Flipping a team-derived row to
+    // 'manual' here would detach it from team sync, so later removing the user
+    // from the Door43 team — the documented way to revoke — would silently stop
+    // working. The trade-off is that an admin edit to a team-derived row is
+    // re-synced away at that user's next team check; the UI says so.
+    `INSERT INTO user_roles (dcs_username, role, added_by, source) VALUES (?1, ?2, ?3, 'manual')
      ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role
      WHERE NOT (
        role = 'admin' AND excluded.role = 'editor'
@@ -157,6 +175,10 @@ adminUsers.put("/:username", async (c) => {
       role: row?.role ?? newRole,
       addedAt: row?.addedAt ?? null,
       addedBy: row?.addedBy != null ? (addedByUsernames.get(row.addedBy) ?? null) : null,
+      // Must be returned: the panel keys its "this edit will be undone at the
+      // next team check" warning off it. Dropping it here silently disabled
+      // that warning for exactly the rows that need it.
+      source: row?.source ?? "manual",
     },
     dcsVerified,
   });
@@ -166,6 +188,16 @@ adminUsers.put("/:username", async (c) => {
 // touch the `users` table (that's the DCS-account cache, unrelated).
 adminUsers.delete("/:username", async (c) => {
   const username = c.req.param("username");
+
+  // Read the source BEFORE deleting so the response can warn that removing a
+  // team-derived row is only temporary — the user's next team check re-creates
+  // it. Without this the API reports a plain success for an action that does
+  // not actually revoke access, which is the more dangerous failure.
+  const existing = await c.env.DB.prepare(
+    `SELECT source FROM user_roles WHERE dcs_username = ?1`,
+  )
+    .bind(username)
+    .first<{ source: string | null }>();
 
   // Same atomic-guard shape as PUT: the admin-COUNT check and the DELETE
   // happen in one statement, so two concurrent deletes of the last two
@@ -179,7 +211,7 @@ adminUsers.delete("/:username", async (c) => {
     .run();
 
   if (del.meta.changes > 0) {
-    return c.json({ ok: true });
+    return c.json({ ok: true, wasTeamDerived: existing?.source === "dcs_team" });
   }
 
   // Zero changes means either the row never existed, or it existed but was

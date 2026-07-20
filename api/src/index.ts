@@ -63,6 +63,11 @@ export interface Env {
   // DCS org whose members get read-only ("viewer") access when not on the
   // editor allowlist. Defaults to "unfoldingWord" when unset.
   VIEWER_ORG?: string;
+  // Door43 team names, inside the configured project org, whose members are
+  // granted admin / editor at sign-in (api/src/dcsTeams.ts). Default to
+  // "BE-Admins" / "BE-Editors" when unset.
+  DCS_TEAM_ADMIN?: string;
+  DCS_TEAM_EDITOR?: string;
   // Shared service token for the uw-bt-bot AI endpoint. Set via
   // `wrangler secret put BT_API_TOKEN`. Absence disables /api/tn-quick.
   BT_API_TOKEN?: string;

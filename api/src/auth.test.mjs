@@ -27,7 +27,10 @@ import {
   updateLastLocation,
   authMe,
   ensureWorkspaceUser,
+  effectiveRole,
+  lookupUserRole,
 } from "./auth.ts";
+import { syncTeamRole, RESYNC_AFTER_SECONDS } from "./dcsTeams.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -261,6 +264,181 @@ console.log("[refreshToken] session-row gating: missing, revoked, expired, healt
   globalThis.fetch = realFetch;
 }
 
+// ── refreshToken → maybeResyncTeamRole: token must be read from SHARED_DB in
+// a non-default workspace, not the per-org `users` mirror ──────────────────
+//
+// Regression for the bug where the resync's single `LEFT JOIN` ran entirely
+// inside `env.DB` (the per-org database). ensureWorkspaceUser deliberately
+// mirrors a user's `users` row into every per-org DB WITHOUT its
+// `dcs_access_token` (that column is shared-DB-only — see auth.ts's comment
+// on ensureWorkspaceUser). So in any non-default workspace, the old join
+// always saw token = NULL and returned early: the re-check was silently
+// disabled there, and a user removed from their Door43 team kept renewing an
+// editor/admin session for the whole 14-day refresh window. The fix splits
+// it into two statements — `synced_at` from env.DB's `user_roles`, then
+// `dcs_access_token` from sharedDb(env)'s `users` — so the resync actually
+// fires. Uses real node:sqlite for both DB and SHARED_DB (same adapter shape
+// as the ensureWorkspaceUser and effectiveRole tests above) because the bug
+// is about which DATABASE a column lives in, which a single string-matching
+// fake can't distinguish.
+//
+// Driven through refreshToken (the actual caller), not by exporting
+// maybeResyncTeamRole — per the task's instruction not to export it just to
+// test it.
+
+console.log("[refreshToken → maybeResyncTeamRole] re-check reads the OAuth token from SHARED_DB, not the per-org mirror");
+{
+  function sqliteD1(db) {
+    function bound(sql, args) {
+      return {
+        first: async () => db.prepare(sql).get(...args) ?? null,
+        run: async () => {
+          const r = db.prepare(sql).run(...args);
+          return { meta: { changes: Number(r.changes) } };
+        },
+        all: async () => ({ results: db.prepare(sql).all(...args) }),
+      };
+    }
+    return {
+      prepare(sql) {
+        return { bind: (...args) => bound(sql, args), ...bound(sql, []) };
+      },
+    };
+  }
+
+  // Per-org DB: user_roles (real schema, so source/synced_at semantics are
+  // real) plus a `users` row mirrored EXACTLY the way ensureWorkspaceUser
+  // produces it — same id, profile fields copied, token left NULL.
+  function makeOrgDb() {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE user_roles (
+        dcs_username TEXT PRIMARY KEY COLLATE NOCASE,
+        role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        added_by INTEGER,
+        source TEXT NOT NULL DEFAULT 'manual',
+        synced_at INTEGER
+      );
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        dcs_user_id INTEGER UNIQUE,
+        dcs_username TEXT,
+        dcs_full_name TEXT,
+        dcs_access_token TEXT
+      );
+    `);
+    return db;
+  }
+
+  // Shared DB: the canonical `users` row (WITH the token) plus `sessions`,
+  // which is what refreshToken's own session lookup reads via sharedDb().
+  function makeSharedDb() {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        dcs_user_id INTEGER UNIQUE,
+        dcs_username TEXT,
+        dcs_full_name TEXT,
+        dcs_access_token TEXT
+      );
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER,
+        last_seen_at INTEGER
+      );
+    `);
+    return db;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // WORKSPACES makes orgForTeamSync resolve 'org2' straight from the
+  // registry (its documented fast path) instead of needing a project_config
+  // row in env.DB — isolates the test to the token-lookup bug only.
+  const WORKSPACE_ENTRY = { slug: "org2", label: "Org Two", org: "org2", binding: "DB" };
+
+  function buildEnv(syncedAt) {
+    const orgRaw = makeOrgDb();
+    orgRaw
+      .prepare(
+        `INSERT INTO user_roles (dcs_username, role, source, synced_at) VALUES ('alice', 'editor', 'dcs_team', ?)`,
+      )
+      .run(syncedAt);
+    orgRaw
+      .prepare(
+        `INSERT INTO users (id, dcs_user_id, dcs_username, dcs_full_name, dcs_access_token)
+         VALUES (7, 100, 'alice', 'Alice A', NULL)`,
+      )
+      .run();
+
+    const sharedRaw = makeSharedDb();
+    sharedRaw
+      .prepare(
+        `INSERT INTO users (id, dcs_user_id, dcs_username, dcs_full_name, dcs_access_token)
+         VALUES (7, 100, 'alice', 'Alice A', 'real-dcs-token')`,
+      )
+      .run();
+    sharedRaw
+      .prepare(`INSERT INTO sessions (id, user_id, expires_at, revoked_at) VALUES ('sess1', 7, ?, NULL)`)
+      .run(now + 1000);
+
+    return {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: sqliteD1(orgRaw),
+      SHARED_DB: sqliteD1(sharedRaw),
+      WORKSPACES: JSON.stringify([WORKSPACE_ENTRY]),
+      WORKSPACE_SLUG: "org2",
+    };
+  }
+
+  const app = buildApp();
+  const realFetch = globalThis.fetch;
+  let teamsFetchCalled = false;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/api/v1/user/teams")) {
+      teamsFetchCalled = true;
+      return new Response(
+        JSON.stringify([{ name: "BE-Editors", organization: { username: "org2" } }]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    // Stale synced_at (older than RESYNC_AFTER_SECONDS) → the resync fires,
+    // and with the fix, the token resolves from SHARED_DB so the DCS call
+    // actually happens.
+    teamsFetchCalled = false;
+    const staleRes = await app.request(
+      "/api/auth/refresh",
+      { method: "POST", headers: { cookie: "be_refresh=sess1" } },
+      buildEnv(now - RESYNC_AFTER_SECONDS - 10),
+    );
+    assert(staleRes.status === 200, "refresh succeeds for a stale team role in a non-default workspace");
+    assert(teamsFetchCalled === true, "stale synced_at → /user/teams WAS called (token found via SHARED_DB)");
+
+    // Fresh synced_at (within the window) → maybeResyncTeamRole returns
+    // before ever touching the token, regardless of which DB it'd read from.
+    teamsFetchCalled = false;
+    const freshRes = await app.request(
+      "/api/auth/refresh",
+      { method: "POST", headers: { cookie: "be_refresh=sess1" } },
+      buildEnv(now - 10),
+    );
+    assert(freshRes.status === 200, "refresh succeeds for a freshly-synced team role");
+    assert(teamsFetchCalled === false, "fresh synced_at → /user/teams NOT called (within RESYNC_AFTER_SECONDS)");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 // ── updateLastLocation input validation ─────────────────────────────────────
 
 console.log("[updateLastLocation] strict shape check before the DB write");
@@ -401,6 +579,91 @@ console.log("[ensureWorkspaceUser] mirrors id+profile (never the token), repeat 
   await ensureWorkspaceUser(soloEnv, 1); // must not throw, must not touch the row
   const soloCount = soloRaw.prepare(`SELECT COUNT(*) as n FROM users`).get().n;
   assert(soloCount === 1, "shared === workspace DB -> no-op (no duplicate row, no extra work)");
+}
+
+// ── Super-admin invariants ───────────────────────────────────────────────────
+//
+// The project owner's explicit requirement: he must be able to (a) act as
+// admin of ANY org, including one he's never joined on Door43, and (b) help
+// orgs bootstrap without joining every one. effectiveRole's SUPER_ADMINS
+// short-circuit is what makes both possible; lookupUserRole is the raw
+// user_roles read that adminUserRoutes.ts's last-admin guard depends on, and
+// must stay meaningful (i.e. NOT be affected by SUPER_ADMINS) or that guard's
+// semantics silently change.
+//
+// Real node:sqlite (same user_roles shape as dcsTeams.test.mjs's freshDb) so
+// syncTeamRole's real SQL runs, not a string-matched stub.
+
+console.log("[effectiveRole / lookupUserRole] super-admin invariants");
+{
+  function rolesDb() {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE user_roles (
+        dcs_username TEXT PRIMARY KEY COLLATE NOCASE,
+        role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        added_by INTEGER,
+        source TEXT NOT NULL DEFAULT 'manual',
+        synced_at INTEGER
+      );
+    `);
+    return db;
+  }
+  function sqliteD1(db) {
+    function bound(sql, args) {
+      return {
+        first: async () => db.prepare(sql).get(...args) ?? null,
+        run: async () => {
+          const r = db.prepare(sql).run(...args);
+          return { meta: { changes: Number(r.changes) } };
+        },
+        all: async () => ({ results: db.prepare(sql).all(...args) }),
+      };
+    }
+    return {
+      prepare(sql) {
+        return { bind: (...args) => bound(sql, args), ...bound(sql, []) };
+      },
+    };
+  }
+
+  const db = rolesDb();
+  const env = { DB: sqliteD1(db), SUPER_ADMINS: "ada" };
+
+  assert(
+    (await lookupUserRole(env, "ada")) === null,
+    "lookupUserRole: no row for the super admin -> null (raw read, unaffected by SUPER_ADMINS)",
+  );
+  assert(
+    (await effectiveRole(env, "ada")) === "admin",
+    "effectiveRole: super admin with NO user_roles row at all -> 'admin'",
+  );
+
+  // Team sync finds them on no team (role: null — the same shape as the real
+  // "no team role" call in auth.ts's syncTeamRoleForUser). Must not demote.
+  await syncTeamRole(env, "ada", null);
+  assert(
+    (await effectiveRole(env, "ada")) === "admin",
+    "effectiveRole: still 'admin' after a team sync that found the super admin on no team",
+  );
+  assert(
+    (await lookupUserRole(env, "ada")) === null,
+    "lookupUserRole: still null after that sync — the raw row was never created for this super admin",
+  );
+
+  // A non-super-admin's raw row is read normally either way.
+  db.prepare(
+    `INSERT INTO user_roles (dcs_username, role, source) VALUES ('bob', 'editor', 'manual')`,
+  ).run();
+  assert(
+    (await lookupUserRole(env, "bob")) === "editor",
+    "lookupUserRole: reflects the actual row for a non-super-admin",
+  );
+  assert(
+    (await effectiveRole(env, "bob")) === "editor",
+    "effectiveRole: non-super-admin resolves via the raw row",
+  );
 }
 
 console.log("auth: all assertions passed");

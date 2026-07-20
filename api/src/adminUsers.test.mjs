@@ -50,7 +50,8 @@ function freshDb() {
       dcs_username TEXT PRIMARY KEY COLLATE NOCASE,
       role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
       added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      added_by INTEGER REFERENCES users(id)
+      added_by INTEGER REFERENCES users(id),
+      source TEXT NOT NULL DEFAULT 'manual'
     );
   `);
   return db;
@@ -374,6 +375,58 @@ console.log("[PUT validation] body shape → username shape → DCS existence �
     const stored = casingDb.prepare("SELECT dcs_username, added_by FROM user_roles").get();
     assert(stored.dcs_username === "BCameron93", "row stored under the DCS-canonical login, not the URL param");
     assert(stored.added_by === 1, "added_by stamped from the caller's userId (sub=1) on first insert");
+
+    // ── Team-derived rows: the panel must be able to tell the admin that an
+    // edit or a removal here does NOT actually stick. Both signals travel in
+    // the response body, so a dropped field silently disables the warning.
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ login: "teamuser" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const teamDb = freshDb();
+    const teamEnv = baseEnv(teamDb);
+    teamDb.exec(
+      "INSERT INTO user_roles (dcs_username, role, source) VALUES ('teamuser','editor','dcs_team'), ('keeper','admin','manual')",
+    );
+
+    const teamPut = await req(app, teamEnv, "PUT", "/api/admin/users/teamuser", {
+      token: adminTok,
+      body: { role: "admin" },
+    });
+    assert(teamPut.status === 200, "PUT on a team-derived row → 200");
+    const teamPutBody = await teamPut.json();
+    assert(
+      teamPutBody.user.source === "dcs_team",
+      "PUT response carries source so the UI can warn the edit will be re-synced away",
+    );
+    assert(
+      teamDb.prepare("SELECT source FROM user_roles WHERE dcs_username='teamuser'").get().source ===
+        "dcs_team",
+      "an admin edit does NOT flip the row to manual (that would detach it from team sync)",
+    );
+
+    const teamDel = await req(app, teamEnv, "DELETE", "/api/admin/users/teamuser", {
+      token: adminTok,
+    });
+    assert(teamDel.status === 200, "DELETE on a team-derived row → 200");
+    assert(
+      (await teamDel.json()).wasTeamDerived === true,
+      "DELETE response flags that removal is temporary until they leave the Door43 team",
+    );
+
+    const manualDb = freshDb();
+    const manualEnv = baseEnv(manualDb);
+    manualDb.exec(
+      "INSERT INTO user_roles (dcs_username, role, source) VALUES ('manualuser','editor','manual'), ('keeper','admin','manual')",
+    );
+    const manualDel = await req(app, manualEnv, "DELETE", "/api/admin/users/manualuser", {
+      token: adminTok,
+    });
+    assert(
+      (await manualDel.json()).wasTeamDerived === false,
+      "a manual row's removal is permanent, and is not flagged",
+    );
   } finally {
     globalThis.fetch = realFetch;
   }
