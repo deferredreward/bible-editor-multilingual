@@ -46,6 +46,30 @@ console.log("[buildTranslateOptions] default (no overrides), ar-bsoj");
   assert(opts.direction === "rtl", "direction derived from config (ar → rtl)");
   assert(!("rowIds" in opts), "rowIds absent when not requested");
   assert(!("verseStart" in opts), "verseStart absent when not requested");
+  assert(
+    opts.literalRef === "BSOJ/ar_avd@master",
+    "literalRef derived from project's own org + repos.lit (target-language literal Bible)",
+  );
+  assert(
+    opts.simplifiedRef === "BSOJ/ar_nav@master",
+    "simplifiedRef derived from project's own org + repos.sim (target-language simplified Bible)",
+  );
+}
+
+console.log("[buildTranslateOptions] literalRef/simplifiedRef client override wins");
+{
+  const opts = buildTranslateOptions(arBsoj, {
+    literalRef: "RLOB/ru_custom_glt@master",
+    simplifiedRef: "RLOB/ru_custom_gst@master",
+  });
+  assert(
+    opts.literalRef === "RLOB/ru_custom_glt@master",
+    "literalRef client override wins over config-derived default",
+  );
+  assert(
+    opts.simplifiedRef === "RLOB/ru_custom_gst@master",
+    "simplifiedRef client override wins over config-derived default",
+  );
 }
 
 console.log("[buildTranslateOptions] explicit contextRef override → included");

@@ -885,6 +885,8 @@ export interface TranslateRequestOptions {
   targetOrg?: string;
   sourceRef?: string;
   contextRef?: string;
+  literalRef?: string;
+  simplifiedRef?: string;
 }
 
 // tW / tA markdown article file (article_units). Keyed by (resource, path).

@@ -134,6 +134,8 @@ const TranslateOptions = z
     targetOrg: z.string().min(1).max(64).optional(),
     sourceRef: z.string().min(3).max(200).optional(),
     contextRef: z.string().min(3).max(200).optional(),
+    literalRef: z.string().min(3).max(200).optional(),
+    simplifiedRef: z.string().min(3).max(200).optional(),
   })
   .strict();
 
