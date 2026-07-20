@@ -190,7 +190,7 @@ templates.get("/unit/history", requireEditor, async (c) => {
       WHERE template_id = ?1 ORDER BY id DESC`,
   )
     .bind(id)
-    .all<{ source_hash: string; source_md: string; seen_at: string }>();
+    .all<{ source_hash: string; source_md: string; seen_at: number }>();
 
   const logRs = await c.env.DB.prepare(
     `SELECT el.new_version AS version,
@@ -223,6 +223,12 @@ templates.get("/unit/history", requireEditor, async (c) => {
   const logEntries = logRs.results ?? [];
   const hasBaselineAtV1 = logEntries.some((e) => e.version === 1);
   type Entry = (typeof logEntries)[number] & { synthetic?: boolean };
+  // A template_units row is always born from the sheet sync with target_md
+  // NULL and no edit_log 'create' entry, so the v1 baseline is ALWAYS
+  // synthesized — and it must be the empty translation, not currentRow's
+  // target_md. Seeding from the current row (as rows.ts does for imported tN
+  // rows, which genuinely do have content at v1) would replay the newest text
+  // as the oldest snapshot and make every diff wrong.
   const entries: Entry[] = hasBaselineAtV1
     ? logEntries
     : [
@@ -230,7 +236,7 @@ templates.get("/unit/history", requireEditor, async (c) => {
           version: 1,
           action: "imported",
           created_at: 0,
-          payload_json: JSON.stringify({ target_md: currentRow.target_md ?? null }),
+          payload_json: JSON.stringify({ target_md: null }),
           restored_from_version: null,
           user_id: null,
           username: null,

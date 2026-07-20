@@ -105,18 +105,44 @@ test("planTemplateSync restores a soft-deleted row that reappears in the sheet",
   assert.equal(u.hashChanged, false); // body unchanged, only restore
 });
 
-test("parseTemplateRows falls back to a positional id when column D is blank", () => {
+test("parseTemplateRows skips an individual row whose id cell is blank", () => {
   const rows = [
     ["ref", "type", "body", "id"], // header
-    ["figs-metaphor", "Note", "First body", ""],
+    ["figs-metaphor", "Note", "First body", "figs-metaphor-01"],
     ["figs-metaphor", "Note", "Second body", ""],
   ];
-  const { rows: parsed, warnings } = parseTemplateRows(rows);
-  assert.equal(parsed.length, 2);
-  assert.equal(parsed[0].templateId, "figs-metaphor-p1");
-  assert.equal(parsed[1].templateId, "figs-metaphor-p2");
-  assert.equal(warnings.length, 2);
+  const { rows: parsed, warnings, aborted } = parseTemplateRows(rows);
+  assert.equal(aborted, false);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].templateId, "figs-metaphor-01");
+  assert.equal(warnings.length, 1);
   assert.match(warnings[0], /blank template id/);
+});
+
+// The id column is the whole basis of identity. Without it we must write
+// nothing at all: positional ids would be silently re-keyed (and every
+// interim translation orphaned) the moment the real ids appeared.
+test("parseTemplateRows aborts when the sheet has no id header in column D", () => {
+  const rows = [
+    ["ref", "type", "body"], // no column D at all
+    ["figs-metaphor", "Note", "First body"],
+    ["figs-irony", "Note", "Second body"],
+  ];
+  const { rows: parsed, warnings, aborted } = parseTemplateRows(rows);
+  assert.equal(aborted, true);
+  assert.equal(parsed.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /no "id" header/);
+});
+
+test("parseTemplateRows aborts when column D exists but is not the id column", () => {
+  const rows = [
+    ["ref", "type", "body", "notes"],
+    ["figs-metaphor", "Note", "First body", "some annotation"],
+  ];
+  const { aborted, rows: parsed } = parseTemplateRows(rows);
+  assert.equal(aborted, true);
+  assert.equal(parsed.length, 0);
 });
 
 test("parseTemplateRows keeps the first occurrence of a duplicate id and warns", () => {

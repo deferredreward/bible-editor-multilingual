@@ -27,18 +27,36 @@ export interface ParsedTemplateRow {
 }
 
 // Row -> {templateId, supportRef, type, body}, skipping blank ref/body rows
-// (same as noteTemplates.ts's buildTemplates). Column D missing -> a positional
-// fallback id "<supportRef>-p<ordinalWithinRef>"; a warning is pushed, sync
-// never fails on it. A templateId collision keeps the first occurrence and
-// warns about the duplicate.
+// (same as noteTemplates.ts's buildTemplates).
+//
+// Identity comes exclusively from column D. If the sheet has no `id` header
+// there, `aborted` is returned and the caller MUST make no writes at all: a
+// positional fallback id would be a trap, not a kindness. Translations keyed on
+// sheet position would be silently orphaned the moment the real ids landed (the
+// positional rows soft-delete, fresh untranslated rows insert), and orphaning a
+// translator's work is strictly worse than doing nothing until the column
+// exists. Same reasoning for an individual row with a blank id: skip + warn.
+// A templateId collision keeps the first occurrence and warns about the duplicate.
 export function parseTemplateRows(rows: string[][]): {
   rows: ParsedTemplateRow[];
   warnings: string[];
+  aborted: boolean;
 } {
   const warnings: string[] = [];
   const out: ParsedTemplateRow[] = [];
   const seenIds = new Set<string>();
-  const refOrdinals = new Map<string, number>();
+
+  const idHeader = (rows[0]?.[3] ?? "").trim().toLowerCase();
+  if (idHeader !== "id") {
+    return {
+      rows: [],
+      warnings: [
+        `sheet has no "id" header in column D (found "${idHeader}") — sync skipped; ` +
+          `run Templates > Stamp missing IDs on the sheet to create it`,
+      ],
+      aborted: true,
+    };
+  }
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
@@ -47,13 +65,10 @@ export function parseTemplateRows(rows: string[][]): {
     if (!supportRef || !body) continue;
     const type = (r[1] ?? "").trim();
 
-    const ordinal = (refOrdinals.get(supportRef) ?? 0) + 1;
-    refOrdinals.set(supportRef, ordinal);
-
-    let templateId = (r[3] ?? "").trim();
+    const templateId = (r[3] ?? "").trim();
     if (!templateId) {
-      templateId = `${supportRef}-p${ordinal}`;
-      warnings.push(`row ${i + 1}: blank template id, using positional fallback "${templateId}"`);
+      warnings.push(`row ${i + 1}: blank template id (support ref "${supportRef}") — row skipped`);
+      continue;
     }
     if (seenIds.has(templateId)) {
       warnings.push(`row ${i + 1}: duplicate template id "${templateId}" — keeping first occurrence`);
@@ -62,7 +77,7 @@ export function parseTemplateRows(rows: string[][]): {
     seenIds.add(templateId);
     out.push({ templateId, supportRef, type, body, sheetOrder: out.length });
   }
-  return { rows: out, warnings };
+  return { rows: out, warnings, aborted: false };
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -85,7 +100,7 @@ export interface DbTemplateRow {
   source_hash: string;
   translation_state: string | null;
   draft_meta_json: string | null;
-  deleted_at: string | null;
+  deleted_at: number | null;
 }
 
 export interface UpsertAction {
@@ -195,6 +210,7 @@ export interface SyncTemplatesResult {
   restored: number;
   unchanged: number;
   warnings: string[];
+  aborted: boolean;
 }
 
 export interface SyncTemplatesOptions {
@@ -256,7 +272,20 @@ export async function syncTemplates(
 ): Promise<SyncTemplatesResult> {
   const doFetch = opts.deps?.fetchCsv ?? fetchSheetCsv;
   const csv = await doFetch();
-  const { rows: parsed, warnings: parseWarnings } = parseTemplateRows(parseCsv(csv));
+  const { rows: parsed, warnings: parseWarnings, aborted } = parseTemplateRows(parseCsv(csv));
+
+  // No id column -> write NOTHING. Falling through would hand planTemplateSync an
+  // empty sheet and soft-delete every existing unit. Still stamp the watermark so
+  // the 6h cron gate doesn't re-fetch the sheet every five minutes.
+  if (aborted) {
+    const result: SyncTemplatesResult = {
+      inserted: 0, revised: 0, removed: 0, restored: 0, unchanged: 0,
+      warnings: parseWarnings, aborted: true,
+    };
+    await writeSyncState(env, Math.floor(Date.now() / 1000), result);
+    return result;
+  }
+
   const sheetRows: SheetRow[] = await Promise.all(
     parsed.map(async (p) => ({ ...p, sourceHash: await sha256Hex(p.body) })),
   );
@@ -296,15 +325,19 @@ export async function syncTemplates(
     restored,
     unchanged: plan.unchanged,
     warnings: [...parseWarnings, ...plan.warnings],
+    aborted: false,
   };
 
-  await env.DB
+  await writeSyncState(env, now, result);
+  return result;
+}
+
+function writeSyncState(env: Env, now: number, result: SyncTemplatesResult): Promise<unknown> {
+  return env.DB
     .prepare(
       `INSERT INTO template_sync_state (id, last_synced_at, last_result_json) VALUES (1, ?1, ?2)
        ON CONFLICT(id) DO UPDATE SET last_synced_at = excluded.last_synced_at, last_result_json = excluded.last_result_json`,
     )
     .bind(now, JSON.stringify(result))
     .run();
-
-  return result;
 }
