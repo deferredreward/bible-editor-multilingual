@@ -828,16 +828,20 @@ export interface ReimportResponse {
 // /api/books/:book/import with { force: true }). 403 when the caller is not an
 // admin; 409 when the book carries local note/question edits and the request
 // did not also set `confirmDiscardEdits`.
-export interface ImportForbiddenBody {
-  error: "forbidden";
-  detail?: string;
-}
-
 export interface ImportHasLocalEditsBody {
   error: "has_local_edits";
   book: string;
   tn: number;
   tq: number;
+}
+
+// Display form of the import response's note-source provenance: the stored
+// value is `source:<owner>/<repo>` (see SOURCE_PROVENANCE_PREFIX in the API);
+// the prefix is a storage detail, not something to show a translator.
+export function importedSourceRepos(sources?: { tn: string | null; tq: string | null }): string[] {
+  return [...new Set(
+    [sources?.tn, sources?.tq].filter((s): s is string => !!s).map((s) => s.replace(/^source:/, "")),
+  )];
 }
 
 // Translation-note AI draft endpoint (proxied through this Worker; the
@@ -1452,7 +1456,7 @@ export const api = {
   // `force` (admin-only) bypasses the already-imported short-circuit and does a
   // full wipe-and-reload; the server answers 403 `forbidden` for non-admins and
   // 409 `has_local_edits` (with tn/tq counts) unless `confirmDiscardEdits` is
-  // also set. See ImportBookForceError for those bodies.
+  // also set. See ImportHasLocalEditsBody for those bodies.
   importBook: (
     book: string,
     opts?: { translateFromSource?: boolean; force?: boolean; confirmDiscardEdits?: boolean },

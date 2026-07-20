@@ -240,6 +240,28 @@ session) but stronger crash safety.
 
 **Once data is flowing, re-import every book** to populate the missing nodes in existing rows. No frontend changes needed.
 
+## No re-source/reset operation in the books API
+
+**Status:** not started — a naming/shape observation from a code review, not a
+bug. `force` on `POST /api/books/:book/import` is really a *second, different*
+operation ("wipe this book's notes/questions and re-source them from the
+English source") that happens to share a URL with "import this book if it
+isn't imported yet." Passing `force: true` bypasses two of the handler's
+early-return branches, flips the auth check from editor-level to admin-only
+partway through the same function, and adds a 409 confirm-negotiation step
+(`has_local_edits` + `confirmDiscardEdits`) that the plain import path never
+needs.
+
+**What's wanted (if we ever clean this up):** split it into its own route,
+e.g. `POST /api/books/:book/resource`, with `requireAdmin` as ordinary
+declarative middleware instead of an inline mid-handler check, delegating to
+the same underlying `importBookFromDcs`. This would be a pure code move — no
+behavior change — since the logic already exists and is already gated
+correctly at runtime; it's just reachable through one overloaded URL instead
+of two purpose-named ones. Low priority: this is a single-client internal
+API (only this app's own frontend calls it), so the current URL shape is not
+a compatibility commitment and can move whenever it's convenient.
+
 ## What did land in this pass
 
 - CORS: env allowlist replaces the origin-echo CSRF hole.

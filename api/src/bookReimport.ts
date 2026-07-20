@@ -41,7 +41,6 @@
 
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
-import type { RepoRef } from "./repoUrl";
 import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, heldOutNoteResources, NT_BOOKS } from "./dcsSources";
 import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
 import {
@@ -1734,24 +1733,11 @@ export interface ResourceSourceRef {
 // read live lane state (active generation + the lane's source owner/repo/ref);
 // tn/tq/twl use the project config org + role repo on master at generation 1
 // (origSourceGeneration — also the sentinel used for UHB/UGNT originals).
-//
-// `override` (tn/tq only) records the TRUE upstream when a book's notes were
-// imported from the English translationSource rather than the org's own repo —
-// the watermark must not claim an identity we never fetched from.
 export async function resourceSourceRef(
   env: Env,
   resource: Resource,
   cfg: ProjectConfig,
-  override?: RepoRef,
 ): Promise<ResourceSourceRef> {
-  if (override && (resource === "tn" || resource === "tq")) {
-    return {
-      generation: origSourceGeneration(),
-      owner: override.owner,
-      repo: override.repo,
-      ref: override.ref,
-    };
-  }
   const lane = laneForBibleVersion(resource === "ult" ? "ULT" : resource === "ust" ? "UST" : resource);
   if (lane) {
     const row = await requireLaneState(env, lane);
@@ -2048,15 +2034,22 @@ async function planAndStageBookResources(
   const maxChapter = maxRow?.m ?? 0;
   if (maxChapter < 1) return { maxChapter, entries: [] };
 
-  const cfg = await getProjectConfig(env);
   // Same held-out guard runReimport applies: a book whose tn/tq came from
   // Aquifer or the English translationSource must never be re-fetched from the
   // configured org repo. This chunked path had NO provenance check, so the
   // nightly self-heal would have clobbered those rows — treat a held-out
-  // resource as a no-op entry (never fetch, never watermark).
-  const prov = await env.DB.prepare(`SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`)
-    .bind(book)
-    .first<{ tn_source: string | null; tq_source: string | null }>();
+  // resource as a no-op entry (never fetch, never watermark). Only queried
+  // when tn/tq are actually requested, matching the guard in runReimport.
+  const needsNoteProv = resources.some((r) => r === "tn" || r === "tq");
+  const [cfg, prov] = await Promise.all([
+    getProjectConfig(env),
+    needsNoteProv
+      ? env.DB
+          .prepare(`SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`)
+          .bind(book)
+          .first<{ tn_source: string | null; tq_source: string | null }>()
+      : Promise.resolve(null),
+  ]);
   const heldOut = heldOutNoteResources(prov);
 
   const entries: StagedResource[] = [];

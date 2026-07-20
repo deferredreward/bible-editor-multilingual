@@ -26,7 +26,7 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
 import AutoStoriesIcon from "@mui/icons-material/AutoStories";
 import TranslateIcon from "@mui/icons-material/Translate";
-import { ApiError, api, isAdmin } from "../sync/api";
+import { ApiError, api, importedSourceRepos, isAdmin } from "../sync/api";
 import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
 import type {
   ImportHasLocalEditsBody,
@@ -239,9 +239,11 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   const canPullAquifer = isAdmin() && isTranslationProject(projectConfig);
   // Admin-only, translation projects only: wipe this book's notes/questions and
   // reload them from the configured English source repos.
-  const canResource = canPullAquifer;
-  const [resourceConfirm, setResourceConfirm] = useState(false);
-  const [resourceEdits, setResourceEdits] = useState<ImportHasLocalEditsBody | null>(null);
+  // "warn" = initial confirm (no local edits known yet); an ImportHasLocalEditsBody
+  // = the sharper 409 confirm naming the tn/tq counts that would be discarded.
+  const [resourceConfirm, setResourceConfirm] = useState<null | "warn" | ImportHasLocalEditsBody>(
+    null,
+  );
   const [resourceBusy, setResourceBusy] = useState(false);
 
   useEffect(() => pipelineStore.subscribe(setActiveJobs), []);
@@ -405,32 +407,28 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         force: true,
         ...(confirmDiscardEdits ? { confirmDiscardEdits: true } : {}),
       });
-      const sources = [res.sources?.tn, res.sources?.tq].filter(Boolean).join(", ");
+      const sources = importedSourceRepos(res.sources).join(", ");
       onMessage?.(
         sources
           ? t("pipeline.resourceDone", { book, sources })
           : t("pipeline.resourceDoneNoSources", { book }),
       );
-      setResourceConfirm(false);
-      setResourceEdits(null);
+      setResourceConfirm(null);
       onImported?.();
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as { error?: string } | undefined) : undefined;
       if (e instanceof ApiError && e.status === 409 && body?.error === "has_local_edits") {
-        setResourceConfirm(false);
-        setResourceEdits(body as ImportHasLocalEditsBody);
+        setResourceConfirm(body as ImportHasLocalEditsBody);
       } else if (e instanceof ApiError && e.status === 403) {
         onMessage?.(t("pipeline.resourceAdminOnly"));
-        setResourceConfirm(false);
-        setResourceEdits(null);
+        setResourceConfirm(null);
       } else {
         onMessage?.(
           t("pipeline.resourceFailed", {
             error: body?.error ?? (e instanceof Error ? e.message : String(e)),
           }),
         );
-        setResourceConfirm(false);
-        setResourceEdits(null);
+        setResourceConfirm(null);
       }
     } finally {
       setResourceBusy(false);
@@ -496,12 +494,12 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
             />
           </MenuItem>
         )}
-        {canResource && (
+        {canPullAquifer && (
           <MenuItem
             disabled={resourceBusy}
             onClick={() => {
               close();
-              setResourceConfirm(true);
+              setResourceConfirm("warn");
             }}
           >
             {resourceBusy ? (
@@ -674,54 +672,39 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         </DialogActions>
       </Dialog>
       <Dialog
-        open={resourceConfirm}
-        onClose={() => !resourceBusy && setResourceConfirm(false)}
+        open={resourceConfirm !== null}
+        onClose={() => !resourceBusy && setResourceConfirm(null)}
       >
-        <DialogTitle>{t("pipeline.resourceConfirmTitle")}</DialogTitle>
-        <DialogContent>
-          <DialogContentText>{t("pipeline.resourceConfirmBody", { book })}</DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResourceConfirm(false)} disabled={resourceBusy}>
-            {t("pipeline.cancel")}
-          </Button>
-          <Button
-            onClick={() => void runResource(false)}
-            variant="contained"
-            color="warning"
-            disabled={resourceBusy}
-            startIcon={resourceBusy ? <CircularProgress size={14} /> : undefined}
-          >
-            {t("pipeline.resourceContinue")}
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
-        open={Boolean(resourceEdits)}
-        onClose={() => !resourceBusy && setResourceEdits(null)}
-      >
-        <DialogTitle>{t("pipeline.resourceEditsTitle")}</DialogTitle>
+        <DialogTitle>
+          {resourceConfirm === "warn"
+            ? t("pipeline.resourceConfirmTitle")
+            : t("pipeline.resourceEditsTitle")}
+        </DialogTitle>
         <DialogContent>
           <DialogContentText>
-            {t("pipeline.resourceEditsBody", {
-              book,
-              tn: resourceEdits?.tn ?? 0,
-              tq: resourceEdits?.tq ?? 0,
-            })}
+            {resourceConfirm === "warn"
+              ? t("pipeline.resourceConfirmBody", { book })
+              : t("pipeline.resourceEditsBody", {
+                  book,
+                  tn: resourceConfirm?.tn ?? 0,
+                  tq: resourceConfirm?.tq ?? 0,
+                })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setResourceEdits(null)} disabled={resourceBusy}>
+          <Button onClick={() => setResourceConfirm(null)} disabled={resourceBusy}>
             {t("pipeline.cancel")}
           </Button>
           <Button
-            onClick={() => void runResource(true)}
+            onClick={() => void runResource(resourceConfirm !== "warn")}
             variant="contained"
-            color="error"
+            color={resourceConfirm === "warn" ? "warning" : "error"}
             disabled={resourceBusy}
             startIcon={resourceBusy ? <CircularProgress size={14} /> : undefined}
           >
-            {t("pipeline.resourceDiscardConfirm")}
+            {resourceConfirm === "warn"
+              ? t("pipeline.resourceContinue")
+              : t("pipeline.resourceDiscardConfirm")}
           </Button>
         </DialogActions>
       </Dialog>

@@ -346,7 +346,7 @@ async function importBookFromDcs(
 
   // Opting in to translate-from-source only makes sense on a translation
   // project; without a configured translationSource there is nothing to pull.
-  if (opts.translateFromSource && !translationSourceRepoRef(cfg, "tn")) {
+  if (opts.translateFromSource && !cfg.translationSource) {
     throw new Error("not_a_translation_project");
   }
 
@@ -400,26 +400,42 @@ async function importBookFromDcs(
   // fetchTextWithStatus and fall back only on a hard 404 (shouldFallBackOnStatus);
   // anything else falls through to the missing/throw path below and is retried.
   const noteUrls: Record<"tn" | "tq", string> = { tn: urls.tn, tq: urls.tq };
-  for (const resource of ["tn", "tq"] as const) {
-    const raw = resource === "tn" ? tnRaw : tqRaw;
-    if (raw != null || noteSource[resource]) continue;
-    const ref = translationSourceRepoRef(cfg, resource);
-    if (!ref) continue;
-    const probe = await fetchTextWithStatus(env, noteUrls[resource]);
-    if (!shouldFallBackOnStatus(probe.status)) continue;
-    const fallbackUrls = dcsUrls(env, cfg, book, { ...overrides, [resource]: ref })!;
-    const url = fallbackUrls[resource];
-    const fetched = await fetchText(url);
-    if (fetched == null) continue;
-    console.warn("import: org note file absent; falling back to translation source", {
-      book,
-      resource,
-      url,
-    });
-    noteSource[resource] = ref;
-    noteUrls[resource] = url;
-    if (resource === "tn") tnRaw = fetched;
-    else tqRaw = fetched;
+  // tn and tq are independent (disjoint noteSource/noteUrls keys), so run both
+  // fallback probes concurrently rather than serially — a book missing both
+  // files otherwise pays for 4 sequential DCS round-trips instead of 2 pairs
+  // in parallel. Each resource still does its OWN probe (fetchTextWithStatus)
+  // then its own primary-shaped fetch (fetchText, which retries once on
+  // network-error/truncation — that retry is the twl_PSA / HAB truncation
+  // guard, so it must stay fetchText and not be swapped for fetchTextWithStatus).
+  const [tnFallback, tqFallback] = await Promise.all(
+    (["tn", "tq"] as const).map(async (resource) => {
+      const raw = resource === "tn" ? tnRaw : tqRaw;
+      if (raw != null || noteSource[resource]) return null;
+      const ref = translationSourceRepoRef(cfg, resource);
+      if (!ref) return null;
+      const probe = await fetchTextWithStatus(env, noteUrls[resource]);
+      if (!shouldFallBackOnStatus(probe.status)) return null;
+      const fallbackUrls = dcsUrls(env, cfg, book, { ...overrides, [resource]: ref })!;
+      const url = fallbackUrls[resource];
+      const fetched = await fetchText(url);
+      if (fetched == null) return null;
+      console.warn("import: org note file absent; falling back to translation source", {
+        book,
+        resource,
+        url,
+      });
+      return { ref, url, fetched };
+    }),
+  );
+  if (tnFallback) {
+    noteSource.tn = tnFallback.ref;
+    noteUrls.tn = tnFallback.url;
+    tnRaw = tnFallback.fetched;
+  }
+  if (tqFallback) {
+    noteSource.tq = tqFallback.ref;
+    noteUrls.tq = tqFallback.url;
+    tqRaw = tqFallback.fetched;
   }
 
   const missing: string[] = [];
@@ -606,14 +622,17 @@ async function importBookFromDcs(
     // nightly reimports that resource.
     for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
       if (!counts.fetched[resource]) continue;
+      // Skip source-pulled tn/tq: they're already held out of the nightly
+      // reimport (heldOutNoteResources), so a watermark here is write-only —
+      // nothing ever reads it. Recording one under the org's identity would
+      // also be a lie (resourceSourceRef no longer takes an override to say
+      // otherwise). An absent watermark correctly fails open to a refetch if
+      // provenance is later cleared.
+      if (resource === "tn" && noteSource.tn) continue;
+      if (resource === "tq" && noteSource.tq) continue;
       const file = dcsResourceFile(cfg, book, resource);
       if (!file) continue;
-      // Pass the per-resource note override so the recorded identity is the TRUE
-      // upstream (the English source repo), not the org's. These books are
-      // reimport-skipped, so the watermark is informational — but it must not lie.
-      const noteOverride =
-        resource === "tn" ? noteSource.tn : resource === "tq" ? noteSource.tq : null;
-      const src = await resourceSourceRef(env, resource, cfg, noteOverride ?? undefined);
+      const src = await resourceSourceRef(env, resource, cfg);
       const sha = await fileCommitSha(env, src.owner, src.repo, file.path, src.ref);
       if (sha) await recordResourceSync(env, book, resource, sha, "import", src);
     }

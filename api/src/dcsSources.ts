@@ -83,26 +83,23 @@ export function dcsUrls(
   const origRepo = isNt ? "el-x-koine_ugnt" : "hbo_uhb";
   const org = cfg.org;
 
-  const litOwner = overrides?.lit?.owner ?? org;
-  const litRepo = overrides?.lit?.repo ?? cfg.repos.lit;
-  const litRef = overrides?.lit?.ref ?? "master";
-  const simOwner = overrides?.sim?.owner ?? org;
-  const simRepo = overrides?.sim?.repo ?? cfg.repos.sim;
-  const simRef = overrides?.sim?.ref ?? "master";
-  const tnOwner = overrides?.tn?.owner ?? org;
-  const tnRepo = overrides?.tn?.repo ?? cfg.repos.tn;
-  const tnRef = overrides?.tn?.ref ?? "master";
-  const tqOwner = overrides?.tq?.owner ?? org;
-  const tqRepo = overrides?.tq?.repo ?? cfg.repos.tq;
-  const tqRef = overrides?.tq?.ref ?? "master";
+  const at = (k: keyof DcsRepoOverrides, repo: string) => ({
+    owner: overrides?.[k]?.owner ?? org,
+    repo: overrides?.[k]?.repo ?? repo,
+    ref: overrides?.[k]?.ref ?? "master",
+  });
+  const lit = at("lit", cfg.repos.lit);
+  const sim = at("sim", cfg.repos.sim);
+  const tn = at("tn", cfg.repos.tn);
+  const tq = at("tq", cfg.repos.tq);
 
   return {
-    ult: `${base}/${litOwner}/${litRepo}/raw/branch/${litRef}/${usfmName}`,
-    ust: `${base}/${simOwner}/${simRepo}/raw/branch/${simRef}/${usfmName}`,
+    ult: `${base}/${lit.owner}/${lit.repo}/raw/branch/${lit.ref}/${usfmName}`,
+    ust: `${base}/${sim.owner}/${sim.repo}/raw/branch/${sim.ref}/${usfmName}`,
     orig: `${base}/${ORIG_OWNER}/${origRepo}/raw/branch/master/${usfmName}`,
     origVersion: isNt ? "UGNT" : "UHB",
-    tn: `${base}/${tnOwner}/${tnRepo}/raw/branch/${tnRef}/tn_${book}.tsv`,
-    tq: `${base}/${tqOwner}/${tqRepo}/raw/branch/${tqRef}/tq_${book}.tsv`,
+    tn: `${base}/${tn.owner}/${tn.repo}/raw/branch/${tn.ref}/tn_${book}.tsv`,
+    tq: `${base}/${tq.owner}/${tq.repo}/raw/branch/${tq.ref}/tq_${book}.tsv`,
     // twl is language-neutral (orig-word links), so it always comes from the
     // project's own org — never from the English translation source.
     twl: `${base}/${org}/${cfg.repos.twl}/raw/branch/master/twl_${book}.tsv`,

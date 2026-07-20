@@ -18,7 +18,7 @@ import {
 } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { useTranslation } from "react-i18next";
-import { api, ApiError } from "../sync/api";
+import { api, ApiError, importedSourceRepos } from "../sync/api";
 import {
   applyProjectOverrides,
   isTranslationProject,
@@ -107,13 +107,9 @@ export function SetupWizard() {
       // Non-null entries mean tN/tQ came from the English source — either
       // because the box was ticked, or because the org's own file was missing
       // and the server fell back on its own.
-      const usedSources = [res.sources?.tn, res.sources?.tq]
-        .filter((s): s is string => !!s)
-        .map((s) => s.replace(/^source:/, ""));
+      const usedSources = importedSourceRepos(res.sources);
       if (usedSources.length > 0) {
-        setSourceNote(
-          t("setup.importedFromSource", { repos: [...new Set(usedSources)].join(", ") }),
-        );
+        setSourceNote(t("setup.importedFromSource", { repos: usedSources.join(", ") }));
       }
       // Drain the article-population queue for this book: each call processes one
       // bounded chunk and reports how many refs remain. Loop until remaining is 0

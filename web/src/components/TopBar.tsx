@@ -36,7 +36,7 @@ import { useTranslation } from "react-i18next";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
-import { api, type BookListEntry, type BookSummary } from "../sync/api";
+import { api, importedSourceRepos, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
@@ -235,13 +235,9 @@ export function TopBar({
     setImportSourceNote(null);
     try {
       const res = await api.importBook(code);
-      const usedSources = [res.sources?.tn, res.sources?.tq]
-        .filter((s): s is string => !!s)
-        .map((s) => s.replace(/^source:/, ""));
+      const usedSources = importedSourceRepos(res.sources);
       if (usedSources.length > 0) {
-        setImportSourceNote(
-          t("topbar.importedFromSource", { repos: [...new Set(usedSources)].join(", ") }),
-        );
+        setImportSourceNote(t("topbar.importedFromSource", { repos: usedSources.join(", ") }));
       }
       const r = await api.getBooks();
       setBooks(r.books);
