@@ -27,6 +27,10 @@ export type TranslateClientOptions = {
   targetOrg?: string;
   sourceRef?: string;
   contextRef?: string;
+  // Target-language literal / simplified Bible refs (org/repo@ref) the bot uses
+  // to make bold-quote and alternate-translation wording match the target Bible.
+  literalRef?: string;
+  simplifiedRef?: string;
 };
 
 // Build the bp-assistant `translate` options from the active project config,
@@ -49,6 +53,8 @@ export function buildTranslateOptions(
   // default; a caller can pin an exact SHA for reproducibility (the bot echoes
   // the resolved SHA). resourceType selects which source repo (tn|tq|tw|ta).
   const sourceRef = o.sourceRef ?? `${src.org}/${src.repos[resourceType]}@master`;
+  const literalRef = o.literalRef ?? (cfg.repos.lit ? `${cfg.org}/${cfg.repos.lit}@master` : undefined);
+  const simplifiedRef = o.simplifiedRef ?? (cfg.repos.sim ? `${cfg.org}/${cfg.repos.sim}@master` : undefined);
   return {
     resourceType,
     targetLang,
@@ -64,6 +70,8 @@ export function buildTranslateOptions(
     // Once {org}/translation-context is created + populated (CONTEXT-REPO-CONTRACT.md),
     // a caller enables assisted output by passing translate.contextRef explicitly.
     ...(o.contextRef ? { contextRef: o.contextRef } : {}),
+    ...(literalRef ? { literalRef } : {}),
+    ...(simplifiedRef ? { simplifiedRef } : {}),
     // Editor delivery — the bot never pushes to Door43; it records an output
     // manifest and the editor pulls the files over the authenticated output
     // endpoint, applying them as ai_draft rows (docs/plan Design 1). 'branch'

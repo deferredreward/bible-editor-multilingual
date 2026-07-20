@@ -52,9 +52,11 @@ function isUniqueConstraintError(err: unknown): boolean {
 // fail the save; the nightly export is the backstop.
 type TmContext = { env: Env; executionCtx: { waitUntil(p: Promise<unknown>): void } };
 function queueContextExport(c: TmContext): void {
-  const id = workflowRunId("context-save-");
+  // Workspace slug in the id prefix keeps two orgs' same-second saves from
+  // colliding on the deterministic id (see workflowRunId's dedup contract).
+  const id = workflowRunId(`context-save-${c.env.WORKSPACE_SLUG ?? "default"}-`);
   try {
-    const p = c.env.EXPORT_WORKFLOW.create({ id, params: { contextOnly: true } }).catch((e: unknown) => {
+    const p = c.env.EXPORT_WORKFLOW.create({ id, params: { contextOnly: true, workspace: c.env.WORKSPACE_SLUG } }).catch((e: unknown) => {
       console.log("context export queue skipped", id, e instanceof Error ? e.message : String(e));
     });
     c.executionCtx.waitUntil(p);
@@ -74,6 +76,7 @@ type PrefsRow = {
   register: string;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   assisted_mode: number;
   version: number;
@@ -88,6 +91,7 @@ const DEFAULT_PREFS: PrefsRow = {
   register: "default",
   script_notes: null,
   instructions_md: null,
+  common_issues_md: null,
   notes: null,
   assisted_mode: 0,
   version: 0, // 0 = never written; the first PUT must send If-Match: 0
@@ -109,6 +113,7 @@ const PutPrefsBody = z.object({
   register: z.enum(REGISTERS).optional(),
   script_notes: z.string().max(8000).nullable().optional(),
   instructions_md: z.string().max(20000).nullable().optional(),
+  common_issues_md: z.string().max(50000).nullable().optional(),
   notes: z.string().max(20000).nullable().optional(),
   // assisted_mode is no longer accepted: the contextRef is injected whenever a
   // successful context export exists (the gate was removed). Column stays in
@@ -139,8 +144,8 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
     const d = parsed.data;
     const insertRes = await c.env.DB.prepare(
       `INSERT INTO translation_prefs
-         (id, audience, purpose, register, script_notes, instructions_md, notes, assisted_mode, version, updated_at, updated_by)
-       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)
+         (id, audience, purpose, register, script_notes, instructions_md, common_issues_md, notes, assisted_mode, version, updated_at, updated_by)
+       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?10)
        ON CONFLICT(id) DO NOTHING`,
     )
       .bind(
@@ -149,6 +154,7 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
         d.register ?? "default",
         d.script_notes ?? null,
         d.instructions_md ?? null,
+        d.common_issues_md ?? null,
         d.notes ?? null,
         0,
         now,
@@ -174,14 +180,16 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
     script_notes: parsed.data.script_notes !== undefined ? parsed.data.script_notes : existing.script_notes,
     instructions_md:
       parsed.data.instructions_md !== undefined ? parsed.data.instructions_md : existing.instructions_md,
+    common_issues_md:
+      parsed.data.common_issues_md !== undefined ? parsed.data.common_issues_md : existing.common_issues_md,
     notes: parsed.data.notes !== undefined ? parsed.data.notes : existing.notes,
   };
   const res = await c.env.DB.prepare(
     `UPDATE translation_prefs
         SET audience = ?1, purpose = ?2, register = ?3, script_notes = ?4,
-            instructions_md = ?5, notes = ?6,
-            version = version + 1, updated_at = ?7, updated_by = ?8
-      WHERE id = 1 AND version = ?9`,
+            instructions_md = ?5, common_issues_md = ?6, notes = ?7,
+            version = version + 1, updated_at = ?8, updated_by = ?9
+      WHERE id = 1 AND version = ?10`,
   )
     .bind(
       merged.audience,
@@ -189,6 +197,7 @@ translationMemory.put("/prefs", requireAdmin, async (c) => {
       merged.register,
       merged.script_notes,
       merged.instructions_md,
+      merged.common_issues_md,
       merged.notes,
       now,
       userId ?? null,

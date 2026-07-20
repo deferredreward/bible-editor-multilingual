@@ -25,9 +25,11 @@ import {
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
 import AutoStoriesIcon from "@mui/icons-material/AutoStories";
-import { ApiError, api, isAdmin } from "../sync/api";
+import TranslateIcon from "@mui/icons-material/Translate";
+import { ApiError, api, importedSourceRepos, isAdmin } from "../sync/api";
 import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
 import type {
+  ImportHasLocalEditsBody,
   PipelineChainStep,
   PipelineConflictBody,
   PipelineConflictExisting,
@@ -235,6 +237,14 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   const [importOpen, setImportOpen] = useState(false);
   const [aquiferBusy, setAquiferBusy] = useState(false);
   const canPullAquifer = isAdmin() && isTranslationProject(projectConfig);
+  // Admin-only, translation projects only: wipe this book's notes/questions and
+  // reload them from the configured English source repos.
+  // "warn" = initial confirm (no local edits known yet); an ImportHasLocalEditsBody
+  // = the sharper 409 confirm naming the tn/tq counts that would be discarded.
+  const [resourceConfirm, setResourceConfirm] = useState<null | "warn" | ImportHasLocalEditsBody>(
+    null,
+  );
+  const [resourceBusy, setResourceBusy] = useState(false);
 
   useEffect(() => pipelineStore.subscribe(setActiveJobs), []);
 
@@ -384,6 +394,47 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
     }
   };
 
+  // Two-step re-source: the first call omits confirmDiscardEdits so the server
+  // can answer 409 has_local_edits with the counts; we then show a sharper
+  // confirmation naming them and repeat the call with the flag set.
+  const runResource = async (confirmDiscardEdits: boolean) => {
+    if (resourceBusy) return;
+    setResourceBusy(true);
+    onMessage?.(t("pipeline.resourceStarting", { book }));
+    try {
+      const res = await api.importBook(book, {
+        translateFromSource: true,
+        force: true,
+        ...(confirmDiscardEdits ? { confirmDiscardEdits: true } : {}),
+      });
+      const sources = importedSourceRepos(res.sources).join(", ");
+      onMessage?.(
+        sources
+          ? t("pipeline.resourceDone", { book, sources })
+          : t("pipeline.resourceDoneNoSources", { book }),
+      );
+      setResourceConfirm(null);
+      onImported?.();
+    } catch (e) {
+      const body = e instanceof ApiError ? (e.body as { error?: string } | undefined) : undefined;
+      if (e instanceof ApiError && e.status === 409 && body?.error === "has_local_edits") {
+        setResourceConfirm(body as ImportHasLocalEditsBody);
+      } else if (e instanceof ApiError && e.status === 403) {
+        onMessage?.(t("pipeline.resourceAdminOnly"));
+        setResourceConfirm(null);
+      } else {
+        onMessage?.(
+          t("pipeline.resourceFailed", {
+            error: body?.error ?? (e instanceof Error ? e.message : String(e)),
+          }),
+        );
+        setResourceConfirm(null);
+      }
+    } finally {
+      setResourceBusy(false);
+    }
+  };
+
   return (
     <>
       <Button
@@ -440,6 +491,25 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
             <ListItemText
               primary={t("pipeline.aquiferPull")}
               secondary={t("pipeline.aquiferPullDesc")}
+            />
+          </MenuItem>
+        )}
+        {canPullAquifer && (
+          <MenuItem
+            disabled={resourceBusy}
+            onClick={() => {
+              close();
+              setResourceConfirm("warn");
+            }}
+          >
+            {resourceBusy ? (
+              <CircularProgress size={16} sx={{ mr: 1 }} />
+            ) : (
+              <TranslateIcon fontSize="small" sx={{ mr: 1, color: "text.secondary" }} />
+            )}
+            <ListItemText
+              primary={t("pipeline.resourceFromSource")}
+              secondary={t("pipeline.resourceFromSourceDesc")}
             />
           </MenuItem>
         )}
@@ -599,6 +669,45 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConflict(null)}>{t("pipeline.close")}</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={resourceConfirm !== null}
+        onClose={() => !resourceBusy && setResourceConfirm(null)}
+      >
+        <DialogTitle>
+          {resourceConfirm === "warn"
+            ? t("pipeline.resourceConfirmTitle")
+            : t("pipeline.resourceEditsTitle")}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {resourceConfirm === "warn"
+              ? t("pipeline.resourceConfirmBody", { book })
+              : t("pipeline.resourceEditsBody", {
+                  book,
+                  tn: resourceConfirm?.tn ?? 0,
+                  tq: resourceConfirm?.tq ?? 0,
+                  twl: resourceConfirm?.twl ?? 0,
+                  verses: resourceConfirm?.verses ?? 0,
+                })}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResourceConfirm(null)} disabled={resourceBusy}>
+            {t("pipeline.cancel")}
+          </Button>
+          <Button
+            onClick={() => void runResource(resourceConfirm !== "warn")}
+            variant="contained"
+            color={resourceConfirm === "warn" ? "warning" : "error"}
+            disabled={resourceBusy}
+            startIcon={resourceBusy ? <CircularProgress size={14} /> : undefined}
+          >
+            {resourceConfirm === "warn"
+              ? t("pipeline.resourceContinue")
+              : t("pipeline.resourceDiscardConfirm")}
+          </Button>
         </DialogActions>
       </Dialog>
     </>

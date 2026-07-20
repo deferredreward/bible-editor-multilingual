@@ -13,6 +13,7 @@
 //
 // Not a test framework; a failed assert exits non-zero.
 
+import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { SignJWT } from "jose";
 import {
@@ -25,6 +26,7 @@ import {
   refreshToken,
   updateLastLocation,
   authMe,
+  ensureWorkspaceUser,
 } from "./auth.ts";
 
 function assert(cond, msg) {
@@ -321,6 +323,84 @@ console.log("[authMe] identity echo, 401 without a token");
     body.userId === 1 && body.username === "alice" && body.role === "editor" && body.lastBook === "ZEC",
     "/me echoes claims + stored location",
   );
+}
+
+// ── ensureWorkspaceUser: mirrors the shared user row into a workspace's
+// local `users` table (real node:sqlite, two separate databases) so per-org
+// FKs — tn_rows.updated_by, edit_log.user_id, etc. — resolve after a switch.
+
+console.log("[ensureWorkspaceUser] mirrors id+profile (never the token), repeat call is a no-op, skipped when shared===local");
+{
+  // Real D1 adapter over node:sqlite (same shape as workspaceRoutes.test.mjs).
+  function sqliteD1(db) {
+    function bound(sql, args) {
+      return {
+        first: async () => db.prepare(sql).get(...args) ?? null,
+        run: async () => {
+          const r = db.prepare(sql).run(...args);
+          return { meta: { changes: Number(r.changes) } };
+        },
+        all: async () => ({ results: db.prepare(sql).all(...args) }),
+      };
+    }
+    return {
+      prepare(sql) {
+        return { bind: (...args) => bound(sql, args), ...bound(sql, []) };
+      },
+    };
+  }
+
+  function usersDb() {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        dcs_user_id INTEGER UNIQUE,
+        dcs_username TEXT,
+        dcs_full_name TEXT,
+        dcs_access_token TEXT
+      );
+    `);
+    return db;
+  }
+
+  // Shared DB holds user id 1 (with a token that must never leak into a
+  // per-org DB); the workspace DB starts empty.
+  const sharedRaw = usersDb();
+  sharedRaw
+    .prepare(
+      `INSERT INTO users (id, dcs_user_id, dcs_username, dcs_full_name, dcs_access_token)
+       VALUES (1, 100, 'alice', 'Alice A', 'secret-token')`,
+    )
+    .run();
+  const workspaceRaw = usersDb();
+  const env = {
+    SHARED_DB: sqliteD1(sharedRaw),
+    DB: sqliteD1(workspaceRaw),
+    WORKSPACE_SLUG: "org2",
+  };
+
+  await ensureWorkspaceUser(env, 1);
+  const mirrored = workspaceRaw.prepare(`SELECT * FROM users WHERE id = 1`).get();
+  assert(!!mirrored, "local users row created with the same id");
+  assert(mirrored.dcs_username === "alice" && mirrored.dcs_full_name === "Alice A", "profile fields mirrored");
+  assert(mirrored.dcs_access_token === null, "dcs_access_token is never copied into the per-org DB");
+
+  // Second call: no-op. Change the shared row first so a non-no-op second
+  // call would be observable.
+  sharedRaw.prepare(`UPDATE users SET dcs_username = 'alice2' WHERE id = 1`).run();
+  await ensureWorkspaceUser(env, 1);
+  const mirroredAgain = workspaceRaw.prepare(`SELECT * FROM users WHERE id = 1`).get();
+  assert(mirroredAgain.dcs_username === "alice", "second call is a no-op — local row left as-is");
+
+  // SHARED_DB === DB (the default/single-workspace case): skipped entirely.
+  const soloRaw = usersDb();
+  soloRaw.prepare(`INSERT INTO users (id, dcs_user_id, dcs_username) VALUES (1, 200, 'solo')`).run();
+  const solo = sqliteD1(soloRaw);
+  const soloEnv = { SHARED_DB: solo, DB: solo, WORKSPACE_SLUG: "default" };
+  await ensureWorkspaceUser(soloEnv, 1); // must not throw, must not touch the row
+  const soloCount = soloRaw.prepare(`SELECT COUNT(*) as n FROM users`).get().n;
+  assert(soloCount === 1, "shared === workspace DB -> no-op (no duplicate row, no extra work)");
 }
 
 console.log("auth: all assertions passed");

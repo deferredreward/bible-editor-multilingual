@@ -190,6 +190,7 @@ export function DocColumn({
         />
       </Stack>
       <Box
+        dir={rtl ? "rtl" : "ltr"}
         sx={(theme) => ({
           flex: 1,
           overflowY: "auto",
@@ -200,8 +201,7 @@ export function DocColumn({
           fontFamily: hebrewSource
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',
-          direction: rtl ? "rtl" : "ltr",
-          textAlign: rtl ? "right" : "left",
+          textAlign: "start",
           ...markHighlightSx(theme.palette.mode),
           ...draftDirtyBorderSx(),
         })}
@@ -628,7 +628,7 @@ function VerseSpan({
           fontWeight: isRange ? 700 : 600,
           color: isRange ? "#014263" : "#9aa0a6",
           verticalAlign: "1px",
-          marginRight: 4,
+          marginInlineEnd: 4,
           borderBottom:
             textShade !== "open" ? `2px solid ${LANE_FILL[textShade].bg}` : undefined,
         }}

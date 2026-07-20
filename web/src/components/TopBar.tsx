@@ -36,7 +36,7 @@ import { useTranslation } from "react-i18next";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
-import { api, type BookListEntry, type BookSummary } from "../sync/api";
+import { api, importedSourceRepos, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
@@ -181,6 +181,7 @@ interface Props {
   logosSyncToggle?: ReactNode;
   lintIndicator?: ReactNode;
   exportMenu?: ReactNode;
+  workspaceSwitcher?: ReactNode;
   railCollapsed?: boolean;
   onToggleRail?: () => void;
   onRequestReload?: () => void;
@@ -195,6 +196,7 @@ export function TopBar({
   logosSyncToggle,
   lintIndicator,
   exportMenu,
+  workspaceSwitcher,
   railCollapsed,
   onToggleRail,
   onRequestReload,
@@ -206,6 +208,9 @@ export function TopBar({
   const [refError, setRefError] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  // Set when the server reports tN/tQ came from the English source repos —
+  // the fallback can fire on its own when the org's file is missing.
+  const [importSourceNote, setImportSourceNote] = useState<string | null>(null);
   const { mode, toggle } = useContext(ThemeModeContext);
   const projectConfig = useProjectConfig();
   const showArticles = isTranslationProject(projectConfig);
@@ -229,8 +234,13 @@ export function TopBar({
   ) => {
     setImporting(code);
     setImportError(null);
+    setImportSourceNote(null);
     try {
-      await api.importBook(code);
+      const res = await api.importBook(code);
+      const usedSources = importedSourceRepos(res.sources);
+      if (usedSources.length > 0) {
+        setImportSourceNote(t("topbar.importedFromSource", { repos: usedSources.join(", ") }));
+      }
       const r = await api.getBooks();
       setBooks(r.books);
       onNavigate(code, targetChapter, verse);
@@ -502,6 +512,7 @@ export function TopBar({
           <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
         </Box>
       )}
+      {workspaceSwitcher}
       {showArticles && (
         <Tooltip title={t("articles.title")}>
           <Button
@@ -562,6 +573,16 @@ export function TopBar({
       >
         <Alert severity="error" onClose={() => setImportError(null)}>
           {importError}
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={importSourceNote !== null}
+        autoHideDuration={8000}
+        onClose={() => setImportSourceNote(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="info" onClose={() => setImportSourceNote(null)}>
+          {importSourceNote}
         </Alert>
       </Snackbar>
     </Stack>

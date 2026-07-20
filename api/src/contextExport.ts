@@ -23,6 +23,7 @@ export type TranslationPrefsForRender = {
   register: string;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
 };
 
 export type ValidatedTnRow = {
@@ -104,6 +105,24 @@ export function renderBriefMd(
     `**Script / direction notes:** ${prefs.script_notes?.trim() || "—"}`,
     "",
   ].join("\n");
+}
+
+/**
+ * instructions.md is the one pack file the bot injects verbatim into every
+ * drafting prompt, so "common issues" rides along inside it under its own
+ * heading rather than as a new top-level file — per CONTEXT-REPO-CONTRACT §5
+ * readers ignore files they don't know, so a `common-issues.md` would be
+ * written and never read. Split it out when the bot grows a reader (§7).
+ */
+export function renderInstructionsMd(prefs: TranslationPrefsForRender): string | null {
+  const instructions = prefs.instructions_md?.trim();
+  const commonIssues = prefs.common_issues_md?.trim();
+  if (!instructions && !commonIssues) return null;
+  const parts: string[] = [];
+  if (instructions) parts.push(instructions);
+  if (commonIssues) parts.push(`## Common issues\n\n${commonIssues}`);
+  const content = parts.join("\n\n");
+  return content.endsWith("\n") ? content : `${content}\n`;
 }
 
 export type JsonlExample = {
@@ -213,9 +232,9 @@ export function renderContextPack(input: {
     ),
   });
 
-  const instructions = input.prefs.instructions_md?.trim();
-  if (instructions) {
-    files.push({ path: "instructions.md", content: instructions.endsWith("\n") ? instructions : `${instructions}\n` });
+  const instructionsContent = renderInstructionsMd(input.prefs);
+  if (instructionsContent) {
+    files.push({ path: "instructions.md", content: instructionsContent });
   }
 
   if (input.terms.length > 0) {

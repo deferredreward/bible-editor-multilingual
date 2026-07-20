@@ -24,6 +24,8 @@ import { l10n } from "./l10n";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
+import { workspaceRoutes } from "./workspaceRoutes";
+import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch } from "./workspaces";
 
 export interface Env {
   DB: D1Database;
@@ -74,6 +76,33 @@ export interface Env {
   // GET /api/pipeline/:jobId). Defaults to the prod bot at uw-bt-bot.fly.dev
   // when unset.
   PIPELINE_API_BASE?: string;
+  // ── Workspaces (org-per-D1) ────────────────────────────────────────────
+  // JSON array of {slug,label,org,binding,exportOwner?} — see workspaces.ts.
+  // Unset/empty/malformed means "one implicit workspace on the DB binding
+  // above", so every existing deployment is unaffected until this is set.
+  WORKSPACES?: string;
+  // Second binding to the SAME database as DB — holds org-independent state
+  // (accounts, sessions, lexicon, alignment frequencies, UI-string overrides)
+  // so switching workspaces doesn't log a user out or blank their lexicon.
+  // Falls back to DB when unset (single-workspace deployments).
+  SHARED_DB?: D1Database;
+  // Set per-request by the fetch() wrapper below to the resolved workspace's
+  // slug ("default" when WORKSPACES is unset) — never configured directly.
+  WORKSPACE_SLUG?: string;
+  // The original, never-swapped env, stamped by workspaceEnv(). Bindings must
+  // always be looked up here so resolving a second workspace from an already-
+  // swapped env can't hand back the currently-active database.
+  BASE_ENV?: Env;
+  // Comma-separated DCS usernames (case-insensitive) who may switch to any
+  // workspace regardless of DCS org membership.
+  SUPER_ADMINS?: string;
+  // Placeholder for an additional org's D1 binding — declared here AND in
+  // wrangler.toml when a new workspace is provisioned (see the WORKSPACES
+  // comment in wrangler.toml for the full add-an-org steps). The workspace
+  // lookup itself is by string via `(env as any)[binding]`, so new bindings
+  // don't need new fields here to be *usable* — this one is just so
+  // wrangler-generated types have somewhere to declare a real example.
+  DB_MLTEST?: D1Database;
 }
 
 // Cron patterns must match the [env.production.triggers] crons list in
@@ -113,12 +142,13 @@ app.use("*", (c, next) => {
   return cors({
     origin: (origin) => (origin && list.includes(origin) ? origin : null),
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation"],
+    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation", "X-Workspace"],
     exposeHeaders: ["ETag"],
   })(c, next);
 });
 
 app.use("*", attachAuth);
+app.use("*", requireWorkspaceMatch);
 app.use("*", requireCsrf);
 
 // Defense-in-depth response headers. CSP locks the SPA to its own bundle
@@ -223,6 +253,7 @@ app.route("/api/pending-imports", pendingImports);
 app.route("/api/alerts", alerts);
 app.route("/api/project-config", projectConfig);
 app.route("/api/orgs", orgRoutes);
+app.route("/api/workspaces", workspaceRoutes);
 app.route("/api/admin/users", adminUsers);
 app.route("/api/articles", articles);
 app.route("/api/translation-memory", translationMemory);
@@ -245,7 +276,12 @@ app.get("/api/ws/chapter/:book/:chapter", async (c) => {
   const chapter = parseInt(c.req.param("chapter"), 10);
   if (!Number.isFinite(chapter)) return c.text("invalid chapter", 400);
 
-  const id = c.env.CHAPTER_ROOM.idFromName(`${book}:${chapter}`);
+  // Workspace-scoped DO name so orgs don't share a ChapterRoom. ChapterRoom
+  // holds only ephemeral presence/fanout state (no durable data), so folding
+  // the slug into the name here (which changes "GEN:1" -> "default:GEN:1"
+  // when WORKSPACES is unset) is safe — no data to migrate, worst case is a
+  // dropped in-flight WS connection on first deploy.
+  const id = c.env.CHAPTER_ROOM.idFromName(`${c.env.WORKSPACE_SLUG ?? "default"}:${book}:${chapter}`);
   return c.env.CHAPTER_ROOM.get(id).fetch(c.req.raw);
 });
 
@@ -262,9 +298,10 @@ app.notFound((c) => {
   return c.json({ error: "not_found", path: c.req.path }, 404);
 });
 
-export default {
-  fetch: app.fetch,
-  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
+// Runs the existing per-cron body once, against a single (already
+// workspace-resolved) env. Split out of the exported `scheduled()` so that
+// handler can loop it once per workspace — see the loop below for why.
+async function runScheduledTick(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
     // Two crons share this handler — wrangler.toml has the full list. The
     // 05:30 one kicks the nightly DCS-export Workflow; the 5-min one polls
     // every non-terminal pipeline_job so the auto-apply step lands even
@@ -328,12 +365,17 @@ export default {
       // merge it. Manual /api/exports/run leaves validateAndMerge unset so
       // tests don't accidentally trigger the auto-merge.
       //
-      // Deterministic per-day instance id: a double-fire of the cron (or a
-      // retried scheduled event) rejects on the duplicate id instead of
-      // running two overlapping nightly exports.
+      // Deterministic per-day-per-workspace instance id: a double-fire of the
+      // cron (or a retried scheduled event) rejects on the duplicate id
+      // instead of running two overlapping nightly exports for the same org;
+      // the workspace slug keeps two orgs' same-day runs from colliding.
       const day = new Date(controller.scheduledTime).toISOString().slice(0, 10);
+      const wsSlug = env.WORKSPACE_SLUG ?? "default";
       try {
-        await env.EXPORT_WORKFLOW.create({ id: `nightly-${day}`, params: { validateAndMerge: true } });
+        await env.EXPORT_WORKFLOW.create({
+          id: `nightly-${wsSlug}-${day}`,
+          params: { validateAndMerge: true, workspace: env.WORKSPACE_SLUG },
+        });
       } catch (e) {
         console.log("nightly export already created for", day, e instanceof Error ? e.message : String(e));
       }
@@ -377,8 +419,35 @@ export default {
       // Workflow in reimportOnly mode — scheduled() has no WorkflowStep context,
       // and the Workflow path chunks by chapter (so a large book can't blow the
       // 10-min step limit) and SHA-skips unchanged files. See exportWorkflow.ts.
-      await env.EXPORT_WORKFLOW.create({ params: { reimportOnly: true } });
+      await env.EXPORT_WORKFLOW.create({ params: { reimportOnly: true, workspace: env.WORKSPACE_SLUG } });
       return;
+    }
+}
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    // The only place the workspace swap happens: resolve which org this
+    // request belongs to (be_ws cookie, else the first/default workspace),
+    // then hand the Hono app a clone of env with DB/VIEWER_ORG/etc. pointed
+    // at that workspace. Every route file still just reads c.env.DB.
+    const ws = resolveWorkspace(env, parseWorkspaceCookie(request));
+    return app.fetch(request, workspaceEnv(env, ws), ctx);
+  },
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // Run the nightly export / job-poll body once per workspace. One org's
+    // failure (a bad D1 binding, an export error) must not skip the others,
+    // so each iteration gets its own try/catch and logs rather than throws.
+    // With WORKSPACES unset this is exactly one iteration against DB, same
+    // as before workspaces existed.
+    for (const ws of listWorkspaces(env)) {
+      try {
+        await runScheduledTick(controller, workspaceEnv(env, ws), ctx);
+      } catch (e) {
+        console.error("scheduled tick failed for workspace", {
+          slug: ws.slug,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   },
 } satisfies ExportedHandler<Env>;

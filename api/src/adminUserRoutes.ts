@@ -11,6 +11,7 @@ import type { Env } from "./index";
 // see adminUsers.test.mjs, which imports this file rather than re-testing
 // its logic in isolation.
 import { requireAuth, requireAdmin, currentUserId, lookupUserRole } from "./auth.ts";
+import { sharedDb } from "./workspaces.ts";
 
 export const adminUsers = new Hono<{
   Bindings: Env;
@@ -21,38 +22,58 @@ adminUsers.use("*", requireAuth, requireAdmin);
 
 const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
-type UserRow = {
-  username: string;
-  role: string;
-  addedAt: number;
-  addedBy: string | null;
-  source: string | null;
-};
-
-// Shared shape for both the list and the single-row post-write fetch.
+// Raw user_roles row before the added_by user id is resolved to a username.
 // `source` is 'manual' (granted here) or 'dcs_team' (derived from Door43 team
 // membership at sign-in — see api/src/dcsTeams.ts). Deleting a 'dcs_team' row
 // only lasts until that user's next login; remove them from the Door43 team to
 // make it stick.
-const USER_ROW_SELECT = `SELECT ur.dcs_username AS username, ur.role AS role, ur.added_at AS addedAt,
-         u.dcs_username AS addedBy, ur.source AS source
-    FROM user_roles ur
-    LEFT JOIN users u ON u.id = ur.added_by`;
+type RoleRow = {
+  username: string;
+  role: string;
+  addedAt: number;
+  addedBy: number | null;
+  source: string | null;
+};
+
+// user_roles is per-org (env.DB); the users table it used to LEFT JOIN for
+// added_by's display name is shared across workspaces (SHARED_DB) — the two
+// can no longer live in one SQL statement, so this fetches user_roles rows
+// first and resolves added_by usernames from the shared DB as a second step.
+const ROLE_ROW_SELECT = `SELECT dcs_username AS username, role AS role, added_at AS addedAt, added_by AS addedBy,
+         source AS source
+    FROM user_roles`;
+
+// Batch-resolves a set of users.id -> dcs_username from the shared DB. Used to
+// fill in addedBy display names for a list of user_roles rows.
+async function lookupAddedByUsernames(env: Env, ids: (number | null)[]): Promise<Map<number, string>> {
+  const uniqueIds = [...new Set(ids.filter((id): id is number => id != null))];
+  const map = new Map<number, string>();
+  if (uniqueIds.length === 0) return map;
+  const placeholders = uniqueIds.map((_v, i) => `?${i + 1}`).join(",");
+  const rs = await sharedDb(env)
+    .prepare(`SELECT id, dcs_username FROM users WHERE id IN (${placeholders})`)
+    .bind(...uniqueIds)
+    .all<{ id: number; dcs_username: string }>();
+  for (const row of rs.results ?? []) map.set(row.id, row.dcs_username);
+  return map;
+}
 
 // GET /api/admin/users — the allowlist, admins first then alpha (COLLATE
 // NOCASE matches the PK's collation so casing doesn't affect sort order).
 adminUsers.get("/", async (c) => {
   const { results } = await c.env.DB.prepare(
-    `${USER_ROW_SELECT}
-      ORDER BY CASE ur.role WHEN 'admin' THEN 0 ELSE 1 END, ur.dcs_username COLLATE NOCASE`,
-  ).all<UserRow>();
+    `${ROLE_ROW_SELECT}
+      ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, dcs_username COLLATE NOCASE`,
+  ).all<RoleRow>();
+
+  const addedByUsernames = await lookupAddedByUsernames(c.env, results.map((r) => r.addedBy));
 
   return c.json({
     users: results.map((r) => ({
       username: r.username,
       role: r.role,
       addedAt: r.addedAt ?? null,
-      addedBy: r.addedBy ?? null,
+      addedBy: r.addedBy != null ? (addedByUsernames.get(r.addedBy) ?? null) : null,
       source: r.source ?? "manual",
     })),
   });
@@ -143,16 +164,17 @@ adminUsers.put("/:username", async (c) => {
     return c.json({ error: "last_admin" }, 409);
   }
 
-  const row = await c.env.DB.prepare(`${USER_ROW_SELECT} WHERE ur.dcs_username = ?1`)
+  const row = await c.env.DB.prepare(`${ROLE_ROW_SELECT} WHERE dcs_username = ?1`)
     .bind(canonicalUsername)
-    .first<UserRow>();
+    .first<RoleRow>();
+  const addedByUsernames = await lookupAddedByUsernames(c.env, [row?.addedBy ?? null]);
 
   return c.json({
     user: {
       username: row?.username ?? canonicalUsername,
       role: row?.role ?? newRole,
       addedAt: row?.addedAt ?? null,
-      addedBy: row?.addedBy ?? null,
+      addedBy: row?.addedBy != null ? (addedByUsernames.get(row.addedBy) ?? null) : null,
       // Must be returned: the panel keys its "this edit will be undone at the
       // next team check" warning off it. Dropping it here silently disabled
       // that warning for exactly the rows that need it.

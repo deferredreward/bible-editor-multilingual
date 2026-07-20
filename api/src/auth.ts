@@ -30,6 +30,56 @@ import {
   orgForTeamSync,
   RESYNC_AFTER_SECONDS,
 } from "./dcsTeams.ts";
+import { sharedDb, listWorkspaces } from "./workspaces.ts";
+
+// Isolate-level memoization for ensureWorkspaceUser (below), keyed
+// `${WORKSPACE_SLUG}:${userId}` — once mirrored this isolate, never repeat
+// the INSERT OR IGNORE for that pair. A cold isolate just re-populates this
+// lazily; the only cost of a cache miss is one harmless extra
+// INSERT OR IGNORE, never a correctness problem.
+const mirroredWorkspaceUsers = new Set<string>();
+
+// Per-org D1 databases each keep their own `users` table — tn_rows,
+// tq_rows, twl_rows, verses, edit_log, user_roles, etc. all have FKs
+// pointing at the LOCAL users(id) (see api/migrations/0001_init.sql and
+// friends) — but sign-in now writes the canonical row to SHARED_DB only.
+// A user whose first write in a session lands in a non-default workspace
+// has no matching local row, so those foreign keys fail:
+// `D1_ERROR: FOREIGN KEY constraint failed`. Mirror the row (same explicit
+// id, so the FK actually resolves) into the workspace's local `users`
+// table. Never copy dcs_access_token — that's shared-DB-only and must
+// never be duplicated into a per-org database.
+export async function ensureWorkspaceUser(env: Env, userId: number): Promise<void> {
+  // Default/single-workspace case: SHARED_DB and DB are the same database,
+  // so the row is already there. Checked first — this is the overwhelmingly
+  // common case and must be free.
+  if (sharedDb(env) === env.DB) return;
+
+  const cacheKey = `${env.WORKSPACE_SLUG ?? "default"}:${userId}`;
+  if (mirroredWorkspaceUsers.has(cacheKey)) return;
+
+  // Must never throw into the request path — a failure here should not
+  // 500 an otherwise-fine read/write.
+  try {
+    const row = await sharedDb(env)
+      .prepare(`SELECT id, dcs_user_id, dcs_username, dcs_full_name FROM users WHERE id = ?1`)
+      .bind(userId)
+      .first<{ id: number; dcs_user_id: number; dcs_username: string; dcs_full_name: string | null }>();
+    if (!row) return;
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO users (id, dcs_user_id, dcs_username, dcs_full_name) VALUES (?1, ?2, ?3, ?4)`,
+    )
+      .bind(row.id, row.dcs_user_id, row.dcs_username, row.dcs_full_name)
+      .run();
+    mirroredWorkspaceUsers.add(cacheKey);
+  } catch (e) {
+    console.error("ensureWorkspaceUser failed", {
+      workspace: env.WORKSPACE_SLUG,
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
 
 const ACCESS_COOKIE = "be_access";
 const REFRESH_COOKIE = "be_refresh";
@@ -136,7 +186,7 @@ export async function lookupUserRole(env: Env, dcsUsername: string): Promise<Rol
 //
 // NOTHING here may break sign-in. Every failure mode — DCS unreachable, the
 // project org unknown, a D1 error (notably `no such column: source` in the
-// window between deploying this worker and applying migration 0053, since code
+// window between deploying this worker and applying migration 0055, since code
 // normally ships before migrations) — must leave the existing allowlist exactly
 // as it was and let the caller fall through to the pre-existing gate. A thrown
 // error here would 500 the OAuth callback and lock EVERY user out, admins
@@ -198,6 +248,30 @@ async function maybeResyncTeamRole(env: Env, dcsUsername: string): Promise<void>
   }
 }
 
+// SUPER_ADMINS (api/wrangler.toml vars) is comma-separated DCS usernames,
+// case-insensitive, whitespace trimmed, empty entries ignored. Empty/unset
+// var = nobody.
+export function isSuperAdmin(env: Env, dcsUsername: string): boolean {
+  const list = (env.SUPER_ADMINS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(dcsUsername.toLowerCase());
+}
+
+// A super admin resolves to 'admin' in every workspace — this is what makes
+// bootstrapping a brand-new org possible: a fresh workspace's user_roles
+// table only has whatever migration 0016 seeds, so without this the first
+// person to switch into it would land as a plain viewer org member and be
+// unable to run the Setup wizard. Deliberately NOT folded into
+// lookupUserRole: adminUserRoutes.ts's last-admin guard asks specifically
+// about the user_roles row, not effective access, and must keep meaning
+// that.
+export async function effectiveRole(env: Env, dcsUsername: string): Promise<Role | null> {
+  if (isSuperAdmin(env, dcsUsername)) return "admin";
+  return lookupUserRole(env, dcsUsername);
+}
+
 function signingKey(env: Env): Uint8Array | null {
   if (!env.JWT_SIGNING_KEY) return null;
   return new TextEncoder().encode(env.JWT_SIGNING_KEY);
@@ -244,6 +318,10 @@ export const attachAuth: MiddlewareHandler = async (c, next) => {
       (c as AppContext).set("userId", claims.userId);
       if (claims.username) (c as AppContext).set("username", claims.username);
       if (claims.role) (c as AppContext).set("role", claims.role);
+      // Covers every authenticated route, including sessions that predate a
+      // workspace switch — not just the switch route itself (see
+      // workspaceRoutes.ts for the switch-time call against the TARGET env).
+      await ensureWorkspaceUser(c.env as Env, claims.userId);
     }
   }
   await next();
@@ -359,7 +437,11 @@ async function verifyStateCookie(token: string, key: Uint8Array): Promise<string
 // Mints a short-lived (1h) Access JWT for the cookie session. The refresh
 // path mints a new one each hour via the be_refresh cookie; revocation lands
 // within that hour even though the JWT itself is stateless.
-async function mintToken(
+//
+// Exported so workspaceRoutes.ts's POST /api/workspaces/:slug can re-mint the
+// Access cookie with a role re-resolved against the TARGET workspace's DB
+// after a switch — reusing this rather than re-implementing the signing.
+export async function mintToken(
   c: AppContext,
   userId: number,
   username: string,
@@ -392,7 +474,7 @@ async function startSession(c: AppContext, userId: number): Promise<SessionMintR
     c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
     null;
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `INSERT INTO sessions (id, user_id, csrf_token, expires_at, user_agent, ip, last_seen_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())`,
   )
@@ -433,9 +515,10 @@ function setSessionCookies(
   });
 }
 
-// Only rotates the Access cookie (called by refreshToken). The Refresh + CSRF
+// Only rotates the Access cookie (called by refreshToken, and by
+// workspaceRoutes.ts's workspace-switch role re-mint). The Refresh + CSRF
 // cookies stay bound to the same session row.
-function rotateAccessCookie(c: AppContext, accessJwt: string) {
+export function rotateAccessCookie(c: AppContext, accessJwt: string) {
   setCookie(c, ACCESS_COOKIE, accessJwt, {
     httpOnly: true,
     sameSite: "Lax",
@@ -443,6 +526,15 @@ function rotateAccessCookie(c: AppContext, accessJwt: string) {
     maxAge: ACCESS_COOKIE_TTL_SECONDS,
     secure: isSecureRequest(c),
   });
+}
+
+// Clears ONLY the Access cookie. Used when a workspace switch can't cleanly
+// re-mint a role-correct token (see workspaceRoutes.ts) — forces the client
+// through /api/auth/refresh, which re-resolves the role against the
+// per-request (by-then target-workspace) DB, rather than leaving a stale,
+// wrong-org role live for the rest of the old token's TTL.
+export function clearAccessCookie(c: AppContext) {
+  deleteCookie(c, ACCESS_COOKIE, { path: "/" });
 }
 
 function clearSessionCookies(c: AppContext) {
@@ -530,7 +622,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // members of the viewer org (default: unfoldingWord) get read-only access.
   // Anything else hits the denied screen.
   const origin = new URL(c.req.url).origin;
-  let role: Role | null = await lookupUserRole(c.env, dcsUser.login);
+  let role: Role | null = await effectiveRole(c.env, dcsUser.login);
   if (!role) {
     const isMember = await isViewerOrgMember(c.env, dcsUser.login, accessToken);
     if (isMember) {
@@ -546,7 +638,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // Upsert users row keyed by dcs_user_id. We stash the DCS access_token so
   // /api/auth/logout can revoke it server-side (RFC 7009) — without it, the
   // next sign-in silently re-auths against a live DCS cookie session.
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `INSERT INTO users (dcs_user_id, dcs_username, dcs_full_name, dcs_access_token)
      VALUES (?1, ?2, ?3, ?4)
      ON CONFLICT(dcs_user_id) DO UPDATE SET
@@ -555,7 +647,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     .bind(dcsUser.id, dcsUser.login, dcsUser.full_name ?? dcsUser.login, accessToken)
     .run();
 
-  const userRow = await c.env.DB.prepare(
+  const userRow = await sharedDb(c.env).prepare(
     `SELECT id FROM users WHERE dcs_user_id = ?1`,
   )
     .bind(dcsUser.id)
@@ -581,11 +673,18 @@ export async function authMe(c: AppContext): Promise<Response> {
   const username = (c as AppContext).get("username");
   const role = (c as AppContext).get("role");
   if (!userId) return c.json({ error: "unauthorized" }, 401);
-  const row = await c.env.DB.prepare(
+  const row = await sharedDb(c.env).prepare(
     `SELECT last_book, last_chapter, last_verse FROM users WHERE id = ?1`,
   )
     .bind(userId)
     .first<{ last_book: string | null; last_chapter: number | null; last_verse: number | null }>();
+  const currentWsSlug = c.env.WORKSPACE_SLUG ?? "default";
+  // The FALLBACK workspace (first entry in WORKSPACES, or the sole implicit
+  // "default" one) is the one whose outbox keeps the legacy unsuffixed
+  // IndexedDB name — see web/src/sync/outbox.ts's outboxDbName(). The client
+  // persists this alongside the slug so it can pick the right outbox name
+  // without depending on the slug literally being "default".
+  const workspaceIsFallback = currentWsSlug === (listWorkspaces(c.env)[0]?.slug ?? "default");
   return c.json({
     userId,
     username: username ?? null,
@@ -593,6 +692,8 @@ export async function authMe(c: AppContext): Promise<Response> {
     lastBook: row?.last_book ?? null,
     lastChapter: row?.last_chapter ?? null,
     lastVerse: row?.last_verse ?? null,
+    workspace: currentWsSlug,
+    workspaceIsFallback,
   });
 }
 
@@ -608,7 +709,7 @@ export async function refreshToken(c: AppContext): Promise<Response> {
   const sessionId = getCookie(c, REFRESH_COOKIE);
   if (!sessionId) return c.json({ error: "unauthorized" }, 401);
 
-  const session = await c.env.DB.prepare(
+  const session = await sharedDb(c.env).prepare(
     `SELECT s.id, s.user_id, s.expires_at, s.revoked_at, u.dcs_username
        FROM sessions s
        JOIN users u ON u.id = s.user_id
@@ -629,9 +730,11 @@ export async function refreshToken(c: AppContext): Promise<Response> {
   const lookupName = session.dcs_username ?? "";
   // Re-check Door43 team membership if the cached row has gone stale, so that
   // removing someone from a team revokes within the hour rather than at their
-  // next full sign-in (which may never come).
+  // next full sign-in (which may never come). Runs BEFORE the role read so the
+  // read sees the fresh row; effectiveRole then short-circuits super admins,
+  // who stay admin in every workspace regardless of team membership.
   await maybeResyncTeamRole(c.env, lookupName);
-  let role: Role | null = await lookupUserRole(c.env, lookupName);
+  let role: Role | null = await effectiveRole(c.env, lookupName);
   if (!role) {
     const isMember = await isViewerOrgMember(c.env, lookupName, null);
     if (isMember) role = "viewer";
@@ -642,7 +745,7 @@ export async function refreshToken(c: AppContext): Promise<Response> {
 
   const newToken = await mintToken(c, session.user_id, lookupName, role);
   rotateAccessCookie(c, newToken);
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `UPDATE sessions SET last_seen_at = unixepoch() WHERE id = ?1`,
   )
     .bind(sessionId)
@@ -663,7 +766,7 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     return c.json({ error: "jwt_signing_key_not_configured" }, 500);
   }
 
-  let role = await lookupUserRole(c.env, username);
+  let role = await effectiveRole(c.env, username);
   if (!role) {
     await c.env.DB.prepare(
       `INSERT OR IGNORE INTO user_roles (dcs_username, role) VALUES (?1, 'admin')`,
@@ -673,7 +776,7 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     role = "admin";
   }
 
-  const existing = await c.env.DB.prepare(
+  const existing = await sharedDb(c.env).prepare(
     `SELECT id FROM users WHERE dcs_username = ?1`,
   )
     .bind(username)
@@ -686,12 +789,12 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
     // two dev usernames — the lookup above is by `dcs_username` anyway, so
     // stability across runs isn't required.
     const fakeDcsId = -(Math.floor(Math.random() * 0x7fffffff) + 1);
-    await c.env.DB.prepare(
+    await sharedDb(c.env).prepare(
       `INSERT INTO users (dcs_user_id, dcs_username, dcs_full_name) VALUES (?1, ?2, ?2)`,
     )
       .bind(fakeDcsId, username)
       .run();
-    const row = await c.env.DB.prepare(
+    const row = await sharedDb(c.env).prepare(
       `SELECT id FROM users WHERE dcs_username = ?1`,
     )
       .bind(username)
@@ -705,7 +808,7 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
   // Return MeResponse shape — same as /api/auth/me — so the client can take
   // a single round-trip path through devSignIn() without a separate /me
   // follow-up. lastBook/lastChapter/lastVerse are NULL for fresh dev users.
-  const loc = await c.env.DB.prepare(
+  const loc = await sharedDb(c.env).prepare(
     `SELECT last_book, last_chapter, last_verse FROM users WHERE id = ?1`,
   )
     .bind(userId)
@@ -740,7 +843,7 @@ export async function authLogout(c: AppContext): Promise<Response> {
   // We still try to revoke the session if we can identify it.
   const sessionId = getCookie(c, REFRESH_COOKIE);
   if (sessionId) {
-    await c.env.DB.prepare(
+    await sharedDb(c.env).prepare(
       `UPDATE sessions SET revoked_at = unixepoch() WHERE id = ?1 AND revoked_at IS NULL`,
     )
       .bind(sessionId)
@@ -748,7 +851,7 @@ export async function authLogout(c: AppContext): Promise<Response> {
   }
 
   if (userId) {
-    const row = await c.env.DB.prepare(
+    const row = await sharedDb(c.env).prepare(
       `SELECT dcs_access_token FROM users WHERE id = ?1`,
     )
       .bind(userId)
@@ -775,7 +878,7 @@ export async function authLogout(c: AppContext): Promise<Response> {
 
     // Clear stored token regardless of revoke outcome — keeping a stale
     // token around would do nothing but accumulate sensitive material.
-    await c.env.DB.prepare(
+    await sharedDb(c.env).prepare(
       `UPDATE users SET dcs_access_token = NULL WHERE id = ?1`,
     )
       .bind(userId)
@@ -811,7 +914,7 @@ export async function updateLastLocation(c: AppContext): Promise<Response> {
     return c.json({ error: "invalid_location" }, 400);
   }
 
-  await c.env.DB.prepare(
+  await sharedDb(c.env).prepare(
     `UPDATE users SET last_book = ?1, last_chapter = ?2, last_verse = ?3 WHERE id = ?4`,
   )
     .bind(book, chapter, verse, userId)

@@ -26,6 +26,7 @@
     "notImportedHint": "ยังไม่ได้นำเข้า — การเลือกจะดึงจาก DCS",
     "importingFromDcs": "กำลังนำเข้า {{book}} จาก DCS…",
     "couldntImport": "นำเข้า {{book}} ไม่สำเร็จ: {{message}}",
+    "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} หมายเหตุ · {{words}} คำ · {{questions}} คำถาม",
     "readingTextSize": "ขนาดข้อความสำหรับอ่าน",
     "readingTextSizeTooltip": "ขนาดข้อความสำหรับอ่าน",
@@ -177,6 +178,15 @@
     "updateAvailable": "มีการอัปเดตแอป — รีเฟรช",
     "buildSha": "บิลด์ {{commit}}",
     "onLatestVersion": "คุณอยู่ในเวอร์ชันล่าสุดที่คุณโหลด"
+  },
+  "workspace": {
+    "switchTooltip": "switch which Door43 organization you're editing",
+    "membershipUnknownHint": "Couldn't confirm your Door43 org memberships — this list may be incomplete. Sign in again to refresh.",
+    "notMemberTooltip": "you need Door43 membership in this org to switch to it",
+    "notAMember": "You're not a member of that organization.",
+    "noLongerAvailable": "That workspace is no longer available.",
+    "switchFailed": "Couldn't switch workspaces — try again.",
+    "unsavedEditsBlock": "Unsaved edits are still syncing ({{n}}) — wait for them to finish before switching workspaces."
   },
   "shell": {
     "scripture": "พระคัมภีร์",
@@ -363,7 +373,20 @@
     "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
     "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
     "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
-    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}"
+    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}",
+    "resourceFromSource": "Re-source notes from English",
+    "resourceFromSourceDesc": "Replace this book’s notes and questions with the current English source.",
+    "resourceConfirmTitle": "Re-source notes from English?",
+    "resourceConfirmBody": "This re-downloads the entire {{book}} book — scripture, notes, questions and word links — and replaces it from DCS. Any local edits to this book will be lost.",
+    "resourceContinue": "Re-source",
+    "resourceEditsTitle": "Local edits will be discarded",
+    "resourceEditsBody": "{{tn}} notes, {{tq}} questions, {{twl}} word links and {{verses}} verses in {{book}} carry local work — human edits, approvals, or AI drafts. All of it will be permanently discarded.",
+    "resourceDiscardConfirm": "Discard and re-source",
+    "resourceStarting": "Re-sourcing {{book}} from the English source…",
+    "resourceDone": "{{book}} re-sourced from {{sources}}.",
+    "resourceDoneNoSources": "{{book}} re-sourced from the English source.",
+    "resourceAdminOnly": "Re-sourcing notes is admin-only.",
+    "resourceFailed": "Could not re-source notes: {{error}}"
   },
   "noteCard": {
     "clickToEdit": "คลิกเพื่อแก้ไข",
@@ -524,6 +547,7 @@
     "section": {
       "brief": "สรุปย่อ",
       "instructions": "คำแนะนำ",
+      "commonIssues": "Common issues",
       "terminology": "คำศัพท์เฉพาะ",
       "examples": "ตัวอย่าง",
       "localization": "Localization",
@@ -558,7 +582,10 @@
         "dcs_user_not_found": "No Door43 user found with that username.",
         "last_admin": "Can't remove or demote the last remaining admin.",
         "not_found": "That user isn't in the allowlist."
-      }
+      },
+      "fromTeam": "Door43 team",
+      "teamManagedEdit": "This user's role comes from a Door43 team, so this change will be undone the next time their membership is checked. Change their team on Door43 to make it stick.",
+      "teamManagedRemove": "Removed for now — but {{username}} is in a Door43 team, so they will regain access the next time they sign in. Remove them from the team on Door43 to revoke access."
     },
     "save": "บันทึก",
     "cancel": "ยกเลิก",
@@ -583,6 +610,11 @@
     "scriptNotes": "หมายเหตุเรื่องอักษร / ทิศทาง",
     "instructionsIntro": "คำแนะนำถาวรที่แทรกในทุกพรอมต์ร่างแปลของ AI ให้กระชับและคงทน — รายละเอียดเฉพาะแต่ละบันทึกอยู่ในคำศัพท์เฉพาะและตัวอย่าง",
     "instructionsPlaceholder": "เช่น ปฏิบัติตามชีตสไตล์ของชุดหนังสือ ใช้ en-dash สำหรับช่วงข้อความ คัดลอกข้อความอ้างอิงโดยตรงจากข้อความ GL",
+    "commonIssuesIntro": "Recurring problems translators hit in this language — false friends, grammar traps, formatting habits to avoid. Paste your team's document here; it is injected into every AI draft prompt alongside Instructions.",
+    "commonIssuesPlaceholder": "e.g. Do not render 'covenant' as 'agreement' — it loses the binding sense. Avoid the colloquial future particle in narrative.",
+    "charCount": "{{count}} / {{max}} characters",
+    "charCountOver": "Too long — {{count}} of {{max}} characters. Shorten it before saving.",
+    "saveTooLong": "Save failed: the text is too long.",
     "terminologyIntro": "คำแปลที่ต้องการ คำที่ห้ามใช้ (พร้อมคำทดแทน) และรายการที่ไม่แปล หนึ่งแนวคิดอาจมีคำแปลที่ถูกต้องได้หลายแบบ",
     "import": "นำเข้า",
     "export": "ส่งออก",
@@ -732,6 +764,9 @@
     "applyFailed": "Could not apply the configuration. Please try again.",
     "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
     "bookLabel": "Book",
+    "translateFromSource": "Translate notes from English source",
+    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
+    "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "importButton": "Import book",
     "importing": "Importing…",
     "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",

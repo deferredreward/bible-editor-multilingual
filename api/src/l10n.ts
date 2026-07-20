@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { currentUserId, requireAdmin } from "./auth";
 import { parseIfMatch } from "./translationMemoryLib.ts";
+import { sharedDb } from "./workspaces.ts";
 
 export const l10n = new Hono<{
   Bindings: Env;
@@ -38,7 +39,7 @@ const MAX_BAG_BYTES = 512 * 1024; // generous: whole en.json is ~40KB
 // empty shape when nothing is stored yet.
 l10n.get("/overrides", async (c) => {
   if (!currentUserId(c)) return c.json({ error: "unauthorized" }, 401);
-  const rows = await c.env.DB.prepare(
+  const rows = await sharedDb(c.env).prepare(
     `SELECT lang, overrides_json, version FROM l10n_overrides`,
   ).all<OverrideRow>();
   const overrides: Record<string, L10nBag> = {};
@@ -78,7 +79,7 @@ l10n.put("/overrides/:lang", requireAdmin, async (c) => {
 
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
-  const existing = await c.env.DB.prepare(
+  const existing = await sharedDb(c.env).prepare(
     `SELECT lang, overrides_json, version FROM l10n_overrides WHERE lang = ?1`,
   )
     .bind(lang)
@@ -86,7 +87,7 @@ l10n.put("/overrides/:lang", requireAdmin, async (c) => {
 
   if (!existing) {
     if (expected !== 0) return c.json({ error: "version_mismatch", current: { version: 0 } }, 409);
-    const insertRes = await c.env.DB.prepare(
+    const insertRes = await sharedDb(c.env).prepare(
       `INSERT INTO l10n_overrides (lang, overrides_json, version, updated_at, updated_by)
        VALUES (?1, ?2, 1, ?3, ?4)
        ON CONFLICT(lang) DO NOTHING`,
@@ -95,7 +96,7 @@ l10n.put("/overrides/:lang", requireAdmin, async (c) => {
       .run();
     if (!insertRes.meta.changes) {
       // Lost a concurrent first-write race — report the winner as a 409.
-      const current = await c.env.DB.prepare(
+      const current = await sharedDb(c.env).prepare(
         `SELECT lang, overrides_json, version FROM l10n_overrides WHERE lang = ?1`,
       )
         .bind(lang)
@@ -105,7 +106,7 @@ l10n.put("/overrides/:lang", requireAdmin, async (c) => {
     return c.json({ version: 1 });
   }
 
-  const res = await c.env.DB.prepare(
+  const res = await sharedDb(c.env).prepare(
     `UPDATE l10n_overrides
         SET overrides_json = ?1, version = version + 1, updated_at = ?2, updated_by = ?3
       WHERE lang = ?4 AND version = ?5`,

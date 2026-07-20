@@ -2,6 +2,8 @@
 // dev proxy points /api/* at the local Worker; production serves the SPA
 // from the same origin as the Worker).
 
+import { getWorkspaceSlug, setWorkspaceSlug } from "./workspace";
+
 export type RowKind = "tn" | "tq" | "twl";
 
 export interface TnRow {
@@ -261,6 +263,12 @@ export interface PipelineConflictBody {
 
 const CSRF_COOKIE_NAME = "be_csrf";
 
+// Guards the workspace-mismatch reload below from looping forever if the
+// server keeps disagreeing with what we just reconciled to (shouldn't
+// happen, but must never reload-loop the tab). Mirrors App.tsx's
+// WS_RECONCILED_KEY for the boot-time reconciliation path.
+const WS_MISMATCH_RELOAD_KEY = "bible-editor.ws-mismatch-reloaded";
+
 function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
   const prefix = `${name}=`;
@@ -441,6 +449,13 @@ async function request<T>(
     const csrf = getCsrfToken();
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
+  // Stamp this tab's own notion of the active workspace on every request.
+  // The server (requireWorkspaceMatch in api/src/workspaces.ts) compares it
+  // against the workspace it actually resolved the request against (from the
+  // be_ws cookie) and 409s workspace_mismatch on a mismatch — the signal that
+  // a SIBLING tab switched orgs and this tab is now stale. See the 409
+  // handling below and outbox.ts's dispatch().
+  headers["X-Workspace"] = getWorkspaceSlug();
 
   const timeoutMs = init?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   let signal = init?.signal ?? undefined;
@@ -507,6 +522,39 @@ async function request<T>(
         body = await res.json();
       } catch {
         /* ignore — status alone is enough to classify the error */
+      }
+      // workspace_mismatch: the server resolved this request against a
+      // different org than the X-Workspace header claimed (see
+      // requireWorkspaceMatch in api/src/workspaces.ts) — a SIBLING tab
+      // switched orgs and this tab's localStorage slug is now stale.
+      // Reconcile onto the server's slug and reload so this tab re-derives
+      // its outbox database + config from the org it's actually talking to.
+      // Guarded by a sessionStorage flag (same shape as App.tsx's boot
+      // reconciliation) so a persistent disagreement can't reload-loop.
+      //
+      // Do NOT treat this as fatal here: still throw ApiError below so
+      // outbox.ts's dispatch() can classify it distinctly from a version
+      // conflict (409 + `current`) — the op stays queued, it belongs to the
+      // OTHER workspace's outbox and will drain once the user is back there.
+      if ((body as { error?: string } | null)?.error === "workspace_mismatch") {
+        const expected = (body as { expected?: string }).expected;
+        if (expected && expected !== getWorkspaceSlug()) {
+          let alreadyReloaded = false;
+          try {
+            alreadyReloaded = sessionStorage.getItem(WS_MISMATCH_RELOAD_KEY) === "1";
+          } catch {
+            /* private mode */
+          }
+          if (!alreadyReloaded) {
+            setWorkspaceSlug(expected);
+            try {
+              sessionStorage.setItem(WS_MISMATCH_RELOAD_KEY, "1");
+            } catch {
+              /* private mode */
+            }
+            location.reload();
+          }
+        }
       }
       // csrf_mismatch is recoverable, not fatal: the be_csrf cookie expired
       // (or was cleared) while the session itself is still valid. A refresh
@@ -591,6 +639,36 @@ export interface MeResponse {
   lastBook: string | null;
   lastChapter: number | null;
   lastVerse: number | null;
+  // The server's active workspace slug for this session's be_ws cookie.
+  // Absent on an older/cached response — callers treat that as "no reconciliation
+  // needed" (see App.tsx boot reconciliation).
+  workspace?: string;
+  // Whether `workspace` is the FALLBACK workspace (first entry in WORKSPACES,
+  // or the sole implicit "default" one) — see workspace.ts's
+  // getWorkspaceIsFallback / outbox.ts's outboxDbName. Absent alongside
+  // `workspace` on an older/cached response.
+  workspaceIsFallback?: boolean;
+}
+
+// One org-per-D1 workspace the switcher can offer. `allowed` reflects Door43
+// org membership (or super-admin status) as of the last GET /api/workspaces —
+// disallowed entries render disabled in the UI.
+export interface WorkspaceInfo {
+  slug: string;
+  label: string;
+  org: string;
+  allowed: boolean;
+  // Whether this is the FALLBACK workspace (first entry in WORKSPACES, or the
+  // sole implicit "default" one) — see workspace.ts's getWorkspaceIsFallback.
+  isFallback: boolean;
+}
+
+export interface WorkspacesResponse {
+  current: string;
+  workspaces: WorkspaceInfo[];
+  // Set when the server couldn't confirm Door43 org membership (no token, or
+  // the DCS lookup failed) — the `allowed` flags may be stale/incomplete.
+  membershipUnknown?: boolean;
 }
 
 export type AlertSeverity = "error" | "warning" | "info";
@@ -826,6 +904,28 @@ export interface ReimportResponse {
   totals: ReimportCounts;
 }
 
+// Error bodies for the admin-only `force` re-import (POST
+// /api/books/:book/import with { force: true }). 403 when the caller is not an
+// admin; 409 when the book carries local note/question edits and the request
+// did not also set `confirmDiscardEdits`.
+export interface ImportHasLocalEditsBody {
+  error: "has_local_edits";
+  book: string;
+  tn: number;
+  tq: number;
+  twl: number;
+  verses: number;
+}
+
+// Display form of the import response's note-source provenance: the stored
+// value is `source:<owner>/<repo>` (see SOURCE_PROVENANCE_PREFIX in the API);
+// the prefix is a storage detail, not something to show a translator.
+export function importedSourceRepos(sources?: { tn: string | null; tq: string | null }): string[] {
+  return [...new Set(
+    [sources?.tn, sources?.tq].filter((s): s is string => !!s).map((s) => s.replace(/^source:/, "")),
+  )];
+}
+
 // Translation-note AI draft endpoint (proxied through this Worker; the
 // shared bot lives at uw-bt-bot.fly.dev). Schema is the bot's; keep in
 // sync with its zod definition. The Worker only adds the BT_API_TOKEN
@@ -887,6 +987,8 @@ export interface TranslateRequestOptions {
   targetOrg?: string;
   sourceRef?: string;
   contextRef?: string;
+  literalRef?: string;
+  simplifiedRef?: string;
 }
 
 // tW / tA markdown article file (article_units). Keyed by (resource, path).
@@ -924,6 +1026,7 @@ export interface TranslationPrefs {
   register: Register;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   assisted_mode: 0 | 1;
   version: number;
@@ -936,6 +1039,7 @@ export type TranslationPrefsInput = {
   register: Register;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   // assisted_mode removed: the server injects contextRef whenever a successful
   // context export exists — there is no client-settable gate any more.
@@ -1427,20 +1531,39 @@ export const api = {
 
   // Trigger a server-side import of a book from DCS. Long-running: ~5-60s
   // depending on book size, so the caller gets a wider timeout.
-  importBook: (book: string) =>
-    request<{
+  // `translateFromSource` pulls tN/tQ from the project's configured English
+  // source repos instead of the org's own; `sources` reports which resources
+  // actually came from the source (also set when the server falls back on its
+  // own because the org's file is missing), e.g. "source:unfoldingWord/en_tn".
+  // `force` (admin-only) bypasses the already-imported short-circuit and does a
+  // full wipe-and-reload; the server answers 403 `forbidden` for non-admins and
+  // 409 `has_local_edits` (with tn/tq/twl/verses counts) unless `confirmDiscardEdits`
+  // is also set. See ImportHasLocalEditsBody for those bodies.
+  importBook: (
+    book: string,
+    opts?: { translateFromSource?: boolean; force?: boolean; confirmDiscardEdits?: boolean },
+  ) => {
+    const body: Record<string, true> = {};
+    if (opts?.translateFromSource) body.translateFromSource = true;
+    if (opts?.force) body.force = true;
+    if (opts?.confirmDiscardEdits) body.confirmDiscardEdits = true;
+    return request<{
       ok: true;
       book: string;
       alreadyImported?: boolean;
+      forced?: boolean;
       verses?: number;
       tn?: number;
       tq?: number;
       twl?: number;
       fetched?: { ult: boolean; ust: boolean; orig: boolean; tn: boolean; tq: boolean; twl: boolean };
+      sources?: { tn: string | null; tq: string | null };
     }>(`/api/books/${encodeURIComponent(book)}/import`, {
       method: "POST",
       timeoutMs: 120_000,
-    }),
+      ...(Object.keys(body).length ? { body: JSON.stringify(body) } : {}),
+    });
+  },
 
   // Non-destructive per-chapter, per-resource re-import from Door43. Only
   // overwrites rows that have never been touched by a human; counts are
@@ -1884,4 +2007,13 @@ export const api = {
       `/api/admin/users/${encodeURIComponent(username)}`,
       { method: "DELETE" },
     ),
+
+  // ── Workspaces (org-per-D1) ──
+  listWorkspaces: () => request<WorkspacesResponse>(`/api/workspaces`),
+  // Sets the be_ws cookie server-side. 404 unknown_workspace / 403
+  // workspace_forbidden are surfaced to callers as ApiError.
+  switchWorkspace: (slug: string) =>
+    request<{ ok: true; slug: string }>(`/api/workspaces/${encodeURIComponent(slug)}`, {
+      method: "POST",
+    }),
 };

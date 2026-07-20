@@ -56,10 +56,10 @@ export const MarkdownView = memo(function MarkdownView({ markdown, baseUrl, dir 
         "& h2": { typography: "h6", mt: 2.5, mb: 1 },
         "& h3": { typography: "subtitle1", fontWeight: 600, mt: 2, mb: 0.5 },
         "& p": { typography: "body1", my: 1 },
-        "& ul, & ol": { pl: 3, my: 1 },
+        "& ul, & ol": { paddingInlineStart: "24px", my: 1 },
         "& li": { typography: "body1", my: 0.5 },
         "& a": { color: "primary.main" },
-        "& blockquote": { borderInlineStart: "3px solid", borderColor: "divider", pl: 1.5, my: 1, color: "text.secondary" },
+        "& blockquote": { borderInlineStart: "3px solid", borderColor: "divider", paddingInlineStart: "12px", my: 1, color: "text.secondary" },
         "& code": { fontFamily: "monospace", fontSize: "0.9em", bgcolor: "action.hover", px: 0.5, borderRadius: 0.5 },
       }}
     >

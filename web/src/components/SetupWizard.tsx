@@ -4,7 +4,9 @@ import {
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   CircularProgress,
+  FormControlLabel,
   Link,
   Stack,
   Step,
@@ -16,8 +18,13 @@ import {
 } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { useTranslation } from "react-i18next";
-import { api, ApiError } from "../sync/api";
-import { applyProjectOverrides, refreshProjectConfig } from "../hooks/useProjectConfig";
+import { api, ApiError, importedSourceRepos } from "../sync/api";
+import {
+  applyProjectOverrides,
+  isTranslationProject,
+  refreshProjectConfig,
+  useProjectConfig,
+} from "../hooks/useProjectConfig";
 import { BOOKS, bookName } from "../lib/bookNames";
 import { useOrgDraft, OrgDraftFields, LaneRepoFields } from "./OrgConfigDraftEditor";
 
@@ -50,6 +57,13 @@ export function SetupWizard() {
   const [populateNote, setPopulateNote] = useState<string | null>(null);
   const [warnings, setWarnings] = useState(0);
   const [importedBook, setImportedBook] = useState<string | null>(null);
+  // Opt-in: pull tN/tQ from the project's English source repos rather than the
+  // org's own (stale machine-translated notes whose row ids no longer match).
+  const [translateFromSource, setTranslateFromSource] = useState(false);
+  const [sourceNote, setSourceNote] = useState<string | null>(null);
+
+  const projectConfig = useProjectConfig();
+  const canTranslateFromSource = isTranslationProject(projectConfig);
 
   const bookOptions = useMemo(() => BOOKS.map((b) => b.code), []);
 
@@ -84,8 +98,19 @@ export function SetupWizard() {
     setPopulateNote(null);
     setProgress(null);
     setWarnings(0);
+    setSourceNote(null);
     try {
-      await api.importBook(book);
+      const res = await api.importBook(
+        book,
+        translateFromSource ? { translateFromSource: true } : undefined,
+      );
+      // Non-null entries mean tN/tQ came from the English source — either
+      // because the box was ticked, or because the org's own file was missing
+      // and the server fell back on its own.
+      const usedSources = importedSourceRepos(res.sources);
+      if (usedSources.length > 0) {
+        setSourceNote(t("setup.importedFromSource", { repos: usedSources.join(", ") }));
+      }
       // Drain the article-population queue for this book: each call processes one
       // bounded chunk and reports how many refs remain. Loop until remaining is 0
       // (or the driver skips/aborts).
@@ -276,6 +301,24 @@ export function SetupWizard() {
               sx={{ maxWidth: 320 }}
               renderInput={(params) => <TextField {...params} label={t("setup.bookLabel")} />}
             />
+            {canTranslateFromSource && (
+              <Box sx={{ mt: 1.5 }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={translateFromSource}
+                      onChange={(e) => setTranslateFromSource(e.target.checked)}
+                      disabled={importing}
+                    />
+                  }
+                  label={t("setup.translateFromSource")}
+                />
+                <Typography variant="caption" color="text.secondary" component="p" sx={{ ml: 4 }}>
+                  {t("setup.translateFromSourceHelp")}
+                </Typography>
+              </Box>
+            )}
             {importing && (
               <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
                 <CircularProgress size={16} />
@@ -313,6 +356,11 @@ export function SetupWizard() {
                 processed: progress?.processed ?? 0,
               })}
             </Typography>
+            {sourceNote && (
+              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
+                {sourceNote}
+              </Alert>
+            )}
             {warnings > 0 && (
               <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
                 {t("setup.populateWarnings", { count: warnings })}

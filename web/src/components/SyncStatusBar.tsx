@@ -15,7 +15,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import EditNoteIcon from "@mui/icons-material/EditNote";
-import { onOutboxResult, outbox, type OutboxOp, type OpTarget } from "../sync/outbox";
+import { onOutboxResult, outbox, isOpPending, type OutboxOp, type OpTarget } from "../sync/outbox";
 import { drafts, type DraftRecord, type DraftMeta } from "../sync/drafts";
 
 // If we believe we're online but haven't seen a successful save in this
@@ -92,7 +92,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     }),
   []);
 
-  const pending = ops.filter((o) => o.status === "pending" || o.status === "in_flight").length;
+  const pending = ops.filter(isOpPending).length;
   const conflicts = ops.filter((o) => o.status === "conflict");
   const failed = ops.filter((o) => o.status === "failed");
 
