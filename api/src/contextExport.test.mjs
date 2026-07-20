@@ -182,6 +182,7 @@ console.log("contextExport — full pack + omission rules");
         register: "default",
         script_notes: null,
         instructions_md: null,
+        common_issues_md: null,
       },
       terms: 0,
       examplesTn: 0,
@@ -197,6 +198,7 @@ console.log("contextExport — full pack + omission rules");
         register: "default",
         script_notes: null,
         instructions_md: null,
+        common_issues_md: null,
       },
       terms: 0,
       examplesTn: 0,
@@ -214,12 +216,48 @@ console.log("contextExport — full pack + omission rules");
         register: "default",
         script_notes: null,
         instructions_md: null,
+        common_issues_md: null,
       },
       terms: 1,
       examplesTn: 0,
       examplesTq: 0,
     }),
     "one term satisfies semantic gate",
+  );
+  // Common issues alone (everything else null/default/zero) must satisfy the
+  // semantic gate — a project whose only content is a pasted "common issues"
+  // doc must not be discarded as scaffold-only.
+  assert(
+    hasSemanticContent({
+      prefs: {
+        audience: null,
+        purpose: null,
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+        common_issues_md: "Translators keep confusing grace and mercy.",
+      },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "common_issues_md alone satisfies semantic gate",
+  );
+  assert(
+    !hasSemanticContent({
+      prefs: {
+        audience: null,
+        purpose: null,
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+        common_issues_md: "   ",
+      },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "whitespace-only common_issues_md fails semantic gate",
   );
 
   const withTerms = renderContextPack({

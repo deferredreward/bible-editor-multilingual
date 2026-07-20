@@ -1327,8 +1327,22 @@ function BriefSection() {
   );
 }
 
-// ── Instructions ─────────────────────────────────────────────────────────────
-function InstructionsSection() {
+// ── Instructions / Common issues (shared markdown-pref editor) ────────────────
+// Server caps: instructions_md 20000 chars, common_issues_md 50000 chars
+// (see PutPrefsBody in api/src/translationMemory.ts) — keep maxChars below in sync.
+function MarkdownPrefSection({
+  field,
+  titleKey,
+  introKey,
+  placeholderKey,
+  maxChars,
+}: {
+  field: "instructions_md" | "common_issues_md";
+  titleKey: string;
+  introKey: string;
+  placeholderKey: string;
+  maxChars: number;
+}) {
   const { t } = useTranslation();
   const { prefs, loading, refetch } = useTranslationPrefs(true);
   const [value, setValue] = useState("");
@@ -1336,14 +1350,16 @@ function InstructionsSection() {
   const save = useSaveState();
 
   useEffect(() => {
-    if (prefs) setValue(prefs.instructions_md ?? "");
-  }, [prefs]);
+    if (prefs) setValue(prefs[field] ?? "");
+  }, [prefs, field]);
+
+  const overLimit = value.length > maxChars;
 
   const onSave = async () => {
     if (!prefs) return;
     save.setSaving(true);
     try {
-      await api.putTranslationPrefs(prefs.version, { instructions_md: value || null });
+      await api.putTranslationPrefs(prefs.version, { [field]: value || null });
       save.setMsg(t("preferences.saved"));
       refetch();
     } catch (e) {
@@ -1352,6 +1368,8 @@ function InstructionsSection() {
         refetch();
       } else if (e instanceof ApiError && e.status === 403) {
         save.setMsg(t("preferences.saveForbidden"));
+      } else if (e instanceof ApiError && e.status === 400) {
+        save.setMsg(t("preferences.saveTooLong"));
       } else {
         save.setMsg(t("preferences.saveFailed"));
       }
@@ -1365,7 +1383,7 @@ function InstructionsSection() {
   return (
     <Stack spacing={2}>
       <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Typography variant="h6">{t("preferences.section.instructions")}</Typography>
+        <Typography variant="h6">{t(titleKey)}</Typography>
         <ToggleButton
           size="small"
           value="preview"
@@ -1378,7 +1396,7 @@ function InstructionsSection() {
         </ToggleButton>
       </Stack>
       <Alert severity="info" variant="outlined" sx={{ py: 0.25 }}>
-        {t("preferences.instructionsIntro")}
+        {t(introKey)}
       </Alert>
       {preview ? (
         <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, minHeight: 200 }}>
@@ -1391,12 +1409,18 @@ function InstructionsSection() {
           multiline
           minRows={10}
           fullWidth
-          placeholder={t("preferences.instructionsPlaceholder")}
+          placeholder={t(placeholderKey)}
+          error={overLimit}
+          helperText={
+            overLimit
+              ? t("preferences.charCountOver", { count: value.length, max: maxChars })
+              : t("preferences.charCount", { count: value.length, max: maxChars })
+          }
           slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
         />
       )}
       <Box>
-        <Button variant="contained" startIcon={<SaveIcon />} onClick={onSave} disabled={save.saving}>
+        <Button variant="contained" startIcon={<SaveIcon />} onClick={onSave} disabled={save.saving || overLimit}>
           {t("preferences.save")}
         </Button>
       </Box>
@@ -1405,81 +1429,27 @@ function InstructionsSection() {
   );
 }
 
-// ── Common issues ────────────────────────────────────────────────────────────
-function CommonIssuesSection() {
-  const { t } = useTranslation();
-  const { prefs, loading, refetch } = useTranslationPrefs(true);
-  const [value, setValue] = useState("");
-  const [preview, setPreview] = useState(false);
-  const save = useSaveState();
-
-  useEffect(() => {
-    if (prefs) setValue(prefs.common_issues_md ?? "");
-  }, [prefs]);
-
-  const onSave = async () => {
-    if (!prefs) return;
-    save.setSaving(true);
-    try {
-      await api.putTranslationPrefs(prefs.version, { common_issues_md: value || null });
-      save.setMsg(t("preferences.saved"));
-      refetch();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        save.setMsg(t("preferences.conflict"));
-        refetch();
-      } else if (e instanceof ApiError && e.status === 403) {
-        save.setMsg(t("preferences.saveForbidden"));
-      } else {
-        save.setMsg(t("preferences.saveFailed"));
-      }
-    } finally {
-      save.setSaving(false);
-    }
-  };
-
-  if (loading && !prefs) return <CircularProgress size={22} />;
-
+function InstructionsSection() {
   return (
-    <Stack spacing={2}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Typography variant="h6">{t("preferences.section.commonIssues")}</Typography>
-        <ToggleButton
-          size="small"
-          value="preview"
-          selected={preview}
-          onChange={() => setPreview((p) => !p)}
-          sx={{ textTransform: "none", py: 0.25 }}
-        >
-          <VisibilityIcon fontSize="small" sx={{ mr: 0.5 }} />
-          {t("preferences.preview")}
-        </ToggleButton>
-      </Stack>
-      <Alert severity="info" variant="outlined" sx={{ py: 0.25 }}>
-        {t("preferences.commonIssuesIntro")}
-      </Alert>
-      {preview ? (
-        <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, minHeight: 200 }}>
-          <MarkdownView markdown={value || "_" + t("preferences.empty") + "_"} />
-        </Box>
-      ) : (
-        <TextField
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          multiline
-          minRows={10}
-          fullWidth
-          placeholder={t("preferences.commonIssuesPlaceholder")}
-          slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
-        />
-      )}
-      <Box>
-        <Button variant="contained" startIcon={<SaveIcon />} onClick={onSave} disabled={save.saving}>
-          {t("preferences.save")}
-        </Button>
-      </Box>
-      <Snackbar open={!!save.msg} autoHideDuration={3000} onClose={save.clear} message={save.msg ?? ""} />
-    </Stack>
+    <MarkdownPrefSection
+      field="instructions_md"
+      titleKey="preferences.section.instructions"
+      introKey="preferences.instructionsIntro"
+      placeholderKey="preferences.instructionsPlaceholder"
+      maxChars={20000}
+    />
+  );
+}
+
+function CommonIssuesSection() {
+  return (
+    <MarkdownPrefSection
+      field="common_issues_md"
+      titleKey="preferences.section.commonIssues"
+      introKey="preferences.commonIssuesIntro"
+      placeholderKey="preferences.commonIssuesPlaceholder"
+      maxChars={50000}
+    />
   );
 }
 
