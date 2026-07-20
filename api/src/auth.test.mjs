@@ -27,7 +27,10 @@ import {
   updateLastLocation,
   authMe,
   ensureWorkspaceUser,
+  effectiveRole,
+  lookupUserRole,
 } from "./auth.ts";
+import { syncTeamRole } from "./dcsTeams.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -401,6 +404,91 @@ console.log("[ensureWorkspaceUser] mirrors id+profile (never the token), repeat 
   await ensureWorkspaceUser(soloEnv, 1); // must not throw, must not touch the row
   const soloCount = soloRaw.prepare(`SELECT COUNT(*) as n FROM users`).get().n;
   assert(soloCount === 1, "shared === workspace DB -> no-op (no duplicate row, no extra work)");
+}
+
+// ── Super-admin invariants ───────────────────────────────────────────────────
+//
+// The project owner's explicit requirement: he must be able to (a) act as
+// admin of ANY org, including one he's never joined on Door43, and (b) help
+// orgs bootstrap without joining every one. effectiveRole's SUPER_ADMINS
+// short-circuit is what makes both possible; lookupUserRole is the raw
+// user_roles read that adminUserRoutes.ts's last-admin guard depends on, and
+// must stay meaningful (i.e. NOT be affected by SUPER_ADMINS) or that guard's
+// semantics silently change.
+//
+// Real node:sqlite (same user_roles shape as dcsTeams.test.mjs's freshDb) so
+// syncTeamRole's real SQL runs, not a string-matched stub.
+
+console.log("[effectiveRole / lookupUserRole] super-admin invariants");
+{
+  function rolesDb() {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE user_roles (
+        dcs_username TEXT PRIMARY KEY COLLATE NOCASE,
+        role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        added_by INTEGER,
+        source TEXT NOT NULL DEFAULT 'manual',
+        synced_at INTEGER
+      );
+    `);
+    return db;
+  }
+  function sqliteD1(db) {
+    function bound(sql, args) {
+      return {
+        first: async () => db.prepare(sql).get(...args) ?? null,
+        run: async () => {
+          const r = db.prepare(sql).run(...args);
+          return { meta: { changes: Number(r.changes) } };
+        },
+        all: async () => ({ results: db.prepare(sql).all(...args) }),
+      };
+    }
+    return {
+      prepare(sql) {
+        return { bind: (...args) => bound(sql, args), ...bound(sql, []) };
+      },
+    };
+  }
+
+  const db = rolesDb();
+  const env = { DB: sqliteD1(db), SUPER_ADMINS: "ada" };
+
+  assert(
+    (await lookupUserRole(env, "ada")) === null,
+    "lookupUserRole: no row for the super admin -> null (raw read, unaffected by SUPER_ADMINS)",
+  );
+  assert(
+    (await effectiveRole(env, "ada")) === "admin",
+    "effectiveRole: super admin with NO user_roles row at all -> 'admin'",
+  );
+
+  // Team sync finds them on no team (role: null — the same shape as the real
+  // "no team role" call in auth.ts's syncTeamRoleForUser). Must not demote.
+  await syncTeamRole(env, "ada", null);
+  assert(
+    (await effectiveRole(env, "ada")) === "admin",
+    "effectiveRole: still 'admin' after a team sync that found the super admin on no team",
+  );
+  assert(
+    (await lookupUserRole(env, "ada")) === null,
+    "lookupUserRole: still null after that sync — the raw row was never created for this super admin",
+  );
+
+  // A non-super-admin's raw row is read normally either way.
+  db.prepare(
+    `INSERT INTO user_roles (dcs_username, role, source) VALUES ('bob', 'editor', 'manual')`,
+  ).run();
+  assert(
+    (await lookupUserRole(env, "bob")) === "editor",
+    "lookupUserRole: reflects the actual row for a non-super-admin",
+  );
+  assert(
+    (await effectiveRole(env, "bob")) === "editor",
+    "effectiveRole: non-super-admin resolves via the raw row",
+  );
 }
 
 console.log("auth: all assertions passed");

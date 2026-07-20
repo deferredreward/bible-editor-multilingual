@@ -371,4 +371,83 @@ console.log("orgForTeamSync");
   );
 }
 
+console.log("orgForTeamSync — workspace-aware: registry wins over project_config");
+{
+  const db = freshDb();
+  const env = {
+    DB: makeD1(db),
+    WORKSPACES: JSON.stringify([
+      { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB" },
+    ]),
+    WORKSPACE_SLUG: "org2",
+  };
+  // project_config claims a DIFFERENT org than the workspace registry entry —
+  // the registry must win.
+  db.exec(
+    "INSERT INTO project_config (id, preset, overrides_json) VALUES (1, 'en-unfoldingword', NULL)",
+  );
+  assert(
+    (await orgForTeamSync(env)) === "OrgTwo",
+    "active workspace's registry org wins over project_config's org",
+  );
+}
+
+console.log("orgForTeamSync — workspace-aware: fresh workspace with no project_config row");
+{
+  // project_config table exists (migrations ran) but has no row yet — the
+  // bootstrap case for a brand-new workspace.
+  const db = freshDb();
+  const env = {
+    DB: makeD1(db),
+    WORKSPACES: JSON.stringify([
+      { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB" },
+    ]),
+    WORKSPACE_SLUG: "org2",
+  };
+  assert(
+    (await orgForTeamSync(env)) === "OrgTwo",
+    "empty project_config still resolves the registry org, not null — this is the case that matters most",
+  );
+}
+
+console.log("orgForTeamSync — WORKSPACES unset/empty: unchanged single-org production behavior");
+{
+  const db = freshDb();
+  const env = { DB: makeD1(db), WORKSPACES: "" };
+  assert(
+    (await orgForTeamSync(env)) === null,
+    "WORKSPACES empty + no project_config row → null (regression guard for production)",
+  );
+  db.exec(
+    "INSERT INTO project_config (id, preset, overrides_json) VALUES (1, 'en-unfoldingword', NULL)",
+  );
+  assert(
+    (await orgForTeamSync(env)) === "unfoldingWord",
+    "WORKSPACES empty → still reads project_config as before",
+  );
+}
+
+console.log("orgForTeamSync — WORKSPACES configured but WORKSPACE_SLUG matches no entry: falls back to project_config");
+{
+  const db = freshDb();
+  const env = {
+    DB: makeD1(db),
+    WORKSPACES: JSON.stringify([
+      { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB" },
+    ]),
+    WORKSPACE_SLUG: "no-such-slug",
+  };
+  assert(
+    (await orgForTeamSync(env)) === null,
+    "no matching registry entry + no project_config row → null",
+  );
+  db.exec(
+    "INSERT INTO project_config (id, preset, overrides_json) VALUES (1, 'en-unfoldingword', NULL)",
+  );
+  assert(
+    (await orgForTeamSync(env)) === "unfoldingWord",
+    "no matching registry entry → falls back to reading project_config",
+  );
+}
+
 console.log("all dcsTeams tests passed");
