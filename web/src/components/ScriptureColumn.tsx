@@ -1075,11 +1075,12 @@ const InactiveVerseRow = memo(
             </Typography>
             <Box
               data-find-cell={`${chapter}-${ultV.verse}-ULT`}
+              dir={targetRtl ? "rtl" : "ltr"}
               sx={(theme) => ({
                 gridColumn: 2,
                 gridRow: 2,
                 minWidth: 0,
-                ...(targetRtl ? { direction: "rtl", textAlign: "right" } : {}),
+                ...(targetRtl ? { textAlign: "start" } : {}),
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
@@ -1119,11 +1120,12 @@ const InactiveVerseRow = memo(
             </Typography>
             <Box
               data-find-cell={`${chapter}-${ustV.verse}-UST`}
+              dir={targetRtl ? "rtl" : "ltr"}
               sx={(theme) => ({
                 gridColumn: 2,
                 gridRow: 3,
                 minWidth: 0,
-                ...(targetRtl ? { direction: "rtl", textAlign: "right" } : {}),
+                ...(targetRtl ? { textAlign: "start" } : {}),
                 ...markHighlightSx(theme.palette.mode),
               })}
             >
@@ -1560,6 +1562,7 @@ function ActiveLine({
       {hebrewSource && lexiconMap ? (
         <Box
           data-find-cell={`${chapter}-${verseNum}-${bibleVersion}`}
+          dir="rtl"
           sx={{
             flex: 1,
             bgcolor: "grey.100",
@@ -1570,8 +1573,7 @@ function ActiveLine({
             py: 0.5,
             fontSize: `calc(21px * var(--be-reading-scale, 1))`,
             lineHeight: 1.5,
-            direction: "rtl",
-            textAlign: "right",
+            textAlign: "start",
             fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
           }}
         >
@@ -1596,6 +1598,7 @@ function ActiveLine({
           contentEditable={editable && !readOnly}
           suppressContentEditableWarning
           spellCheck={!rtl}
+          dir={rtl ? "rtl" : "ltr"}
           onInput={(e) => {
             if (readOnly || !editable || !onEditPlain) return;
             const value = (e.currentTarget as HTMLDivElement).textContent ?? "";
@@ -1618,8 +1621,7 @@ function ActiveLine({
             py: 0.5,
             fontSize: `calc(${hebrewSource ? 21 : 14.5}px * var(--be-reading-scale, 1))`,
             lineHeight: 1.5,
-            direction: rtl ? "rtl" : "ltr",
-            textAlign: rtl ? "right" : "left",
+            textAlign: "start",
             fontFamily: hebrewSource
               ? '"Times New Roman","SBL Hebrew","Cardo",serif'
               : '"Source Serif Pro","Cambria","Times New Roman",serif',

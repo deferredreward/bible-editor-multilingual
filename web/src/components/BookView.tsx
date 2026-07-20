@@ -938,7 +938,7 @@ const VerseCell = memo(function VerseCell({
   const showTextCheck = !!textCheck?.canCheck && !readOnly;
 
   return (
-    <Box sx={{ lineHeight: 1.6, ...(rtl ? { direction: "rtl", textAlign: "right" } : {}) }}>
+    <Box dir={rtl ? "rtl" : "ltr"} sx={{ lineHeight: 1.6, ...(rtl ? { textAlign: "start" } : {}) }}>
       <Typography
         component="span"
         variant="caption"
