@@ -824,6 +824,28 @@ export interface ReimportResponse {
   totals: ReimportCounts;
 }
 
+// Error bodies for the admin-only `force` re-import (POST
+// /api/books/:book/import with { force: true }). 403 when the caller is not an
+// admin; 409 when the book carries local note/question edits and the request
+// did not also set `confirmDiscardEdits`.
+export interface ImportHasLocalEditsBody {
+  error: "has_local_edits";
+  book: string;
+  tn: number;
+  tq: number;
+  twl: number;
+  verses: number;
+}
+
+// Display form of the import response's note-source provenance: the stored
+// value is `source:<owner>/<repo>` (see SOURCE_PROVENANCE_PREFIX in the API);
+// the prefix is a storage detail, not something to show a translator.
+export function importedSourceRepos(sources?: { tn: string | null; tq: string | null }): string[] {
+  return [...new Set(
+    [sources?.tn, sources?.tq].filter((s): s is string => !!s).map((s) => s.replace(/^source:/, "")),
+  )];
+}
+
 // Translation-note AI draft endpoint (proxied through this Worker; the
 // shared bot lives at uw-bt-bot.fly.dev). Schema is the bot's; keep in
 // sync with its zod definition. The Worker only adds the BT_API_TOKEN
@@ -1429,20 +1451,39 @@ export const api = {
 
   // Trigger a server-side import of a book from DCS. Long-running: ~5-60s
   // depending on book size, so the caller gets a wider timeout.
-  importBook: (book: string) =>
-    request<{
+  // `translateFromSource` pulls tN/tQ from the project's configured English
+  // source repos instead of the org's own; `sources` reports which resources
+  // actually came from the source (also set when the server falls back on its
+  // own because the org's file is missing), e.g. "source:unfoldingWord/en_tn".
+  // `force` (admin-only) bypasses the already-imported short-circuit and does a
+  // full wipe-and-reload; the server answers 403 `forbidden` for non-admins and
+  // 409 `has_local_edits` (with tn/tq/twl/verses counts) unless `confirmDiscardEdits`
+  // is also set. See ImportHasLocalEditsBody for those bodies.
+  importBook: (
+    book: string,
+    opts?: { translateFromSource?: boolean; force?: boolean; confirmDiscardEdits?: boolean },
+  ) => {
+    const body: Record<string, true> = {};
+    if (opts?.translateFromSource) body.translateFromSource = true;
+    if (opts?.force) body.force = true;
+    if (opts?.confirmDiscardEdits) body.confirmDiscardEdits = true;
+    return request<{
       ok: true;
       book: string;
       alreadyImported?: boolean;
+      forced?: boolean;
       verses?: number;
       tn?: number;
       tq?: number;
       twl?: number;
       fetched?: { ult: boolean; ust: boolean; orig: boolean; tn: boolean; tq: boolean; twl: boolean };
+      sources?: { tn: string | null; tq: string | null };
     }>(`/api/books/${encodeURIComponent(book)}/import`, {
       method: "POST",
       timeoutMs: 120_000,
-    }),
+      ...(Object.keys(body).length ? { body: JSON.stringify(body) } : {}),
+    });
+  },
 
   // Non-destructive per-chapter, per-resource re-import from Door43. Only
   // overwrites rows that have never been touched by a human; counts are

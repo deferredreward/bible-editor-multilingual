@@ -708,7 +708,10 @@ const WordRow = memo(function WordRow({
               gridArea: "gloss",
               color: "text.secondary",
               fontStyle: "italic",
-              lineHeight: 1.3,
+              // Arabic glosses carry stacked diacritics; a tight line-height
+              // lets their marks overflow upward into the row above. Loosen it
+              // so the gloss keeps clear of the quote row above.
+              lineHeight: 1.7,
               pb: "2px",
               whiteSpace: "normal",
               wordBreak: "break-word",
