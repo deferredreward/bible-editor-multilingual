@@ -1,5 +1,16 @@
 // USFM 3-letter codes (uppercase) with English names and common aliases.
 // Used by the TopBar book picker (typeahead) and the reference parser.
+//
+// `code` is the stable USFM/DCS identifier — it drives file names, import/
+// export paths, and API routes, and must never be swapped for a translated
+// display string. `name` here is the English fallback used to seed the
+// alias map (so typing "Genesis" still resolves even before i18n loads) and
+// as a last-resort display value; the actual localized display name/abbr
+// comes from the `books.<CODE>.name` / `books.<CODE>.abbr` i18next keys (see
+// i18n/locales/en.json) via bookName()/bookAbbr() below, which route through
+// i18next (including any runtime overrides from the Localization tab).
+
+import i18n from "../i18n";
 
 export interface BookInfo {
   code: string;
@@ -92,6 +103,19 @@ export function resolveBook(input: string): string | null {
   return ALIAS_MAP[key] ?? null;
 }
 
+/** Localized display name for a book code (e.g. "Zechariah"). Falls back to
+ *  the bundled English name, then to the raw code, if a translation is
+ *  missing. `code` itself is untouched — only the label shown to users. */
 export function bookName(code: string): string {
-  return BOOKS.find((b) => b.code === code.toUpperCase())?.name ?? code;
+  const upper = code.toUpperCase();
+  const fallback = BOOKS.find((b) => b.code === upper)?.name ?? code;
+  return i18n.t(`books.${upper}.name`, { defaultValue: fallback });
+}
+
+/** Localized short abbreviation for a book code (e.g. "Zech"). Falls back to
+ *  the localized full name, then the raw code, if no abbreviation is set. */
+export function bookAbbr(code: string): string {
+  const upper = code.toUpperCase();
+  const fallback = bookName(code);
+  return i18n.t(`books.${upper}.abbr`, { defaultValue: fallback });
 }
