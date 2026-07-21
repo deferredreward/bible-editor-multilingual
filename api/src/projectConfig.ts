@@ -36,6 +36,18 @@ import type { Env } from "./index";
 export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl" | "tw" | "ta";
 
 /**
+ * A per-resource translation-source repo pointer. Historically this was a bare
+ * repo string under the single `translationSource.org`; it can now ALSO be an
+ * `{ org?, repo }` ref so a resource can be sourced from a DIFFERENT org than
+ * the default upstream (a pasted Door43 URL → org+repo). Both shapes are
+ * persisted-JSON compatible and normalize through `resolveSourceRef`
+ * (dcsSources.ts): a bare string, or an object with `org` omitted, both mean
+ * "use `translationSource.org`". `translationSource.org` stays the default /
+ * primary org for reader-friendly display and for non-overridden resources.
+ */
+export type TranslationSourceRef = string | { org?: string; repo: string };
+
+/**
  * The editor/translator workflow mode. Independent from `translationSource`
  * (which is the DATA source): `mode` drives which UI affordances show, and is
  * an OPTIONAL override in overrides_json. When unset it DERIVES from
@@ -90,7 +102,14 @@ export interface ProjectConfig {
   translationSource: {
     org: string;
     languageCode: string;
-    repos: Record<ResourceKey, string>;
+    /**
+     * PARTIAL per-resource source map. A role absent from the map has NO
+     * upstream source (skip cleanly, never fetch an `undefined` repo). Each
+     * present value is a bare repo string (org = `org` above) OR an
+     * `{ org?, repo }` ref pointing the resource at a different org. Read every
+     * entry through `resolveSourceRef` (dcsSources.ts), never directly.
+     */
+    repos: Partial<Record<ResourceKey, TranslationSourceRef>>;
   } | null;
   /**
    * Explicit editor/translator workflow mode — the materialized value is ALWAYS

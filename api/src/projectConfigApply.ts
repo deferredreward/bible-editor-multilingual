@@ -92,26 +92,40 @@ export function validateCustomGlOverrides(
     if (!tsRepos || typeof tsRepos !== "object") {
       return { ok: false, error: "custom_gl_invalid_translation_source" };
     }
-    // Partial + per-resource repo override: a translationSource repo map may
+    // Partial + per-resource source override: a translationSource repo map may
     // carry only SOME of the seven roles (a resource whose upstream box is
-    // unchecked is simply omitted). Each PRESENT value must still be an
-    // isIdent-valid repo name (any valid ident IS the per-resource override);
-    // ABSENT keys are allowed.
+    // unchecked is simply omitted). Each PRESENT value is EITHER a bare
+    // isIdent-valid repo name (org = translationSource.org) OR an { org?, repo }
+    // ref pointing the resource at a DIFFERENT org (a pasted Door43 URL). When it
+    // is a ref, `repo` is required + isIdent-valid and `org`, when present, must
+    // be isIdent-valid too. ABSENT keys are allowed.
     //
     // CONTRACT for readers of translationSource.repos[key]: a missing role means
     // "this resource has NO upstream source" and MUST be handled gracefully
     // (skip / render an empty state) — NEVER fetched as an `${org}/undefined`
-    // repo. Route every read through a guarded accessor (dcsSources.ts
-    // translationSourceRepoRef returns null on missing/blank; articlePopulate.ts
-    // repoForResource returns undefined) and branch on it. The guarded readers:
-    // dcsSources.translationSourceRepoRef, articlePopulate (populate/refresh/add),
-    // translateOptions.buildTranslateOptions, contextSourceFetch.fetchEnSourceMaps,
-    // aquiferImport, and the web source panes (ResourceColumn, TwArticleDialog).
+    // repo. Route every read through the shared accessor (dcsSources.ts
+    // resolveSourceRef, which translationSourceRepoRef delegates to) and branch
+    // on its null. The guarded readers: dcsSources.translationSourceRepoRef,
+    // articlePopulate (populate/refresh/add), translateOptions.buildTranslateOptions,
+    // contextSourceFetch.fetchEnSourceMaps, aquiferImport, and the web source
+    // panes (ResourceColumn, TwArticleDialog) via web resolveSourceRef.
     const tr = tsRepos as Record<string, unknown>;
     for (const key of RESOURCE_KEYS) {
       if (!(key in tr)) continue;
       const v = tr[key];
-      if (typeof v !== "string" || !isIdent(v)) {
+      if (typeof v === "string") {
+        if (!isIdent(v)) {
+          return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
+        }
+      } else if (v && typeof v === "object" && !Array.isArray(v)) {
+        const vo = v as Record<string, unknown>;
+        if (typeof vo.repo !== "string" || !isIdent(vo.repo)) {
+          return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
+        }
+        if (vo.org !== undefined && (typeof vo.org !== "string" || !isIdent(vo.org))) {
+          return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
+        }
+      } else {
         return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
       }
     }

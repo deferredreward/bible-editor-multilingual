@@ -199,7 +199,7 @@ console.log("parsers");
 // ── 2. planWork ordering + blocking ──────────────────────────────────────────
 console.log("planWork");
 {
-  const src = { org: "unfoldingWord", repos: { tw: "en_tw", ta: "en_ta" } };
+  const src = { refs: { tw: { org: "unfoldingWord", repo: "en_tw" }, ta: { org: "unfoldingWord", repo: "en_ta" } } };
   const referenced = [
     { resource: "tw", path: "bible/kt/god.md", article_id: "kt/god", part: "body" },
     { resource: "tw", path: "bible/kt/grace.md", article_id: "kt/grace", part: "body" },
@@ -258,16 +258,43 @@ console.log("planWork partial source");
     { resource: "ta", path: "translate/figs-aside/01.md", article_id: "translate/figs-aside", part: "body" },
   ];
   // tw omitted from the source (blank in Setup); only ta has a repo.
-  const taOnly = planWork(referenced, [], [], { org: "unfoldingWord", repos: { ta: "en_ta" } });
+  const taOnly = planWork(referenced, [], [], { refs: { ta: { org: "unfoldingWord", repo: "en_ta" } } });
   assert.deepEqual(
     taOnly.map((p) => p.resource),
     ["ta"],
     "tw ref skipped when translationSource omits tw (never planned → never fetched as undefined)",
   );
   // No repos at all → nothing planned.
-  const none = planWork(referenced, [], [], { org: "unfoldingWord", repos: {} });
+  const none = planWork(referenced, [], [], { refs: {} });
   assert.equal(none.length, 0, "empty source repos → nothing planned");
   console.log("  ✓ planWork skips no-source resources");
+}
+
+// ── 2b'. planWork honors a PER-RESOURCE org override (issue #84 slice) ─────────
+console.log("planWork per-resource org");
+{
+  const referenced = [
+    { resource: "ta", path: "translate/figs-aside/01.md", article_id: "translate/figs-aside", part: "body" },
+  ];
+  // ta sourced from a DIFFERENT org than the default upstream.
+  const src = { refs: { ta: { org: "BibleAquifer", repo: "ar_ta" } } };
+  // A row stamped with the same org+repo is fresh (skipped)...
+  const fresh = planWork(
+    referenced,
+    [{ resource: "ta", path: "translate/figs-aside/01.md", source_org: "BibleAquifer", source_repo: "ar_ta", deleted_at: null }],
+    [],
+    src,
+  );
+  assert.equal(fresh.length, 0, "row stamped with the override org+repo is fresh");
+  // ...but a row stamped with the DEFAULT org (right repo, wrong org) is a mismatch → refetch.
+  const mismatch = planWork(
+    referenced,
+    [{ resource: "ta", path: "translate/figs-aside/01.md", source_org: "unfoldingWord", source_repo: "ar_ta", deleted_at: null }],
+    [],
+    src,
+  );
+  assert.equal(mismatch.length, 1, "same repo under a different org is an identity mismatch");
+  console.log("  ✓ planWork identity is per-resource org+repo");
 }
 
 // ── 2c. Driver never builds a `${org}/undefined` URL under a partial source ───

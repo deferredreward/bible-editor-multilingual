@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeDoor43RepoUrl, repoRefEquals, repoRefKey } from "./repoUrl.ts";
+import { normalizeDoor43RepoUrl, parseDoor43SourceRef, repoRefEquals, repoRefKey } from "./repoUrl.ts";
 
 // ── normalizeDoor43RepoUrl ───────────────────────────────────────────────────
 
@@ -85,6 +85,48 @@ import { normalizeDoor43RepoUrl, repoRefEquals, repoRefKey } from "./repoUrl.ts"
     repoRefKey({ owner: "BSOJ", repo: "ar_avd", ref: "master" }),
     "BSOJ/ar_avd@master",
   );
+}
+
+// ── parseDoor43SourceRef (per-resource source URL → { org, repo }) ────────────
+
+// Full URL
+{
+  const r = parseDoor43SourceRef("https://git.door43.org/BibleAquifer/ar_tn");
+  assert.ok(r.ok);
+  assert.deepStrictEqual({ org: r.org, repo: r.repo }, { org: "BibleAquifer", repo: "ar_tn" });
+}
+// Trailing slash
+{
+  const r = parseDoor43SourceRef("https://git.door43.org/BibleAquifer/ar_tn/");
+  assert.ok(r.ok && r.repo === "ar_tn");
+}
+// .git suffix stripped
+{
+  const r = parseDoor43SourceRef("https://git.door43.org/BibleAquifer/ar_tn.git");
+  assert.ok(r.ok);
+  assert.deepStrictEqual({ org: r.org, repo: r.repo }, { org: "BibleAquifer", repo: "ar_tn" });
+}
+// Deep path (src/branch/...) still yields owner/repo
+{
+  const r = parseDoor43SourceRef("https://git.door43.org/BibleAquifer/ar_tn/src/branch/master/tn_TIT.tsv");
+  assert.ok(r.ok && r.org === "BibleAquifer" && r.repo === "ar_tn");
+}
+// Bare owner/repo
+{
+  const r = parseDoor43SourceRef("BibleAquifer/ar_tn");
+  assert.ok(r.ok && r.org === "BibleAquifer" && r.repo === "ar_tn");
+}
+// Rejects a non-Door43 host
+{
+  const r = parseDoor43SourceRef("https://github.com/BibleAquifer/ar_tn");
+  assert.ok(!r.ok);
+  assert.equal(r.error, "unsupported_host");
+}
+// Rejects garbage / bare org
+{
+  assert.ok(!parseDoor43SourceRef("not a url").ok);
+  assert.ok(!parseDoor43SourceRef("BibleAquifer").ok);
+  assert.ok(!parseDoor43SourceRef("").ok);
 }
 
 console.log("repoUrl tests passed");

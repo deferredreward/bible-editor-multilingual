@@ -11,7 +11,7 @@
 // stay fixed here.
 
 import type { Env } from "./index";
-import type { ProjectConfig } from "./projectConfig";
+import type { ProjectConfig, TranslationSourceRef } from "./projectConfig";
 import type { RepoRef } from "./repoUrl";
 
 // Standard unfoldingWord book number prefixes for USFM filenames. Mirror of
@@ -119,22 +119,67 @@ export function sourceProvenance(owner: string, repo: string): string {
   return `${SOURCE_PROVENANCE_PREFIX}${owner}/${repo}`;
 }
 
+// ── Per-resource source-ref accessor — the ONE place org+repo is resolved ──
+// A resource's translation source can now come from a DIFFERENT org than the
+// single translationSource.org, carried as an { org?, repo } ref (a pasted
+// Door43 URL). Legacy persisted rows stored a bare repo string; both shapes
+// normalize here. EVERY consumer of translationSource.repos[role] must read
+// through this accessor so a missing/blank ref cleanly means "no source" and a
+// per-resource org override is honored uniformly.
+export interface SourceRef {
+  org: string;
+  repo: string;
+}
+
+// The shape resolveSourceRef reads. Kept structural (not `ProjectConfig`) so
+// callers can pass just the translationSource object.
+export interface TranslationSourceLike {
+  org: string;
+  repos: Partial<Record<string, TranslationSourceRef>>;
+}
+
+// Normalize one persisted per-resource value against the default (primary) org.
+// - bare string            → { org: defaultOrg, repo }
+// - { repo, org? }         → { org: org ?? defaultOrg, repo }
+// - missing / blank repo   → null ("no upstream source for this resource")
+export function normalizeSourceRef(
+  defaultOrg: string,
+  value: TranslationSourceRef | null | undefined,
+): SourceRef | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const repo = value.trim();
+    return repo ? { org: defaultOrg, repo } : null;
+  }
+  if (typeof value !== "object") return null;
+  const repo = (value.repo ?? "").trim();
+  if (!repo) return null;
+  const org = (value.org ?? "").trim() || defaultOrg;
+  return { org, repo };
+}
+
+// Resolve a translationSource role to a concrete { org, repo }, or null when
+// the project has no translationSource / the role has no upstream source.
+export function resolveSourceRef(
+  translationSource: TranslationSourceLike | null | undefined,
+  role: string,
+): SourceRef | null {
+  if (!translationSource) return null;
+  return normalizeSourceRef(translationSource.org, translationSource.repos[role]);
+}
+
 // The repo ref for a note resource when translating from the English source.
 // Returns null when cfg.translationSource is absent (an authored, not
-// translated, project — there is nothing to translate from).
+// translated, project — there is nothing to translate from) OR when the role
+// has no upstream source (missing/blank in Setup). Delegates to resolveSourceRef
+// so the per-resource org override is honored on the import/reimport path too.
 export function translationSourceRepoRef(
   cfg: ProjectConfig,
   resource: "tn" | "tq",
 ): RepoRef | null {
-  const src = cfg.translationSource;
-  if (!src) return null;
-  // translationSource.repos is now PARTIAL (custom-gl may omit a role whose
-  // upstream box was unchecked). A missing/blank repo for this resource means
-  // "no source to translate from" — same as an authored project for that one
-  // resource — so return null rather than building a URL with an undefined repo.
-  const repo = src.repos[resource];
-  if (!repo) return null;
-  return { owner: src.org, repo, ref: "master" };
+  const ref = resolveSourceRef(cfg.translationSource, resource);
+  if (!ref) return null;
+  return { owner: ref.org, repo: ref.repo, ref: "master" };
 }
 
 // Does a failed org-repo note fetch mean "this file genuinely does not exist"

@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
 import { requireAuth, requireAdmin } from "./auth.ts";
-import { isIdent } from "./repoUrl.ts";
+import { isIdent, parseDoor43SourceRef } from "./repoUrl.ts";
 import {
   listOrgRepos,
   fetchManifest,
@@ -57,6 +57,37 @@ orgRoutes.get("/search", async (c) => {
   return c.json({
     matches: [{ org: rec.username, fullName: rec.fullName }],
     canonical: rec.username,
+  });
+});
+
+// GET /api/orgs/verify-source?url=<pasted Door43 URL> — resolve a pasted repo
+// URL for the Setup wizard's per-resource source-org override (issue #84 slice).
+// Parses the URL into { org, repo }, then confirms BOTH the org (canonical
+// verify, GET /api/v1/orgs/{org}) and the repo (GET /api/v1/repos/{org}/{repo})
+// exist on DCS. Admin-gated like the rest of orgRoutes. Returns canonical casing
+// so a pasted "bibleaquifer/AR_TN" comes back as the repo's real full name.
+orgRoutes.get("/verify-source", async (c) => {
+  const urlParam = (c.req.query("url") ?? "").trim();
+  if (!urlParam) {
+    return c.json({ ok: false, error: "empty_url" }, 400);
+  }
+  const parsed = parseDoor43SourceRef(urlParam);
+  if (!parsed.ok) {
+    return c.json({ ok: false, error: parsed.error }, 400);
+  }
+  const orgRec = await lookupOrgRecord(c.env, parsed.org);
+  if (!orgRec) {
+    return c.json({ ok: false, error: "org_not_found", org: parsed.org, repo: parsed.repo }, 404);
+  }
+  const repoRec = await lookupRepoRecord(c.env, orgRec.username, parsed.repo);
+  if (!repoRec) {
+    return c.json({ ok: false, error: "repo_not_found", org: orgRec.username, repo: parsed.repo }, 404);
+  }
+  return c.json({
+    ok: true,
+    org: orgRec.username,
+    repo: repoRec.name,
+    fullName: repoRec.fullName,
   });
 });
 
@@ -167,6 +198,32 @@ async function lookupOrgRecord(
     const body = (await res.json()) as { username?: string; full_name?: string };
     if (!body.username) return null;
     return { username: body.username, fullName: body.full_name ?? body.username };
+  } catch {
+    return null;
+  }
+}
+
+// Looks a repo up on DCS via GET /api/v1/repos/{org}/{repo}. Returns the
+// canonical record ({name, fullName}) on a 200, or null on 404 / any non-200 /
+// network error. Used by verify-source to confirm a pasted per-resource source
+// URL actually resolves to a real repo (not just a real org).
+async function lookupRepoRecord(
+  env: Env,
+  org: string,
+  repo: string,
+): Promise<{ name: string; fullName: string } | null> {
+  try {
+    const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+    const res = await fetch(
+      `${base}/api/v1/repos/${encodeURIComponent(org)}/${encodeURIComponent(repo)}`,
+      { headers },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { name?: string; full_name?: string };
+    if (!body.name) return null;
+    return { name: body.name, fullName: body.full_name ?? `${org}/${body.name}` };
   } catch {
     return null;
   }

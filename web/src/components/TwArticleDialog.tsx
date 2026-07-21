@@ -15,6 +15,7 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import { MarkdownView } from "./MarkdownView";
 import { fetchTwArticle, twArticleDcsUrl, twShort, type TwArticleSource } from "../lib/twArticle";
+import { resolveSourceRef } from "../lib/sourceRef";
 import { useProjectConfig } from "../hooks/useProjectConfig";
 
 interface Props {
@@ -31,17 +32,20 @@ function titleFromMarkdown(md: string, fallback: string): string {
 
 export function TwArticleDialog({ articleId, onClose }: Props) {
   const cfg = useProjectConfig();
-  // A GL project reads tW articles from its translationSource (source repo);
-  // non-translation projects read their own org's tW repo. Default (null cfg)
-  // falls back to unfoldingWord/en_tw inside twArticle. translationSource.repos
-  // (and cfg.repos) can be PARTIAL — the applicable tW repo may be blank (the
-  // role was left blank in Setup). Guard so we never fetch `${org}/undefined/...`
-  // and show a clear "no tW source configured" message instead.
-  const twOrg = cfg ? (cfg.translationSource ? cfg.translationSource.org : cfg.org) : undefined;
-  const twRepo = cfg ? (cfg.translationSource ? cfg.translationSource.repos.tw : cfg.repos.tw) : undefined;
-  const noSource = !!cfg && !twRepo;
-  const source: TwArticleSource | undefined =
-    twOrg && twRepo ? { org: twOrg, repo: twRepo } : undefined;
+  // A GL project reads tW articles from its translationSource (source repo, which
+  // may live in a DIFFERENT org than translationSource.org); non-translation
+  // projects read their own org's tW repo. Default (null cfg) falls back to
+  // unfoldingWord/en_tw inside twArticle. translationSource.repos (and cfg.repos)
+  // can be PARTIAL — the applicable tW repo may be blank (role left blank in
+  // Setup). resolveSourceRef gives { org, repo } | null for the translation
+  // branch; guard so we never fetch `${org}/undefined/...` and show a clear
+  // "no tW source configured" message instead.
+  const source: TwArticleSource | undefined = cfg
+    ? cfg.translationSource
+      ? (resolveSourceRef(cfg.translationSource, "tw") ?? undefined)
+      : (cfg.repos.tw ? { org: cfg.org, repo: cfg.repos.tw } : undefined)
+    : undefined;
+  const noSource = !!cfg && !source;
   const sourceKey = source ? `${source.org}/${source.repo}` : "";
 
   const [markdown, setMarkdown] = useState<string | null>(null);

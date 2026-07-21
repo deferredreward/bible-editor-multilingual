@@ -12,6 +12,7 @@ import { QuestionsTable } from "./QuestionsTable";
 import { QuestionCard } from "./QuestionCard";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
+import { resolveSourceRef } from "../lib/sourceRef";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import CheckIcon from "@mui/icons-material/Check";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -353,16 +354,14 @@ export function ResourceColumn({
   // The English root project sees the unchanged card.
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
-  // translationSource.repos is PARTIAL: a resource left blank in Setup has no
-  // upstream source. Project to null when the tN repo is absent so useSourceNotes
-  // short-circuits (no `${org}/undefined/...` fetch) and the source block cleanly
-  // omits — distinct from a genuine 404. Null here means "no tN source
-  // configured", NOT "not a translation project" (translationMode stays true).
+  // translationSource.repos is PARTIAL and PER-RESOURCE: a resource left blank in
+  // Setup has no upstream source, and a resource may point at a DIFFERENT org.
+  // resolveSourceRef returns { org, repo } | null; null (no tN source) makes
+  // useSourceNotes short-circuit (no `${org}/undefined/...` fetch) and the source
+  // block cleanly omit — distinct from a genuine 404. Null here means "no tN
+  // source configured", NOT "not a translation project" (translationMode stays true).
   const sourceProjection = useMemo(
-    () =>
-      projectConfig?.translationSource?.repos.tn
-        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tn }
-        : null,
+    () => resolveSourceRef(projectConfig?.translationSource, "tn"),
     [projectConfig],
   );
   // Published source-language tN for this book, indexed by row id (matched
@@ -403,13 +402,10 @@ export function ResourceColumn({
     };
   }, [translationMode, book]);
   // tQ analogues of the source projection + stats above.
-  // Same partial-source guard as sourceProjection above (tQ): null when the tQ
-  // source repo is absent → no undefined fetch, source block cleanly omitted.
+  // Same partial/per-resource guard as sourceProjection above (tQ): null when the
+  // tQ source repo is absent → no undefined fetch, source block cleanly omitted.
   const sourceQuestionProjection = useMemo(
-    () =>
-      projectConfig?.translationSource?.repos.tq
-        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tq }
-        : null,
+    () => resolveSourceRef(projectConfig?.translationSource, "tq"),
     [projectConfig],
   );
   const sourceQuestions = useSourceQuestions(translationMode ? book : null, sourceQuestionProjection);

@@ -108,8 +108,8 @@ const ChainStep = z
 const TranslateOptions = z
   .object({
     // Which row-keyed TSV resource to translate. Defaults to 'tn' (the pilot);
-    // 'tq' translates translationQuestions. The server picks the matching source
-    // repo (src.repos[resourceType]) and passes resourceType through to the bot,
+    // 'tq' translates translationQuestions. The server resolves the matching
+    // source org+repo (resolveSourceRef) and passes resourceType through to the bot,
     // which selects the TSV parser + target repo. Row-keyed TSV resources are
     // tn|tq; article resources (tw|ta) use articleId/articleUrl instead of a
     // book/chapter scope (bp-assistant articles envelope, INTEGRATION.md §7).

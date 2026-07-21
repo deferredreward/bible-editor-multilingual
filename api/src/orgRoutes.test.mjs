@@ -131,4 +131,111 @@ console.log("[empty/invalid] blank or non-ident query returns empty matches with
   }
 }
 
+// ── verify-source: parse a pasted URL, verify org + repo exist ───────────────
+// A DCS stub that answers GET /api/v1/orgs/{org} and GET /api/v1/repos/{org}/{repo}.
+function stubOrgsAndRepos(orgs, repos) {
+  globalThis.fetch = async (url) => {
+    const s = String(url);
+    const repoM = /\/api\/v1\/repos\/([^/]+)\/([^/?]+)/.exec(s);
+    if (repoM) {
+      const org = decodeURIComponent(repoM[1]).toLowerCase();
+      const repo = decodeURIComponent(repoM[2]).toLowerCase();
+      const rec = repos[`${org}/${repo}`];
+      if (!rec) return new Response(JSON.stringify({ message: "GetRepo" }), { status: 404 });
+      return new Response(JSON.stringify(rec), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const orgM = /\/api\/v1\/orgs\/([^/?]+)/.exec(s);
+    if (orgM) {
+      const name = decodeURIComponent(orgM[1]).toLowerCase();
+      const rec = orgs[name];
+      if (!rec) return new Response(JSON.stringify({ message: "GetOrgByName" }), { status: 404 });
+      return new Response(JSON.stringify(rec), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 404 });
+  };
+}
+
+console.log("[verify-source] admin gating");
+{
+  stubOrgsAndRepos({}, {});
+  try {
+    assert(
+      (await buildApp().request("/api/orgs/verify-source?url=BibleAquifer/ar_tn", {}, ENV)).status === 401,
+      "no auth → 401",
+    );
+    assert(
+      (await buildApp({ userId: 2, role: "editor" }).request("/api/orgs/verify-source?url=BibleAquifer/ar_tn", {}, ENV)).status === 403,
+      "editor → 403",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[verify-source] valid pasted URL resolves org + repo (canonical casing)");
+{
+  stubOrgsAndRepos(
+    { bibleaquifer: { username: "BibleAquifer", full_name: "Bible Aquifer" } },
+    { "bibleaquifer/ar_tn": { name: "ar_tn", full_name: "BibleAquifer/ar_tn" } },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+    const res = await app.request(
+      "/api/orgs/verify-source?url=" + encodeURIComponent("https://git.door43.org/bibleaquifer/ar_tn"),
+      {},
+      ENV,
+    );
+    assert(res.status === 200, "200");
+    const body = await res.json();
+    assert(body.ok === true, "ok:true");
+    assert(body.org === "BibleAquifer", "org canonical casing from DCS");
+    assert(body.repo === "ar_tn", "repo name echoed");
+    assert(body.fullName === "BibleAquifer/ar_tn", "fullName from DCS repo record");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[verify-source] a DIFFERENT-org URL resolves to that org");
+{
+  stubOrgsAndRepos(
+    { someorg: { username: "SomeOrg" } },
+    { "someorg/xx_tw": { name: "xx_tw" } },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+    const res = await app.request("/api/orgs/verify-source?url=SomeOrg/xx_tw", {}, ENV);
+    const body = await res.json();
+    assert(res.status === 200 && body.ok === true && body.org === "SomeOrg" && body.repo === "xx_tw", "different org+repo resolves");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[verify-source] garbage URL → 400; nonexistent org → 404; nonexistent repo → 404");
+{
+  stubOrgsAndRepos(
+    { bibleaquifer: { username: "BibleAquifer" } },
+    { "bibleaquifer/ar_tn": { name: "ar_tn" } },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+
+    const garbage = await app.request("/api/orgs/verify-source?url=" + encodeURIComponent("https://github.com/x/y"), {}, ENV);
+    assert(garbage.status === 400, "non-Door43 host → 400");
+    assert((await garbage.json()).error === "unsupported_host", "  ...error is unsupported_host");
+
+    const empty = await app.request("/api/orgs/verify-source", {}, ENV);
+    assert(empty.status === 400 && (await empty.json()).error === "empty_url", "missing url param → 400 empty_url");
+
+    const noOrg = await app.request("/api/orgs/verify-source?url=NoSuchOrg/whatever", {}, ENV);
+    assert(noOrg.status === 404 && (await noOrg.json()).error === "org_not_found", "nonexistent org → 404 org_not_found");
+
+    const noRepo = await app.request("/api/orgs/verify-source?url=BibleAquifer/no_such_repo", {}, ENV);
+    assert(noRepo.status === 404 && (await noRepo.json()).error === "repo_not_found", "nonexistent repo → 404 repo_not_found");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("orgRoutes search tests passed");

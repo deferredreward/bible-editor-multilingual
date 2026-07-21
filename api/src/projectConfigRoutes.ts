@@ -69,7 +69,13 @@ const TranslationSourceShape = z
   .object({
     org: z.string(),
     languageCode: z.string(),
-    repos: z.record(z.string(), z.string()),
+    // Per-resource value is a bare repo string OR an { org?, repo } ref (a
+    // resource sourced from a different org via a pasted Door43 URL). Loose here;
+    // custom-gl's stricter isIdent guard runs in validateCustomGlOverrides.
+    repos: z.record(
+      z.string(),
+      z.union([z.string(), z.object({ org: z.string().optional(), repo: z.string() })]),
+    ),
   })
   .nullable();
 

@@ -158,4 +158,27 @@ console.log("[buildTranslateOptions] partial translationSource — resource with
   assert(overridden !== null && overridden.sourceRef === "unfoldingWord/en_tw@abc123", "explicit sourceRef override wins over missing repo");
 }
 
+console.log("[buildTranslateOptions] per-resource org override → sourceRef uses THAT org (#84 slice)");
+{
+  // tn sourced from a DIFFERENT org than translationSource.org (pasted URL).
+  const perOrg = {
+    ...arBsoj,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: { org: "BibleAquifer", repo: "ar_tn" }, tq: "en_tq" },
+    },
+  };
+  const tn = buildTranslateOptions(perOrg, undefined);
+  assert(
+    tn !== null && tn.sourceRef === "BibleAquifer/ar_tn@master",
+    "tn sourceRef points at the override org+repo, not translationSource.org",
+  );
+  const tq = buildTranslateOptions(perOrg, { resourceType: "tq" });
+  assert(
+    tq !== null && tq.sourceRef === "unfoldingWord/en_tq@master",
+    "a legacy-string sibling role still resolves under the default org",
+  );
+}
+
 console.log("\ntranslateOptions: all assertions passed");
