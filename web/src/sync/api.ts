@@ -1134,6 +1134,69 @@ export interface ArticleUnitMeta {
   latest_source?: string | null;
 }
 
+// ── Note templates (migration 0054) ──
+// A single translatable note-template unit. Mirrors ArticleUnit, but a template
+// is one indivisible markdown body (no title/sub-title parts): source_md is the
+// English sheet text (column C), target_md is the translation (NULL = not
+// started).
+export interface TemplateUnit {
+  template_id: string;
+  support_ref: string;
+  sheet_order: number | null;
+  type: string | null;
+  source_md: string;
+  source_hash: string;
+  origin: string;
+  target_md: string | null;
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  draft_meta_json: string | null;
+  pre_draft_json?: string | null;
+  version: number;
+  updated_by: number | null;
+  updated_at: number;
+  deleted_at: number | null;
+  latest_source?: string | null;
+}
+
+// Lightweight rail item (source_md/target_md excluded server-side for weight).
+export interface TemplateUnitMeta {
+  template_id: string;
+  support_ref: string;
+  type: string | null;
+  sheet_order: number | null;
+  origin: string;
+  has_target: 0 | 1;
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  version: number;
+  // 1 when a source change demoted the draft and the target is now stale.
+  stale_source: 0 | 1;
+}
+
+// One English-source revision (newest first).
+export interface TemplateSourceRevision {
+  source_hash: string;
+  source_md: string;
+  seen_at: number;
+}
+
+// Target-side history entry — the same word-diff-ready shape RowHistoryEntry
+// uses, narrowed to the single `target_md` content field.
+export interface TemplateHistoryEntry {
+  version: number;
+  action: string;
+  created_at: number;
+  user: RowHistoryUser | null;
+  patch: { target_md?: string | null };
+  snapshot: { target_md: string | null };
+  synthetic: boolean;
+  restored_from_version: number | null;
+}
+
+export interface TemplateHistory {
+  source: TemplateSourceRevision[];
+  target: TemplateHistoryEntry[];
+}
+
 export type PipelineState =
   // queued: accepted by us, not yet sent to the bot (cancellable).
   // dispatching: claimed the single bot slot; upstream POST in flight.
@@ -1768,6 +1831,40 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(opts ?? {}),
     }),
+
+  // ── Note templates (migration 0054) ──
+  // Rail list (metadata only; source_md/target_md excluded server-side).
+  getTemplates: (opts?: { includeDeleted?: boolean }) =>
+    request<{ units: TemplateUnitMeta[] }>(
+      `/api/templates${opts?.includeDeleted ? "?includeDeleted=1" : ""}`,
+    ),
+
+  // Full unit (source_md + target_md) for the editor.
+  getTemplate: (id: string) =>
+    request<TemplateUnit>(`/api/templates/unit?id=${encodeURIComponent(id)}`),
+
+  // Save the translation. If-Match version CAS (409 on mismatch, 428 if the
+  // header is missing). Editing an ai_draft/validated unit demotes it to
+  // 'edited' server-side.
+  patchTemplate: (id: string, expectedVersion: number, targetMd: string) =>
+    request<TemplateUnit>(`/api/templates/unit?id=${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+      body: JSON.stringify({ target_md: targetMd }),
+    }),
+
+  // "Approve" — value=true → 'validated'; value=false → 'edited'. Non-version-
+  // bumping; 404 if the unit has no translation to (un)validate.
+  validateTemplate: (id: string, value: boolean) =>
+    request<TemplateUnit>(`/api/templates/unit/validate?id=${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value ? 1 : 0 }),
+    }),
+
+  // Source revisions + word-diff-ready target history for the history dialog.
+  getTemplateHistory: (id: string) =>
+    request<TemplateHistory>(`/api/templates/unit/history?id=${encodeURIComponent(id)}`),
 
   // ── UI localization overrides (migration 0052) ──
   getL10nOverrides: () =>

@@ -30,6 +30,7 @@ import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
 import LanguageIcon from "@mui/icons-material/Language";
 import CheckIcon from "@mui/icons-material/Check";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
+import NoteAltOutlinedIcon from "@mui/icons-material/NoteAltOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
 import TranslateIcon from "@mui/icons-material/Translate";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
@@ -571,6 +572,21 @@ export function TopBar({
             sx={{ color: "text.secondary" }}
           >
             <ArticleOutlinedIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      )}
+      {showArticles && (
+        <Tooltip title={t("templates.title")}>
+          <IconButton
+            size="small"
+            color="inherit"
+            onClick={() => {
+              location.hash = "#/templates";
+            }}
+            aria-label={t("templates.title")}
+            sx={{ color: "text.secondary" }}
+          >
+            <NoteAltOutlinedIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       )}
