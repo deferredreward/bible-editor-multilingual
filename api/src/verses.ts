@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
 import type { VerseRow } from "./types";
-import { currentUserId, requireEditor } from "./auth";
-import { activePipelineForChapter, lockedResponseBody } from "./chapterLock";
-import { broadcastChapter } from "./wsEvents";
-import { recomputeTargetOccurrences } from "./importParsers";
+import { currentUserId, requireEditor } from "./auth.ts";
+import { activePipelineForChapter, lockedResponseBody } from "./chapterLock.ts";
+import { broadcastChapter } from "./wsEvents.ts";
+import { recomputeTargetOccurrences } from "./importParsers.ts";
 import {
   CorruptContentJsonError,
   corruptContentJsonBody,
@@ -19,8 +19,8 @@ import {
 } from "./alignmentDelta.ts";
 import { buildVerseHistory, type VerseHistoryLogRow } from "./verseHistory.ts";
 import { lanesToReopenOnVerseEdit, reopenLaneChecks } from "./laneReopen.ts";
-import { laneForBibleVersion, assertLaneWritable, allowVersePatch, activeGenerationForBibleVersion } from "./scriptureLane";
-import { nonAlignmentContentEqual, derivePlainText } from "./alignmentCanonical";
+import { laneForBibleVersion, assertLaneWritable, allowVersePatch, activeGenerationForBibleVersion } from "./scriptureLane.ts";
+import { nonAlignmentContentEqual, derivePlainText } from "./alignmentCanonical.ts";
 
 // Verse content can carry malformed/missing `\w` occurrence data — colliding
 // `(text, occurrence)` pairs from a bad import or AI alignment (ULT/UST), or no

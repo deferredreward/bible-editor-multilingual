@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "./index";
-import { requireAuth } from "./auth";
+import { requireAuth } from "./auth.ts";
 
 export const alerts = new Hono<{
   Bindings: Env;
@@ -44,6 +44,9 @@ alerts.get("/me", async (c) => {
 
 // 200 with { ok: true } rather than 204 — the frontend request<T> helper
 // unconditionally parses JSON on success and would throw on empty bodies.
+// Intentionally requireAuth-only (no requireEditor): the UPDATE is scoped to
+// the caller's own username, so dismissing is per-user state and stays
+// viewer-accessible (see viewerGuard.ts allowlist).
 alerts.post("/:id/dismiss", async (c) => {
   const username = c.get("username");
   if (!username) return c.json({ error: "unauthorized" }, 401);

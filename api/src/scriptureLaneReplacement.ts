@@ -19,9 +19,9 @@ import {
   recoverOrphanedReservation,
   requireLaneState,
   snapshotRequiredBooks,
-} from "./scriptureLane";
-import { dcsRawUrl, fetchText, BOOK_NUMBERS, fileCommitSha } from "./dcsSources";
-import { extractVersesForRange, extractUsfmHeaders } from "./importParsers";
+} from "./scriptureLane.ts";
+import { dcsRawUrl, fetchText, BOOK_NUMBERS, fileCommitSha } from "./dcsSources.ts";
+import { extractVersesForRange, extractUsfmHeaders } from "./importParsers.ts";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
