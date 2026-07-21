@@ -39,7 +39,12 @@
     "switchToLight": "สลับไปโหมดสว่าง",
     "switchToDark": "สลับไปโหมดมืด",
     "toggleColorMode": "สลับโหมดสี",
-    "uiLanguage": "ภาษาของส่วนติดต่อ"
+    "uiLanguage": "ภาษาของส่วนติดต่อ",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "โหมดการแปล",

@@ -39,7 +39,12 @@
     "switchToLight": "تغییر به حالت روشن",
     "switchToDark": "تغییر به حالت تیره",
     "toggleColorMode": "تغییر حالت رنگ",
-    "uiLanguage": "زبان رابط"
+    "uiLanguage": "زبان رابط",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "حالت ترجمه",

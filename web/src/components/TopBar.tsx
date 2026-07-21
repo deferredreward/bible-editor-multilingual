@@ -31,12 +31,14 @@ import LanguageIcon from "@mui/icons-material/Language";
 import CheckIcon from "@mui/icons-material/Check";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
+import TranslateIcon from "@mui/icons-material/Translate";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
 import { useTranslation } from "react-i18next";
-import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
+import { useProjectConfig, isTranslationProject, setProjectMode } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
-import { api, ApiError, importedSourceRepos, type BookListEntry, type BookSummary } from "../sync/api";
+import { api, ApiError, importedSourceRepos, isAdmin, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
@@ -214,6 +216,22 @@ export function TopBar({
   const { mode, toggle } = useContext(ThemeModeContext);
   const projectConfig = useProjectConfig();
   const showArticles = isTranslationProject(projectConfig);
+  // Editor/Translator mode: an admin gets an interactive toggle, everyone else
+  // a read-only indicator. `isTranslationProject` already reads cfg.mode, so the
+  // rest of the app (articles, memory panels) reacts once setProjectMode lands.
+  const isTranslatorMode = showArticles;
+  const [modePending, setModePending] = useState(false);
+  const flipMode = async () => {
+    if (modePending) return;
+    setModePending(true);
+    try {
+      await setProjectMode(isTranslatorMode ? "authoring" : "translation");
+    } catch {
+      /* soft-fail: leave the current mode; a later fetch reconciles */
+    } finally {
+      setModePending(false);
+    }
+  };
 
   useEffect(() => {
     api.getBooks().then((r) => setBooks(r.books)).catch(() => setBooks([]));
@@ -507,6 +525,40 @@ export function TopBar({
       </Box>
       <Box sx={{ flex: 1 }} />
       {workspaceSwitcher}
+      {projectConfig &&
+        (isAdmin() ? (
+          <Tooltip title={t("topbar.mode.tooltip")}>
+            <span>
+              <IconButton
+                size="small"
+                color="inherit"
+                disabled={modePending}
+                onClick={() => void flipMode()}
+                aria-label={t("topbar.mode.tooltip")}
+                sx={{ color: "text.secondary" }}
+              >
+                {isTranslatorMode ? (
+                  <TranslateIcon fontSize="small" />
+                ) : (
+                  <EditOutlinedIcon fontSize="small" />
+                )}
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip title={isTranslatorMode ? t("topbar.mode.translator") : t("topbar.mode.editor")}>
+            <Box
+              sx={{ display: "flex", alignItems: "center", color: "text.disabled" }}
+              aria-label={isTranslatorMode ? t("topbar.mode.translator") : t("topbar.mode.editor")}
+            >
+              {isTranslatorMode ? (
+                <TranslateIcon fontSize="small" />
+              ) : (
+                <EditOutlinedIcon fontSize="small" />
+              )}
+            </Box>
+          </Tooltip>
+        ))}
       {showArticles && (
         <Tooltip title={t("articles.title")}>
           <IconButton

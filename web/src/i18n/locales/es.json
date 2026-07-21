@@ -39,7 +39,12 @@
     "switchToLight": "cambiar al modo claro",
     "switchToDark": "cambiar al modo oscuro",
     "toggleColorMode": "alternar modo de color",
-    "uiLanguage": "Idioma de la interfaz"
+    "uiLanguage": "Idioma de la interfaz",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "Modo de traducción",

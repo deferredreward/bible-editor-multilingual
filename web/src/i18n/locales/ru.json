@@ -39,7 +39,12 @@
     "switchToLight": "переключить на светлую тему",
     "switchToDark": "переключить на тёмную тему",
     "toggleColorMode": "переключить цветовую тему",
-    "uiLanguage": "Язык интерфейса"
+    "uiLanguage": "Язык интерфейса",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "Режим перевода",

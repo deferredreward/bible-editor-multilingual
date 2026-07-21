@@ -39,7 +39,12 @@
     "switchToLight": "আলো মোডে স্যুইচ করুন",
     "switchToDark": "অন্ধকার মোডে স্যুইচ করুন",
     "toggleColorMode": "রঙ মোড টগল করুন",
-    "uiLanguage": "ইন্টারফেস ভাষা"
+    "uiLanguage": "ইন্টারফেস ভাষা",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "অনুবাদ মোড",

@@ -35,6 +35,14 @@ import type { Env } from "./index";
 
 export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl" | "tw" | "ta";
 
+/**
+ * The editor/translator workflow mode. Independent from `translationSource`
+ * (which is the DATA source): `mode` drives which UI affordances show, and is
+ * an OPTIONAL override in overrides_json. When unset it DERIVES from
+ * translationSource for back-compat (see deriveMode / materialize).
+ */
+export type ProjectMode = "authoring" | "translation";
+
 export interface GlBiblePane {
   /** DCS repo under the project org, e.g. "ar_avd" */
   repo: string;
@@ -84,6 +92,15 @@ export interface ProjectConfig {
     languageCode: string;
     repos: Record<ResourceKey, string>;
   } | null;
+  /**
+   * Explicit editor/translator workflow mode — the materialized value is ALWAYS
+   * concrete. Source of truth is an optional `mode` key in overrides_json; when
+   * that key is absent it derives to `translationSource != null ? "translation"
+   * : "authoring"`, so existing configs behave exactly as before until an admin
+   * toggles it. This is decoupled from `translationSource` on purpose: the mode
+   * changes which UI affordances show without changing the data source.
+   */
+  mode: ProjectMode;
   /** True when the org's repos were confirmed to exist on Door43 (2026-07-10 survey) */
   reposVerified: boolean;
   /**
@@ -122,7 +139,9 @@ const EN_REPOS: Record<ResourceKey, string> = {
 
 const UW_SOURCE = { org: "unfoldingWord", languageCode: "en", repos: EN_REPOS };
 
-export const PRESETS: Record<string, ProjectConfig> = {
+// Presets never hardcode `mode` — it's derived at materialize() time (or set
+// by an explicit overrides_json toggle), so the preset shape omits it.
+export const PRESETS: Record<string, Omit<ProjectConfig, "mode">> = {
   // The default — byte-for-byte the behavior the hardcoded mapping had.
   "en-unfoldingword": {
     preset: "en-unfoldingword",
@@ -316,12 +335,19 @@ interface ConfigRow {
 // Exported for the PR B atomic-apply path (projectConfigApply.ts), which must
 // compute the "would-be" materialized config from a direct uncached D1 read
 // BEFORE writing, to plan the empty-project guard and lane reconciliation.
+// Back-compat mode derivation: with no explicit `mode` override, translation
+// projects (translationSource set) default to "translation", author-only ones
+// (English root, custom-gl) to "authoring" — byte-for-byte the old behavior.
+export function deriveMode(translationSource: ProjectConfig["translationSource"]): ProjectMode {
+  return translationSource != null ? "translation" : "authoring";
+}
+
 export function materialize(preset: string, overridesJson: string | null): ProjectConfig {
   const base = PRESETS[preset] ?? PRESETS[DEFAULT_PRESET];
-  if (!overridesJson) return base;
+  if (!overridesJson) return { ...base, mode: deriveMode(base.translationSource) };
   try {
     const o = JSON.parse(overridesJson) as Partial<ProjectConfig>;
-    return {
+    const merged = {
       ...base,
       ...(o.org ? { org: o.org } : {}),
       ...(o.exportOrg ? { exportOrg: o.exportOrg } : {}),
@@ -357,8 +383,15 @@ export function materialize(preset: string, overridesJson: string | null): Proje
       ...(o.translationSource !== undefined ? { translationSource: o.translationSource } : {}),
       preset: base.preset,
     };
+    // mode: an explicit override wins; otherwise derive from the (possibly
+    // overridden) translationSource so pre-mode configs keep today's behavior.
+    const mode: ProjectMode =
+      o.mode === "authoring" || o.mode === "translation"
+        ? o.mode
+        : deriveMode(merged.translationSource);
+    return { ...merged, mode };
   } catch {
-    return base;
+    return { ...base, mode: deriveMode(base.translationSource) };
   }
 }
 
@@ -378,9 +411,9 @@ export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
     // transient error must not pin a GL project to unfoldingWord/en_* for the
     // whole TTL (that would send import/reimport/export at the wrong org). The
     // next request retries the read.
-    return PRESETS[DEFAULT_PRESET];
+    return materialize(DEFAULT_PRESET, null);
   }
-  const cfg = row ? materialize(row.preset, row.overrides_json) : PRESETS[DEFAULT_PRESET];
+  const cfg = row ? materialize(row.preset, row.overrides_json) : materialize(DEFAULT_PRESET, null);
   cached.set(key, { cfg, at: now });
   return cfg;
 }

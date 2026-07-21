@@ -39,7 +39,12 @@
     "switchToLight": "روشن موڈ پر جائیں",
     "switchToDark": "تاریک موڈ پر جائیں",
     "toggleColorMode": "رنگ موڈ تبدیل کریں",
-    "uiLanguage": "انٹرفیس زبان"
+    "uiLanguage": "انٹرفیس زبان",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "ترجمہ موڈ",

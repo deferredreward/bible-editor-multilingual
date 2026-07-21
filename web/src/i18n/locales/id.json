@@ -39,7 +39,12 @@
     "switchToLight": "beralih ke mode terang",
     "switchToDark": "beralih ke mode gelap",
     "toggleColorMode": "alihkan mode warna",
-    "uiLanguage": "Bahasa antarmuka"
+    "uiLanguage": "Bahasa antarmuka",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "Mode terjemahan",

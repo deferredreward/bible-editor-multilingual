@@ -39,7 +39,12 @@
     "switchToLight": "badilisha kwenda hali angavu",
     "switchToDark": "badilisha kwenda hali giza",
     "toggleColorMode": "geuza hali ya rangi",
-    "uiLanguage": "Lugha ya kiolesura"
+    "uiLanguage": "Lugha ya kiolesura",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "Hali ya tafsiri",

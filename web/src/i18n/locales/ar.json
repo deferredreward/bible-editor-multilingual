@@ -64,7 +64,12 @@
     "switchToLight": "التبديل إلى الوضع الفاتح",
     "switchToDark": "التبديل إلى الوضع الداكن",
     "toggleColorMode": "تبديل وضع الألوان",
-    "uiLanguage": "لغة الواجهة"
+    "uiLanguage": "لغة الواجهة",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "وضع الترجمة",

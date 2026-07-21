@@ -39,7 +39,12 @@
     "switchToLight": "उज्यालो मोडमा बदल्नुहोस्",
     "switchToDark": "अँध्यारो मोडमा बदल्नुहोस्",
     "toggleColorMode": "रङ मोड टगल गर्नुहोस्",
-    "uiLanguage": "इन्टरफेस भाषा"
+    "uiLanguage": "इन्टरफेस भाषा",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "अनुवाद मोड",
