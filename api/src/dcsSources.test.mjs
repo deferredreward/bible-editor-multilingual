@@ -225,6 +225,40 @@ function runPure() {
     "translationSourceRepoRef: per-resource org override → owner is the override org",
   );
 
+  // ── SECURITY: non-ident override org/repo must never yield a usable ref ──
+  // A non-custom-preset override reaches normalizeSourceRef UNVALIDATED. A path-
+  // traversal org/repo must resolve to null (treated as no-source), never a ref.
+  assert(
+    normalizeSourceRef("unfoldingWord", { org: "uW/../../other", repo: "x_tn" }) === null,
+    "normalizeSourceRef: traversal in org → null (no source)",
+  );
+  assert(
+    normalizeSourceRef("unfoldingWord", { repo: "../../../etc" }) === null,
+    "normalizeSourceRef: traversal in repo → null",
+  );
+  assert(normalizeSourceRef("unfoldingWord", "bad repo!") === null, "normalizeSourceRef: non-ident bare string → null");
+  const evilTs = {
+    org: "unfoldingWord",
+    languageCode: "en",
+    repos: { tn: { org: "a/../../b", repo: "x_tn" }, tq: "ok_tq" },
+  };
+  assert(resolveSourceRef(evilTs, "tn") === null, "resolveSourceRef: traversal org role → null");
+  assert(
+    JSON.stringify(resolveSourceRef(evilTs, "tq")) === JSON.stringify({ org: "unfoldingWord", repo: "ok_tq" }),
+    "resolveSourceRef: a valid sibling role still resolves (only the bad one is dropped)",
+  );
+
+  // Belt-and-suspenders: even if a slash-bearing owner/repo reached a URL builder
+  // (it can't via resolveSourceRef, but a legacy DcsRepoOverrides caller might),
+  // dcsUrls encodes the owner/repo segments so no traversal escapes.
+  const traversalUrls = dcsUrls(ENV, CFG, "ZEC", {
+    tn: { owner: "a/../../evil", repo: "x_tn", ref: "master" },
+  });
+  assert(
+    !traversalUrls.tn.includes("/../") && traversalUrls.tn.includes("a%2F..%2F..%2Fevil"),
+    "dcsUrls: owner/repo segments encoded — traversal neutralized",
+  );
+
   // Held-out predicate — any non-null marker means "don't sync with the org repo".
   const setOf = (p) => [...heldOutNoteResources(p)].sort().join(",");
   assert(setOf(null) === "", "null provenance → nothing held out");

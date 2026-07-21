@@ -42,3 +42,35 @@ test("resolveSourceRef(null) → null (not a translation project)", () => {
   assert.equal(resolveSourceRef(null, "tn"), null);
   assert.equal(resolveSourceRef(undefined, "tn"), null);
 });
+
+// ── PARITY PIN ───────────────────────────────────────────────────────────────
+// web/src/lib/sourceRef.ts hand-mirrors api/src/dcsSources.ts normalizeSourceRef
+// (can't share across the api/web build boundary). This fixed table pins the
+// behavior of BOTH to identical cases — the SAME table lives in
+// api/src/dcsSources.test.mjs assertions. If you change one module, this table
+// (and its api twin) will catch a divergent edit. Format: [defaultOrg, value, expected].
+const NORMALIZE_PARITY = [
+  ["unfoldingWord", "en_tn", { org: "unfoldingWord", repo: "en_tn" }],
+  ["unfoldingWord", "", null],
+  ["unfoldingWord", "   ", null],
+  ["unfoldingWord", undefined, null],
+  ["unfoldingWord", null, null],
+  ["unfoldingWord", { repo: "en_ta" }, { org: "unfoldingWord", repo: "en_ta" }],
+  ["unfoldingWord", { org: "BibleAquifer", repo: "ar_tw" }, { org: "BibleAquifer", repo: "ar_tw" }],
+  ["unfoldingWord", { org: "", repo: "en_tq" }, { org: "unfoldingWord", repo: "en_tq" }],
+  ["unfoldingWord", { repo: "" }, null],
+  // SECURITY: non-ident org/repo → null (must match api normalizeSourceRef).
+  ["unfoldingWord", "bad repo!", null],
+  ["unfoldingWord", { org: "a/../../b", repo: "x_tn" }, null],
+  ["unfoldingWord", { repo: "../../etc" }, null],
+];
+
+test("PARITY: normalizeSourceRef matches the api table exactly", () => {
+  for (const [defaultOrg, value, expected] of NORMALIZE_PARITY) {
+    assert.deepEqual(
+      normalizeSourceRef(defaultOrg, value),
+      expected,
+      `normalizeSourceRef(${JSON.stringify(defaultOrg)}, ${JSON.stringify(value)})`,
+    );
+  }
+});

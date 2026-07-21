@@ -22,20 +22,34 @@ export interface TranslationSourceLike {
   repos: Partial<Record<string, SourceRefValue>>;
 }
 
-// Normalize one persisted value against the default (primary) org.
+// DCS ident (org/repo). Mirrors isIdent in api/src/repoUrl.ts.
+function isIdent(s: string): boolean {
+  return /^[A-Za-z0-9._~-]+$/.test(s);
+}
+
+// Normalize one persisted value against the default (primary) org. Mirror of
+// api/src/dcsSources.ts normalizeSourceRef — keep in lockstep (see
+// sourceRef.test.mjs, which pins both to a shared table). SECURITY: the resolved
+// org/repo are interpolated into browser-side git.door43.org fetch URLs
+// (useSourceNotes / twArticle), so a non-ident org/repo → null (no source).
 export function normalizeSourceRef(
   defaultOrg: string,
   value: SourceRefValue | null | undefined,
 ): SourceRef | null {
   if (value == null) return null;
+  let repo: string;
+  let org: string;
   if (typeof value === "string") {
-    const repo = value.trim();
-    return repo ? { org: defaultOrg, repo } : null;
+    repo = value.trim();
+    org = defaultOrg;
+  } else if (typeof value === "object") {
+    repo = (value.repo ?? "").trim();
+    org = (value.org ?? "").trim() || defaultOrg;
+  } else {
+    return null;
   }
-  if (typeof value !== "object") return null;
-  const repo = (value.repo ?? "").trim();
   if (!repo) return null;
-  const org = (value.org ?? "").trim() || defaultOrg;
+  if (!isIdent(org) || !isIdent(repo)) return null;
   return { org, repo };
 }
 

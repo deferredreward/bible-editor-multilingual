@@ -62,10 +62,17 @@ orgRoutes.get("/search", async (c) => {
 
 // GET /api/orgs/verify-source?url=<pasted Door43 URL> — resolve a pasted repo
 // URL for the Setup wizard's per-resource source-org override (issue #84 slice).
-// Parses the URL into { org, repo }, then confirms BOTH the org (canonical
-// verify, GET /api/v1/orgs/{org}) and the repo (GET /api/v1/repos/{org}/{repo})
-// exist on DCS. Admin-gated like the rest of orgRoutes. Returns canonical casing
-// so a pasted "bibleaquifer/AR_TN" comes back as the repo's real full name.
+// Parses the URL into { org, repo }, then confirms the REPO exists on DCS via a
+// SINGLE GET /api/v1/repos/{owner}/{repo}. We deliberately DON'T also check
+// /api/v1/orgs/{owner}: many DCS source repos live under a USER account (not an
+// org), and the org endpoint 404s for users — that would wrongly refuse a valid
+// pasted URL. The repo record's `full_name` already carries the canonical owner
+// casing, so one round-trip both verifies existence and canonicalizes casing.
+// Admin-gated like the rest of orgRoutes.
+//
+// A transient DCS failure (network / 429 / 5xx) must NOT masquerade as a genuine
+// 404 (which would tell the wizard a real source doesn't exist): only a real 404
+// from DCS → repo_not_found (404); transient → dcs_unavailable (503).
 orgRoutes.get("/verify-source", async (c) => {
   const urlParam = (c.req.query("url") ?? "").trim();
   if (!urlParam) {
@@ -75,19 +82,18 @@ orgRoutes.get("/verify-source", async (c) => {
   if (!parsed.ok) {
     return c.json({ ok: false, error: parsed.error }, 400);
   }
-  const orgRec = await lookupOrgRecord(c.env, parsed.org);
-  if (!orgRec) {
-    return c.json({ ok: false, error: "org_not_found", org: parsed.org, repo: parsed.repo }, 404);
+  const lookup = await lookupRepoRecord(c.env, parsed.org, parsed.repo);
+  if (lookup.status === "unavailable") {
+    return c.json({ ok: false, error: "dcs_unavailable", org: parsed.org, repo: parsed.repo }, 503);
   }
-  const repoRec = await lookupRepoRecord(c.env, orgRec.username, parsed.repo);
-  if (!repoRec) {
-    return c.json({ ok: false, error: "repo_not_found", org: orgRec.username, repo: parsed.repo }, 404);
+  if (lookup.status === "not_found") {
+    return c.json({ ok: false, error: "repo_not_found", org: parsed.org, repo: parsed.repo }, 404);
   }
   return c.json({
     ok: true,
-    org: orgRec.username,
-    repo: repoRec.name,
-    fullName: repoRec.fullName,
+    org: lookup.org,
+    repo: lookup.repo,
+    fullName: lookup.fullName,
   });
 });
 
@@ -203,30 +209,47 @@ async function lookupOrgRecord(
   }
 }
 
-// Looks a repo up on DCS via GET /api/v1/repos/{org}/{repo}. Returns the
-// canonical record ({name, fullName}) on a 200, or null on 404 / any non-200 /
-// network error. Used by verify-source to confirm a pasted per-resource source
-// URL actually resolves to a real repo (not just a real org).
-async function lookupRepoRecord(
-  env: Env,
-  org: string,
-  repo: string,
-): Promise<{ name: string; fullName: string } | null> {
+// Looks a repo up on DCS via GET /api/v1/repos/{owner}/{repo} (works for BOTH
+// org- and user-owned namespaces, unlike GET /api/v1/orgs/{owner}). Distinguishes
+// three outcomes so verify-source never turns a transient DCS blip into a false
+// "does not exist":
+//   ok         → 200 with a repo record (canonical owner/repo from full_name)
+//   not_found  → a genuine 404 from DCS (the repo really isn't there)
+//   unavailable→ network error / 429 / 5xx / other non-200 / unparseable 200
+// Sends the service token when present (private repos / rate limits).
+type RepoLookup =
+  | { status: "ok"; org: string; repo: string; fullName: string }
+  | { status: "not_found" }
+  | { status: "unavailable" };
+
+async function lookupRepoRecord(env: Env, owner: string, repo: string): Promise<RepoLookup> {
+  let res: Response;
   try {
     const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
     const headers: Record<string, string> = { Accept: "application/json" };
     if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
-    const res = await fetch(
-      `${base}/api/v1/repos/${encodeURIComponent(org)}/${encodeURIComponent(repo)}`,
+    res = await fetch(
+      `${base}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
       { headers },
     );
-    if (!res.ok) return null;
-    const body = (await res.json()) as { name?: string; full_name?: string };
-    if (!body.name) return null;
-    return { name: body.name, fullName: body.full_name ?? `${org}/${body.name}` };
   } catch {
-    return null;
+    return { status: "unavailable" }; // network error — retryable, not a 404
   }
+  if (res.status === 404) return { status: "not_found" };
+  if (!res.ok) return { status: "unavailable" }; // 429 / 5xx / 403 — transient
+  let body: { name?: string; full_name?: string };
+  try {
+    body = (await res.json()) as { name?: string; full_name?: string };
+  } catch {
+    return { status: "unavailable" }; // malformed 200 — don't assert existence
+  }
+  if (!body.name) return { status: "unavailable" };
+  // full_name is "Owner/repo" — the canonical owner + repo casing DCS holds.
+  const fullName = body.full_name ?? `${owner}/${body.name}`;
+  const slash = fullName.indexOf("/");
+  const canonOwner = slash > 0 ? fullName.slice(0, slash) : owner;
+  const canonRepo = slash > 0 ? fullName.slice(slash + 1) : body.name;
+  return { status: "ok", org: canonOwner, repo: canonRepo, fullName };
 }
 
 // Resolves an org name to DCS's canonical casing via GET /api/v1/orgs/{org}

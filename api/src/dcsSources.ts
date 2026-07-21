@@ -12,7 +12,7 @@
 
 import type { Env } from "./index";
 import type { ProjectConfig, TranslationSourceRef } from "./projectConfig";
-import type { RepoRef } from "./repoUrl";
+import { isIdent, type RepoRef } from "./repoUrl.ts";
 
 // Standard unfoldingWord book number prefixes for USFM filenames. Mirror of
 // the BOOK_NUMBERS map in scripts/import-book.mjs and api/src/export.ts.
@@ -93,16 +93,23 @@ export function dcsUrls(
   const tn = at("tn", cfg.repos.tn);
   const tq = at("tq", cfg.repos.tq);
 
+  // SECURITY: encode ONLY the owner/repo path segments — a per-resource override
+  // org/repo can reach here from an unvalidated non-custom-preset merge, and a
+  // '/' or '..' in either would otherwise repoint the URL. The ref + filename
+  // segments are code-controlled (master / SHA / `${res}_${BOOK}.tsv`) and carry
+  // legitimate structure, so they are left as-is. For valid idents (the norm)
+  // encoding is a no-op.
+  const seg = encodeURIComponent;
   return {
-    ult: `${base}/${lit.owner}/${lit.repo}/raw/branch/${lit.ref}/${usfmName}`,
-    ust: `${base}/${sim.owner}/${sim.repo}/raw/branch/${sim.ref}/${usfmName}`,
-    orig: `${base}/${ORIG_OWNER}/${origRepo}/raw/branch/master/${usfmName}`,
+    ult: `${base}/${seg(lit.owner)}/${seg(lit.repo)}/raw/branch/${lit.ref}/${usfmName}`,
+    ust: `${base}/${seg(sim.owner)}/${seg(sim.repo)}/raw/branch/${sim.ref}/${usfmName}`,
+    orig: `${base}/${seg(ORIG_OWNER)}/${seg(origRepo)}/raw/branch/master/${usfmName}`,
     origVersion: isNt ? "UGNT" : "UHB",
-    tn: `${base}/${tn.owner}/${tn.repo}/raw/branch/${tn.ref}/tn_${book}.tsv`,
-    tq: `${base}/${tq.owner}/${tq.repo}/raw/branch/${tq.ref}/tq_${book}.tsv`,
+    tn: `${base}/${seg(tn.owner)}/${seg(tn.repo)}/raw/branch/${tn.ref}/tn_${book}.tsv`,
+    tq: `${base}/${seg(tq.owner)}/${seg(tq.repo)}/raw/branch/${tq.ref}/tq_${book}.tsv`,
     // twl is language-neutral (orig-word links), so it always comes from the
     // project's own org — never from the English translation source.
-    twl: `${base}/${org}/${cfg.repos.twl}/raw/branch/master/twl_${book}.tsv`,
+    twl: `${base}/${seg(org)}/${seg(cfg.repos.twl)}/raw/branch/master/twl_${book}.tsv`,
   };
 }
 
@@ -142,19 +149,35 @@ export interface TranslationSourceLike {
 // - bare string            → { org: defaultOrg, repo }
 // - { repo, org? }         → { org: org ?? defaultOrg, repo }
 // - missing / blank repo   → null ("no upstream source for this resource")
+//
+// SECURITY: both the resolved org and repo MUST be valid DCS idents. These
+// values are interpolated into git.door43.org URL path segments (dcsUrls /
+// dcsRawUrl), and — unlike the custom-gl APPLY path — a translationSource
+// override merged via a NON-custom preset reaches here UNVALIDATED (loose zod →
+// materialize). A value like `uW/../../other_tn` would otherwise resolve to an
+// unintended repo/path. Treat any non-ident org/repo as NO source (null) so a
+// traversal can never leave this function. The persist boundary
+// (projectConfigRoutes) and the URL builders (encodeURIComponent) are the other
+// two defense layers.
 export function normalizeSourceRef(
   defaultOrg: string,
   value: TranslationSourceRef | null | undefined,
 ): SourceRef | null {
   if (value == null) return null;
+  let repo: string;
+  let org: string;
   if (typeof value === "string") {
-    const repo = value.trim();
-    return repo ? { org: defaultOrg, repo } : null;
+    repo = value.trim();
+    org = defaultOrg;
+  } else if (typeof value === "object") {
+    repo = (value.repo ?? "").trim();
+    org = (value.org ?? "").trim() || defaultOrg;
+  } else {
+    return null;
   }
-  if (typeof value !== "object") return null;
-  const repo = (value.repo ?? "").trim();
   if (!repo) return null;
-  const org = (value.org ?? "").trim() || defaultOrg;
+  // Reject non-ident org/repo — never yield a value that could traverse paths.
+  if (!isIdent(org) || !isIdent(repo)) return null;
   return { org, repo };
 }
 
@@ -354,7 +377,10 @@ export function dcsResourceFile(
 export function dcsRawUrl(env: Env, owner: string, repo: string, path: string, ref = "master"): string {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const kind = /^[0-9a-f]{40}$/i.test(ref) ? "commit" : "branch";
-  return `${base}/${owner}/${repo}/raw/${kind}/${ref}/${path}`;
+  // SECURITY: encode ONLY owner/repo (a per-resource override can carry an
+  // unvalidated org/repo). `path` intentionally keeps its slashes (in-repo file
+  // path); `ref` is code-controlled (master / SHA). No-op for valid idents.
+  return `${base}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/raw/${kind}/${ref}/${path}`;
 }
 
 // Latest commit SHA on master that touched `path` in `repo`, or null on
