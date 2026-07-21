@@ -16,8 +16,20 @@
 // ("Chapter {{chapter}}"), so those don't hover-match. Static strings (the
 // majority of the UI chrome — buttons, labels, headings) match fine.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, Paper, Stack, TextField, Typography, IconButton } from "@mui/material";
+import {
+  Box,
+  Button,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+  IconButton,
+  Tooltip,
+  Checkbox,
+  FormControlLabel,
+} from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { dirForLang } from "../i18n";
@@ -63,7 +75,16 @@ export function LocalizationInspector() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [barPos, setBarPos] = useState<{ left: number; top: number } | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
   const active = enabled && admin;
+  // Pausing keeps the mode on (and the bar visible, so it's easy to resume)
+  // but suspends hover/click interception entirely, so the admin can
+  // navigate the real app — switch tabs, go back to scripture, whatever —
+  // without having to fully exit and re-enter localization mode.
+  const engaged = active && !paused;
   const rafRef = useRef(0);
 
   // Rebuild the reverse index whenever ANY override save touches i18next's
@@ -98,22 +119,62 @@ export function LocalizationInspector() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang, reindex]);
 
+  function exactMatch(el: Element): Match | null {
+    const text = normalize(el.textContent ?? "");
+    if (!text) return null;
+    const paths = reverseIndex.get(text);
+    if (!paths || paths.length === 0) return null;
+    return { el, rect: el.getBoundingClientRect(), paths };
+  }
+
+  // Handles a label rendered next to a sibling count/badge (e.g. a tab
+  // "Notes" with a separate "0" Chip beside it): the actual click target's
+  // own textContent includes the badge text too ("Notes0"), which won't
+  // exactly equal the plain i18n string, so no ancestor level ever matches.
+  // Search the click target's own descendants for the most specific element
+  // whose OWN text exactly matches — the label span, not the badge sibling.
+  function findMatchInDescendants(root: Element): Match | null {
+    for (const child of root.querySelectorAll("*")) {
+      const match = exactMatch(child);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  // Real interactive controls (buttons, tabs, links, inputs, …). Matching
+  // must never escalate past the nearest one of these on the way up from
+  // the click target — otherwise a click on an icon-only button (no text of
+  // its own) can walk up to a shared ancestor whose OTHER children's text
+  // happens to exactly equal some unrelated key (e.g. a header Stack
+  // containing an icon-only Back button next to a page-title Typography),
+  // hijacking the click into editing that title instead of activating the
+  // button. Confining the walk to the clicked control's own boundary keeps
+  // matching scoped to "this control's own label", never "whatever text
+  // happens to sit next to it".
+  const INTERACTIVE_SELECTOR =
+    'button, a[href], input, select, textarea, [role="button"], [role="tab"], [role="checkbox"], [role="switch"], [role="menuitem"]';
+
   function findMatch(start: Element): Match | null {
+    const boundary = start.closest(INTERACTIVE_SELECTOR);
     let el: Element | null = start;
     for (let depth = 0; el && depth < 6; depth++, el = el.parentElement) {
-      const text = normalize(el.textContent ?? "");
-      if (text) {
-        const paths = reverseIndex.get(text);
-        if (paths && paths.length > 0) {
-          return { el, rect: el.getBoundingClientRect(), paths };
-        }
+      const match = exactMatch(el);
+      if (match) return match;
+      if (depth === 0) {
+        const nested = findMatchInDescendants(el);
+        if (nested) return nested;
       }
+      if (boundary && el === boundary) break;
     }
     return null;
   }
 
   useEffect(() => {
     if (!active) {
+      setPaused(false);
+      setBarPos(null);
+    }
+    if (!engaged) {
       setHover(null);
       setEditor(null);
       setDraft({});
@@ -142,25 +203,32 @@ export function LocalizationInspector() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, editor, reverseIndex]);
+  }, [active, engaged, editor, reverseIndex]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!engaged) return;
     const onClick = (e: MouseEvent) => {
       const target = e.target;
       if (isInspectorUi(target)) return; // let the editor's own controls work
-      e.preventDefault();
-      e.stopPropagation();
+      if (!(target instanceof Element)) return;
       if (editor) {
-        // Editor already open — a click elsewhere just closes it.
+        // Editor already open — dismiss it. Consume this one click so it
+        // doesn't also activate whatever's underneath while closing the
+        // popup, but only this one: a click that doesn't hit an editor and
+        // doesn't match anything must NOT be swallowed (see below) — that
+        // was the bug that made every tab/button in the app inert the
+        // moment localization mode turned on.
+        e.preventDefault();
+        e.stopPropagation();
         setEditor(null);
         setDraft({});
         setErr(null);
         return;
       }
-      if (!(target instanceof Element)) return;
       const match = findMatch(target);
-      if (!match) return;
+      if (!match) return; // no recognized string here — let the click behave normally (navigate, switch tabs, etc.)
+      e.preventDefault();
+      e.stopPropagation();
       setHover(null);
       setEditor(match);
       const seed: Record<string, string> = {};
@@ -170,7 +238,7 @@ export function LocalizationInspector() {
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, editor, reverseIndex, lang]);
+  }, [engaged, editor, reverseIndex, lang]);
 
   const onSave = async () => {
     if (!editor) return;
@@ -197,6 +265,29 @@ export function LocalizationInspector() {
     }
   };
 
+  function onDragStart(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const w = barRef.current?.offsetWidth ?? 300;
+      const h = barRef.current?.offsetHeight ?? 40;
+      const left = Math.min(Math.max(ev.clientX - dragRef.current.dx, 4), window.innerWidth - w - 4);
+      const top = Math.min(Math.max(ev.clientY - dragRef.current.dy, 4), window.innerHeight - h - 4);
+      setBarPos({ left, top });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   if (!active) return null;
 
   const box = editor ?? hover;
@@ -221,24 +312,52 @@ export function LocalizationInspector() {
 
       <Paper
         {...{ [UI_MARKER]: true }}
+        ref={barRef}
         elevation={4}
         sx={{
           position: "fixed",
-          top: 8,
-          left: "50%",
-          transform: "translateX(-50%)",
-          px: 1.5,
+          // Defaults to bottom-center (matching this app's existing Snackbar
+          // convention — see TopBar.tsx's import/error notifications) rather
+          // than top, which used to sit directly over the resource column's
+          // own tab strip (Notes/TWLinks/Questions/…) and visually cover it.
+          // Once dragged, barPos takes over as an absolute position instead.
+          ...(barPos
+            ? { top: barPos.top, left: barPos.left, transform: "none" }
+            : { bottom: 8, left: "50%", transform: "translateX(-50%)" }),
+          px: 1,
           py: 0.5,
           pointerEvents: "auto",
           display: "flex",
           alignItems: "center",
-          gap: 1,
+          gap: 0.5,
+          maxWidth: "calc(100vw - 16px)",
         }}
       >
-        <Typography variant="caption">{t("preferences.localization.inspectHint")}</Typography>
-        <IconButton size="small" onClick={() => setLocalizationModeEnabled(false)}>
-          <CloseIcon fontSize="small" />
-        </IconButton>
+        <Box
+          onMouseDown={onDragStart}
+          sx={{ cursor: "grab", display: "flex", alignItems: "center", color: "text.disabled" }}
+        >
+          <DragIndicatorIcon fontSize="small" />
+        </Box>
+        <Typography variant="caption">
+          {paused ? t("preferences.localization.inspectPausedHint") : t("preferences.localization.inspectHint")}
+        </Typography>
+        <FormControlLabel
+          sx={{ mx: 0, "& .MuiFormControlLabel-label": { fontSize: "0.75rem" } }}
+          control={
+            <Checkbox
+              size="small"
+              checked={paused}
+              onChange={(e) => setPaused(e.target.checked)}
+            />
+          }
+          label={t("preferences.localization.inspectPause")}
+        />
+        <Tooltip title={t("preferences.localization.inspectExit")}>
+          <IconButton size="small" onClick={() => setLocalizationModeEnabled(false)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Paper>
 
       {editor && (

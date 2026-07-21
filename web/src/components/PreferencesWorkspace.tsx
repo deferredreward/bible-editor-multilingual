@@ -80,11 +80,7 @@ import {
   saveOverridePatch,
   type StringRow,
 } from "../i18n/overrides";
-import {
-  useLocalizationMode,
-  setLocalizationModeEnabled,
-  L10N_INSPECTOR_UI_MARKER,
-} from "../i18n/localizationMode";
+import { useLocalizationMode, setLocalizationModeEnabled } from "../i18n/localizationMode";
 import SearchIcon from "@mui/icons-material/Search";
 
 const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
@@ -191,10 +187,7 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
   }, [section, memoryAvailable]);
 
   return (
-    <Box
-      {...{ [L10N_INSPECTOR_UI_MARKER]: true }}
-      sx={{ height: "100%", display: "flex", minHeight: 0 }}
-    >
+    <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
       {/* ── Left rail ── */}
       <Box
         sx={{
