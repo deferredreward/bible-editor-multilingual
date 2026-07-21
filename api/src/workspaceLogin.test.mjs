@@ -216,6 +216,37 @@ console.log("role rows (manual allowlist) keep a workspace allowed without org m
   );
 }
 
+console.log("would-deny fan-out re-resolve: role rows alone can drive single/multi match");
+{
+  // The callback's rescue path: first resolution came back no_match, it fanned
+  // the user_roles lookup across ALL workspaces, and re-resolves with the
+  // expanded roleSlugs — no cookie, no history, no org membership at all.
+  const single = resolveLoginWorkspace({
+    workspaces: WS,
+    cookieSlug: null,
+    lastUsedSlug: null,
+    memberOrgs: orgs(),
+    roleSlugs: new Set(["mltest"]),
+  });
+  assert(
+    single.workspace.slug === "mltest" && single.reason === "single_match",
+    "one role row, zero org matches -> that workspace is the single match",
+  );
+  assert(single.matched === true && single.promptChoice === false, "treated as a positive single match");
+
+  const multi = resolveLoginWorkspace({
+    workspaces: WS,
+    cookieSlug: null,
+    lastUsedSlug: null,
+    memberOrgs: orgs(),
+    roleSlugs: new Set(["mltest", "uw"]),
+  });
+  assert(
+    multi.workspace.slug === "mltest" && multi.reason === "multi_match" && multi.promptChoice === true,
+    "several role rows -> first (registry order) + the picker prompt",
+  );
+}
+
 console.log("garbage slugs never crash resolution");
 {
   const r = resolveLoginWorkspace({

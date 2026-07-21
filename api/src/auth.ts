@@ -658,13 +658,47 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
       /* treat as no row — org membership can still allow the workspace */
     }
   }
-  const resolution = resolveLoginWorkspace({
+  let resolution = resolveLoginWorkspace({
     workspaces,
     cookieSlug,
     lastUsedSlug,
     memberOrgs,
     roleSlugs,
   });
+  // Would-deny rescue: "no_match" means org membership matched nothing and the
+  // cookie/last-used candidates held no role row — the resolution is headed
+  // for the list[0] fallback, where effectiveRole reads the WRONG database and
+  // a manually-allowlisted first-time user (no cookie, no history, not a
+  // Door43 org member) gets the denied screen even though their workspace has
+  // a row for them. ONLY on this rare path, fan the user_roles lookup out
+  // across every configured workspace (the registry is small) and re-resolve:
+  // exactly one row → that workspace (single_match); several → first + the
+  // picker prompt (multi_match — not persisted as last-used, same rule as any
+  // multi match); none → today's deny stands. The common paths above stay
+  // cheap: no fan-out unless we were about to deny.
+  if (resolution.reason === "no_match") {
+    for (const ws of workspaces) {
+      if (roleSlugs.has(ws.slug)) continue;
+      try {
+        const row = await workspaceEnv(c.env, ws)
+          .DB.prepare(`SELECT 1 AS present FROM user_roles WHERE dcs_username = ?1`)
+          .bind(dcsUser.login)
+          .first<{ present: number }>();
+        if (row) roleSlugs.add(ws.slug);
+      } catch {
+        /* unreachable workspace DB — treat as no row */
+      }
+    }
+    if (roleSlugs.size > 0) {
+      resolution = resolveLoginWorkspace({
+        workspaces,
+        cookieSlug,
+        lastUsedSlug,
+        memberOrgs,
+        roleSlugs,
+      });
+    }
+  }
   const wsEnv = workspaceEnv(c.env, resolution.workspace);
 
   // Door43 teams as role source (read-side). Membership of the resolved

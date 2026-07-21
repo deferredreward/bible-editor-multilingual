@@ -163,10 +163,12 @@ export function resolveLoginWorkspace(opts: {
   // Slugs of workspaces where the user already holds a user_roles row (manual
   // allowlist grant or cached team role). A role row grants access to that
   // workspace even without Door43 org membership — otherwise a manually
-  // allowlisted outsider would be evicted from their org at every login. The
-  // caller only queries the CANDIDATE workspaces actually being considered
-  // (cookie + last-used) rather than fanning out to every configured DB, so
-  // this set can only influence steps (a) and (b).
+  // allowlisted outsider would be evicted from their org at every login. On
+  // the fast path the caller only queries the CANDIDATE workspaces (cookie +
+  // last-used); when the first resolution comes back "no_match" — the
+  // would-deny path — it fans the lookup out across ALL configured workspaces
+  // and re-resolves with the expanded set, so entries here can then drive
+  // single_match/multi_match selection too.
   roleSlugs?: Set<string>;
 }): LoginWorkspaceResolution {
   const { workspaces, memberOrgs } = opts;
