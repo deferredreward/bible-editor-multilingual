@@ -75,6 +75,10 @@ export interface Env {
   // Override the bot URL (defaults to https://uw-bt-bot.fly.dev/api/tn-quick
   // when unset). Useful for staging / local bot dev.
   TN_QUICK_URL?: string;
+  // Override the bot URL for single-unit note-template drafting (defaults to
+  // https://uw-bt-bot.fly.dev/api/template-quick when unset). See
+  // api/src/templates.ts POST /unit/draft.
+  TEMPLATE_QUICK_URL?: string;
   // Base URL for the bp-assistant pipeline API (POST /api/pipeline/start,
   // GET /api/pipeline/:jobId). Defaults to the prod bot at uw-bt-bot.fly.dev
   // when unset.

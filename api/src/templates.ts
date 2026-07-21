@@ -9,8 +9,18 @@ import type { Env } from "./index";
 import type { TemplateUnit } from "./types";
 import { currentUserId, requireEditor, requireAdmin } from "./auth";
 import { syncTemplates } from "./templateSync";
+import { getProjectConfig } from "./projectConfig";
+import { nextPreDraftJson } from "./preDraftSnapshot";
 
 export const templates = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
+
+// Same audit-source label pipelineImport.ts uses for translate-pipeline
+// applies (kept as a local literal — pipelineImport.ts doesn't export its
+// copy, and the two producers are otherwise independent).
+const AI_SOURCE = "ai_pipeline";
+
+const DEFAULT_TEMPLATE_QUICK_URL = "https://uw-bt-bot.fly.dev/api/template-quick";
+const TEMPLATE_DRAFT_MAX_BODY_BYTES = 64 * 1024;
 
 function parseIfMatch(header: string | undefined): number | null {
   if (!header) return null;
@@ -104,6 +114,136 @@ templates.patch("/unit", requireEditor, async (c) => {
 
   if (!updateRes.meta.changes) {
     // Distinguish 404 (gone) from 409 (version moved on).
+    const cur = await c.env.DB.prepare(
+      `SELECT version FROM template_units WHERE template_id = ?1 AND deleted_at IS NULL`,
+    )
+      .bind(id)
+      .first<{ version: number }>();
+    if (!cur) return c.json({ error: "not_found" }, 404);
+    const fresh = await c.env.DB.prepare(`SELECT * FROM template_units WHERE template_id = ?1`)
+      .bind(id)
+      .first<TemplateUnit>();
+    return c.json({ error: "version_mismatch", current: fresh }, 409);
+  }
+  const updated = await c.env.DB.prepare(`SELECT * FROM template_units WHERE template_id = ?1`)
+    .bind(id)
+    .first<TemplateUnit>();
+  return c.json(updated);
+});
+
+// POST /api/templates/unit/draft?id=... — "Draft with AI". Mirrors tnQuick.ts's
+// dumb-proxy shape (auth gate, env check, forward, return) for the request/
+// response leg, but — unlike tn-quick, which just hands its result back to the
+// browser for the translator to review before any save — this endpoint also
+// persists the result itself: templates have no separate "apply this AI draft"
+// step, so the write happens here, in the same request, exactly like the
+// translate-pipeline's applyTranslateArticle (api/src/pipelineImport.ts)
+// stamps target_md + translation_state='ai_draft' + pre_draft_json for
+// article_units. Reuses nextPreDraftJson so the last-published snapshot
+// (export gate) is computed identically to every other AI-draft producer.
+// If-Match CAS guards against clobbering a concurrent human edit — same
+// mechanics as PATCH /unit above.
+templates.post("/unit/draft", requireEditor, async (c) => {
+  if (!c.env.BT_API_TOKEN) {
+    return c.json({ error: "template_draft_disabled" }, 503);
+  }
+  const id = c.req.query("id");
+  if (!id) return c.json({ error: "id_required" }, 400);
+  const expected = parseIfMatch(c.req.header("If-Match"));
+  if (expected == null) return c.json({ error: "if_match_required" }, 428);
+
+  const unit = await c.env.DB.prepare(
+    `SELECT * FROM template_units WHERE template_id = ?1 AND deleted_at IS NULL`,
+  )
+    .bind(id)
+    .first<TemplateUnit>();
+  if (!unit) return c.json({ error: "not_found" }, 404);
+  if (unit.version !== expected) {
+    return c.json({ error: "version_mismatch", current: unit }, 409);
+  }
+
+  const cfg = await getProjectConfig(c.env);
+  const requestBody = JSON.stringify({
+    templateId: unit.template_id,
+    supportRef: unit.support_ref,
+    type: unit.type,
+    sourceMd: unit.source_md,
+    targetMd: unit.target_md,
+    targetLang: cfg.languageCode,
+    targetOrg: cfg.exportOrg,
+    direction: cfg.direction,
+  });
+  if (requestBody.length > TEMPLATE_DRAFT_MAX_BODY_BYTES) {
+    return c.json({ error: "body_too_large", maxBytes: TEMPLATE_DRAFT_MAX_BODY_BYTES }, 413);
+  }
+
+  const url = c.env.TEMPLATE_QUICK_URL || DEFAULT_TEMPLATE_QUICK_URL;
+  let upstream: Response;
+  try {
+    upstream = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${c.env.BT_API_TOKEN}`,
+      },
+      body: requestBody,
+    });
+  } catch {
+    return c.json({ error: "model_call_failed" }, 502);
+  }
+  if (!upstream.ok) {
+    const text = await upstream.text();
+    return c.json(
+      { error: "model_call_failed", detail: text.slice(0, 300) },
+      upstream.status === 429 ? 429 : 502,
+    );
+  }
+  let upstreamJson: { target_md?: unknown; warnings?: unknown };
+  try {
+    upstreamJson = await upstream.json();
+  } catch {
+    return c.json({ error: "model_call_failed", detail: "invalid_upstream_json" }, 502);
+  }
+  if (typeof upstreamJson.target_md !== "string") {
+    return c.json({ error: "model_call_failed", detail: "missing_target_md" }, 502);
+  }
+  const targetMd = upstreamJson.target_md;
+  const warnings = Array.isArray(upstreamJson.warnings)
+    ? upstreamJson.warnings.filter((w): w is string => typeof w === "string")
+    : [];
+
+  const userId = currentUserId(c);
+  const now = Math.floor(Date.now() / 1000);
+  const newVersion = unit.version + 1;
+  const draftMeta = warnings.length > 0 ? JSON.stringify({ warnings }) : null;
+  const preDraftJson = nextPreDraftJson(unit.translation_state, unit.pre_draft_json ?? null, {
+    target_md: unit.target_md,
+  });
+
+  const [updateRes] = await c.env.DB.batch([
+    c.env.DB
+      .prepare(
+        `UPDATE template_units
+            SET target_md = ?1,
+                translation_state = 'ai_draft',
+                draft_meta_json = ?2,
+                pre_draft_json = ?3,
+                version = version + 1,
+                updated_at = ?4,
+                updated_by = ?5
+          WHERE template_id = ?6 AND deleted_at IS NULL AND version = ?7`,
+      )
+      .bind(targetMd, draftMeta, preDraftJson, now, userId ?? null, id, expected),
+    c.env.DB
+      .prepare(
+        `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, source, payload_json)
+         SELECT 'template', ?1, NULL, ?2, ?3, ?4, 'update', ?5, ?6
+          WHERE (SELECT changes()) > 0`,
+      )
+      .bind(id, userId ?? null, expected, newVersion, AI_SOURCE, JSON.stringify({ target_md: targetMd, warnings })),
+  ]);
+
+  if (!updateRes.meta.changes) {
     const cur = await c.env.DB.prepare(
       `SELECT version FROM template_units WHERE template_id = ?1 AND deleted_at IS NULL`,
     )

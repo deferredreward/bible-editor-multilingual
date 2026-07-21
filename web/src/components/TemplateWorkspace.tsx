@@ -19,10 +19,12 @@ import SaveIcon from "@mui/icons-material/Save";
 import HistoryIcon from "@mui/icons-material/History";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import EditIcon from "@mui/icons-material/Edit";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type TemplateUnit, type TemplateUnitMeta } from "../sync/api";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useTemplates } from "../hooks/useTemplates";
+import { useTemplateAiDraft } from "../hooks/useTemplateAiDraft";
 import { MarkdownView } from "./MarkdownView";
 import { TemplateHistoryDialog } from "./TemplateHistoryDialog";
 
@@ -334,6 +336,29 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
   }, [isValidated]);
   const collapsedValidated = isValidated && !expanded && !dirty;
 
+  const {
+    drafting: aiDrafting,
+    error: aiDraftError,
+    clearError: clearAiDraftError,
+    draft: requestAiDraft,
+  } = useTemplateAiDraft();
+
+  useEffect(() => {
+    if (aiDraftError) {
+      setErrorMsg(aiDraftError);
+      clearAiDraftError();
+    }
+  }, [aiDraftError, clearAiDraftError]);
+
+  const handleDraftWithAi = useCallback(async () => {
+    if (!unit) return;
+    const updated = await requestAiDraft(unit);
+    if (updated) {
+      applyServerUnit(updated);
+      onServerChange();
+    }
+  }, [unit, requestAiDraft, applyServerUnit, onServerChange]);
+
   const handleSave = useCallback(async () => {
     if (!unit || !dirty) return;
     setSaving(true);
@@ -401,6 +426,25 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
           <IconButton size="small" onClick={() => setHistoryOpen(true)} sx={{ color: "text.secondary" }}>
             <HistoryIcon fontSize="small" />
           </IconButton>
+        </Tooltip>
+        <Tooltip title={isValidated ? t("templates.draftDisabledValidated") : ""}>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                aiDrafting ? (
+                  <CircularProgress size={14} color="inherit" />
+                ) : (
+                  <AutoAwesomeIcon sx={{ fontSize: "18px !important" }} />
+                )
+              }
+              disabled={dirty || saving || aiDrafting || isValidated}
+              onClick={handleDraftWithAi}
+            >
+              {t("templates.draftWithAi")}
+            </Button>
+          </span>
         </Tooltip>
         <Button
           size="small"

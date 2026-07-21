@@ -67,7 +67,9 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftWithAi": "Draft with AI",
+    "draftDisabledValidated": "Un-approve first to draft over an approved translation."
   },
   "topbar": {
     "showVerseList": "show verse list",
