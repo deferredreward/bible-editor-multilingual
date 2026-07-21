@@ -534,6 +534,8 @@
     "attrPeople_other": "{{count}} personnes"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "Ouvrir ce verset dans Logos",
     "autoFollow": "suivi automatique",
     "autoFollowTooltip": "Suivre automatiquement le verset actif dans Logos (capte le focus à chaque changement)",

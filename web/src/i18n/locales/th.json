@@ -506,6 +506,8 @@
     "attrPeople_other": "{{count}} คน"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "เปิดข้อนี้ใน Logos",
     "autoFollow": "ติดตามอัตโนมัติ",
     "autoFollowTooltip": "ติดตามข้อที่ใช้งานอยู่โดยอัตโนมัติใน Logos (แย่งโฟกัสทุกครั้งที่เปลี่ยน)",

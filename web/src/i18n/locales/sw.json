@@ -520,6 +520,8 @@
     "attrPeople_other": "watu {{count}}"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "Fungua mstari huu katika Logos",
     "autoFollow": "fuata kiotomatiki",
     "autoFollowTooltip": "Fuata mstari unaotumika kiotomatiki katika Logos (huchukua umakini kila unapobadilika)",

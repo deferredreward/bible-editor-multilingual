@@ -796,6 +796,8 @@
     "attrPeople_other": "{{count}} شخص"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "افتح هذه الآية في Logos",
     "autoFollow": "متابعة تلقائية",
     "autoFollowTooltip": "متابعة الآية النشطة تلقائيًا في Logos (يسحب التركيز عند كل تغيير)",
