@@ -13,7 +13,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
-import { currentUserId, requireAdmin } from "./auth";
+import { currentUserId, requireAdmin } from "./auth.ts";
 import { parseIfMatch } from "./translationMemoryLib.ts";
 import { sharedDb } from "./workspaces.ts";
 

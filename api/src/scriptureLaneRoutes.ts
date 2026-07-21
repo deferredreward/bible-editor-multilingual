@@ -4,16 +4,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
-import { requireAuth, requireAdmin } from "./auth";
-import { normalizeDoor43RepoUrl } from "./repoUrl";
-import type { LaneKey, ScriptureLaneConfig } from "./scriptureLane";
+import { requireAuth, requireAdmin } from "./auth.ts";
+import { normalizeDoor43RepoUrl } from "./repoUrl.ts";
+import type { LaneKey, ScriptureLaneConfig } from "./scriptureLane.ts";
 import {
   requireLaneState,
   activeLaneConfig,
   parseLaneConfig,
   lanePublicState,
   assertLaneWritable,
-} from "./scriptureLane";
+} from "./scriptureLane.ts";
 import {
   startReplacement,
   stageBook,
@@ -24,9 +24,9 @@ import {
   waiveBook,
   getJob,
   getJobBooks,
-} from "./scriptureLaneReplacement";
-import { broadcastLaneEvent } from "./wsEvents";
-import type { WsEvent } from "./wsEvents";
+} from "./scriptureLaneReplacement.ts";
+import { broadcastLaneEvent } from "./wsEvents.ts";
+import type { WsEvent } from "./wsEvents.ts";
 
 export const scriptureLaneRoutes = new Hono<{
   Bindings: Env;
@@ -60,8 +60,11 @@ async function buildLaneEvent(
   };
 }
 
-// POST /:lane/validate — normalize a pasted URL and return source/export/impact
-scriptureLaneRoutes.post("/:lane/validate", async (c) => {
+// POST /:lane/validate — normalize a pasted URL and return source/export/impact.
+// Read-only dry-run, but it is the first step of the admin-only replacement
+// flow (the Preferences panel gates the whole lane surface on role === admin),
+// so it takes the same requireAdmin as its sibling routes.
+scriptureLaneRoutes.post("/:lane/validate", requireAdmin, async (c) => {
   const lane = c.req.param("lane");
   if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
 

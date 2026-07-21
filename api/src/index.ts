@@ -27,6 +27,7 @@ import { templates } from "./templates";
 import { syncTemplates } from "./templateSync";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
 import { workspaceRoutes } from "./workspaceRoutes";
+import { blockViewerWrites } from "./viewerGuard";
 import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch } from "./workspaces";
 
 export interface Env {
@@ -152,6 +153,11 @@ app.use("*", (c, next) => {
 app.use("*", attachAuth);
 app.use("*", requireWorkspaceMatch);
 app.use("*", requireCsrf);
+// Viewer read-only backstop: 403 any viewer-role mutation outside the
+// self-scoped allowlist (auth/session, own location, workspace switch, own
+// alert dismiss). Per-route requireEditor/requireAdmin guards remain the
+// primary gate — this catches future write routes added without one.
+app.use("*", blockViewerWrites);
 
 // Defense-in-depth response headers. CSP locks the SPA to its own bundle
 // (no third-party scripts/styles aside from inline styles emotion/MUI need).

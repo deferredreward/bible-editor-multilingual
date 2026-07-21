@@ -2,12 +2,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
 import type { CheckLane, RowKind, TnRow, TqRow, TwlRow } from "./types";
-import { currentUserId, requireEditor } from "./auth";
-import { activePipelineForChapter, lockedResponseBody } from "./chapterLock";
-import { broadcastChapter } from "./wsEvents";
-import { newRowId } from "./rowId";
-import { reopenLaneChecks } from "./laneReopen";
-import { refParts, coveredVersesFromRef } from "./importParsers";
+import { currentUserId, requireEditor } from "./auth.ts";
+import { activePipelineForChapter, lockedResponseBody } from "./chapterLock.ts";
+import { broadcastChapter } from "./wsEvents.ts";
+import { newRowId } from "./rowId.ts";
+import { reopenLaneChecks } from "./laneReopen.ts";
+import { refParts, coveredVersesFromRef } from "./importParsers.ts";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
