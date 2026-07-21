@@ -520,6 +520,8 @@
     "attrPeople_other": "{{count}} জন"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "এই পদটি Logos-এ খুলুন",
     "autoFollow": "স্বয়ংক্রিয় অনুসরণ",
     "autoFollowTooltip": "Logos-এ সক্রিয় পদ স্বয়ংক্রিয়ভাবে অনুসরণ করুন (প্রতিটি পরিবর্তনে ফোকাস কেড়ে নেয়)",

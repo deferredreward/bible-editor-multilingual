@@ -521,6 +521,8 @@
     "attrPeople_other": "{{count}} लोग"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "इस पद को Logos में खोलें",
     "autoFollow": "स्वतः अनुसरण",
     "autoFollowTooltip": "Logos में सक्रिय पद का स्वतः अनुसरण करें (हर बदलाव पर फ़ोकस छीन लेता है)",

@@ -520,6 +520,8 @@
     "attrPeople_other": "{{count}} نفر"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "باز کردن این آیه در Logos",
     "autoFollow": "دنبال‌کردن خودکار",
     "autoFollowTooltip": "دنبال‌کردن خودکار آیهٔ فعال در Logos (در هر تغییر تمرکز را می‌رباید)",

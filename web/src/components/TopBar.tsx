@@ -500,48 +500,34 @@ export function TopBar({
         {logosSyncToggle}
       </Box>
       <Box sx={{ flex: 1 }} />
-      {summary?.chapters && (
-        <Box sx={{ display: { xs: "none", lg: "flex" }, alignItems: "center", gap: 1.5 }}>
-          <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
-            {t("topbar.stats", {
-              notes: summary.chapters.reduce((a, c) => a + c.tn, 0),
-              words: summary.chapters.reduce((a, c) => a + c.twl, 0),
-              questions: summary.chapters.reduce((a, c) => a + c.tq, 0),
-            })}
-          </Typography>
-          <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
-        </Box>
-      )}
       {workspaceSwitcher}
       {showArticles && (
         <Tooltip title={t("articles.title")}>
-          <Button
+          <IconButton
             size="small"
-            variant="text"
             color="inherit"
-            startIcon={<ArticleOutlinedIcon fontSize="small" />}
             onClick={() => {
               location.hash = "#/articles/tw";
             }}
-            sx={{ textTransform: "none", color: "text.secondary" }}
+            aria-label={t("articles.title")}
+            sx={{ color: "text.secondary" }}
           >
-            {t("articles.title")}
-          </Button>
+            <ArticleOutlinedIcon fontSize="small" />
+          </IconButton>
         </Tooltip>
       )}
       <Tooltip title={t("preferences.title")}>
-        <Button
+        <IconButton
           size="small"
-          variant="text"
           color="inherit"
-          startIcon={<TuneIcon fontSize="small" />}
           onClick={() => {
             location.hash = "#/preferences";
           }}
-          sx={{ textTransform: "none", color: "text.secondary" }}
+          aria-label={t("preferences.title")}
+          sx={{ color: "text.secondary" }}
         >
-          {t("preferences.title")}
-        </Button>
+          <TuneIcon fontSize="small" />
+        </IconButton>
       </Tooltip>
       {lintIndicator}
       <VersionIndicator onRequestReload={onRequestReload} />

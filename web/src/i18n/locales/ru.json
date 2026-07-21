@@ -548,6 +548,8 @@
     "attrPeople_other": "{{count}} человека"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "Открыть этот стих в Logos",
     "autoFollow": "автоследование",
     "autoFollowTooltip": "Автоматически следовать за активным стихом в Logos (перехватывает фокус при каждом изменении)",

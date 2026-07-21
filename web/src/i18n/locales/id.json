@@ -506,6 +506,8 @@
     "attrPeople_other": "{{count}} orang"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "Buka ayat ini di Logos",
     "autoFollow": "ikuti otomatis",
     "autoFollowTooltip": "Ikuti ayat aktif secara otomatis di Logos (mengambil fokus pada setiap perubahan)",

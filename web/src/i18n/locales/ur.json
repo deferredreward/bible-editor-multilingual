@@ -520,6 +520,8 @@
     "attrPeople_other": "{{count}} لوگ"
   },
   "logos": {
+    "hideButton": "Hide Logos button",
+    "settingsTooltip": "Logos settings",
     "openVerse": "یہ آیت Logos میں کھولیں",
     "autoFollow": "خودکار پیروی",
     "autoFollowTooltip": "Logos میں فعال آیت کی خودکار پیروی کریں (ہر تبدیلی پر فوکس چھین لیتا ہے)",

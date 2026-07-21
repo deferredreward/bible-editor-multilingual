@@ -70,16 +70,20 @@ export function VersionIndicator({ onRequestReload }: Props = {}) {
 
   return (
     <Tooltip title={tooltip}>
-      <Chip
-        label={`v ${current.commit}`}
-        size="small"
-        variant="outlined"
+      <Typography
+        variant="caption"
+        component="span"
         sx={{
           fontFamily: "monospace",
-          opacity: 0.6,
-          "&:hover": { opacity: 1 },
+          color: "text.secondary",
+          opacity: 0.5,
+          userSelect: "none",
+          cursor: "default",
+          "&:hover": { opacity: 0.85 },
         }}
-      />
+      >
+        {current.commit}
+      </Typography>
     </Tooltip>
   );
 }
