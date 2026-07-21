@@ -63,6 +63,7 @@ import {
 import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
 import { SetupWizard } from "./SetupWizard";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { UserManagementSection } from "./UserManagementSection";
 import { UiLanguageControl } from "./TopBar";
 import { UI_LANGUAGES, dirForLang } from "../i18n";
@@ -303,6 +304,10 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
+          {/* Org switcher — the single canonical spot, visible to ALL roles.
+              Non-admins have no Setup rail entry, so this is their only route to
+              switch orgs; it self-fetches and renders read-only for single-org. */}
+          <WorkspaceSwitcher variant="expanded" />
           {section === "setup" && role === "admin" ? (
             // Setup is the single home for project configuration — the mode
             // selector + scripture-lane controls live here (moved out of the
