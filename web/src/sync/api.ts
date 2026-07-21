@@ -1437,6 +1437,9 @@ export interface ProjectConfig {
     languageCode: string;
     repos: Record<string, string>;
   } | null;
+  // Explicit editor/translator workflow mode (always materialized concrete by
+  // the server; derives from translationSource when no override is set).
+  mode: "authoring" | "translation";
   reposVerified: boolean;
   laneState?: {
     lit: LanePublicState;
@@ -1538,6 +1541,14 @@ export const api = {
     request<{ config: ProjectConfig }>(`/api/project-config`, {
       method: "PUT",
       body: JSON.stringify({ preset, overrides }),
+    }),
+  // Toggle the editor/translator mode only (admin). Independent of the preset;
+  // the server merges the `mode` override into overrides_json — identity-
+  // preserving, so it succeeds even on a populated DB.
+  patchProjectMode: (mode: "authoring" | "translation") =>
+    request<{ config: ProjectConfig }>(`/api/project-config/mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
     }),
 
   // PR B: draft-only manifest inference for a Door43 org. Applies nothing.

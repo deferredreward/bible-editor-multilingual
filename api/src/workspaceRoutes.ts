@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import type { Env } from "./index";
 import { requireAuth, currentUserId, effectiveRole, ensureWorkspaceUser, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
 import { listWorkspaces, sharedDb, serializeWorkspaceCookie, workspaceEnv, type Workspace } from "./workspaces.ts";
+import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
 
 export const workspaceRoutes = new Hono<{
   Bindings: Env;
@@ -165,6 +166,25 @@ workspaceRoutes.post("/:slug", async (c) => {
       // set above has already taken effect for that follow-up request.
       clearAccessCookie(c);
     }
+  }
+
+  // Seed the target workspace's project_config from its org's preset when that
+  // DB has no row yet. Without this, getProjectConfig on a freshly-selected
+  // workspace DB falls back to a preset with no translationSource and drops the
+  // user into English authoring mode regardless of which org the workspace is.
+  // Best-effort and idempotent at the SQL level (INSERT … ON CONFLICT DO
+  // NOTHING inside seedProjectConfigIfAbsent), so a concurrent admin
+  // PUT /api/project-config that lands a row between switches is never
+  // clobbered back to NULL overrides; the read-path fallback in
+  // getProjectConfig covers the same case should this write fail.
+  try {
+    const targetEnv = workspaceEnv(c.env, ws);
+    const preset = presetForOrg(ws.org);
+    if (preset) {
+      await seedProjectConfigIfAbsent(targetEnv, preset);
+    }
+  } catch {
+    // Non-fatal: the read-path fallback resolves the correct preset per request.
   }
 
   return c.json({ ok: true, slug: ws.slug });

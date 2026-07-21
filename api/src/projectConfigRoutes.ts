@@ -10,7 +10,7 @@ import { requireAuth, requireAdmin } from "./auth";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
 import { overlayLaneLabels } from "./scriptureLane";
 import { scriptureLaneRoutes } from "./scriptureLaneRoutes";
-import { applyProjectConfig } from "./projectConfigApply.ts";
+import { applyProjectConfig, applyProjectMode } from "./projectConfigApply.ts";
 
 export const projectConfig = new Hono<{
   Bindings: Env;
@@ -125,6 +125,32 @@ projectConfig.put("/", requireAdmin, async (c) => {
       return c.json(body, result.status);
     }
     return c.json({ config: await overlayLaneLabels(c.env, result.config) });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: "write_failed", detail: msg }, 500);
+  }
+});
+
+// Admin-only editor/translator mode toggle. Independent of the preset: it only
+// writes the `mode` override, which is identity-preserving (never trips the
+// project_not_empty guard), so it succeeds on a populated DB where a full
+// preset PUT would be blocked.
+const ModeBody = z.object({ mode: z.enum(["authoring", "translation"]) });
+
+projectConfig.patch("/mode", requireAdmin, async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const parsed = ModeBody.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  }
+  try {
+    const cfg = await applyProjectMode(c.env, parsed.data.mode);
+    return c.json({ config: await overlayLaneLabels(c.env, cfg) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ error: "write_failed", detail: msg }, 500);

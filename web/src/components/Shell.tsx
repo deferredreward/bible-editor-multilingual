@@ -2587,7 +2587,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         logosSyncToggle={
           <LogosSyncToggle book={book} chapter={chapter} verse={activeVerse} />
         }
-        workspaceSwitcher={<WorkspaceSwitcher />}
+        workspaceSwitcher={<WorkspaceSwitcher variant="indicator" />}
         lintIndicator={
           <BookLintIndicator
             book={book}

@@ -16,7 +16,7 @@
 // POINTER/METADATA state, matching the plan's scope.
 
 import type { Env } from "./index";
-import { PRESETS, DEFAULT_PRESET, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
+import { PRESETS, DEFAULT_PRESET, presetForOrg, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
 import { isIdent } from "./repoUrl.ts";
 import {
   configHash,
@@ -306,6 +306,44 @@ export function laneGuardStmt(env: Env, plan: LaneCommitPlan): D1PreparedStateme
 export function isAbortError(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e);
   return /constraint/i.test(msg);
+}
+
+// ── Mode-only apply ──────────────────────────────────────────────────────────
+
+/**
+ * Set the editor/translator `mode` override without disturbing anything else.
+ * A mode change is IDENTITY-PRESERVING: `dataExportIdentity` ignores `mode`
+ * (it's org|export|non-lane-repos), and `mode` never feeds a scripture lane's
+ * config, so this can never trip the project_not_empty tenancy guard nor need
+ * lane reconciliation — even on a fully populated DB. We therefore MERGE `mode`
+ * into the existing overrides_json (preserving any custom org/repos/labels) and
+ * write the config row directly, rather than routing through applyProjectConfig.
+ */
+export async function applyProjectMode(
+  env: Env,
+  mode: "authoring" | "translation",
+): Promise<ProjectConfig> {
+  const row = await readConfigRowUncached(env);
+  // No stored row yet: fall back to THIS workspace's org preset (mirrors
+  // getProjectConfig's workspace-aware fallback) rather than DEFAULT_PRESET —
+  // otherwise a first mode-toggle on a workspace with no config row silently
+  // re-pins it to the English root org.
+  const preset = row?.preset ?? presetForOrg(env.VIEWER_ORG ?? "") ?? DEFAULT_PRESET;
+  let overrides: Record<string, unknown> = {};
+  if (row?.overrides_json) {
+    try {
+      const parsed = JSON.parse(row.overrides_json) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        overrides = parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* malformed blob — fall back to a fresh overrides object carrying only mode */
+    }
+  }
+  const overridesJson = JSON.stringify({ ...overrides, mode });
+  await configWriteStmt(env, preset, overridesJson).run();
+  clearProjectConfigCache(env);
+  return materialize(preset, overridesJson);
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────

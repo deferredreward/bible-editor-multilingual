@@ -117,6 +117,17 @@ export async function selectProjectPreset(preset: string): Promise<ProjectConfig
   return res.config;
 }
 
+// Persist the editor/translator mode override (admin only) and publish the
+// updated config through the shared cache so every mode-dependent component
+// (TopBar articles, Preferences memory, translation UI) re-renders at once.
+export async function setProjectMode(
+  mode: "authoring" | "translation",
+): Promise<ProjectConfig> {
+  const res = await api.patchProjectMode(mode);
+  publish({ config: res.config, presets: cache?.presets ?? [] });
+  return res.config;
+}
+
 // PR B: apply a custom-gl draft (or any explicit override set) — always sends
 // `overrides` explicitly, unlike selectProjectPreset above.
 export async function applyProjectOverrides(
@@ -146,13 +157,18 @@ export async function refreshProjectConfig(): Promise<ProjectConfig> {
   return res.config;
 }
 
-// True when translation-mode UI should be shown: the active project translates
-// FROM a source language (English root project → translationSource === null →
-// false, so its UX is byte-for-byte unchanged).
+// True when translation-mode UI should be shown. Now driven by the explicit,
+// admin-toggleable `mode` (materialized server-side), decoupled from the
+// data source: an admin can run an org that HAS a translationSource in
+// authoring mode, or vice versa.
 export function isTranslationProject(cfg: ProjectConfig | null): boolean {
-  // Loose `!= null` (not `!== null`) so a cached/older-schema config whose
-  // `translationSource` is UNDEFINED (missing field) reads as non-translation
-  // — otherwise `undefined !== null` is true and the English root project would
-  // wrongly enable translation-mode UI on first paint until the fetch converges.
-  return !!cfg && cfg.translationSource != null;
+  if (!cfg) return false;
+  // `mode` is the source of truth. Fall back to the legacy translationSource
+  // derivation ONLY for a pre-mode cached config whose `mode` field is missing,
+  // so first paint before the fetch converges still matches the old behavior
+  // (English root → non-translation) rather than flickering.
+  if (cfg.mode === "authoring" || cfg.mode === "translation") {
+    return cfg.mode === "translation";
+  }
+  return cfg.translationSource != null;
 }

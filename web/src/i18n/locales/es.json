@@ -39,7 +39,12 @@
     "switchToLight": "cambiar al modo claro",
     "switchToDark": "cambiar al modo oscuro",
     "toggleColorMode": "alternar modo de color",
-    "uiLanguage": "Idioma de la interfaz"
+    "uiLanguage": "Idioma de la interfaz",
+    "mode": {
+      "editor": "Editor",
+      "translator": "Translator",
+      "tooltip": "Switch between Editor and Translator mode"
+    }
   },
   "translation": {
     "translationMode": "Modo de traducción",
@@ -200,7 +205,13 @@
     "notAMember": "You're not a member of that organization.",
     "noLongerAvailable": "That workspace is no longer available.",
     "switchFailed": "Couldn't switch workspaces — try again.",
-    "unsavedEditsBlock": "Unsaved edits are still syncing ({{n}}) — wait for them to finish before switching workspaces."
+    "unsavedEditsBlock": "Unsaved edits are still syncing ({{n}}) — wait for them to finish before switching workspaces.",
+    "title": "Organization",
+    "intro": "Choose which Door43 organization you're editing. Each organization uses its own database, so switching reloads the editor.",
+    "selectLabel": "Organization",
+    "currentLabel": "Current organization",
+    "singleOrgNote": "No other organizations are configured.",
+    "indicatorTooltip": "Organization — switch it in Preferences → Setup"
   },
   "shell": {
     "scripture": "Escritura",
@@ -703,7 +714,8 @@
     "projectModeSaved": "Modo de proyecto actualizado para todos.",
     "projectModeForbidden": "Solo un administrador puede cambiar el modo de proyecto.",
     "projectModeFailed": "No se pudo actualizar el modo de proyecto. Inténtalo de nuevo.",
-    "projectModeNotEmpty": "This database already holds project data for a different org. Empty it (start from a fresh database) before switching project mode.",
+    "projectModeNotEmpty": "Each database belongs to one organization. This one already contains another organization's project data, so it can't be repointed to a different org here. To work in that organization, use the Organization switcher at the top of this Setup page to move to its own database — this isn't a broken control.",
+    "projectModeOrgLockHint": "Each database belongs to a single organization. Once it holds data, its organization can't be changed here. To work in a different organization, use the Organization switcher at the top of this Setup page to move to that org's own database.",
     "projectModeLaneBusy": "A scripture source replacement is in progress. Finish or cancel it before switching project mode.",
     "detectOrg": {
       "label": "Set up a new org (draft)",

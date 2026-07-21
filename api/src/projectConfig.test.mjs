@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PRESETS, writeProjectConfig, getProjectConfig, clearProjectConfigCache } from "./projectConfig.ts";
+import { PRESETS, presetForOrg, writeProjectConfig, getProjectConfig, clearProjectConfigCache } from "./projectConfig.ts";
 
 test("preset catalog identifies authoring and translation projects", () => {
   assert.equal(PRESETS["en-unfoldingword"].translationSource, null);
@@ -89,6 +89,41 @@ test("writeProjectConfig replaces overrides when an object is passed", async () 
   const config = await writeProjectConfig({ DB: db }, "ar-bsoj", { litLabel: "NEW" });
   assert.deepEqual(db.state.bound, ["ar-bsoj", JSON.stringify({ litLabel: "NEW" })]);
   assert.equal(config.litLabel, "NEW");
+});
+
+// ── presetForOrg + fresh-workspace fallback (issue #61) ──────────────────────
+
+test("presetForOrg matches an org's preset case-insensitively; null when none", () => {
+  assert.equal(presetForOrg("BibleEditorMLTest"), "en-bible-editor-ml-test");
+  assert.equal(presetForOrg("bibleeditormltest"), "en-bible-editor-ml-test");
+  assert.equal(presetForOrg("BSOJ"), "ar-bsoj");
+  assert.equal(presetForOrg("unfoldingWord"), "en-unfoldingword");
+  assert.equal(presetForOrg("no-such-org"), null);
+  // Hidden preset (custom-gl, org="") and empty input never match.
+  assert.equal(presetForOrg(""), null);
+  assert.equal(presetForOrg("   "), null);
+});
+
+// A freshly-selected workspace DB has NO project_config row. getProjectConfig
+// must materialize THAT workspace org's preset (via VIEWER_ORG), not silently
+// default to the English root (which would land the user in authoring/English).
+test("getProjectConfig falls back to the workspace org's preset when no row exists", async () => {
+  const noRowDb = { prepare: () => ({ bind() { return this; }, async first() { return null; } }) };
+  clearProjectConfigCache();
+  const cfg = await getProjectConfig({ DB: noRowDb, VIEWER_ORG: "BibleEditorMLTest", WORKSPACE_SLUG: "ml-test" });
+  assert.equal(cfg.preset, "en-bible-editor-ml-test");
+  assert.equal(cfg.mode, "translation");
+  assert.notEqual(cfg.translationSource, null);
+  clearProjectConfigCache();
+});
+
+test("getProjectConfig no-row fallback keeps the English root when org is unknown", async () => {
+  const noRowDb = { prepare: () => ({ bind() { return this; }, async first() { return null; } }) };
+  clearProjectConfigCache();
+  const cfg = await getProjectConfig({ DB: noRowDb, VIEWER_ORG: "some-unmapped-org", WORKSPACE_SLUG: "other" });
+  assert.equal(cfg.preset, "en-unfoldingword");
+  assert.equal(cfg.translationSource, null);
+  clearProjectConfigCache();
 });
 
 test("writeProjectConfig rejects unknown presets", async () => {
