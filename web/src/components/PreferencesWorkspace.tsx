@@ -74,14 +74,17 @@ import { UI_LANGUAGES, dirForLang } from "../i18n";
 import {
   flattenEn,
   currentValue,
-  bagFromFlat,
   flatFromBag,
   mergedLocale,
   placeholdersOf,
-  applyOverrides,
+  saveOverridePatch,
   type StringRow,
 } from "../i18n/overrides";
-import { useLocalizationMode, setLocalizationModeEnabled } from "../i18n/localizationMode";
+import {
+  useLocalizationMode,
+  setLocalizationModeEnabled,
+  L10N_INSPECTOR_UI_MARKER,
+} from "../i18n/localizationMode";
 import SearchIcon from "@mui/icons-material/Search";
 
 const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
@@ -188,7 +191,10 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
   }, [section, memoryAvailable]);
 
   return (
-    <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
+    <Box
+      {...{ [L10N_INSPECTOR_UI_MARKER]: true }}
+      sx={{ height: "100%", display: "flex", minHeight: 0 }}
+    >
       {/* ── Left rail ── */}
       <Box
         sx={{
@@ -1114,18 +1120,15 @@ function LocalizationSection() {
   const onSave = async () => {
     if (version == null || dirtyCount === 0) return;
     save.setSaving(true);
-    // Whole-bag replace = prior stored overrides + this session's edits.
-    const mergedFlat = { ...stored, ...draft };
-    const bag = bagFromFlat(mergedFlat);
     try {
-      const { version: next } = await api.putL10nOverrides(lang, version, bag);
-      applyOverrides({ [lang]: bag }); // live effect for this editor
-      setStored(mergedFlat);
-      setVersion(next);
-      setDraft({});
-      save.setMsg(t("preferences.saved"));
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
+      // Whole-bag replace = prior stored overrides + this session's edits.
+      const outcome = await saveOverridePatch(lang, version, stored, draft);
+      if (outcome.ok) {
+        setStored({ ...stored, ...draft });
+        setVersion(outcome.version);
+        setDraft({});
+        save.setMsg(t("preferences.saved"));
+      } else if (outcome.kind === "conflict") {
         // Another admin's write won — reload their overrides + version so the
         // next save has the right If-Match. Unsaved draft is kept.
         save.setMsg(t("preferences.conflict"));
@@ -1136,7 +1139,7 @@ function LocalizationSection() {
         } catch {
           /* leave state; user can retry */
         }
-      } else if (e instanceof ApiError && e.status === 403) {
+      } else if (outcome.kind === "forbidden") {
         save.setMsg(t("preferences.saveForbidden"));
       } else {
         save.setMsg(t("preferences.saveFailed"));

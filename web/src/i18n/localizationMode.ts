@@ -6,6 +6,15 @@
 // store is simpler than threading the flag through a shared ancestor.
 import { useSyncExternalStore } from "react";
 
+// Marks an element (and its subtree) as inspector chrome — clicks inside it
+// must never be hijacked by LocalizationInspector's document-level capture
+// listener. PreferencesWorkspace's own container carries this too: the
+// toggle switch that turns localization mode on lives on that page, so
+// without it every other control there (Back button, Accordions, search
+// field) would be swallowed by the inspector the instant it's enabled,
+// before the user ever navigates away.
+export const L10N_INSPECTOR_UI_MARKER = "data-l10n-inspector-ui";
+
 let enabled = false;
 const listeners = new Set<() => void>();
 

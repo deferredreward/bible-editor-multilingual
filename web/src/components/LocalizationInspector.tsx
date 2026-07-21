@@ -21,17 +21,20 @@ import CloseIcon from "@mui/icons-material/Close";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { dirForLang } from "../i18n";
-import { isAdmin, api, ApiError } from "../sync/api";
+import { isAdmin, api } from "../sync/api";
 import {
   flattenEn,
   currentValue,
-  bagFromFlat,
   flatFromBag,
-  applyOverrides,
+  saveOverridePatch,
 } from "../i18n/overrides";
-import { useLocalizationMode, setLocalizationModeEnabled } from "../i18n/localizationMode";
+import {
+  useLocalizationMode,
+  setLocalizationModeEnabled,
+  L10N_INSPECTOR_UI_MARKER,
+} from "../i18n/localizationMode";
 
-const UI_MARKER = "data-l10n-inspector-ui";
+const UI_MARKER = L10N_INSPECTOR_UI_MARKER;
 
 function normalize(s: string): string {
   return s.replace(/\s+/g, " ").trim();
@@ -62,6 +65,21 @@ export function LocalizationInspector() {
   const [err, setErr] = useState<string | null>(null);
   const active = enabled && admin;
   const rafRef = useRef(0);
+
+  // Rebuild the reverse index whenever ANY override save touches i18next's
+  // resource store — not just this component's own onSave. The Localization
+  // tab (PreferencesWorkspace) has its own separate save path that also
+  // calls applyOverrides()/addResourceBundle() directly; without this, an
+  // edit made there leaves the inspector's cached index pointing at
+  // pre-edit rendered text until an unrelated language switch happens to
+  // force a rebuild.
+  useEffect(() => {
+    const bump = () => setReindex((v) => v + 1);
+    i18n.on("added", bump);
+    return () => {
+      i18n.off("added", bump);
+    };
+  }, []);
 
   // text -> key path(s), built from the currently-rendered (post-override)
   // strings so an already-localized UI still matches on re-hover.
@@ -97,6 +115,9 @@ export function LocalizationInspector() {
   useEffect(() => {
     if (!active) {
       setHover(null);
+      setEditor(null);
+      setDraft({});
+      setErr(null);
       return;
     }
     const onMove = (e: MouseEvent) => {
@@ -115,7 +136,10 @@ export function LocalizationInspector() {
     document.addEventListener("mousemove", onMove);
     return () => {
       document.removeEventListener("mousemove", onMove);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, editor, reverseIndex]);
@@ -155,17 +179,15 @@ export function LocalizationInspector() {
     try {
       const { overrides, versions } = await api.getL10nOverrides();
       const storedFlat = flatFromBag(overrides[lang] ?? {});
-      const mergedFlat = { ...storedFlat, ...draft };
-      const bag = bagFromFlat(mergedFlat);
-      await api.putL10nOverrides(lang, versions[lang] ?? 0, bag);
-      applyOverrides({ [lang]: bag });
-      setReindex((v) => v + 1);
-      setEditor(null);
-      setDraft({});
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
+      // saveOverridePatch's applyOverrides() call triggers the i18n "added"
+      // listener above, which rebuilds reverseIndex.
+      const outcome = await saveOverridePatch(lang, versions[lang] ?? 0, storedFlat, draft);
+      if (outcome.ok) {
+        setEditor(null);
+        setDraft({});
+      } else if (outcome.kind === "conflict") {
         setErr(t("preferences.conflict"));
-      } else if (e instanceof ApiError && e.status === 403) {
+      } else if (outcome.kind === "forbidden") {
         setErr(t("preferences.saveForbidden"));
       } else {
         setErr(t("preferences.saveFailed"));
@@ -226,7 +248,11 @@ export function LocalizationInspector() {
           sx={{
             position: "fixed",
             top: Math.min(editor.rect.bottom + 8, window.innerHeight - 260),
-            left: Math.min(Math.max(editor.rect.left, 8), window.innerWidth - 420),
+            // On viewports narrower than the popup + margins (e.g. phones),
+            // `window.innerWidth - 420` goes negative and would push the
+            // popup off-screen; clamp the lower bound at 8 too so it never
+            // goes below the left margin.
+            left: Math.min(Math.max(editor.rect.left, 8), Math.max(8, window.innerWidth - 420)),
             width: 400,
             maxWidth: "calc(100vw - 16px)",
             p: 2,

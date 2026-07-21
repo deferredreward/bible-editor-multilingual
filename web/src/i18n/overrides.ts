@@ -8,7 +8,7 @@
 
 import i18n from "./index";
 import en from "./locales/en.json";
-import type { L10nBag } from "../sync/api";
+import { api, ApiError, type L10nBag } from "../sync/api";
 
 const NS = "translation";
 
@@ -86,6 +86,37 @@ export function flatFromBag(bag: L10nBag, prefix = ""): Record<string, string> {
     else if (v && typeof v === "object") Object.assign(flat, flatFromBag(v, path));
   }
   return flat;
+}
+
+export type SaveOverrideOutcome =
+  | { ok: true; version: number }
+  | { ok: false; kind: "conflict" | "forbidden" | "error" };
+
+/** Merge `patch` into `storedFlat`, PUT the result under CAS (`baseVersion`),
+ *  and apply it live on success. Shared by PreferencesWorkspace's Localization
+ *  tab and LocalizationInspector's inspect-to-edit popup — both hit the same
+ *  save/CAS/error-classification contract, and letting them diverge means a
+ *  future change to that contract (a new error code, a different merge
+ *  strategy) silently applies to only one of them. Callers still own their
+ *  own post-save/error UI state (which fields to clear, which local cache to
+ *  refresh) — this only does the network call + merge + error mapping. */
+export async function saveOverridePatch(
+  lang: string,
+  baseVersion: number,
+  storedFlat: Record<string, string>,
+  patch: Record<string, string>,
+): Promise<SaveOverrideOutcome> {
+  const mergedFlat = { ...storedFlat, ...patch };
+  const bag = bagFromFlat(mergedFlat);
+  try {
+    const { version } = await api.putL10nOverrides(lang, baseVersion, bag);
+    applyOverrides({ [lang]: bag });
+    return { ok: true, version };
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) return { ok: false, kind: "conflict" };
+    if (e instanceof ApiError && e.status === 403) return { ok: false, kind: "forbidden" };
+    return { ok: false, kind: "error" };
+  }
 }
 
 /** i18next interpolation tokens ({{book}}, {{count}}, …) present in a string. */
