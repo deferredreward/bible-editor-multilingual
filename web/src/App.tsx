@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
+import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
@@ -22,6 +23,7 @@ import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "./sy
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
+  | { view: "templates"; templateId: string | null }
   | { view: "preferences"; section: PrefsSection };
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
@@ -56,6 +58,10 @@ function parseHash(): Location {
       resource: am[1] as "tw" | "ta",
       articleId: decodeURIComponent(am[2] ?? "") || null,
     };
+  }
+  const tm = location.hash.match(/^#\/templates(?:\/(.+))?$/);
+  if (tm) {
+    return { view: "templates", templateId: decodeURIComponent(tm[1] ?? "") || null };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
   if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
@@ -470,6 +476,14 @@ export function App() {
               // must not emit a trailing slash — `#/articles/ta/` fails the
               // article regex and misparses as a chapter.
               location.hash = a ? `#/articles/${r}/${encodeURIComponent(a)}` : `#/articles/${r}`;
+            }}
+          />
+        ) : loc.view === "templates" ? (
+          <TemplateWorkspace
+            templateId={loc.templateId}
+            onBack={backToScripture}
+            onNavigate={(id) => {
+              location.hash = id ? `#/templates/${encodeURIComponent(id)}` : `#/templates`;
             }}
           />
         ) : (
