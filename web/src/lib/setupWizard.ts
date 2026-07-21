@@ -1,0 +1,110 @@
+// Pure (React-free) helpers behind the Setup wizard's owner-confirmed flow.
+// Kept in a plain .ts module (no JSX) so the node --strip-types web test runner
+// can import and unit-test the load-bearing decisions directly: step gating
+// after Apply, the import-error → replacement-step routing, the per-resource
+// source-URL verify state machine, and the lane upstream-choice mapping.
+
+import type { ResourceSource, ResourceSourceMode } from "./orgDraft";
+
+// The wizard's step order (owner-confirmed flow). `replacement` (a.k.a. "4b") is
+// conditional — only entered when a lane comes back quarantined after Apply.
+export const SETUP_STEPS = {
+  organization: 0,
+  sources: 1,
+  lanes: 2,
+  review: 3,
+  replacement: 4,
+  importBook: 5,
+  done: 6,
+} as const;
+
+export type SetupStepName = keyof typeof SETUP_STEPS;
+export type SetupStepIndex = (typeof SETUP_STEPS)[SetupStepName];
+
+// Minimal shape of the per-lane public state this module reads. Mirrors the
+// `replacementRequired` flag on api.ProjectConfig.laneState.{lit,sim}.
+export interface LaneReplacementFlag {
+  replacementRequired?: boolean;
+  pendingTarget?: unknown;
+}
+export interface LaneStateLike {
+  lit?: LaneReplacementFlag;
+  sim?: LaneReplacementFlag;
+}
+
+export type LaneKey = "lit" | "sim";
+
+// The lanes (in display order) that came back quarantined after Apply and so
+// need their text staged + activated in the replacement step.
+export function lanesNeedingReplacement(laneState: LaneStateLike | null | undefined): LaneKey[] {
+  const out: LaneKey[] = [];
+  if (laneState?.lit?.replacementRequired) out.push("lit");
+  if (laneState?.sim?.replacementRequired) out.push("sim");
+  return out;
+}
+
+// After a successful Apply, decide the next step: enter the conditional
+// replacement step when any lane is quarantined, otherwise skip straight to the
+// import step.
+export function stepAfterApply(laneState: LaneStateLike | null | undefined): SetupStepIndex {
+  return lanesNeedingReplacement(laneState).length > 0
+    ? SETUP_STEPS.replacement
+    : SETUP_STEPS.importBook;
+}
+
+// Import-error routing. importBook throws when a lane is frozen, but the route
+// wraps the lane-freeze Error as { error: "import_failed", message:
+// "lit_lane_replacement_required" } (status 502/422) — so the lane string lives
+// in `message`, not `error`. Match either field defensively. Returns the lane to
+// jump the wizard to its replacement step, or null when the error is unrelated.
+export function importErrorLane(
+  body: { error?: string; message?: string } | null | undefined,
+): LaneKey | null {
+  const hay = `${body?.error ?? ""} ${body?.message ?? ""}`;
+  if (hay.includes("lit_lane_replacement_required")) return "lit";
+  if (hay.includes("sim_lane_replacement_required")) return "sim";
+  return null;
+}
+
+// ── Per-resource source-URL verify state machine (Step 2 "Use a different
+// source"). A pasted Door43 URL is verified on blur via GET
+// /api/orgs/verify-source; the states drive the inline UI. ────────────────────
+export type SourceVerifyErrorKind = "invalid" | "not_found" | "unreachable";
+
+export type SourceVerifyState =
+  | { status: "idle" }
+  | { status: "verifying" }
+  | { status: "verified"; org: string; repo: string; fullName?: string }
+  | { status: "error"; kind: SourceVerifyErrorKind };
+
+// Classify the HTTP status of a failed verify-source call. A transient DCS
+// failure (503) — or any unexpected status — is "unreachable" (retry), NOT
+// "invalid": we must never tell the admin a real repo doesn't exist because of a
+// DCS blip. 400 = garbage/unsupported host; 404 = genuine repo_not_found.
+export function verifyErrorKind(httpStatus: number | undefined): SourceVerifyErrorKind {
+  if (httpStatus === 400) return "invalid";
+  if (httpStatus === 404) return "not_found";
+  return "unreachable";
+}
+
+// ── Lane upstream choice ↔ resourceSource mode (Step 3). A lane's "Upstream for
+// this lane" control (unfoldingWord / a URL / None) is the SAME per-resource
+// selection Step 2 drives for the lit/sim role — keep them consistent. ─────────
+export type LaneUpstreamChoice = "unfoldingWord" | "url" | "none";
+
+export function laneChoiceFromMode(mode: ResourceSourceMode): LaneUpstreamChoice {
+  return mode === "upstream" ? "unfoldingWord" : mode === "override" ? "url" : "none";
+}
+
+// The resourceSource entry a Step-2 checkbox produces when toggled. Checked =
+// pull from the default upstream (mode 'upstream'); unchecked defaults to blank
+// until the admin opts into an override URL.
+export function toggleResourceChecked(checked: boolean): ResourceSource {
+  return checked ? { mode: "upstream" } : { mode: "blank" };
+}
+
+// The canonical Door43 web URL for an org/repo — used to LINK a reader-friendly
+// `org: repo` chip to the actual repository.
+export function door43RepoUrl(org: string, repo: string): string {
+  return `https://git.door43.org/${org}/${repo}`;
+}

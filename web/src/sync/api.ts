@@ -1622,6 +1622,16 @@ export const api = {
   getInferredOrgConfig: (org: string) =>
     request<InferredOrgConfigResponse>(`/api/orgs/${encodeURIComponent(org)}/inferred-config`),
 
+  // Resolve a pasted Door43 source URL (or bare owner/repo) into a verified
+  // { org, repo } for the Setup wizard's per-resource source override. On a 2xx
+  // the repo is confirmed to exist on DCS. Throws ApiError on 400 (garbage /
+  // unsupported host), 404 (repo_not_found), or 503 (dcs_unavailable — transient,
+  // NOT a real "does not exist"); callers classify via lib/setupWizard.verifyErrorKind.
+  verifySource: (url: string) =>
+    request<{ ok: true; org: string; repo: string; fullName?: string }>(
+      `/api/orgs/verify-source?url=${encodeURIComponent(url)}`,
+    ),
+
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 
   // Trigger a server-side import of a book from DCS. Long-running: ~5-60s

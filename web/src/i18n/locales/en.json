@@ -838,6 +838,11 @@
     "title": "Set up a new org",
     "intro": "Point the editor at a Door43 org's repositories, then import a first book and fill its translationWords and translationAcademy areas. One database serves one org.",
     "step": {
+      "organization": "Your organization",
+      "sources": "Sources to pull from",
+      "lanes": "Your scripture lanes",
+      "review": "Review & apply",
+      "replacement": "Finish replacing lane text",
       "gatewayAdmin": "Create your repositories",
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
@@ -878,7 +883,65 @@
     "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
     "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
     "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "goToScripture": "Go to the scripture view",
+    "orgIdentityIntro": "This is the organization this workspace serves. One database serves one org, so it can't be changed here. Confirm the resource language below.",
+    "orgNameLabel": "Organization",
+    "orgLoadFailed": "Could not load this workspace's organization. Reload and try again.",
+    "resourceLanguageLabel": "Resource language",
+    "resourceLanguageHelp": "The language of the text and notes you are producing. Pre-filled from your org's manifests where possible.",
+    "sourcesIntro": "Choose the repositories you pull FROM. Each resource is checked by default and pulls from the upstream org below; uncheck one to leave it blank or point it at a different source.",
+    "upstreamOrgLabel": "Default upstream org",
+    "upstreamOrgHelp": "The org you translate from. Defaults to unfoldingWord.",
+    "upstreamOrgError": "Could not verify that org on Door43. Check the spelling and try again.",
+    "upstreamOrgUnverified": "This upstream org hasn't been verified yet. It will be checked when you leave the field.",
+    "resource": {
+      "lit": "Literal text (GLT)",
+      "sim": "Simplified text (GST)",
+      "tn": "translationNotes",
+      "tq": "translationQuestions",
+      "twl": "translationWords Links",
+      "tw": "translationWords",
+      "ta": "translationAcademy"
+    },
+    "leaveBlank": "Leave blank",
+    "useDifferentSource": "Use a different source",
+    "sourceUrlLabel": "Door43 source URL",
+    "sourceUrlError": {
+      "invalid": "That doesn't look like a Door43 repository URL.",
+      "not_found": "No such repository on Door43.",
+      "unreachable": "Door43 is unreachable right now — try again."
+    },
+    "lanesIntro": "These are YOUR org's repositories — the text you edit and export TO. Confirm the target repo, whether you're editing or only aligning, and where each lane pulls from.",
+    "lane": {
+      "lit": "Literal lane",
+      "sim": "Simplified lane"
+    },
+    "targetRepoLabel": "Target repository",
+    "targetRepoHelp": "Your org's repo for this lane. Pre-filled but editable — it needn't be {lang}_glt (e.g. ru_rlob, ar_avd).",
+    "laneEditModeLabel": "What are translators doing in this lane?",
+    "laneEditMode": {
+      "edit": "Editing the text",
+      "align": "Aligning only"
+    },
+    "laneUpstreamLabel": "Upstream for this lane",
+    "laneUpstream": {
+      "unfoldingWord": "unfoldingWord",
+      "url": "A URL",
+      "none": "None (author your own)"
+    },
+    "laneFromTo": "Pulls from",
+    "upstreamNone": "None",
+    "upstreamPending": "(paste a URL)",
+    "reviewIntro": "Review the {{lang}} configuration for {{org}} before applying.",
+    "reviewFrom": "Pull from (sources)",
+    "reviewTo": "Your org ({{org}})",
+    "reviewMissing": "not set",
+    "reviewIncomplete": "Some resource repositories are still missing or ambiguous. Resolve them before applying.",
+    "replacementStepIntro": "Changing a lane's source on a populated project stages the new text first. Nothing changes for editors until you press Activate.",
+    "replacementStart": "Stage the new text",
+    "replacementIntro": "This stages the new source text book by book. When every book is ready, press Activate to switch the lane over.",
+    "replacementNone": "No lane needs a text replacement. You can continue.",
+    "continueToImport": "Continue"
   },
   "books": {
     "GEN": { "name": "Genesis", "abbr": "Gen" },

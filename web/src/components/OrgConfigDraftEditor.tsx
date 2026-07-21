@@ -71,6 +71,8 @@ export interface OrgDraftState {
   resourceLang: ResolvedResourceLanguage | null;
   /** Seed resourceLang from the current draft's inference, falling back to the UI language. */
   seedResourceLanguage: (uiLangCode: string) => void;
+  /** Directly set the resource language (Setup wizard's editable Autocomplete). */
+  setResourceLanguage: (lang: ResolvedResourceLanguage | null) => void;
   exportOrg: string;
   setExportOrg: (v: string) => void;
   /** Run inference for the entered org. */
@@ -114,6 +116,7 @@ export function useOrgDraft(): OrgDraftState {
 
   const seedResourceLanguage = (uiLangCode: string) =>
     setResourceLang(resolveResourceLanguage(draft?.proposal ?? null, uiLangCode));
+  const setResourceLanguage = (lang: ResolvedResourceLanguage | null) => setResourceLang(lang);
 
   const reset = () => {
     setDraft(null);
@@ -212,6 +215,7 @@ export function useOrgDraft(): OrgDraftState {
     setResourceSource,
     resourceLang,
     seedResourceLanguage,
+    setResourceLanguage,
     exportOrg,
     setExportOrg,
     detect,
