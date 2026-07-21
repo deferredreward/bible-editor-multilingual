@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   IconButton,
   MenuItem,
@@ -15,7 +16,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, type AdminUser } from "../sync/api";
+import { api, ApiError, type AdminUser, type OrgMembersResponse } from "../sync/api";
 
 const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; labelKey: string }> = [
   { value: "editor", labelKey: "preferences.users.roleEditor" },
@@ -51,6 +52,10 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
 export function UserManagementSection() {
   const { t } = useTranslation();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
+  // Live DCS org roster, fetched alongside the allowlist for reconciliation.
+  // null = still loading / never loaded; a value with `.error` set = DCS was
+  // unreachable but the allowlist half of the page is still fully usable.
+  const [orgMembers, setOrgMembers] = useState<OrgMembersResponse | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("");
@@ -65,6 +70,14 @@ export function UserManagementSection() {
       setUsers(users);
     } catch {
       setLoadError(true);
+    }
+    // The org roster is best-effort and independent of the allowlist: a DCS
+    // outage (or the route failing soft) must not block role management. Fetch
+    // it separately and swallow hard failures into the same soft-error shape.
+    try {
+      setOrgMembers(await api.adminListOrgMembers());
+    } catch {
+      setOrgMembers({ org: "", members: [], error: "network", truncated: false });
     }
   }, []);
 
@@ -128,6 +141,17 @@ export function UserManagementSection() {
     await load();
   };
 
+  // ── Reconciliation data (read-only) ──
+  // Match logins case-insensitively — Gitea itself is case-insensitive on
+  // usernames, and allowlist rows may differ in casing from the DCS roster.
+  const roleByLogin = new Map((users ?? []).map((u) => [u.username.toLowerCase(), u]));
+  const orgLoginSet = new Set((orgMembers?.members ?? []).map((m) => m.login.toLowerCase()));
+  // Only trust "is / isn't an org member" once we actually have a roster:
+  // an errored or empty fetch must not flag every allowlist entry as an outsider.
+  const haveRoster = !!orgMembers && !orgMembers.error && orgMembers.members.length > 0;
+  const rosterUnavailable = !!orgMembers && (!!orgMembers.error || orgMembers.members.length === 0);
+  const orgName = orgMembers?.org || "";
+
   return (
     <Box component="section" aria-labelledby="user-management-heading">
       <Typography id="user-management-heading" variant="h6" gutterBottom>
@@ -187,6 +211,13 @@ export function UserManagementSection() {
           <CircularProgress size={22} />
         )
       ) : (
+        <>
+        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+          {t("preferences.users.reconcile.allowlistHeading")}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+          {t("preferences.users.reconcile.allowlistNote")}
+        </Typography>
         <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
           <Box
             sx={{
@@ -225,9 +256,21 @@ export function UserManagementSection() {
                 "&:last-of-type": { borderBottom: "none" },
               }}
             >
-              <Typography variant="body2" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                {u.username}
-              </Typography>
+              <Box sx={{ overflow: "hidden", display: "flex", alignItems: "center", gap: 0.5 }}>
+                <Typography variant="body2" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {u.username}
+                </Typography>
+                {haveRoster && !orgMembers?.truncated && !orgLoginSet.has(u.username.toLowerCase()) && (
+                  <Tooltip title={t("preferences.users.reconcile.notOrgMemberHint", { org: orgName })}>
+                    <Chip
+                      size="small"
+                      color="warning"
+                      variant="outlined"
+                      label={t("preferences.users.reconcile.notOrgMember")}
+                    />
+                  </Tooltip>
+                )}
+              </Box>
               <TextField
                 select
                 size="small"
@@ -262,6 +305,115 @@ export function UserManagementSection() {
             </Box>
           ))}
         </Box>
+
+        {/* ── Reconciliation against the live DCS org roster (read-only) ── */}
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            {orgName
+              ? t("preferences.users.reconcile.orgHeading", { org: orgName })
+              : t("preferences.users.reconcile.orgHeadingNoOrg")}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+            {t("preferences.users.reconcile.orgNote")}
+          </Typography>
+
+          {orgMembers === null ? (
+            <CircularProgress size={20} />
+          ) : rosterUnavailable ? (
+            <Alert severity="info">{t("preferences.users.reconcile.unavailable")}</Alert>
+          ) : (
+            <>
+              {orgMembers.truncated && (
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  {t("preferences.users.reconcile.truncated")}
+                </Alert>
+              )}
+              <Box
+                sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}
+              >
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 240px",
+                    gap: 1,
+                    px: 1.5,
+                    py: 0.75,
+                    bgcolor: "grey.50",
+                    fontFamily: "monospace",
+                    fontSize: 10,
+                    textTransform: "uppercase",
+                    color: "text.disabled",
+                    borderBottom: "1px dashed",
+                    borderColor: "divider",
+                  }}
+                >
+                  <span>{t("preferences.users.reconcile.memberColumn")}</span>
+                  <span>{t("preferences.users.reconcile.statusColumn")}</span>
+                </Box>
+                {orgMembers.members.map((m) => {
+                  const role = roleByLogin.get(m.login.toLowerCase());
+                  return (
+                    <Box
+                      key={m.login}
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 240px",
+                        gap: 1,
+                        px: 1.5,
+                        py: 0.75,
+                        alignItems: "center",
+                        borderBottom: "1px dashed",
+                        borderColor: "divider",
+                        "&:last-of-type": { borderBottom: "none" },
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {m.login}
+                        {m.fullName ? (
+                          <Typography component="span" variant="body2" color="text.secondary">
+                            {" "}
+                            — {m.fullName}
+                          </Typography>
+                        ) : null}
+                      </Typography>
+                      {role ? (
+                        <Chip
+                          size="small"
+                          color={role.role === "admin" ? "primary" : "default"}
+                          variant="outlined"
+                          label={t("preferences.users.reconcile.hasRole", {
+                            role:
+                              role.role === "admin"
+                                ? t("preferences.users.roleAdmin")
+                                : t("preferences.users.roleEditor"),
+                            source:
+                              role.source === "dcs_team"
+                                ? t("preferences.users.reconcile.sourceTeam")
+                                : t("preferences.users.reconcile.sourceManual"),
+                          })}
+                        />
+                      ) : (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          label={t("preferences.users.reconcile.noRole")}
+                        />
+                      )}
+                    </Box>
+                  );
+                })}
+                {orgMembers.members.length === 0 && (
+                  <Box sx={{ px: 1.5, py: 1 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      {t("preferences.users.reconcile.emptyRoster")}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            </>
+          )}
+        </Box>
+        </>
       )}
 
       <Snackbar open={!!msg} autoHideDuration={4000} onClose={() => setMsg(null)} message={msg ?? ""} />

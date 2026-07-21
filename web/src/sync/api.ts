@@ -611,6 +611,23 @@ export interface AdminUser {
   source?: "manual" | "dcs_team";
 }
 
+/** A live Door43 org member (from GET /api/admin/users/org-members), not the allowlist. */
+export interface OrgMember {
+  login: string;
+  fullName: string;
+  avatarUrl: string;
+}
+
+export interface OrgMembersResponse {
+  /** The project's configured org that was queried. */
+  org: string;
+  members: OrgMember[];
+  /** Set when DCS was unreachable / errored — members is empty; page stays usable. */
+  error?: string;
+  /** True when the roster exceeded the page cap and is incomplete. */
+  truncated: boolean;
+}
+
 export interface AquiferDraftsResponse {
   ok: true;
   book: string;
@@ -1994,6 +2011,11 @@ export const api = {
 
   // ── Admin user allowlist (migration 0016) ──
   adminListUsers: () => request<{ users: AdminUser[] }>(`/api/admin/users`),
+  // Live DCS org roster (NOT the allowlist) for reconciliation — see issue #64.
+  // Fails soft server-side, so a 200 with { error, members: [] } is normal when
+  // DCS is unreachable; callers surface that inline rather than treating it as
+  // a hard failure.
+  adminListOrgMembers: () => request<OrgMembersResponse>(`/api/admin/users/org-members`),
   adminSetUserRole: (username: string, role: "admin" | "editor") =>
     request<{ user: AdminUser; dcsVerified: boolean }>(
       `/api/admin/users/${encodeURIComponent(username)}`,

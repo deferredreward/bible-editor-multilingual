@@ -12,6 +12,7 @@ import type { Env } from "./index";
 // its logic in isolation.
 import { requireAuth, requireAdmin, currentUserId, lookupUserRole } from "./auth.ts";
 import { sharedDb } from "./workspaces.ts";
+import { getProjectConfig } from "./projectConfig.ts";
 
 export const adminUsers = new Hono<{
   Bindings: Env;
@@ -77,6 +78,70 @@ adminUsers.get("/", async (c) => {
       source: r.source ?? "manual",
     })),
   });
+});
+
+// Gitea caps page size at 50; loop pages until a short one. MAX_PAGES bounds
+// the subrequest budget on a single Worker request — 20 * 50 = 1000 members is
+// far more than any real GL org, and exhausting it just means we flag the
+// result `truncated` rather than pretending the list is complete.
+const MEMBERS_PAGE_SIZE = 50;
+const MEMBERS_MAX_PAGES = 20;
+
+type OrgMember = { login: string; fullName: string; avatarUrl: string };
+
+// GET /api/admin/users/org-members — the LIVE Door43 org roster.
+//
+// Unlike GET /api/admin/users (which reads the local user_roles allowlist),
+// this makes a live read against DCS: it lists the actual members of the
+// project's configured org. It is READ-ONLY reconciliation data — it never
+// mutates user_roles. The UI cross-references it against the allowlist so the
+// allowlist is no longer mistaken for "the org roster" (see issue #64).
+//
+// Fails soft: on any non-2xx or network error it returns HTTP 200 with an
+// empty members list and an `error` string, mirroring the fail-open tolerance
+// used for DCS lookups elsewhere (auth.ts, the PUT canonicalization above). A
+// DCS outage must degrade the reconciliation view, not break the whole page.
+adminUsers.get("/org-members", async (c) => {
+  const { org } = await getProjectConfig(c.env);
+  const base = (c.env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+
+  if (!org) {
+    // No org configured (e.g. an unconfigured workspace) — nothing to list, but
+    // this isn't an error the admin can act on, so report an empty roster.
+    return c.json({ org, members: [], truncated: false });
+  }
+
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (c.env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${c.env.DCS_SERVICE_TOKEN}`;
+
+  const members: OrgMember[] = [];
+  try {
+    let truncated = false;
+    for (let page = 1; page <= MEMBERS_MAX_PAGES; page++) {
+      const res = await fetch(
+        `${base}/api/v1/orgs/${encodeURIComponent(org)}/members?limit=${MEMBERS_PAGE_SIZE}&page=${page}`,
+        { headers },
+      );
+      if (!res.ok) {
+        return c.json({ org, members: [], error: `dcs_${res.status}`, truncated: false });
+      }
+      const batch = (await res.json()) as unknown;
+      if (!Array.isArray(batch)) {
+        return c.json({ org, members: [], error: "dcs_bad_body", truncated: false });
+      }
+      for (const m of batch as Array<{ login?: string; full_name?: string; avatar_url?: string }>) {
+        if (m.login) {
+          members.push({ login: m.login, fullName: m.full_name ?? "", avatarUrl: m.avatar_url ?? "" });
+        }
+      }
+      if (batch.length < MEMBERS_PAGE_SIZE) break;
+      // Last allowed page still full — the roster is longer than we fetched.
+      if (page === MEMBERS_MAX_PAGES) truncated = true;
+    }
+    return c.json({ org, members, truncated });
+  } catch {
+    return c.json({ org, members: [], error: "network", truncated: false });
+  }
 });
 
 const PutBody = z.object({
