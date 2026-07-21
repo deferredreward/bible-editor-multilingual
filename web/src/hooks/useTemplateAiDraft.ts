@@ -40,15 +40,23 @@ export interface UseTemplateAiDraftAPI {
   drafting: boolean;
   error: string | null;
   clearError: () => void;
+  /** Set when a draft request 409s — the fresh server row from the error
+   *  body, same as handleSave's conflict rebase. The caller should apply it
+   *  (e.g. via applyServerUnit) so the next retry uses the current version
+   *  instead of re-sending the stale one and 409ing forever. */
+  conflictUnit: TemplateUnit | null;
+  clearConflict: () => void;
   draft: (unit: TemplateUnit) => Promise<TemplateUnit | null>;
 }
 
 export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
   const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflictUnit, setConflictUnit] = useState<TemplateUnit | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
   const clearError = useCallback(() => setError(null), []);
+  const clearConflict = useCallback(() => setConflictUnit(null), []);
 
   const draft = useCallback(async (unit: TemplateUnit) => {
     controllerRef.current?.abort();
@@ -61,6 +69,10 @@ export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
       return updated;
     } catch (err) {
       if (controller.signal.aborted) return null;
+      if (err instanceof ApiError && err.status === 409) {
+        const fresh = (err.body as { current?: TemplateUnit } | undefined)?.current;
+        if (fresh) setConflictUnit(fresh);
+      }
       const message = mapTemplateDraftError(err);
       if (message) setError(message);
       return null;
@@ -74,5 +86,5 @@ export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
   // prop in TemplateWorkspace.tsx).
   useEffect(() => () => controllerRef.current?.abort(), []);
 
-  return { drafting, error, clearError, draft };
+  return { drafting, error, clearError, conflictUnit, clearConflict, draft };
 }

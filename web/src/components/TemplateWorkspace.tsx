@@ -340,6 +340,8 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
     drafting: aiDrafting,
     error: aiDraftError,
     clearError: clearAiDraftError,
+    conflictUnit: aiConflictUnit,
+    clearConflict: clearAiConflict,
     draft: requestAiDraft,
   } = useTemplateAiDraft();
 
@@ -349,6 +351,17 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
       clearAiDraftError();
     }
   }, [aiDraftError, clearAiDraftError]);
+
+  useEffect(() => {
+    // A 409 rebase (someone else's edit/validate won the CAS, or the unit was
+    // validated out from under us) — apply the fresh row so a retry uses the
+    // current version instead of resubmitting the stale one and 409ing again.
+    if (aiConflictUnit) {
+      applyServerUnit(aiConflictUnit);
+      clearAiConflict();
+      onServerChange();
+    }
+  }, [aiConflictUnit, clearAiConflict, applyServerUnit, onServerChange]);
 
   const handleDraftWithAi = useCallback(async () => {
     if (!unit) return;

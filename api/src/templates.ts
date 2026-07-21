@@ -161,6 +161,13 @@ templates.post("/unit/draft", requireEditor, async (c) => {
   if (unit.version !== expected) {
     return c.json({ error: "version_mismatch", current: unit }, 409);
   }
+  // A validated (human-approved) translation must never be silently
+  // overwritten by an AI draft — the frontend button already disables for
+  // this case, but a stale tab or a direct API call could still reach here
+  // with a correct If-Match version for the now-validated row.
+  if (unit.translation_state === "validated") {
+    return c.json({ error: "already_validated", current: unit }, 409);
+  }
 
   const cfg = await getProjectConfig(c.env);
   const requestBody = JSON.stringify({
@@ -173,7 +180,9 @@ templates.post("/unit/draft", requireEditor, async (c) => {
     targetOrg: cfg.exportOrg,
     direction: cfg.direction,
   });
-  if (requestBody.length > TEMPLATE_DRAFT_MAX_BODY_BYTES) {
+  // .length is UTF-16 code units, not bytes — undercounts for non-ASCII
+  // target languages (Arabic, etc.), so measure the actual UTF-8 byte size.
+  if (new TextEncoder().encode(requestBody).length > TEMPLATE_DRAFT_MAX_BODY_BYTES) {
     return c.json({ error: "body_too_large", maxBytes: TEMPLATE_DRAFT_MAX_BODY_BYTES }, 413);
   }
 
@@ -231,7 +240,8 @@ templates.post("/unit/draft", requireEditor, async (c) => {
                 version = version + 1,
                 updated_at = ?4,
                 updated_by = ?5
-          WHERE template_id = ?6 AND deleted_at IS NULL AND version = ?7`,
+          WHERE template_id = ?6 AND deleted_at IS NULL AND version = ?7
+            AND (translation_state IS NULL OR translation_state != 'validated')`,
       )
       .bind(targetMd, draftMeta, preDraftJson, now, userId ?? null, id, expected),
     c.env.DB
@@ -244,15 +254,15 @@ templates.post("/unit/draft", requireEditor, async (c) => {
   ]);
 
   if (!updateRes.meta.changes) {
-    const cur = await c.env.DB.prepare(
-      `SELECT version FROM template_units WHERE template_id = ?1 AND deleted_at IS NULL`,
+    const fresh = await c.env.DB.prepare(
+      `SELECT * FROM template_units WHERE template_id = ?1 AND deleted_at IS NULL`,
     )
       .bind(id)
-      .first<{ version: number }>();
-    if (!cur) return c.json({ error: "not_found" }, 404);
-    const fresh = await c.env.DB.prepare(`SELECT * FROM template_units WHERE template_id = ?1`)
-      .bind(id)
       .first<TemplateUnit>();
+    if (!fresh) return c.json({ error: "not_found" }, 404);
+    if (fresh.translation_state === "validated") {
+      return c.json({ error: "already_validated", current: fresh }, 409);
+    }
     return c.json({ error: "version_mismatch", current: fresh }, 409);
   }
   const updated = await c.env.DB.prepare(`SELECT * FROM template_units WHERE template_id = ?1`)
