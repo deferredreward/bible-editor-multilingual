@@ -291,8 +291,8 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
             <UserManagementSection />
           ) : (
           <>
-          <ProjectModeControl cfg={cfg} role={role} />
-          {role === "admin" && cfg && <ScriptureLanesSection cfg={cfg} />}
+          {section === "brief" && <ProjectModeControl cfg={cfg} role={role} />}
+          {section === "brief" && role === "admin" && cfg && <ScriptureLanesSection cfg={cfg} />}
           {cfg === null ? null : !isTranslation ? (
             <Alert severity="info" variant="outlined">
               {t("preferences.glOnly")}
