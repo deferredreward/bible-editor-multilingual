@@ -42,7 +42,7 @@ import { UiLangContext } from "../i18n/UiLangContext";
 import { api, ApiError, importedSourceRepos, isAdmin, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
-import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
+import { BOOKS, bookName, bookAbbr, resolveBook } from "../lib/bookNames";
 import { parseReference } from "../lib/referenceParser";
 import {
   ThemeModeContext,
@@ -361,7 +361,13 @@ export function TopBar({
             return options.filter((opt) => {
               if (opt.toLowerCase().startsWith(q)) return true;
               if (resolved && opt === resolved) return true;
-              return bookName(opt).toLowerCase().includes(q);
+              if (bookName(opt).toLowerCase().includes(q)) return true;
+              if (bookAbbr(opt).toLowerCase().includes(q)) return true;
+              // Also match the bundled English name so typing/pasting an
+              // English book name still finds it under a non-English UI
+              // language, not just the currently-active translation.
+              const english = BOOKS.find((b) => b.code === opt)?.name;
+              return !!english && english.toLowerCase().includes(q);
             });
           }}
           getOptionLabel={(opt) => opt}
@@ -379,6 +385,7 @@ export function TopBar({
                   sx={{ color: "text.secondary", fontSize: 12, ml: 1, flex: 1 }}
                 >
                   {bookName(opt)}
+                  {bookAbbr(opt) !== bookName(opt) && ` (${bookAbbr(opt)})`}
                 </Box>
                 {!isImported && (
                   <Tooltip title={t("topbar.notImportedHint")}>

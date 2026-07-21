@@ -98,9 +98,23 @@ const ALIAS_MAP: Record<string, string> = (() => {
   return m;
 })();
 
+const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+
+/** Resolves free-text input (code, English alias, or the *current* locale's
+ *  translated name/abbr) to a stable book code. `ALIAS_MAP` only covers the
+ *  bundled English names/aliases, so a translated `books.<CODE>.name`/`.abbr`
+ *  (from a non-English locale or a runtime Localization override) is checked
+ *  as a fallback — otherwise pasting exactly what the UI displays wouldn't
+ *  resolve once a locale supplies a translated name. */
 export function resolveBook(input: string): string | null {
-  const key = input.trim().toLowerCase().replace(/\s+/g, "");
-  return ALIAS_MAP[key] ?? null;
+  const key = norm(input);
+  const direct = ALIAS_MAP[key];
+  if (direct) return direct;
+  for (const b of BOOKS) {
+    if (norm(bookName(b.code)) === key) return b.code;
+    if (norm(bookAbbr(b.code)) === key) return b.code;
+  }
+  return null;
 }
 
 /** Localized display name for a book code (e.g. "Zechariah"). Falls back to
