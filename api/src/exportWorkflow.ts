@@ -529,6 +529,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const tqRows = tqRs.results ?? [];
 
     const sourceFetch = await fetchEnSourceMaps(this.env, cfg, tnRows, tqRows);
+    // A resource whose translationSource repo was left blank in Setup has NO
+    // upstream source: fetchEnSourceMaps SKIPS it (empty map) and still fetches
+    // the sourced resources, returning ok with `skipped`. That must NOT fail the
+    // whole context export — prefs, terms, and the resources that DO have a
+    // source still publish. Only genuine fetch failures (en_fetch_failed /
+    // truncation / network) land in the !ok branch and hard-fail as before.
     if (!sourceFetch.ok) {
       await finalizeContextExport(this.env, resultId, {
         status: "failed",
@@ -536,6 +542,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       });
           await this.recordSnapshot("CONTEXT", "ctx", null, null, 0, sourceFetch.reason);
       return empty("failed", sourceFetch.reason);
+    }
+    if (sourceFetch.skipped.length > 0) {
+      console.log(
+        `context export: no upstream source for [${sourceFetch.skipped.join(", ")}] — exporting without those examples`,
+      );
     }
 
     // CAS retry loop: re-render from D1 on parent conflict (max 3).
@@ -551,6 +562,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         tnRows,
         tqRows,
         sources: sourceFetch.sources,
+        skipped: sourceFetch.skipped,
       });
       if (!rendered.ok) {
         await finalizeContextExport(this.env, resultId, {

@@ -144,45 +144,54 @@ export function buildValidatedExamples(
   tnRows: readonly ValidatedTnRow[],
   tqRows: readonly ValidatedTqRow[],
   sources: EnSourceMaps,
+  // Resources ("tn"/"tq") whose upstream source repo was left blank in Setup:
+  // their rows have no EN source to pair against, so they are SKIPPED (no
+  // examples, and NOT treated as missing_en_source). A resource is either fully
+  // sourced or fully skipped — never a mix.
+  skipped: readonly string[] = [],
 ): { ok: true; lines: JsonlExample[] } | { ok: false; reason: string } {
   const lines: JsonlExample[] = [];
-  for (const r of tnRows) {
-    const key = sourceRowKey(r.book, r.id);
-    const src = sources.tn.get(key);
-    if (!src) return { ok: false, reason: `missing_en_source:tn:${key}` };
-    if (!src.note.trim()) return { ok: false, reason: `empty_en_source:tn:${key}` };
-    const target = (r.note ?? "").trim();
-    if (!target) return { ok: false, reason: `empty_target:tn:${key}` };
-    lines.push({
-      resource: "tn",
-      rowId: r.id,
-      book: r.book,
-      ref: r.ref_raw ?? "",
-      supportReference: r.support_reference,
-      source: nfc(src.note),
-      target: nfc(target),
-      validated_at: r.updated_at,
-    });
+  if (!skipped.includes("tn")) {
+    for (const r of tnRows) {
+      const key = sourceRowKey(r.book, r.id);
+      const src = sources.tn.get(key);
+      if (!src) return { ok: false, reason: `missing_en_source:tn:${key}` };
+      if (!src.note.trim()) return { ok: false, reason: `empty_en_source:tn:${key}` };
+      const target = (r.note ?? "").trim();
+      if (!target) return { ok: false, reason: `empty_target:tn:${key}` };
+      lines.push({
+        resource: "tn",
+        rowId: r.id,
+        book: r.book,
+        ref: r.ref_raw ?? "",
+        supportReference: r.support_reference,
+        source: nfc(src.note),
+        target: nfc(target),
+        validated_at: r.updated_at,
+      });
+    }
   }
-  for (const r of tqRows) {
-    const key = sourceRowKey(r.book, r.id);
-    const src = sources.tq.get(key);
-    if (!src) return { ok: false, reason: `missing_en_source:tq:${key}` };
-    const srcQ = src.question.trim();
-    const srcR = src.response.trim();
-    if (!srcQ && !srcR) return { ok: false, reason: `empty_en_source:tq:${key}` };
-    const target = `${(r.question ?? "").trim()}\t${(r.response ?? "").trim()}`;
-    if (!target.trim()) return { ok: false, reason: `empty_target:tq:${key}` };
-    lines.push({
-      resource: "tq",
-      rowId: r.id,
-      book: r.book,
-      ref: r.ref_raw ?? "",
-      supportReference: null,
-      source: nfc(`${srcQ}\t${srcR}`),
-      target: nfc(target),
-      validated_at: r.updated_at,
-    });
+  if (!skipped.includes("tq")) {
+    for (const r of tqRows) {
+      const key = sourceRowKey(r.book, r.id);
+      const src = sources.tq.get(key);
+      if (!src) return { ok: false, reason: `missing_en_source:tq:${key}` };
+      const srcQ = src.question.trim();
+      const srcR = src.response.trim();
+      if (!srcQ && !srcR) return { ok: false, reason: `empty_en_source:tq:${key}` };
+      const target = `${(r.question ?? "").trim()}\t${(r.response ?? "").trim()}`;
+      if (!target.trim()) return { ok: false, reason: `empty_target:tq:${key}` };
+      lines.push({
+        resource: "tq",
+        rowId: r.id,
+        book: r.book,
+        ref: r.ref_raw ?? "",
+        supportReference: null,
+        source: nfc(`${srcQ}\t${srcR}`),
+        target: nfc(target),
+        validated_at: r.updated_at,
+      });
+    }
   }
   // Append-ordered by validation time (most recent last) per contract §3.4.
   lines.sort((a, b) => a.validated_at - b.validated_at);
@@ -205,10 +214,13 @@ export function renderContextPack(input: {
   tnRows: readonly ValidatedTnRow[];
   tqRows: readonly ValidatedTqRow[];
   sources: EnSourceMaps;
+  // Resources with no upstream source (blank in Setup) — their rows are skipped
+  // rather than tripping missing_en_source. See fetchEnSourceMaps / buildValidatedExamples.
+  skipped?: readonly string[];
   exportedAt?: Date;
 }): ContextPackRender {
   const exportedAt = input.exportedAt ?? new Date();
-  const examples = buildValidatedExamples(input.tnRows, input.tqRows, input.sources);
+  const examples = buildValidatedExamples(input.tnRows, input.tqRows, input.sources, input.skipped ?? []);
   if (!examples.ok) return { ok: false, reason: examples.reason };
 
   const files: ContextFile[] = [];
