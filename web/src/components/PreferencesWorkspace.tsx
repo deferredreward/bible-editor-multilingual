@@ -151,6 +151,14 @@ function statusColor(status: TermStatus): string {
   }
 }
 
+// Memory is now one long scrollable page; the rail items and deep links jump to
+// a section by scrolling its wrapper (id `pref-sec-<key>`) into view rather than
+// swapping panes. Guarded so a missing element (section not mounted / memory not
+// available) is a no-op.
+function scrollToSection(key: Section) {
+  document.getElementById(`pref-sec-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 interface Props {
   onNavigate: (section: Section) => void;
   onBack: () => void;
@@ -163,6 +171,15 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
   const memoryAvailable = isTranslation && !isReadOnly();
+
+  // Deep-link / rail-driven anchor scroll: when the routed section is a memory
+  // section and the long page is available, scroll it into view. Runs on mount
+  // and whenever `section` changes (a rail click rewrites the hash → new prop).
+  useEffect(() => {
+    if (memoryAvailable && SECTIONS.includes(section)) {
+      scrollToSection(section);
+    }
+  }, [section, memoryAvailable]);
 
   return (
     <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
@@ -205,7 +222,10 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
             return (
               <Box
                 key={s}
-                onClick={() => onNavigate(s)}
+                onClick={() => {
+                  onNavigate(s);
+                  scrollToSection(s);
+                }}
                 sx={{
                   px: 1.5,
                   py: 0.9,
@@ -284,16 +304,19 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
           {section === "setup" && role === "admin" ? (
-            <SetupWizard />
+            // Setup is the single home for project configuration — the mode
+            // selector + scripture-lane controls live here (moved out of the
+            // memory pages, where they used to repeat on every section).
+            <Stack spacing={3}>
+              <SetupWizard />
+              <ProjectModeControl cfg={cfg} role={role} />
+              {cfg && <ScriptureLanesSection cfg={cfg} />}
+            </Stack>
           ) : section === "localization" && role === "admin" ? (
             <LocalizationSection />
           ) : section === "users" && role === "admin" ? (
             <UserManagementSection />
-          ) : (
-          <>
-          <ProjectModeControl cfg={cfg} role={role} />
-          {role === "admin" && cfg && <ScriptureLanesSection cfg={cfg} />}
-          {cfg === null ? null : !isTranslation ? (
+          ) : cfg === null ? null : !isTranslation ? (
             <Alert severity="info" variant="outlined">
               {t("preferences.glOnly")}
             </Alert>
@@ -302,15 +325,28 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
               {t("preferences.editorOnly")}
             </Alert>
           ) : (
-            <>
-              {section === "brief" && <BriefSection />}
-              {section === "instructions" && <InstructionsSection />}
-              {section === "commonIssues" && <CommonIssuesSection />}
-              {section === "terminology" && <TerminologySection direction={cfg?.direction ?? "ltr"} />}
-              {section === "examples" && <ExamplesSection />}
-            </>
-          )}
-          </>
+            // One long scrollable memory page. Every section is always mounted
+            // and anchored by `id="pref-sec-<key>"`; the rail items + deep links
+            // scroll to these anchors (see scrollToSection). Each section renders
+            // its own heading (preferences.section.*), which serves as the
+            // visible anchor label — no duplicate heading needed.
+            <Stack spacing={4} divider={<Divider />}>
+              <Box id="pref-sec-brief" sx={{ scrollMarginTop: "16px" }}>
+                <BriefSection />
+              </Box>
+              <Box id="pref-sec-instructions" sx={{ scrollMarginTop: "16px" }}>
+                <InstructionsSection />
+              </Box>
+              <Box id="pref-sec-commonIssues" sx={{ scrollMarginTop: "16px" }}>
+                <CommonIssuesSection />
+              </Box>
+              <Box id="pref-sec-terminology" sx={{ scrollMarginTop: "16px" }}>
+                <TerminologySection direction={cfg?.direction ?? "ltr"} />
+              </Box>
+              <Box id="pref-sec-examples" sx={{ scrollMarginTop: "16px" }}>
+                <ExamplesSection />
+              </Box>
+            </Stack>
           )}
         </Box>
       </Box>
