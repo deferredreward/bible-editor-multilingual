@@ -1498,7 +1498,11 @@ export interface ProjectConfig {
   translationSource: {
     org: string;
     languageCode: string;
-    repos: Record<string, string>;
+    // Per-resource value is a bare repo string (org = `org` above) OR an
+    // { org?, repo } ref pointing the resource at a different org. PARTIAL: an
+    // absent role has no upstream source. Read via lib/sourceRef.resolveSourceRef,
+    // never directly.
+    repos: Record<string, string | { org?: string; repo: string }>;
   } | null;
   // Explicit editor/translator workflow mode (always materialized concrete by
   // the server; derives from translationSource when no override is set).

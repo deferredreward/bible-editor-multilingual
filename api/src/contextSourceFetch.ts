@@ -5,7 +5,7 @@
 
 import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig.ts";
-import { fetchText, dcsRawUrl } from "./dcsSources.ts";
+import { fetchText, dcsRawUrl, resolveSourceRef } from "./dcsSources.ts";
 import { parseTsv } from "./importParsers.ts";
 import {
   sourceRowKey,
@@ -84,19 +84,21 @@ export async function fetchEnSourceMaps(
   const bookCacheTq = new Map<string, Map<string, { question: string; response: string }>>();
   const skipped: string[] = [];
 
-  // translationSource.repos is PARTIAL: a resource left blank in Setup has NO
-  // upstream source. Skip its fetch (its map stays empty) and continue with the
-  // OTHER resources — NEVER fetch `${org}/undefined/...`, and never fail the whole
-  // export just because one resource is sourceless. Genuine fetch failures /
-  // truncation below still hard-fail. `tnRepo` captured after the guard so TS
-  // knows it's defined inside the loop.
-  const tnRepo = src.repos.tn;
-  if (tnRows.length > 0 && !tnRepo) {
+  // translationSource.repos is PARTIAL and per-resource: a resource left blank in
+  // Setup has NO upstream source, and a resource may point at a DIFFERENT org
+  // than src.org. Resolve each role's org+repo through the shared accessor. Skip
+  // a sourceless resource (its map stays empty) and continue with the OTHERS —
+  // NEVER fetch `${org}/undefined/...`, and never fail the whole export just
+  // because one resource is sourceless. Genuine fetch failures / truncation below
+  // still hard-fail. `tnSrc` captured after the guard so TS knows it's defined
+  // inside the loop.
+  const tnSrc = resolveSourceRef(src, "tn");
+  if (tnRows.length > 0 && !tnSrc) {
     skipped.push("tn");
-  } else if (tnRepo) {
+  } else if (tnSrc) {
     for (const book of booksOf(tnRows)) {
       const path = `tn_${book}.tsv`;
-      const url = dcsRawUrl(env, src.org, tnRepo, path);
+      const url = dcsRawUrl(env, tnSrc.org, tnSrc.repo, path);
       const raw = await fetchText(url);
       if (raw == null) {
         return { ok: false, reason: `en_fetch_failed:tn:${book}` };
@@ -108,13 +110,13 @@ export async function fetchEnSourceMaps(
     }
   }
 
-  const tqRepo = src.repos.tq;
-  if (tqRows.length > 0 && !tqRepo) {
+  const tqSrc = resolveSourceRef(src, "tq");
+  if (tqRows.length > 0 && !tqSrc) {
     skipped.push("tq");
-  } else if (tqRepo) {
+  } else if (tqSrc) {
     for (const book of booksOf(tqRows)) {
       const path = `tq_${book}.tsv`;
-      const url = dcsRawUrl(env, src.org, tqRepo, path);
+      const url = dcsRawUrl(env, tqSrc.org, tqSrc.repo, path);
       const raw = await fetchText(url);
       if (raw == null) {
         return { ok: false, reason: `en_fetch_failed:tq:${book}` };

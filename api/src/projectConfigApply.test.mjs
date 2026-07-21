@@ -300,6 +300,61 @@ test("validateCustomGlOverrides: a PRESENT-but-empty translationSource repo reje
   assert.equal(r.error, "custom_gl_invalid_translation_source");
 });
 
+// ── translationSource: per-resource { org, repo } override (issue #84 slice) ──
+
+test("validateCustomGlOverrides: a per-resource { org, repo } ref passes", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      // tn sourced from a DIFFERENT org; tq stays a bare string (default org).
+      repos: { tn: { org: "BibleAquifer", repo: "ar_tn" }, tq: "en_tq" },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: an org-less { repo } ref passes (default org)", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: { repo: "en_tn" } },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: a { org, repo } ref with an invalid org rejects", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: { org: "bad org!", repo: "ar_tn" } },
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+  assert.deepEqual(r.detail, { role: "tn" });
+});
+
+test("validateCustomGlOverrides: a ref missing repo (or non-ident repo) rejects", () => {
+  const noRepo = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: { org: "BibleAquifer" } } },
+  });
+  assert.equal(noRepo.ok, false);
+  assert.equal(noRepo.error, "custom_gl_invalid_translation_source");
+  const badRepo = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: { org: "BibleAquifer", repo: "ar tn!" } } },
+  });
+  assert.equal(badRepo.ok, false);
+});
+
 test("validateCustomGlOverrides: partial translationSource still requires a valid org", () => {
   const r = validateCustomGlOverrides({
     ...VALID_CUSTOM_GL,

@@ -116,6 +116,33 @@ test("the upstream language code is threaded through, not hardcoded to 'en'", ()
   assert.equal(build(defaultResourceSources()).languageCode, "en");
 });
 
+// ── per-resource org override (issue #84 slice) ──────────────────────────────
+
+test("override with a DIFFERENT org emits an { org, repo } ref", () => {
+  const sources = defaultResourceSources();
+  sources.tn = { mode: "override", org: "BibleAquifer", repo: "ar_tn" };
+  const ts = build(sources);
+  assert.deepEqual(ts.repos.tn, { org: "BibleAquifer", repo: "ar_tn" });
+  // siblings stay bare strings (default upstream org)
+  assert.equal(ts.repos.tq, "en_tq");
+  assert.equal(ts.org, "unfoldingWord");
+});
+
+test("override whose org EQUALS the upstream org stays a bare string (backward-compat)", () => {
+  const sources = defaultResourceSources();
+  // Explicit org, but it's the same upstream org → must NOT change the shape.
+  sources.lit = { mode: "override", org: "unfoldingWord", repo: "en_glt" };
+  const ts = build(sources);
+  assert.equal(ts.repos.lit, "en_glt");
+});
+
+test("all-upstream STILL round-trips to the legacy UW_SOURCE (no refs leak in)", () => {
+  // Guardrail: adding the optional org field must not change the default output.
+  const ts = build(defaultResourceSources());
+  assert.deepEqual(ts, LEGACY_UW_SOURCE);
+  for (const v of Object.values(ts.repos)) assert.equal(typeof v, "string");
+});
+
 test("translationSourceOnFor: true unless every resource is blank", () => {
   assert.equal(translationSourceOnFor(allResourceSources("upstream")), true);
   assert.equal(translationSourceOnFor(defaultResourceSources()), true);

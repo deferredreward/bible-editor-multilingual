@@ -11,6 +11,8 @@ import {
   translationSourceRepoRef,
   heldOutNoteResources,
   shouldFallBackOnStatus,
+  resolveSourceRef,
+  normalizeSourceRef,
 } from "./dcsSources.ts";
 
 function assert(cond, msg) {
@@ -165,6 +167,96 @@ function runPure() {
   assert(
     translationSourceRepoRef(partialCfg, "tq") === null,
     "partial source: absent tq role → null (no undefined repo)",
+  );
+
+  // ── resolveSourceRef + normalizeSourceRef (the shared per-resource accessor) ──
+  // Backward-compat: a bare repo STRING resolves under the default (primary) org.
+  assert(
+    JSON.stringify(normalizeSourceRef("unfoldingWord", "en_tn")) ===
+      JSON.stringify({ org: "unfoldingWord", repo: "en_tn" }),
+    "normalizeSourceRef: bare string → { defaultOrg, repo }",
+  );
+  assert(normalizeSourceRef("unfoldingWord", undefined) === null, "normalizeSourceRef: undefined → null");
+  assert(normalizeSourceRef("unfoldingWord", "") === null, "normalizeSourceRef: blank string → null");
+  assert(normalizeSourceRef("unfoldingWord", { repo: "" }) === null, "normalizeSourceRef: blank repo ref → null");
+  // Per-resource org: an { org, repo } ref points at a DIFFERENT org.
+  assert(
+    JSON.stringify(normalizeSourceRef("unfoldingWord", { org: "BibleAquifer", repo: "ar_tn" })) ===
+      JSON.stringify({ org: "BibleAquifer", repo: "ar_tn" }),
+    "normalizeSourceRef: { org, repo } → honors the override org",
+  );
+  // An org-less ref falls back to the default org.
+  assert(
+    JSON.stringify(normalizeSourceRef("unfoldingWord", { repo: "en_tq" })) ===
+      JSON.stringify({ org: "unfoldingWord", repo: "en_tq" }),
+    "normalizeSourceRef: { repo } (no org) → default org",
+  );
+
+  // resolveSourceRef over a mixed/partial map: legacy string + per-resource org.
+  const mixedTs = {
+    org: "unfoldingWord",
+    languageCode: "en",
+    repos: { tn: "en_tn", tw: { org: "BibleAquifer", repo: "ar_tw" }, ta: { repo: "en_ta" } },
+  };
+  assert(
+    JSON.stringify(resolveSourceRef(mixedTs, "tn")) === JSON.stringify({ org: "unfoldingWord", repo: "en_tn" }),
+    "resolveSourceRef: legacy string role → default org",
+  );
+  assert(
+    JSON.stringify(resolveSourceRef(mixedTs, "tw")) === JSON.stringify({ org: "BibleAquifer", repo: "ar_tw" }),
+    "resolveSourceRef: per-resource org override honored",
+  );
+  assert(
+    JSON.stringify(resolveSourceRef(mixedTs, "ta")) === JSON.stringify({ org: "unfoldingWord", repo: "en_ta" }),
+    "resolveSourceRef: org-less object role → default org",
+  );
+  assert(resolveSourceRef(mixedTs, "tq") === null, "resolveSourceRef: absent role → null");
+  assert(resolveSourceRef(null, "tn") === null, "resolveSourceRef: no translationSource → null");
+
+  // translationSourceRepoRef delegates → a per-resource org override flows to the
+  // import/reimport RepoRef (owner is the override org, not translationSource.org).
+  const overrideOrgCfg = {
+    ...CFG,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: { org: "BibleAquifer", repo: "ar_tn" } } },
+  };
+  const overRef = translationSourceRepoRef(overrideOrgCfg, "tn");
+  assert(
+    overRef.owner === "BibleAquifer" && overRef.repo === "ar_tn" && overRef.ref === "master",
+    "translationSourceRepoRef: per-resource org override → owner is the override org",
+  );
+
+  // ── SECURITY: non-ident override org/repo must never yield a usable ref ──
+  // A non-custom-preset override reaches normalizeSourceRef UNVALIDATED. A path-
+  // traversal org/repo must resolve to null (treated as no-source), never a ref.
+  assert(
+    normalizeSourceRef("unfoldingWord", { org: "uW/../../other", repo: "x_tn" }) === null,
+    "normalizeSourceRef: traversal in org → null (no source)",
+  );
+  assert(
+    normalizeSourceRef("unfoldingWord", { repo: "../../../etc" }) === null,
+    "normalizeSourceRef: traversal in repo → null",
+  );
+  assert(normalizeSourceRef("unfoldingWord", "bad repo!") === null, "normalizeSourceRef: non-ident bare string → null");
+  const evilTs = {
+    org: "unfoldingWord",
+    languageCode: "en",
+    repos: { tn: { org: "a/../../b", repo: "x_tn" }, tq: "ok_tq" },
+  };
+  assert(resolveSourceRef(evilTs, "tn") === null, "resolveSourceRef: traversal org role → null");
+  assert(
+    JSON.stringify(resolveSourceRef(evilTs, "tq")) === JSON.stringify({ org: "unfoldingWord", repo: "ok_tq" }),
+    "resolveSourceRef: a valid sibling role still resolves (only the bad one is dropped)",
+  );
+
+  // Belt-and-suspenders: even if a slash-bearing owner/repo reached a URL builder
+  // (it can't via resolveSourceRef, but a legacy DcsRepoOverrides caller might),
+  // dcsUrls encodes the owner/repo segments so no traversal escapes.
+  const traversalUrls = dcsUrls(ENV, CFG, "ZEC", {
+    tn: { owner: "a/../../evil", repo: "x_tn", ref: "master" },
+  });
+  assert(
+    !traversalUrls.tn.includes("/../") && traversalUrls.tn.includes("a%2F..%2F..%2Fevil"),
+    "dcsUrls: owner/repo segments encoded — traversal neutralized",
   );
 
   // Held-out predicate — any non-null marker means "don't sync with the org repo".

@@ -6,6 +6,7 @@
 // Contract of record: bp-bot/translate-pipeline/{PLAN.md,BIBLE-EDITOR-INTEGRATION.md}.
 
 import type { ProjectConfig } from "./projectConfig.ts";
+import { resolveSourceRef } from "./dcsSources.ts";
 
 // Client-supplied overrides (a top-level `translate:{…}` field on the start body).
 export type TranslateClientOptions = {
@@ -52,13 +53,15 @@ export function buildTranslateOptions(
   // Source is the published source repo for the chosen resource, pinned to master
   // by default; a caller can pin an exact SHA for reproducibility (the bot echoes
   // the resolved SHA). resourceType selects which source repo (tn|tq|tw|ta).
-  // translationSource.repos is PARTIAL: a role whose upstream was left blank in
-  // Setup is omitted, so this resource has NO source to translate FROM. Emit no
-  // options (return null → caller 400) rather than a `${org}/undefined@master`
-  // ref. An explicit client sourceRef override still wins.
-  const sourceRepo = src.repos[resourceType];
-  if (!o.sourceRef && !sourceRepo) return null;
-  const sourceRef = o.sourceRef ?? `${src.org}/${sourceRepo}@master`;
+  // translationSource.repos is PARTIAL and per-resource: a role whose upstream
+  // was left blank in Setup is omitted (NO source to translate FROM), and a role
+  // may point at a DIFFERENT org than src.org. Resolve org+repo through the
+  // shared accessor; emit no options (return null → caller 400) when there's no
+  // ref rather than a `${org}/undefined@master`. An explicit client sourceRef
+  // override still wins.
+  const resolved = resolveSourceRef(src, resourceType);
+  if (!o.sourceRef && !resolved) return null;
+  const sourceRef = o.sourceRef ?? `${resolved!.org}/${resolved!.repo}@master`;
   const literalRef = o.literalRef ?? (cfg.repos.lit ? `${cfg.org}/${cfg.repos.lit}@master` : undefined);
   const simplifiedRef = o.simplifiedRef ?? (cfg.repos.sim ? `${cfg.org}/${cfg.repos.sim}@master` : undefined);
   return {

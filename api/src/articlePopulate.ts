@@ -29,8 +29,8 @@
 //    old-source invocation can never land rows after an admin switches source.
 
 import type { Env } from "./index";
-import { getProjectConfig } from "./projectConfig.ts";
-import { dcsRawUrl, fetchTextWithStatus, type FetchTextResult } from "./dcsSources.ts";
+import { getProjectConfig, type TranslationSourceRef } from "./projectConfig.ts";
+import { dcsRawUrl, fetchTextWithStatus, resolveSourceRef, type FetchTextResult, type SourceRef } from "./dcsSources.ts";
 import { gitBlobSha } from "./articleExport.ts";
 
 export type ArticleResource = "tw" | "ta";
@@ -170,19 +170,20 @@ export interface FetchStateRow {
   attempts: number;
 }
 export interface CurrentSource {
-  org: string;
-  // PARTIAL: a resource whose upstream repo was left blank in Setup is omitted,
-  // meaning "no upstream source for this resource" — callers must skip it, never
-  // build a `${org}/undefined/raw/...` URL from it.
-  repos: { tw?: string; ta?: string };
+  // PARTIAL and PER-RESOURCE: a resource whose upstream repo was left blank in
+  // Setup is omitted, meaning "no upstream source for this resource" — callers
+  // must skip it, never build a `${org}/undefined/raw/...` URL. A present entry
+  // carries its OWN org (the tW/tA source may live in a different org than the
+  // default upstream), so identity stamping/comparison is per-resource org+repo.
+  refs: { tw?: SourceRef; ta?: SourceRef };
 }
 
 function keyOf(resource: string, path: string): string {
   return `${resource}\u0000${path}`;
 }
 // undefined when this resource has no upstream source configured.
-function repoForResource(src: CurrentSource, resource: ArticleResource): string | undefined {
-  return src.repos[resource];
+function refForResource(src: CurrentSource, resource: ArticleResource): SourceRef | undefined {
+  return src.refs[resource];
 }
 function stateBlocks(state: FetchStateRow): boolean {
   if (state.status === "not_found") return true; // terminal for its source
@@ -213,20 +214,20 @@ export function planWork(
     const k = keyOf(ref.resource, ref.path);
     if (seen.has(k)) continue;
     seen.add(k);
-    const repo = repoForResource(currentSource, ref.resource);
+    const srcRef = refForResource(currentSource, ref.resource);
     // No upstream repo for this resource (blank in Setup) → nothing to populate.
     // Skip so we never plan a fetch against a `${org}/undefined` URL.
-    if (!repo) continue;
+    if (!srcRef) continue;
     const unit = existing.get(k);
     if (unit) {
       if (unit.deleted_at != null) continue; // present (soft-deleted) — never revived by reconciler
-      const identOk = unit.source_org === currentSource.org && unit.source_repo === repo;
+      const identOk = unit.source_org === srcRef.org && unit.source_repo === srcRef.repo;
       if (identOk) continue; // present & fresh
       mismatched.push(ref);
       continue;
     }
     const st = state.get(k);
-    if (st && st.source_org === currentSource.org && st.source_repo === repo && stateBlocks(st)) {
+    if (st && st.source_org === srcRef.org && st.source_repo === srcRef.repo && stateBlocks(st)) {
       continue; // blocked by same-source terminal/capped fetch-state
     }
     missing.push(ref);
@@ -458,11 +459,18 @@ async function readFetchState(env: Env): Promise<FetchStateRow[]> {
 }
 
 function currentSourceFrom(cfg: {
-  translationSource: { org: string; repos: Record<string, string> } | null;
+  translationSource: { org: string; repos: Partial<Record<string, TranslationSourceRef>> } | null;
 }): CurrentSource | null {
   const ts = cfg.translationSource;
   if (!ts) return null;
-  return { org: ts.org, repos: { tw: ts.repos.tw, ta: ts.repos.ta } };
+  // Resolve each article resource to its own { org, repo } (a role may point at a
+  // different org than ts.org). Omit a role with no upstream source.
+  const refs: { tw?: SourceRef; ta?: SourceRef } = {};
+  const tw = resolveSourceRef(ts, "tw");
+  if (tw) refs.tw = tw;
+  const ta = resolveSourceRef(ts, "ta");
+  if (ta) refs.ta = ta;
+  return { refs };
 }
 
 // ── Fetch + write driver ────────────────────────────────────────────────────
@@ -494,17 +502,17 @@ async function fetchAll(
   doFetch: (env: Env, url: string) => Promise<FetchTextResult>,
 ): Promise<Fetched[]> {
   const out: Fetched[] = [];
-  // Pair each item with its resolved repo, dropping any whose resource has no
-  // upstream source (planWork already excludes these; belt-and-suspenders so a
+  // Pair each item with its resolved source ref, dropping any whose resource has
+  // no upstream source (planWork already excludes these; belt-and-suspenders so a
   // `${org}/undefined` URL can never be built here).
   const jobs = work
-    .map((item) => ({ item, repo: repoForResource(src, item.resource) }))
-    .filter((j): j is { item: ReferencedPath; repo: string } => !!j.repo);
+    .map((item) => ({ item, ref: refForResource(src, item.resource) }))
+    .filter((j): j is { item: ReferencedPath; ref: SourceRef } => !!j.ref);
   for (let i = 0; i < jobs.length; i += FETCH_CONCURRENCY) {
     const chunk = jobs.slice(i, i + FETCH_CONCURRENCY);
     const settled = await Promise.all(
-      chunk.map(async ({ item, repo }): Promise<Fetched> => {
-        const url = dcsRawUrl(env, src.org, repo, item.path, "master");
+      chunk.map(async ({ item, ref }): Promise<Fetched> => {
+        const url = dcsRawUrl(env, ref.org, ref.repo, item.path, "master");
         const res = await doFetch(env, url);
         if (res.status === 200 && res.text != null && !res.truncated) {
           return { item, kind: "ok", text: res.text, sha: await gitBlobSha(res.text) };
@@ -542,10 +550,10 @@ export async function populateReferencedArticles(
   const voidKeys: FetchStateRow[] = [];
   const liveState: FetchStateRow[] = [];
   for (const s of fetchState) {
-    const repo = s.resource === "tw" || s.resource === "ta"
-      ? repoForResource(src, s.resource)
-      : null;
-    if (repo != null && s.source_org === src.org && s.source_repo === repo) liveState.push(s);
+    const ref = s.resource === "tw" || s.resource === "ta"
+      ? refForResource(src, s.resource)
+      : undefined;
+    if (ref != null && s.source_org === ref.org && s.source_repo === ref.repo) liveState.push(s);
     else voidKeys.push(s);
   }
   if (voidKeys.length > 0) {
@@ -600,8 +608,8 @@ export async function populateReferencedArticles(
     let okCount = 0;
     const groupWarnings: string[] = [];
     for (const f of group) {
-      const repo = repoForResource(src, f.item.resource);
-      if (!repo) continue; // no source for this resource — never written (unreachable: planWork filtered)
+      const ref = refForResource(src, f.item.resource);
+      if (!ref) continue; // no source for this resource — never written (unreachable: planWork filtered)
       if (f.kind === "ok") {
         stmts.push(
           upsertStmt(
@@ -612,15 +620,15 @@ export async function populateReferencedArticles(
             f.item.part,
             f.text,
             f.sha,
-            src.org,
-            repo,
+            ref.org,
+            ref.repo,
             now,
           ),
           deleteStateStmt(env, f.item.resource, f.item.path),
         );
         okCount++;
       } else if (f.kind === "not_found") {
-        stmts.push(recordStateStmt(env, f.item.resource, f.item.path, src.org, repo, "not_found", 404, now));
+        stmts.push(recordStateStmt(env, f.item.resource, f.item.path, ref.org, ref.repo, "not_found", 404, now));
         // tA title/sub-title absence is expected (many articles have neither) —
         // silent. A missing body (tA 01.md) or tW article is worth surfacing.
         if (f.item.part === "body") {
@@ -628,7 +636,7 @@ export async function populateReferencedArticles(
         }
       } else {
         stmts.push(
-          recordStateStmt(env, f.item.resource, f.item.path, src.org, repo, "error", f.httpStatus, now),
+          recordStateStmt(env, f.item.resource, f.item.path, ref.org, ref.repo, "error", f.httpStatus, now),
         );
         groupWarnings.push(`${f.item.resource} fetch error (${f.httpStatus}): ${f.item.path}`);
       }
@@ -687,18 +695,18 @@ export async function populateSingleArticle(
     want = [{ path: twPath(tw.cat, tw.slug), part: "body" }];
   }
 
-  const repo = repoForResource(src, resource);
+  const ref = refForResource(src, resource);
   // The chosen resource has no upstream source repo (blank in Setup) — there is
   // nothing to fetch. Distinct from source_not_found (which means the id didn't
   // resolve at a configured source).
-  if (!repo) return { error: "no_source_configured" };
+  if (!ref) return { error: "no_source_configured" };
   // Snapshot BEFORE the fetch (as the reconciler does) so the fence window
   // covers the fetch: a source switch mid-fetch must abort the write, not slip
   // through because the snapshot was taken after the switch.
   const snapshot = await readConfigSnapshot(env);
   const fetched = await Promise.all(
     want.map(async (w) => {
-      const url = dcsRawUrl(env, src.org, repo, w.path, "master");
+      const url = dcsRawUrl(env, ref.org, ref.repo, w.path, "master");
       const res = await doFetch(env, url);
       return { ...w, res };
     }),
@@ -718,7 +726,7 @@ export async function populateSingleArticle(
     if (f.res.status !== 200 || f.res.text == null || f.res.truncated) continue;
     const sha = await gitBlobSha(f.res.text);
     stmts.push(
-      manualUpsertStmt(env, resource, f.path, articleId, f.part, f.res.text, sha, src.org, repo, now),
+      manualUpsertStmt(env, resource, f.path, articleId, f.part, f.res.text, sha, ref.org, ref.repo, now),
     );
     written.push(f.path);
   }
@@ -758,20 +766,26 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
   // omitted from translationSource.repos has no source, so exclude it entirely
   // rather than binding an `undefined` repo into the query (which would build a
   // `${org}/undefined` fetch URL and pollute the results with 404s).
-  const sourced = (["tw", "ta"] as const).filter((r) => !!src.repos[r]);
+  const sourced = (["tw", "ta"] as const)
+    .map((r) => ({ r, ref: refForResource(src, r) }))
+    .filter((x): x is { r: "tw" | "ta"; ref: SourceRef } => !!x.ref);
   if (sourced.length === 0) return { processed: 0, changed: 0, nextCursor: null, skipped: true };
 
   // Current-identity rows only, ordered by (resource, path) with a continuation
   // cursor — sha no-ops don't remove rows from candidacy, so a plain "first N"
-  // would repeat forever.
-  const params: unknown[] = [src.org];
+  // would repeat forever. Identity is per-resource org+repo (a role may point at
+  // a different org than the others), so each OR-clause binds its OWN source_org.
+  const params: unknown[] = [];
   const orClauses: string[] = [];
-  for (const r of sourced) {
-    params.push(src.repos[r]);
+  for (const { r, ref } of sourced) {
+    params.push(ref.org);
+    const orgIdx = params.length;
+    params.push(ref.repo);
+    const repoIdx = params.length;
     // `r` is a compile-time literal ('tw'|'ta'), never user input — safe to inline.
-    orClauses.push(`(resource = '${r}' AND source_repo = ?${params.length})`);
+    orClauses.push(`(resource = '${r}' AND source_org = ?${orgIdx} AND source_repo = ?${repoIdx})`);
   }
-  let where = `deleted_at IS NULL AND source_org = ?1 AND (${orClauses.join(" OR ")})`;
+  let where = `deleted_at IS NULL AND (${orClauses.join(" OR ")})`;
   if (opts.resource) {
     where += ` AND resource = ?${params.length + 1}`;
     params.push(opts.resource);
@@ -803,9 +817,9 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
     const chunk = rows.slice(i, i + FETCH_CONCURRENCY);
     const settled = await Promise.all(
       chunk.map(async (row) => {
-        const repo = repoForResource(src, row.resource);
-        if (!repo) return null; // no source (unreachable: the WHERE only selects sourced resources)
-        const res = await doFetch(env, dcsRawUrl(env, src.org, repo, row.path, "master"));
+        const ref = refForResource(src, row.resource);
+        if (!ref) return null; // no source (unreachable: the WHERE only selects sourced resources)
+        const res = await doFetch(env, dcsRawUrl(env, ref.org, ref.repo, row.path, "master"));
         if (res.status !== 200 || res.text == null || res.truncated) return null;
         const sha = await gitBlobSha(res.text);
         if (sha === row.source_sha) return null; // unchanged
@@ -819,8 +833,8 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
     const group = changes.slice(i, i + WRITE_ITEM_BATCH);
     const stmts: D1PreparedStatement[] = [fenceStmt(env, snapshot)];
     for (const c of group) {
-      const repo = repoForResource(src, c.row.resource);
-      if (!repo) continue; // no source (unreachable: the WHERE only selects sourced resources)
+      const ref = refForResource(src, c.row.resource);
+      if (!ref) continue; // no source (unreachable: the WHERE only selects sourced resources)
       stmts.push(
         upsertStmt(
           env,
@@ -830,8 +844,8 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
           c.row.part,
           c.text,
           c.sha,
-          src.org,
-          repo,
+          ref.org,
+          ref.repo,
           now,
         ),
       );

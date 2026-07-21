@@ -11,8 +11,8 @@
 // stay fixed here.
 
 import type { Env } from "./index";
-import type { ProjectConfig } from "./projectConfig";
-import type { RepoRef } from "./repoUrl";
+import type { ProjectConfig, TranslationSourceRef } from "./projectConfig";
+import { isIdent, type RepoRef } from "./repoUrl.ts";
 
 // Standard unfoldingWord book number prefixes for USFM filenames. Mirror of
 // the BOOK_NUMBERS map in scripts/import-book.mjs and api/src/export.ts.
@@ -93,16 +93,23 @@ export function dcsUrls(
   const tn = at("tn", cfg.repos.tn);
   const tq = at("tq", cfg.repos.tq);
 
+  // SECURITY: encode ONLY the owner/repo path segments — a per-resource override
+  // org/repo can reach here from an unvalidated non-custom-preset merge, and a
+  // '/' or '..' in either would otherwise repoint the URL. The ref + filename
+  // segments are code-controlled (master / SHA / `${res}_${BOOK}.tsv`) and carry
+  // legitimate structure, so they are left as-is. For valid idents (the norm)
+  // encoding is a no-op.
+  const seg = encodeURIComponent;
   return {
-    ult: `${base}/${lit.owner}/${lit.repo}/raw/branch/${lit.ref}/${usfmName}`,
-    ust: `${base}/${sim.owner}/${sim.repo}/raw/branch/${sim.ref}/${usfmName}`,
-    orig: `${base}/${ORIG_OWNER}/${origRepo}/raw/branch/master/${usfmName}`,
+    ult: `${base}/${seg(lit.owner)}/${seg(lit.repo)}/raw/branch/${lit.ref}/${usfmName}`,
+    ust: `${base}/${seg(sim.owner)}/${seg(sim.repo)}/raw/branch/${sim.ref}/${usfmName}`,
+    orig: `${base}/${seg(ORIG_OWNER)}/${seg(origRepo)}/raw/branch/master/${usfmName}`,
     origVersion: isNt ? "UGNT" : "UHB",
-    tn: `${base}/${tn.owner}/${tn.repo}/raw/branch/${tn.ref}/tn_${book}.tsv`,
-    tq: `${base}/${tq.owner}/${tq.repo}/raw/branch/${tq.ref}/tq_${book}.tsv`,
+    tn: `${base}/${seg(tn.owner)}/${seg(tn.repo)}/raw/branch/${tn.ref}/tn_${book}.tsv`,
+    tq: `${base}/${seg(tq.owner)}/${seg(tq.repo)}/raw/branch/${tq.ref}/tq_${book}.tsv`,
     // twl is language-neutral (orig-word links), so it always comes from the
     // project's own org — never from the English translation source.
-    twl: `${base}/${org}/${cfg.repos.twl}/raw/branch/master/twl_${book}.tsv`,
+    twl: `${base}/${seg(org)}/${seg(cfg.repos.twl)}/raw/branch/master/twl_${book}.tsv`,
   };
 }
 
@@ -119,22 +126,83 @@ export function sourceProvenance(owner: string, repo: string): string {
   return `${SOURCE_PROVENANCE_PREFIX}${owner}/${repo}`;
 }
 
+// ── Per-resource source-ref accessor — the ONE place org+repo is resolved ──
+// A resource's translation source can now come from a DIFFERENT org than the
+// single translationSource.org, carried as an { org?, repo } ref (a pasted
+// Door43 URL). Legacy persisted rows stored a bare repo string; both shapes
+// normalize here. EVERY consumer of translationSource.repos[role] must read
+// through this accessor so a missing/blank ref cleanly means "no source" and a
+// per-resource org override is honored uniformly.
+export interface SourceRef {
+  org: string;
+  repo: string;
+}
+
+// The shape resolveSourceRef reads. Kept structural (not `ProjectConfig`) so
+// callers can pass just the translationSource object.
+export interface TranslationSourceLike {
+  org: string;
+  repos: Partial<Record<string, TranslationSourceRef>>;
+}
+
+// Normalize one persisted per-resource value against the default (primary) org.
+// - bare string            → { org: defaultOrg, repo }
+// - { repo, org? }         → { org: org ?? defaultOrg, repo }
+// - missing / blank repo   → null ("no upstream source for this resource")
+//
+// SECURITY: both the resolved org and repo MUST be valid DCS idents. These
+// values are interpolated into git.door43.org URL path segments (dcsUrls /
+// dcsRawUrl), and — unlike the custom-gl APPLY path — a translationSource
+// override merged via a NON-custom preset reaches here UNVALIDATED (loose zod →
+// materialize). A value like `uW/../../other_tn` would otherwise resolve to an
+// unintended repo/path. Treat any non-ident org/repo as NO source (null) so a
+// traversal can never leave this function. The persist boundary
+// (projectConfigRoutes) and the URL builders (encodeURIComponent) are the other
+// two defense layers.
+export function normalizeSourceRef(
+  defaultOrg: string,
+  value: TranslationSourceRef | null | undefined,
+): SourceRef | null {
+  if (value == null) return null;
+  let repo: string;
+  let org: string;
+  if (typeof value === "string") {
+    repo = value.trim();
+    org = defaultOrg;
+  } else if (typeof value === "object") {
+    repo = (value.repo ?? "").trim();
+    org = (value.org ?? "").trim() || defaultOrg;
+  } else {
+    return null;
+  }
+  if (!repo) return null;
+  // Reject non-ident org/repo — never yield a value that could traverse paths.
+  if (!isIdent(org) || !isIdent(repo)) return null;
+  return { org, repo };
+}
+
+// Resolve a translationSource role to a concrete { org, repo }, or null when
+// the project has no translationSource / the role has no upstream source.
+export function resolveSourceRef(
+  translationSource: TranslationSourceLike | null | undefined,
+  role: string,
+): SourceRef | null {
+  if (!translationSource) return null;
+  return normalizeSourceRef(translationSource.org, translationSource.repos[role]);
+}
+
 // The repo ref for a note resource when translating from the English source.
 // Returns null when cfg.translationSource is absent (an authored, not
-// translated, project — there is nothing to translate from).
+// translated, project — there is nothing to translate from) OR when the role
+// has no upstream source (missing/blank in Setup). Delegates to resolveSourceRef
+// so the per-resource org override is honored on the import/reimport path too.
 export function translationSourceRepoRef(
   cfg: ProjectConfig,
   resource: "tn" | "tq",
 ): RepoRef | null {
-  const src = cfg.translationSource;
-  if (!src) return null;
-  // translationSource.repos is now PARTIAL (custom-gl may omit a role whose
-  // upstream box was unchecked). A missing/blank repo for this resource means
-  // "no source to translate from" — same as an authored project for that one
-  // resource — so return null rather than building a URL with an undefined repo.
-  const repo = src.repos[resource];
-  if (!repo) return null;
-  return { owner: src.org, repo, ref: "master" };
+  const ref = resolveSourceRef(cfg.translationSource, resource);
+  if (!ref) return null;
+  return { owner: ref.org, repo: ref.repo, ref: "master" };
 }
 
 // Does a failed org-repo note fetch mean "this file genuinely does not exist"
@@ -309,7 +377,10 @@ export function dcsResourceFile(
 export function dcsRawUrl(env: Env, owner: string, repo: string, path: string, ref = "master"): string {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const kind = /^[0-9a-f]{40}$/i.test(ref) ? "commit" : "branch";
-  return `${base}/${owner}/${repo}/raw/${kind}/${ref}/${path}`;
+  // SECURITY: encode ONLY owner/repo (a per-resource override can carry an
+  // unvalidated org/repo). `path` intentionally keeps its slashes (in-repo file
+  // path); `ref` is code-controlled (master / SHA). No-op for valid idents.
+  return `${base}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/raw/${kind}/${ref}/${path}`;
 }
 
 // Latest commit SHA on master that touched `path` in `repo`, or null on

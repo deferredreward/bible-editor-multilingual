@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { requireAuth, requireAdmin } from "./auth.ts";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
+import { isIdent } from "./repoUrl.ts";
 import { overlayLaneLabels } from "./scriptureLane.ts";
 import { scriptureLaneRoutes } from "./scriptureLaneRoutes.ts";
 import { applyProjectConfig, applyProjectMode } from "./projectConfigApply.ts";
@@ -65,11 +66,27 @@ projectConfig.get("/", async (c) => {
 
 // Loose shape check for translationSource only when the key is present
 // (custom-gl's stricter isIdent/completeness guard runs in applyProjectConfig).
-const TranslationSourceShape = z
+// SECURITY: org + per-resource repo/org are interpolated into git.door43.org URL
+// path segments (dcsUrls/dcsRawUrl). Only the custom-gl APPLY path used to
+// isIdent-validate them; a translationSource override merged via a NON-custom
+// preset reaches materialize UNCHECKED. Validate at THIS persist boundary for
+// EVERY preset so a traversal value (org/repo with '/', '..') can never be
+// stored. `languageCode` stays loose (it's not a URL path segment).
+const Ident = z.string().refine(isIdent, { message: "not_a_valid_ident" });
+// Exported for the persist-boundary regression test (projectConfigRoutes.test.mjs):
+// a non-ident override org/repo must be REJECTED here for EVERY preset, so it can
+// never be stored via a non-custom preset override.
+export const TranslationSourceShape = z
   .object({
-    org: z.string(),
+    org: Ident,
     languageCode: z.string(),
-    repos: z.record(z.string(), z.string()),
+    // Per-resource value is a bare repo string OR an { org?, repo } ref (a
+    // resource sourced from a different org via a pasted Door43 URL). Both the
+    // repo and the optional override org must be valid idents.
+    repos: z.record(
+      z.string(),
+      z.union([Ident, z.object({ org: Ident.optional(), repo: Ident })]),
+    ),
   })
   .nullable();
 
