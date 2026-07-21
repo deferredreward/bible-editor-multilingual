@@ -615,7 +615,25 @@
       },
       "fromTeam": "Door43 team",
       "teamManagedEdit": "This user's role comes from a Door43 team, so this change will be undone the next time their membership is checked. Change their team on Door43 to make it stick.",
-      "teamManagedRemove": "Removed for now — but {{username}} is in a Door43 team, so they will regain access the next time they sign in. Remove them from the team on Door43 to revoke access."
+      "teamManagedRemove": "Removed for now — but {{username}} is in a Door43 team, so they will regain access the next time they sign in. Remove them from the team on Door43 to revoke access.",
+      "reconcile": {
+        "allowlistHeading": "Manually granted roles (allowlist)",
+        "allowlistNote": "Editor and admin access held in this app. This is not the Door43 org roster — it's who has been granted a role here.",
+        "notOrgMember": "not an org member",
+        "notOrgMemberHint": "This user holds an app role but isn't in the {{org}} org on Door43.",
+        "orgHeading": "Actual {{org}} org members (live from Door43)",
+        "orgHeadingNoOrg": "Org members (live from Door43)",
+        "orgNote": "The real org roster, read live from Door43 for comparison. Nothing here changes roles — grant or remove access above.",
+        "unavailable": "Couldn't reach Door43 to load the org roster. Role management above still works.",
+        "truncated": "The org has more members than could be listed; this view is incomplete.",
+        "memberColumn": "Org member",
+        "statusColumn": "App role",
+        "hasRole": "{{role}} ({{source}})",
+        "noRole": "org member (no app role)",
+        "sourceTeam": "Door43 team",
+        "sourceManual": "manual",
+        "emptyRoster": "No org members found."
+      }
     },
     "save": "Guardar",
     "cancel": "Cancelar",
