@@ -5,6 +5,7 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
 import { requireAuth, currentUserId, effectiveRole, ensureWorkspaceUser, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
+import { fetchMemberOrgs, syncTeamRoleForUser } from "./dcsTeams.ts";
 import { listWorkspaces, sharedDb, serializeWorkspaceCookie, workspaceEnv, type Workspace } from "./workspaces.ts";
 import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
 
@@ -30,22 +31,11 @@ async function currentAccessToken(env: Env, userId: number | null): Promise<stri
   return row?.dcs_access_token ?? null;
 }
 
-// One DCS call per request: GET /api/v1/user/orgs with the caller's own
-// token. Returns null (not an empty array) on any failure so callers can
+// The GET /api/v1/user/orgs membership lookup lives in dcsTeams.ts
+// (fetchMemberOrgs) — shared with the OAuth callback's login-time workspace
+// resolution. Null (never an empty set) on any failure so callers can
 // distinguish "confirmed no orgs" from "couldn't check" — the latter must
 // fail closed to "current workspace only", never to "denied everywhere".
-async function fetchMemberOrgs(env: Env, accessToken: string): Promise<Set<string> | null> {
-  try {
-    const res = await fetch(`${env.DCS_BASE_URL}/api/v1/user/orgs`, {
-      headers: { Authorization: `token ${accessToken}` },
-    });
-    if (!res.ok) return null;
-    const orgs = (await res.json()) as Array<{ username?: string }>;
-    return new Set(orgs.map((o) => (o.username ?? "").toLowerCase()));
-  } catch {
-    return null;
-  }
-}
 
 // GET /api/workspaces — the switcher's list, with an `allowed` flag per
 // workspace so the UI can show-but-disable orgs the user isn't a member of.
@@ -112,9 +102,11 @@ workspaceRoutes.post("/:slug", async (c) => {
   if (!ws) return c.json({ error: "unknown_workspace" }, 404);
 
   const username = c.get("username");
-  let allowed = !!username && isSuperAdmin(c.env, username);
+  const superAdmin = !!username && isSuperAdmin(c.env, username);
+  // Hoisted past the gate: the switch-time team resync below reuses it.
+  const accessToken = superAdmin ? null : await currentAccessToken(c.env, currentUserId(c));
+  let allowed = superAdmin;
   if (!allowed) {
-    const accessToken = await currentAccessToken(c.env, currentUserId(c));
     const memberOrgs = accessToken ? await fetchMemberOrgs(c.env, accessToken) : null;
     allowed = !!memberOrgs && memberOrgs.has(ws.org.toLowerCase());
   }
@@ -152,6 +144,15 @@ workspaceRoutes.post("/:slug", async (c) => {
       if (userId !== null) {
         await ensureWorkspaceUser(targetEnv, userId);
       }
+      // Switch-time team resync, against the TARGET workspace's env: a user
+      // entering this workspace for the first time has no user_roles row in
+      // its database yet, so without this they'd land as a plain viewer until
+      // their next full OAuth sign-in re-ran the team sync. Best-effort
+      // (never throws); skipped for super admins, whose effectiveRole below
+      // short-circuits to admin regardless — their switches stay DCS-free.
+      if (accessToken) {
+        await syncTeamRoleForUser(targetEnv, username, accessToken);
+      }
       const role: Role = (await effectiveRole(targetEnv, username)) ?? "viewer";
       if (userId !== null) {
         const newAccessToken = await mintToken(c, userId, username, role);
@@ -185,6 +186,22 @@ workspaceRoutes.post("/:slug", async (c) => {
     }
   } catch {
     // Non-fatal: the read-path fallback resolves the correct preset per request.
+  }
+
+  // Remember the choice — the (b) "last-used workspace" input the OAuth
+  // callback's login resolution reads on their next sign-in. Best-effort:
+  // the column arrives with migration 0056, and code deploys before
+  // migrations apply.
+  const switchedUserId = currentUserId(c);
+  if (switchedUserId !== null) {
+    try {
+      await sharedDb(c.env)
+        .prepare(`UPDATE users SET last_workspace_slug = ?1 WHERE id = ?2`)
+        .bind(ws.slug, switchedUserId)
+        .run();
+    } catch {
+      // Pre-migration window — nothing to do.
+    }
   }
 
   return c.json({ ok: true, slug: ws.slug });

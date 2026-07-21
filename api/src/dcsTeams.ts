@@ -101,6 +101,58 @@ export async function listUserTeams(
 }
 
 /**
+ * GET /api/v1/user/orgs with the user's own token — the set of Door43 orgs
+ * they belong to, lowercased for case-insensitive compare against workspace
+ * org names. (In Gitea, team membership implies org membership, so this set
+ * is sufficient for workspace matching.)
+ *
+ * Returns `null` (never an empty set) on ANY failure — network, non-2xx,
+ * unparseable body, or a paginated list truncated at the page cap — so
+ * callers can distinguish "confirmed no orgs" from "couldn't check". The
+ * latter must fail soft (keep the current/cookie workspace, keep cached
+ * roles), never hard to "denied everywhere".
+ *
+ * Shared by the OAuth callback's login-time workspace resolution (auth.ts)
+ * and the workspace switcher (workspaceRoutes.ts).
+ */
+export async function fetchMemberOrgs(
+  env: Env,
+  accessToken: string,
+  deps?: { fetch?: typeof fetch },
+): Promise<Set<string> | null> {
+  const doFetch = deps?.fetch ?? fetch;
+  const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+  const orgs = new Set<string>();
+  try {
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await doFetch(
+        `${base}/api/v1/user/orgs?limit=${PAGE_SIZE}&page=${page}`,
+        { headers: { Authorization: `token ${accessToken}`, Accept: "application/json" } },
+      );
+      if (!res.ok) {
+        console.warn(`[dcsTeams] /user/orgs page ${page} returned ${res.status}`);
+        return null;
+      }
+      const batch = (await res.json()) as unknown;
+      if (!Array.isArray(batch)) {
+        console.warn("[dcsTeams] /user/orgs returned a non-array body");
+        return null;
+      }
+      for (const o of batch as Array<{ username?: string }>) {
+        const name = (o?.username ?? "").toLowerCase();
+        if (name) orgs.add(name);
+      }
+      if (batch.length < PAGE_SIZE) return orgs;
+    }
+  } catch (err) {
+    console.warn(`[dcsTeams] /user/orgs fetch failed: ${String(err)}`);
+    return null;
+  }
+  console.warn(`[dcsTeams] /user/orgs exceeded ${MAX_PAGES} pages; treating as unknown`);
+  return null;
+}
+
+/**
  * Highest role granted by the user's teams *within `org`*. Team names and org
  * names both compare case-insensitively (Gitea itself is case-insensitive on
  * org names). Membership in neither team → null.
@@ -132,31 +184,53 @@ export async function resolveTeamRole(
 ): Promise<{ known: boolean; role: Role | null }> {
   const teams = await listUserTeams(env, accessToken, deps);
   if (teams === null) return { known: false, role: null };
-  return { known: true, role: roleFromTeams(teams, org, teamRoleNames(env)) };
+  const names = teamRoleNames(env);
+  const role = roleFromTeams(teams, org, names);
+  if (role === null) {
+    // Near-miss diagnostic: the user IS on teams in this org, just none whose
+    // name matches the configured admin/editor team names. Without this line
+    // a misnamed team (real case: a Door43 team created as "BE-Admin" while
+    // the default is the plural "BE-Admins") silently degrades every member
+    // to viewer/denied and is indistinguishable, from the outside, from "not
+    // on any team". `wrangler tail` is the intended diagnostic; the fix is to
+    // rename the team or set DCS_TEAM_ADMIN / DCS_TEAM_EDITOR.
+    const wantOrg = org.trim().toLowerCase();
+    const inOrg = teams
+      .filter((t) => (t?.organization?.username ?? "").toLowerCase() === wantOrg)
+      .map((t) => (t?.name ?? "").trim())
+      .filter(Boolean);
+    if (inOrg.length > 0) {
+      console.warn(
+        `[dcsTeams] user has teams in org "${org}" but none match the configured role teams ` +
+          `(admin="${names.admin}", editor="${names.editor}"); their teams there: ${inOrg.join(", ")}`,
+      );
+    }
+  }
+  return { known: true, role };
 }
 
 /**
  * Sync the team-derived role into `user_roles` so /api/auth/refresh (which
  * re-reads that table) needs no DCS round-trip on every request.
  *
- * Precedence, stated as one rule: **a row belongs to whoever created it, and
- * Door43 teams may only ever raise access on rows they don't own.**
+ * Precedence, stated as one rule: **Door43 teams win; a manual row is only a
+ * fallback for users with no team signal at all.**
  *
- *  - `source = 'dcs_team'` rows track their team exactly, in both directions —
- *    including removal once the user leaves the team.
- *  - `source = 'manual'` rows belong to the admin who added them. A team can
- *    PROMOTE such a user (editor → admin, e.g. adding a legacy allowlist entry
- *    to BE-Admins) but can never demote or delete them; only an admin can do
- *    that, in the Preferences panel.
- *  - `source` itself never changes after insert, so a row stays under the
- *    management of whoever created it. (An earlier revision flipped a team row
- *    to 'manual' on any admin edit, which silently detached it from team sync
- *    and made removal-from-team stop revoking — the documented management path
- *    would have quietly done nothing.)
+ *  - A team role (admin/editor) OVERWRITES the row — role AND source — even
+ *    when the existing row was a manual allowlist grant. Once a user has a
+ *    team signal, Door43 is authoritative for them in both directions:
+ *    promotion, demotion, and (below) removal. (The earlier revision let a
+ *    manual admin row survive a team-says-editor sync, which meant the
+ *    documented management path — move the user between teams in Door43 —
+ *    silently did nothing for allowlisted users.)
+ *  - No team signal (`role === null`, membership positively known) deletes
+ *    ONLY `source = 'dcs_team'` rows. A manual row that team sync never
+ *    claimed survives and keeps acting as the fallback grant.
  *  - The last remaining admin is never demoted OR deleted, matching the guards
  *    in adminUserRoutes.ts. Leaving a Door43 team must not be able to empty the
  *    admin set: `/api/admin/users` is itself admin-gated, so a zero-admin
- *    project can only be repaired with raw SQL against D1.
+ *    project can only be repaired with raw SQL against D1. A guard-refused
+ *    demotion leaves role AND source untouched.
  *
  * `synced_at` is stamped on every successful sync (even a no-op one) so the
  * refresh path can tell a freshly-checked row from a stale one.
@@ -170,21 +244,26 @@ export async function syncTeamRole(
     // The role decision is a CASE inside SET rather than a WHERE on the whole
     // UPDATE so that `synced_at` is refreshed even when the role is unchanged
     // or the change is refused — otherwise a declined update would leave the
-    // row permanently stale and re-hit DCS on every single refresh.
+    // row permanently stale and re-hit DCS on every single refresh. The same
+    // last-admin condition gates `source` so a refused demotion doesn't hand
+    // the (still-admin) row to team ownership, where the DELETE path's guard
+    // would then be the only thing standing between it and removal.
     await env.DB.prepare(
       `INSERT INTO user_roles (dcs_username, role, source, synced_at)
        VALUES (?1, ?2, 'dcs_team', unixepoch())
        ON CONFLICT(dcs_username) DO UPDATE SET
          synced_at = unixepoch(),
          role = CASE
-           WHEN user_roles.source = 'dcs_team'
-                AND NOT (user_roles.role = 'admin' AND excluded.role = 'editor'
-                         AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)
-             THEN excluded.role
-           WHEN user_roles.source <> 'dcs_team'
-                AND user_roles.role = 'editor' AND excluded.role = 'admin'
+           WHEN NOT (user_roles.role = 'admin' AND excluded.role = 'editor'
+                     AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)
              THEN excluded.role
            ELSE user_roles.role
+         END,
+         source = CASE
+           WHEN NOT (user_roles.role = 'admin' AND excluded.role = 'editor'
+                     AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)
+             THEN 'dcs_team'
+           ELSE user_roles.source
          END`,
     )
       .bind(dcsUsername, role)
@@ -237,5 +316,37 @@ export async function orgForTeamSync(env: Env): Promise<string | null> {
     return materialize(row.preset, row.overrides_json).org || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Full pipeline for one user: resolve the org this env belongs to, ask DCS
+ * which teams they're on, cache the mapped role into user_roles.
+ *
+ * `env` decides WHICH workspace's org is matched and WHICH database is
+ * written — callers switching/landing a user in a non-request workspace must
+ * pass the derived `workspaceEnv(...)`, not the request env.
+ *
+ * NOTHING here may break sign-in. Every failure mode — DCS unreachable, the
+ * project org unknown, a D1 error (notably `no such column: source` in the
+ * window between deploying the worker and applying migration 0055, since code
+ * normally ships before migrations) — must leave the existing allowlist exactly
+ * as it was and let the caller fall through to the pre-existing gate. A thrown
+ * error here would 500 the OAuth callback and lock EVERY user out, admins
+ * included, which is strictly worse than the feature silently not applying.
+ */
+export async function syncTeamRoleForUser(
+  env: Env,
+  dcsUsername: string,
+  accessToken: string,
+): Promise<void> {
+  try {
+    const org = await orgForTeamSync(env);
+    if (!org) return; // project never onboarded, or the config read failed
+    const team = await resolveTeamRole(env, org, accessToken);
+    if (!team.known) return; // DCS didn't answer — never read that as "no teams"
+    await syncTeamRole(env, dcsUsername, team.role);
+  } catch (err) {
+    console.warn(`[dcsTeams] team role sync failed for ${dcsUsername}: ${String(err)}`);
   }
 }

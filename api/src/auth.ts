@@ -25,12 +25,19 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import type { Env } from "./index";
 import {
-  resolveTeamRole,
-  syncTeamRole,
-  orgForTeamSync,
+  fetchMemberOrgs,
+  syncTeamRoleForUser,
   RESYNC_AFTER_SECONDS,
 } from "./dcsTeams.ts";
-import { sharedDb, listWorkspaces } from "./workspaces.ts";
+import {
+  sharedDb,
+  listWorkspaces,
+  resolveLoginWorkspace,
+  serializeWorkspaceCookie,
+  workspaceEnv,
+  WORKSPACE_COOKIE,
+} from "./workspaces.ts";
+import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
 
 // Isolate-level memoization for ensureWorkspaceUser (below), keyed
 // `${WORKSPACE_SLUG}:${userId}` — once mirrored this isolate, never repeat
@@ -182,30 +189,10 @@ export async function lookupUserRole(env: Env, dcsUsername: string): Promise<Rol
   return row?.role ?? null;
 }
 
-// Refresh the caller's cached Door43-team role, if any.
-//
-// NOTHING here may break sign-in. Every failure mode — DCS unreachable, the
-// project org unknown, a D1 error (notably `no such column: source` in the
-// window between deploying this worker and applying migration 0055, since code
-// normally ships before migrations) — must leave the existing allowlist exactly
-// as it was and let the caller fall through to the pre-existing gate. A thrown
-// error here would 500 the OAuth callback and lock EVERY user out, admins
-// included, which is strictly worse than the feature silently not applying.
-async function syncTeamRoleForUser(
-  env: Env,
-  dcsUsername: string,
-  accessToken: string,
-): Promise<void> {
-  try {
-    const org = await orgForTeamSync(env);
-    if (!org) return; // project never onboarded, or the config read failed
-    const team = await resolveTeamRole(env, org, accessToken);
-    if (!team.known) return; // DCS didn't answer — never read that as "no teams"
-    await syncTeamRole(env, dcsUsername, team.role);
-  } catch (err) {
-    console.warn(`[auth] team role sync failed for ${dcsUsername}: ${String(err)}`);
-  }
-}
+// Team-role sync itself (org resolution + DCS teams fetch + user_roles cache
+// write) lives in dcsTeams.ts as syncTeamRoleForUser — it's shared with the
+// workspace-switch route, which must run it against the TARGET workspace's
+// env, not this request's.
 
 // Re-check a cached team role on refresh, at most once per RESYNC_AFTER_SECONDS.
 //
@@ -622,19 +609,64 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   if (!userRes.ok) return c.json({ error: "user_fetch_failed" }, 502);
   const dcsUser = (await userRes.json()) as { id: number; login: string; full_name?: string };
 
-  // Door43 teams as role source (read-side). Membership of the configured
-  // org's BE-Admins / BE-Editors teams grants admin / editor, and is cached
-  // into user_roles so /api/auth/refresh needs no DCS round-trip.
-  await syncTeamRoleForUser(c.env, dcsUser.login, accessToken);
+  // ── Login-time workspace resolution ────────────────────────────────────
+  // index.ts's fetch() wrapper picked this request's workspace from the be_ws
+  // cookie BEFORE anyone knew who the user is, so a first-time user with no
+  // cookie landed in list[0] — and every org comparison below (team sync,
+  // viewer membership) then ran against the wrong org. Observed in the wild:
+  // a DCS user in BibleEditorMLTest's BE-Editors team hit the denied screen
+  // because everything was checked against BSOJ (list[0]). Now that the
+  // profile is in hand, re-resolve from the user's actual Door43 orgs and run
+  // EVERYTHING downstream against the derived wsEnv. Shared-DB writes
+  // (users, sessions) are workspace-agnostic — sharedDb() resolves the same
+  // database from either env.
+  const workspaces = listWorkspaces(c.env);
+  const cookieSlug = getCookie(c, WORKSPACE_COOKIE) ?? null;
+  let lastUsedSlug: string | null = null;
+  try {
+    const lw = await sharedDb(c.env)
+      .prepare(`SELECT last_workspace_slug AS slug FROM users WHERE dcs_user_id = ?1`)
+      .bind(dcsUser.id)
+      .first<{ slug: string | null }>();
+    lastUsedSlug = lw?.slug ?? null;
+  } catch {
+    // Pre-migration-0056 deploy window (code ships before migrations) —
+    // resolution simply proceeds without last-used history.
+  }
+  // Super admins are allowed in every workspace (mirrors the switch route) —
+  // no DCS round-trip needed to know that.
+  const memberOrgs = isSuperAdmin(c.env, dcsUser.login)
+    ? new Set(workspaces.map((w) => w.org.toLowerCase()))
+    : await fetchMemberOrgs(c.env, accessToken);
+  const resolution = resolveLoginWorkspace({
+    workspaces,
+    cookieSlug,
+    lastUsedSlug,
+    memberOrgs,
+  });
+  const wsEnv = workspaceEnv(c.env, resolution.workspace);
+
+  // Door43 teams as role source (read-side). Membership of the resolved
+  // workspace org's BE-Admins / BE-Editors teams grants admin / editor, and is
+  // cached into user_roles so /api/auth/refresh needs no DCS round-trip.
+  await syncTeamRoleForUser(wsEnv, dcsUser.login, accessToken);
 
   // Allowlist gate. user_roles is the source of truth for edit access; an
   // account missing from it falls through to a DCS org-membership check so
-  // members of the viewer org (default: unfoldingWord) get read-only access.
-  // Anything else hits the denied screen.
+  // members of the viewer org (stamped from the resolved workspace's org, or
+  // VIEWER_ORG in a single-org deployment) get read-only access. Anything
+  // else hits the denied screen — which by construction only happens when we
+  // POSITIVELY know the user matches no workspace org AND no cached/manual/
+  // super-admin role grants access; an orgs-fetch failure fails soft into the
+  // cookie/first workspace where cached roles still work.
   const origin = new URL(c.req.url).origin;
-  let role: Role | null = await effectiveRole(c.env, dcsUser.login);
+  let role: Role | null = await effectiveRole(wsEnv, dcsUser.login);
   if (!role) {
-    const isMember = await isViewerOrgMember(c.env, dcsUser.login, accessToken);
+    // Reuse the org set already fetched above instead of a second DCS call;
+    // fall back to the direct check only when that fetch failed.
+    const isMember = memberOrgs
+      ? memberOrgs.has(viewerOrgName(wsEnv).toLowerCase())
+      : await isViewerOrgMember(wsEnv, dcsUser.login, accessToken);
     if (isMember) {
       role = "viewer";
     } else {
@@ -664,15 +696,61 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     .first<{ id: number }>();
   if (!userRow) return c.json({ error: "user_create_failed" }, 500);
 
+  // Mirror the user into the resolved workspace's local users table now, so
+  // the very first post-login write (which will carry the be_ws cookie set
+  // below) can't race attachAuth's lazy mirror and trip an FK.
+  await ensureWorkspaceUser(wsEnv, userRow.id);
+
+  // Persist where they landed — the (b) "last-used workspace" input for their
+  // next login. Only on a POSITIVE match (cases a–d): recording the fail-soft
+  // fallback would turn one DCS hiccup into sticky wrong-workspace history.
+  if (resolution.matched) {
+    try {
+      await sharedDb(c.env)
+        .prepare(`UPDATE users SET last_workspace_slug = ?1 WHERE id = ?2`)
+        .bind(resolution.workspace.slug, userRow.id)
+        .run();
+    } catch {
+      // Pre-migration-0056 deploy window — best-effort by design.
+    }
+  }
+
+  // Init-on-admin-login: a fresh org's first admin (via their Door43 team)
+  // must land ready to run Setup, so seed the workspace's project_config from
+  // its org preset when the database has no row yet. Same idempotent
+  // best-effort call the workspace-switch route makes.
+  if (role === "admin") {
+    try {
+      const preset = presetForOrg(resolution.workspace.org);
+      if (preset) await seedProjectConfigIfAbsent(wsEnv, preset);
+    } catch {
+      // Non-fatal: getProjectConfig's read-path fallback covers this.
+    }
+  }
+
   const token = await mintToken(c, userRow.id, dcsUser.login, role);
   const { sessionId, csrfToken } = await startSession(c, userRow.id);
   setSessionCookies(c, token, sessionId, csrfToken);
+
+  // Land the browser in the workspace we just resolved everything against.
+  // append: true — this must ride ALONGSIDE the session cookies above, and
+  // c.header()'s default Headers.set would clobber them.
+  c.header(
+    "Set-Cookie",
+    serializeWorkspaceCookie(resolution.workspace.slug, isSecureRequest(c)),
+    { append: true },
+  );
 
   // Plain redirect to /. Cookies travel with the response automatically.
   // The earlier `#_auth=<jwt>` fragment shape leaked the bearer into
   // history.state + Referer in some edge cases; cookies eliminate the leak
   // surface entirely (HttpOnly = JS can't even read the Access value).
-  return c.redirect(`${origin}/`, 302);
+  // ?_choose_ws=1 (case (d): several org matches, no usable history) tells
+  // the SPA to offer a one-time workspace picker — see App.tsx.
+  return c.redirect(
+    resolution.promptChoice ? `${origin}/?_choose_ws=1` : `${origin}/`,
+    302,
+  );
 }
 
 // GET /api/auth/me — returns identity from the bearer token plus the user's

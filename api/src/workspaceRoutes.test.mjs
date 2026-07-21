@@ -381,6 +381,87 @@ console.log("[POST] switching workspace re-mints the access cookie's role from t
   }
 }
 
+// ── switch-time team resync: first entry into a workspace grants team role ──
+
+console.log("[POST] switching runs a team-role sync against the TARGET workspace before re-minting");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    // hana is a Door43 member of OrgTwo and on its BE-Editors team, but has
+    // NO user_roles row in org2's database yet (first time entering it).
+    // Without the switch-time resync she'd be re-minted as viewer until her
+    // next full OAuth sign-in.
+    const dbUw = freshDb();
+    dbUw.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER);`);
+    seedUser(dbUw, { id: 11, username: "hana", token: "hana-token" });
+
+    const dbOrg2 = freshDb();
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER);`);
+
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("/api/v1/user/orgs")) {
+        return new Response(JSON.stringify([{ username: "OrgTwo" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (u.includes("/api/v1/user/teams")) {
+        return new Response(
+          JSON.stringify([{ name: "BE-Editors", organization: { username: "OrgTwo" } }]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected DCS call: ${u}`);
+    };
+
+    const app = buildApp();
+    const env = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: makeD1(dbUw),
+      DB2: makeD1(dbOrg2),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+      WORKSPACE_SLUG: "uw",
+      SUPER_ADMINS: "",
+    };
+    const tok = await makeToken({ sub: "11", role: "viewer", username: "hana" });
+    const res = await req(app, env, "POST", "/api/workspaces/org2", { token: tok });
+    assert(res.status === 200, "switch to org2 -> 200");
+
+    const row = dbOrg2
+      .prepare("SELECT role, source FROM user_roles WHERE dcs_username = 'hana'")
+      .get();
+    assert(
+      !!row && row.role === "editor" && row.source === "dcs_team",
+      "the TARGET workspace's user_roles now has hana's team-derived editor row",
+    );
+    const uwRow = dbUw
+      .prepare("SELECT role FROM user_roles WHERE dcs_username = 'hana'")
+      .get();
+    assert(uwRow === undefined || uwRow === null, "the SOURCE workspace's user_roles was not written");
+
+    const setCookies =
+      typeof res.headers.getSetCookie === "function"
+        ? res.headers.getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    const accessCookie = setCookies.find((h) => /^be_access=/.test(h));
+    assert(!!accessCookie, "a new be_access cookie was minted");
+    const newToken = accessCookie.match(/^be_access=([^;]+)/)[1];
+    const { payload } = await jwtVerify(newToken, KEY, { algorithms: ["HS256"], issuer: ISSUER });
+    assert(
+      payload.role === "editor",
+      `re-minted token carries the freshly-synced editor role, got ${payload.role}`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 // ── super admin bootstraps a brand-new workspace as admin ──────────────────
 
 console.log("[POST] super-admin switching into a workspace with no user_roles row -> re-minted as admin");

@@ -19,6 +19,11 @@ import {
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
 import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "./sync/workspace";
+import {
+  WorkspaceChoiceDialog,
+  markChooseWsPending,
+  isChooseWsPending,
+} from "./components/WorkspaceChoiceDialog";
 
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
@@ -192,6 +197,21 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
 
 export function App() {
   const [loc, setLoc] = useState<Location>(() => parseHash());
+  // ?_choose_ws=1: the OAuth callback matched this account to SEVERAL Door43
+  // orgs with no usable history and landed the session in the first match —
+  // offer a one-time picker. Persisted to sessionStorage (markChooseWsPending)
+  // because the workspace-reconciliation effect below may reload the tab once
+  // before the dialog is seen; the initializer runs before useAuthGate's so
+  // the flag survives its own history.replaceState URL cleanup too.
+  const [chooseWs, setChooseWs] = useState<boolean>(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("_choose_ws")) {
+      history.replaceState(null, "", location.pathname + location.hash);
+      markChooseWsPending();
+      return true;
+    }
+    return isChooseWsPending();
+  });
   const [auth, setAuth] = useAuthGate();
   const [sessionExpired, setSessionExpired] = useState(false);
   // useBook is hoisted here so its chapter cache survives Shell remounts
@@ -515,6 +535,7 @@ export function App() {
           Your session expired — sign in to keep saving. Queued edits will sync after sign-in.
         </Alert>
       </Snackbar>
+      {chooseWs && <WorkspaceChoiceDialog onClose={() => setChooseWs(false)} />}
     </Box>
   );
 }
