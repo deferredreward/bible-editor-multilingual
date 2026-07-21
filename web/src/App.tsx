@@ -4,6 +4,7 @@ import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
+import { LocalizationInspector } from "./components/LocalizationInspector";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
 import {
@@ -424,6 +425,7 @@ export function App() {
 
   return (
     <Box sx={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+      <LocalizationInspector />
       {alerts.length > 0 && (
         // Float the alert stack so it doesn't push Shell down — the outer
         // flex column's children can't actually shrink (Shell's internal

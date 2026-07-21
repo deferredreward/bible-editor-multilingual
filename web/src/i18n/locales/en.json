@@ -153,7 +153,12 @@
       "export": "Export file",
       "saveCount": "Save changes ({{count}})",
       "noMatches": "No strings match your search.",
-      "placeholderWarning": "Missing placeholder(s): {{tokens}} — keep these so values fill in correctly."
+      "placeholderWarning": "Missing placeholder(s): {{tokens}} — keep these so values fill in correctly.",
+      "inspectMode": "Localization mode (hover + click the real app to edit its text)",
+      "inspectHint": "Localization mode is on — go back to the app, then hover any text to highlight it and click to edit its translation.",
+      "inspectNoKey": "Couldn't match this element to a translation key.",
+      "inspectSave": "Save",
+      "inspectCancel": "Cancel"
     },
     "users": {
       "title": "User management",

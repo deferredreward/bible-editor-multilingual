@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -27,6 +30,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DownloadIcon from "@mui/icons-material/Download";
 import UploadIcon from "@mui/icons-material/Upload";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useTranslation } from "react-i18next";
 import {
   api,
@@ -77,6 +81,7 @@ import {
   applyOverrides,
   type StringRow,
 } from "../i18n/overrides";
+import { useLocalizationMode, setLocalizationModeEnabled } from "../i18n/localizationMode";
 import SearchIcon from "@mui/icons-material/Search";
 
 const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
@@ -1049,6 +1054,14 @@ function LocalizationSection() {
   const [draft, setDraft] = useState<Record<string, string>>({}); // unsaved edits, path→text
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  // Perf (#77): ~3,218 keys means rendering every row's pair of TextFields at
+  // once briefly freezes the main thread on open. Namespace groups are
+  // collapsed by default (Accordion `unmountOnExit` means collapsed groups
+  // mount ZERO fields), and a non-empty search auto-expands only the groups
+  // that actually matched — so the common "hunt for a key" path only ever
+  // mounts a small, filtered set of rows.
+  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
+  const localizationModeOn = useLocalizationMode();
 
   // Load this language's stored overrides + version so the first save sends the
   // right If-Match and untouched overrides aren't wiped on a whole-bag PUT.
@@ -1171,6 +1184,16 @@ function LocalizationSection() {
           : t("preferences.localization.intro", { language: langLabel })}
       </Typography>
 
+      <FormControlLabel
+        control={
+          <Switch
+            checked={localizationModeOn}
+            onChange={(e) => setLocalizationModeEnabled(e.target.checked)}
+          />
+        }
+        label={t("preferences.localization.inspectMode")}
+      />
+
       <TextField
         size="small"
         fullWidth
@@ -1193,68 +1216,97 @@ function LocalizationSection() {
           {t("preferences.localization.noMatches")}
         </Alert>
       ) : (
-        <Stack spacing={2.5}>
-          {groups.map(([ns, list]) => (
-            <Box key={ns}>
-              <Typography variant="overline" color="text.secondary">
-                {ns}
-              </Typography>
-              <Divider sx={{ mb: 1 }} />
-              <Stack spacing={1.5}>
-                {list.map((r) => {
-                  const value = valueFor(r.path);
-                  const dropped =
-                    r.path in draft &&
-                    placeholdersOf(r.english).filter((p) => !value.includes(p));
-                  const hasWarning = Array.isArray(dropped) && dropped.length > 0;
-                  return (
-                    <Box key={r.path}>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontFamily: "monospace", display: "block", mb: 0.25 }}
-                      >
-                        {r.path}
-                      </Typography>
-                      <Stack
-                        direction={{ xs: "column", sm: "row" }}
-                        spacing={1}
-                        alignItems={{ sm: "flex-start" }}
-                      >
-                        <TextField
-                          size="small"
-                          fullWidth
-                          value={r.english}
-                          InputProps={{ readOnly: true }}
-                          variant="filled"
-                          multiline
-                          maxRows={6}
-                        />
-                        <TextField
-                          size="small"
-                          fullWidth
-                          dir={dirForLang(lang)}
-                          value={value}
-                          onChange={(e) => setDraft((d) => ({ ...d, [r.path]: e.target.value }))}
-                          placeholder={isEnglish ? undefined : r.english}
-                          multiline
-                          maxRows={6}
-                          error={hasWarning}
-                          helperText={
-                            hasWarning
-                              ? t("preferences.localization.placeholderWarning", {
-                                  tokens: (dropped as string[]).join(", "),
-                                })
-                              : undefined
-                          }
-                        />
-                      </Stack>
-                    </Box>
-                  );
-                })}
-              </Stack>
-            </Box>
-          ))}
+        <Stack spacing={1}>
+          {groups.map(([ns, list]) => {
+            // A live search forces every matching group open (the filtered
+            // set is already small); otherwise only manually-expanded groups
+            // mount their rows.
+            const isSearching = query.trim().length > 0;
+            const isOpen = isSearching || manualExpanded.has(ns);
+            return (
+              <Accordion
+                key={ns}
+                expanded={isOpen}
+                disableGutters
+                onChange={(_e, next) => {
+                  if (isSearching) return; // search already forces this open
+                  setManualExpanded((prev) => {
+                    const nextSet = new Set(prev);
+                    if (next) nextSet.add(ns);
+                    else nextSet.delete(ns);
+                    return nextSet;
+                  });
+                }}
+                slotProps={{ transition: { unmountOnExit: true } }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="overline" color="text.secondary">
+                    {ns} ({list.length})
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Stack spacing={1.5}>
+                    {list.map((r) => {
+                      const value = valueFor(r.path);
+                      const dropped =
+                        r.path in draft &&
+                        placeholdersOf(r.english).filter((p) => !value.includes(p));
+                      const hasWarning = Array.isArray(dropped) && dropped.length > 0;
+                      const fieldId = `l10n-${lang}-${r.path}`;
+                      return (
+                        <Box key={r.path}>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ fontFamily: "monospace", display: "block", mb: 0.25 }}
+                          >
+                            {r.path}
+                          </Typography>
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            spacing={1}
+                            alignItems={{ sm: "flex-start" }}
+                          >
+                            <TextField
+                              id={`${fieldId}-en`}
+                              name={`${fieldId}-en`}
+                              size="small"
+                              fullWidth
+                              value={r.english}
+                              InputProps={{ readOnly: true }}
+                              variant="filled"
+                              multiline
+                              maxRows={6}
+                            />
+                            <TextField
+                              id={`${fieldId}-override`}
+                              name={`${fieldId}-override`}
+                              size="small"
+                              fullWidth
+                              dir={dirForLang(lang)}
+                              value={value}
+                              onChange={(e) => setDraft((d) => ({ ...d, [r.path]: e.target.value }))}
+                              placeholder={isEnglish ? undefined : r.english}
+                              multiline
+                              maxRows={6}
+                              error={hasWarning}
+                              helperText={
+                                hasWarning
+                                  ? t("preferences.localization.placeholderWarning", {
+                                      tokens: (dropped as string[]).join(", "),
+                                    })
+                                  : undefined
+                              }
+                            />
+                          </Stack>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                </AccordionDetails>
+              </Accordion>
+            );
+          })}
         </Stack>
       )}
 
