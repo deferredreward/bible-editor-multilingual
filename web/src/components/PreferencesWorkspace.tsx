@@ -806,6 +806,11 @@ function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Ro
             </Button>
           </Stack>
         )}
+        {canChange && (
+          <Typography variant="caption" color="text.secondary">
+            {t("preferences.projectModeOrgLockHint")}
+          </Typography>
+        )}
         {message && <Alert severity={message.severity}>{message.text}</Alert>}
       </Stack>
       {canChange && <OrgDetectionSection />}

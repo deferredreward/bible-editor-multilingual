@@ -294,6 +294,36 @@ export const PRESETS: Record<string, Omit<ProjectConfig, "mode">> = {
 
 export const DEFAULT_PRESET = "en-unfoldingword";
 
+/**
+ * The preset id whose `org` matches `org` (case-insensitively), or null when no
+ * preset targets that org. Used to resolve a fresh workspace's DB to ITS org's
+ * preset instead of silently defaulting to the English root (en-unfoldingWord,
+ * whose translationSource is null → authoring/English mode). Hidden presets
+ * (custom-gl, org="") are skipped — they can't stand in for a real org.
+ */
+export function presetForOrg(org: string): string | null {
+  const target = org.trim().toLowerCase();
+  if (!target) return null;
+  for (const [id, preset] of Object.entries(PRESETS)) {
+    if (preset.hidden) continue;
+    if (preset.org.toLowerCase() === target) return id;
+  }
+  return null;
+}
+
+// The preset to materialize when a workspace's D1 has NO project_config row.
+// Prefer the preset that matches the request's workspace org (env.VIEWER_ORG,
+// stamped by workspaceEnv); fall back to the English root only when nothing
+// matches. This is READ-ONLY — it never writes a row (see getProjectConfig).
+function fallbackPreset(env: { VIEWER_ORG?: string }): string {
+  const org = env.VIEWER_ORG;
+  if (org) {
+    const match = presetForOrg(org);
+    if (match) return match;
+  }
+  return DEFAULT_PRESET;
+}
+
 // Per-isolate cache. Config changes are rare admin actions; a 60s TTL keeps
 // every request path from paying a D1 read while still converging quickly
 // after a PUT (which also clears the cache in-isolate).
@@ -407,13 +437,17 @@ export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
       .first<ConfigRow>();
   } catch {
     // Table missing (migration not yet applied) or transient D1 error. Fall
-    // back to the default preset for THIS request, but do NOT cache it — a
-    // transient error must not pin a GL project to unfoldingWord/en_* for the
+    // back to the workspace org's preset for THIS request, but do NOT cache it
+    // — a transient error must not pin a GL project to the wrong org for the
     // whole TTL (that would send import/reimport/export at the wrong org). The
     // next request retries the read.
-    return materialize(DEFAULT_PRESET, null);
+    return materialize(fallbackPreset(env), null);
   }
-  const cfg = row ? materialize(row.preset, row.overrides_json) : materialize(DEFAULT_PRESET, null);
+  // No row (a freshly-selected workspace DB) — materialize the workspace org's
+  // own preset rather than blindly defaulting to the English root, which would
+  // drop a GL workspace into English authoring mode. Read path only: never
+  // written back (switch-time seeding in workspaceRoutes.ts persists it).
+  const cfg = row ? materialize(row.preset, row.overrides_json) : materialize(fallbackPreset(env), null);
   cached.set(key, { cfg, at: now });
   return cfg;
 }
@@ -449,6 +483,25 @@ export async function writeProjectConfig(
     .run();
   clearProjectConfigCache(env);
   return materialize(preset, overridesJson);
+}
+
+// Seed the project_config row from an org's preset ONLY when no row exists yet.
+// Unlike writeProjectConfig (INSERT … ON CONFLICT DO UPDATE), this is
+// INSERT … ON CONFLICT DO NOTHING, so a row that races in between a caller's
+// check-and-seed (e.g. a concurrent admin PUT /api/project-config) is left
+// untouched rather than clobbered back to NULL overrides. Idempotent and safe
+// to call unconditionally on workspace switch.
+export async function seedProjectConfigIfAbsent(env: Env, preset: string): Promise<void> {
+  if (!PRESETS[preset]) throw new Error(`unknown preset: ${preset}`);
+  await env.DB
+    .prepare(
+      `INSERT INTO project_config (id, preset, overrides_json, updated_at)
+       VALUES (1, ?, NULL, unixepoch())
+       ON CONFLICT(id) DO NOTHING`,
+    )
+    .bind(preset)
+    .run();
+  clearProjectConfigCache(env);
 }
 
 // The repo name for a role under this project (what dcsResourceFile consumes).
