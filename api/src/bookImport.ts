@@ -265,7 +265,11 @@ books.post("/:book/import", requireEditor, async (c) => {
     return c.json({ ok: true, book, ...result, ...(force ? { forced: true } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return c.json({ error: "import_failed", book, message: msg }, 502);
+    // A completeness failure where EVERY missing resource was a hard 404 is
+    // permanent (the org simply has no file for this book) — return 422 so a
+    // caller can distinguish it from a transient/mixed failure (kept at 502).
+    const permanent = !!(e && typeof e === "object" && (e as { permanent?: boolean }).permanent);
+    return c.json({ error: "import_failed", book, message: msg }, permanent ? 422 : 502);
   } finally {
     await c.env.DB.prepare(
       `DELETE FROM book_import_locks WHERE book = ?1`,
@@ -414,6 +418,12 @@ async function importBookFromDcs(
   // fetchTextWithStatus and fall back only on a hard 404 (shouldFallBackOnStatus);
   // anything else falls through to the missing/throw path below and is retried.
   const noteUrls: Record<"tn" | "tq", string> = { tn: urls.tn, tq: urls.tq };
+  // The fallback (translation-source) URL actually attempted for a note
+  // resource, if any. Retained even when the fallback fetch fails so the
+  // failure-path classifier below can re-probe BOTH the primary AND the
+  // fallback and only mark the resource permanently missing when both are hard
+  // 404s (a transient fallback failure must not masquerade as permanent).
+  const noteFallbackAttempt: Partial<Record<"tn" | "tq", string>> = {};
   // tn and tq are independent (disjoint noteSource/noteUrls keys), so run both
   // fallback probes concurrently rather than serially — a book missing both
   // files otherwise pays for 4 sequential DCS round-trips instead of 2 pairs
@@ -431,6 +441,7 @@ async function importBookFromDcs(
       if (!shouldFallBackOnStatus(probe.status)) return null;
       const fallbackUrls = dcsUrls(env, cfg, book, { ...overrides, [resource]: ref })!;
       const url = fallbackUrls[resource];
+      noteFallbackAttempt[resource] = url;
       const fetched = await fetchText(url);
       if (fetched == null) return null;
       console.warn("import: org note file absent; falling back to translation source", {
@@ -452,15 +463,66 @@ async function importBookFromDcs(
     tqRaw = tqFallback.fetched;
   }
 
-  const missing: string[] = [];
-  if (!ultRaw) missing.push(`ult (${urls.ult})`);
-  if (!ustRaw) missing.push(`ust (${urls.ust})`);
-  if (!origRaw) missing.push(`${origVersion.toLowerCase()} (${urls.orig})`);
-  if (!tnRaw) missing.push(`tn (${noteUrls.tn})`);
-  if (!tqRaw) missing.push(`tq (${noteUrls.tq})`);
-  if (!twlRaw) missing.push(`twl (${urls.twl})`);
+  const missing: Array<{ label: string; url: string }> = [];
+  if (!ultRaw) missing.push({ label: "ult", url: urls.ult });
+  if (!ustRaw) missing.push({ label: "ust", url: urls.ust });
+  if (!origRaw) missing.push({ label: origVersion.toLowerCase(), url: urls.orig });
+  if (!tnRaw) missing.push({ label: "tn", url: noteUrls.tn });
+  if (!tqRaw) missing.push({ label: "tq", url: noteUrls.tq });
+  if (!twlRaw) missing.push({ label: "twl", url: urls.twl });
   if (missing.length > 0) {
-    throw new Error(`DCS fetch failed for ${missing.length} resource(s); retry: ${missing.join("; ")}`);
+    // Re-probe each missing resource — on the failure path ONLY, never the
+    // happy path — to classify why it failed. A hard 404 means the org's repo
+    // genuinely has no file for this book (permanent: retrying won't help); a
+    // 5xx / network error / truncated read is transient (retry may succeed).
+    // fetchText collapses all of those to null, so the primary fetch above
+    // can't tell them apart; this second probe restores the distinction so the
+    // thrown message — and the HTTP status the route returns — can say which it
+    // is. See issue #58. (Extra DCS round-trips here are acceptable: the import
+    // has already failed.)
+    const classifyStatus = (probe: { status: number; truncated?: boolean }) => {
+      const permanent = probe.status === 404;
+      const reason = permanent
+        ? "missing (HTTP 404)"
+        : probe.status === 0
+          ? "transient (network error)"
+          : probe.truncated
+            ? "transient (truncated read)"
+            : probe.status === 200
+              ? // TOCTOU: the primary fetch returned null but the re-probe now
+                // succeeds — treat as transient, never emit "HTTP 200" as a reason.
+                "transient (recovered on re-check)"
+              : `transient (HTTP ${probe.status})`;
+      return { permanent, reason };
+    };
+    const classified = await Promise.all(
+      missing.map(async ({ label, url }) => {
+        const primary = classifyStatus(await fetchTextWithStatus(env, url));
+        // tn/tq that also attempted a translation-source fallback: the resource
+        // is only permanently missing when BOTH the org's primary URL and the
+        // fallback URL are hard 404s. If either probe is transient, retrying may
+        // still recover the resource, so classify the whole thing as transient.
+        const fallbackUrl =
+          label === "tn" || label === "tq" ? noteFallbackAttempt[label] : undefined;
+        if (fallbackUrl) {
+          const fallback = classifyStatus(await fetchTextWithStatus(env, fallbackUrl));
+          const permanent = primary.permanent && fallback.permanent;
+          const reason = permanent
+            ? "missing (HTTP 404 on org + fallback)"
+            : `org ${primary.reason}; fallback ${fallback.reason}`;
+          return { label, url, permanent, reason };
+        }
+        return { label, url, permanent: primary.permanent, reason: primary.reason };
+      }),
+    );
+    const allPermanent = classified.every((r) => r.permanent);
+    const detail = classified.map((r) => `${r.label} — ${r.reason} (${r.url})`).join("; ");
+    const message = allPermanent
+      ? `This org's repos have no file for ${missing.length} resource(s); retrying won't help: ${detail}`
+      : `DCS fetch failed for ${missing.length} resource(s); retry may succeed: ${detail}`;
+    const err = new Error(message) as Error & { permanent?: boolean };
+    err.permanent = allPermanent;
+    throw err;
   }
 
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple

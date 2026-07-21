@@ -36,7 +36,7 @@ import { useTranslation } from "react-i18next";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
-import { api, importedSourceRepos, type BookListEntry, type BookSummary } from "../sync/api";
+import { api, ApiError, importedSourceRepos, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, resolveBook } from "../lib/bookNames";
@@ -245,7 +245,13 @@ export function TopBar({
       setBooks(r.books);
       onNavigate(code, targetChapter, verse);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      // The backend reports exactly which DCS resource failed (and whether it
+      // was a hard 404 or a transient hiccup) in the error body's `message`.
+      // Prefer that over the bare "HTTP 502" carried by e.message, so an
+      // operator can tell a genuinely-missing book from a retry-able blip.
+      const body = e instanceof ApiError ? (e.body as { error?: string; message?: string } | undefined) : undefined;
+      const msg =
+        body?.message ?? body?.error ?? (e instanceof Error ? e.message : String(e));
       setImportError(t("topbar.couldntImport", { book: bookName(code), message: msg }));
     } finally {
       setImporting(null);
