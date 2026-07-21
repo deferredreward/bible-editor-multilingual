@@ -36,13 +36,15 @@ const RESOURCE_KEYS: ResourceKey[] = ["lit", "sim", "tn", "tq", "twl", "tw", "ta
 export type ValidationResult = { ok: true } | { ok: false; error: string; detail?: unknown };
 
 /**
- * custom-gl completeness + isIdent guard: org, exportOrg, all seven repos, and
- * every nested translationSource repo must be PRESENT and isIdent-VALID
- * ("non-empty" is insufficient for URL-building values — a value like
- * "../foo" or an empty string would corrupt every dcsUrls()/dcsRawUrl() call
- * built from it). translationSource must be explicitly an object or `null`
- * (the key must be present — custom-gl has no preset default to fall back
- * on). lit repo must differ from sim repo.
+ * custom-gl completeness + isIdent guard: org, exportOrg, and all seven MY-ORG
+ * repos must be PRESENT and isIdent-VALID ("non-empty" is insufficient for
+ * URL-building values — a value like "../foo" or an empty string would corrupt
+ * every dcsUrls()/dcsRawUrl() call built from it). translationSource must be
+ * explicitly an object or `null` (the key must be present — custom-gl has no
+ * preset default to fall back on); when it IS an object, its `org` and
+ * `languageCode` are required, but its `repos` map is PARTIAL — each present
+ * role must be isIdent-valid, absent roles are allowed (an unchecked upstream
+ * resource is simply omitted). lit repo must differ from sim repo.
  */
 export function validateCustomGlOverrides(
   overrides: Record<string, unknown> | null | undefined,
@@ -90,8 +92,16 @@ export function validateCustomGlOverrides(
     if (!tsRepos || typeof tsRepos !== "object") {
       return { ok: false, error: "custom_gl_invalid_translation_source" };
     }
+    // Partial + per-resource repo override: a translationSource repo map may
+    // carry only SOME of the seven roles (a resource whose upstream box is
+    // unchecked is simply omitted). Each PRESENT value must still be an
+    // isIdent-valid repo name (any valid ident IS the per-resource override);
+    // ABSENT keys are allowed. Downstream readers of translationSource.repos[key]
+    // already null-check (dcsSources.ts translationSourceRepoRef), so an omitted
+    // role safely means "no source for this resource".
     const tr = tsRepos as Record<string, unknown>;
     for (const key of RESOURCE_KEYS) {
+      if (!(key in tr)) continue;
       const v = tr[key];
       if (typeof v !== "string" || !isIdent(v)) {
         return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };

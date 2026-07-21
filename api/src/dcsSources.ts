@@ -128,7 +128,13 @@ export function translationSourceRepoRef(
 ): RepoRef | null {
   const src = cfg.translationSource;
   if (!src) return null;
-  return { owner: src.org, repo: src.repos[resource], ref: "master" };
+  // translationSource.repos is now PARTIAL (custom-gl may omit a role whose
+  // upstream box was unchecked). A missing/blank repo for this resource means
+  // "no source to translate from" — same as an authored project for that one
+  // resource — so return null rather than building a URL with an undefined repo.
+  const repo = src.repos[resource];
+  if (!repo) return null;
+  return { owner: src.org, repo, ref: "master" };
 }
 
 // Does a failed org-repo note fetch mean "this file genuinely does not exist"

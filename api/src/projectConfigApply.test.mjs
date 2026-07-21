@@ -241,6 +241,74 @@ test("validateCustomGlOverrides: valid translationSource object passes", () => {
   assert.equal(r.ok, true);
 });
 
+// ── translationSource: partial + per-resource repo override (PR foundation) ──
+
+test("validateCustomGlOverrides: PARTIAL translationSource repos passes (some roles absent)", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      // only tn/tq sourced from upstream; the other five roles are omitted (blank)
+      repos: { tn: "en_tn", tq: "en_tq" },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: an OVERRIDE repo name (any valid ident) passes", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      // lit pulled from a DIFFERENT repo within the same upstream org
+      repos: { lit: "en_glt", tn: "en_tn" },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: empty translationSource repos object passes (all blank)", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: {} },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: a PRESENT translationSource repo that is not an ident rejects", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: "en_tn", tq: "bad/tq repo" },
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+  assert.deepEqual(r.detail, { role: "tq" });
+});
+
+test("validateCustomGlOverrides: a PRESENT-but-empty translationSource repo rejects", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "" } },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+});
+
+test("validateCustomGlOverrides: partial translationSource still requires a valid org", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "bad org!", languageCode: "en", repos: { tn: "en_tn" } },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+});
+
 // ── resolveOverridesIntent (override lifecycle) ────────────────────────────
 
 test("resolveOverridesIntent: explicit overrides always win, same preset", () => {
