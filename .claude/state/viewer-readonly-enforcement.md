@@ -6,8 +6,12 @@ Status: PR open, awaiting review. Delete this file when the PR merges.
   coverage was already complete except POST /api/project-config/lanes/:lane/validate
   (was requireAuth-only; now requireAdmin, matching its admin-only Preferences UI).
 - Added global backstop `blockViewerWrites` (api/src/viewerGuard.ts), registered in
-  index.ts after requireCsrf: 403s viewer-role POST/PUT/PATCH/DELETE outside the
-  self-scoped allowlist (/api/auth/, /api/users/me/, /api/workspaces/, /api/alerts/).
+  index.ts on "/api/*" after requireCsrf: 403s any authenticated non-editor/non-admin
+  POST/PUT/PATCH/DELETE outside the exact-match self-scoped allowlist (PUT
+  /api/users/me/location, POST /api/workspaces/:slug, POST /api/alerts/:id/dismiss;
+  /api/auth/ stays prefix-exempt). Unknown roles fail closed; anonymous passes
+  through to per-route 401. Review round 1 applied (guard /api-scoped, exact
+  allowlist, role inversion, route-existence test companions).
 - New suite api/src/viewerGuard.test.mjs mounts real routers (rows, verses, l10n,
   alerts, scriptureLaneRoutes); required adding .ts extensions to a handful of
   runtime relative imports so those modules load under the strip-types runner.

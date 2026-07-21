@@ -6,10 +6,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
-import { requireAuth, requireAdmin } from "./auth";
+import { requireAuth, requireAdmin } from "./auth.ts";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
-import { overlayLaneLabels } from "./scriptureLane";
-import { scriptureLaneRoutes } from "./scriptureLaneRoutes";
+import { overlayLaneLabels } from "./scriptureLane.ts";
+import { scriptureLaneRoutes } from "./scriptureLaneRoutes.ts";
 import { applyProjectConfig, applyProjectMode } from "./projectConfigApply.ts";
 
 export const projectConfig = new Hono<{

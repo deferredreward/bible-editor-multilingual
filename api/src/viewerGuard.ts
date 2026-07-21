@@ -9,36 +9,51 @@
 // viewer-writable.
 //
 // Scope rules:
+// - Registered on "/api/*" only (index.ts) — non-API paths keep their normal
+//   SPA/asset fallthrough for every caller, so a viewer's response never
+//   diverges from anyone else's outside the API surface.
 // - Only state-changing methods are gated; reads stay untouched (they are
 //   deliberately unauthenticated — public-export destiny).
-// - Only the "viewer" role is gated. Unauthenticated / missing-role requests
-//   pass through unchanged so each route's own requireAuth/requireEditor
-//   keeps deciding between 401 and 403 exactly as before.
-// - Self-scoped, per-user state stays viewer-writable via the prefix
-//   allowlist below: auth/session endpoints, the user's own last-location,
-//   workspace switching, and dismissing the user's own banner alerts (the
-//   dismiss UPDATE is WHERE username = ? — strictly per-user).
+// - Fail closed on role: only "admin" and "editor" pass. A viewer — or any
+//   unknown/future role value — is blocked. Unauthenticated requests (no
+//   userId) pass through unchanged so each route's own requireAuth /
+//   requireEditor keeps deciding 401 vs 403 exactly as before (and the
+//   frontend's silent-refresh-on-401 flow keeps working).
+// - Self-scoped, per-user writes are allowlisted by EXACT method + path
+//   pattern, not by router prefix — a future unguarded write route added
+//   under /api/users/, /api/workspaces/, or /api/alerts/ must be added here
+//   deliberately or it fails closed. The one prefix exemption is /api/auth/:
+//   that router is entirely session lifecycle (start/callback are GETs;
+//   refresh/logout act only on the caller's own session; dev mint is
+//   DEV_AUTH_ENABLED + localhost gated) and viewers must be able to hold a
+//   session.
 import type { Context, MiddlewareHandler } from "hono";
-import { currentUserRole } from "./auth.ts";
+import { currentUserId, currentUserRole } from "./auth.ts";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// Prefixes a viewer may send writes to. Everything here is per-user state —
-// nothing under these paths mutates shared project/content rows.
-const VIEWER_WRITABLE_PREFIXES = [
-  "/api/auth/", // login, refresh, logout, dev mint — viewers must be able to hold a session
-  "/api/users/me/", // own reading position (PUT /api/users/me/location)
-  "/api/workspaces/", // workspace switch (POST /api/workspaces/:slug) — per-user cookie + role re-mint
-  "/api/alerts/", // dismiss own banner alert (POST /api/alerts/:id/dismiss, username-scoped UPDATE)
+// Exact self-scoped write endpoints a viewer may call. Nothing here mutates
+// shared project/content rows:
+// - own reading position (auth.ts updateLastLocation)
+// - workspace switch (workspaceRoutes.ts — per-user cookie + role re-mint)
+// - dismiss own banner alert (alerts.ts — username-scoped UPDATE)
+const VIEWER_WRITABLE: Array<{ method: string; pattern: RegExp }> = [
+  { method: "PUT", pattern: /^\/api\/users\/me\/location$/ },
+  { method: "POST", pattern: /^\/api\/workspaces\/[A-Za-z0-9._-]+$/ },
+  { method: "POST", pattern: /^\/api\/alerts\/\d+\/dismiss$/ },
 ];
 
-export function isViewerWritablePath(path: string): boolean {
-  return VIEWER_WRITABLE_PREFIXES.some((p) => path.startsWith(p));
+export function isViewerWritable(method: string, path: string): boolean {
+  if (path.startsWith("/api/auth/")) return true;
+  return VIEWER_WRITABLE.some((e) => e.method === method && e.pattern.test(path));
 }
 
 export const blockViewerWrites: MiddlewareHandler = async (c: Context, next) => {
-  if (!WRITE_METHODS.has(c.req.method.toUpperCase())) return next();
-  if (currentUserRole(c) !== "viewer") return next();
-  if (isViewerWritablePath(c.req.path)) return next();
+  const method = c.req.method.toUpperCase();
+  if (!WRITE_METHODS.has(method)) return next();
+  if (currentUserId(c) === null) return next(); // anonymous → per-route 401
+  const role = currentUserRole(c);
+  if (role === "admin" || role === "editor") return next();
+  if (isViewerWritable(method, c.req.path)) return next();
   return c.json({ error: "forbidden", reason: "viewer_read_only" }, 403);
 };
