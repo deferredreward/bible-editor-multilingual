@@ -39,6 +39,14 @@ orgRoutes.get("/:org/inferred-config", async (c) => {
     return c.json({ error: listed.error }, status);
   }
 
+  // Canonicalize casing against DCS (org already confirmed to exist above via
+  // listOrgRepos) — Gitea org lookups are case-insensitive, so an admin typing
+  // "bsoj" would otherwise get echoed back verbatim and persisted lowercase
+  // into org/exportOrg. Same fail-open pattern as the per-user lookup in
+  // adminUserRoutes.ts: any non-200 or network error just keeps the as-typed
+  // value rather than blocking the draft.
+  const canonicalOrg = await canonicalOrgName(c.env, org);
+
   const names = listed.repos.map((r) => r.name);
   const tnMatches = names.filter((n) => TN_REPO_RE.test(n));
   if (tnMatches.length === 0) {
@@ -94,11 +102,11 @@ orgRoutes.get("/:org/inferred-config", async (c) => {
     // Suggestion only — never auto-applied. The admin must explicitly choose
     // a translationSource (or none) at apply time.
     suggestedTranslationSource: "UW_SOURCE" as const,
-    suggestedExportOrg: org,
+    suggestedExportOrg: canonicalOrg,
   };
 
   return c.json({
-    org,
+    org: canonicalOrg,
     proposal,
     missing: inf.missing,
     ambiguous: inf.ambiguous,
@@ -106,3 +114,22 @@ orgRoutes.get("/:org/inferred-config", async (c) => {
     warnings,
   });
 });
+
+// Resolves an org name to DCS's canonical casing via GET /api/v1/orgs/{org}
+// (Gitea's `username` field). Fails open to the input as-typed on any
+// non-200 response or network error — same tolerance as the per-user lookup
+// in adminUserRoutes.ts, since a lookup hiccup here must not block org
+// detection when listOrgRepos already confirmed the org exists.
+async function canonicalOrgName(env: Env, org: string): Promise<string> {
+  try {
+    const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+    const res = await fetch(`${base}/api/v1/orgs/${encodeURIComponent(org)}`, { headers });
+    if (!res.ok) return org;
+    const body = (await res.json()) as { username?: string };
+    return body.username || org;
+  } catch {
+    return org;
+  }
+}
