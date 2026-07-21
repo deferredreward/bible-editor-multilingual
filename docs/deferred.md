@@ -48,18 +48,37 @@ a `source` column: `'manual'` vs `'dcs_team'`) so `/api/auth/refresh` keeps
 working off a plain D1 read. Teams are still created/managed only in Door43's
 own team UI — the app never writes membership.
 
-Precedence, one rule: **a row belongs to whoever created it, and Door43 teams
-may only ever raise access on rows they don't own.** All covered by
-`api/src/dcsTeams.test.mjs`:
+Precedence, one rule (revised by the org/team ↔ auth integration PR): **Door43
+teams win; a manual row is only a fallback for users with no team signal at
+all.** All covered by `api/src/dcsTeams.test.mjs`:
 - `dcs_team` rows track their team exactly, in both directions, including
   removal once the user leaves the team.
-- `manual` rows belong to the admin who added them. A team can *promote* such a
-  user (editor → admin — this is how a pre-0053 legacy allowlist entry gets
-  handed to team control) but can never demote or delete them.
-- `source` never changes after insert, so a row stays managed by whoever
-  created it. An admin edit to a team-derived row is therefore re-synced away
-  at that user's next team check; the Preferences panel says so explicitly, and
-  removing such a row warns that it only sticks once they're out of the team.
+- A team signal (admin *or* editor) OVERWRITES a `manual` row — role and
+  `source` both — so once Door43 knows about a user, moving them between
+  teams there is authoritative in both directions (the earlier "teams may
+  only raise" rule made the documented management path silently do nothing
+  for allowlisted users). The prior manual role is STASHED in
+  `user_roles.manual_role` (migration 0057): when the team signal later
+  disappears — the user left the team, or the team was renamed/deleted,
+  which is indistinguishable — the row is RESTORED to the stashed manual
+  grant instead of deleted, so a team rename can never wipe the manual
+  allowlist org-wide. Pure team creations (nothing stashed) still delete.
+  A manual row team sync never claimed is untouched by a no-signal sync.
+  An admin PUT takes manual ownership (source='manual', stash cleared);
+  its response's `wasTeamManaged` drives the "will be re-taken by team
+  sync" warning.
+- A `user_roles` row also GRANTS WORKSPACE ACCESS by itself: login
+  resolution (cookie/last-used retention) and the switch route treat a
+  workspace as allowed if the user is a Door43 org member OR already holds
+  a role row in that workspace's database — otherwise a manually
+  allowlisted outsider would be evicted from their org at every login.
+- Membership of the org's Owners team grants NOTHING — only the configured
+  admin/editor team names map to roles (rename the team or set
+  `DCS_TEAM_ADMIN`/`DCS_TEAM_EDITOR`). A near-miss — the user has teams in
+  the org, none matching the configured names, e.g. a team created as
+  "BE-Admin" against the default plural "BE-Admins" — logs a diagnostic
+  (`wrangler tail`) naming the org, the configured names, and their actual
+  teams.
 - The last remaining admin is never demoted *or* deleted, matching the guards
   in `adminUserRoutes.ts` — `/api/admin/users` is itself admin-gated, so a
   zero-admin project could only be repaired with raw SQL against D1.
@@ -153,16 +172,21 @@ Unset/empty `WORKSPACES` = exactly today's single-org behavior.
    guessing the id. Admin-only information leak, low severity, not fixed in
    this PR.
 
-**Bootstrapping a brand-new org's roles — partially answered, still blunt.**
-A freshly created workspace database only has whatever migration `0016`
-seeds, so the first person to switch into an empty org used to land as
-`viewer` and couldn't run the Setup wizard. The review round fixed the
-onboarding deadlock: `SUPER_ADMINS` members now resolve to `admin` in
-*every* workspace (`effectiveRole()`), so a super admin can always bootstrap
-a new org. But this is a blunt instrument — a super admin is admin
-everywhere, not just in the org being onboarded — and the finer-grained
-answer is still open: deriving a new org's first admin from Door43 team
-membership, which ties into the Door43-teams item above.
+**Bootstrapping a brand-new org's roles — SOLVED (team-derived), escape
+hatch retained.** The finer-grained answer landed with the org/team ↔ auth
+integration PR: a fresh org's first admin now comes straight from Door43
+team membership. The OAuth callback resolves the login workspace from the
+user's actual DCS orgs (be_ws cookie → persisted last-used workspace →
+single org match → first match + picker prompt) instead of forcing
+first-time users into `WORKSPACES[0]`, runs the team sync + role resolution
+against THAT workspace's database, and — when the resolved role is admin —
+seeds the workspace's `project_config` from its org preset so the first
+admin lands ready to run Setup. Switching into a workspace also team-syncs
+against the target DB first, so a first-time entrant gets their team role
+immediately instead of landing as viewer until their next full sign-in.
+`SUPER_ADMINS` remains as the blunt-instrument escape hatch (admin in every
+workspace, no team needed) for repairing an org whose team setup is itself
+broken.
 
 ### Admin-controlled per-user translate/edit toggle
 

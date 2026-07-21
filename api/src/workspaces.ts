@@ -109,6 +109,101 @@ export function listWorkspaces(env: Env): Workspace[] {
   return result;
 }
 
+// ── Login-time workspace resolution ─────────────────────────────────────────
+
+// Why this exists: index.ts's fetch() wrapper resolves the workspace from the
+// be_ws cookie BEFORE anyone knows who the user is, so a first-time user with
+// no cookie lands in list[0] — and the OAuth callback then ran every org
+// comparison (team sync, viewer membership) against the wrong org. Once the
+// callback holds the user's profile + org memberships, it re-resolves with
+// this function and re-derives its env via workspaceEnv().
+//
+// Pure and synchronous so the resolution ORDER is unit-testable on its own
+// (see workspaceLogin.test.mjs); the callback supplies the inputs.
+export type LoginWorkspaceReason =
+  | "cookie" // (a) valid be_ws cookie for a workspace the user is allowed in
+  | "last_used" // (b) persisted users.last_workspace_slug, still allowed
+  | "single_match" // (c) exactly one configured workspace matches their orgs
+  | "multi_match" // (d) several match, no usable history — first match + prompt
+  | "no_match" // (e) memberships known, nothing matches — fallback; callback may deny
+  | "unknown"; // orgs fetch failed — fail soft to cookie/first (cached roles still work)
+
+export interface LoginWorkspaceResolution {
+  workspace: Workspace;
+  reason: LoginWorkspaceReason;
+  // (d) only: tell the SPA to prompt the user to pick (callback appends
+  // ?_choose_ws=1 to its redirect). Derived from `reason`.
+  promptChoice: boolean;
+  // True when the user is POSITIVELY allowed in `workspace` (cases a–d).
+  // False for "unknown"/"no_match", where `workspace` is only the fail-soft
+  // fallback. Derived from `reason`.
+  matched: boolean;
+}
+
+// Single construction point: promptChoice/matched are pure functions of
+// `reason`, so deriving them here (instead of hand-writing booleans at each
+// return site) means the fields can never drift out of sync with the reason.
+function loginResolution(workspace: Workspace, reason: LoginWorkspaceReason): LoginWorkspaceResolution {
+  return {
+    workspace,
+    reason,
+    promptChoice: reason === "multi_match",
+    matched: reason !== "unknown" && reason !== "no_match",
+  };
+}
+
+export function resolveLoginWorkspace(opts: {
+  workspaces: Workspace[]; // from listWorkspaces() — never empty
+  cookieSlug: string | null; // raw be_ws cookie value, if any
+  lastUsedSlug: string | null; // users.last_workspace_slug, if any
+  // Lowercased Door43 org names the user belongs to; null = fetch failed
+  // ("unknown", NOT "no orgs"). Callers pass every workspace org for a super
+  // admin — they're allowed everywhere without a DCS round-trip.
+  memberOrgs: Set<string> | null;
+  // Slugs of workspaces where the user already holds a user_roles row (manual
+  // allowlist grant or cached team role). A role row grants access to that
+  // workspace even without Door43 org membership — otherwise a manually
+  // allowlisted outsider would be evicted from their org at every login. On
+  // the fast path the caller only queries the CANDIDATE workspaces (cookie +
+  // last-used); when the first resolution comes back "no_match" — the
+  // would-deny path — it fans the lookup out across ALL configured workspaces
+  // and re-resolves with the expanded set, so entries here can then drive
+  // single_match/multi_match selection too.
+  roleSlugs?: Set<string>;
+}): LoginWorkspaceResolution {
+  const { workspaces, memberOrgs } = opts;
+  const roleSlugs = opts.roleSlugs ?? new Set<string>();
+  const bySlug = (slug: string | null): Workspace | undefined =>
+    slug ? workspaces.find((w) => w.slug === slug) : undefined;
+  // The pre-this-feature behavior, kept as the fail-soft/no-match landing:
+  // cookie's workspace when the slug is at least real, else list[0].
+  const fallback = bySlug(opts.cookieSlug) ?? workspaces[0];
+
+  if (memberOrgs === null) {
+    return loginResolution(fallback, "unknown");
+  }
+
+  const isAllowed = (ws: Workspace | undefined): ws is Workspace =>
+    !!ws && (memberOrgs.has(ws.org.toLowerCase()) || roleSlugs.has(ws.slug));
+
+  const cookieWs = bySlug(opts.cookieSlug);
+  if (isAllowed(cookieWs)) {
+    return loginResolution(cookieWs, "cookie");
+  }
+  const lastWs = bySlug(opts.lastUsedSlug);
+  if (isAllowed(lastWs)) {
+    return loginResolution(lastWs, "last_used");
+  }
+  const allowed = workspaces.filter((w) => isAllowed(w));
+  if (allowed.length === 1) {
+    return loginResolution(allowed[0], "single_match");
+  }
+  if (allowed.length > 1) {
+    return loginResolution(allowed[0], "multi_match");
+  }
+  return loginResolution(fallback, "no_match");
+}
+
 // Exact slug match; unknown/null slug falls back to the first workspace
 // (the implicit default when WORKSPACES is unset).
 export function resolveWorkspace(env: Env, slug: string | null): Workspace {

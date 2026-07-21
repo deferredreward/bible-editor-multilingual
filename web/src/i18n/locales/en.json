@@ -479,7 +479,12 @@
     "selectLabel": "Organization",
     "currentLabel": "Current organization",
     "singleOrgNote": "No other organizations are configured.",
-    "indicatorTooltip": "Organization — switch it in Preferences → Setup"
+    "indicatorTooltip": "Organization — switch it in Preferences → Setup",
+    "chooseTitle": "Choose your organization",
+    "chooseIntro": "Your Door43 account belongs to more than one organization here. Pick the one you want to work in — you can switch any time in Preferences.",
+    "chooseCurrentNote": "where you are now",
+    "chooseFailed": "Couldn't load your organizations — you can switch later in Preferences.",
+    "chooseStay": "Continue"
   },
   "shell": {
     "scripture": "Scripture",

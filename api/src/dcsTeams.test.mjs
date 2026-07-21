@@ -12,12 +12,14 @@
 //   node --experimental-strip-types --no-warnings --test src/dcsTeams.test.mjs
 
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import {
   listUserTeams,
   roleFromTeams,
   resolveTeamRole,
   orgForTeamSync,
   syncTeamRole,
+  fetchMemberOrgs,
   teamRoleNames,
   DEFAULT_ADMIN_TEAM,
   DEFAULT_EDITOR_TEAM,
@@ -36,18 +38,32 @@ const team = (name, org) => ({ name, organization: { username: org } });
 
 // ── D1 adapter over node:sqlite ───────────────────────────────────────────────
 
+// user_roles comes from the REAL migration SQL (0016 creates it, 0055 adds
+// source/synced_at, 0057 adds the manual_role stash) so the precedence tests
+// below exercise the exact schema — CHECK constraints, NOCASE collation,
+// defaults — production has. 0016's seed rows are cleared so each test starts
+// from an empty allowlist.
+const MIGRATION_0016 = readFileSync(
+  new URL("../migrations/0016_user_roles.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION_0055 = readFileSync(
+  new URL("../migrations/0055_user_roles_source.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION_0057 = readFileSync(
+  new URL("../migrations/0057_user_roles_manual_stash.sql", import.meta.url),
+  "utf8",
+);
+
 function freshDb() {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = OFF;");
+  db.exec(MIGRATION_0016);
+  db.exec(MIGRATION_0055);
+  db.exec(MIGRATION_0057);
+  db.exec("DELETE FROM user_roles;");
   db.exec(`
-    CREATE TABLE user_roles (
-      dcs_username TEXT PRIMARY KEY COLLATE NOCASE,
-      role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
-      added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      added_by INTEGER,
-      source TEXT NOT NULL DEFAULT 'manual',
-      synced_at INTEGER
-    );
     CREATE TABLE project_config (
       id INTEGER PRIMARY KEY,
       preset TEXT NOT NULL,
@@ -83,8 +99,19 @@ function makeD1(db) {
 
 function rolesIn(db) {
   return db
-    .prepare("SELECT dcs_username, role, source, synced_at FROM user_roles ORDER BY dcs_username")
+    .prepare(
+      "SELECT dcs_username, role, source, synced_at, manual_role FROM user_roles ORDER BY dcs_username",
+    )
     .all();
+}
+
+// Serves the given pages in order, then EMPTY pages forever — matching the
+// pagination termination rule (a page shorter than the requested limit is not
+// proof of the end; only an empty page is — Gitea's MAX_RESPONSE_ITEMS can cap
+// pages below the limit we asked for).
+function pagedFetch(...pages) {
+  let i = 0;
+  return async () => ({ ok: true, json: async () => (i < pages.length ? pages[i++] : []) });
 }
 
 // ── 1. Name resolution ────────────────────────────────────────────────────────
@@ -145,9 +172,13 @@ assert(
 console.log("listUserTeams");
 {
   const seen = [];
+  let call = 0;
   const fakeFetch = async (url, init) => {
     seen.push({ url, auth: init.headers.Authorization });
-    return { ok: true, json: async () => [team("BE-Editors", "BibleEditorMLTest")] };
+    return {
+      ok: true,
+      json: async () => (call++ === 0 ? [team("BE-Editors", "BibleEditorMLTest")] : []),
+    };
   };
   const teams = await listUserTeams({ DCS_BASE_URL: "https://git.door43.org/" }, "tok", {
     fetch: fakeFetch,
@@ -158,24 +189,30 @@ console.log("listUserTeams");
     "hits /api/v1/user/teams with the trailing slash stripped from the base URL",
   );
   assert(seen[0].auth === "token tok", "authenticates with the USER's access token");
-  assert(seen.length === 1, "a short page stops pagination");
+  // A page shorter than the requested limit is NOT trusted as final — Gitea's
+  // MAX_RESPONSE_ITEMS can cap the server's page size below what we asked for,
+  // so only an EMPTY page proves the end.
+  assert(seen.length === 2, "pagination stops at the first EMPTY page, not at a short one");
 }
 
 {
-  // Two full pages then a short one.
+  // Two full pages, a short one (server-capped, NOT the end), then empty.
   const page = (n) => Array.from({ length: n }, (_, i) => team(`T${i}`, "Org"));
-  const bodies = [page(50), page(50), page(3)];
+  const bodies = [page(50), page(50), page(3), []];
   let calls = 0;
   const teams = await listUserTeams({}, "tok", {
     fetch: async () => ({ ok: true, json: async () => bodies[calls++] }),
   });
-  assert(teams.length === 103 && calls === 3, "follows pagination until a short page");
+  assert(
+    teams.length === 103 && calls === 4,
+    "a short mid-list page keeps paginating; only the empty page ends it",
+  );
 }
 
 {
-  // Every page full → the cap is hit with the list still possibly incomplete.
-  // Returning the partial list would make a user whose BE-Editors entry sits
-  // past the cap look like they're on no teams, and revoke them.
+  // Every page non-empty → the cap is hit with the list still possibly
+  // incomplete. Returning the partial list would make a user whose BE-Editors
+  // entry sits past the cap look like they're on no teams, and revoke them.
   const page = (n) => Array.from({ length: n }, (_, i) => team(`T${i}`, "Org"));
   let calls = 0;
   const teams = await listUserTeams({}, "tok", {
@@ -210,7 +247,7 @@ assert(
 console.log("resolveTeamRole");
 {
   const ok = await resolveTeamRole({}, "Org", "tok", {
-    fetch: async () => ({ ok: true, json: async () => [team("BE-Admins", "Org")] }),
+    fetch: pagedFetch([team("BE-Admins", "Org")]),
   });
   assert(ok.known === true && ok.role === "admin", "reachable DCS → known:true with the mapped role");
   const down = await resolveTeamRole({}, "Org", "tok", { fetch: async () => ({ ok: false }) });
@@ -218,6 +255,40 @@ console.log("resolveTeamRole");
     down.known === false && down.role === null,
     "unreachable DCS → known:false so the caller skips the sync entirely",
   );
+}
+
+console.log("resolveTeamRole — near-miss diagnostic for misnamed teams");
+{
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    // The real-world case: the Door43 team is "BE-Admin" (singular) while the
+    // configured default is "BE-Admins" — no role, but the mismatch must be
+    // loudly diagnosable in `wrangler tail`, not silent.
+    const res = await resolveTeamRole({}, "BibleEditorMLTest", "tok", {
+      fetch: pagedFetch([team("BE-Admin", "BibleEditorMLTest"), team("Owners", "BibleEditorMLTest")]),
+    });
+    assert(res.known === true && res.role === null, "near-miss still resolves to no role (no aliasing)");
+    const hit = warnings.find((w) => w.includes("none match the configured role teams"));
+    assert(!!hit, "a near-miss logs a diagnostic warning");
+    assert(
+      hit.includes("BE-Admin") && hit.includes("BE-Admins") && hit.includes("BibleEditorMLTest"),
+      "the warning names the org, the configured names, and the user's actual teams",
+    );
+
+    warnings.length = 0;
+    const none = await resolveTeamRole({}, "BibleEditorMLTest", "tok", {
+      fetch: pagedFetch([team("BE-Admin", "SomeOtherOrg")]),
+    });
+    assert(none.role === null, "teams only in OTHER orgs → no role");
+    assert(
+      !warnings.some((w) => w.includes("none match the configured role teams")),
+      "no teams in the resolved org → no near-miss warning (nothing to diagnose)",
+    );
+  } finally {
+    console.warn = realWarn;
+  }
 }
 
 // ── 4. syncTeamRole ───────────────────────────────────────────────────────────
@@ -257,28 +328,71 @@ console.log("syncTeamRole — revocation");
   );
 }
 
-console.log("syncTeamRole — manual rows: teams may raise, never lower");
+console.log("syncTeamRole — teams WIN over manual rows, stashing the manual grant for restore");
 {
   const db = freshDb();
   const env = { DB: makeD1(db) };
+  // A second admin so carol's demotion below isn't refused by the last-admin
+  // guard (exercised on its own further down).
+  db.exec("INSERT INTO user_roles (dcs_username, role, source) VALUES ('root','admin','manual')");
   db.exec("INSERT INTO user_roles (dcs_username, role, source) VALUES ('carol','admin','manual')");
   await syncTeamRole(env, "carol", "editor");
-  assert(rolesIn(db)[0].role === "admin", "a team role never downgrades an admin's manual grant");
-  await syncTeamRole(env, "carol", null);
-  assert(
-    rolesIn(db).length === 1 && rolesIn(db)[0].role === "admin",
-    "and never deletes a manual grant",
-  );
-  assert(rolesIn(db)[0].source === "manual", "the row stays manual — source never flips");
+  const carol = rolesIn(db).find((r) => r.dcs_username === "carol");
+  assert(carol.role === "editor", "a team signal DEMOTES a manual admin (teams win)");
+  assert(carol.source === "dcs_team", "the overwritten row is now team-owned");
+  assert(carol.manual_role === "admin", "the prior manual grant is STASHED, not destroyed");
 
-  // The legacy-allowlist promotion case: every row predating migration 0053 is
-  // 'manual', so without this a pre-existing editor could never be promoted by
-  // adding them to BE-Admins.
+  // Signal disappears (left the team — or the team was renamed/deleted, which
+  // looks identical): the stashed manual grant is RESTORED, not wiped. This is
+  // the org-wide-wipe guard: a team rename must degrade to the manual
+  // allowlist, never to an empty one.
+  await syncTeamRole(env, "carol", null);
+  const carolBack = rolesIn(db).find((r) => r.dcs_username === "carol");
+  assert(
+    carolBack && carolBack.role === "admin" && carolBack.source === "manual",
+    "signal loss RESTORES the stashed manual grant (team rename/deletion can't wipe manual rows)",
+  );
+  assert(carolBack.manual_role === null, "the stash is cleared on restore");
+  assert(carolBack.synced_at > 0, "the restore stamps synced_at");
+
+  // No team signal at all: an untouched manual row survives as the fallback.
+  await syncTeamRole(env, "root", null);
+  const root = rolesIn(db).find((r) => r.dcs_username === "root");
+  assert(
+    root && root.role === "admin" && root.source === "manual",
+    "no team signal leaves a manual row alone — it stays the fallback grant",
+  );
+
+  // The legacy-allowlist promotion case: every row predating migration 0055 is
+  // 'manual', so a pre-existing editor added to BE-Admins gets promoted — and
+  // handed to team control, with the editor grant stashed.
   db.exec("INSERT INTO user_roles (dcs_username, role, source) VALUES ('legacy','editor','manual')");
   await syncTeamRole(env, "legacy", "admin");
   const legacy = rolesIn(db).find((r) => r.dcs_username === "legacy");
-  assert(legacy.role === "admin", "a team CAN promote a manual editor to admin");
-  assert(legacy.source === "manual", "...and the promoted row is still manual-owned");
+  assert(legacy.role === "admin", "a team promotes a manual editor to admin");
+  assert(legacy.source === "dcs_team", "...and the row is now team-owned (teams win)");
+  assert(legacy.manual_role === "editor", "...with the manual editor grant stashed");
+  // Re-syncing while still on the team must not clobber the stash with the
+  // team-written role.
+  await syncTeamRole(env, "legacy", "admin");
+  assert(
+    rolesIn(db).find((r) => r.dcs_username === "legacy").manual_role === "editor",
+    "subsequent syncs preserve the original stash (don't re-stash the team's own value)",
+  );
+  await syncTeamRole(env, "legacy", null);
+  const legacyBack = rolesIn(db).find((r) => r.dcs_username === "legacy");
+  assert(
+    legacyBack.role === "editor" && legacyBack.source === "manual" && legacyBack.manual_role === null,
+    "leaving the team restores the legacy editor grant",
+  );
+
+  // A pure team creation (nothing stashed) still deletes on signal loss.
+  await syncTeamRole(env, "pure", "editor");
+  await syncTeamRole(env, "pure", null);
+  assert(
+    !rolesIn(db).some((r) => r.dcs_username === "pure"),
+    "a row the team created (no stash) is deleted when the signal disappears",
+  );
 }
 
 console.log("syncTeamRole — last-admin guard");
@@ -310,6 +424,46 @@ console.log("syncTeamRole — last-admin guard");
     !rolesIn(db).some((r) => r.dcs_username === "dave"),
     "and so does the deletion",
   );
+
+  // A guard-refused demotion of a MANUAL sole admin must not flip the row to
+  // dcs_team either — that would hand a still-admin row to team ownership.
+  const db2 = freshDb();
+  const env2 = { DB: makeD1(db2) };
+  db2.exec("INSERT INTO user_roles (dcs_username, role, source) VALUES ('solo','admin','manual')");
+  await syncTeamRole(env2, "solo", "editor");
+  const solo = rolesIn(db2)[0];
+  assert(
+    solo.role === "admin" && solo.source === "manual" && solo.manual_role === null,
+    "refused demotion of the sole (manual) admin leaves role, source AND stash untouched",
+  );
+
+  // Guard-refused DELETE still stamps synced_at — an unstamped survivor would
+  // re-trigger a DCS check on every refresh window.
+  const db3 = freshDb();
+  const env3 = { DB: makeD1(db3) };
+  await syncTeamRole(env3, "onlyadmin", "admin");
+  db3.exec("UPDATE user_roles SET synced_at = 1 WHERE dcs_username = 'onlyadmin'");
+  await syncTeamRole(env3, "onlyadmin", null);
+  const survivor = rolesIn(db3)[0];
+  assert(
+    survivor.role === "admin" && survivor.synced_at > 1,
+    "guard-refused deletion of the sole admin still refreshes synced_at",
+  );
+
+  // Restore guard: the sole admin with a stashed 'editor' grant would empty
+  // the admin set if restored — refuse the restore, keep the row, stamp it.
+  const db4 = freshDb();
+  const env4 = { DB: makeD1(db4) };
+  db4.exec(
+    "INSERT INTO user_roles (dcs_username, role, source, manual_role, synced_at) VALUES ('lastone','admin','dcs_team','editor',1)",
+  );
+  await syncTeamRole(env4, "lastone", null);
+  const lastone = rolesIn(db4)[0];
+  assert(
+    lastone.role === "admin" && lastone.source === "dcs_team" && lastone.manual_role === "editor",
+    "restoring the sole admin down to a stashed editor grant is refused (admin set never empties)",
+  );
+  assert(lastone.synced_at > 1, "the refused restore still refreshes synced_at");
 }
 
 console.log("syncTeamRole — synced_at freshness stamp");
@@ -449,5 +603,70 @@ console.log("orgForTeamSync — WORKSPACES configured but WORKSPACE_SLUG matches
     "no matching registry entry → falls back to reading project_config",
   );
 }
+
+// ── 5. fetchMemberOrgs ───────────────────────────────────────────────────────
+
+console.log("fetchMemberOrgs");
+{
+  const seen = [];
+  let call = 0;
+  const orgs = await fetchMemberOrgs({ DCS_BASE_URL: "https://git.door43.org/" }, "tok", {
+    fetch: async (url, init) => {
+      seen.push({ url, auth: init.headers.Authorization });
+      return {
+        ok: true,
+        json: async () =>
+          call++ === 0 ? [{ username: "BibleEditorMLTest" }, { username: "BSOJ" }] : [],
+      };
+    },
+  });
+  assert(
+    seen[0].url === "https://git.door43.org/api/v1/user/orgs?limit=50&page=1",
+    "hits /api/v1/user/orgs with the trailing slash stripped",
+  );
+  assert(seen[0].auth === "token tok", "authenticates with the USER's access token");
+  assert(
+    orgs.has("bibleeditormltest") && orgs.has("bsoj") && orgs.size === 2,
+    "returns a lowercased org-name set",
+  );
+  assert(seen.length === 2, "pagination stops at the first EMPTY page, not at a short one");
+}
+{
+  // Two full pages, a short (server-capped) one, then empty — all followed.
+  const page = (n, prefix) => Array.from({ length: n }, (_, i) => ({ username: `${prefix}${i}` }));
+  const bodies = [page(50, "a"), page(50, "b"), page(3, "c"), []];
+  let calls = 0;
+  const orgs = await fetchMemberOrgs({}, "tok", {
+    fetch: async () => ({ ok: true, json: async () => bodies[calls++] }),
+  });
+  assert(
+    orgs.size === 103 && calls === 4,
+    "a short mid-list page keeps paginating; only the empty page ends it",
+  );
+}
+{
+  // Cap exhausted with pages still non-empty → unknown, not a truncated set.
+  const page = (n) => Array.from({ length: n }, (_, i) => ({ username: `o${i}` }));
+  const orgs = await fetchMemberOrgs({}, "tok", {
+    fetch: async () => ({ ok: true, json: async () => page(50) }),
+  });
+  assert(orgs === null, "exhausting the page cap → null (truncated ≠ complete)");
+}
+assert(
+  (await fetchMemberOrgs({}, "tok", { fetch: async () => ({ ok: false }) })) === null,
+  "non-2xx → null (unknown), not an empty set",
+);
+assert(
+  (await fetchMemberOrgs({}, "tok", {
+    fetch: async () => {
+      throw new Error("network down");
+    },
+  })) === null,
+  "network throw → null (unknown)",
+);
+assert(
+  (await fetchMemberOrgs({}, "tok", { fetch: async () => ({ ok: true, json: async () => ({ message: "nope" }) }) })) === null,
+  "non-array body → null (unknown)",
+);
 
 console.log("all dcsTeams tests passed");

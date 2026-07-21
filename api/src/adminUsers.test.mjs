@@ -51,7 +51,8 @@ function freshDb() {
       role TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
       added_at INTEGER NOT NULL DEFAULT (unixepoch()),
       added_by INTEGER REFERENCES users(id),
-      source TEXT NOT NULL DEFAULT 'manual'
+      source TEXT NOT NULL DEFAULT 'manual',
+      manual_role TEXT
     );
   `);
   return db;
@@ -386,8 +387,10 @@ console.log("[PUT validation] body shape → username shape → DCS existence �
       });
     const teamDb = freshDb();
     const teamEnv = baseEnv(teamDb);
+    // manual_role seeded to prove the PUT clears the stash — the admin's new
+    // edit IS the manual baseline now, superseding whatever was stashed.
     teamDb.exec(
-      "INSERT INTO user_roles (dcs_username, role, source) VALUES ('teamuser','editor','dcs_team'), ('keeper','admin','manual')",
+      "INSERT INTO user_roles (dcs_username, role, source, manual_role) VALUES ('teamuser','editor','dcs_team','editor'), ('keeper','admin','manual',NULL)",
     );
 
     const teamPut = await req(app, teamEnv, "PUT", "/api/admin/users/teamuser", {
@@ -397,15 +400,25 @@ console.log("[PUT validation] body shape → username shape → DCS existence �
     assert(teamPut.status === 200, "PUT on a team-derived row → 200");
     const teamPutBody = await teamPut.json();
     assert(
-      teamPutBody.user.source === "dcs_team",
-      "PUT response carries source so the UI can warn the edit will be re-synced away",
+      teamPutBody.wasTeamManaged === true,
+      "PUT response flags wasTeamManaged so the UI can warn the edit will be re-synced away",
     );
+    const teamRow = teamDb
+      .prepare("SELECT role, source, manual_role FROM user_roles WHERE dcs_username='teamuser'")
+      .get();
     assert(
-      teamDb.prepare("SELECT source FROM user_roles WHERE dcs_username='teamuser'").get().source ===
-        "dcs_team",
-      "an admin edit does NOT flip the row to manual (that would detach it from team sync)",
+      teamRow.source === "manual" && teamRow.role === "admin",
+      "an admin edit takes MANUAL ownership of the row (teams-win re-takes it at the next sync)",
+    );
+    assert(teamRow.manual_role === null, "the stashed manual_role is cleared — this edit is the new baseline");
+    assert(
+      teamPutBody.user.source === "manual",
+      "PUT response reflects the post-edit manual ownership",
     );
 
+    // Reset team ownership (the PUT above just took manual ownership) so the
+    // DELETE below exercises the team-derived-row warning path.
+    teamDb.exec("UPDATE user_roles SET source='dcs_team' WHERE dcs_username='teamuser'");
     const teamDel = await req(app, teamEnv, "DELETE", "/api/admin/users/teamuser", {
       token: adminTok,
     });
