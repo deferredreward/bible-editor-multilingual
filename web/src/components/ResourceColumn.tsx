@@ -353,9 +353,14 @@ export function ResourceColumn({
   // The English root project sees the unchanged card.
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
+  // translationSource.repos is PARTIAL: a resource left blank in Setup has no
+  // upstream source. Project to null when the tN repo is absent so useSourceNotes
+  // short-circuits (no `${org}/undefined/...` fetch) and the source block cleanly
+  // omits — distinct from a genuine 404. Null here means "no tN source
+  // configured", NOT "not a translation project" (translationMode stays true).
   const sourceProjection = useMemo(
     () =>
-      projectConfig?.translationSource
+      projectConfig?.translationSource?.repos.tn
         ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tn }
         : null,
     [projectConfig],
@@ -398,9 +403,11 @@ export function ResourceColumn({
     };
   }, [translationMode, book]);
   // tQ analogues of the source projection + stats above.
+  // Same partial-source guard as sourceProjection above (tQ): null when the tQ
+  // source repo is absent → no undefined fetch, source block cleanly omitted.
   const sourceQuestionProjection = useMemo(
     () =>
-      projectConfig?.translationSource
+      projectConfig?.translationSource?.repos.tq
         ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tq }
         : null,
     [projectConfig],

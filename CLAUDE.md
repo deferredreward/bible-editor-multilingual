@@ -165,6 +165,15 @@ Run order:
 
 ### Deploy
 
+> **`npm run deploy` ships to PRODUCTION.** It resolves to `wrangler deploy --env production` (`api/package.json` `deploy` script). Do **not** use it for a dev push — it got us once already. To deploy the **dev** worker (`bible-editor-api-dev`), build the SPA then run a plain `wrangler deploy` (no `--env`) from `api/`:
+> ```sh
+> npm run build:web                              # from repo root → web/dist
+> cd api && npx wrangler deploy                  # NO --env → dev worker bible-editor-api-dev
+> ```
+> Same rule for D1: a plain `--remote` migration targets the **dev** databases (`bible_editor_dev`, `bible_editor_mltest_dev`); prod requires `--env production`. So `--remote` without `--env production` is the safe dev target.
+>
+> **Non-interactive gotcha:** two Cloudflare accounts are authed on this box, so `wrangler deploy` / `d1 ... --remote` fail with *"More than one account available… non-interactive mode"*. Export `CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242` (unfoldingWord — where all three DBs `bible_editor`, `bible_editor_dev`, `bible_editor_mltest_dev` and the workers live) for the command. Only prod `bible_editor` is targeted by name+`--env production`, so dev commands that name the `_dev` DBs never touch it.
+
 Single command from repo root: `npm run deploy` builds `web/dist` then runs `wrangler deploy --env production` from `api/`. The Worker serves both `/api/*` and the SPA. See [`docs/deploy.md`](docs/deploy.md) for first-time provisioning (D1 create, R2 bucket, secrets `JWT_SIGNING_KEY` / `DCS_CLIENT_ID` / `DCS_CLIENT_SECRET` / `DCS_SERVICE_TOKEN` / `BT_API_TOKEN`).
 
 Prod-only vars (`ALLOWED_ORIGINS`, `DEV_AUTH_ENABLED=false`) live in `[env.production.vars]` so the default env stays dev-friendly. Don't put prod values at the top level — that broke local dev once already.

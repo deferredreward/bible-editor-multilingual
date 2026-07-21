@@ -49,10 +49,16 @@ export function buildTranslateOptions(
   const resourceType = o.resourceType ?? "tn";
   const targetLang = o.targetLang ?? cfg.languageCode;
   const targetOrg = o.targetOrg ?? cfg.exportOrg;
-  // Source is the published EN repo for the chosen resource, pinned to master by
-  // default; a caller can pin an exact SHA for reproducibility (the bot echoes
+  // Source is the published source repo for the chosen resource, pinned to master
+  // by default; a caller can pin an exact SHA for reproducibility (the bot echoes
   // the resolved SHA). resourceType selects which source repo (tn|tq|tw|ta).
-  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos[resourceType]}@master`;
+  // translationSource.repos is PARTIAL: a role whose upstream was left blank in
+  // Setup is omitted, so this resource has NO source to translate FROM. Emit no
+  // options (return null → caller 400) rather than a `${org}/undefined@master`
+  // ref. An explicit client sourceRef override still wins.
+  const sourceRepo = src.repos[resourceType];
+  if (!o.sourceRef && !sourceRepo) return null;
+  const sourceRef = o.sourceRef ?? `${src.org}/${sourceRepo}@master`;
   const literalRef = o.literalRef ?? (cfg.repos.lit ? `${cfg.org}/${cfg.repos.lit}@master` : undefined);
   const simplifiedRef = o.simplifiedRef ?? (cfg.repos.sim ? `${cfg.org}/${cfg.repos.sim}@master` : undefined);
   return {

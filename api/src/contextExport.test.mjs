@@ -296,6 +296,70 @@ console.log("contextExport — full pack + omission rules");
   );
 }
 
+console.log("contextExport — partial source: sourceless resource is SKIPPED, export still succeeds");
+{
+  // Regression (PR #86 review): tN source blank in Setup (skipped:['tn']) with a
+  // VALIDATED tN row + a sourced tQ row. The empty tn source map must NOT trip
+  // missing_en_source — the tN row is skipped, and tQ examples + prefs + terms
+  // still export. Before the fix, this failed the WHOLE context export.
+  const r = renderContextPack({
+    cfg,
+    prefs: {
+      audience: "teams",
+      purpose: "notes",
+      register: "formal",
+      script_notes: null,
+      instructions_md: "Keep it simple\n",
+      common_issues_md: null,
+    },
+    terms: [
+      {
+        concept_id: "kt/grace",
+        source_term: "grace",
+        target_term: "نعمة",
+        status: "preferred",
+        replacement: null,
+        comment: null,
+        tw_link: null,
+      },
+    ],
+    // A validated tN row with NO EN source (tn skipped) + a tQ row WITH source.
+    tnRows: [
+      { id: "n1", book: "TIT", ref_raw: "1:1", support_reference: "figs-metaphor", quote: null, note: "ملاحظة", updated_at: 10 },
+    ],
+    tqRows: [
+      { id: "q1", book: "TIT", ref_raw: "1:1", question: "من؟", response: "الله.", updated_at: 20 },
+    ],
+    sources: {
+      tn: new Map(), // empty — tn was skipped (no upstream source)
+      tq: new Map([[sourceRowKey("TIT", "q1"), { question: "Who?", response: "God." }]]),
+    },
+    skipped: ["tn"],
+  });
+  assert(r.ok, "export SUCCEEDS despite a sourceless tN with validated rows (no missing_en_source)");
+  assert(r.ok && r.stats.examplesTn === 0, "tN examples empty (skipped resource)");
+  assert(r.ok && r.stats.examplesTq === 1, "tQ example still exported (sourced resource)");
+  assert(r.ok && r.stats.terms === 1, "terms still exported");
+  assert(r.ok && r.files.some((f) => f.path === "instructions.md"), "prefs/instructions still exported");
+  assert(
+    r.ok && r.files.some((f) => f.path === "examples/validated.jsonl"),
+    "validated.jsonl emitted from the tQ example",
+  );
+
+  // Without skipped, the same empty tn map WOULD fail (proves skipped is what saves it).
+  const wouldFail = renderContextPack({
+    cfg,
+    prefs: { audience: null, purpose: null, register: "default", script_notes: null, instructions_md: null, common_issues_md: null },
+    terms: [],
+    tnRows: [
+      { id: "n1", book: "TIT", ref_raw: "1:1", support_reference: null, quote: null, note: "ملاحظة", updated_at: 10 },
+    ],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+  });
+  assert(!wouldFail.ok && wouldFail.reason.includes("missing_en_source:tn"), "empty tn map without skipped still hard-fails (control)");
+}
+
 console.log("contextExport — renderInstructionsMd");
 {
   const basePrefs = { audience: null, purpose: null, register: "default", script_notes: null };

@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "./index";
-import { requireAuth, requireAdmin } from "./auth";
+import { requireAuth, requireAdmin } from "./auth.ts";
 import { isIdent } from "./repoUrl.ts";
 import {
   listOrgRepos,
@@ -26,6 +26,39 @@ const TN_REPO_RE = /^([a-z0-9-]+)_tn$/;
 // Cap manifest fetches per org so a runaway org (hundreds of repos) can't
 // blow the subrequest budget on a single draft-inference GET.
 const MAX_CANDIDATE_FETCHES = 20;
+
+// GET /api/orgs/search?q=<query> — clean-match org verify for the Setup
+// wizard's org-entry step. Admin-gated like inferred-config.
+//
+// Guaranteed path: an EXACT canonical verify against DCS via GET
+// /api/v1/orgs/{q} (Gitea org lookups are case-insensitive), so a typed org
+// that exactly resolves comes back as a single clean match with `canonical`.
+// DCS 1.26 exposes NO fuzzy org-search endpoint — /api/v1/orgs/search routes
+// to GetOrgByName (name="search") and /api/v1/users/search returns users, not
+// cleanly-identifiable orgs — so `matches` carries only the canonical exact
+// match (or is empty when the query resolves to nothing). Returning a stable
+// shape ({ matches, canonical? }) lets a later fuzzy source drop in without a
+// client change.
+orgRoutes.get("/search", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  if (!q) {
+    return c.json({ matches: [] as { org: string; fullName: string }[] });
+  }
+  // Only an ident-shaped query can be an org name; anything else can't resolve
+  // (and must not be interpolated into the lookup URL). Return empty, not 400 —
+  // the wizard treats "no match" and "invalid" the same (keep typing).
+  if (!isIdent(q)) {
+    return c.json({ matches: [] as { org: string; fullName: string }[] });
+  }
+  const rec = await lookupOrgRecord(c.env, q);
+  if (!rec) {
+    return c.json({ matches: [] as { org: string; fullName: string }[] });
+  }
+  return c.json({
+    matches: [{ org: rec.username, fullName: rec.fullName }],
+    canonical: rec.username,
+  });
+});
 
 orgRoutes.get("/:org/inferred-config", async (c) => {
   const org = c.req.param("org");
@@ -115,21 +148,36 @@ orgRoutes.get("/:org/inferred-config", async (c) => {
   });
 });
 
+// Looks an org up on DCS via GET /api/v1/orgs/{org} (Gitea org lookups are
+// case-insensitive). Returns the canonical record ({username, fullName}) on a
+// 200, or null on 404 / any non-200 / network error. Unlike canonicalOrgName
+// this DISTINGUISHES "exists" from "does not" — the org-search endpoint needs
+// that distinction (a clean match vs. an empty result), whereas org detection
+// only wants canonical casing and fails open.
+async function lookupOrgRecord(
+  env: Env,
+  org: string,
+): Promise<{ username: string; fullName: string } | null> {
+  try {
+    const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+    const res = await fetch(`${base}/api/v1/orgs/${encodeURIComponent(org)}`, { headers });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { username?: string; full_name?: string };
+    if (!body.username) return null;
+    return { username: body.username, fullName: body.full_name ?? body.username };
+  } catch {
+    return null;
+  }
+}
+
 // Resolves an org name to DCS's canonical casing via GET /api/v1/orgs/{org}
 // (Gitea's `username` field). Fails open to the input as-typed on any
 // non-200 response or network error — same tolerance as the per-user lookup
 // in adminUserRoutes.ts, since a lookup hiccup here must not block org
 // detection when listOrgRepos already confirmed the org exists.
 async function canonicalOrgName(env: Env, org: string): Promise<string> {
-  try {
-    const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
-    const res = await fetch(`${base}/api/v1/orgs/${encodeURIComponent(org)}`, { headers });
-    if (!res.ok) return org;
-    const body = (await res.json()) as { username?: string };
-    return body.username || org;
-  } catch {
-    return org;
-  }
+  const rec = await lookupOrgRecord(env, org);
+  return rec?.username || org;
 }

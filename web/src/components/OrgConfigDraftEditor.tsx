@@ -11,18 +11,23 @@ import {
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type InferredOrgConfigResponse } from "../sync/api";
+import {
+  RESOURCE_KEYS,
+  UW_UPSTREAM_ORG,
+  UW_UPSTREAM_LANG,
+  UW_UPSTREAM_REPOS,
+  defaultResourceSources,
+  allResourceSources,
+  buildTranslationSource,
+  translationSourceOnFor,
+  type ResourceKey,
+  type ResourceSource,
+  type ResourceSourceMap,
+} from "../lib/orgDraft";
+import { resolveResourceLanguage, type ResolvedResourceLanguage } from "../lib/isoLanguages";
 
 // The seven repo roles a custom-gl override must carry, in display order.
-export const RESOURCE_ROLES = ["lit", "sim", "tn", "tq", "twl", "tw", "ta"] as const;
-
-// unfoldingWord's English gateway resources — the default translationSource a
-// non-English org typically translates FROM. Kept identical to the object PR B's
-// OrgDetectionSection built inline, so the two callers can never drift apart.
-const UW_SOURCE = {
-  org: "unfoldingWord",
-  languageCode: "en",
-  repos: { lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
-} as const;
+export const RESOURCE_ROLES = RESOURCE_KEYS;
 
 // Shared draft-editor state for manifest inference (PR B). Used both by the
 // single-shot OrgDetectionSection in Preferences and by the multi-step Setup
@@ -37,8 +42,35 @@ export interface OrgDraftState {
   /** Editable resolved repo per role (verified prefilled, ambiguous picked). */
   repos: Record<string, string>;
   setRepo: (role: string, v: string) => void;
+  /**
+   * Legacy all-or-nothing translationSource toggle. Backed by `resourceSource`:
+   * reads true when ANY resource is non-blank; setting it flips EVERY resource
+   * to upstream (on) or blank (off). The existing wizard/Preferences UI drives
+   * only this; the per-resource model below lands in the follow-up wizard PR.
+   */
   translationSourceOn: boolean;
   setTranslationSourceOn: (v: boolean) => void;
+  // ── Per-resource upstream model (owner decision — not yet wired to UI) ──
+  /** Upstream org each resource is pulled FROM (single org for all; #84 is per-resource org). */
+  upstreamOrg: string;
+  setUpstreamOrg: (v: string) => void;
+  /** Source language code of the upstream org (translationSource.languageCode); defaults to 'en'. */
+  upstreamLanguageCode: string;
+  setUpstreamLanguageCode: (v: string) => void;
+  /** True once the upstream org has been verified (org-search / canonical). */
+  upstreamVerified: boolean;
+  setUpstreamVerified: (v: boolean) => void;
+  /** Default/inferred repo per resource under the upstream org (auto-fillable). */
+  upstreamRepos: Record<ResourceKey, string>;
+  setUpstreamRepo: (key: ResourceKey, v: string) => void;
+  setUpstreamRepos: (repos: Record<ResourceKey, string>) => void;
+  /** Per-resource source selection: pull from upstream, an override repo, or blank. */
+  resourceSource: ResourceSourceMap;
+  setResourceSource: (key: ResourceKey, sel: ResourceSource) => void;
+  /** Pre-seeded resource language (null until seeded); prefers inferred, falls back to UI lang. */
+  resourceLang: ResolvedResourceLanguage | null;
+  /** Seed resourceLang from the current draft's inference, falling back to the UI language. */
+  seedResourceLanguage: (uiLangCode: string) => void;
   exportOrg: string;
   setExportOrg: (v: string) => void;
   /** Run inference for the entered org. */
@@ -58,15 +90,36 @@ export function useOrgDraft(): OrgDraftState {
   const [draft, setDraft] = useState<InferredOrgConfigResponse | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [repos, setRepos] = useState<Record<string, string>>({});
-  const [translationSourceOn, setTranslationSourceOn] = useState(true);
+  const [upstreamOrg, setUpstreamOrg] = useState(UW_UPSTREAM_ORG);
+  const [upstreamLanguageCode, setUpstreamLanguageCode] = useState(UW_UPSTREAM_LANG);
+  const [upstreamVerified, setUpstreamVerified] = useState(false);
+  const [upstreamRepos, setUpstreamReposState] =
+    useState<Record<ResourceKey, string>>({ ...UW_UPSTREAM_REPOS });
+  // Default all-upstream — reproduces the legacy `translationSourceOn = true`
+  // default (UW_SOURCE) once buildOverrides runs.
+  const [resourceSource, setResourceSourceState] = useState<ResourceSourceMap>(defaultResourceSources());
+  const [resourceLang, setResourceLang] = useState<ResolvedResourceLanguage | null>(null);
   const [exportOrg, setExportOrg] = useState("");
 
   const setRepo = (role: string, v: string) => setRepos((r) => ({ ...r, [role]: v }));
+  const setUpstreamRepo = (key: ResourceKey, v: string) =>
+    setUpstreamReposState((r) => ({ ...r, [key]: v }));
+  const setUpstreamRepos = (next: Record<ResourceKey, string>) => setUpstreamReposState({ ...next });
+  const setResourceSource = (key: ResourceKey, sel: ResourceSource) =>
+    setResourceSourceState((s) => ({ ...s, [key]: sel }));
+
+  const translationSourceOn = translationSourceOnFor(resourceSource);
+  const setTranslationSourceOn = (v: boolean) =>
+    setResourceSourceState(allResourceSources(v ? "upstream" : "blank"));
+
+  const seedResourceLanguage = (uiLangCode: string) =>
+    setResourceLang(resolveResourceLanguage(draft?.proposal ?? null, uiLangCode));
 
   const reset = () => {
     setDraft(null);
     setDetectError(null);
     setRepos({});
+    setResourceLang(null);
   };
 
   const detect = async () => {
@@ -103,17 +156,36 @@ export function useOrgDraft(): OrgDraftState {
   const buildOverrides = (): Record<string, unknown> => {
     if (!draft) return {};
     const resolvedRepos: Record<string, string> = { ...repos };
+    // Language fields: prefer an explicitly pre-seeded resourceLang (follow-up
+    // wizard); otherwise keep the exact proposal-first logic the existing
+    // wizard has always emitted (so its output is byte-identical).
+    const languageCode = resourceLang?.languageCode ?? draft.proposal.languageCode ?? draft.org;
+    const languageName = resourceLang?.languageName ?? draft.proposal.languageName ?? draft.org;
+    const languageTitle = resourceLang
+      ? (draft.proposal.languageTitle ?? resourceLang.languageName)
+      : (draft.proposal.languageTitle ?? draft.org);
+    const direction = resourceLang?.direction ?? draft.proposal.direction;
+    // translationSource: assembled from the per-resource selection. All-upstream
+    // with the default UW upstream (org=unfoldingWord, en_* repos) reproduces the
+    // legacy UW_SOURCE exactly; all-blank yields null — matching what the old
+    // `translationSourceOn ? UW_SOURCE : null` produced.
+    const translationSource = buildTranslationSource({
+      upstreamOrg,
+      languageCode: upstreamLanguageCode,
+      upstreamRepos,
+      resourceSource,
+    });
     return {
       org: draft.org,
       exportOrg: exportOrg.trim() || draft.org,
-      languageCode: draft.proposal.languageCode ?? draft.org,
-      languageName: draft.proposal.languageName ?? draft.org,
-      languageTitle: draft.proposal.languageTitle ?? draft.org,
-      direction: draft.proposal.direction,
+      languageCode,
+      languageName,
+      languageTitle,
+      direction,
       repos: resolvedRepos,
       litLabel: draft.proposal.litLabel ?? resolvedRepos.lit?.toUpperCase() ?? "LIT",
       simLabel: draft.proposal.simLabel ?? resolvedRepos.sim?.toUpperCase() ?? "SIM",
-      translationSource: translationSourceOn ? UW_SOURCE : null,
+      translationSource,
     };
   };
 
@@ -127,6 +199,19 @@ export function useOrgDraft(): OrgDraftState {
     setRepo,
     translationSourceOn,
     setTranslationSourceOn,
+    upstreamOrg,
+    setUpstreamOrg,
+    upstreamLanguageCode,
+    setUpstreamLanguageCode,
+    upstreamVerified,
+    setUpstreamVerified,
+    upstreamRepos,
+    setUpstreamRepo,
+    setUpstreamRepos,
+    resourceSource,
+    setResourceSource,
+    resourceLang,
+    seedResourceLanguage,
     exportOrg,
     setExportOrg,
     detect,
