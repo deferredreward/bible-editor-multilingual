@@ -1853,6 +1853,19 @@ export const api = {
       body: JSON.stringify({ target_md: targetMd }),
     }),
 
+  // "Draft with AI" — generates a translation for this unit's target_md via
+  // the uw-bt-bot proxy and persists it server-side as translation_state=
+  // 'ai_draft' in the same request (templates have no separate apply step).
+  // If-Match CAS like patchTemplate; long timeout since generation can take a
+  // while (mirrors api.tnQuick's 120s ceiling).
+  draftTemplate: (id: string, expectedVersion: number, signal?: AbortSignal) =>
+    request<TemplateUnit>(`/api/templates/unit/draft?id=${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "If-Match": String(expectedVersion) },
+      signal,
+      timeoutMs: 120_000,
+    }),
+
   // "Approve" — value=true → 'validated'; value=false → 'edited'. Non-version-
   // bumping; 404 if the unit has no translation to (un)validate.
   validateTemplate: (id: string, value: boolean) =>
