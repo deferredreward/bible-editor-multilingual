@@ -12,16 +12,23 @@
 
 export type Direction = "ltr" | "rtl";
 
-// RTL base languages. Mirrors api/src/orgInference.ts RTL_LANGS, widened with a
-// few common script-level variants (Arabic macrolanguage variants, Dari,
-// Sorani Kurdish, Sindhi, Uyghur, Yiddish) so a coded variant still resolves
-// RTL by its base subtag.
-const RTL_BASES = new Set<string>([
-  // core (parity with orgInference.ts)
+// RTL base languages. The first row is the EXACT parity set with
+// api/src/orgInference.ts RTL_LANGS (keep in sync — a divergent edit there or
+// here is caught by isoLanguages.test.mjs, which pins this COMPLETE array). The
+// second row widens it with common script-level variants (Arabic macrolanguage
+// variants, Dari, Sorani Kurdish, Sindhi, Uyghur, Yiddish, legacy `iw`) so a
+// coded variant still resolves RTL by its base subtag.
+//
+// The api/web build boundary (separate tsconfigs + bundles) means we can't share
+// orgInference.ts's Set directly, so the test locks the full list instead.
+export const RTL_BASE_CODES = [
+  // core — parity with orgInference.ts RTL_LANGS
   "ar", "he", "fa", "ur", "ps", "syr", "dv",
   // widened
   "iw", "yi", "ckb", "sd", "ug", "prs", "pnb", "apc", "acm", "ary", "arz", "arb",
-]);
+] as const;
+
+const RTL_BASES = new Set<string>(RTL_BASE_CODES);
 
 // The base subtag of an IETF-ish code ("es-419" → "es", "ar_avd" → "ar").
 export function baseSubtag(code: string): string {

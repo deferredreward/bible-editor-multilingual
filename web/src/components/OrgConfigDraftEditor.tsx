@@ -54,6 +54,9 @@ export interface OrgDraftState {
   /** Upstream org each resource is pulled FROM (single org for all; #84 is per-resource org). */
   upstreamOrg: string;
   setUpstreamOrg: (v: string) => void;
+  /** Source language code of the upstream org (translationSource.languageCode); defaults to 'en'. */
+  upstreamLanguageCode: string;
+  setUpstreamLanguageCode: (v: string) => void;
   /** True once the upstream org has been verified (org-search / canonical). */
   upstreamVerified: boolean;
   setUpstreamVerified: (v: boolean) => void;
@@ -88,6 +91,7 @@ export function useOrgDraft(): OrgDraftState {
   const [detectError, setDetectError] = useState<string | null>(null);
   const [repos, setRepos] = useState<Record<string, string>>({});
   const [upstreamOrg, setUpstreamOrg] = useState(UW_UPSTREAM_ORG);
+  const [upstreamLanguageCode, setUpstreamLanguageCode] = useState(UW_UPSTREAM_LANG);
   const [upstreamVerified, setUpstreamVerified] = useState(false);
   const [upstreamRepos, setUpstreamReposState] =
     useState<Record<ResourceKey, string>>({ ...UW_UPSTREAM_REPOS });
@@ -167,7 +171,7 @@ export function useOrgDraft(): OrgDraftState {
     // `translationSourceOn ? UW_SOURCE : null` produced.
     const translationSource = buildTranslationSource({
       upstreamOrg,
-      languageCode: UW_UPSTREAM_LANG,
+      languageCode: upstreamLanguageCode,
       upstreamRepos,
       resourceSource,
     });
@@ -197,6 +201,8 @@ export function useOrgDraft(): OrgDraftState {
     setTranslationSourceOn,
     upstreamOrg,
     setUpstreamOrg,
+    upstreamLanguageCode,
+    setUpstreamLanguageCode,
     upstreamVerified,
     setUpstreamVerified,
     upstreamRepos,

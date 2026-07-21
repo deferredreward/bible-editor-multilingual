@@ -152,6 +152,20 @@ function runPure() {
     translationSourceRepoRef({ ...CFG, translationSource: null }, "tn") === null,
     "no translationSource → null (authored project)",
   );
+  // Partial translationSource: a role omitted from repos (blank in Setup) → null,
+  // NOT a RepoRef with an undefined repo (which would build org/undefined@master).
+  const partialCfg = {
+    ...CFG,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "en_tn" } },
+  };
+  assert(
+    translationSourceRepoRef(partialCfg, "tn").repo === "en_tn",
+    "partial source: present tn role → its RepoRef",
+  );
+  assert(
+    translationSourceRepoRef(partialCfg, "tq") === null,
+    "partial source: absent tq role → null (no undefined repo)",
+  );
 
   // Held-out predicate — any non-null marker means "don't sync with the org repo".
   const setOf = (p) => [...heldOutNoteResources(p)].sort().join(",");

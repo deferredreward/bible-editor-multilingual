@@ -113,6 +113,14 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     if (!Array.isArray(aqItems)) return c.json({ error: "aquifer_json_shape", book }, 502);
 
     const src = cfg.translationSource;
+    // translationSource.repos is PARTIAL — a tN role left blank in Setup has no
+    // upstream source. Report that DISTINCTLY rather than fetching
+    // `${org}/undefined/...` and mislabeling it en_tn_fetch_failed (502): the
+    // Aquifer converter needs the English tN to pair against, so a missing source
+    // is a configuration gap (400), not a transient fetch failure.
+    if (!src.repos.tn) {
+      return c.json({ error: "no_source_configured", resource: "tn", book, org: src.org }, 400);
+    }
     const enRaw = await fetchText(dcsRawUrl(env, src.org, src.repos.tn, `tn_${book}.tsv`));
     if (!enRaw) return c.json({ error: "en_tn_fetch_failed", book, org: src.org, repo: src.repos.tn }, 502);
     const enRows: EnRow[] = parseTsv(enRaw).rows.map((r) => ({

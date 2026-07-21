@@ -12,7 +12,29 @@ import {
   baseSubtag,
   lookupLanguage,
   resolveResourceLanguage,
+  RTL_BASE_CODES,
 } from "./isoLanguages.ts";
+
+// Locks the COMPLETE RTL base set (not just the 7-code core). RTL_BASE_CODES is
+// hand-maintained parity with api/src/orgInference.ts RTL_LANGS (the api/web
+// build boundary prevents sharing one module) — if either side diverges, update
+// BOTH and this assertion. The first 7 MUST equal orgInference's RTL_LANGS.
+test("RTL_BASE_CODES: full set is locked (core 7 = orgInference RTL_LANGS, then widened variants)", () => {
+  assert.deepEqual(
+    [...RTL_BASE_CODES],
+    [
+      // core — MUST match api/src/orgInference.ts RTL_LANGS exactly
+      "ar", "he", "fa", "ur", "ps", "syr", "dv",
+      // widened variants
+      "iw", "yi", "ckb", "sd", "ug", "prs", "pnb", "apc", "acm", "ary", "arz", "arb",
+    ],
+    "RTL_BASE_CODES drifted — reconcile with orgInference.ts RTL_LANGS",
+  );
+  // Every locked code actually resolves rtl through the public accessor.
+  for (const code of RTL_BASE_CODES) {
+    assert.equal(directionForLang(code), "rtl", `${code} resolves rtl`);
+  }
+});
 
 test("directionForLang: RTL core set (parity with orgInference RTL_LANGS)", () => {
   for (const code of ["ar", "he", "fa", "ur", "ps", "syr", "dv"]) {

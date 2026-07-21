@@ -171,13 +171,17 @@ export interface FetchStateRow {
 }
 export interface CurrentSource {
   org: string;
-  repos: { tw: string; ta: string };
+  // PARTIAL: a resource whose upstream repo was left blank in Setup is omitted,
+  // meaning "no upstream source for this resource" — callers must skip it, never
+  // build a `${org}/undefined/raw/...` URL from it.
+  repos: { tw?: string; ta?: string };
 }
 
 function keyOf(resource: string, path: string): string {
   return `${resource}\u0000${path}`;
 }
-function repoForResource(src: CurrentSource, resource: ArticleResource): string {
+// undefined when this resource has no upstream source configured.
+function repoForResource(src: CurrentSource, resource: ArticleResource): string | undefined {
   return src.repos[resource];
 }
 function stateBlocks(state: FetchStateRow): boolean {
@@ -210,6 +214,9 @@ export function planWork(
     if (seen.has(k)) continue;
     seen.add(k);
     const repo = repoForResource(currentSource, ref.resource);
+    // No upstream repo for this resource (blank in Setup) → nothing to populate.
+    // Skip so we never plan a fetch against a `${org}/undefined` URL.
+    if (!repo) continue;
     const unit = existing.get(k);
     if (unit) {
       if (unit.deleted_at != null) continue; // present (soft-deleted) — never revived by reconciler
@@ -455,7 +462,7 @@ function currentSourceFrom(cfg: {
 }): CurrentSource | null {
   const ts = cfg.translationSource;
   if (!ts) return null;
-  return { org: ts.org, repos: { tw: ts.repos.tw as string, ta: ts.repos.ta as string } };
+  return { org: ts.org, repos: { tw: ts.repos.tw, ta: ts.repos.ta } };
 }
 
 // ── Fetch + write driver ────────────────────────────────────────────────────
@@ -487,11 +494,16 @@ async function fetchAll(
   doFetch: (env: Env, url: string) => Promise<FetchTextResult>,
 ): Promise<Fetched[]> {
   const out: Fetched[] = [];
-  for (let i = 0; i < work.length; i += FETCH_CONCURRENCY) {
-    const chunk = work.slice(i, i + FETCH_CONCURRENCY);
+  // Pair each item with its resolved repo, dropping any whose resource has no
+  // upstream source (planWork already excludes these; belt-and-suspenders so a
+  // `${org}/undefined` URL can never be built here).
+  const jobs = work
+    .map((item) => ({ item, repo: repoForResource(src, item.resource) }))
+    .filter((j): j is { item: ReferencedPath; repo: string } => !!j.repo);
+  for (let i = 0; i < jobs.length; i += FETCH_CONCURRENCY) {
+    const chunk = jobs.slice(i, i + FETCH_CONCURRENCY);
     const settled = await Promise.all(
-      chunk.map(async (item): Promise<Fetched> => {
-        const repo = repoForResource(src, item.resource);
+      chunk.map(async ({ item, repo }): Promise<Fetched> => {
         const url = dcsRawUrl(env, src.org, repo, item.path, "master");
         const res = await doFetch(env, url);
         if (res.status === 200 && res.text != null && !res.truncated) {
@@ -589,6 +601,7 @@ export async function populateReferencedArticles(
     const groupWarnings: string[] = [];
     for (const f of group) {
       const repo = repoForResource(src, f.item.resource);
+      if (!repo) continue; // no source for this resource — never written (unreachable: planWork filtered)
       if (f.kind === "ok") {
         stmts.push(
           upsertStmt(
@@ -640,7 +653,14 @@ export async function populateReferencedArticles(
 
 export type AddArticleResult =
   | { ok: true; resource: ArticleResource; article_id: string; paths: string[] }
-  | { error: "not_translation_project" | "unparseable_id" | "source_not_found" | "source_changed" };
+  | {
+      error:
+        | "not_translation_project"
+        | "no_source_configured"
+        | "unparseable_id"
+        | "source_not_found"
+        | "source_changed";
+    };
 
 export async function populateSingleArticle(
   env: Env,
@@ -668,6 +688,10 @@ export async function populateSingleArticle(
   }
 
   const repo = repoForResource(src, resource);
+  // The chosen resource has no upstream source repo (blank in Setup) — there is
+  // nothing to fetch. Distinct from source_not_found (which means the id didn't
+  // resolve at a configured source).
+  if (!repo) return { error: "no_source_configured" };
   // Snapshot BEFORE the fetch (as the reconciler does) so the fence window
   // covers the fetch: a source switch mid-fetch must abort the write, not slip
   // through because the snapshot was taken after the switch.
@@ -730,13 +754,24 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
   const src = currentSourceFrom(cfg);
   if (!src) return { processed: 0, changed: 0, nextCursor: null, skipped: true };
 
+  // Only resources with an actual upstream repo can be refreshed. A resource
+  // omitted from translationSource.repos has no source, so exclude it entirely
+  // rather than binding an `undefined` repo into the query (which would build a
+  // `${org}/undefined` fetch URL and pollute the results with 404s).
+  const sourced = (["tw", "ta"] as const).filter((r) => !!src.repos[r]);
+  if (sourced.length === 0) return { processed: 0, changed: 0, nextCursor: null, skipped: true };
+
   // Current-identity rows only, ordered by (resource, path) with a continuation
   // cursor — sha no-ops don't remove rows from candidacy, so a plain "first N"
   // would repeat forever.
-  const params: unknown[] = [src.org, src.repos.tw, src.repos.ta];
-  let where =
-    `deleted_at IS NULL AND source_org = ?1
-     AND ((resource = 'tw' AND source_repo = ?2) OR (resource = 'ta' AND source_repo = ?3))`;
+  const params: unknown[] = [src.org];
+  const orClauses: string[] = [];
+  for (const r of sourced) {
+    params.push(src.repos[r]);
+    // `r` is a compile-time literal ('tw'|'ta'), never user input — safe to inline.
+    orClauses.push(`(resource = '${r}' AND source_repo = ?${params.length})`);
+  }
+  let where = `deleted_at IS NULL AND source_org = ?1 AND (${orClauses.join(" OR ")})`;
   if (opts.resource) {
     where += ` AND resource = ?${params.length + 1}`;
     params.push(opts.resource);
@@ -769,6 +804,7 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
     const settled = await Promise.all(
       chunk.map(async (row) => {
         const repo = repoForResource(src, row.resource);
+        if (!repo) return null; // no source (unreachable: the WHERE only selects sourced resources)
         const res = await doFetch(env, dcsRawUrl(env, src.org, repo, row.path, "master"));
         if (res.status !== 200 || res.text == null || res.truncated) return null;
         const sha = await gitBlobSha(res.text);
@@ -784,6 +820,7 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
     const stmts: D1PreparedStatement[] = [fenceStmt(env, snapshot)];
     for (const c of group) {
       const repo = repoForResource(src, c.row.resource);
+      if (!repo) continue; // no source (unreachable: the WHERE only selects sourced resources)
       stmts.push(
         upsertStmt(
           env,

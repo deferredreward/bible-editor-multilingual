@@ -96,9 +96,17 @@ export function validateCustomGlOverrides(
     // carry only SOME of the seven roles (a resource whose upstream box is
     // unchecked is simply omitted). Each PRESENT value must still be an
     // isIdent-valid repo name (any valid ident IS the per-resource override);
-    // ABSENT keys are allowed. Downstream readers of translationSource.repos[key]
-    // already null-check (dcsSources.ts translationSourceRepoRef), so an omitted
-    // role safely means "no source for this resource".
+    // ABSENT keys are allowed.
+    //
+    // CONTRACT for readers of translationSource.repos[key]: a missing role means
+    // "this resource has NO upstream source" and MUST be handled gracefully
+    // (skip / render an empty state) — NEVER fetched as an `${org}/undefined`
+    // repo. Route every read through a guarded accessor (dcsSources.ts
+    // translationSourceRepoRef returns null on missing/blank; articlePopulate.ts
+    // repoForResource returns undefined) and branch on it. The guarded readers:
+    // dcsSources.translationSourceRepoRef, articlePopulate (populate/refresh/add),
+    // translateOptions.buildTranslateOptions, contextSourceFetch.fetchEnSourceMaps,
+    // aquiferImport, and the web source panes (ResourceColumn, TwArticleDialog).
     const tr = tsRepos as Record<string, unknown>;
     for (const key of RESOURCE_KEYS) {
       if (!(key in tr)) continue;

@@ -74,6 +74,17 @@ export async function fetchEnSourceMaps(
   if (!src) {
     return { ok: false, reason: "no_translation_source" };
   }
+  // translationSource.repos is PARTIAL: a resource left blank in Setup has no
+  // upstream source. Report that DISTINCTLY (no_source_configured:<res>) rather
+  // than fetching `${org}/undefined/...` and surfacing it as en_fetch_failed —
+  // a legitimately sourceless resource must be distinguishable from a real fetch
+  // failure so the caller doesn't treat it as a transient error.
+  if (tnRows.length > 0 && !src.repos.tn) {
+    return { ok: false, reason: "no_source_configured:tn" };
+  }
+  if (tqRows.length > 0 && !src.repos.tq) {
+    return { ok: false, reason: "no_source_configured:tq" };
+  }
 
   const sources: EnSourceMaps = { tn: new Map(), tq: new Map() };
   const bookCacheTn = new Map<string, Map<string, { note: string; quote: string | null }>>();

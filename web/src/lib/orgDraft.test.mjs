@@ -102,6 +102,20 @@ test("a non-default upstream org is carried onto translationSource.org", () => {
   assert.equal(ts.org, "SomeOtherOrg");
 });
 
+test("the upstream language code is threaded through, not hardcoded to 'en'", () => {
+  // A non-UW upstream in the wizard PR can set its own source language.
+  const ts = buildTranslationSource({
+    upstreamOrg: "es-419_gl",
+    languageCode: "es-419",
+    upstreamRepos: { ...UW_UPSTREAM_REPOS, lit: "es-419_glt" },
+    resourceSource: defaultResourceSources(),
+  });
+  assert.equal(ts.languageCode, "es-419");
+  assert.equal(ts.org, "es-419_gl");
+  // default UW upstream still comes out 'en' (backward compat)
+  assert.equal(build(defaultResourceSources()).languageCode, "en");
+});
+
 test("translationSourceOnFor: true unless every resource is blank", () => {
   assert.equal(translationSourceOnFor(allResourceSources("upstream")), true);
   assert.equal(translationSourceOnFor(defaultResourceSources()), true);

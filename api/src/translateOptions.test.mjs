@@ -139,4 +139,23 @@ console.log("[buildTranslateOptions] English root project → null (not_a_gl_pro
   assert(opts === null, "translationSource=null → null (caller turns into 400)");
 }
 
+console.log("[buildTranslateOptions] partial translationSource — resource with no source repo → null");
+{
+  // A GL project whose translationSource omits tq/tw/ta (blank in Setup): only
+  // tn is sourced. The chosen resource without a source repo must yield NO
+  // options (null → caller 400) rather than a `${org}/undefined@master` ref.
+  const partial = {
+    ...arBsoj,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "en_tn" } },
+  };
+  const tn = buildTranslateOptions(partial, undefined);
+  assert(tn !== null && tn.sourceRef === "unfoldingWord/en_tn@master", "sourced tn still builds a valid sourceRef");
+  assert(buildTranslateOptions(partial, { resourceType: "tq" }) === null, "tq (no source repo) → null, not undefined ref");
+  assert(buildTranslateOptions(partial, { resourceType: "tw" }) === null, "tw (no source repo) → null");
+  assert(buildTranslateOptions(partial, { resourceType: "ta" }) === null, "ta (no source repo) → null");
+  // An explicit client sourceRef override still wins even when the repo is absent.
+  const overridden = buildTranslateOptions(partial, { resourceType: "tw", sourceRef: "unfoldingWord/en_tw@abc123" });
+  assert(overridden !== null && overridden.sourceRef === "unfoldingWord/en_tw@abc123", "explicit sourceRef override wins over missing repo");
+}
+
 console.log("\ntranslateOptions: all assertions passed");
