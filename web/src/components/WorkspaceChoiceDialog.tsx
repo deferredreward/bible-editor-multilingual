@@ -63,7 +63,12 @@ export function WorkspaceChoiceDialog({ onClose }: { onClose: () => void }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  // Two distinct failures, two distinct recoveries: a failed LIST load leaves
+  // nothing to render (alert replaces the list); a failed SWITCH must keep the
+  // already-loaded list on screen with an inline error so the user can retry
+  // or pick a different org.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [switchFailed, setSwitchFailed] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,7 +83,7 @@ export function WorkspaceChoiceDialog({ onClose }: { onClose: () => void }) {
       })
       .catch(() => {
         if (cancelled) return;
-        setFailed(true);
+        setLoadFailed(true);
         setLoading(false);
       });
     return () => {
@@ -101,6 +106,7 @@ export function WorkspaceChoiceDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     setSwitching(w.slug);
+    setSwitchFailed(false);
     try {
       await api.switchWorkspace(w.slug);
       setWorkspaceSlug(w.slug);
@@ -110,8 +116,10 @@ export function WorkspaceChoiceDialog({ onClose }: { onClose: () => void }) {
       // the previous org may survive the D1 rebind.
       location.reload();
     } catch {
+      // Keep the list rendered and the buttons enabled — the user can retry
+      // this org or pick another; only the inline error appears.
       setSwitching(null);
-      setFailed(true);
+      setSwitchFailed(true);
     }
   };
 
@@ -126,31 +134,38 @@ export function WorkspaceChoiceDialog({ onClose }: { onClose: () => void }) {
           <Stack alignItems="center" sx={{ py: 2 }}>
             <CircularProgress size={24} />
           </Stack>
-        ) : failed ? (
+        ) : loadFailed ? (
           <Alert severity="warning">{t("workspace.chooseFailed")}</Alert>
         ) : (
-          <List dense>
-            {workspaces.map((w) => (
-              <ListItemButton
-                key={w.slug}
-                disabled={switching !== null}
-                selected={w.slug === current}
-                onClick={() => void choose(w)}
-              >
-                <ListItemIcon>
-                  {w.slug === current ? (
-                    <CheckIcon fontSize="small" />
-                  ) : (
-                    <BusinessIcon fontSize="small" />
-                  )}
-                </ListItemIcon>
-                <ListItemText
-                  primary={w.label}
-                  secondary={w.slug === current ? t("workspace.chooseCurrentNote") : w.org}
-                />
-              </ListItemButton>
-            ))}
-          </List>
+          <>
+            {switchFailed && (
+              <Alert severity="warning" sx={{ mb: 1 }}>
+                {t("workspace.switchFailed")}
+              </Alert>
+            )}
+            <List dense>
+              {workspaces.map((w) => (
+                <ListItemButton
+                  key={w.slug}
+                  disabled={switching !== null}
+                  selected={w.slug === current}
+                  onClick={() => void choose(w)}
+                >
+                  <ListItemIcon>
+                    {w.slug === current ? (
+                      <CheckIcon fontSize="small" />
+                    ) : (
+                      <BusinessIcon fontSize="small" />
+                    )}
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={w.label}
+                    secondary={w.slug === current ? t("workspace.chooseCurrentNote") : w.org}
+                  />
+                </ListItemButton>
+              ))}
+            </List>
+          </>
         )}
       </DialogContent>
       <DialogActions>

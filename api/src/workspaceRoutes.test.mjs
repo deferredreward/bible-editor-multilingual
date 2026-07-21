@@ -105,6 +105,21 @@ function buildApp() {
   return app;
 }
 
+function jsonRes(body) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+// DCS list fetches paginate until an EMPTY page (fetchPagedList in
+// dcsTeams.ts), so a stub must serve its body on page 1 and [] afterwards —
+// returning the same non-empty body forever would read as "truncated at the
+// page cap" (null / membership unknown).
+function firstPageOnly(url, body) {
+  return new URL(String(url)).searchParams.get("page") === "1" ? body : [];
+}
+
 function req(app, env, method, path, { token, body, skipCsrf } = {}) {
   const cookies = [];
   const headers = {};
@@ -169,10 +184,7 @@ console.log("[GET] non-super-admin: allowed flags come from DCS org membership")
     globalThis.fetch = async (url, init) => {
       assert(String(url).includes("/api/v1/user/orgs"), "membership check hits /api/v1/user/orgs");
       assert(init.headers.Authorization === "token bob-dcs-token", "membership check uses the user's stored access token");
-      return new Response(JSON.stringify([{ username: "unfoldingWord" }]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return jsonRes(firstPageOnly(url, [{ username: "unfoldingWord" }]));
     };
     const app = buildApp();
     const env = baseEnv(db);
@@ -259,11 +271,7 @@ console.log("[POST] disallowed workspace -> 403 workspace_forbidden");
   try {
     const db = freshDb();
     seedUser(db, { id: 6, username: "frank", token: "frank-token" });
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify([{ username: "unfoldingWord" }]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    globalThis.fetch = async (url) => jsonRes(firstPageOnly(url, [{ username: "unfoldingWord" }]));
     const app = buildApp();
     const env = baseEnv(db);
     const tok = await makeToken({ sub: "6", username: "frank" });
@@ -281,11 +289,7 @@ console.log("[POST] allowed workspace -> 200 + Set-Cookie carrying the slug");
   try {
     const db = freshDb();
     seedUser(db, { id: 7, username: "gina", token: "gina-token" });
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify([{ username: "OrgTwo" }]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    globalThis.fetch = async (url) => jsonRes(firstPageOnly(url, [{ username: "OrgTwo" }]));
     const app = buildApp();
     const env = baseEnv(db);
     const tok = await makeToken({ sub: "7", username: "gina" });
@@ -331,11 +335,8 @@ console.log("[POST] switching workspace re-mints the access cookie's role from t
     // deliberately no user_roles row for ivy — she's never been granted a
     // role in org2, only a plain DCS member.
 
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify([{ username: "unfoldingWord" }, { username: "OrgTwo" }]), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    globalThis.fetch = async (url) =>
+      jsonRes(firstPageOnly(url, [{ username: "unfoldingWord" }, { username: "OrgTwo" }]));
 
     const app = buildApp();
     const env = {
@@ -392,24 +393,20 @@ console.log("[POST] switching runs a team-role sync against the TARGET workspace
     // Without the switch-time resync she'd be re-minted as viewer until her
     // next full OAuth sign-in.
     const dbUw = freshDb();
-    dbUw.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER);`);
+    dbUw.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER, manual_role TEXT);`);
     seedUser(dbUw, { id: 11, username: "hana", token: "hana-token" });
 
     const dbOrg2 = freshDb();
-    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER);`);
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER, manual_role TEXT);`);
 
     globalThis.fetch = async (url) => {
       const u = String(url);
       if (u.includes("/api/v1/user/orgs")) {
-        return new Response(JSON.stringify([{ username: "OrgTwo" }]), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return jsonRes(firstPageOnly(url, [{ username: "OrgTwo" }]));
       }
       if (u.includes("/api/v1/user/teams")) {
-        return new Response(
-          JSON.stringify([{ name: "BE-Editors", organization: { username: "OrgTwo" } }]),
-          { status: 200, headers: { "content-type": "application/json" } },
+        return jsonRes(
+          firstPageOnly(url, [{ name: "BE-Editors", organization: { username: "OrgTwo" } }]),
         );
       }
       throw new Error(`unexpected DCS call: ${u}`);
@@ -457,6 +454,122 @@ console.log("[POST] switching runs a team-role sync against the TARGET workspace
       payload.role === "editor",
       `re-minted token carries the freshly-synced editor role, got ${payload.role}`,
     );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── FINDING 1 regression: a manual role row allows entry without org membership ──
+
+console.log("[POST] a user_roles row in the TARGET workspace allows the switch — no Door43 org membership needed");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    // mia is manually allowlisted in org2 but is NOT a Door43 member of
+    // OrgTwo. The pure org-membership gate used to 403 her forever.
+    const dbUw = freshDb();
+    seedUser(dbUw, { id: 12, username: "mia", token: "mia-token" });
+
+    const dbOrg2 = freshDb();
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER, manual_role TEXT);`);
+    dbOrg2.exec(`INSERT INTO user_roles (dcs_username, role, source) VALUES ('mia','editor','manual');`);
+
+    const dcsCalls = [];
+    globalThis.fetch = async (url) => {
+      dcsCalls.push(String(url));
+      // She's in NO orgs and on NO teams — every list is empty.
+      return jsonRes([]);
+    };
+
+    const app = buildApp();
+    const env = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: makeD1(dbUw),
+      DB2: makeD1(dbOrg2),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+      WORKSPACE_SLUG: "uw",
+      SUPER_ADMINS: "",
+    };
+    const tok = await makeToken({ sub: "12", role: "viewer", username: "mia" });
+    const res = await req(app, env, "POST", "/api/workspaces/org2", { token: tok });
+    assert(res.status === 200, "manual allowlist row in the target DB -> switch allowed (200)");
+    assert(
+      !dcsCalls.some((u) => u.includes("/user/orgs")),
+      "the role-row check short-circuits the gate — no DCS org round-trip needed",
+    );
+
+    const row = dbOrg2
+      .prepare("SELECT role, source FROM user_roles WHERE dcs_username = 'mia'")
+      .get();
+    assert(
+      !!row && row.role === "editor" && row.source === "manual",
+      "the no-team-signal sync leaves the manual row untouched (fallback grant survives)",
+    );
+
+    const setCookies =
+      typeof res.headers.getSetCookie === "function"
+        ? res.headers.getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    const accessCookie = setCookies.find((h) => /^be_access=/.test(h));
+    const newToken = accessCookie.match(/^be_access=([^;]+)/)[1];
+    const { payload } = await jwtVerify(newToken, KEY, { algorithms: ["HS256"], issuer: ISSUER });
+    assert(payload.role === "editor", `re-minted token carries her manual editor role, got ${payload.role}`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── switch-time resync throttle: a fresh dcs_team row skips the DCS round-trip ──
+
+console.log("[POST] a freshly-synced dcs_team row in the target workspace skips the switch-time DCS resync");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const dbUw = freshDb();
+    seedUser(dbUw, { id: 13, username: "nick", token: "nick-token" });
+
+    const dbOrg2 = freshDb();
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT PRIMARY KEY COLLATE NOCASE, role TEXT, source TEXT NOT NULL DEFAULT 'manual', synced_at INTEGER, manual_role TEXT);`);
+    dbOrg2.exec(`INSERT INTO user_roles (dcs_username, role, source, synced_at) VALUES ('nick','editor','dcs_team', unixepoch());`);
+
+    let dcsCalled = false;
+    globalThis.fetch = async () => {
+      dcsCalled = true;
+      return jsonRes([]);
+    };
+
+    const app = buildApp();
+    const env = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: makeD1(dbUw),
+      DB2: makeD1(dbOrg2),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+      WORKSPACE_SLUG: "uw",
+      SUPER_ADMINS: "",
+    };
+    const tok = await makeToken({ sub: "13", role: "viewer", username: "nick" });
+    const res = await req(app, env, "POST", "/api/workspaces/org2", { token: tok });
+    assert(res.status === 200, "switch with a fresh team row -> 200");
+    assert(dcsCalled === false, "fresh synced_at (< RESYNC_AFTER_SECONDS) -> no DCS call at all");
+
+    const setCookies =
+      typeof res.headers.getSetCookie === "function"
+        ? res.headers.getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    const accessCookie = setCookies.find((h) => /^be_access=/.test(h));
+    const newToken = accessCookie.match(/^be_access=([^;]+)/)[1];
+    const { payload } = await jwtVerify(newToken, KEY, { algorithms: ["HS256"], issuer: ISSUER });
+    assert(payload.role === "editor", "the cached team role is used for the re-mint");
   } finally {
     globalThis.fetch = realFetch;
   }

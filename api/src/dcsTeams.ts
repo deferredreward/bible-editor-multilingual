@@ -46,6 +46,59 @@ export interface DcsTeam {
 const PAGE_SIZE = 50;
 const MAX_PAGES = 5;
 
+// Shared paginated GET against a DCS list endpoint, authenticated with the
+// user's own token. Termination rule: keep fetching until an EMPTY page.
+// A page merely shorter than our requested PAGE_SIZE is NOT proof of the end —
+// Gitea's MAX_RESPONSE_ITEMS can cap the server's page size below what we
+// asked for, so a server-capped "full" page would masquerade as a final short
+// one and silently truncate the list. The price is one extra (empty-page)
+// request per complete listing; the alternative was misreading membership.
+//
+// Returns null — "unknown", never an empty list — on ANY failure: network,
+// non-2xx, unparseable body, or the page cap exhausted with items still
+// coming. Callers must never read null as "no memberships".
+async function fetchPagedList<T>(
+  env: Env,
+  path: string,
+  label: string,
+  accessToken: string,
+  deps?: { fetch?: typeof fetch },
+): Promise<T[] | null> {
+  const doFetch = deps?.fetch ?? fetch;
+  const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+  const items: T[] = [];
+  try {
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await doFetch(
+        `${base}${path}?limit=${PAGE_SIZE}&page=${page}`,
+        { headers: { Authorization: `token ${accessToken}`, Accept: "application/json" } },
+      );
+      if (!res.ok) {
+        // Logged, not silent: a persistent 403 here (e.g. the OAuth grant not
+        // carrying org-read scope) would otherwise be indistinguishable, from
+        // the outside, from "no memberships". `wrangler tail` is the intended
+        // diagnostic.
+        console.warn(`[dcsTeams] ${label} page ${page} returned ${res.status}`);
+        return null;
+      }
+      const batch = (await res.json()) as unknown;
+      if (!Array.isArray(batch)) {
+        console.warn(`[dcsTeams] ${label} returned a non-array body`);
+        return null;
+      }
+      if (batch.length === 0) return items;
+      items.push(...(batch as T[]));
+    }
+  } catch (err) {
+    console.warn(`[dcsTeams] ${label} fetch failed: ${String(err)}`);
+    return null;
+  }
+  // Ran out of pages with items still arriving — the list may be truncated,
+  // so we don't know the user's full membership. Unknown, not complete.
+  console.warn(`[dcsTeams] ${label} exceeded ${MAX_PAGES} pages; treating as unknown`);
+  return null;
+}
+
 // A cached team role is re-checked against DCS this often (see maybeResync in
 // api/src/auth.ts). Without it, removing someone from a Door43 team wouldn't
 // take effect until their next *full* sign-in — up to the 14-day refresh
@@ -65,39 +118,7 @@ export async function listUserTeams(
   accessToken: string,
   deps?: { fetch?: typeof fetch },
 ): Promise<DcsTeam[] | null> {
-  const doFetch = deps?.fetch ?? fetch;
-  const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
-  const teams: DcsTeam[] = [];
-  try {
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await doFetch(
-        `${base}/api/v1/user/teams?limit=${PAGE_SIZE}&page=${page}`,
-        { headers: { Authorization: `token ${accessToken}`, Accept: "application/json" } },
-      );
-      if (!res.ok) {
-        // Logged, not silent: a persistent 403 here (e.g. the OAuth grant not
-        // carrying org-read scope) would otherwise make the whole feature a
-        // no-op that is indistinguishable, from the outside, from "this user
-        // is on no teams". `wrangler tail` is the intended diagnostic.
-        console.warn(`[dcsTeams] /user/teams page ${page} returned ${res.status}`);
-        return null;
-      }
-      const batch = (await res.json()) as unknown;
-      if (!Array.isArray(batch)) {
-        console.warn("[dcsTeams] /user/teams returned a non-array body");
-        return null;
-      }
-      teams.push(...(batch as DcsTeam[]));
-      if (batch.length < PAGE_SIZE) return teams;
-    }
-  } catch (err) {
-    console.warn(`[dcsTeams] /user/teams fetch failed: ${String(err)}`);
-    return null;
-  }
-  // Ran out of pages with the last one still full — the list is truncated, so
-  // we don't know the user's full membership. Unknown, not empty.
-  console.warn(`[dcsTeams] /user/teams exceeded ${MAX_PAGES} pages; treating as unknown`);
-  return null;
+  return fetchPagedList<DcsTeam>(env, "/api/v1/user/teams", "/user/teams", accessToken, deps);
 }
 
 /**
@@ -106,9 +127,8 @@ export async function listUserTeams(
  * org names. (In Gitea, team membership implies org membership, so this set
  * is sufficient for workspace matching.)
  *
- * Returns `null` (never an empty set) on ANY failure — network, non-2xx,
- * unparseable body, or a paginated list truncated at the page cap — so
- * callers can distinguish "confirmed no orgs" from "couldn't check". The
+ * Returns `null` (never an empty set) on ANY failure — see fetchPagedList —
+ * so callers can distinguish "confirmed no orgs" from "couldn't check". The
  * latter must fail soft (keep the current/cookie workspace, keep cached
  * roles), never hard to "denied everywhere".
  *
@@ -120,36 +140,20 @@ export async function fetchMemberOrgs(
   accessToken: string,
   deps?: { fetch?: typeof fetch },
 ): Promise<Set<string> | null> {
-  const doFetch = deps?.fetch ?? fetch;
-  const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+  const list = await fetchPagedList<{ username?: string }>(
+    env,
+    "/api/v1/user/orgs",
+    "/user/orgs",
+    accessToken,
+    deps,
+  );
+  if (list === null) return null;
   const orgs = new Set<string>();
-  try {
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await doFetch(
-        `${base}/api/v1/user/orgs?limit=${PAGE_SIZE}&page=${page}`,
-        { headers: { Authorization: `token ${accessToken}`, Accept: "application/json" } },
-      );
-      if (!res.ok) {
-        console.warn(`[dcsTeams] /user/orgs page ${page} returned ${res.status}`);
-        return null;
-      }
-      const batch = (await res.json()) as unknown;
-      if (!Array.isArray(batch)) {
-        console.warn("[dcsTeams] /user/orgs returned a non-array body");
-        return null;
-      }
-      for (const o of batch as Array<{ username?: string }>) {
-        const name = (o?.username ?? "").toLowerCase();
-        if (name) orgs.add(name);
-      }
-      if (batch.length < PAGE_SIZE) return orgs;
-    }
-  } catch (err) {
-    console.warn(`[dcsTeams] /user/orgs fetch failed: ${String(err)}`);
-    return null;
+  for (const o of list) {
+    const name = (o?.username ?? "").toLowerCase();
+    if (name) orgs.add(name);
   }
-  console.warn(`[dcsTeams] /user/orgs exceeded ${MAX_PAGES} pages; treating as unknown`);
-  return null;
+  return orgs;
 }
 
 /**
@@ -209,31 +213,46 @@ export async function resolveTeamRole(
   return { known: true, role };
 }
 
+// The last-admin guard predicate for the teams-win UPSERT below, shared by
+// its role AND source CASEs so the two can never desynchronize (a refused
+// demotion must leave BOTH untouched — flipping only source would hand a
+// still-admin row to team ownership). `user_roles.*` = the pre-update row,
+// `excluded.*` = the incoming team value; valid only inside the upsert's
+// DO UPDATE clause.
+const UPSERT_LAST_ADMIN_GUARD = `(user_roles.role = 'admin' AND excluded.role = 'editor'
+                AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)`;
+
 /**
  * Sync the team-derived role into `user_roles` so /api/auth/refresh (which
  * re-reads that table) needs no DCS round-trip on every request.
  *
- * Precedence, stated as one rule: **Door43 teams win; a manual row is only a
- * fallback for users with no team signal at all.**
+ * Precedence, stated as one rule: **Door43 teams win; a manual grant is a
+ * fallback that resurfaces only when the team signal disappears.**
  *
  *  - A team role (admin/editor) OVERWRITES the row — role AND source — even
  *    when the existing row was a manual allowlist grant. Once a user has a
  *    team signal, Door43 is authoritative for them in both directions:
- *    promotion, demotion, and (below) removal. (The earlier revision let a
- *    manual admin row survive a team-says-editor sync, which meant the
- *    documented management path — move the user between teams in Door43 —
- *    silently did nothing for allowlisted users.)
- *  - No team signal (`role === null`, membership positively known) deletes
- *    ONLY `source = 'dcs_team'` rows. A manual row that team sync never
- *    claimed survives and keeps acting as the fallback grant.
- *  - The last remaining admin is never demoted OR deleted, matching the guards
- *    in adminUserRoutes.ts. Leaving a Door43 team must not be able to empty the
- *    admin set: `/api/admin/users` is itself admin-gated, so a zero-admin
- *    project can only be repaired with raw SQL against D1. A guard-refused
- *    demotion leaves role AND source untouched.
+ *    promotion, demotion, and removal. When the row being taken over was
+ *    `source = 'manual'`, its prior role is STASHED in `manual_role`
+ *    (migration 0057) so the grant isn't destroyed, just superseded.
+ *  - No team signal (`role === null`, membership positively known):
+ *      * a `dcs_team` row with a stashed `manual_role` is RESTORED to
+ *        (role = manual_role, source = 'manual', manual_role = NULL) — so a
+ *        Door43 team rename or deletion (indistinguishable from "everyone
+ *        left the team") degrades to the pre-team manual allowlist instead of
+ *        wiping it org-wide;
+ *      * a pure team creation (`manual_role` NULL) is deleted;
+ *      * a `manual` row team sync never claimed is untouched.
+ *  - The last remaining admin is never demoted OR deleted — on the overwrite,
+ *    restore, AND delete paths — matching the guards in adminUserRoutes.ts.
+ *    Leaving a Door43 team must not be able to empty the admin set:
+ *    `/api/admin/users` is itself admin-gated, so a zero-admin project can
+ *    only be repaired with raw SQL against D1. A guard-refused change leaves
+ *    role, source, and manual_role all untouched.
  *
- * `synced_at` is stamped on every successful sync (even a no-op one) so the
- * refresh path can tell a freshly-checked row from a stale one.
+ * `synced_at` is stamped on every sync outcome — grant, restore, guard-refused
+ * change, even a no-op — so the refresh path can tell a freshly-checked row
+ * from a stale one (an unstamped survivor would re-hit DCS every window).
  */
 export async function syncTeamRole(
   env: Env,
@@ -244,25 +263,25 @@ export async function syncTeamRole(
     // The role decision is a CASE inside SET rather than a WHERE on the whole
     // UPDATE so that `synced_at` is refreshed even when the role is unchanged
     // or the change is refused — otherwise a declined update would leave the
-    // row permanently stale and re-hit DCS on every single refresh. The same
-    // last-admin condition gates `source` so a refused demotion doesn't hand
-    // the (still-admin) row to team ownership, where the DELETE path's guard
-    // would then be the only thing standing between it and removal.
+    // row permanently stale and re-hit DCS on every single refresh. All SET
+    // expressions evaluate against the PRE-update row, so manual_role's CASE
+    // sees the original source/role regardless of assignment order.
     await env.DB.prepare(
       `INSERT INTO user_roles (dcs_username, role, source, synced_at)
        VALUES (?1, ?2, 'dcs_team', unixepoch())
        ON CONFLICT(dcs_username) DO UPDATE SET
          synced_at = unixepoch(),
+         manual_role = CASE
+           WHEN NOT ${UPSERT_LAST_ADMIN_GUARD} AND user_roles.source = 'manual'
+             THEN user_roles.role
+           ELSE user_roles.manual_role
+         END,
          role = CASE
-           WHEN NOT (user_roles.role = 'admin' AND excluded.role = 'editor'
-                     AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)
-             THEN excluded.role
+           WHEN NOT ${UPSERT_LAST_ADMIN_GUARD} THEN excluded.role
            ELSE user_roles.role
          END,
          source = CASE
-           WHEN NOT (user_roles.role = 'admin' AND excluded.role = 'editor'
-                     AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)
-             THEN 'dcs_team'
+           WHEN NOT ${UPSERT_LAST_ADMIN_GUARD} THEN 'dcs_team'
            ELSE user_roles.source
          END`,
     )
@@ -270,11 +289,38 @@ export async function syncTeamRole(
       .run();
     return;
   }
+  // No team signal (positively known). Three statements, in order:
+  // 1. restore rows with a stashed manual grant (guard: restoring the sole
+  //    admin down to a stashed 'editor' would empty the admin set — refuse);
+  await env.DB.prepare(
+    `UPDATE user_roles SET
+       role = manual_role,
+       source = 'manual',
+       manual_role = NULL,
+       synced_at = unixepoch()
+     WHERE dcs_username = ?1 AND source = 'dcs_team' AND manual_role IS NOT NULL
+       AND NOT (role = 'admin' AND manual_role = 'editor'
+                AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)`,
+  )
+    .bind(dcsUsername)
+    .run();
+  // 2. delete pure team creations (restored rows are now source='manual' and
+  //    unreachable here);
   await env.DB.prepare(
     `DELETE FROM user_roles
       WHERE dcs_username = ?1
         AND source = 'dcs_team'
+        AND manual_role IS NULL
         AND NOT (role = 'admin' AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1)`,
+  )
+    .bind(dcsUsername)
+    .run();
+  // 3. stamp any guard-refused survivor — a dcs_team row still standing after
+  //    the two statements above was refused by a last-admin guard, and leaving
+  //    it unstamped would trigger a DCS re-check on every refresh window.
+  await env.DB.prepare(
+    `UPDATE user_roles SET synced_at = unixepoch()
+      WHERE dcs_username = ?1 AND source = 'dcs_team'`,
   )
     .bind(dcsUsername)
     .run();

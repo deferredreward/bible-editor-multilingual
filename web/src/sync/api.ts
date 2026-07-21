@@ -2124,8 +2124,12 @@ export const api = {
   // DCS is unreachable; callers surface that inline rather than treating it as
   // a hard failure.
   adminListOrgMembers: () => request<OrgMembersResponse>(`/api/admin/users/org-members`),
+  // wasTeamManaged: the row belonged to Door43 team sync BEFORE this edit
+  // (post-edit it reads source='manual' — the admin just took ownership), so
+  // the edit will be re-taken at the user's next team check while they stay
+  // on the team. Optional so older cached responses stay type-compatible.
   adminSetUserRole: (username: string, role: "admin" | "editor") =>
-    request<{ user: AdminUser; dcsVerified: boolean }>(
+    request<{ user: AdminUser; wasTeamManaged?: boolean; dcsVerified: boolean }>(
       `/api/admin/users/${encodeURIComponent(username)}`,
       { method: "PUT", body: JSON.stringify({ role }) },
     ),

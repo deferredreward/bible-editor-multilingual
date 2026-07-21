@@ -318,7 +318,8 @@ console.log("[refreshToken → maybeResyncTeamRole] re-check reads the OAuth tok
         added_at INTEGER NOT NULL DEFAULT (unixepoch()),
         added_by INTEGER,
         source TEXT NOT NULL DEFAULT 'manual',
-        synced_at INTEGER
+        synced_at INTEGER,
+        manual_role TEXT
       );
       CREATE TABLE users (
         id INTEGER PRIMARY KEY,
@@ -605,7 +606,8 @@ console.log("[effectiveRole / lookupUserRole] super-admin invariants");
         added_at INTEGER NOT NULL DEFAULT (unixepoch()),
         added_by INTEGER,
         source TEXT NOT NULL DEFAULT 'manual',
-        synced_at INTEGER
+        synced_at INTEGER,
+        manual_role TEXT
       );
     `);
     return db;

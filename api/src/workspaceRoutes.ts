@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
 import { requireAuth, currentUserId, effectiveRole, ensureWorkspaceUser, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
-import { fetchMemberOrgs, syncTeamRoleForUser } from "./dcsTeams.ts";
+import { fetchMemberOrgs, syncTeamRoleForUser, RESYNC_AFTER_SECONDS } from "./dcsTeams.ts";
 import { listWorkspaces, sharedDb, serializeWorkspaceCookie, workspaceEnv, type Workspace } from "./workspaces.ts";
 import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
 
@@ -37,6 +37,24 @@ async function currentAccessToken(env: Env, userId: number | null): Promise<stri
 // distinguish "confirmed no orgs" from "couldn't check" — the latter must
 // fail closed to "current workspace only", never to "denied everywhere".
 
+// A workspace is allowed to a user if they're a Door43 member of its org OR
+// they already hold a user_roles row in that workspace's database (a manual
+// allowlist grant, or a cached team role). Org membership alone would evict
+// manually allowlisted outsiders. Best-effort: an unreachable workspace DB
+// (or a mid-migration missing table) reads as "no row seen".
+async function hasRoleRow(env: Env, ws: Workspace, username: string | undefined): Promise<boolean> {
+  if (!username) return false;
+  try {
+    const row = await workspaceEnv(env, ws)
+      .DB.prepare(`SELECT 1 AS present FROM user_roles WHERE dcs_username = ?1`)
+      .bind(username)
+      .first<{ present: number }>();
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
 // GET /api/workspaces — the switcher's list, with an `allowed` flag per
 // workspace so the UI can show-but-disable orgs the user isn't a member of.
 workspaceRoutes.get("/", async (c) => {
@@ -65,16 +83,27 @@ workspaceRoutes.get("/", async (c) => {
   const accessToken = await currentAccessToken(c.env, currentUserId(c));
   const memberOrgs = accessToken ? await fetchMemberOrgs(c.env, accessToken) : null;
 
+  // Org membership OR an existing role row allows a workspace (see
+  // hasRoleRow) — checked per workspace so a manually allowlisted outsider's
+  // own org isn't shown as off-limits. Small bounded fan-out (one D1 read per
+  // configured workspace the org check didn't already allow).
+  const roleAllowed = new Set<string>();
+  for (const w of workspaces) {
+    if (memberOrgs?.has(w.org.toLowerCase())) continue; // already allowed
+    if (await hasRoleRow(c.env, w, username)) roleAllowed.add(w.slug);
+  }
+
   if (!memberOrgs) {
     // No token, or the DCS lookup failed — fail closed but don't strand the
-    // user: they keep the workspace they're already in.
+    // user: they keep the workspace they're already in, plus any workspace
+    // where a role row already vouches for them.
     return c.json({
       current,
       workspaces: workspaces.map((w) => ({
         slug: w.slug,
         label: w.label,
         org: w.org,
-        allowed: w.slug === current,
+        allowed: w.slug === current || roleAllowed.has(w.slug),
         isFallback: w.slug === fallbackSlug,
       })),
       membershipUnknown: true,
@@ -87,7 +116,7 @@ workspaceRoutes.get("/", async (c) => {
       slug: w.slug,
       label: w.label,
       org: w.org,
-      allowed: memberOrgs.has(w.org.toLowerCase()),
+      allowed: memberOrgs.has(w.org.toLowerCase()) || roleAllowed.has(w.slug),
       isFallback: w.slug === fallbackSlug,
     })),
   });
@@ -106,6 +135,12 @@ workspaceRoutes.post("/:slug", async (c) => {
   // Hoisted past the gate: the switch-time team resync below reuses it.
   const accessToken = superAdmin ? null : await currentAccessToken(c.env, currentUserId(c));
   let allowed = superAdmin;
+  if (!allowed) {
+    // A role row in the TARGET workspace's database grants entry even without
+    // Door43 org membership (manual allowlist grant) — and it's a local D1
+    // read, so check it before spending a DCS round-trip on the org gate.
+    allowed = await hasRoleRow(c.env, ws, username);
+  }
   if (!allowed) {
     const memberOrgs = accessToken ? await fetchMemberOrgs(c.env, accessToken) : null;
     allowed = !!memberOrgs && memberOrgs.has(ws.org.toLowerCase());
@@ -150,8 +185,31 @@ workspaceRoutes.post("/:slug", async (c) => {
       // their next full OAuth sign-in re-ran the team sync. Best-effort
       // (never throws); skipped for super admins, whose effectiveRole below
       // short-circuits to admin regardless — their switches stay DCS-free.
+      //
+      // Throttled with the same synced_at freshness the refresh path uses
+      // (maybeResyncTeamRole): a dcs_team row checked within the last
+      // RESYNC_AFTER_SECONDS skips the DCS round-trip, so bouncing between
+      // workspaces isn't a /user/teams call per bounce. First-ever entry (no
+      // row → no synced_at) and pre-migration windows (query throws) still
+      // sync immediately.
       if (accessToken) {
-        await syncTeamRoleForUser(targetEnv, username, accessToken);
+        let fresh = false;
+        try {
+          const row = await targetEnv.DB.prepare(
+            `SELECT synced_at AS syncedAt FROM user_roles
+              WHERE dcs_username = ?1 AND source = 'dcs_team'`,
+          )
+            .bind(username)
+            .first<{ syncedAt: number | null }>();
+          fresh =
+            !!row?.syncedAt &&
+            Math.floor(Date.now() / 1000) - row.syncedAt < RESYNC_AFTER_SECONDS;
+        } catch {
+          /* pre-migration window — sync unconditionally, as before */
+        }
+        if (!fresh) {
+          await syncTeamRoleForUser(targetEnv, username, accessToken);
+        }
       }
       const role: Role = (await effectiveRole(targetEnv, username)) ?? "viewer";
       if (userId !== null) {

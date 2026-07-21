@@ -57,8 +57,21 @@ all.** All covered by `api/src/dcsTeams.test.mjs`:
   `source` both — so once Door43 knows about a user, moving them between
   teams there is authoritative in both directions (the earlier "teams may
   only raise" rule made the documented management path silently do nothing
-  for allowlisted users). A manual row that team sync never claimed survives
-  a no-team-signal sync untouched and keeps acting as the fallback grant.
+  for allowlisted users). The prior manual role is STASHED in
+  `user_roles.manual_role` (migration 0057): when the team signal later
+  disappears — the user left the team, or the team was renamed/deleted,
+  which is indistinguishable — the row is RESTORED to the stashed manual
+  grant instead of deleted, so a team rename can never wipe the manual
+  allowlist org-wide. Pure team creations (nothing stashed) still delete.
+  A manual row team sync never claimed is untouched by a no-signal sync.
+  An admin PUT takes manual ownership (source='manual', stash cleared);
+  its response's `wasTeamManaged` drives the "will be re-taken by team
+  sync" warning.
+- A `user_roles` row also GRANTS WORKSPACE ACCESS by itself: login
+  resolution (cookie/last-used retention) and the switch route treat a
+  workspace as allowed if the user is a Door43 org member OR already holds
+  a role row in that workspace's database — otherwise a manually
+  allowlisted outsider would be evicted from their org at every login.
 - Membership of the org's Owners team grants NOTHING — only the configured
   admin/editor team names map to roles (rename the team or set
   `DCS_TEAM_ADMIN`/`DCS_TEAM_EDITOR`). A near-miss — the user has teams in

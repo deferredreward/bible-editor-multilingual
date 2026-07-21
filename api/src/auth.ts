@@ -638,11 +638,32 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   const memberOrgs = isSuperAdmin(c.env, dcsUser.login)
     ? new Set(workspaces.map((w) => w.org.toLowerCase()))
     : await fetchMemberOrgs(c.env, accessToken);
+  // A user_roles row grants access to its workspace even without Door43 org
+  // membership — a manually allowlisted outsider must not be evicted from
+  // their org at login just because the org check can't see them. Only the
+  // CANDIDATE workspaces (cookie + last-used) are queried; no fan-out across
+  // every configured database. Best-effort per workspace: an unreachable DB
+  // (or the table missing mid-migration) just means "no row seen here".
+  const roleSlugs = new Set<string>();
+  for (const slug of new Set([cookieSlug, lastUsedSlug])) {
+    const ws = slug ? workspaces.find((w) => w.slug === slug) : undefined;
+    if (!ws) continue;
+    try {
+      const row = await workspaceEnv(c.env, ws)
+        .DB.prepare(`SELECT 1 AS present FROM user_roles WHERE dcs_username = ?1`)
+        .bind(dcsUser.login)
+        .first<{ present: number }>();
+      if (row) roleSlugs.add(ws.slug);
+    } catch {
+      /* treat as no row — org membership can still allow the workspace */
+    }
+  }
   const resolution = resolveLoginWorkspace({
     workspaces,
     cookieSlug,
     lastUsedSlug,
     memberOrgs,
+    roleSlugs,
   });
   const wsEnv = workspaceEnv(c.env, resolution.workspace);
 
@@ -702,9 +723,14 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   await ensureWorkspaceUser(wsEnv, userRow.id);
 
   // Persist where they landed — the (b) "last-used workspace" input for their
-  // next login. Only on a POSITIVE match (cases a–d): recording the fail-soft
-  // fallback would turn one DCS hiccup into sticky wrong-workspace history.
-  if (resolution.matched) {
+  // next login. Only for a POSITIVE, user-attributable resolution (cookie /
+  // last-used / single match): recording the fail-soft fallback would turn one
+  // DCS hiccup into sticky wrong-workspace history, and recording the
+  // multi_match FIRST match would make that arbitrary pick sticky "last_used"
+  // on every device if the one-shot ?_choose_ws prompt is ever lost — by NOT
+  // persisting, a lost prompt self-heals: the next login re-prompts. The
+  // picker's explicit switch call is what persists a multi-match choice.
+  if (resolution.matched && resolution.reason !== "multi_match") {
     try {
       await sharedDb(c.env)
         .prepare(`UPDATE users SET last_workspace_slug = ?1 WHERE id = ?2`)

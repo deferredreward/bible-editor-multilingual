@@ -206,24 +206,48 @@ adminUsers.put("/:username", async (c) => {
   // being conflicted into; `excluded.role` is the incoming value. If the
   // WHERE evaluates false, the UPDATE is skipped and meta.changes is 0.
   //
-  // added_by is only set on first insert; ON CONFLICT only touches role, so
-  // re-promoting/demoting an existing user preserves who originally added them.
-  const upsert = await c.env.DB.prepare(
-    // `source` is set on INSERT only and deliberately NOT touched on conflict:
-    // a row stays owned by whoever created it. Flipping a team-derived row to
-    // 'manual' here would detach it from team sync, so later removing the user
-    // from the Door43 team — the documented way to revoke — would silently stop
-    // working. The trade-off is that an admin edit to a team-derived row is
-    // re-synced away at that user's next team check; the UI says so.
+  // Read the pre-edit source so the response can tell the UI the user is
+  // team-managed (`wasTeamManaged`) — after the upsert below the row reads
+  // 'manual', so the post-edit row can no longer carry that warning signal.
+  const preEdit = await c.env.DB.prepare(
+    `SELECT source FROM user_roles WHERE dcs_username = ?1`,
+  )
+    .bind(canonicalUsername)
+    .first<{ source: string | null }>();
+
+  // An admin edit takes MANUAL ownership of the row: source flips to
+  // 'manual' and any stashed manual_role is cleared — this edit IS the
+  // manual baseline now. Under teams-win (see dcsTeams.ts's syncTeamRole)
+  // that ownership lasts only until the user's next team check: a team
+  // signal re-takes the row (stashing this edit as the new manual_role, so
+  // it resurfaces if they ever leave the team), which is why the UI warns
+  // via `wasTeamManaged` that an edit to a team member's row won't stick
+  // while they remain on the team.
+  //
+  // added_by is only set on first insert; ON CONFLICT preserves who originally
+  // added them.
+  const upsertSql = (withStash: boolean) =>
     `INSERT INTO user_roles (dcs_username, role, added_by, source) VALUES (?1, ?2, ?3, 'manual')
-     ON CONFLICT(dcs_username) DO UPDATE SET role = excluded.role
+     ON CONFLICT(dcs_username) DO UPDATE SET
+       role = excluded.role,
+       source = 'manual'${withStash ? ",\n       manual_role = NULL" : ""}
      WHERE NOT (
        role = 'admin' AND excluded.role = 'editor'
        AND (SELECT COUNT(*) FROM user_roles WHERE role = 'admin') <= 1
-     )`,
-  )
-    .bind(canonicalUsername, newRole, currentUserId(c))
-    .run();
+     )`;
+  let upsert;
+  try {
+    upsert = await c.env.DB.prepare(upsertSql(true))
+      .bind(canonicalUsername, newRole, currentUserId(c))
+      .run();
+  } catch {
+    // Deploy-before-migrate window: `manual_role` arrives with migration 0057.
+    // Admin edits must keep working through it — retry without the stash
+    // column (there's nothing stashed to clear yet anyway).
+    upsert = await c.env.DB.prepare(upsertSql(false))
+      .bind(canonicalUsername, newRole, currentUserId(c))
+      .run();
+  }
 
   if (upsert.meta.changes === 0) {
     return c.json({ error: "last_admin" }, 409);
@@ -240,11 +264,15 @@ adminUsers.put("/:username", async (c) => {
       role: row?.role ?? newRole,
       addedAt: row?.addedAt ?? null,
       addedBy: row?.addedBy != null ? (addedByUsernames.get(row.addedBy) ?? null) : null,
-      // Must be returned: the panel keys its "this edit will be undone at the
-      // next team check" warning off it. Dropping it here silently disabled
-      // that warning for exactly the rows that need it.
+      // Post-edit source — 'manual' now that an admin edit takes ownership.
       source: row?.source ?? "manual",
     },
+    // Must be returned: the panel keys its "this edit will be undone at the
+    // next team check" warning off it. The post-edit row reads source='manual'
+    // (the admin just took ownership), so the PRE-edit source is the only
+    // remaining signal that this user is team-managed and the edit will be
+    // re-taken by team sync while they stay on the team.
+    wasTeamManaged: preEdit?.source === "dcs_team",
     dcsVerified,
   });
 });

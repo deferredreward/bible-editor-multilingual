@@ -174,6 +174,48 @@ console.log("(unknown) orgs fetch failed → fail SOFT to cookie/first, never lo
   );
 }
 
+console.log("role rows (manual allowlist) keep a workspace allowed without org membership");
+{
+  // The eviction bug: a manually-allowlisted user who is NOT a Door43 member
+  // of their workspace's org must not be bounced out of it at login.
+  const cookieKept = resolveLoginWorkspace({
+    workspaces: WS,
+    cookieSlug: "bsoj",
+    lastUsedSlug: null,
+    memberOrgs: orgs("SomeUnrelatedOrg"),
+    roleSlugs: new Set(["bsoj"]),
+  });
+  assert(
+    cookieKept.workspace.slug === "bsoj" && cookieKept.reason === "cookie",
+    "a role row in the cookie workspace keeps it, org membership or not",
+  );
+  assert(cookieKept.matched === true, "role-row retention is a positive match");
+
+  const lastKept = resolveLoginWorkspace({
+    workspaces: WS,
+    cookieSlug: null,
+    lastUsedSlug: "bsoj",
+    memberOrgs: orgs(),
+    roleSlugs: new Set(["bsoj"]),
+  });
+  assert(
+    lastKept.workspace.slug === "bsoj" && lastKept.reason === "last_used",
+    "a role row in the last-used workspace keeps it too",
+  );
+
+  // And WITHOUT the role row, the same inputs still evict (org rule applies).
+  const evicted = resolveLoginWorkspace({
+    workspaces: WS,
+    cookieSlug: "bsoj",
+    lastUsedSlug: null,
+    memberOrgs: orgs("BibleEditorMLTest"),
+  });
+  assert(
+    evicted.workspace.slug === "mltest" && evicted.reason === "single_match",
+    "no role row + no org membership -> the cookie workspace is not retained",
+  );
+}
+
 console.log("garbage slugs never crash resolution");
 {
   const r = resolveLoginWorkspace({

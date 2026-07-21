@@ -113,9 +113,12 @@ export function UserManagementSection() {
     setRowBusy(username);
     try {
       const res = await api.adminSetUserRole(username, role);
-      // A team-derived row stays team-managed, so this edit is undone at the
-      // user's next team check. Say so rather than letting it look permanent.
-      if (res.user.source === "dcs_team") setMsg(t("preferences.users.teamManagedEdit"));
+      // A team member's row is re-taken by team sync at their next check, so
+      // this edit won't stick while they stay on the team. Keyed on the
+      // PRE-edit source (wasTeamManaged): the post-edit row reads 'manual'
+      // because the admin's edit takes ownership until the next sync. The
+      // `source` check is kept for compatibility with older API responses.
+      if (res.wasTeamManaged || res.user.source === "dcs_team") setMsg(t("preferences.users.teamManagedEdit"));
       else if (!res.dcsVerified) setMsg(t("preferences.users.unverified"));
     } catch (e) {
       setMsg(errorMessage(t, e));
