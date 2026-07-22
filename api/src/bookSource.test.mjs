@@ -25,6 +25,7 @@ import {
   clearBookSourceOverride,
   clearBookSourceRange,
   listBookSourceOverrides,
+  listRangeHeldOutKeys,
   WHOLE_BOOK_START,
   WHOLE_BOOK_END,
 } from "./bookSource.ts";
@@ -305,6 +306,15 @@ async function runStorage() {
   await setBookSourceOverride(env, "MRK", "tq", "unfoldingWord", "en_tq", 1);
   const list = await listBookSourceOverrides(env, "MRK");
   assert(list.some((r) => r.resource === "tq") && list.some((r) => r.resource === "tn"), "listBookSourceOverrides: tn + tq coexist");
+
+  // listRangeHeldOutKeys — the export skip's partial-book detection (the gate
+  // that stops a partial book from pushing cross-sourced chapters over master).
+  // State so far: LUK tn = whole-book Aquifer (migrated); MRK tn = 12-14 Aquifer
+  // + 1-11 uW; MRK tq = whole-book uW. Add JON tn = 1-4 pointing at the org's OWN
+  // repo → a no-op that must NOT be held out.
+  await setBookSourceRange(env, "JON", "tn", 1, 4, "BSOJ", "ar_tn", 1);
+  const keys = (await listRangeHeldOutKeys(env, CFG)).sort();
+  assert(eq(keys, ["LUK:tn", "MRK:tn", "MRK:tq"]), "listRangeHeldOutKeys: partial + whole held out, org's-own no-op excluded (JON absent)");
 
   // Clear one range vs all.
   await clearBookSourceRange(env, "MRK", "tn", 1);

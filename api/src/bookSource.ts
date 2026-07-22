@@ -400,3 +400,29 @@ export async function heldOutChapters(
   const ranges = await getBookSourceRanges(env, book, resource);
   return heldOutChaptersFromRanges(cfg, resource, ranges, marker);
 }
+
+// Every "BOOK:resource" that has ANY range-based hold-out (partial or whole),
+// for the export skip. A PARTIAL book carries no book_imports marker (its base is
+// the org's own repo), so the marker-only export skip would miss it and render
+// the cross-sourced chapters over master — this closes that gap. The marker-based
+// whole-book keys are added separately by the caller (heldOutNoteResources). NB:
+// marker is passed null here on purpose — we want the RANGE-derived hold-out only.
+export async function listRangeHeldOutKeys(env: Env, cfg: ProjectConfig): Promise<string[]> {
+  let rows: Array<{ book: string; resource: string }>;
+  try {
+    const rs = await env.DB
+      .prepare("SELECT DISTINCT book, resource FROM book_source_overrides WHERE resource IN ('tn','tq')")
+      .all<{ book: string; resource: string }>();
+    rows = rs.results ?? [];
+  } catch (e) {
+    if (isMissingTableError(e)) return [];
+    throw e;
+  }
+  const out: string[] = [];
+  for (const { book, resource } of rows) {
+    if (!isBookSourceResource(resource)) continue;
+    const h = await heldOutChapters(env, cfg, book, resource, null);
+    if (h.all || h.ranges.length > 0) out.push(`${book}:${resource}`);
+  }
+  return out;
+}

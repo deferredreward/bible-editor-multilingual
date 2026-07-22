@@ -33,9 +33,9 @@ import {
   type DcsRepoOverrides,
 } from "./dcsSources";
 import { isIdent, parseDoor43SourceRef, type RepoRef } from "./repoUrl";
-import { getProjectConfig } from "./projectConfig.ts";
+import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
 import {
-  resolveBookNoteSourceRef,
+  planBookNoteSources,
   listBookSourceOverrides,
   setBookSourceRange,
   clearBookSourceOverride,
@@ -43,6 +43,7 @@ import {
   isBookSourceResource,
   WHOLE_BOOK_START,
   WHOLE_BOOK_END,
+  type ResolvedSourceRange,
 } from "./bookSource.ts";
 import { populateReferencedArticles } from "./articlePopulate";
 import type { Context } from "hono";
@@ -446,6 +447,61 @@ interface ImportCounts {
   sources: { tn: string | null; tq: string | null };
 }
 
+// Fetch each per-chapter-range source file for a note resource (issue #103
+// Tier 2). Returns [{ range, raw }] in range order; THROWS if any configured
+// range's file cannot be fetched — a missing range source must fail the import,
+// never silently leave those chapters to the base source.
+async function fetchRangeNoteFiles(
+  env: Env,
+  cfg: ProjectConfig,
+  book: string,
+  resource: "tn" | "tq",
+  ranges: ResolvedSourceRange[],
+): Promise<Array<{ range: ResolvedSourceRange; raw: string }>> {
+  const out: Array<{ range: ResolvedSourceRange; raw: string }> = [];
+  for (const range of ranges) {
+    const urls = dcsUrls(env, cfg, book, { [resource]: range.ref });
+    if (!urls) throw new Error(`unknown book: ${book}`);
+    const url = urls[resource];
+    const raw = await fetchText(url);
+    if (raw == null) {
+      throw new Error(
+        `range source ${range.ref.owner}/${range.ref.repo} has no ${resource} file for ${book} ` +
+          `(chapters ${range.chapter_start}-${range.chapter_end}): ${url}`,
+      );
+    }
+    out.push({ range, raw });
+  }
+  return out;
+}
+
+// Merge multiple per-chapter source files into one book's note rows (issue #103
+// Tier 2). The base file contributes only chapters NOT covered by any range;
+// each range file contributes only its own chapters. With no ranges this is a
+// single unfiltered insert — byte-for-byte the Tier 1 path.
+//
+// The whole-book DELETE has already run (caller), so these are pure inserts into
+// an empty book. A cross-source ID collision (two source repos using the same tn
+// id for the SAME book in DIFFERENT chapters) surfaces as a loud INSERT failure —
+// rare, and far safer than silently overwriting a row from another chapter.
+// (Follow-up: re-mint colliding range-file ids preserving alignment.)
+async function insertMergedNotes(
+  insert: (raw: string | null, filter?: (ch: number) => boolean) => Promise<number>,
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+  renew: () => Promise<void>,
+): Promise<number> {
+  if (ranges.length === 0) return insert(baseRaw);
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  let total = await insert(baseRaw, (ch) => !covered(ch));
+  for (const { range, raw } of rangeFiles) {
+    await renew();
+    total += await insert(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+  }
+  return total;
+}
+
 async function importBookFromDcs(
   env: Env,
   book: string,
@@ -473,20 +529,24 @@ async function importBookFromDcs(
     throw new Error("not_a_translation_project");
   }
 
-  // Per-resource note provenance: non-null = this resource came from the
-  // English translationSource, not the org's own repo. Drives the book_imports
-  // marker (which holds the book out of the nightly reimport + export) and the
-  // watermark identity below.
-  // tN honors a PER-BOOK source override (issue #103): resolution prefers the
-  // book's override, then the project-wide translationSource, then the org's own
-  // repo (null). An override applies even when translateFromSource is false —
-  // it is an explicit per-book decision. tQ stays project-wide-only until the
-  // per-book tQ fast-follow lands. Whatever non-org source is chosen flows
-  // through noteSource → sourceProvenance → book_imports.tn_source below, so the
-  // existing reimport/export hold-out (heldOutNoteResources) covers it unchanged.
+  // Per-resource note source plan (issue #103). Each resolves, in precedence
+  // order: per-chapter-range override → whole-book override → project-wide
+  // translationSource → org's own repo. `base` is the source for chapters NOT
+  // covered by a cross-org range (project-wide, or null = org's own); `ranges`
+  // are the cross-org per-chapter ranges to splice in.
+  //
+  // `noteSource.tn/tq` = the BASE ref. It drives (a) the base-file fetch URL and
+  // (b) the book_imports.tn_source/tq_source marker: a non-null base means the
+  // WHOLE book is off-org → whole-book hold-out marker; a null base (org's own
+  // for uncovered chapters) with ranges → marker stays NULL and the range table
+  // (heldOutChapters) drives PER-CHAPTER hold-out. This keeps the base fetch,
+  // the 404 fallback, and provenance stamping exactly as before for a book with
+  // no per-chapter ranges (Tier 1), and correct for a partially-sourced book.
+  const tnPlan = await planBookNoteSources(env, cfg, book, "tn", !!opts.translateFromSource);
+  const tqPlan = await planBookNoteSources(env, cfg, book, "tq", !!opts.translateFromSource);
   const noteSource: { tn: RepoRef | null; tq: RepoRef | null } = {
-    tn: await resolveBookNoteSourceRef(env, cfg, book, "tn", !!opts.translateFromSource),
-    tq: await resolveBookNoteSourceRef(env, cfg, book, "tq", !!opts.translateFromSource),
+    tn: tnPlan.base,
+    tq: tqPlan.base,
   };
 
   // Use lane source refs from active config for scripture USFM URLs
@@ -637,6 +697,14 @@ async function importBookFromDcs(
     throw err;
   }
 
+  // Per-chapter-range note sources (issue #103 Tier 2): fetch each cross-org
+  // range's tn/tq file so the insert can splice its chapters into the book. A
+  // configured range whose file cannot be fetched is a HARD error — we must NOT
+  // silently fall back to the base source for those chapters (that would import
+  // the wrong content and skip the intended per-chapter hold-out).
+  const tnRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tn", tnPlan.ranges);
+  const tqRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tq", tqPlan.ranges);
+
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
   // the destructive wipe to a transactional lane-state predicate: DELETE only
   // while both lanes are still free at the expected generation (EXISTS). A
@@ -773,9 +841,15 @@ async function importBookFromDcs(
     counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen, null);
 
     await renewBoth();
-    counts.tn = await insertTnRows(env, book, tnRaw, userId, litGen, simGen);
+    counts.tn = await insertMergedNotes(
+      (raw, filter) => insertTnRows(env, book, raw, userId, litGen, simGen, filter),
+      tnRaw, tnPlan.ranges, tnRangeFiles, renewBoth,
+    );
     await renewBoth();
-    counts.tq = await insertTqRows(env, book, tqRaw, userId, litGen, simGen);
+    counts.tq = await insertMergedNotes(
+      (raw, filter) => insertTqRows(env, book, raw, userId, litGen, simGen, filter),
+      tqRaw, tqPlan.ranges, tqRangeFiles, renewBoth,
+    );
     await renewBoth();
     counts.twl = await insertTwlRows(env, book, twlRaw, userId, litGen, simGen);
 
@@ -931,6 +1005,7 @@ async function insertTnRows(
   userId: number,
   litGen: number,
   simGen: number,
+  chapterFilter?: (chapter: number) => boolean,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -966,6 +1041,10 @@ async function insertTnRows(
     if (!id) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
+    // Per-chapter-range merge (issue #103 Tier 2): skip rows whose chapter this
+    // pass doesn't own, so the base file and each range file each contribute only
+    // their assigned chapters into one merged book.
+    if (chapterFilter && !chapterFilter(ch)) continue;
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {
@@ -1003,6 +1082,7 @@ async function insertTqRows(
   userId: number,
   litGen: number,
   simGen: number,
+  chapterFilter?: (chapter: number) => boolean,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -1038,6 +1118,8 @@ async function insertTqRows(
     if (!id) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
+    // Per-chapter-range merge (issue #103 Tier 2) — see insertTnRows.
+    if (chapterFilter && !chapterFilter(ch)) continue;
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {

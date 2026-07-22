@@ -63,6 +63,7 @@ import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
+import { listRangeHeldOutKeys } from "./bookSource.ts";
 import {
   laneForBibleVersion,
   assertLaneWritable,
@@ -239,23 +240,34 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       : ALL_RESOURCES;
 
     // Books whose tn/tq did NOT come from the configured org repo — re-sourced
-    // from Aquifer (POST /aquifer-drafts) or imported from the English
-    // translationSource — are held out of that resource's EXPORT: their rows are
-    // source-keyed drafts, and until validated their export snapshot is empty —
-    // exporting would push blank/unapproved notes over the DCS tn/tq repo.
-    // Export-direction handling for these books is deferred (see STATE.md);
-    // until then, skip the held-out resource. Other resources (verses/twl)
-    // export normally. Mirrors the reimport skip in bookReimport.
+    // from Aquifer (POST /aquifer-drafts), imported from the English
+    // translationSource, or set to a per-book/per-chapter-range override (#103) —
+    // are held out of that resource's EXPORT: their rows are source-keyed drafts,
+    // and until validated their export snapshot is empty — exporting would push
+    // blank/unapproved (or another org's) notes over the DCS tn/tq repo.
+    // Export-direction handling for these books is deferred (see STATE.md); until
+    // then, skip the held-out resource. Other resources (verses/twl) export
+    // normally. Mirrors the reimport skip in bookReimport.
+    //
+    // Two sources of hold-out: (a) the whole-book book_imports marker, and (b) the
+    // range table (#103 Tier 2). A PARTIALLY-sourced book has NO marker (its base
+    // is the org's own repo), so (b) is what stops it from rendering the
+    // cross-sourced chapters over master. NOTE: this is whole-RESOURCE skip, so a
+    // partial book's OWNED chapters don't publish either — a documented limitation;
+    // the merge-export that publishes owned chapters is a follow-up (STATE.md).
     const heldOutNotes = new Set(
       await step.do("list-held-out-note-books", async () => {
+        const cfg = await getProjectConfig(this.env);
         const rs = await this.env.DB.prepare(
           `SELECT book, tn_source, tq_source FROM book_imports
             WHERE tn_source IS NOT NULL OR tq_source IS NOT NULL`,
         ).all<{ book: string; tn_source: string | null; tq_source: string | null }>();
         // step.do must return a JSON-serializable value → "BOOK:resource" strings.
-        return rs.results.flatMap((r) =>
+        const markerKeys = rs.results.flatMap((r) =>
           [...heldOutNoteResources(r)].map((res) => `${r.book}:${res}`),
         );
+        const rangeKeys = await listRangeHeldOutKeys(this.env, cfg);
+        return [...new Set([...markerKeys, ...rangeKeys])];
       }),
     );
 
