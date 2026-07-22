@@ -54,24 +54,38 @@ export async function getBookSourceOverride(
   book: string,
   resource: BookSourceResource,
 ): Promise<BookSourceOverride | null> {
-  const row = await env.DB
-    .prepare("SELECT org, repo FROM book_source_overrides WHERE book = ? AND resource = ?")
-    .bind(book, resource)
-    .first<{ org: string; repo: string }>();
-  return row ? { org: row.org, repo: row.repo } : null;
+  try {
+    const row = await env.DB
+      .prepare("SELECT org, repo FROM book_source_overrides WHERE book = ? AND resource = ?")
+      .bind(book, resource)
+      .first<{ org: string; repo: string }>();
+    return row ? { org: row.org, repo: row.repo } : null;
+  } catch {
+    // Table missing (migration 0058 not yet applied) or a transient D1 error.
+    // This runs on EVERY book import; a throw here would break all imports until
+    // the migration lands. "No override" is the correct safe default — the
+    // import falls back to the project-wide / org's own source exactly as before
+    // this feature existed. Mirrors getProjectConfig's table-missing fallback.
+    return null;
+  }
 }
 
 export async function listBookSourceOverrides(
   env: Env,
   book: string,
 ): Promise<Array<{ resource: string; org: string; repo: string; updated_at: number }>> {
-  const rs = await env.DB
-    .prepare(
-      "SELECT resource, org, repo, updated_at FROM book_source_overrides WHERE book = ? ORDER BY resource",
-    )
-    .bind(book)
-    .all<{ resource: string; org: string; repo: string; updated_at: number }>();
-  return rs.results ?? [];
+  try {
+    const rs = await env.DB
+      .prepare(
+        "SELECT resource, org, repo, updated_at FROM book_source_overrides WHERE book = ? ORDER BY resource",
+      )
+      .bind(book)
+      .all<{ resource: string; org: string; repo: string; updated_at: number }>();
+    return rs.results ?? [];
+  } catch {
+    // Table missing (migration not applied) → no overrides, not a 500.
+    return [];
+  }
 }
 
 // Upsert an override. org/repo MUST be valid DCS idents — the caller (route)
