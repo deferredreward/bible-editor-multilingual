@@ -37,9 +37,12 @@ import { getProjectConfig } from "./projectConfig.ts";
 import {
   resolveBookNoteSourceRef,
   listBookSourceOverrides,
-  setBookSourceOverride,
+  setBookSourceRange,
   clearBookSourceOverride,
+  clearBookSourceRange,
   isBookSourceResource,
+  WHOLE_BOOK_START,
+  WHOLE_BOOK_END,
 } from "./bookSource.ts";
 import { populateReferencedArticles } from "./articlePopulate";
 import type { Context } from "hono";
@@ -120,11 +123,12 @@ books.get("/:book/lint", requireAuth, async (c) => {
 // unapproved drafts merged onto the en_tn skeleton (admin-only).
 books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
 
-// ── Per-book source overrides (issue #103, Tier 1 step 1) ──────────────────
-// GET  /api/books/:book/sources — list this book's per-resource source overrides.
-// PUT  /api/books/:book/sources — set/clear one (admin). Takes effect on the next
-//   import of the book (POST /:book/import): the chosen source is fetched, its
-//   rows stamped source:<owner>/<repo>, and the book held out of reimport/export.
+// ── Per-book / per-chapter-range source overrides (issue #103) ─────────────
+// GET  /api/books/:book/sources — list this book's per-resource source ranges.
+// PUT  /api/books/:book/sources — set/clear one range (admin). Takes effect on
+//   the next import of the book (POST /:book/import): the chosen source is
+//   fetched per chapter range, its rows stamped, and those chapters held out of
+//   the nightly reimport/export.
 books.get("/:book/sources", requireAuth, async (c) => {
   const book = (c.req.param("book") ?? "").toUpperCase();
   if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
@@ -132,7 +136,11 @@ books.get("/:book/sources", requireAuth, async (c) => {
   return c.json({ book, overrides });
 });
 
-// Body: { resource, url } | { resource, org, repo } | { resource, clear: true }.
+// Body:
+//   set whole book : { resource, url|org+repo }
+//   set a range    : { resource, url|org+repo, chapterStart, chapterEnd }
+//   clear a range  : { resource, clear: true, chapterStart }
+//   clear resource : { resource, clear: true }
 // A pasted Door43 URL is parsed + ident-validated the same way #84's
 // verify-source does. REPO EXISTENCE is NOT checked here — the caller verifies
 // via GET /api/orgs/verify-source first, matching the decoupled project-wide flow.
@@ -145,6 +153,8 @@ books.put("/:book/sources", requireAdmin, async (c) => {
     org?: unknown;
     repo?: unknown;
     clear?: unknown;
+    chapterStart?: unknown;
+    chapterEnd?: unknown;
   };
   try {
     body = await c.req.json();
@@ -155,10 +165,29 @@ books.put("/:book/sources", requireAdmin, async (c) => {
   if (!isBookSourceResource(resource)) {
     return c.json({ error: "unsupported_resource", resource }, 400);
   }
+  // Chapter bounds: absent → whole book (0, 999). A partial pair (only one of
+  // the two) is rejected — it's almost certainly a client mistake.
+  const hasStart = body.chapterStart !== undefined;
+  const hasEnd = body.chapterEnd !== undefined;
+  if (hasStart !== hasEnd) {
+    return c.json({ error: "range_needs_both_bounds" }, 400);
+  }
+  const chapterStart = hasStart ? Number(body.chapterStart) : WHOLE_BOOK_START;
+  const chapterEnd = hasEnd ? Number(body.chapterEnd) : WHOLE_BOOK_END;
+  if (hasStart && (!Number.isInteger(chapterStart) || !Number.isInteger(chapterEnd))) {
+    return c.json({ error: "invalid_range" }, 400);
+  }
+
   if (body.clear === true) {
+    // Clear a specific range if a start was given, else every range for the resource.
+    if (hasStart) {
+      await clearBookSourceRange(c.env, book, resource, chapterStart);
+      return c.json({ book, resource, chapterStart, cleared: true });
+    }
     await clearBookSourceOverride(c.env, book, resource);
     return c.json({ book, resource, cleared: true });
   }
+
   let org: string;
   let repo: string;
   if (typeof body.url === "string" && body.url.trim()) {
@@ -178,8 +207,15 @@ books.put("/:book/sources", requireAdmin, async (c) => {
     return c.json({ error: "invalid_org_or_repo", org, repo }, 400);
   }
   const userId = currentUserId(c) ?? null;
-  await setBookSourceOverride(c.env, book, resource, org, repo, userId);
-  return c.json({ book, resource, org, repo });
+  try {
+    await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, org, repo, userId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "overlapping_range") return c.json({ error: msg }, 409);
+    if (msg === "invalid_range" || msg === "invalid_org_or_repo") return c.json({ error: msg }, 400);
+    throw e;
+  }
+  return c.json({ book, resource, chapterStart, chapterEnd, org, repo });
 });
 
 books.post("/:book/import", requireEditor, async (c) => {
@@ -450,7 +486,7 @@ async function importBookFromDcs(
   // existing reimport/export hold-out (heldOutNoteResources) covers it unchanged.
   const noteSource: { tn: RepoRef | null; tq: RepoRef | null } = {
     tn: await resolveBookNoteSourceRef(env, cfg, book, "tn", !!opts.translateFromSource),
-    tq: opts.translateFromSource ? translationSourceRepoRef(cfg, "tq") : null,
+    tq: await resolveBookNoteSourceRef(env, cfg, book, "tq", !!opts.translateFromSource),
   };
 
   // Use lane source refs from active config for scripture USFM URLs
