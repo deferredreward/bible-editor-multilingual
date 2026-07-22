@@ -12,7 +12,6 @@ import {
   SETUP_STEPS,
   lanesNeedingReplacement,
   stepAfterApply,
-  importErrorLane,
   verifyErrorKind,
   laneChoiceFromMode,
   toggleResourceChecked,
@@ -25,12 +24,12 @@ import {
   describeBookError,
 } from "./setupWizard.ts";
 
-test("stepAfterApply skips to import when no lane is quarantined", () => {
-  assert.equal(stepAfterApply(null), SETUP_STEPS.importBook);
-  assert.equal(stepAfterApply({}), SETUP_STEPS.importBook);
+test("stepAfterApply goes straight to done when no lane is quarantined", () => {
+  assert.equal(stepAfterApply(null), SETUP_STEPS.done);
+  assert.equal(stepAfterApply({}), SETUP_STEPS.done);
   assert.equal(
     stepAfterApply({ lit: { replacementRequired: false }, sim: { replacementRequired: false } }),
-    SETUP_STEPS.importBook,
+    SETUP_STEPS.done,
   );
 });
 
@@ -46,26 +45,6 @@ test("lanesNeedingReplacement returns quarantined lanes in lit,sim order", () =>
     ["lit", "sim"],
   );
   assert.deepEqual(lanesNeedingReplacement({ sim: { replacementRequired: true } }), ["sim"]);
-});
-
-test("importErrorLane routes the wrapped lane-freeze message (in body.message)", () => {
-  // The route wraps the thrown Error as import_failed with the lane in message.
-  assert.equal(
-    importErrorLane({ error: "import_failed", message: "lit_lane_replacement_required" }),
-    "lit",
-  );
-  assert.equal(
-    importErrorLane({ error: "import_failed", message: "sim_lane_replacement_required" }),
-    "sim",
-  );
-});
-
-test("importErrorLane also matches a bare error code, and ignores unrelated errors", () => {
-  assert.equal(importErrorLane({ error: "lit_lane_replacement_required" }), "lit");
-  assert.equal(importErrorLane({ error: "unknown_book" }), null);
-  assert.equal(importErrorLane({ error: "import_failed", message: "network boom" }), null);
-  assert.equal(importErrorLane(null), null);
-  assert.equal(importErrorLane(undefined), null);
 });
 
 test("verifyErrorKind never turns a transient 503 into 'not_found'", () => {

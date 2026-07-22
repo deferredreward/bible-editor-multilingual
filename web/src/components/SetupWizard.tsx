@@ -1,29 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
-  Checkbox,
   CircularProgress,
-  FormControlLabel,
   Stack,
   Step,
   StepContent,
   StepLabel,
   Stepper,
-  TextField,
   Typography,
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, importedSourceRepos } from "../sync/api";
-import {
-  applyProjectOverrides,
-  isTranslationProject,
-  refreshProjectConfig,
-  useProjectConfig,
-} from "../hooks/useProjectConfig";
-import { BOOKS, bookName } from "../lib/bookNames";
+import { api, ApiError } from "../sync/api";
+import { applyProjectOverrides, refreshProjectConfig, useProjectConfig } from "../hooks/useProjectConfig";
 import { useOrgDraft } from "./OrgConfigDraftEditor";
 import { OrgIdentityFields } from "./OrgIdentityFields";
 import { UpstreamSourcePicker } from "./UpstreamSourcePicker";
@@ -31,11 +21,7 @@ import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneT
 import { LaneReplacementDriver } from "./LaneReplacementDriver";
 import { RepoRef } from "./SourceOverrideField";
 import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
-import { SETUP_STEPS, lanesNeedingReplacement, stepAfterApply, importErrorLane } from "../lib/setupWizard";
-
-// Safety cap on the populate loop — each call drains up to ~150 fetches, so this
-// covers even the largest book many times over without risking a hung tab.
-const POPULATE_MAX_ROUNDS = 60;
+import { SETUP_STEPS, lanesNeedingReplacement, stepAfterApply } from "../lib/setupWizard";
 
 // Apply the edit/align choice to each lane that exists post-Apply. "align" =
 // text frozen (read-only) but alignment writable; "edit" = both writable. Skips
@@ -65,10 +51,12 @@ async function applyLaneModes(laneMode: LaneModeMap): Promise<("lit" | "sim")[]>
   return failed;
 }
 
-// Admin-only guided onboarding for an org (owner-confirmed flow): confirm the
+// Admin-only guided CONFIGURATION for an org (owner-confirmed flow): confirm the
 // org + resource language, choose the upstream sources to pull FROM, set the
-// org's own target repos + edit/align per lane, apply, finish any lane text
-// replacement, then import a first book.
+// org's own target repos + edit/align per lane, apply, and (only when
+// re-configuring a populated project) finish changing the scripture source.
+// Setup no longer imports content — that happens later in the editor / the
+// forthcoming Import surface.
 export function SetupWizard() {
   const { t } = useTranslation();
   const draft = useOrgDraft();
@@ -97,19 +85,6 @@ export function SetupWizard() {
     stepRefs.current[activeStep]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [activeStep]);
 
-  // Step 5 — import + populate.
-  const [book, setBook] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ processed: number; remaining: number } | null>(null);
-  const [populateNote, setPopulateNote] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState(0);
-  const [importedBook, setImportedBook] = useState<string | null>(null);
-  const [translateFromSource, setTranslateFromSource] = useState(false);
-  const [sourceNote, setSourceNote] = useState<string | null>(null);
-
-  const canTranslateFromSource = isTranslationProject(projectConfig);
-  const bookOptions = useMemo(() => BOOKS.map((b) => b.code), []);
   const quarantinedLanes = lanesNeedingReplacement(projectConfig?.laneState);
 
   // Apply the lane edit/align modes, then advance. Shared by first-apply and the
@@ -153,78 +128,6 @@ export function SetupWizard() {
       await finishLaneModesAndAdvance();
     } finally {
       setApplying(false);
-    }
-  };
-
-  const doImport = async () => {
-    if (!book) return;
-    setImporting(true);
-    setImportError(null);
-    setPopulateNote(null);
-    setProgress(null);
-    setWarnings(0);
-    setSourceNote(null);
-    try {
-      const res = await api.importBook(
-        book,
-        translateFromSource ? { translateFromSource: true } : undefined,
-      );
-      const usedSources = importedSourceRepos(res.sources);
-      if (usedSources.length > 0) {
-        setSourceNote(t("setup.importedFromSource", { repos: usedSources.join(", ") }));
-      }
-      let totalProcessed = 0;
-      let totalWarnings = 0;
-      let settled = false;
-      for (let round = 0; round < POPULATE_MAX_ROUNDS; round++) {
-        const r = await api.populateArticles({ book });
-        totalProcessed += r.processed;
-        totalWarnings += r.warnings.length;
-        setProgress({ processed: totalProcessed, remaining: r.remaining });
-        setWarnings(totalWarnings);
-        if (r.skipped) {
-          setPopulateNote(t("setup.populateSkipped"));
-          settled = true;
-          break;
-        }
-        if (r.aborted) {
-          setPopulateNote(t("setup.populateAborted"));
-          settled = true;
-          break;
-        }
-        if (r.remaining === 0) {
-          settled = true;
-          break;
-        }
-      }
-      if (!settled) setPopulateNote(t("setup.populateIncomplete"));
-      setImportedBook(book);
-      setActiveStep(SETUP_STEPS.done);
-    } catch (e) {
-      if (e instanceof ApiError) {
-        const body = e.body as { error?: string; message?: string } | undefined;
-        // A lane frozen for replacement blocks import — route to the in-wizard
-        // replacement driver instead of showing a dead-end generic error.
-        const lane = importErrorLane(body);
-        if (lane) {
-          await refreshProjectConfig().catch(() => {});
-          setImportError(null);
-          setActiveStep(SETUP_STEPS.replacement);
-          return;
-        }
-        const code = body?.error;
-        setImportError(
-          code === "unknown_book"
-            ? t("setup.unknownBook")
-            : code === "in_progress"
-              ? t("setup.importInProgress")
-              : t("setup.importFailed"),
-        );
-      } else {
-        setImportError(t("setup.importFailed"));
-      }
-    } finally {
-      setImporting(false);
     }
   };
 
@@ -348,7 +251,8 @@ export function SetupWizard() {
           </StepContent>
         </Step>
 
-        {/* Step 4b — Finish replacing a lane's text (conditional) */}
+        {/* Step 4b — Finish changing the scripture source (conditional — only on
+            a source migration for an already-populated project) */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.replacement] = el; }}>
           <StepLabel>{t("setup.step.replacement")}</StepLabel>
           <StepContent>
@@ -380,109 +284,34 @@ export function SetupWizard() {
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button
                 variant="contained"
-                onClick={() => setActiveStep(SETUP_STEPS.importBook)}
+                onClick={() => setActiveStep(SETUP_STEPS.done)}
                 disabled={quarantinedLanes.length > 0}
               >
-                {t("setup.continueToImport")}
+                {t("setup.replacementContinue")}
               </Button>
             </Stack>
           </StepContent>
         </Step>
 
-        {/* Step 5 — Import first book */}
-        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.importBook] = el; }}>
-          <StepLabel>{t("setup.step.importBook")}</StepLabel>
-          <StepContent>
-            <Typography variant="body2" sx={{ mb: 1.5 }}>
-              {t("setup.importIntro")}
-            </Typography>
-            <Autocomplete
-              size="small"
-              options={bookOptions}
-              value={book}
-              onChange={(_, v) => setBook(v)}
-              getOptionLabel={(code) => `${bookName(code)} (${code})`}
-              disabled={importing}
-              sx={{ maxWidth: 320 }}
-              renderInput={(params) => <TextField {...params} label={t("setup.bookLabel")} />}
-            />
-            {canTranslateFromSource && (
-              <Box sx={{ mt: 1.5 }}>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={translateFromSource}
-                      onChange={(e) => setTranslateFromSource(e.target.checked)}
-                      disabled={importing}
-                    />
-                  }
-                  label={t("setup.translateFromSource")}
-                />
-                <Typography variant="caption" color="text.secondary" component="p" sx={{ ml: 4 }}>
-                  {t("setup.translateFromSourceHelp")}
-                </Typography>
-              </Box>
-            )}
-            {importing && (
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
-                <CircularProgress size={16} />
-                <Typography variant="body2">
-                  {progress
-                    ? t("setup.populating", { processed: progress.processed, remaining: progress.remaining })
-                    : t("setup.importing")}
-                </Typography>
-              </Stack>
-            )}
-            {importError && (
-              <Alert severity="error" sx={{ mt: 1.5 }}>
-                {importError}
-              </Alert>
-            )}
-            <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-              <Button variant="contained" onClick={doImport} disabled={importing || !book}>
-                {t("setup.importButton")}
-              </Button>
-            </Stack>
-          </StepContent>
-        </Step>
-
-        {/* Step 6 — done */}
+        {/* Step 5 — Configured */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.done] = el; }}>
           <StepLabel>{t("setup.step.done")}</StepLabel>
           <StepContent>
             <Typography variant="subtitle1" gutterBottom>
               {t("setup.doneTitle")}
             </Typography>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              {t("setup.doneSummary", {
-                org: draft.draft?.org ?? importedBook ?? "",
-                book: importedBook ? bookName(importedBook) : "",
-                processed: progress?.processed ?? 0,
-              })}
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              {t("setup.doneConfigured", { org: draft.draft?.org ?? "" })}
             </Typography>
-            {sourceNote && (
-              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
-                {sourceNote}
-              </Alert>
-            )}
-            {warnings > 0 && (
-              <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
-                {t("setup.populateWarnings", { count: warnings })}
-              </Alert>
-            )}
-            {populateNote && (
-              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
-                {populateNote}
-              </Alert>
-            )}
             <Button
               variant="contained"
               onClick={() => {
+                // Import & translation happen in the editor / the forthcoming
+                // Import surface — a follow-up will repoint this at #/import.
                 location.hash = "#/";
               }}
             >
-              {t("setup.goToScripture")}
+              {t("setup.goToEditor")}
             </Button>
           </StepContent>
         </Step>

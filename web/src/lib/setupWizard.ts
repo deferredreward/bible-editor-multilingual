@@ -6,16 +6,17 @@
 
 import type { ResourceSource, ResourceSourceMode } from "./orgDraft";
 
-// The wizard's step order (owner-confirmed flow). `replacement` (a.k.a. "4b") is
-// conditional — only entered when a lane comes back quarantined after Apply.
+// The wizard's step order (configure-only flow). `replacement` (a.k.a. "4b") is
+// conditional — only entered when a lane comes back quarantined after Apply
+// (a source migration on an already-populated project). Content import is NOT
+// part of setup — it happens later in the editor / the forthcoming Import surface.
 export const SETUP_STEPS = {
   organization: 0,
   sources: 1,
   lanes: 2,
   review: 3,
   replacement: 4,
-  importBook: 5,
-  done: 6,
+  done: 5,
 } as const;
 
 export type SetupStepName = keyof typeof SETUP_STEPS;
@@ -34,8 +35,9 @@ export interface LaneStateLike {
 
 export type LaneKey = "lit" | "sim";
 
-// The lanes (in display order) that came back quarantined after Apply and so
-// need their text staged + activated in the replacement step.
+// The lanes (in display order) that came back quarantined after Apply (a source
+// migration on a populated project) and so need their text staged + activated in
+// the replacement step.
 export function lanesNeedingReplacement(laneState: LaneStateLike | null | undefined): LaneKey[] {
   const out: LaneKey[] = [];
   if (laneState?.lit?.replacementRequired) out.push("lit");
@@ -44,26 +46,12 @@ export function lanesNeedingReplacement(laneState: LaneStateLike | null | undefi
 }
 
 // After a successful Apply, decide the next step: enter the conditional
-// replacement step when any lane is quarantined, otherwise skip straight to the
-// import step.
+// replacement step when any lane is quarantined (a source migration), otherwise
+// go straight to the done step. Setup no longer imports content.
 export function stepAfterApply(laneState: LaneStateLike | null | undefined): SetupStepIndex {
   return lanesNeedingReplacement(laneState).length > 0
     ? SETUP_STEPS.replacement
-    : SETUP_STEPS.importBook;
-}
-
-// Import-error routing. importBook throws when a lane is frozen, but the route
-// wraps the lane-freeze Error as { error: "import_failed", message:
-// "lit_lane_replacement_required" } (status 502/422) — so the lane string lives
-// in `message`, not `error`. Match either field defensively. Returns the lane to
-// jump the wizard to its replacement step, or null when the error is unrelated.
-export function importErrorLane(
-  body: { error?: string; message?: string } | null | undefined,
-): LaneKey | null {
-  const hay = `${body?.error ?? ""} ${body?.message ?? ""}`;
-  if (hay.includes("lit_lane_replacement_required")) return "lit";
-  if (hay.includes("sim_lane_replacement_required")) return "sim";
-  return null;
+    : SETUP_STEPS.done;
 }
 
 // ── Per-resource source-URL verify state machine (Step 2 "Use a different
