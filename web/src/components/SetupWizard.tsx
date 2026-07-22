@@ -446,16 +446,25 @@ export function SetupWizard() {
             <Typography variant="body2" sx={{ mb: 2 }}>
               {t("setup.doneConfigured", { org: draft.draft?.org ?? "" })}
             </Typography>
-            <Button
-              variant="contained"
-              onClick={() => {
-                // Import & translation happen in the editor / the forthcoming
-                // Import surface — a follow-up will repoint this at #/import.
-                location.hash = "#/";
-              }}
-            >
-              {t("setup.goToEditor")}
-            </Button>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Button
+                variant="contained"
+                onClick={() => {
+                  // Hand off to the Import surface — the separated import workflow.
+                  location.hash = "#/import";
+                }}
+              >
+                {t("setup.goToImport")}
+              </Button>
+              <Button
+                variant="text"
+                onClick={() => {
+                  location.hash = "#/";
+                }}
+              >
+                {t("setup.openEditor")}
+              </Button>
+            </Stack>
           </StepContent>
         </Step>
       </Stepper>
