@@ -55,6 +55,7 @@ import {
 import { startBookAiTranslate } from "../lib/aiTranslate";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
+import { BookSourceOverridesPanel } from "./BookSourceOverridesPanel";
 
 interface Props {
   /** Selected book (from #/import/:book), or null on the bare #/import route. */
@@ -470,20 +471,17 @@ function BookImportPane({ book, imported, target, onImported, onOpenBook }: Pane
         </Typography>
       </Box>
 
-      {/* Advanced (stub — deferred to the next PR) */}
+      {/* Advanced — per-book / per-chapter-range resource source overrides. */}
       <Accordion
-        disabled
         disableGutters
         elevation={0}
         sx={{ mt: 2, border: "1px solid", borderColor: "divider", "&:before": { display: "none" } }}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography variant="body2">{t("import.advanced")}</Typography>
+          <Typography variant="body2">{t("import.sources.title")}</Typography>
         </AccordionSummary>
         <AccordionDetails>
-          <Typography variant="caption" color="text.secondary">
-            {t("import.advancedComingSoon")}
-          </Typography>
+          <BookSourceOverridesPanel book={book} />
         </AccordionDetails>
       </Accordion>
 

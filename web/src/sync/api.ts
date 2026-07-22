@@ -898,6 +898,18 @@ export interface BookListEntry {
   imported_at: number;
 }
 
+// One per-book / per-chapter-range resource source override (api/src/bookSource.ts).
+// A whole-book override uses chapter_start=0, chapter_end=999; a range override
+// carries its real [start, end] bounds. Only "tn" and "tq" are overridable.
+export interface BookSourceOverride {
+  resource: "tn" | "tq";
+  chapter_start: number;
+  chapter_end: number;
+  org: string;
+  repo: string;
+  updated_at: number;
+}
+
 // Mirrors api/src/bookReimport.ts. Counts of rows/verses touched per
 // resource by a single POST /api/books/:book/reimport call.
 export type ReimportResource = "ult" | "ust" | "tn" | "tq" | "twl";
@@ -1645,6 +1657,45 @@ export const api = {
     request<{ ok: true; org: string; repo: string; fullName?: string; hasBooks?: boolean }>(
       `/api/orgs/verify-source?url=${encodeURIComponent(url)}${opts?.checkBooks ? "&checkBooks=1" : ""}`,
     ),
+
+  // Per-book resource source overrides (issue #103). Whole-book override rows
+  // come back as (chapter_start=0, chapter_end=999); range rows carry their real
+  // bounds. Readable by any authenticated user; the PUT below is admin-only.
+  getBookSources: (book: string) =>
+    request<{ book: string; overrides: BookSourceOverride[] }>(
+      `/api/books/${encodeURIComponent(book)}/sources`,
+    ),
+
+  // Set an override (admin only; non-admins get 403). Pass a verified org+repo
+  // (not a raw URL — verify it first with verifySource). Both chapterStart and
+  // chapterEnd together set a range; omitting both sets the whole book. A range
+  // that overlaps an existing one answers 409 { error: "overlapping_range" }.
+  setBookSource: (
+    book: string,
+    body: {
+      resource: "tn" | "tq";
+      url?: string;
+      org?: string;
+      repo?: string;
+      chapterStart?: number;
+      chapterEnd?: number;
+    },
+  ) =>
+    request<{ ok: true }>(`/api/books/${encodeURIComponent(book)}/sources`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  // Clear one range (pass chapterStart) or a whole resource's overrides (omit
+  // chapterStart). Admin only. Same PUT endpoint, distinguished by `clear`.
+  clearBookSource: (
+    book: string,
+    body: { resource: "tn" | "tq"; chapterStart?: number },
+  ) =>
+    request<{ ok: true }>(`/api/books/${encodeURIComponent(book)}/sources`, {
+      method: "PUT",
+      body: JSON.stringify({ ...body, clear: true }),
+    }),
 
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 
