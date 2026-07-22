@@ -667,9 +667,13 @@ export interface MeResponse {
   workspaceIsFallback?: boolean;
 }
 
-// One org-per-D1 workspace the switcher can offer. `allowed` reflects Door43
-// org membership (or super-admin status) as of the last GET /api/workspaces —
-// disallowed entries render disabled in the UI.
+// One org-per-D1 workspace the switcher can offer. For non-super-admins the
+// server now OMITS workspaces the user may not enter (issue #93 — showing them
+// disabled leaked other orgs' names), so every entry a non-super-admin receives
+// is one they're allowed into and carries `allowed: true`. Super admins still
+// receive every configured workspace, also all `allowed: true`. The flag is
+// retained for the (now-defensive) disabled render path and forward
+// compatibility.
 export interface WorkspaceInfo {
   slug: string;
   label: string;

@@ -55,8 +55,13 @@ async function hasRoleRow(env: Env, ws: Workspace, username: string | undefined)
   }
 }
 
-// GET /api/workspaces — the switcher's list, with an `allowed` flag per
-// workspace so the UI can show-but-disable orgs the user isn't a member of.
+// GET /api/workspaces — the switcher's list. Super admins see every
+// configured workspace; everyone else sees ONLY the workspaces they may
+// actually enter. Non-members must not even learn the names of other orgs
+// (issue #93 — the previous "show-but-disable" behavior leaked the existence
+// and labels of every configured org to non-members). The currently-active
+// workspace is always included so a user can never be stranded with an empty
+// switcher. Every surfaced entry carries `allowed: true`.
 workspaceRoutes.get("/", async (c) => {
   const workspaces = listWorkspaces(c.env);
   const current = c.env.WORKSPACE_SLUG ?? "default";
@@ -93,33 +98,33 @@ workspaceRoutes.get("/", async (c) => {
     if (await hasRoleRow(c.env, w, username)) roleAllowed.add(w.slug);
   }
 
+  // A workspace is visible when the user may actually switch to it: their
+  // current workspace (never strand them), a workspace a role row vouches for,
+  // or — when membership was confirmed — their DCS org. When membership is
+  // unknown (no token / DCS lookup failed) we fail closed to current-only plus
+  // role grants, exactly as before, but omit the rest rather than showing them
+  // disabled. Mirrors the POST /:slug allow logic so the list only ever offers
+  // workspaces the switch endpoint would accept.
+  const isVisible = (w: Workspace): boolean =>
+    w.slug === current ||
+    roleAllowed.has(w.slug) ||
+    (!!memberOrgs && memberOrgs.has(w.org.toLowerCase()));
+
+  const visible = workspaces.filter(isVisible).map((w) => ({
+    slug: w.slug,
+    label: w.label,
+    org: w.org,
+    allowed: true,
+    isFallback: w.slug === fallbackSlug,
+  }));
+
   if (!memberOrgs) {
-    // No token, or the DCS lookup failed — fail closed but don't strand the
-    // user: they keep the workspace they're already in, plus any workspace
-    // where a role row already vouches for them.
-    return c.json({
-      current,
-      workspaces: workspaces.map((w) => ({
-        slug: w.slug,
-        label: w.label,
-        org: w.org,
-        allowed: w.slug === current || roleAllowed.has(w.slug),
-        isFallback: w.slug === fallbackSlug,
-      })),
-      membershipUnknown: true,
-    });
+    // Signal the client that the `allowed`/visible set may be incomplete
+    // because we couldn't confirm membership — the switcher shows a hint.
+    return c.json({ current, workspaces: visible, membershipUnknown: true });
   }
 
-  return c.json({
-    current,
-    workspaces: workspaces.map((w) => ({
-      slug: w.slug,
-      label: w.label,
-      org: w.org,
-      allowed: memberOrgs.has(w.org.toLowerCase()) || roleAllowed.has(w.slug),
-      isFallback: w.slug === fallbackSlug,
-    })),
-  });
+  return c.json({ current, workspaces: visible });
 });
 
 // POST /api/workspaces/:slug — switch the caller's active workspace. CSRF is
