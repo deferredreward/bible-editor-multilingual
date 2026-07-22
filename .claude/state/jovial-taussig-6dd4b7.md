@@ -1,7 +1,14 @@
 # In-flight · issue #103 Tier 1 step 1 — per-book tN source override (backend)
 
 **Branch:** `feat/issue-103-per-book-tn-source` (cut from `claude/jovial-taussig-6dd4b7`)
-**Status:** implemented, typecheck + tests green, PR open. DEV FORK ONLY.
+**Status:** implemented, typecheck + tests green, PR #106 open, pre-merge review passed. DEV FORK ONLY.
+
+## Pre-merge review (Claude self-review + 2 Codex passes)
+- Claude pass: added a missing-table guard on the per-book read (runs on every import).
+- Codex High (fixed): the guard must NOT swallow *transient* D1 errors — during import of
+  an overridden book that would fall back to the wrong repo and clobber the tN rows +
+  drop the hold-out. Now only a `no such table` error → null/[]; any other error rethrows.
+  Regression test added. Codex verify pass: FIXED, no new regressions.
 
 ## What shipped in this increment
 Extends source config from PROJECT scope (#84 `translationSource.repos[role]`) to
