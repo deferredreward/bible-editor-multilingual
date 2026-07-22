@@ -28,7 +28,7 @@ import { syncTemplates } from "./templateSync";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
 import { workspaceRoutes } from "./workspaceRoutes";
 import { blockViewerWrites } from "./viewerGuard";
-import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch } from "./workspaces";
+import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch, primeWorkspaces } from "./workspaces";
 
 export interface Env {
   DB: D1Database;
@@ -455,11 +455,17 @@ async function runScheduledTick(controller: ScheduledController, env: Env, _ctx:
 }
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     // The only place the workspace swap happens: resolve which org this
     // request belongs to (be_ws cookie, else the first/default workspace),
     // then hand the Hono app a clone of env with DB/VIEWER_ORG/etc. pointed
     // at that workspace. Every route file still just reads c.env.DB.
+    //
+    // primeWorkspaces() loads the roster from the shared-DB registry table once
+    // per isolate (fails soft to the WORKSPACES env var, then the implicit
+    // default) so the synchronous resolveWorkspace below reads it. It's a no-op
+    // after the first request in this isolate.
+    await primeWorkspaces(env);
     const ws = resolveWorkspace(env, parseWorkspaceCookie(request));
     return app.fetch(request, workspaceEnv(env, ws), ctx);
   },
@@ -469,6 +475,7 @@ export default {
     // so each iteration gets its own try/catch and logs rather than throws.
     // With WORKSPACES unset this is exactly one iteration against DB, same
     // as before workspaces existed.
+    await primeWorkspaces(env);
     for (const ws of listWorkspaces(env)) {
       try {
         await runScheduledTick(controller, workspaceEnv(env, ws), ctx);

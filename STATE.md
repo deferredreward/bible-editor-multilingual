@@ -46,6 +46,16 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **Workspace roster is DB-backed as of PR-1 of #81, with a strict fail-soft chain.** `workspaces.ts`
+  reads the roster from the `workspaces` registry table on the SHARED DB (migration 0058), loaded once
+  per isolate by the async `primeWorkspaces(env)` that the entry points (`index.ts` fetch/scheduled,
+  `exportWorkflow.ts`) await before the *synchronous* `resolveWorkspace`/`listWorkspaces`. Ordering is
+  **registry → WORKSPACES env var → implicit default** and MUST never throw. Two traps that shaped it:
+  (a) seed the table from the env var only, **never the implicit default** — seeding a `{slug:default}`
+  row would freeze `VIEWER_ORG` (which the implicit default reads dynamically); (b) D1 returns NULL for
+  absent `export_owner`, and `parseEntry` rejects a non-string/non-undefined `exportOwner`, so map
+  NULL→undefined before validating. Only `status='claimed'` rows are listable; the other statuses
+  (available/provisioning/failed/retired) are spare-pool lifecycle bookkeeping for later PRs.
 - **RTL scripture font choice is provisional.** As of the RTL-display fix (branch
   `claude/rtl-language-display-bee8f4`), non-original RTL panes (e.g. Arabic AVD/NAV) render in the
   normal reading stack `"Source Serif Pro","Cambria","Times New Roman",serif` at the standard reading
