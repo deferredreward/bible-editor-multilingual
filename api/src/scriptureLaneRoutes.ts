@@ -15,6 +15,7 @@ import {
   assertLaneWritable,
   bibleVersionForLane,
   snapshotRequiredBooks,
+  copyBookForward,
 } from "./scriptureLane.ts";
 import {
   startReplacement,
@@ -131,6 +132,10 @@ const StartBody = z.object({
     alignmentWritable: z.boolean(),
   }),
   confirm: z.boolean(),
+  // Optional per-book selection (issue #94): the books to stage from the new
+  // source. Omitted → replace all (unchanged behavior). Must be a subset of the
+  // lane's current books; the complement is carried forward (never emptied).
+  replaceBooks: z.array(z.string().min(1)).optional(),
 });
 
 scriptureLaneRoutes.post("/:lane/replacements", requireAdmin, async (c) => {
@@ -154,12 +159,14 @@ scriptureLaneRoutes.post("/:lane/replacements", requireAdmin, async (c) => {
       lane,
       parsed.data.config as ScriptureLaneConfig,
       parsed.data.confirm,
+      parsed.data.replaceBooks,
     );
     const jobId = result.job.job_id;
-    const books = result.books.map((b) => b.book);
     // After the freeze lands: tell open tabs to quarantine their edits, then
-    // stage each required book and mark the job ready once complete. All out of
-    // the request's hot path (waitUntil) so the admin gets an immediate 201.
+    // bring each book into the new generation and mark the job ready once
+    // complete. All out of the request's hot path (waitUntil) so the admin gets
+    // an immediate 201. Each book is either STAGED from the new source or
+    // CARRIED FORWARD from the predecessor generation, per its mode.
     c.executionCtx.waitUntil(
       (async () => {
         try {
@@ -167,13 +174,17 @@ scriptureLaneRoutes.post("/:lane/replacements", requireAdmin, async (c) => {
             c.env,
             await buildLaneEvent(c.env, lane, jobId, "lane.replacement_freeze"),
           );
-          for (const book of books) {
+          for (const b of result.books) {
             try {
-              await stageBook(c.env, jobId, book);
+              if (b.mode === "carry_forward") {
+                await copyBookForward(c.env, jobId, b.book);
+              } else {
+                await stageBook(c.env, jobId, b.book);
+              }
             } catch {
-              // stageBook records per-book retryable_error itself; a throw here
-              // is an unexpected job-state race — leave the book pending so an
-              // admin retry can re-run it.
+              // stageBook / copyBookForward record per-book retryable_error
+              // themselves; a throw here is an unexpected job-state race — leave
+              // the book pending so an admin retry can re-run it.
             }
           }
           await markReadyIfComplete(c.env, jobId);
