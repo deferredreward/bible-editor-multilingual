@@ -2,20 +2,32 @@
 // and flip the be_ws cookie that index.ts's fetch() wrapper reads on every
 // subsequent request to pick the D1 binding for that org (see workspaces.ts).
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "./index";
 import { requireAuth, currentUserId, effectiveRole, ensureWorkspaceUser, isSuperAdmin, mintToken, rotateAccessCookie, clearAccessCookie, type Role } from "./auth.ts";
 import { fetchMemberOrgs, syncTeamRoleForUser, RESYNC_AFTER_SECONDS } from "./dcsTeams.ts";
-import { listWorkspaces, sharedDb, serializeWorkspaceCookie, workspaceEnv, type Workspace } from "./workspaces.ts";
+import {
+  listWorkspaces,
+  sharedDb,
+  serializeWorkspaceCookie,
+  workspaceEnv,
+  claimWorkspace,
+  getPoolStatus,
+  registerPoolSlot,
+  type Workspace,
+} from "./workspaces.ts";
 import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
+import { isIdent } from "./repoUrl.ts";
 
-export const workspaceRoutes = new Hono<{
+type WorkspaceEnv = {
   Bindings: Env;
   // Variables shape matches auth.ts's AppContext exactly (see mintToken /
   // rotateAccessCookie / clearAccessCookie) so `c` can be passed straight
   // through to those helpers without a cast.
   Variables: { userId?: number; username?: string; role?: Role };
-}>();
+};
+
+export const workspaceRoutes = new Hono<WorkspaceEnv>();
 
 workspaceRoutes.use("*", requireAuth);
 
@@ -133,6 +145,69 @@ workspaceRoutes.get("/", async (c) => {
   }
 
   return c.json({ current, workspaces: visible });
+});
+
+// ── Spare-pool admin (issue #81, PR-2) — SUPER-ADMIN only ────────────────────
+//
+// These manage the pre-provisioned D1 pool: inspect it, register a deployed
+// binding as an `available` slot, and manually claim a slot for an org. Claiming
+// at first admin login is PR-3; this manual claim endpoint makes onboarding work
+// end-to-end now and is the seam the callback will reuse.
+//
+// Gated on isSuperAdmin (there is no super-admin route middleware — the codebase
+// does inline checks, e.g. GET/POST above). Registered BEFORE POST /:slug so the
+// literal "pool" segment can never be swallowed as a workspace slug.
+
+// Returns the super-admin's username, or null when the caller isn't one.
+function superAdminUser(c: Context<WorkspaceEnv>): string | null {
+  const username = c.get("username");
+  return username && isSuperAdmin(c.env, username) ? username : null;
+}
+
+// GET /api/workspaces/pool — full registry snapshot (all statuses) + counts.
+workspaceRoutes.get("/pool", async (c) => {
+  if (!superAdminUser(c)) return c.json({ error: "forbidden" }, 403);
+  return c.json(await getPoolStatus(c.env));
+});
+
+// POST /api/workspaces/pool — register a deployed binding as an `available`
+// slot. Body: { binding: string, slug?: string, databaseUuid?: string }.
+workspaceRoutes.post("/pool", async (c) => {
+  if (!superAdminUser(c)) return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.binding !== "string") return c.json({ error: "binding_required" }, 400);
+  const result = await registerPoolSlot(c.env, {
+    binding: body.binding,
+    slug: typeof body.slug === "string" ? body.slug : undefined,
+    databaseUuid: typeof body.databaseUuid === "string" ? body.databaseUuid : undefined,
+  });
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.error === "slug_taken" ? 409 : 400);
+  }
+  return c.json({ ok: true, slot: result.slot }, 201);
+});
+
+// POST /api/workspaces/pool/claim — claim an `available` slot for an org.
+// Body: { org: string, label: string, exportOwner?: string }. Idempotent.
+workspaceRoutes.post("/pool/claim", async (c) => {
+  if (!superAdminUser(c)) return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null);
+  const org = typeof body?.org === "string" ? body.org.trim() : "";
+  const label = typeof body?.label === "string" ? body.label.trim() : "";
+  if (!isIdent(org)) return c.json({ error: "invalid_org" }, 400);
+  if (label.length === 0 || label.length > 64) return c.json({ error: "invalid_label" }, 400);
+  // Genuine DB errors propagate to a 500 on purpose — a half-completed claim
+  // must never be reported as success.
+  const result = await claimWorkspace(c.env, {
+    org,
+    label,
+    exportOwner: typeof body?.exportOwner === "string" ? body.exportOwner : undefined,
+  });
+  if (!result) return c.json({ error: "pool_exhausted" }, 503);
+  return c.json(
+    { ok: true, slug: result.workspace.slug, org: result.workspace.org, alreadyClaimed: result.alreadyClaimed },
+    result.alreadyClaimed ? 200 : 201,
+  );
 });
 
 // POST /api/workspaces/:slug — switch the caller's active workspace. CSRF is

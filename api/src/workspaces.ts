@@ -243,6 +243,219 @@ export function listWorkspaces(env: Env): Workspace[] {
   return parseWorkspacesFromEnv(env);
 }
 
+// ── Spare-pool claiming (issue #81, PR-2) ────────────────────────────────────
+//
+// The spare-pool model: an operator pre-provisions empty, migrated D1 databases
+// and declares each as a native binding in wrangler.toml (DB_POOL1, …). Each is
+// registered as an `available` registry row (registerPoolSlot). When a new org
+// onboards, claimWorkspace flips one `available` row to `claimed`, stamping the
+// org/label — the roster grows WITHOUT a redeploy, while the hot path stays on
+// native bindings (the reason spare-pool was chosen over create-live-over-HTTP).
+//
+// PR-2 delivers the mechanism + a super-admin API. Auto-claiming at first admin
+// login (wiring into the OAuth callback) is PR-3.
+
+// Is `binding` a live D1Database on this env? The same check parseEntry makes —
+// the pool-slot validity gate. Bindings are resolved off BASE_ENV so this holds
+// whether `env` is the raw Worker env or an already-swapped per-request clone
+// (workspaceEnv spreads every binding from base, but reading base is canonical).
+function bindingIsLiveD1(env: Env, binding: string): boolean {
+  const base = (env.BASE_ENV ?? env) as unknown as Record<string, unknown>;
+  const bound = base[binding] as { prepare?: unknown } | undefined;
+  return typeof bound?.prepare === "function";
+}
+
+// Drop the per-isolate registry cache and reload it, so a claim made mid-request
+// is visible to listWorkspaces/resolveWorkspace in that same isolate. The reload
+// reads the now-non-empty table (never re-seeds), and fails soft like any prime.
+async function invalidateAndReprime(env: Env): Promise<void> {
+  const db = sharedDb(env);
+  if (db) registryState.delete(db as object);
+  await primeWorkspaces(env);
+}
+
+async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<Workspace | null> {
+  const row = await db
+    .prepare(
+      `SELECT slug, label, org, binding, export_owner AS exportOwner
+         FROM workspaces WHERE org = ?1 AND status = 'claimed' LIMIT 1`,
+    )
+    .bind(org)
+    .first<WorkspaceRow>();
+  if (!row) return null;
+  return parseEntry(env, {
+    slug: row.slug,
+    label: row.label,
+    org: row.org,
+    binding: row.binding,
+    exportOwner: row.exportOwner ?? undefined,
+  });
+}
+
+export interface ClaimResult {
+  workspace: Workspace;
+  // true = `org` already owned a claimed slot; no new slot was consumed
+  // (idempotent re-onboard, or recovery from a concurrent-claim race).
+  alreadyClaimed: boolean;
+}
+
+// Claims one `available` pool slot for `org`, flipping it to `claimed` and
+// stamping org/label/export_owner. Returns null ONLY when the pool is exhausted
+// (no `available` row whose binding is a live, deployed D1). Idempotent: if
+// `org` already owns a claimed slot it's returned untouched.
+//
+// Concurrency: the flip is a conditional UPDATE guarded by `status='available'`,
+// so two isolates racing for the SAME slot => exactly one sees changes===1; the
+// loser tries the next slot. Two isolates racing to claim for the SAME org land
+// on different slots, and the second trips UNIQUE(org) — caught and recovered by
+// returning the winner's now-claimed slot. Callers must validate org/label
+// first (throws on bad input rather than persisting a corrupt row).
+export async function claimWorkspace(
+  env: Env,
+  opts: { org: string; label: string; exportOwner?: string },
+): Promise<ClaimResult | null> {
+  const db = sharedDb(env);
+  const org = opts.org.trim();
+  const label = opts.label.trim();
+  if (!isIdent(org)) throw new Error(`claimWorkspace: invalid org ${JSON.stringify(opts.org)}`);
+  if (label.length === 0 || label.length > 64) throw new Error("claimWorkspace: label must be 1..64 chars");
+
+  const existing = await findClaimedByOrg(env, db, org);
+  if (existing) return { workspace: existing, alreadyClaimed: true };
+
+  const candidates = await db
+    .prepare(`SELECT id, slug, binding FROM workspaces WHERE status = 'available' ORDER BY id`)
+    .all<{ id: number; slug: string; binding: string }>();
+
+  for (const cand of candidates.results ?? []) {
+    if (!SLUG_RE.test(cand.slug)) continue; // corrupt slot row; never claim into it
+    if (!bindingIsLiveD1(env, cand.binding)) continue; // binding not deployed yet
+
+    let claimed = false;
+    try {
+      const res = await db
+        .prepare(
+          `UPDATE workspaces
+              SET status = 'claimed', org = ?1, label = ?2, export_owner = ?3, updated_at = unixepoch()
+            WHERE id = ?4 AND status = 'available'`,
+        )
+        .bind(org, label, opts.exportOwner ?? null, cand.id)
+        .run();
+      claimed = (res.meta?.changes ?? 0) === 1;
+    } catch (e) {
+      // UNIQUE(org): a concurrent login already claimed a slot for this org
+      // between the findClaimedByOrg check above and this UPDATE. Recover by
+      // handing back that claim instead of erroring.
+      const raced = await findClaimedByOrg(env, db, org);
+      if (raced) return { workspace: raced, alreadyClaimed: true };
+      throw e; // any other constraint failure is genuinely unexpected
+    }
+    if (!claimed) continue; // lost the race for THIS slot; try the next
+
+    const ws = parseEntry(env, { slug: cand.slug, label, org, binding: cand.binding, exportOwner: opts.exportOwner });
+    await invalidateAndReprime(env);
+    if (!ws) {
+      // Pre-validated slug + live binding, so this shouldn't happen — but never
+      // return a half-valid workspace. The row is claimed; surface as a failure.
+      console.warn("workspaces: claimed slot failed post-claim validation", cand.slug);
+      return null;
+    }
+    return { workspace: ws, alreadyClaimed: false };
+  }
+  return null; // pool exhausted
+}
+
+export interface PoolSlot {
+  slug: string;
+  label: string | null;
+  org: string | null;
+  binding: string;
+  databaseUuid: string | null;
+  exportOwner: string | null;
+  status: string;
+  bindingLive: boolean; // is `binding` a live D1 on this deployment right now?
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PoolStatus {
+  counts: Record<string, number>; // rows per status value
+  slots: PoolSlot[]; // every registry row, oldest first
+}
+
+// Full registry snapshot for the super-admin pool view — every row regardless
+// of status, plus a live-binding flag so an operator can see which `available`
+// slots are actually claimable vs. declared-but-not-yet-deployed.
+export async function getPoolStatus(env: Env): Promise<PoolStatus> {
+  const db = sharedDb(env);
+  const res = await db
+    .prepare(
+      `SELECT slug, label, org, binding,
+              database_uuid AS databaseUuid, export_owner AS exportOwner,
+              status, created_at AS createdAt, updated_at AS updatedAt
+         FROM workspaces ORDER BY id`,
+    )
+    .all<Omit<PoolSlot, "bindingLive">>();
+  const counts: Record<string, number> = {};
+  const slots: PoolSlot[] = (res.results ?? []).map((r) => {
+    counts[r.status] = (counts[r.status] ?? 0) + 1;
+    return { ...r, bindingLive: bindingIsLiveD1(env, r.binding) };
+  });
+  return { counts, slots };
+}
+
+export type RegisterPoolError = "invalid_binding" | "binding_not_live" | "invalid_slug" | "slug_taken";
+
+export interface RegisterPoolResult {
+  ok: boolean;
+  error?: RegisterPoolError;
+  slot?: PoolSlot;
+}
+
+// Derive a slug from a binding name: "DB_POOL1" -> "pool1", "DB_MLTEST" ->
+// "mltest". Callers may override; a derivation that doesn't satisfy SLUG_RE is
+// rejected (invalid_slug) so the operator supplies one explicitly.
+function defaultSlugForBinding(binding: string): string {
+  return binding.replace(/^DB_?/i, "").toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+// Registers a pre-provisioned, migrated D1 binding as an `available` pool slot.
+// The binding must already be declared in wrangler.toml and deployed (live on
+// env) — this only writes the registry row; it neither creates a database nor
+// runs migrations (that's the operator runbook / a later PR).
+export async function registerPoolSlot(
+  env: Env,
+  opts: { binding: string; slug?: string; databaseUuid?: string },
+): Promise<RegisterPoolResult> {
+  const binding = (opts.binding ?? "").trim();
+  if (!binding) return { ok: false, error: "invalid_binding" };
+  if (!bindingIsLiveD1(env, binding)) return { ok: false, error: "binding_not_live" };
+  const slug = (opts.slug ?? defaultSlugForBinding(binding)).trim();
+  if (!SLUG_RE.test(slug)) return { ok: false, error: "invalid_slug" };
+
+  const db = sharedDb(env);
+  try {
+    await db
+      .prepare(`INSERT INTO workspaces (slug, binding, database_uuid, status) VALUES (?1, ?2, ?3, 'available')`)
+      .bind(slug, binding, opts.databaseUuid ?? null)
+      .run();
+  } catch {
+    // UNIQUE(slug): a slot with this slug is already registered.
+    return { ok: false, error: "slug_taken" };
+  }
+  const slot = await db
+    .prepare(
+      `SELECT slug, label, org, binding,
+              database_uuid AS databaseUuid, export_owner AS exportOwner,
+              status, created_at AS createdAt, updated_at AS updatedAt
+         FROM workspaces WHERE slug = ?1`,
+    )
+    .bind(slug)
+    .first<Omit<PoolSlot, "bindingLive">>();
+  // `available` rows aren't in the claimed roster, so no reprime is needed here.
+  return { ok: true, slot: slot ? { ...slot, bindingLive: true } : undefined };
+}
+
 // ── Login-time workspace resolution ─────────────────────────────────────────
 
 // Why this exists: index.ts's fetch() wrapper resolves the workspace from the
