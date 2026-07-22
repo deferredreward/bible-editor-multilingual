@@ -893,7 +893,8 @@
     "sourceUrlError": {
       "invalid": "That doesn't look like a Door43 repository URL.",
       "not_found": "No such repository on Door43.",
-      "unreachable": "Door43 is unreachable right now — try again."
+      "unreachable": "Door43 is unreachable right now — try again.",
+      "no_books": "This source has no scripture book files — pick a valid source."
     },
     "lanesIntro": "These are YOUR org's repositories — the text you edit and export TO. Confirm the target repo, whether you're editing or only aligning, and where each lane pulls from.",
     "lane": {

@@ -12,6 +12,8 @@ import {
   pendingOverrideSelection,
   overrideFieldInitialUrl,
   shouldClearOverrideOnBlur,
+  shouldCheckBooks,
+  resolveVerifiedSource,
   type SourceVerifyState,
 } from "../lib/setupWizard";
 
@@ -80,7 +82,20 @@ export function SourceOverrideField({
     }
     setVerify({ status: "verifying" });
     try {
-      const res = await api.verifySource(raw);
+      // For a lit/sim PULL source, also require the repo to contain USFM book
+      // files — an empty scaffolding repo is nothing to translate from. hasBooks
+      // is OMITTED on a transient contents blip; resolveVerifiedSource treats
+      // that (and every non-scripture role) as OK, so a DCS blip never blocks.
+      const scripture = shouldCheckBooks(resource);
+      const res = await api.verifySource(raw, scripture ? { checkBooks: true } : undefined);
+      const resolution = resolveVerifiedSource(resource, res.hasBooks);
+      if (!resolution.ok) {
+        // Repo exists but has no scripture books → INVALID source. Do NOT store a
+        // verified override; keep it pending so Apply is blocked, and say why.
+        setVerify({ status: "error", kind: resolution.errorKind ?? "no_books" });
+        state.setResourceSource(resource, pendingOverrideSelection());
+        return;
+      }
       setVerify({ status: "verified", org: res.org, repo: res.repo, fullName: res.fullName });
       state.setResourceSource(resource, { mode: "override", org: res.org, repo: res.repo });
     } catch (e) {

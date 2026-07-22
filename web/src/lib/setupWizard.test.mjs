@@ -29,6 +29,8 @@ import {
   shouldClearOverrideOnBlur,
   wizardApply409,
   detectOrg409Key,
+  shouldCheckBooks,
+  resolveVerifiedSource,
 } from "./setupWizard.ts";
 import { defaultResourceSources } from "./orgDraft.ts";
 
@@ -119,6 +121,35 @@ test("detectOrg409Key: same-org lane-source change never shows the recreate-DB m
   );
   assert.equal(detectOrg409Key("project_not_empty"), "preferences.detectOrg.projectNotEmpty");
   assert.equal(detectOrg409Key(undefined), "preferences.detectOrg.projectNotEmpty");
+});
+
+test("shouldCheckBooks: only scripture (lit/sim) pull-sources are book-checked", () => {
+  assert.equal(shouldCheckBooks("lit"), true);
+  assert.equal(shouldCheckBooks("sim"), true);
+  for (const r of ["tn", "tq", "twl", "tw", "ta"]) {
+    assert.equal(shouldCheckBooks(r), false, `${r} is not USFM — no book check`);
+  }
+});
+
+test("resolveVerifiedSource: a scripture source to a scaffolding-only repo is rejected (no_books)", () => {
+  assert.deepEqual(resolveVerifiedSource("lit", false), { ok: false, errorKind: "no_books" });
+  assert.deepEqual(resolveVerifiedSource("sim", false), { ok: false, errorKind: "no_books" });
+});
+
+test("resolveVerifiedSource: a scripture source WITH books passes", () => {
+  assert.deepEqual(resolveVerifiedSource("lit", true), { ok: true });
+});
+
+test("resolveVerifiedSource: a transient (hasBooks omitted) does NOT block a scripture source", () => {
+  // A DCS contents blip omits hasBooks — never a false 'empty'.
+  assert.deepEqual(resolveVerifiedSource("lit", undefined), { ok: true });
+});
+
+test("resolveVerifiedSource: non-scripture overrides are unaffected by the book check", () => {
+  // Even hasBooks:false (which we never request for these) must not reject them.
+  assert.deepEqual(resolveVerifiedSource("tn", false), { ok: true });
+  assert.deepEqual(resolveVerifiedSource("tw", undefined), { ok: true });
+  assert.deepEqual(resolveVerifiedSource("ta", true), { ok: true });
 });
 
 test("laneUrlChoiceSelection makes the choice read as 'url' without committing a repo", () => {

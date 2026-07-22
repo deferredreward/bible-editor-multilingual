@@ -33,7 +33,37 @@ export type LaneKey = "lit" | "sim";
 // ── Per-resource source-URL verify state machine (Step 2 "Use a different
 // source"). A pasted Door43 URL is verified on blur via GET
 // /api/orgs/verify-source; the states drive the inline UI. ────────────────────
-export type SourceVerifyErrorKind = "invalid" | "not_found" | "unreachable";
+// `no_books` is a scripture-only outcome: the repo EXISTS but has no USFM book
+// files, so it's an invalid PULL source for a lit/sim lane (nothing to translate
+// from). It is treated like `invalid` (blocks Apply), NOT `unreachable`.
+export type SourceVerifyErrorKind = "invalid" | "not_found" | "unreachable" | "no_books";
+
+// A pasted URL used as a lit/sim PULL SOURCE is a source you intend to pull books
+// FROM, so it must actually contain USFM — request the content check for those.
+// Non-scripture roles (tn/tq/twl/tw/ta are TSV/markdown, not USFM) are
+// verify-repo-exists only. The lane's own TARGET repo is NOT checked here (it's
+// legitimately empty on a fresh org) — this is only the upstream=URL override.
+export function shouldCheckBooks(resource: ResourceKey): boolean {
+  return resource === "lit" || resource === "sim";
+}
+
+// Decide the outcome of a SUCCESSFUL repo verification (the repo exists) for a
+// per-resource source override, given the optional book-content signal:
+//   scripture role + hasBooks === false → REJECT as an empty scripture source
+//     (no_books) — do not store it, block Apply.
+//   hasBooks omitted (transient contents blip) → OK — never a false empty on a
+//     DCS blip; allow proceeding.
+//   non-scripture role, or hasBooks true → OK.
+export interface SourceVerifyResolution {
+  ok: boolean;
+  errorKind?: SourceVerifyErrorKind;
+}
+export function resolveVerifiedSource(resource: ResourceKey, hasBooks: boolean | undefined): SourceVerifyResolution {
+  if (shouldCheckBooks(resource) && hasBooks === false) {
+    return { ok: false, errorKind: "no_books" };
+  }
+  return { ok: true };
+}
 
 export type SourceVerifyState =
   | { status: "idle" }
