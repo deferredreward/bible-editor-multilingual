@@ -714,13 +714,20 @@ export async function copyBookForward(
   // Chunked, server-side INSERT ... SELECT. NOT EXISTS makes each chunk skip
   // rows already copied (idempotent, crash-resume-safe); LIMIT bounds each
   // statement and the loop runs ceil(verses / CHUNK) times.
+  // Copy version / updated_by / updated_at FORWARD, not just content. A carried
+  // book may contain translator-edited verses (updated_by set, version > 1);
+  // dropping updated_by would land them with updated_by NULL, and reimport's
+  // `updated_by IS NULL` overwrite-guard would then treat those edits as pristine
+  // and clobber the very content carry-forward exists to protect. (This is why
+  // copyBookForward does NOT mirror stageBook's column list — staged rows are
+  // fresh upstream, carried rows carry edit provenance.)
   const copyStmt = env.DB.prepare(
     `INSERT INTO verses (
        book, chapter, verse, verse_end, bible_version, source_generation,
-       content_json, plain_text, created_by_job_id
+       content_json, plain_text, version, updated_by, updated_at, created_by_job_id
      )
      SELECT src.book, src.chapter, src.verse, src.verse_end, src.bible_version, ?4,
-            src.content_json, src.plain_text, ?5
+            src.content_json, src.plain_text, src.version, src.updated_by, src.updated_at, ?5
        FROM verses src
       WHERE src.book = ?1 AND src.bible_version = ?2 AND src.source_generation = ?3
         AND NOT EXISTS (

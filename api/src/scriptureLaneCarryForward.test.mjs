@@ -276,6 +276,39 @@ test("copyBookForward copies the full predecessor generation and marks carried_f
   assert.equal(job.status, "staging");
 });
 
+test("carry-forward preserves edit provenance (version / updated_by / updated_at)", async () => {
+  // The whole point of carry-forward is "leave the books I've already edited
+  // alone." If the copy dropped updated_by, reimport's `updated_by IS NULL`
+  // overwrite-guard would treat a carried translator edit as pristine and
+  // clobber it after activation. So the copy MUST preserve edit provenance.
+  const db = freshDb();
+  const env = makeEnv(db);
+  seedJob(db);
+  seedBook(db, "MAL");
+  seedVerses(db, "MAL", { gen: 1, chapters: 2, perChapter: 3 });
+  // Mark MAL 1:2 as a translator edit in the predecessor generation.
+  db.prepare(
+    `UPDATE verses SET updated_by = 42, version = 5, updated_at = 1700000000
+      WHERE book='MAL' AND chapter=1 AND verse=2 AND bible_version=? AND source_generation=1`,
+  ).run(BV);
+
+  const res = await copyBookForward(env, JOB, "MAL");
+  assert.equal(res.status, "carried_forward");
+
+  const edited = db
+    .prepare(`SELECT updated_by, version, updated_at FROM verses WHERE book='MAL' AND chapter=1 AND verse=2 AND bible_version=? AND source_generation=2`)
+    .get(BV);
+  assert.equal(edited.updated_by, 42, "editor id carried forward (not nulled)");
+  assert.equal(edited.version, 5, "version carried forward");
+  assert.equal(edited.updated_at, 1700000000, "edit timestamp carried forward");
+
+  // A never-edited verse stays pristine (updated_by NULL) on the new generation.
+  const pristine = db
+    .prepare(`SELECT updated_by FROM verses WHERE book='MAL' AND chapter=2 AND verse=1 AND bible_version=? AND source_generation=2`)
+    .get(BV);
+  assert.equal(pristine.updated_by, null, "un-edited verse stays pristine");
+});
+
 test("carry-forward is idempotent: a second call is a no-op with no duplicate rows", async () => {
   const db = freshDb();
   const env = makeEnv(db);
