@@ -850,6 +850,43 @@ export async function copyBookForward(
   return { status: "carried_forward" };
 }
 
+export interface LaneBookStat {
+  /** Total verses this book has in the generation. */
+  verses: number;
+  /** How many of those verses carry a translator edit (`updated_by` set). */
+  edited: number;
+}
+
+/**
+ * Per-book existing-content stats for a lane generation (issue #94): verse count
+ * and how many verses have a translator edit (`updated_by` is set). The
+ * Change-Source checklist surfaces these so the user can see which books hold
+ * edits worth keeping (carrying forward) before choosing to overwrite them from
+ * a new source. Read-only; never part of a write path.
+ */
+export async function laneBookStats(
+  env: Env,
+  bibleVersion: string,
+  generation: number,
+): Promise<Record<string, LaneBookStat>> {
+  const rs = await env.DB
+    .prepare(
+      `SELECT book,
+              COUNT(*) AS verses,
+              SUM(CASE WHEN updated_by IS NOT NULL THEN 1 ELSE 0 END) AS edited
+         FROM verses
+        WHERE bible_version = ?1 AND source_generation = ?2
+        GROUP BY book`,
+    )
+    .bind(bibleVersion, generation)
+    .all<{ book: string; verses: number; edited: number }>();
+  const out: Record<string, LaneBookStat> = {};
+  for (const r of rs.results) {
+    out[r.book] = { verses: Number(r.verses) || 0, edited: Number(r.edited) || 0 };
+  }
+  return out;
+}
+
 export interface ReplacementBookPlan {
   /** Books to stage from the NEW source (book row `mode='staged'`). */
   staged: string[];

@@ -402,6 +402,8 @@
       "confirmBooksSelectAll": "Replace all",
       "confirmBooksSelectNone": "Keep all",
       "confirmBooksSummary": "Replacing {{replace}} · keeping {{keep}}",
+      "confirmBooksEditedHint": "✎ marks books with verses you've edited — leave them unselected to keep those edits (carried forward unchanged).",
+      "bookStatTip": "{{verses}} verses · {{edited}} edited",
       "confirmNoBookList": "The affected books couldn't be listed, but every imported book in this lane will be replaced.",
       "confirmSourceUnverified": "We couldn't confirm this source contains book files (Door43 was briefly unreachable). You can proceed, but if the staged books come back empty, use Cancel to back out without overwriting your current content.",
       "confirmAck": "I understand this replaces the text and alignment for the books marked to replace, and keeps the rest unchanged.",
@@ -1048,6 +1050,8 @@
     "replacementConfirmBooksSelectAll": "Replace all",
     "replacementConfirmBooksSelectNone": "Keep all",
     "replacementConfirmBooksSummary": "Replacing {{replace}} · keeping {{keep}}",
+    "replacementConfirmBooksEditedHint": "✎ marks books with verses you've edited — leave them unselected to keep those edits (carried forward unchanged).",
+    "replacementConfirmBookStatTip": "{{verses}} verses · {{edited}} edited",
     "replacementConfirmNoBookList": "The affected books couldn't be listed, but every imported book in this lane will be replaced.",
     "replacementConfirmAck": "I understand this replaces the text for the books marked to replace, and keeps the rest unchanged.",
     "replacementConfirmButton": "Stage the replacement"

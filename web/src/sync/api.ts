@@ -2180,7 +2180,13 @@ export const api = {
   // list affected books in the confirm dialog + staging view — NOT getBooks(),
   // which reflects the whole DB rather than this lane's imported generation.
   laneAffectedBooks: (lane: "lit" | "sim") =>
-    request<{ books: string[] }>(
+    request<{
+      books: string[];
+      // Per-book existing-content stats (issue #94): verse count + how many
+      // verses have a translator edit. Lets the checklist show what each book
+      // holds before it's overwritten. Absent on older servers.
+      stats?: Record<string, { verses: number; edited: number }>;
+    }>(
       `/api/project-config/lanes/${lane}/affected-books`,
     ),
 

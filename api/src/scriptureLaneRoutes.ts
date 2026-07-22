@@ -16,6 +16,7 @@ import {
   bibleVersionForLane,
   snapshotRequiredBooks,
   copyBookForward,
+  laneBookStats,
 } from "./scriptureLane.ts";
 import {
   startReplacement,
@@ -113,8 +114,13 @@ scriptureLaneRoutes.get("/:lane/affected-books", requireAdmin, async (c) => {
   if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
   const state = await requireLaneState(c.env, lane);
   const bv = bibleVersionForLane(lane);
-  const snap = await snapshotRequiredBooks(c.env, bv, state.active_generation);
-  return c.json({ books: snap.books });
+  // Book set + per-book existing-content stats (issue #94) so the checklist can
+  // show verse/edit counts. Both read the same active generation.
+  const [snap, stats] = await Promise.all([
+    snapshotRequiredBooks(c.env, bv, state.active_generation),
+    laneBookStats(c.env, bv, state.active_generation),
+  ]);
+  return c.json({ books: snap.books, stats });
 });
 
 // POST /:lane/replacements — start a replacement job (admin)

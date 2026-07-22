@@ -114,6 +114,8 @@ export function LaneReplacementDriver({
   // Per-book replace/keep selection (issue #94): checked → re-staged from the new
   // source; unchecked → kept unchanged (carried forward). Defaults to replace-all.
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
+  // Per-book existing-content stats (verses + translator-edit count).
+  const [bookStats, setBookStats] = useState<Record<string, { verses: number; edited: number }>>({});
 
   const replacementJobId = laneState.replacementJobId ?? null;
   const pendingTarget = laneState.pendingTarget;
@@ -165,9 +167,11 @@ export function LaneReplacementDriver({
       const res = await api.laneAffectedBooks(lane);
       setAffectedBooks(res.books);
       setSelectedBooks(new Set(res.books)); // default: replace all
+      setBookStats(res.stats ?? {});
     } catch {
       setAffectedBooks([]);
       setSelectedBooks(new Set());
+      setBookStats({});
     }
   };
 
@@ -465,23 +469,32 @@ export function LaneReplacementDriver({
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
                   {affectedBooks.map((b) => {
                     const selected = selectedBooks.has(b);
+                    const stat = bookStats[b];
+                    const edited = stat?.edited ?? 0;
+                    const label = edited > 0 ? `${bookName(b)} (${b}) ✎${edited}` : `${bookName(b)} (${b})`;
                     return (
-                      <Chip
+                      <Tooltip
                         key={b}
-                        size="small"
-                        label={`${bookName(b)} (${b})`}
-                        color={selected ? "warning" : "default"}
-                        variant={selected ? "filled" : "outlined"}
-                        aria-pressed={selected}
-                        onClick={() =>
-                          setSelectedBooks((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(b)) next.delete(b);
-                            else next.add(b);
-                            return next;
-                          })
+                        title={
+                          stat ? t("setup.replacementConfirmBookStatTip", { verses: stat.verses, edited }) : ""
                         }
-                      />
+                      >
+                        <Chip
+                          size="small"
+                          label={label}
+                          color={selected ? "warning" : "default"}
+                          variant={selected ? "filled" : "outlined"}
+                          aria-pressed={selected}
+                          onClick={() =>
+                            setSelectedBooks((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(b)) next.delete(b);
+                              else next.add(b);
+                              return next;
+                            })
+                          }
+                        />
+                      </Tooltip>
                     );
                   })}
                 </Box>
@@ -491,6 +504,11 @@ export function LaneReplacementDriver({
                     keep: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
                   })}
                 </Typography>
+                {affectedBooks.some((b) => (bookStats[b]?.edited ?? 0) > 0) && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+                    {t("setup.replacementConfirmBooksEditedHint")}
+                  </Typography>
+                )}
               </>
             ) : (
               <Typography variant="body2">{t("setup.replacementConfirmNoBookList")}</Typography>
