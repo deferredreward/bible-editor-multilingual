@@ -443,6 +443,26 @@ export async function applyProjectConfig(
     plans.push(planLaneCommit(lane, row.active_config_json, row.config_revision, desiredCfg, verseCount));
   }
 
+  // Configure-only tenancy rule (owner decision): a config PUT must NEVER stage a
+  // scripture-source change on a POPULATED lane. planLaneCommit only produces a
+  // "quarantine" plan when a lane already has verses AND its source changed — the
+  // old behaviour that set replacement_required + pending_target and let the (now
+  // removed) in-wizard staging step run. That step was a trap (an empty new source
+  // can only fail; a valid one overwrites existing verses). Reject the WHOLE apply
+  // atomically, writing NOTHING (we return before the batch is built), and name the
+  // lane(s) so the UI can offer to revert. A deliberate source migration goes
+  // through the replacement FSM (laneValidate → laneStartReplacement → activate),
+  // NOT this path. An EMPTY lane (verseCount 0) still plans "install" and applies.
+  const migrationLanes = plans.filter((p) => p.needsUpdate && p.action === "quarantine").map((p) => p.lane);
+  if (migrationLanes.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: "lane_source_change_requires_migration",
+      detail: { lanes: migrationLanes },
+    };
+  }
+
   const stmts: D1PreparedStatement[] = [configWriteStmt(env, preset, overridesJsonForWrite)];
   for (const plan of plans) {
     if (!plan.needsUpdate) continue;

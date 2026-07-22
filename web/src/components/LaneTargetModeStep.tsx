@@ -1,5 +1,9 @@
+import { useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Box,
+  Button,
+  CircularProgress,
   Stack,
   TextField,
   ToggleButton,
@@ -7,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
+import { api } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import { RepoRef, SourceOverrideField } from "./SourceOverrideField";
 import { laneChoiceFromMode, laneUrlChoiceSelection, type LaneUpstreamChoice } from "../lib/setupWizard";
@@ -15,6 +20,14 @@ import { laneChoiceFromMode, laneUrlChoiceSelection, type LaneUpstreamChoice } f
 // "align" additionally freezes the text. Applied after Apply via lanePatch.
 export type LaneEditMode = "edit" | "align";
 export type LaneModeMap = { lit: LaneEditMode; sim: LaneEditMode };
+
+// Content-check status for a lane's target scripture repo (item 4):
+//   unknown     → not yet checked (blank repo / initial)
+//   checking    → verify in flight
+//   has         → repo contains USFM book files (good)
+//   empty       → repo exists but has NO book files (scaffolding trap) → BLOCK
+//   unreachable → couldn't check (repo lookup/contents blip) → non-blocking retry
+export type LaneBooksStatus = "unknown" | "checking" | "has" | "empty" | "unreachable";
 
 const LANES: Array<{ key: "lit" | "sim"; labelKey: string }> = [
   { key: "lit", labelKey: "setup.lane.lit" },
@@ -27,18 +40,60 @@ function LaneCard({
   state,
   laneMode,
   setLaneMode,
+  onLaneBooks,
 }: {
   lane: "lit" | "sim";
   labelKey: string;
   state: OrgDraftState;
   laneMode: LaneEditMode;
   setLaneMode: (m: LaneEditMode) => void;
+  onLaneBooks: (status: LaneBooksStatus) => void;
 }) {
   const { t } = useTranslation();
   const sel = state.resourceSource[lane] ?? { mode: "upstream" };
   const upstreamChoice: LaneUpstreamChoice = laneChoiceFromMode(sel.mode);
   const targetRepo = state.repos[lane] ?? "";
   const upstreamRepo = state.upstreamRepos[lane];
+  const org = state.draft?.org ?? "";
+
+  // Content check for the target scripture repo: it must contain book files, not
+  // just exist (an empty scaffolding-only repo is a trap). Runs on the resolved
+  // org/repo; "empty" blocks Apply, "unreachable" is a non-blocking retry.
+  const [booksStatus, setBooksStatus] = useState<LaneBooksStatus>("unknown");
+  const reportBooks = (s: LaneBooksStatus) => {
+    setBooksStatus(s);
+    onLaneBooks(s);
+  };
+  const checkSeq = useRef(0);
+  const checkBooks = async () => {
+    const repo = targetRepo.trim();
+    if (!org || !repo) {
+      reportBooks("unknown");
+      return;
+    }
+    const seq = ++checkSeq.current;
+    setBooksStatus("checking");
+    try {
+      const res = await api.verifySource(`${org}/${repo}`, { checkBooks: true });
+      if (seq !== checkSeq.current) return; // superseded by a newer edit
+      // hasBooks omitted = contents lookup couldn't run → treat as unreachable.
+      reportBooks(res.hasBooks === undefined ? "unreachable" : res.hasBooks ? "has" : "empty");
+    } catch {
+      if (seq !== checkSeq.current) return;
+      // Repo lookup itself failed (missing/invalid/transient) — non-blocking.
+      reportBooks("unreachable");
+    }
+  };
+
+  // Auto-check once when a pre-filled repo is present on mount.
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (!autoChecked.current && org && targetRepo.trim()) {
+      autoChecked.current = true;
+      void checkBooks();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org, targetRepo]);
 
   const onUpstreamChoice = (choice: LaneUpstreamChoice) => {
     if (choice === "unfoldingWord") state.setResourceSource(lane, { mode: "upstream" });
@@ -74,9 +129,32 @@ function LaneCard({
           label={t("setup.targetRepoLabel")}
           value={targetRepo}
           onChange={(e) => state.setRepo(lane, e.target.value)}
+          onBlur={() => void checkBooks()}
           helperText={t("setup.targetRepoHelp")}
           placeholder={lane === "lit" ? "ru_rlob" : "es-419_gst"}
+          InputProps={{
+            endAdornment: booksStatus === "checking" ? <CircularProgress size={16} /> : undefined,
+          }}
         />
+        {booksStatus === "empty" && (
+          <Alert severity="warning" variant="outlined" sx={{ py: 0 }}>
+            {t("setup.laneSourceEmptyInline", { repo: `${org}/${targetRepo}` })}
+          </Alert>
+        )}
+        {booksStatus === "unreachable" && (
+          <Alert
+            severity="info"
+            variant="outlined"
+            sx={{ py: 0 }}
+            action={
+              <Button color="inherit" size="small" onClick={() => void checkBooks()}>
+                {t("setup.upstreamOrgRetry")}
+              </Button>
+            }
+          >
+            {t("setup.laneSourceCheckUnreachable")}
+          </Alert>
+        )}
 
         <Box>
           <Typography variant="caption" color="text.secondary" component="p">
@@ -132,10 +210,13 @@ export function LaneTargetModeStep({
   state,
   laneMode,
   setLaneMode,
+  onLaneBooks,
 }: {
   state: OrgDraftState;
   laneMode: LaneModeMap;
   setLaneMode: (lane: "lit" | "sim", m: LaneEditMode) => void;
+  // Reports each lane's target-repo book-content status up so Apply can block on "empty".
+  onLaneBooks: (lane: "lit" | "sim", status: LaneBooksStatus) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -151,6 +232,7 @@ export function LaneTargetModeStep({
           state={state}
           laneMode={laneMode[key]}
           setLaneMode={(m) => setLaneMode(key, m)}
+          onLaneBooks={(s) => onLaneBooks(key, s)}
         />
       ))}
     </Stack>

@@ -9,9 +9,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  SETUP_STEPS,
-  lanesNeedingReplacement,
-  stepAfterApply,
   verifyErrorKind,
   laneChoiceFromMode,
   toggleResourceChecked,
@@ -23,36 +20,12 @@ import {
   unverifiedOverrideResources,
   hasUnverifiedOverride,
   laneModeMatches,
-  replacementContinueEnabled,
   upstreamLanguageOf,
   jobActionable,
   replacementSpinnerVisible,
   describeBookError,
 } from "./setupWizard.ts";
 import { defaultResourceSources } from "./orgDraft.ts";
-
-test("stepAfterApply goes straight to done when no lane is quarantined", () => {
-  assert.equal(stepAfterApply(null), SETUP_STEPS.done);
-  assert.equal(stepAfterApply({}), SETUP_STEPS.done);
-  assert.equal(
-    stepAfterApply({ lit: { replacementRequired: false }, sim: { replacementRequired: false } }),
-    SETUP_STEPS.done,
-  );
-});
-
-test("stepAfterApply enters the replacement step when any lane is quarantined", () => {
-  assert.equal(stepAfterApply({ lit: { replacementRequired: true } }), SETUP_STEPS.replacement);
-  assert.equal(stepAfterApply({ sim: { replacementRequired: true } }), SETUP_STEPS.replacement);
-});
-
-test("lanesNeedingReplacement returns quarantined lanes in lit,sim order", () => {
-  assert.deepEqual(lanesNeedingReplacement(null), []);
-  assert.deepEqual(
-    lanesNeedingReplacement({ lit: { replacementRequired: true }, sim: { replacementRequired: true } }),
-    ["lit", "sim"],
-  );
-  assert.deepEqual(lanesNeedingReplacement({ sim: { replacementRequired: true } }), ["sim"]);
-});
 
 test("verifyErrorKind never turns a transient 503 into 'not_found'", () => {
   assert.equal(verifyErrorKind(400), "invalid");
@@ -132,13 +105,6 @@ test("laneModeMatches confirms the live config equals the desired mode", () => {
   assert.equal(laneModeMatches({ textReadOnly: false, alignmentWritable: true }, "edit"), true);
   assert.equal(laneModeMatches({ textReadOnly: true, alignmentWritable: true }, "edit"), false);
   assert.equal(laneModeMatches(null, "edit"), false);
-});
-
-test("replacementContinueEnabled requires every replaced lane confirmed done", () => {
-  assert.equal(replacementContinueEnabled(["lit"], { lit: true }), true);
-  assert.equal(replacementContinueEnabled(["lit", "sim"], { lit: true }), false); // sim not done
-  assert.equal(replacementContinueEnabled(["lit", "sim"], { lit: true, sim: true }), true);
-  assert.equal(replacementContinueEnabled([], {}), true); // nothing to replace
 });
 
 test("upstreamLanguageOf uses the inferred code, falling back to 'en'", () => {

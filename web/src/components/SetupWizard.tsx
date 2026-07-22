@@ -17,17 +17,15 @@ import { applyProjectOverrides, refreshProjectConfig, useProjectConfig } from ".
 import { useOrgDraft } from "./OrgConfigDraftEditor";
 import { OrgIdentityFields } from "./OrgIdentityFields";
 import { UpstreamSourcePicker } from "./UpstreamSourcePicker";
-import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneTargetModeStep";
-import { LaneReplacementDriver } from "./LaneReplacementDriver";
+import {
+  LaneTargetModeStep,
+  type LaneEditMode,
+  type LaneModeMap,
+  type LaneBooksStatus,
+} from "./LaneTargetModeStep";
 import { RepoRef } from "./SourceOverrideField";
 import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
-import {
-  SETUP_STEPS,
-  lanesNeedingReplacement,
-  stepAfterApply,
-  replacementContinueEnabled,
-  type LaneKey,
-} from "../lib/setupWizard";
+import { SETUP_STEPS, type LaneKey } from "../lib/setupWizard";
 
 // Pinned duration (ms) for each StepContent's expand/collapse Collapse. Fixed —
 // not MUI's default 'auto', which scales with content height and would make the
@@ -35,11 +33,11 @@ import {
 // this long (plus a small buffer) before scrolling.
 const STEP_COLLAPSE_MS = 260;
 
-// Apply the edit/align choice to each lane that exists post-Apply. "align" =
-// text frozen (read-only) but alignment writable; "edit" = both writable. Skips
-// quarantined lanes (a replacement carries its own locks — their mode is applied
-// after activation, in LaneReplacementDriver) and any lane already in the
-// desired state. Reads the FRESH config so configRevision isn't stale, and
+// Apply the edit/align choice to each lane post-Apply. "align" = text frozen
+// (read-only) but alignment writable; "edit" = both writable. Skips any lane
+// already in the desired state (and, defensively, any replacement-locked lane —
+// the configure-only wizard never creates one, but a concurrent Change-Source
+// migration could). Reads the FRESH config so configRevision isn't stale, and
 // RETURNS the lanes whose patch failed so the caller can block rather than
 // silently leave an "aligning only" lane editable (data-safety).
 async function applyLaneModes(laneMode: LaneModeMap): Promise<("lit" | "sim")[]> {
@@ -80,6 +78,13 @@ export function SetupWizard() {
   const setLaneMode = (lane: "lit" | "sim", m: LaneEditMode) =>
     setLaneModeState((s) => ({ ...s, [lane]: m }));
 
+  // Step 3 — per-lane target-repo book-content status (item 4). A scripture lane
+  // source with no USFM files is a trap; "empty" blocks Apply.
+  const [laneBooks, setLaneBooksState] = useState<Partial<Record<LaneKey, LaneBooksStatus>>>({});
+  const setLaneBooks = (lane: LaneKey, status: LaneBooksStatus) =>
+    setLaneBooksState((s) => ({ ...s, [lane]: status }));
+  const emptyLaneSources = (["lit", "sim"] as LaneKey[]).filter((l) => laneBooks[l] === "empty");
+
   // Step 4 — apply.
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -90,12 +95,27 @@ export function SetupWizard() {
   // offer a retry, so an "Aligning only" lane is never left editable.
   const [laneModeError, setLaneModeError] = useState<string | null>(null);
 
-  // The lanes that Apply quarantined (a source migration), captured when routing
-  // to the replacement step, plus which have finished (activated + mode
-  // confirmed). Continue is gated on ALL of them being done.
-  const [lanesToReplace, setLanesToReplace] = useState<LaneKey[]>([]);
-  const [laneDone, setLaneDone] = useState<Partial<Record<LaneKey, boolean>>>({});
-  const markLaneDone = (lane: LaneKey) => setLaneDone((d) => ({ ...d, [lane]: true }));
+  // Lanes the backend refused to change the source of because the project is
+  // already populated (409 lane_source_change_requires_migration). We offer to
+  // revert each to the current config's repo so the admin isn't stuck.
+  const [migrationLanes, setMigrationLanes] = useState<LaneKey[]>([]);
+
+  // Pre-fill lane target repos from the CURRENT config once (populated re-runs),
+  // so re-opening Setup doesn't accidentally propose a source change.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !draft.draft || !projectConfig) return;
+    prefilled.current = true;
+    if (projectConfig.repos?.lit) draft.setRepo("lit", projectConfig.repos.lit);
+    if (projectConfig.repos?.sim) draft.setRepo("sim", projectConfig.repos.sim);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.draft, projectConfig]);
+
+  const revertLaneSource = (lane: LaneKey) => {
+    const current = projectConfig?.repos?.[lane];
+    if (current) draft.setRepo(lane, current);
+    setMigrationLanes((ls) => ls.filter((l) => l !== lane));
+  };
 
   // Scroll the newly-active step's HEADER to the top of the viewport on change,
   // so the admin lands on "N. <title>" rather than below it. The ref sits on the
@@ -128,9 +148,8 @@ export function SetupWizard() {
     return () => clearTimeout(timer);
   }, [activeStep]);
 
-  // Apply the lane edit/align modes, then advance. Shared by first-apply and the
-  // retry button so a lanePatch failure is recoverable without re-applying the
-  // (now-persisted) overrides.
+  // Apply the lane edit/align modes, then advance to Done. A lanePatch failure is
+  // recoverable via the retry button without re-applying the persisted overrides.
   const finishLaneModesAndAdvance = async () => {
     const failed = await applyLaneModes(laneMode);
     if (failed.length > 0) {
@@ -138,30 +157,46 @@ export function SetupWizard() {
       return;
     }
     setLaneModeError(null);
-    const cfg = await refreshProjectConfig().catch(() => null);
-    const next = stepAfterApply(cfg?.laneState);
-    if (next === SETUP_STEPS.replacement) {
-      // Capture the quarantined lanes so their drivers stay mounted through
-      // activation + mode confirmation (they leave `laneState` once activated).
-      setLanesToReplace(lanesNeedingReplacement(cfg?.laneState));
-      setLaneDone({});
-    }
-    setActiveStep(next);
+    await refreshProjectConfig().catch(() => {});
+    setActiveStep(SETUP_STEPS.done);
   };
 
   const doApply = async () => {
-    if (!draft.complete || !draft.upstreamVerified || draft.hasUnverifiedOverride) return;
+    if (
+      !draft.complete ||
+      !draft.upstreamVerified ||
+      draft.hasUnverifiedOverride ||
+      emptyLaneSources.length > 0
+    ) {
+      return;
+    }
     setApplying(true);
     setApplyError(null);
     setLaneModeError(null);
+    setMigrationLanes([]);
     try {
       await applyProjectOverrides("custom-gl", draft.buildOverrides());
       setApplied(true);
       await finishLaneModesAndAdvance();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        const code = (e.body as { error?: string } | undefined)?.error;
-        setApplyError(code === "project_not_empty" ? t("setup.projectNotEmpty") : t("setup.laneBusy"));
+        const body = e.body as { error?: string; detail?: { lanes?: string[] } } | undefined;
+        const code = body?.error;
+        if (code === "lane_source_change_requires_migration") {
+          // Configure-only: the backend refuses to change a populated lane's
+          // source. Surface it non-trappingly with a per-lane revert affordance.
+          const lanes = (body?.detail?.lanes ?? []).filter(
+            (l): l is LaneKey => l === "lit" || l === "sim",
+          );
+          setMigrationLanes(lanes);
+          setApplyError(
+            t("setup.laneSourceMigration", {
+              lanes: lanes.map((l) => t(`setup.lane.${l}`)).join(", "),
+            }),
+          );
+        } else {
+          setApplyError(code === "project_not_empty" ? t("setup.projectNotEmpty") : t("setup.laneBusy"));
+        }
       } else {
         setApplyError(t("setup.applyFailed"));
       }
@@ -228,7 +263,12 @@ export function SetupWizard() {
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.lanes] = el; }}>
           <StepLabel>{t("setup.step.lanes")}</StepLabel>
           <StepContent transitionDuration={STEP_COLLAPSE_MS}>
-            <LaneTargetModeStep state={draft} laneMode={laneMode} setLaneMode={setLaneMode} />
+            <LaneTargetModeStep
+              state={draft}
+              laneMode={laneMode}
+              setLaneMode={setLaneMode}
+              onLaneBooks={setLaneBooks}
+            />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button onClick={() => setActiveStep(SETUP_STEPS.sources)}>{t("setup.back")}</Button>
               <Button
@@ -266,11 +306,35 @@ export function SetupWizard() {
                 })}
               </Alert>
             )}
+            {emptyLaneSources.length > 0 && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>
+                {t("setup.laneSourceEmpty", {
+                  lanes: emptyLaneSources.map((l) => t(`setup.lane.${l}`)).join(", "),
+                })}
+              </Alert>
+            )}
             {applyError && (
-              <Alert severity="error" sx={{ mt: 1.5 }}>
+              <Alert
+                severity={migrationLanes.length > 0 ? "warning" : "error"}
+                sx={{ mt: 1.5 }}
+              >
                 {applyError}
               </Alert>
             )}
+            {migrationLanes.map((lane) => (
+              <Button
+                key={lane}
+                size="small"
+                variant="outlined"
+                sx={{ mt: 1, mr: 1 }}
+                onClick={() => revertLaneSource(lane)}
+              >
+                {t("setup.revertLaneSource", {
+                  lane: t(`setup.lane.${lane}`),
+                  repo: projectConfig?.repos?.[lane] ?? "",
+                })}
+              </Button>
+            ))}
             {laneModeError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
                 {laneModeError}
@@ -303,64 +367,13 @@ export function SetupWizard() {
                     applied ||
                     !draft.complete ||
                     !draft.upstreamVerified ||
-                    draft.hasUnverifiedOverride
+                    draft.hasUnverifiedOverride ||
+                    emptyLaneSources.length > 0
                   }
                   startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
                 >
                   {applying ? t("setup.applying") : t("setup.applyButton")}
                 </Button>
-              )}
-            </Stack>
-          </StepContent>
-        </Step>
-
-        {/* Step 4b — Finish changing the scripture source (conditional — only on
-            a source migration for an already-populated project) */}
-        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.replacement] = el; }}>
-          <StepLabel>{t("setup.step.replacement")}</StepLabel>
-          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              {t("setup.replacementStepIntro")}
-            </Typography>
-            {lanesToReplace.length === 0 ? (
-              <Alert severity="success" variant="outlined">
-                {t("setup.replacementNone")}
-              </Alert>
-            ) : (
-              <Stack spacing={2}>
-                {/* Drive by the CAPTURED set (not the live quarantine list): a lane
-                    leaves `laneState.replacementRequired` the moment it activates,
-                    but its driver must stay mounted to confirm the edit/align mode
-                    before the lane counts as done. */}
-                {lanesToReplace.map((lane) => {
-                  const ls = projectConfig?.laneState?.[lane];
-                  if (!ls) return null;
-                  const label = lane === "lit" ? draft.repos.lit || "ULT" : draft.repos.sim || "UST";
-                  return (
-                    <LaneReplacementDriver
-                      key={lane}
-                      lane={lane}
-                      label={label}
-                      laneState={ls}
-                      desiredMode={laneMode[lane]}
-                      onComplete={() => markLaneDone(lane)}
-                    />
-                  );
-                })}
-              </Stack>
-            )}
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => setActiveStep(SETUP_STEPS.done)}
-                disabled={!replacementContinueEnabled(lanesToReplace, laneDone)}
-              >
-                {t("setup.replacementContinue")}
-              </Button>
-              {!replacementContinueEnabled(lanesToReplace, laneDone) && (
-                <Typography variant="caption" color="text.secondary">
-                  {t("setup.replacementContinueBlocked")}
-                </Typography>
               )}
             </Stack>
           </StepContent>

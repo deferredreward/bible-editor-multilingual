@@ -1627,9 +1627,13 @@ export const api = {
   // the repo is confirmed to exist on DCS. Throws ApiError on 400 (garbage /
   // unsupported host), 404 (repo_not_found), or 503 (dcs_unavailable — transient,
   // NOT a real "does not exist"); callers classify via lib/setupWizard.verifyErrorKind.
-  verifySource: (url: string) =>
-    request<{ ok: true; org: string; repo: string; fullName?: string }>(
-      `/api/orgs/verify-source?url=${encodeURIComponent(url)}`,
+  // `checkBooks` additionally verifies the repo CONTAINS USFM book files (a
+  // scripture lane source that only has scaffolding is a trap). `hasBooks` is
+  // present only when checked and the content lookup succeeded; a transient
+  // contents-API failure OMITS it (treat missing as "couldn't check", not empty).
+  verifySource: (url: string, opts?: { checkBooks?: boolean }) =>
+    request<{ ok: true; org: string; repo: string; fullName?: string; hasBooks?: boolean }>(
+      `/api/orgs/verify-source?url=${encodeURIComponent(url)}${opts?.checkBooks ? "&checkBooks=1" : ""}`,
     ),
 
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),

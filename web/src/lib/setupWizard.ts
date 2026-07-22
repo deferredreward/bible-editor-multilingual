@@ -12,53 +12,23 @@ import {
   type ResourceKey,
 } from "./orgDraft.ts";
 
-// The wizard's step order (configure-only flow). `replacement` (a.k.a. "4b") is
-// conditional — only entered when a lane comes back quarantined after Apply
-// (a source migration on an already-populated project). Content import is NOT
-// part of setup — it happens later in the editor / the forthcoming Import surface.
+// The wizard's step order (configure-only flow). Setup NEVER stages/overwrites
+// scripture text: a populated-lane source change is rejected by the backend
+// (lane_source_change_requires_migration), not quarantined here, and content
+// import happens later in the editor / the forthcoming Import surface. A
+// deliberate source migration is the separate "Change scripture source" tool.
 export const SETUP_STEPS = {
   organization: 0,
   sources: 1,
   lanes: 2,
   review: 3,
-  replacement: 4,
-  done: 5,
+  done: 4,
 } as const;
 
 export type SetupStepName = keyof typeof SETUP_STEPS;
 export type SetupStepIndex = (typeof SETUP_STEPS)[SetupStepName];
 
-// Minimal shape of the per-lane public state this module reads. Mirrors the
-// `replacementRequired` flag on api.ProjectConfig.laneState.{lit,sim}.
-export interface LaneReplacementFlag {
-  replacementRequired?: boolean;
-  pendingTarget?: unknown;
-}
-export interface LaneStateLike {
-  lit?: LaneReplacementFlag;
-  sim?: LaneReplacementFlag;
-}
-
 export type LaneKey = "lit" | "sim";
-
-// The lanes (in display order) that came back quarantined after Apply (a source
-// migration on a populated project) and so need their text staged + activated in
-// the replacement step.
-export function lanesNeedingReplacement(laneState: LaneStateLike | null | undefined): LaneKey[] {
-  const out: LaneKey[] = [];
-  if (laneState?.lit?.replacementRequired) out.push("lit");
-  if (laneState?.sim?.replacementRequired) out.push("sim");
-  return out;
-}
-
-// After a successful Apply, decide the next step: enter the conditional
-// replacement step when any lane is quarantined (a source migration), otherwise
-// go straight to the done step. Setup no longer imports content.
-export function stepAfterApply(laneState: LaneStateLike | null | undefined): SetupStepIndex {
-  return lanesNeedingReplacement(laneState).length > 0
-    ? SETUP_STEPS.replacement
-    : SETUP_STEPS.done;
-}
 
 // ── Per-resource source-URL verify state machine (Step 2 "Use a different
 // source"). A pasted Door43 URL is verified on blur via GET
@@ -154,15 +124,6 @@ export function laneModeMatches(
   if (!config) return false;
   const desiredReadOnly = desiredMode === "align";
   return config.textReadOnly === desiredReadOnly && config.alignmentWritable === true;
-}
-
-// The replacement step's Continue is enabled only once EVERY lane that went
-// through replacement is confirmed done (activated AND its mode applied).
-export function replacementContinueEnabled(
-  lanesToReplace: ReadonlyArray<LaneKey>,
-  done: Partial<Record<LaneKey, boolean>>,
-): boolean {
-  return lanesToReplace.every((l) => done[l] === true);
 }
 
 // The languageCode a translationSource should carry for a given upstream org:

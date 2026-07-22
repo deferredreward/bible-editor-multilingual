@@ -260,4 +260,113 @@ console.log("[verify-source] transient DCS failure → 503 dcs_unavailable (NOT 
   }
 }
 
+// ── verify-source content check (checkBooks): a scripture lane source must
+// actually contain USFM book files, not just exist. ─────────────────────────
+// This stub answers the repo endpoint AND the contents endpoint. `contents`
+// maps "owner/repo" → an array of contents entries; `contentsStatus` maps the
+// same key → a non-200 status to simulate a transient contents-API failure.
+function stubReposAndContents(repos, contents = {}, contentsStatus = {}) {
+  globalThis.fetch = async (url) => {
+    const s = String(url);
+    const contentsM = /\/api\/v1\/repos\/([^/]+)\/([^/]+)\/contents/.exec(s);
+    if (contentsM) {
+      const key = `${decodeURIComponent(contentsM[1]).toLowerCase()}/${decodeURIComponent(contentsM[2]).toLowerCase()}`;
+      const st = contentsStatus[key];
+      if (typeof st === "number") return new Response("upstream", { status: st });
+      const entries = contents[key] ?? [];
+      return new Response(JSON.stringify(entries), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const repoM = /\/api\/v1\/repos\/([^/]+)\/([^/?]+)/.exec(s);
+    if (repoM) {
+      const key = `${decodeURIComponent(repoM[1]).toLowerCase()}/${decodeURIComponent(repoM[2]).toLowerCase()}`;
+      const rec = repos[key];
+      if (!rec) return new Response(JSON.stringify({ message: "GetRepo" }), { status: 404 });
+      return new Response(JSON.stringify(rec), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 404 });
+  };
+}
+
+console.log("[verify-source] checkBooks flags a scaffolding-only repo as hasBooks:false");
+{
+  stubReposAndContents(
+    { "bibleeditormltest/en_glt": { name: "en_glt", full_name: "BibleEditorMLTest/en_glt" } },
+    {
+      // Only scaffolding — no USFM book files.
+      "bibleeditormltest/en_glt": [
+        { type: "file", name: ".gitignore" },
+        { type: "file", name: "LICENSE.md" },
+        { type: "file", name: "README.md" },
+        { type: "file", name: "manifest.yaml" },
+      ],
+    },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+    const res = await app.request("/api/orgs/verify-source?checkBooks=1&url=BibleEditorMLTest/en_glt", {}, ENV);
+    const body = await res.json();
+    assert(res.status === 200 && body.ok === true, "repo exists → ok");
+    assert(body.hasBooks === false, "scaffolding-only → hasBooks:false");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[verify-source] checkBooks reports hasBooks:true when USFM files are present");
+{
+  stubReposAndContents(
+    { "unfoldingword/en_ult": { name: "en_ult", full_name: "unfoldingWord/en_ult" } },
+    {
+      "unfoldingword/en_ult": [
+        { type: "file", name: "LICENSE.md" },
+        { type: "file", name: "01-GEN.usfm" },
+        { type: "file", name: "02-EXO.usfm" },
+      ],
+    },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+    const res = await app.request("/api/orgs/verify-source?checkBooks=1&url=unfoldingWord/en_ult", {}, ENV);
+    const body = await res.json();
+    assert(res.status === 200 && body.ok === true, "ok");
+    assert(body.hasBooks === true, "USFM present → hasBooks:true");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[verify-source] a transient contents-API failure OMITS hasBooks (never a false empty)");
+{
+  stubReposAndContents(
+    { "unfoldingword/en_ult": { name: "en_ult", full_name: "unfoldingWord/en_ult" } },
+    {},
+    { "unfoldingword/en_ult": 502 },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+    const res = await app.request("/api/orgs/verify-source?checkBooks=1&url=unfoldingWord/en_ult", {}, ENV);
+    const body = await res.json();
+    assert(res.status === 200 && body.ok === true, "repo still verifies ok");
+    assert(!("hasBooks" in body), "contents blip → hasBooks omitted (client retries, not a false empty)");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[verify-source] without checkBooks, no content call is made and hasBooks is absent");
+{
+  stubReposAndContents(
+    { "unfoldingword/en_ult": { name: "en_ult", full_name: "unfoldingWord/en_ult" } },
+    { "unfoldingword/en_ult": [{ type: "file", name: "01-GEN.usfm" }] },
+  );
+  try {
+    const app = buildApp({ userId: 1, role: "admin" });
+    const res = await app.request("/api/orgs/verify-source?url=unfoldingWord/en_ult", {}, ENV);
+    const body = await res.json();
+    assert(res.status === 200 && body.ok === true && !("hasBooks" in body), "no checkBooks → hasBooks absent");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("orgRoutes search tests passed");
