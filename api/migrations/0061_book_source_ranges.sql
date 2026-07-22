@@ -1,6 +1,6 @@
 -- Per-chapter-range source overrides (issue #103, Tier 2).
 --
--- book_source_overrides (0058) was keyed (book, resource) — exactly ONE source
+-- book_source_overrides (0060) was keyed (book, resource) — exactly ONE source
 -- per book+resource. Tier 2 allows MULTIPLE ranges per (book, resource): the
 -- BSOJ driver is tN chapters 1-11 from unfoldingWord and 12-16 from Aquifer in
 -- one book. Ranges are [chapter_start, chapter_end] INCLUSIVE.

@@ -9,7 +9,7 @@
 //
 //   per-range override → per-book(whole) override → project-wide → org's own (null)
 //
-// Storage: book_source_overrides (migrations 0058 + 0059). A (book, resource)
+// Storage: book_source_overrides (migrations 0060 + 0061). A (book, resource)
 // may carry MULTIPLE ranges [chapter_start, chapter_end] inclusive; whole-book
 // (Tier 1) is the single range (0, 999).
 //
@@ -37,7 +37,7 @@ export function isBookSourceResource(v: string): v is BookSourceResource {
   return (BOOK_SOURCE_RESOURCES as readonly string[]).includes(v);
 }
 
-// Whole-book range sentinels (migration 0059). 0 includes front matter (refParts
+// Whole-book range sentinels (migration 0061). 0 includes front matter (refParts
 // maps "front" → chapter 0); 999 exceeds any real chapter count.
 export const WHOLE_BOOK_START = 0;
 export const WHOLE_BOOK_END = 999;

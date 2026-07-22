@@ -246,10 +246,10 @@ async function runStorage() {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY); INSERT INTO users (id) VALUES (1);");
   // Apply the exact migration chain that creates + reshapes the table.
-  db.exec(readFileSync("migrations/0058_book_source_overrides.sql", "utf8"));
-  // Seed a Tier 1 whole-book row on the OLD schema to prove 0059 migrates it to (0,999).
+  db.exec(readFileSync("migrations/0060_book_source_overrides.sql", "utf8"));
+  // Seed a Tier 1 whole-book row on the OLD schema to prove 0061 migrates it to (0,999).
   db.exec("INSERT INTO book_source_overrides (book, resource, org, repo) VALUES ('LUK','tn','BibleAquifer','arb_tn');");
-  db.exec(readFileSync("migrations/0059_book_source_ranges.sql", "utf8"));
+  db.exec(readFileSync("migrations/0061_book_source_ranges.sql", "utf8"));
   const env = { DB: d1(db) };
 
   // 0059 migrated the pre-existing whole-book row to (0, 999).
