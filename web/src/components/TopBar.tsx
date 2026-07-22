@@ -10,9 +10,6 @@ import {
   Autocomplete,
   TextField,
   InputAdornment,
-  Snackbar,
-  Alert,
-  CircularProgress,
   Popover,
   Button,
 } from "@mui/material";
@@ -32,6 +29,7 @@ import CheckIcon from "@mui/icons-material/Check";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import NoteAltOutlinedIcon from "@mui/icons-material/NoteAltOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import TranslateIcon from "@mui/icons-material/Translate";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
@@ -39,7 +37,7 @@ import { useTranslation } from "react-i18next";
 import { useProjectConfig, isTranslationProject, setProjectMode } from "../hooks/useProjectConfig";
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
-import { api, ApiError, importedSourceRepos, isAdmin, type BookListEntry, type BookSummary } from "../sync/api";
+import { api, isAdmin, type BookListEntry, type BookSummary } from "../sync/api";
 import { SyncStatusBar } from "./SyncStatusBar";
 import { VersionIndicator } from "./VersionIndicator";
 import { BOOKS, bookName, bookAbbr, resolveBook } from "../lib/bookNames";
@@ -209,11 +207,6 @@ export function TopBar({
   const [summary, setSummary] = useState<BookSummary | null>(null);
   const [refInput, setRefInput] = useState("");
   const [refError, setRefError] = useState<string | null>(null);
-  const [importing, setImporting] = useState<string | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
-  // Set when the server reports tN/tQ came from the English source repos —
-  // the fallback can fire on its own when the org's file is missing.
-  const [importSourceNote, setImportSourceNote] = useState<string | null>(null);
   const { mode, toggle } = useContext(ThemeModeContext);
   const projectConfig = useProjectConfig();
   const showArticles = isTranslationProject(projectConfig);
@@ -243,38 +236,20 @@ export function TopBar({
     api.getBookSummary(book).then(setSummary).catch(() => setSummary(null));
   }, [book]);
 
-  // Trigger a DCS import for an unfetched book, then refresh the books list
-  // and navigate. The caller's onChange short-circuits if the book is
-  // already imported, so this is the cold path only.
-  const importAndNavigate = async (
-    code: string,
-    targetChapter: number = 1,
-    verse?: number,
-  ) => {
-    setImporting(code);
-    setImportError(null);
-    setImportSourceNote(null);
-    try {
-      const res = await api.importBook(code);
-      const usedSources = importedSourceRepos(res.sources);
-      if (usedSources.length > 0) {
-        setImportSourceNote(t("topbar.importedFromSource", { repos: usedSources.join(", ") }));
-      }
-      const r = await api.getBooks();
-      setBooks(r.books);
-      onNavigate(code, targetChapter, verse);
-    } catch (e) {
-      // The backend reports exactly which DCS resource failed (and whether it
-      // was a hard 404 or a transient hiccup) in the error body's `message`.
-      // Prefer that over the bare "HTTP 502" carried by e.message, so an
-      // operator can tell a genuinely-missing book from a retry-able blip.
-      const body = e instanceof ApiError ? (e.body as { error?: string; message?: string } | undefined) : undefined;
-      const msg =
-        body?.message ?? body?.error ?? (e instanceof Error ? e.message : String(e));
-      setImportError(t("topbar.couldntImport", { book: bookName(code), message: msg }));
-    } finally {
-      setImporting(null);
+  // Un-imported books are no longer silently bootstrapped from here. Selecting
+  // one routes to the deliberate IMPORT surface (#/import/:book), where the user
+  // picks an intent (translate a new book vs load existing work) before any
+  // destructive import runs. Already-imported books navigate as before.
+  // Optionally carries the requested chapter[:verse] through the route so a
+  // reference like "MAT 5:3" for an un-imported book lands at 5:3 after import
+  // (Open in editor reads it) instead of silently resetting to 1:1.
+  const goToImport = (code: string, targetChapter?: number, verse?: number) => {
+    const parts = [`#/import/${code}`];
+    if (targetChapter && targetChapter > 0) {
+      parts.push(String(targetChapter));
+      if (verse && verse > 0) parts.push(String(verse));
     }
+    location.hash = parts.join("/");
   };
 
   const chapterList = (summary?.chapters ?? []).map((c) => c.chapter);
@@ -283,7 +258,7 @@ export function TopBar({
   const canNext = idx >= 0 && idx < chapterList.length - 1;
 
   // Canonical 66-book list — unimported books surface in the dropdown with
-  // a "+" hint, and selecting one kicks off importAndNavigate. Keeping the
+  // a download hint, and selecting one routes to the IMPORT surface. Keeping the
   // canonical order means books always land in their familiar slot.
   const importedSet = useMemo(() => new Set(books.map((b) => b.book)), [books]);
   const bookOptions = useMemo(() => BOOKS.map((b) => b.code), []);
@@ -307,7 +282,7 @@ export function TopBar({
     if (importedSet.has(targetBook)) {
       onNavigate(targetBook, targetChapter, verse);
     } else {
-      void importAndNavigate(targetBook, targetChapter, verse);
+      goToImport(targetBook, targetChapter, verse);
     }
   };
 
@@ -339,13 +314,12 @@ export function TopBar({
           value={book}
           options={bookOptions.includes(book) ? bookOptions : [book, ...bookOptions]}
           disableClearable
-          disabled={importing !== null}
           onChange={(_, v) => {
             if (!v || v === book) return;
             if (importedSet.has(v)) {
               onNavigate(v, 1);
             } else {
-              void importAndNavigate(v);
+              goToImport(v);
             }
           }}
           selectOnFocus
@@ -404,14 +378,6 @@ export function TopBar({
               inputProps={{
                 ...params.inputProps,
                 style: { fontFamily: "monospace", textTransform: "uppercase" },
-              }}
-              InputProps={{
-                ...params.InputProps,
-                endAdornment: importing ? (
-                  <InputAdornment position="end">
-                    <CircularProgress size={14} />
-                  </InputAdornment>
-                ) : params.InputProps.endAdornment,
               }}
             />
           )}
@@ -597,6 +563,19 @@ export function TopBar({
           </IconButton>
         </Tooltip>
       )}
+      <Tooltip title={t("import.navTitle")}>
+        <IconButton
+          size="small"
+          color="inherit"
+          onClick={() => {
+            location.hash = "#/import";
+          }}
+          aria-label={t("import.navTitle")}
+          sx={{ color: "text.secondary" }}
+        >
+          <FileDownloadOutlinedIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
       <Tooltip title={t("preferences.title")}>
         <IconButton
           size="small"
@@ -624,34 +603,6 @@ export function TopBar({
       <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
       {pipelineMenu}
       {pipelineStatus}
-      <Snackbar
-        open={importing !== null}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert severity="info" icon={<CircularProgress size={16} />}>
-          {t("topbar.importingFromDcs", { book: importing ? bookName(importing) : "" })}
-        </Alert>
-      </Snackbar>
-      <Snackbar
-        open={importError !== null}
-        autoHideDuration={6000}
-        onClose={() => setImportError(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert severity="error" onClose={() => setImportError(null)}>
-          {importError}
-        </Alert>
-      </Snackbar>
-      <Snackbar
-        open={importSourceNote !== null}
-        autoHideDuration={8000}
-        onClose={() => setImportSourceNote(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert severity="info" onClose={() => setImportSourceNote(null)}>
-          {importSourceNote}
-        </Alert>
-      </Snackbar>
     </Stack>
   );
 }
