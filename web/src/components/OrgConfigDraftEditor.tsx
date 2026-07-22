@@ -25,6 +25,7 @@ import {
   type ResourceSourceMap,
 } from "../lib/orgDraft";
 import { resolveResourceLanguage, type ResolvedResourceLanguage } from "../lib/isoLanguages";
+import { hasUnverifiedOverride, unverifiedOverrideResources } from "../lib/setupWizard";
 
 // The seven repo roles a custom-gl override must carry, in display order.
 export const RESOURCE_ROLES = RESOURCE_KEYS;
@@ -67,10 +68,16 @@ export interface OrgDraftState {
   /** Per-resource source selection: pull from upstream, an override repo, or blank. */
   resourceSource: ResourceSourceMap;
   setResourceSource: (key: ResourceKey, sel: ResourceSource) => void;
+  /** True when any resource sits on an override URL that hasn't verified — Apply must block. */
+  hasUnverifiedOverride: boolean;
+  /** The resources currently on an unverified override (for a "fix these" message). */
+  unverifiedOverrideResources: ResourceKey[];
   /** Pre-seeded resource language (null until seeded); prefers inferred, falls back to UI lang. */
   resourceLang: ResolvedResourceLanguage | null;
   /** Seed resourceLang from the current draft's inference, falling back to the UI language. */
   seedResourceLanguage: (uiLangCode: string) => void;
+  /** Directly set the resource language (Setup wizard's editable Autocomplete). */
+  setResourceLanguage: (lang: ResolvedResourceLanguage | null) => void;
   exportOrg: string;
   setExportOrg: (v: string) => void;
   /** Run inference for the entered org. */
@@ -114,6 +121,7 @@ export function useOrgDraft(): OrgDraftState {
 
   const seedResourceLanguage = (uiLangCode: string) =>
     setResourceLang(resolveResourceLanguage(draft?.proposal ?? null, uiLangCode));
+  const setResourceLanguage = (lang: ResolvedResourceLanguage | null) => setResourceLang(lang);
 
   const reset = () => {
     setDraft(null);
@@ -210,8 +218,11 @@ export function useOrgDraft(): OrgDraftState {
     setUpstreamRepos,
     resourceSource,
     setResourceSource,
+    hasUnverifiedOverride: hasUnverifiedOverride(resourceSource),
+    unverifiedOverrideResources: unverifiedOverrideResources(resourceSource),
     resourceLang,
     seedResourceLanguage,
+    setResourceLanguage,
     exportOrg,
     setExportOrg,
     detect,

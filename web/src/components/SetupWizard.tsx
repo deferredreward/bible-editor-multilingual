@@ -1,88 +1,249 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
-  Checkbox,
   CircularProgress,
-  FormControlLabel,
-  Link,
   Stack,
   Step,
   StepContent,
   StepLabel,
   Stepper,
-  TextField,
   Typography,
 } from "@mui/material";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, importedSourceRepos } from "../sync/api";
+import { api, ApiError } from "../sync/api";
+import { applyProjectOverrides, refreshProjectConfig, useProjectConfig } from "../hooks/useProjectConfig";
+import { useOrgDraft } from "./OrgConfigDraftEditor";
+import { OrgIdentityFields } from "./OrgIdentityFields";
+import { UpstreamSourcePicker } from "./UpstreamSourcePicker";
+import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneTargetModeStep";
+import { RepoRef } from "./SourceOverrideField";
+import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
 import {
-  applyProjectOverrides,
-  isTranslationProject,
-  refreshProjectConfig,
-  useProjectConfig,
-} from "../hooks/useProjectConfig";
-import { BOOKS, bookName } from "../lib/bookNames";
-import { useOrgDraft, OrgDraftFields, LaneRepoFields } from "./OrgConfigDraftEditor";
+  SETUP_STEPS,
+  shouldPrefillFromCurrent,
+  wizardApply409,
+  laneSourceEstablished,
+  laneActiveSourceRepo,
+  laneSourceReconcilable,
+  type LaneKey,
+} from "../lib/setupWizard";
 
-// gatewayAdmin has no confirmed public URL recorded in this repo; link to the
-// Door43 Content Service host (verifiable) and name gatewayAdmin in the copy.
-// Kept as a constant so it's a one-line change if the real URL is confirmed.
-const GATEWAY_ADMIN_URL = "https://git.door43.org";
+const LANE_KEYS: LaneKey[] = ["lit", "sim"];
 
-// Safety cap on the populate loop — each call drains up to ~150 fetches, so this
-// covers even the largest book many times over without risking a hung tab.
-const POPULATE_MAX_ROUNDS = 60;
+// Pinned duration (ms) for each StepContent's expand/collapse Collapse. Fixed —
+// not MUI's default 'auto', which scales with content height and would make the
+// post-transition scroll delay unpredictable. The scroll-to-header effect waits
+// this long (plus a small buffer) before scrolling.
+const STEP_COLLAPSE_MS = 260;
 
-// Admin-only guided onboarding for a brand-new org: point the editor at the org's
-// Door43 repos (custom-gl), then import a first book and fill its tW/tA areas.
-// Pure UI orchestration over routes PR A/B already expose.
+// Apply the edit/align choice to each lane post-Apply. "align" = text frozen
+// (read-only) but alignment writable; "edit" = both writable. Skips any lane
+// already in the desired state (and, defensively, any replacement-locked lane —
+// the configure-only wizard never creates one, but a concurrent Change-Source
+// migration could). Reads the FRESH config so configRevision isn't stale, and
+// RETURNS the lanes whose patch failed so the caller can block rather than
+// silently leave an "aligning only" lane editable (data-safety).
+async function applyLaneModes(laneMode: LaneModeMap): Promise<("lit" | "sim")[]> {
+  const cfg = await refreshProjectConfig().catch(() => null);
+  if (!cfg) return ["lit", "sim"];
+  const failed: ("lit" | "sim")[] = [];
+  for (const lane of ["lit", "sim"] as const) {
+    const ls = cfg.laneState?.[lane];
+    if (!ls || ls.replacementRequired) continue;
+    const desiredReadOnly = laneMode[lane] === "align";
+    if (ls.config.textReadOnly === desiredReadOnly && ls.config.alignmentWritable) continue;
+    try {
+      await api.lanePatch(lane, ls.configRevision, {
+        textReadOnly: desiredReadOnly,
+        alignmentWritable: true,
+      });
+    } catch {
+      failed.push(lane);
+    }
+  }
+  return failed;
+}
+
+// Admin-only guided CONFIGURATION for an org (owner-confirmed flow): confirm the
+// org + resource language, choose the upstream sources to pull FROM, set the
+// org's own target repos + edit/align per lane, apply, and (only when
+// re-configuring a populated project) finish changing the scripture source.
+// Setup no longer imports content — that happens later in the editor / the
+// forthcoming Import surface.
 export function SetupWizard() {
   const { t } = useTranslation();
   const draft = useOrgDraft();
-  const [activeStep, setActiveStep] = useState(0);
+  const projectConfig = useProjectConfig();
+  const [activeStep, setActiveStep] = useState<number>(SETUP_STEPS.organization);
+
+  // Step 3 — per-lane edit/align choice (applied after Apply).
+  const [laneMode, setLaneModeState] = useState<LaneModeMap>({ lit: "edit", sim: "edit" });
+  const setLaneMode = (lane: "lit" | "sim", m: LaneEditMode) =>
+    setLaneModeState((s) => ({ ...s, [lane]: m }));
 
   // Step 4 — apply.
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  // True once the custom-gl overrides were persisted — re-clicking Apply would
+  // 409, so after this only the lane-mode step can be retried.
+  const [applied, setApplied] = useState(false);
+  // Set when a post-apply lanePatch (edit/align) failed: block advancing and
+  // offer a retry, so an "Aligning only" lane is never left editable.
+  const [laneModeError, setLaneModeError] = useState<string | null>(null);
 
-  // Step 5 — import + populate.
-  const [book, setBook] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ processed: number; remaining: number } | null>(null);
-  const [populateNote, setPopulateNote] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState(0);
-  const [importedBook, setImportedBook] = useState<string | null>(null);
-  // Opt-in: pull tN/tQ from the project's English source repos rather than the
-  // org's own (stale machine-translated notes whose row ids no longer match).
-  const [translateFromSource, setTranslateFromSource] = useState(false);
-  const [sourceNote, setSourceNote] = useState<string | null>(null);
+  // Lanes the backend refused to change the source of because the project is
+  // already populated (409 lane_source_change_requires_migration). We offer to
+  // revert each to the current config's repo so the admin isn't stuck.
+  const [migrationLanes, setMigrationLanes] = useState<LaneKey[]>([]);
+  // Set when a same-org re-run tripped 409 project_not_empty (a non-lane repo
+  // was edited, shifting the data/export identity) — offer "revert ALL repos".
+  const [revertAll, setRevertAll] = useState(false);
 
-  const projectConfig = useProjectConfig();
-  const canTranslateFromSource = isTranslationProject(projectConfig);
+  // ── Populated-lane source lock (stops the migration-409 loop) ──────────────
+  // A lane that already has verses (or is mid-migration) has its source LOCKED to
+  // the live ACTIVE source — the exact baseline the backend 409 compares against
+  // (from laneState, NOT projectConfig.repos, which overlayLaneLabels can already
+  // have rewritten to the lane's active source anyway). We lock the Step-3 target
+  // field and, when the active source can't be reproduced by the configure-only
+  // model (foreign owner / mid-migration — the mltest drift), block Apply with a
+  // clear message instead of offering a revert that can never win.
+  const laneState = projectConfig?.laneState;
+  const detectedOrg = draft.draft?.org ?? "";
+  const lockedLanes = LANE_KEYS.filter((l) => laneSourceEstablished(laneState?.[l]));
+  const blockedLanes = LANE_KEYS.filter((l) => !laneSourceReconcilable(laneState?.[l], detectedOrg));
 
-  const bookOptions = useMemo(() => BOOKS.map((b) => b.code), []);
+  // Pre-fill once. Locked lanes take their repo from the ACTIVE source (the 409
+  // baseline); non-lane repos come from the current config on a same-org re-run
+  // (so re-running proposes no identity change). Never prefills a fresh org's
+  // lanes — there laneState has no verses, nothing is locked, and detect()'s
+  // inference wins. The lane field is disabled once locked, so no re-clobber.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !draft.draft || !projectConfig) return;
+    prefilled.current = true;
+    for (const lane of LANE_KEYS) {
+      if (laneSourceEstablished(laneState?.[lane])) {
+        const repo = laneActiveSourceRepo(laneState?.[lane]);
+        if (repo) draft.setRepo(lane, repo);
+      }
+    }
+    // Non-lane prefill: same-org re-run, keyed on exportOrg (NOT `org`, which
+    // overlayLaneLabels rewrites to the lane's active-source owner and would read
+    // foreign on a mid-migration project).
+    if (shouldPrefillFromCurrent(projectConfig.exportOrg, draft.draft.org)) {
+      for (const key of ["tn", "tq", "twl", "tw", "ta"] as const) {
+        const repo = projectConfig.repos?.[key];
+        if (repo) draft.setRepo(key, repo);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.draft, projectConfig]);
+
+  const revertLaneSource = (lane: LaneKey) => {
+    const current = projectConfig?.repos?.[lane];
+    if (current) draft.setRepo(lane, current);
+    setMigrationLanes((ls) => ls.filter((l) => l !== lane));
+  };
+
+  // Reset every target repo to the current config (all lanes + non-lane repos) —
+  // the escape hatch when a same-org re-run's edits tripped the identity guard.
+  const revertAllRepos = () => {
+    if (!projectConfig) return;
+    for (const key of RESOURCE_KEYS) {
+      const repo = projectConfig.repos?.[key];
+      if (repo) draft.setRepo(key, repo);
+    }
+    setRevertAll(false);
+    setApplyError(null);
+  };
+
+  // Scroll the newly-active step's HEADER to the top of the viewport on change,
+  // so the admin lands on "N. <title>" rather than below it. The ref sits on the
+  // <Step> root, whose top edge IS the numbered StepLabel header.
+  //
+  // Timing is the whole game here: MUI's StepContent Collapse animates the old
+  // step closed and the new one open over STEP_COLLAPSE_MS (pinned below so this
+  // delay is deterministic — the default 'auto' duration scales with content
+  // height and is unpredictable). Scrolling synchronously on activeStep change
+  // targets a stale mid-animation layout, and the post-expansion shift then
+  // leaves the header above the viewport (the reported "lands at the bottom of
+  // the next step" bug). So defer until after the transition settles. Skip the
+  // initial mount so opening Setup doesn't yank the page.
+  const stepRefs = useRef<(HTMLElement | null)[]>([]);
+  const firstScrollRun = useRef(true);
+  useEffect(() => {
+    if (firstScrollRun.current) {
+      firstScrollRun.current = false;
+      return;
+    }
+    const el = stepRefs.current[activeStep];
+    if (!el) return;
+    const timer = setTimeout(() => {
+      // rAF so the scroll runs on a frame after the transition's final layout is
+      // committed, not the same tick the timeout fires.
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }, STEP_COLLAPSE_MS + 60);
+    return () => clearTimeout(timer);
+  }, [activeStep]);
+
+  // Apply the lane edit/align modes, then advance to Done. A lanePatch failure is
+  // recoverable via the retry button without re-applying the persisted overrides.
+  const finishLaneModesAndAdvance = async () => {
+    const failed = await applyLaneModes(laneMode);
+    if (failed.length > 0) {
+      setLaneModeError(t("setup.laneModeFailed", { lanes: failed.join(", ") }));
+      return;
+    }
+    setLaneModeError(null);
+    await refreshProjectConfig().catch(() => {});
+    setActiveStep(SETUP_STEPS.done);
+  };
 
   const doApply = async () => {
-    if (!draft.complete) return;
+    if (
+      !draft.complete ||
+      !draft.upstreamVerified ||
+      draft.hasUnverifiedOverride ||
+      blockedLanes.length > 0
+    ) {
+      return;
+    }
     setApplying(true);
     setApplyError(null);
+    setLaneModeError(null);
+    setMigrationLanes([]);
+    setRevertAll(false);
     try {
       await applyProjectOverrides("custom-gl", draft.buildOverrides());
-      await refreshProjectConfig().catch(() => {});
-      setActiveStep(4);
+      setApplied(true);
+      await finishLaneModesAndAdvance();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        const code = (e.body as { error?: string } | undefined)?.error;
-        setApplyError(
-          code === "project_not_empty"
-            ? t("setup.projectNotEmpty")
-            : t("setup.laneBusy"),
-        );
+        const body = e.body as { error?: string; detail?: { lanes?: string[] } } | undefined;
+        const code = body?.error;
+        // Same-org re-run? Then a project_not_empty is an identity edit the admin
+        // can fix by reverting repos — NOT the different-org "recreate the DB"
+        // tenancy stop. wizardApply409 picks the right message + revert affordance.
+        const sameOrg = shouldPrefillFromCurrent(projectConfig?.org, draft.draft?.org);
+        const { messageKey, revert } = wizardApply409(code, sameOrg);
+        if (revert === "lanes") {
+          const lanes = (body?.detail?.lanes ?? []).filter(
+            (l): l is LaneKey => l === "lit" || l === "sim",
+          );
+          setMigrationLanes(lanes);
+          setApplyError(
+            t(messageKey, { lanes: lanes.map((l) => t(`setup.lane.${l}`)).join(", ") }),
+          );
+        } else if (revert === "allRepos") {
+          setRevertAll(true);
+          setApplyError(t(messageKey));
+        } else {
+          setApplyError(t(messageKey));
+        }
       } else {
         setApplyError(t("setup.applyFailed"));
       }
@@ -91,78 +252,17 @@ export function SetupWizard() {
     }
   };
 
-  const doImport = async () => {
-    if (!book) return;
-    setImporting(true);
-    setImportError(null);
-    setPopulateNote(null);
-    setProgress(null);
-    setWarnings(0);
-    setSourceNote(null);
+  const retryLaneModes = async () => {
+    setApplying(true);
     try {
-      const res = await api.importBook(
-        book,
-        translateFromSource ? { translateFromSource: true } : undefined,
-      );
-      // Non-null entries mean tN/tQ came from the English source — either
-      // because the box was ticked, or because the org's own file was missing
-      // and the server fell back on its own.
-      const usedSources = importedSourceRepos(res.sources);
-      if (usedSources.length > 0) {
-        setSourceNote(t("setup.importedFromSource", { repos: usedSources.join(", ") }));
-      }
-      // Drain the article-population queue for this book: each call processes one
-      // bounded chunk and reports how many refs remain. Loop until remaining is 0
-      // (or the driver skips/aborts).
-      let totalProcessed = 0;
-      let totalWarnings = 0;
-      let settled = false;
-      for (let round = 0; round < POPULATE_MAX_ROUNDS; round++) {
-        const r = await api.populateArticles({ book });
-        totalProcessed += r.processed;
-        totalWarnings += r.warnings.length;
-        setProgress({ processed: totalProcessed, remaining: r.remaining });
-        setWarnings(totalWarnings);
-        if (r.skipped) {
-          setPopulateNote(t("setup.populateSkipped"));
-          settled = true;
-          break;
-        }
-        if (r.aborted) {
-          setPopulateNote(t("setup.populateAborted"));
-          settled = true;
-          break;
-        }
-        if (r.remaining === 0) {
-          settled = true;
-          break;
-        }
-      }
-      // Backstop hit with work still queued — surface it rather than reporting a
-      // clean finish. The user can re-run population from the articles workspace.
-      if (!settled) setPopulateNote(t("setup.populateIncomplete"));
-      setImportedBook(book);
-      setActiveStep(5);
-    } catch (e) {
-      if (e instanceof ApiError) {
-        const code = (e.body as { error?: string } | undefined)?.error;
-        setImportError(
-          code === "unknown_book"
-            ? t("setup.unknownBook")
-            : code === "in_progress"
-              ? t("setup.importInProgress")
-              : t("setup.importFailed"),
-        );
-      } else {
-        setImportError(t("setup.importFailed"));
-      }
+      await finishLaneModesAndAdvance();
     } finally {
-      setImporting(false);
+      setApplying(false);
     }
   };
 
   return (
-    <Box component="section" aria-labelledby="setup-wizard-heading" sx={{ maxWidth: 640 }}>
+    <Box component="section" aria-labelledby="setup-wizard-heading" sx={{ maxWidth: 680 }}>
       <Typography id="setup-wizard-heading" variant="h6" gutterBottom>
         {t("setup.title")}
       </Typography>
@@ -171,84 +271,57 @@ export function SetupWizard() {
       </Typography>
 
       <Stepper activeStep={activeStep} orientation="vertical">
-        {/* Step 1 — gatewayAdmin */}
-        <Step>
-          <StepLabel>{t("setup.step.gatewayAdmin")}</StepLabel>
-          <StepContent>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              {t("setup.gatewayAdminIntro")}
-            </Typography>
-            <Typography variant="body2" component="pre" sx={{ whiteSpace: "pre-wrap", mb: 1 }}>
-              {t("setup.gatewayAdminChecklist")}
-            </Typography>
-            <Link href={GATEWAY_ADMIN_URL} target="_blank" rel="noopener noreferrer">
-              {t("setup.gatewayAdminLink")} <OpenInNewIcon fontSize="inherit" sx={{ verticalAlign: "middle" }} />
-            </Link>
+        {/* Step 1 — Your organization */}
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.organization] = el; }}>
+          <StepLabel>{t("setup.step.organization")}</StepLabel>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
+            <OrgIdentityFields state={draft} />
             <Box sx={{ mt: 2 }}>
-              <Button variant="contained" onClick={() => setActiveStep(1)}>
-                {t("setup.reposReady")}
+              <Button
+                variant="contained"
+                disabled={!draft.draft || !draft.resourceLang}
+                onClick={() => setActiveStep(SETUP_STEPS.sources)}
+              >
+                {t("setup.next")}
               </Button>
             </Box>
           </StepContent>
         </Step>
 
-        {/* Step 2 — detect org */}
-        <Step>
-          <StepLabel>{t("setup.step.detectOrg")}</StepLabel>
-          <StepContent>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              {t("setup.detectIntro")}
-            </Typography>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <TextField
-                size="small"
-                placeholder="BibleEditorMLTest"
-                value={draft.org}
-                onChange={(e) => draft.setOrg(e.target.value)}
-                disabled={draft.loading}
-              />
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={draft.detect}
-                disabled={draft.loading || !draft.org.trim()}
-              >
-                {draft.loading ? <CircularProgress size={16} /> : t("preferences.detectOrg.button")}
-              </Button>
-            </Stack>
-            {draft.detectError && (
-              <Alert severity="error" sx={{ mt: 1 }}>
-                {draft.detectError}
-              </Alert>
-            )}
-            {draft.draft && (
-              <Box sx={{ mt: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
-                <OrgDraftFields state={draft} />
-              </Box>
-            )}
+        {/* Step 2 — Sources (pull FROM) */}
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.sources] = el; }}>
+          <StepLabel>{t("setup.step.sources")}</StepLabel>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
+            <UpstreamSourcePicker state={draft} />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-              <Button onClick={() => setActiveStep(0)}>{t("setup.back")}</Button>
-              <Button variant="contained" disabled={!draft.complete} onClick={() => setActiveStep(2)}>
+              <Button onClick={() => setActiveStep(SETUP_STEPS.organization)}>{t("setup.back")}</Button>
+              <Button
+                variant="contained"
+                disabled={!draft.upstreamVerified || draft.hasUnverifiedOverride}
+                onClick={() => setActiveStep(SETUP_STEPS.lanes)}
+              >
                 {t("setup.next")}
               </Button>
             </Stack>
           </StepContent>
         </Step>
 
-        {/* Step 3 — confirm literal/simplified */}
-        <Step>
-          <StepLabel>{t("setup.step.confirmLanes")}</StepLabel>
-          <StepContent>
-            <Typography variant="body2" sx={{ mb: 1.5 }}>
-              {t("setup.confirmLanesIntro")}
-            </Typography>
-            <LaneRepoFields state={draft} />
+        {/* Step 3 — Your scripture lanes: target + edit/align */}
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.lanes] = el; }}>
+          <StepLabel>{t("setup.step.lanes")}</StepLabel>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
+            <LaneTargetModeStep
+              state={draft}
+              laneMode={laneMode}
+              setLaneMode={setLaneMode}
+              lockedLanes={lockedLanes}
+            />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-              <Button onClick={() => setActiveStep(1)}>{t("setup.back")}</Button>
+              <Button onClick={() => setActiveStep(SETUP_STEPS.sources)}>{t("setup.back")}</Button>
               <Button
                 variant="contained"
                 disabled={!draft.repos.lit?.trim() || !draft.repos.sim?.trim()}
-                onClick={() => setActiveStep(3)}
+                onClick={() => setActiveStep(SETUP_STEPS.review)}
               >
                 {t("setup.next")}
               </Button>
@@ -256,132 +329,258 @@ export function SetupWizard() {
           </StepContent>
         </Step>
 
-        {/* Step 4 — apply */}
-        <Step>
-          <StepLabel>{t("setup.step.apply")}</StepLabel>
-          <StepContent>
-            <Typography variant="body2" sx={{ mb: 1.5 }}>
-              {t("setup.applyIntro", { org: draft.draft?.org ?? "" })}
-            </Typography>
+        {/* Step 4 — Review & apply */}
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.review] = el; }}>
+          <StepLabel>{t("setup.step.review")}</StepLabel>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
+            <ReviewSummary state={draft} laneMode={laneMode} />
+            {blockedLanes.length > 0 && (
+              <Alert severity="error" sx={{ mt: 1.5 }}>
+                {t("setup.laneSourceLockedBlocked", {
+                  lanes: blockedLanes.map((l) => t(`setup.lane.${l}`)).join(", "),
+                })}
+              </Alert>
+            )}
+            {!draft.complete && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>
+                {t("setup.reviewIncomplete")}
+              </Alert>
+            )}
+            {!draft.upstreamVerified && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>
+                {t("setup.upstreamOrgUnverified")}
+              </Alert>
+            )}
+            {draft.hasUnverifiedOverride && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>
+                {t("setup.unverifiedOverride", {
+                  resources: draft.unverifiedOverrideResources
+                    .map((r) => t(`setup.resource.${r}`))
+                    .join(", "),
+                })}
+              </Alert>
+            )}
             {applyError && (
-              <Alert severity="error" sx={{ mb: 1.5 }}>
+              <Alert
+                severity={migrationLanes.length > 0 || revertAll ? "warning" : "error"}
+                sx={{ mt: 1.5 }}
+              >
                 {applyError}
               </Alert>
             )}
-            <Stack direction="row" spacing={1}>
-              <Button onClick={() => setActiveStep(2)} disabled={applying}>
-                {t("setup.back")}
-              </Button>
+            {migrationLanes.map((lane) => (
               <Button
-                variant="contained"
-                onClick={doApply}
-                disabled={applying || !draft.complete}
-                startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
+                key={lane}
+                size="small"
+                variant="outlined"
+                sx={{ mt: 1, mr: 1 }}
+                onClick={() => revertLaneSource(lane)}
               >
-                {applying ? t("setup.applying") : t("setup.applyButton")}
+                {t("setup.revertLaneSource", {
+                  lane: t(`setup.lane.${lane}`),
+                  repo: projectConfig?.repos?.[lane] ?? "",
+                })}
               </Button>
-            </Stack>
-          </StepContent>
-        </Step>
-
-        {/* Step 5 — import first book */}
-        <Step>
-          <StepLabel>{t("setup.step.importBook")}</StepLabel>
-          <StepContent>
-            <Typography variant="body2" sx={{ mb: 1.5 }}>
-              {t("setup.importIntro")}
-            </Typography>
-            <Autocomplete
-              size="small"
-              options={bookOptions}
-              value={book}
-              onChange={(_, v) => setBook(v)}
-              getOptionLabel={(code) => `${bookName(code)} (${code})`}
-              disabled={importing}
-              sx={{ maxWidth: 320 }}
-              renderInput={(params) => <TextField {...params} label={t("setup.bookLabel")} />}
-            />
-            {canTranslateFromSource && (
-              <Box sx={{ mt: 1.5 }}>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={translateFromSource}
-                      onChange={(e) => setTranslateFromSource(e.target.checked)}
-                      disabled={importing}
-                    />
-                  }
-                  label={t("setup.translateFromSource")}
-                />
-                <Typography variant="caption" color="text.secondary" component="p" sx={{ ml: 4 }}>
-                  {t("setup.translateFromSourceHelp")}
-                </Typography>
-              </Box>
+            ))}
+            {revertAll && (
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{ mt: 1, mr: 1 }}
+                onClick={revertAllRepos}
+              >
+                {t("setup.revertAllRepos")}
+              </Button>
             )}
-            {importing && (
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
-                <CircularProgress size={16} />
-                <Typography variant="body2">
-                  {progress
-                    ? t("setup.populating", { processed: progress.processed, remaining: progress.remaining })
-                    : t("setup.importing")}
-                </Typography>
-              </Stack>
-            )}
-            {importError && (
+            {laneModeError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
-                {importError}
+                {laneModeError}
               </Alert>
             )}
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-              <Button variant="contained" onClick={doImport} disabled={importing || !book}>
-                {t("setup.importButton")}
+              <Button
+                onClick={() => setActiveStep(SETUP_STEPS.lanes)}
+                disabled={applying || applied}
+              >
+                {t("setup.back")}
               </Button>
+              {applied && laneModeError ? (
+                // Overrides already persisted; re-applying would 409. Only the
+                // failed lane-mode patch needs retrying.
+                <Button
+                  variant="contained"
+                  onClick={retryLaneModes}
+                  disabled={applying}
+                  startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
+                >
+                  {applying ? t("setup.applying") : t("setup.retryLaneMode")}
+                </Button>
+              ) : (
+                <Button
+                  variant="contained"
+                  onClick={doApply}
+                  disabled={
+                    applying ||
+                    applied ||
+                    !draft.complete ||
+                    !draft.upstreamVerified ||
+                    draft.hasUnverifiedOverride ||
+                    blockedLanes.length > 0
+                  }
+                  startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
+                >
+                  {applying ? t("setup.applying") : t("setup.applyButton")}
+                </Button>
+              )}
             </Stack>
           </StepContent>
         </Step>
 
-        {/* Step 6 — done */}
-        <Step>
+        {/* Step 5 — Configured */}
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.done] = el; }}>
           <StepLabel>{t("setup.step.done")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <Typography variant="subtitle1" gutterBottom>
               {t("setup.doneTitle")}
             </Typography>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              {t("setup.doneSummary", {
-                org: draft.draft?.org ?? importedBook ?? "",
-                book: importedBook ? bookName(importedBook) : "",
-                processed: progress?.processed ?? 0,
-              })}
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              {t("setup.doneConfigured", { org: draft.draft?.org ?? "" })}
             </Typography>
-            {sourceNote && (
-              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
-                {sourceNote}
-              </Alert>
-            )}
-            {warnings > 0 && (
-              <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
-                {t("setup.populateWarnings", { count: warnings })}
-              </Alert>
-            )}
-            {populateNote && (
-              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
-                {populateNote}
-              </Alert>
-            )}
             <Button
               variant="contained"
               onClick={() => {
+                // Import & translation happen in the editor / the forthcoming
+                // Import surface — a follow-up will repoint this at #/import.
                 location.hash = "#/";
               }}
             >
-              {t("setup.goToScripture")}
+              {t("setup.goToEditor")}
             </Button>
           </StepContent>
         </Step>
       </Stepper>
     </Box>
+  );
+}
+
+// Step 4 — a two-column FROM (source/upstream) vs TO (your org) summary, built
+// from the same draft the Apply button materializes. The FROM column reads the
+// assembled translationSource (per-resource, with per-resource org); the TO
+// column reads the org's own target repos.
+function ReviewSummary({
+  state,
+  laneMode,
+}: {
+  state: ReturnType<typeof useOrgDraft>;
+  laneMode: LaneModeMap;
+}) {
+  const { t } = useTranslation();
+  const targetOrg = state.draft?.org ?? "";
+  const source = useMemo(
+    () =>
+      buildTranslationSource({
+        upstreamOrg: state.upstreamOrg,
+        languageCode: state.upstreamLanguageCode,
+        upstreamRepos: state.upstreamRepos,
+        resourceSource: state.resourceSource,
+      }),
+    [state.upstreamOrg, state.upstreamLanguageCode, state.upstreamRepos, state.resourceSource],
+  );
+
+  const sourceRefFor = (key: ResourceKey): { org: string; repo: string } | null => {
+    const v = source?.repos?.[key];
+    if (!v) return null;
+    if (typeof v === "string") return { org: source.org, repo: v };
+    return { org: v.org, repo: v.repo };
+  };
+
+  return (
+    <Stack spacing={1.5}>
+      <Typography variant="body2" color="text.secondary">
+        {t("setup.reviewIntro", {
+          lang: state.resourceLang?.languageName ?? "",
+          org: targetOrg,
+        })}
+      </Typography>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+        {/* FROM */}
+        <Box sx={{ flex: 1, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
+          <Typography variant="overline" color="text.secondary">
+            {t("setup.reviewFrom")}
+          </Typography>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(80px, max-content) 1fr",
+              columnGap: 1,
+              rowGap: 0.5,
+              alignItems: "baseline",
+              mt: 0.5,
+            }}
+          >
+            {RESOURCE_KEYS.map((key) => {
+              const ref = sourceRefFor(key);
+              return (
+                <Box key={key} sx={{ display: "contents" }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", textAlign: "start" }}>
+                    {t(`setup.resource.${key}`)}
+                  </Typography>
+                  {ref ? (
+                    <RepoRef org={ref.org} repo={ref.repo} />
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      {t("setup.upstreamNone")}
+                    </Typography>
+                  )}
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
+        {/* TO */}
+        <Box sx={{ flex: 1, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
+          <Typography variant="overline" color="text.secondary">
+            {t("setup.reviewTo", { org: targetOrg })}
+          </Typography>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(80px, max-content) 1fr",
+              columnGap: 1,
+              rowGap: 0.5,
+              alignItems: "baseline",
+              mt: 0.5,
+            }}
+          >
+            {RESOURCE_KEYS.map((key) => {
+              const repo = state.repos[key];
+              const isLane = key === "lit" || key === "sim";
+              return (
+                <Box key={key} sx={{ display: "contents" }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", textAlign: "start" }}>
+                    {t(`setup.resource.${key}`)}
+                  </Typography>
+                  <Box sx={{ minWidth: 0 }}>
+                    {repo ? (
+                      <RepoRef org={targetOrg} repo={repo} />
+                    ) : (
+                      <Typography variant="body2" component="span" color="warning.main">
+                        {t("setup.reviewMissing")}
+                      </Typography>
+                    )}
+                    {isLane && repo && (
+                      <Typography variant="caption" component="span" color="text.secondary">
+                        {" · "}
+                        {t(`setup.laneEditMode.${laneMode[key as "lit" | "sim"]}`)}
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
+      </Stack>
+    </Stack>
   );
 }

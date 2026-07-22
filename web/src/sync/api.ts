@@ -1422,6 +1422,9 @@ export interface LanePublicState {
   replacementJobId: string | null;
   exportsBlocked: boolean;
   replacementRequired: boolean;
+  // True when this lane already has verses (from getProjectConfig's overlay). The
+  // Setup wizard locks a populated lane's source so it can't propose a change.
+  populated?: boolean;
   config: {
     label: string;
     source: { owner: string; repo: string; ref: string };
@@ -1621,6 +1624,20 @@ export const api = {
   // PR B: draft-only manifest inference for a Door43 org. Applies nothing.
   getInferredOrgConfig: (org: string) =>
     request<InferredOrgConfigResponse>(`/api/orgs/${encodeURIComponent(org)}/inferred-config`),
+
+  // Resolve a pasted Door43 source URL (or bare owner/repo) into a verified
+  // { org, repo } for the Setup wizard's per-resource source override. On a 2xx
+  // the repo is confirmed to exist on DCS. Throws ApiError on 400 (garbage /
+  // unsupported host), 404 (repo_not_found), or 503 (dcs_unavailable — transient,
+  // NOT a real "does not exist"); callers classify via lib/setupWizard.verifyErrorKind.
+  // `checkBooks` additionally verifies the repo CONTAINS USFM book files (a
+  // scripture lane source that only has scaffolding is a trap). `hasBooks` is
+  // present only when checked and the content lookup succeeded; a transient
+  // contents-API failure OMITS it (treat missing as "couldn't check", not empty).
+  verifySource: (url: string, opts?: { checkBooks?: boolean }) =>
+    request<{ ok: true; org: string; repo: string; fullName?: string; hasBooks?: boolean }>(
+      `/api/orgs/verify-source?url=${encodeURIComponent(url)}${opts?.checkBooks ? "&checkBooks=1" : ""}`,
+    ),
 
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 

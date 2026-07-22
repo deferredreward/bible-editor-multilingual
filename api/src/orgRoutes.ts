@@ -89,12 +89,26 @@ orgRoutes.get("/verify-source", async (c) => {
   if (lookup.status === "not_found") {
     return c.json({ ok: false, error: "repo_not_found", org: parsed.org, repo: parsed.repo }, 404);
   }
-  return c.json({
-    ok: true,
-    org: lookup.org,
-    repo: lookup.repo,
-    fullName: lookup.fullName,
-  });
+  // Optional content check (owner decision): for a SCRIPTURE lane source the repo
+  // existing isn't enough — it must actually contain book (USFM) files. An empty
+  // scaffolding-only repo (LICENSE/README/manifest, e.g. BibleEditorMLTest/en_glt)
+  // is a trap: nothing to translate/import from. When `checkBooks` is requested we
+  // add `hasBooks`; a transient contents-API failure OMITS the field (the client
+  // treats "couldn't check" as retryable, never as empty) so a DCS blip can't
+  // falsely flag a real source as empty.
+  const resp: {
+    ok: true;
+    org: string;
+    repo: string;
+    fullName: string;
+    hasBooks?: boolean;
+  } = { ok: true, org: lookup.org, repo: lookup.repo, fullName: lookup.fullName };
+  const wantBooks = (c.req.query("checkBooks") ?? "").trim() !== "";
+  if (wantBooks) {
+    const books = await repoHasBookFiles(c.env, lookup.org, lookup.repo);
+    if (books !== "unavailable") resp.hasBooks = books === "has_books";
+  }
+  return c.json(resp);
 });
 
 orgRoutes.get("/:org/inferred-config", async (c) => {
@@ -250,6 +264,47 @@ async function lookupRepoRecord(env: Env, owner: string, repo: string): Promise<
   const canonOwner = slash > 0 ? fullName.slice(0, slash) : owner;
   const canonRepo = slash > 0 ? fullName.slice(slash + 1) : body.name;
   return { status: "ok", org: canonOwner, repo: canonRepo, fullName };
+}
+
+// Does this repo contain scripture BOOK files? Lists the repo root via
+// GET /api/v1/repos/{owner}/{repo}/contents and looks for any USFM file (RC Bible
+// repos put `NN-BOOK.usfm` at the root). Distinguishes:
+//   has_books   → at least one *.usfm file present
+//   empty       → contents fetched OK but no USFM (scaffolding-only)
+//   unavailable → network error / non-200 / unparseable (do NOT assert emptiness)
+async function repoHasBookFiles(
+  env: Env,
+  owner: string,
+  repo: string,
+): Promise<"has_books" | "empty" | "unavailable"> {
+  try {
+    const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
+    const res = await fetch(
+      `${base}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents`,
+      { headers },
+    );
+    if (!res.ok) return "unavailable";
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      return "unavailable";
+    }
+    if (!Array.isArray(body)) return "unavailable";
+    const hasUsfm = body.some(
+      (e) =>
+        e &&
+        typeof e === "object" &&
+        (e as { type?: unknown }).type === "file" &&
+        typeof (e as { name?: unknown }).name === "string" &&
+        /\.usfm$/i.test((e as { name: string }).name),
+    );
+    return hasUsfm ? "has_books" : "empty";
+  } catch {
+    return "unavailable";
+  }
 }
 
 // Resolves an org name to DCS's canonical casing via GET /api/v1/orgs/{org}

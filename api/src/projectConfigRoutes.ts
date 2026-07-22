@@ -139,6 +139,9 @@ projectConfig.put("/", requireAdmin, async (c) => {
       if (result.error === "lane_busy") {
         body.hint = "Finish or cancel the in-flight scripture source replacement before switching project mode.";
       }
+      if (result.error === "lane_source_change_requires_migration") {
+        body.hint = "This project already has scripture text; changing a lane's source is a migration. Keep the current source, or use the deliberate Change scripture source tool (replacement flow).";
+      }
       return c.json(body, result.status);
     }
     return c.json({ config: await overlayLaneLabels(c.env, result.config) });

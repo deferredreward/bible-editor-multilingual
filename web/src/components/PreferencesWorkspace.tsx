@@ -66,6 +66,7 @@ import {
 } from "../hooks/useTranslationMemory";
 import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
+import { detectOrg409Key } from "../lib/setupWizard";
 import { SetupWizard } from "./SetupWizard";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { UserManagementSection } from "./UserManagementSection";
@@ -886,7 +887,12 @@ function OrgDetectionSection() {
       draft.setOrg("");
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        setMessage({ severity: "error", text: t("preferences.detectOrg.projectNotEmpty") });
+        // Branch on the code: a same-org populated lane-source change now returns
+        // lane_source_change_requires_migration — mapping that to the different-org
+        // "recreate the database" guidance would tell an admin to DESTROY their
+        // own data. Only project_not_empty means "different org, recreate DB".
+        const code = (e.body as { error?: string } | undefined)?.error;
+        setMessage({ severity: "error", text: t(detectOrg409Key(code)) });
       } else {
         setMessage({ severity: "error", text: t("preferences.detectOrg.applyFailed") });
       }

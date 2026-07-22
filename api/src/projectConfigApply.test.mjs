@@ -538,6 +538,98 @@ test("applyProjectConfig: non-lane repo change (same org) on a populated custom-
   assert.equal(result.error, "project_not_empty");
 });
 
+test("applyProjectConfig: changing a POPULATED lane's source rejects 409 lane_source_change_requires_migration, zero writes", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  // Install custom-gl (MyOrg/ar_glt for lit) on the empty DB, then populate the
+  // LIT lane so a subsequent source change would have to overwrite verses.
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  const before = db.prepare(`SELECT * FROM project_config WHERE id=1`).get();
+  const beforeLit = db.prepare(`SELECT * FROM scripture_lane_state WHERE lane='lit'`).get();
+  // Same org/exportOrg/non-lane repos — ONLY the lit lane repo changes. The
+  // tenancy guard ignores lit/sim, so this reaches lane planning and must reject
+  // (not quarantine).
+  const changed = { ...VALID_CUSTOM_GL, repos: { ...VALID_CUSTOM_GL.repos, lit: "ar_glt_v2" } };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.equal(result.error, "lane_source_change_requires_migration");
+  assert.deepEqual(result.detail, { lanes: ["lit"] });
+  // Nothing applied: config row untouched, and the lane was NOT quarantined.
+  assert.deepEqual(db.prepare(`SELECT * FROM project_config WHERE id=1`).get(), before, "config zero writes");
+  const afterLit = db.prepare(`SELECT * FROM scripture_lane_state WHERE lane='lit'`).get();
+  assert.deepEqual(afterLit, beforeLit, "lane untouched — no replacement_required, no pending_target");
+  assert.equal(afterLit.replacement_required, 0, "lane not quarantined");
+});
+
+test("applyProjectConfig: a populated lane whose source is UNCHANGED applies with no 409 (the wizard lock)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // Populate the lit lane, then re-apply the SAME config (lit still ar_glt) — the
+  // wizard locks a populated lane's source to the active source, so desired ===
+  // active and applyProjectConfig must NOT return lane_source_change_requires_migration.
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  const result = await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL);
+  assert.equal(result.ok, true, "same-source apply on a populated lane succeeds — no 409, no loop");
+});
+
+test("applyProjectConfig: changing a lane's source on an EMPTY lane still installs (fresh org path)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // No verses seeded — lit lane is empty, so a source change is a clean install.
+  const changed = { ...VALID_CUSTOM_GL, repos: { ...VALID_CUSTOM_GL.repos, lit: "ar_glt_v2" } };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
+  assert.equal(result.ok, true, "empty lane source change installs");
+  const litCfg = JSON.parse(db.prepare(`SELECT active_config_json FROM scripture_lane_state WHERE lane='lit'`).get().active_config_json);
+  assert.equal(litCfg.source.repo, "ar_glt_v2", "lane source updated in place");
+  assert.equal(db.prepare(`SELECT replacement_required FROM scripture_lane_state WHERE lane='lit'`).get().replacement_required, 0, "not quarantined");
+});
+
+test("applyProjectConfig: a non-lane change (translationSource) on a populated DB with UNCHANGED lane source still succeeds", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // Populate the DB, but keep every lane source identical.
+  db.prepare(`INSERT INTO tn_rows (id, book, deleted_at) VALUES ('a','GEN',NULL)`).run();
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  // Only translationSource changes (null → an upstream object). This is NOT a
+  // data/export identity change and NOT a lane-source change, so it must apply.
+  const changed = {
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
+    },
+  };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
+  assert.equal(result.ok, true, "non-lane, non-identity change on populated DB succeeds");
+  assert.ok(
+    db.prepare(`SELECT overrides_json FROM project_config WHERE id=1`).get().overrides_json.includes("unfoldingWord"),
+    "translationSource persisted",
+  );
+});
+
 test("applyProjectConfig: switching to a different preset without overrides clears stored overrides", async () => {
   const db = freshDb();
   seedConfig(db, "ar-bsoj", JSON.stringify({ litLabel: "CUSTOM" }));
