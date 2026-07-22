@@ -925,6 +925,38 @@ console.log("[POST purge-manual] keeps the caller as the last admin when every a
   }
 }
 
+console.log("[POST purge-manual] clears stashed manual_role on team rows so a purged grant can't resurface");
+{
+  const realFetch = globalThis.fetch;
+  stubDcsOk();
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const db = freshDb();
+    // bob: had a manual editor grant, then joined BE-Editors and signed in, so
+    // syncTeamRole took the row over (source='dcs_team') and STASHED the prior
+    // manual grant in manual_role. A purge must clear that stash — otherwise
+    // when bob later leaves the team, syncTeamRole restores it and bob keeps
+    // access the purge was meant to revoke.
+    db.exec(
+      `INSERT INTO user_roles (dcs_username, role, source, manual_role) VALUES
+         ('teamadmin','admin','dcs_team',NULL),
+         ('bob','editor','dcs_team','editor'),
+         ('carol','editor','manual',NULL)`,
+    );
+    const env = baseEnv(db, "svc-token");
+    const res = await req(app, env, "POST", "/api/admin/users/purge-manual", { token: adminTok });
+    assert(res.status === 200, "200");
+    const body = await res.json();
+    assert(body.removed.join(",") === "carol", `visible manual row removed (got ${body.removed})`);
+    const bob = db.prepare("SELECT role, source, manual_role FROM user_roles WHERE dcs_username='bob'").get();
+    assert(bob.role === "editor" && bob.source === "dcs_team", "bob's live team role is untouched");
+    assert(bob.manual_role === null, "bob's stashed manual grant is cleared — it can't resurface on team departure");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("[POST purge-manual] no manual rows → empty result, nothing changed");
 {
   const realFetch = globalThis.fetch;

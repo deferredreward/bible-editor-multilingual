@@ -330,6 +330,23 @@ adminUsers.get("/org-members", async (c) => {
 // them is the whole intent (the UI warns which ones up front); the guard only
 // protects the ability to administer the project at all.
 adminUsers.post("/purge-manual", async (c) => {
+  // Clear stashed manual grants on team-derived rows FIRST, and unconditionally
+  // (a stash can exist even when no visible `source='manual'` row does). When a
+  // team signal took over a manual row, syncTeamRole stashes the prior grant in
+  // manual_role and RESTORES it if the user later leaves the Door43 team (see
+  // dcsTeams.ts). Left in place, a purged grant would silently resurface on
+  // team departure — handing back the very access this action revokes. After a
+  // purge, teams are the source of truth in both directions, so the stash must
+  // go too. Wrapped: manual_role arrives with migration 0057, and the purge
+  // must still work in the deploy-before-migrate window (nothing stashed yet).
+  try {
+    await c.env.DB.prepare(
+      `UPDATE user_roles SET manual_role = NULL WHERE source = 'dcs_team' AND manual_role IS NOT NULL`,
+    ).run();
+  } catch {
+    // No manual_role column yet (pre-0057) — nothing could have been stashed.
+  }
+
   const { results: manualRows } = await c.env.DB.prepare(
     `SELECT dcs_username AS username, role AS role FROM user_roles WHERE source = 'manual'`,
   ).all<{ username: string; role: string }>();
