@@ -3,6 +3,7 @@ import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
+import { ImportWorkspace } from "./components/ImportWorkspace";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { LocalizationInspector } from "./components/LocalizationInspector";
 import { useBook } from "./hooks/useBook";
@@ -30,6 +31,7 @@ type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
   | { view: "templates"; templateId: string | null }
+  | { view: "import"; book: string | null }
   | { view: "preferences"; section: PrefsSection };
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
@@ -68,6 +70,10 @@ function parseHash(): Location {
   const tm = location.hash.match(/^#\/templates(?:\/(.+))?$/);
   if (tm) {
     return { view: "templates", templateId: decodeURIComponent(tm[1] ?? "") || null };
+  }
+  const im = location.hash.match(/^#\/import(?:\/([A-Za-z0-9]+))?$/);
+  if (im) {
+    return { view: "import", book: im[1] ? im[1].toUpperCase() : null };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
   if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
@@ -507,6 +513,15 @@ export function App() {
             onNavigate={(id) => {
               location.hash = id ? `#/templates/${encodeURIComponent(id)}` : `#/templates`;
             }}
+          />
+        ) : loc.view === "import" ? (
+          <ImportWorkspace
+            book={loc.book}
+            onBack={backToScripture}
+            onNavigate={(b) => {
+              location.hash = b ? `#/import/${b}` : `#/import`;
+            }}
+            onOpenBook={(b) => navigate(b, 1)}
           />
         ) : (
           <Shell
