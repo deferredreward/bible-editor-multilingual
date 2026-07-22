@@ -41,6 +41,28 @@ override points at its own repo.
 - **Tier 2**: per-chapter-range merge within a book + per-range provenance.
 - **UI**: import panel (per-book × per-resource grid, verify-on-blur via `/api/orgs/verify-source`).
 
+## Follow-ups branch (feat/issue-103-followups, stacked on #106)
+All #103 follow-ups, built on top of PR #106:
+- **tQ widening** + **range-capable storage** (migration 0059 rebuilds book_source_overrides
+  with [chapter_start, chapter_end]; whole book = (0,999); Tier 1 rows migrate to (0,999)).
+  tW/scripture deliberately OUT (twl language-neutral; scripture = lane model).
+- **Tier 2 per-chapter-range**: import fetches base + each range file and splices by chapter
+  (insertTn/TqRows gain a chapterFilter); reimport holds out per-chapter on BOTH the direct
+  and nightly-staging paths (apply loop + pristine prune both skip held-out chapters); export
+  skip extended to range-based partial books (which carry no book_imports marker).
+- **Provenance**: base non-null → whole-book book_imports marker; base=org's own + ranges →
+  marker NULL, the range table (heldOutChapters) drives per-chapter hold-out.
+- **UI**: the Import workspace's "Advanced" accordion is now a per-book source panel
+  (admin add/remove ranges, verify-on-blur via /api/orgs/verify-source).
+
+### Known limitations / follow-ups (documented in code + PR)
+- **Export is whole-RESOURCE skip** for a partial book — its OWNED chapters don't publish while
+  an override exists. The merge-export (owned chapters from D1 + held-out chapters from current
+  master) is the real fix; tied to un-deferring cross-sourced note export generally.
+- **Cross-source tN/tQ ID collision** within a book fails the import loudly (rare). Follow-up:
+  re-mint colliding range-file ids preserving alignment.
+- **Aquifer as a per-range source** is separate (aquifer-drafts endpoint; per-range = future).
+
 ## Migration-number caution
 Used `0058` (latest on main was `0057`). Parallel worktrees may also add `0058` —
 check `wrangler d1 migrations list` after merge (memory: migrations collide across worktrees).
