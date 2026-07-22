@@ -10,7 +10,7 @@ import type { Env } from "./index";
 // module can also be loaded directly by node's strip-types test runner —
 // see adminUsers.test.mjs, which imports this file rather than re-testing
 // its logic in isolation.
-import { requireAuth, requireAdmin, currentUserId, lookupUserRole } from "./auth.ts";
+import { requireAuth, requireAdmin, currentUserId, currentUserDcsToken, lookupUserRole } from "./auth.ts";
 import { sharedDb } from "./workspaces.ts";
 import { getProjectConfig } from "./projectConfig.ts";
 
@@ -134,12 +134,27 @@ async function fetchOrgMembers(
 // DCS outage must degrade the reconciliation view, not break the whole page.
 //
 // `/orgs/{org}/members` only returns the full roster to a caller who is
-// themselves a member/owner of that org (see issue #78) — if DCS_SERVICE_TOKEN's
-// account isn't, DCS answers 401/403 even though the org and token are both
-// otherwise fine. Rather than going straight to an empty "unreachable" panel,
-// fall back to `/orgs/{org}/public_members` (visible to anyone) and flag the
-// response as `partial` so the UI can explain *why* the list may be incomplete
-// instead of hiding it entirely.
+// themselves a member/owner of that org — an unauthenticated or non-member
+// caller gets 401/403 even though the org and token are otherwise fine.
+//
+// Fetch chain, in order (each step falls through to the next on failure):
+//
+//   1. The signed-in admin's OWN stored DCS token. They necessarily are a
+//      member of the org (that is how they became admin — via a Door43 team
+//      in it), so their personal token reads the FULL roster including private
+//      members. This is the primary path; it is best-effort — a missing
+//      (dev-minted / logged-out session) or expired token just moves to (2),
+//      NOT an error the admin sees.
+//   2. The shared DCS_SERVICE_TOKEN. Returns the full roster when that
+//      account is itself a member/owner of the org (issue #78: it often is
+//      not, hence step 3).
+//   3. `/orgs/{org}/public_members` (visible to anyone). Only the PUBLIC
+//      members — so this result is flagged `partial` with a `_public_only`
+//      error so the UI can explain *why* the list may be incomplete instead of
+//      hiding it entirely. Last resort.
+//
+// A full roster from (1) or (2) is returned plainly (never `partial`); only
+// the public-members fallback (3) is `partial`.
 adminUsers.get("/org-members", async (c) => {
   const { org } = await getProjectConfig(c.env);
   const base = (c.env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
@@ -150,6 +165,22 @@ adminUsers.get("/org-members", async (c) => {
     return c.json({ org, members: [], truncated: false });
   }
 
+  // (1) Admin's own DCS token — full roster (incl. private members). Any
+  // failure (missing/expired token, non-2xx, network) falls through to (2).
+  const adminToken = await currentUserDcsToken(c);
+  if (adminToken) {
+    try {
+      const own = await fetchOrgMembers(base, org, "members", {
+        Accept: "application/json",
+        Authorization: `token ${adminToken}`,
+      });
+      if (own.ok) return c.json({ org, members: own.members, truncated: own.truncated });
+    } catch {
+      // Network error on the admin-token attempt — fall through to (2).
+    }
+  }
+
+  // (2) Shared service token → (3) public_members (partial) as last resort.
   const headers: Record<string, string> = { Accept: "application/json" };
   if (c.env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${c.env.DCS_SERVICE_TOKEN}`;
 

@@ -400,6 +400,32 @@ export function currentUserRole(c: Context): Role | null {
   return v === "admin" || v === "editor" || v === "viewer" ? v : null;
 }
 
+// The signed-in caller's stored DCS OAuth access token, read from the SHARED
+// `users` table (stashed at OAuth callback for logout revocation; cleared at
+// logout). Lets an authenticated route act against DCS *as the caller* —
+// e.g. reading an org roster the shared DCS_SERVICE_TOKEN's account can't see,
+// but the caller (an org member) can.
+//
+// BEST-EFFORT by design, so callers can treat it as one strategy among
+// several: returns null when there's no caller, no stored token (dev-minted
+// sessions never carry one, and logout nulls it), or the read fails (the
+// column/table unavailable mid-migration). A STALE/EXPIRED token is returned
+// as-is — this can't tell live from expired; that's discovered at the DCS
+// fetch (401/403), where the caller falls through to its next strategy.
+export async function currentUserDcsToken(c: Context): Promise<string | null> {
+  const userId = currentUserId(c);
+  if (userId == null) return null;
+  try {
+    const row = await sharedDb((c as AppContext).env)
+      .prepare(`SELECT dcs_access_token AS token FROM users WHERE id = ?1`)
+      .bind(userId)
+      .first<{ token: string | null }>();
+    return row?.token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ── DCS OAuth ────────────────────────────────────────────────────────────────
 
 const STATE_COOKIE = "dcs_auth_state";
