@@ -682,6 +682,43 @@ console.log("[GET org-members] missing admin token falls through to the service 
   }
 }
 
+console.log("[GET org-members] public_members fallback carries NO auth (an invalid service token must not 401 the public endpoint)");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      const auth = authOf(init);
+      calls.push({ url: String(url), auth });
+      if (String(url).includes("/public_members")) {
+        // Door43 behavior: the public endpoint needs no auth (200), but an
+        // invalid token 401s it. If the bad service-token header leaks here,
+        // this returns 401 and the fallback collapses to an empty roster.
+        if (auth) return new Response("unauthorized", { status: 401 });
+        return new Response(JSON.stringify([{ login: "publicuser" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // /members with the (invalid) service token 401s. No admin token stored.
+      return new Response("unauthorized", { status: 401 });
+    };
+    // No users row for sub=1 → no admin token; service token is invalid.
+    const env = baseEnv(freshDb(), "bad-svc-token");
+    const res = await req(app, env, "GET", "/api/admin/users/org-members", { token: adminTok });
+    assert(res.status === 200, "200 (fail-soft) at the public_members last resort");
+    const body = await res.json();
+    assert(body.partial === true, "flagged partial via public_members despite the bad service token");
+    assert(body.members.length === 1 && body.members[0].login === "publicuser", "public roster returned, not empty");
+    const pubCall = calls.find((call) => call.url.includes("/public_members?"));
+    assert(pubCall && pubCall.auth === null, "public_members was called WITHOUT an Authorization header");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("[GET org-members] expired admin token + service 403 → public_members partial (full chain to last resort)");
 {
   const realFetch = globalThis.fetch;

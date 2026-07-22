@@ -189,7 +189,12 @@ adminUsers.get("/org-members", async (c) => {
     if (full.ok) return c.json({ org, members: full.members, truncated: full.truncated });
 
     if (full.status === 401 || full.status === 403) {
-      const pub = await fetchOrgMembers(base, org, "public_members", headers);
+      // public_members is readable WITHOUT auth. Deliberately omit the
+      // Authorization header here: reusing the service-token header would make
+      // an expired/revoked/typoed service token 401 this public endpoint too
+      // (Door43 returns 200 unauthenticated but 401 for an invalid token),
+      // collapsing the last-resort fallback into an empty non-partial roster.
+      const pub = await fetchOrgMembers(base, org, "public_members", { Accept: "application/json" });
       if (pub.ok) {
         return c.json({
           org,
