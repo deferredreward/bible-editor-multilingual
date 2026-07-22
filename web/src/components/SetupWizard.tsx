@@ -17,12 +17,7 @@ import { applyProjectOverrides, refreshProjectConfig, useProjectConfig } from ".
 import { useOrgDraft } from "./OrgConfigDraftEditor";
 import { OrgIdentityFields } from "./OrgIdentityFields";
 import { UpstreamSourcePicker } from "./UpstreamSourcePicker";
-import {
-  LaneTargetModeStep,
-  type LaneEditMode,
-  type LaneModeMap,
-  type LaneBooksStatus,
-} from "./LaneTargetModeStep";
+import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneTargetModeStep";
 import { RepoRef } from "./SourceOverrideField";
 import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
 import { SETUP_STEPS, type LaneKey } from "../lib/setupWizard";
@@ -77,13 +72,6 @@ export function SetupWizard() {
   const [laneMode, setLaneModeState] = useState<LaneModeMap>({ lit: "edit", sim: "edit" });
   const setLaneMode = (lane: "lit" | "sim", m: LaneEditMode) =>
     setLaneModeState((s) => ({ ...s, [lane]: m }));
-
-  // Step 3 — per-lane target-repo book-content status (item 4). A scripture lane
-  // source with no USFM files is a trap; "empty" blocks Apply.
-  const [laneBooks, setLaneBooksState] = useState<Partial<Record<LaneKey, LaneBooksStatus>>>({});
-  const setLaneBooks = (lane: LaneKey, status: LaneBooksStatus) =>
-    setLaneBooksState((s) => ({ ...s, [lane]: status }));
-  const emptyLaneSources = (["lit", "sim"] as LaneKey[]).filter((l) => laneBooks[l] === "empty");
 
   // Step 4 — apply.
   const [applying, setApplying] = useState(false);
@@ -162,14 +150,7 @@ export function SetupWizard() {
   };
 
   const doApply = async () => {
-    if (
-      !draft.complete ||
-      !draft.upstreamVerified ||
-      draft.hasUnverifiedOverride ||
-      emptyLaneSources.length > 0
-    ) {
-      return;
-    }
+    if (!draft.complete || !draft.upstreamVerified || draft.hasUnverifiedOverride) return;
     setApplying(true);
     setApplyError(null);
     setLaneModeError(null);
@@ -263,12 +244,7 @@ export function SetupWizard() {
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.lanes] = el; }}>
           <StepLabel>{t("setup.step.lanes")}</StepLabel>
           <StepContent transitionDuration={STEP_COLLAPSE_MS}>
-            <LaneTargetModeStep
-              state={draft}
-              laneMode={laneMode}
-              setLaneMode={setLaneMode}
-              onLaneBooks={setLaneBooks}
-            />
+            <LaneTargetModeStep state={draft} laneMode={laneMode} setLaneMode={setLaneMode} />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button onClick={() => setActiveStep(SETUP_STEPS.sources)}>{t("setup.back")}</Button>
               <Button
@@ -303,13 +279,6 @@ export function SetupWizard() {
                   resources: draft.unverifiedOverrideResources
                     .map((r) => t(`setup.resource.${r}`))
                     .join(", "),
-                })}
-              </Alert>
-            )}
-            {emptyLaneSources.length > 0 && (
-              <Alert severity="warning" sx={{ mt: 1.5 }}>
-                {t("setup.laneSourceEmpty", {
-                  lanes: emptyLaneSources.map((l) => t(`setup.lane.${l}`)).join(", "),
                 })}
               </Alert>
             )}
@@ -367,8 +336,7 @@ export function SetupWizard() {
                     applied ||
                     !draft.complete ||
                     !draft.upstreamVerified ||
-                    draft.hasUnverifiedOverride ||
-                    emptyLaneSources.length > 0
+                    draft.hasUnverifiedOverride
                   }
                   startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
                 >

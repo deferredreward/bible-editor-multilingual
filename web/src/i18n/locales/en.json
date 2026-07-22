@@ -901,8 +901,6 @@
     },
     "targetRepoLabel": "Target repository",
     "targetRepoHelp": "Your org's repo for this lane. Pre-filled but editable — it needn't be {lang}_glt (e.g. ru_rlob, ar_avd).",
-    "laneSourceEmptyInline": "{{repo}} has no book files — pick a scripture repo that already contains USFM.",
-    "laneSourceCheckUnreachable": "Couldn't check this repo for book files — Door43 was unreachable. Retry before applying.",
     "laneEditModeLabel": "What are translators doing in this lane?",
     "laneEditMode": {
       "edit": "Editing the text",
@@ -922,7 +920,6 @@
     "reviewTo": "Your org ({{org}})",
     "reviewMissing": "not set",
     "reviewIncomplete": "Some resource repositories are still missing or ambiguous. Resolve them before applying.",
-    "laneSourceEmpty": "The scripture source for {{lanes}} has no book files. Pick a repo that already contains USFM before applying.",
     "laneSourceMigration": "Setup can't change the scripture source for {{lanes}} on a project that already has text — that's a migration. Revert the source below to keep the current one, or use \"Change scripture source\" in Preferences to do it deliberately.",
     "revertLaneSource": "Revert {{lane}} source to current ({{repo}})",
     "replacementStepIntro": "You changed the scripture source for an already-populated project, so the new text must be staged before it goes live. This step finishes that change; nothing changes for editors until you press Activate.",
