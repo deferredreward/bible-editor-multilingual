@@ -166,10 +166,25 @@ books.put("/:book/sources", requireAdmin, async (c) => {
   if (!isBookSourceResource(resource)) {
     return c.json({ error: "unsupported_resource", resource }, 400);
   }
-  // Chapter bounds: absent → whole book (0, 999). A partial pair (only one of
-  // the two) is rejected — it's almost certainly a client mistake.
   const hasStart = body.chapterStart !== undefined;
   const hasEnd = body.chapterEnd !== undefined;
+
+  // CLEAR is handled first, and needs only chapterStart (chapterEnd is irrelevant
+  // when removing a range by its start) — so the both-bounds check below, which
+  // applies to SET, must not reject a clear that carries just chapterStart.
+  if (body.clear === true) {
+    if (hasStart) {
+      const cs = Number(body.chapterStart);
+      if (!Number.isInteger(cs)) return c.json({ error: "invalid_range" }, 400);
+      await clearBookSourceRange(c.env, book, resource, cs);
+      return c.json({ book, resource, chapterStart: cs, cleared: true });
+    }
+    await clearBookSourceOverride(c.env, book, resource);
+    return c.json({ book, resource, cleared: true });
+  }
+
+  // SET. Chapter bounds absent → whole book (0, 999). A partial pair (only one of
+  // the two) is rejected — it's almost certainly a client mistake.
   if (hasStart !== hasEnd) {
     return c.json({ error: "range_needs_both_bounds" }, 400);
   }
@@ -177,16 +192,6 @@ books.put("/:book/sources", requireAdmin, async (c) => {
   const chapterEnd = hasEnd ? Number(body.chapterEnd) : WHOLE_BOOK_END;
   if (hasStart && (!Number.isInteger(chapterStart) || !Number.isInteger(chapterEnd))) {
     return c.json({ error: "invalid_range" }, 400);
-  }
-
-  if (body.clear === true) {
-    // Clear a specific range if a start was given, else every range for the resource.
-    if (hasStart) {
-      await clearBookSourceRange(c.env, book, resource, chapterStart);
-      return c.json({ book, resource, chapterStart, cleared: true });
-    }
-    await clearBookSourceOverride(c.env, book, resource);
-    return c.json({ book, resource, cleared: true });
   }
 
   let org: string;
@@ -485,6 +490,41 @@ async function fetchRangeNoteFiles(
 // id for the SAME book in DIFFERENT chapters) surfaces as a loud INSERT failure —
 // rare, and far safer than silently overwriting a row from another chapter.
 // (Follow-up: re-mint colliding range-file ids preserving alignment.)
+// Pre-wipe collision scan (issue #103). Returns the first row id that would be
+// inserted from TWO different source files in the merge (base non-covered
+// chapters + each range's chapters), or null if none. Mirrors insertMergedNotes'
+// exact partitioning so it predicts the real insert set. No ranges → no merge →
+// null (a single file's internal duplicates are the pre-existing bare-INSERT
+// concern, unchanged here).
+function mergedNoteIdCollision(
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+): string | null {
+  if (ranges.length === 0) return null;
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  const seen = new Set<string>();
+  const scan = (raw: string | null, include: (ch: number) => boolean): string | null => {
+    if (!raw) return null;
+    for (const r of parseTsv(raw).rows) {
+      const id = r["ID"];
+      if (!id) continue;
+      const [ch] = refParts(r["Reference"] ?? "");
+      if (!include(ch)) continue;
+      if (seen.has(id)) return id;
+      seen.add(id);
+    }
+    return null;
+  };
+  const baseDup = scan(baseRaw, (ch) => !covered(ch));
+  if (baseDup) return baseDup;
+  for (const { range, raw } of rangeFiles) {
+    const dup = scan(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+    if (dup) return dup;
+  }
+  return null;
+}
+
 async function insertMergedNotes(
   insert: (raw: string | null, filter?: (ch: number) => boolean) => Promise<number>,
   baseRaw: string | null,
@@ -704,6 +744,26 @@ async function importBookFromDcs(
   // the wrong content and skip the intended per-chapter hold-out).
   const tnRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tn", tnPlan.ranges);
   const tqRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tq", tqPlan.ranges);
+
+  // Detect cross-source ID collisions BEFORE the destructive wipe (issue #103).
+  // The merge inserts base rows + range rows with a bare INSERT; if two source
+  // files reuse the same row id (for DIFFERENT chapters) the second insert throws
+  // on the (book, id) PK — but by then the book has been wiped and half-inserted,
+  // and the stale book_imports marker would send the next non-force import down
+  // the already-imported fast path, leaving the book stuck partial. Failing here
+  // (before any wipe) keeps the collision a clean no-op the admin can resolve.
+  for (const [resource, baseRaw, ranges, files] of [
+    ["tn", tnRaw, tnPlan.ranges, tnRangeFiles],
+    ["tq", tqRaw, tqPlan.ranges, tqRangeFiles],
+  ] as const) {
+    const dup = mergedNoteIdCollision(baseRaw, ranges, files);
+    if (dup) {
+      throw new Error(
+        `merge source ${resource} id collision: '${dup}' appears in more than one source for ${book}; ` +
+          `resolve the overlapping sources before importing (no changes were made)`,
+      );
+    }
+  }
 
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
   // the destructive wipe to a transactional lane-state predicate: DELETE only

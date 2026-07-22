@@ -326,8 +326,8 @@ async function runReimport(
   // not-fetched so it can't drive the apply OR the prune; the existing dcs_404
   // tally below records the miss. Verses are exempt (never row-pruned; a short
   // USFM just no-ops its missing chapters).
-  if (tnRaw && (await tsvFetchLooksTruncated(env, book, "tn", tnRaw))) tnRaw = null;
-  if (tqRaw && (await tsvFetchLooksTruncated(env, book, "tq", tqRaw))) tqRaw = null;
+  if (tnRaw && (await tsvFetchLooksTruncated(env, book, "tn", tnRaw, tnHeld))) tnRaw = null;
+  if (tqRaw && (await tsvFetchLooksTruncated(env, book, "tq", tqRaw, tqHeld))) tqRaw = null;
   if (twlRaw && (await tsvFetchLooksTruncated(env, book, "twl", twlRaw))) twlRaw = null;
 
   const perResource: Record<Resource, ReimportCounts> = {
@@ -908,15 +908,27 @@ async function tsvFetchLooksTruncated(
   book: string,
   kind: TsvKind,
   raw: string,
+  held?: HeldOut,
 ): Promise<boolean> {
-  const liveRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM ${kind}_rows WHERE book = ?1 AND deleted_at IS NULL`,
+  // Compare like-for-like: EXCLUDE held-out chapters (issue #103) from both
+  // sides. For a partial-source book the org file legitimately lacks the
+  // cross-sourced chapters, so counting them on the live side would read the
+  // org file as a catastrophic shrink and drop the whole reimport — starving the
+  // OWNED chapters of their self-heal. The guard must judge only the chapters the
+  // org file is expected to carry.
+  const isHeld = (chapter: number) => (held ? isChapterHeldOut(held, chapter) : false);
+  const liveRows = await env.DB.prepare(
+    `SELECT chapter, COUNT(*) AS n FROM ${kind}_rows WHERE book = ?1 AND deleted_at IS NULL GROUP BY chapter`,
   )
     .bind(book)
-    .first<{ n: number }>();
-  const live = Number(liveRow?.n ?? 0);
+    .all<{ chapter: number; n: number }>();
+  let live = 0;
+  for (const r of liveRows.results ?? []) if (!isHeld(Number(r.chapter))) live += Number(r.n);
   let incoming = 0;
-  for (const r of parseTsv(raw).rows) if (parseTsvRow(r, kind)) incoming++;
+  for (const r of parseTsv(raw).rows) {
+    const p = parseTsvRow(r, kind);
+    if (p && !isHeld(p.chapter)) incoming++;
+  }
   if (!isCatastrophicTsvShrink(live, incoming)) return false;
   console.error(
     "reimport: incoming TSV is a catastrophic shrink vs live D1 — treating as a truncated fetch (no apply/prune/watermark)",
@@ -2117,7 +2129,13 @@ async function planAndStageBookResources(
     // the reimport-sync step only stamps watermarks for entries with a masterSha.
     if (
       (resource === "tn" || resource === "tq" || resource === "twl") &&
-      (await tsvFetchLooksTruncated(env, book, resource, raw))
+      (await tsvFetchLooksTruncated(
+        env,
+        book,
+        resource,
+        raw,
+        resource === "tn" || resource === "tq" ? heldByResource[resource] : undefined,
+      ))
     ) {
       entries.push({ resource, changed: false, masterSha: null, r2Key: null, src });
       continue;
