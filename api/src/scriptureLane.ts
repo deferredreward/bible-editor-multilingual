@@ -526,6 +526,323 @@ export async function snapshotRequiredBooks(
   return { books: verses.results.map((r) => r.book) };
 }
 
+/**
+ * Stale staging reclaim window (seconds): a Worker that died mid-stage/copy
+ * loses its per-book claim after this, so a fresh claim may take over. Single
+ * source of truth — the replacement FSM's stageBook imports this too.
+ */
+export const STAGING_CLAIM_STALE_SECONDS = 600;
+
+/**
+ * Verses copied per statement in copyBookForward. Each chunk is one server-side
+ * INSERT ... SELECT subrequest (rows never pass through the Worker), so a large
+ * book (e.g. Psalms, ~2.5k verses) still costs only a handful of subrequests —
+ * well under Cloudflare's ~1000-subrequest cap.
+ */
+const CARRY_FORWARD_CHUNK = 500;
+
+/** book_resource_syncs `resource` key for a lane's scripture text. */
+function laneScriptureResource(lane: LaneKey): "ult" | "ust" {
+  return lane === "lit" ? "ult" : "ust";
+}
+
+interface CarryForwardJobRow {
+  lane: LaneKey;
+  generation: number;
+  predecessor_generation: number;
+  status: string;
+}
+
+/**
+ * Carry a book's predecessor-generation scripture content FORWARD into a
+ * replacement job's fresh generation, so activating a SUBSET replacement does
+ * not leave un-selected books empty (issue #94; the JOL/MAL trap — a fresh
+ * generation starts empty, stageBook writes only staged books, so any book
+ * neither staged nor carried is silently deleted on the pointer flip).
+ *
+ * This is the copy counterpart to stageBook and reuses the SAME discipline:
+ * a unique `staging_claim_token` per claim, `stillOurs()` re-checks between
+ * destructive writes, and token-gated deletes — but the source is the
+ * predecessor generation already in D1, not a DCS fetch. All copies are
+ * server-side INSERT ... SELECT (verse bodies never pass through the Worker),
+ * chunked to stay under the subrequest cap.
+ *
+ * - Idempotent: a completed carry-forward re-run is a no-op (the book row is no
+ *   longer claimable); a reset-and-rerun re-deletes this job's partial
+ *   destination rows and re-copies to an identical, complete result. Each chunk
+ *   also skips verses already present at the destination (NOT EXISTS), so a
+ *   crash mid-copy is resumed rather than double-inserted.
+ * - FAILS CLOSED (like stageBook's `incomplete_usfm` shrink-guard): if the
+ *   destination ends up with fewer verses than the predecessor had, the book is
+ *   left in `retryable_error` — never `carried_forward` — so a partial copy can
+ *   never be activated.
+ *
+ * PR-1 (issue #94): DORMANT. Nothing calls this yet; startReplacement / routes
+ * / UI wiring is PR-2. Requires migration 0058 (`mode` column, `carried_forward`
+ * status).
+ */
+export async function copyBookForward(
+  env: Env,
+  jobId: string,
+  book: string,
+): Promise<{ status: string }> {
+  const job = await env.DB
+    .prepare(
+      `SELECT lane, generation, predecessor_generation, status
+         FROM scripture_lane_replacement WHERE job_id = ?1`,
+    )
+    .bind(jobId)
+    .first<CarryForwardJobRow>();
+  if (!job) throw Object.assign(new Error("job_not_found"), { status: 404 });
+  if (job.status !== "reserved" && job.status !== "staging") {
+    throw Object.assign(new Error("job_not_stageable"), {
+      status: 409,
+      detail: { status: job.status },
+    });
+  }
+
+  const lane = job.lane as LaneKey;
+  const bv = bibleVersionForLane(lane);
+  const destGen = job.generation;
+  const predGen = job.predecessor_generation;
+  const scriptureResource = laneScriptureResource(lane);
+
+  // Claim the book row with a unique token (same CAS UPDATE … RETURNING as
+  // stageBook). Reclaim a stale `staging` row after STAGING_CLAIM_STALE_SECONDS.
+  // Stamp mode='carry_forward' so the row records HOW this book reached the new
+  // generation.
+  const claimToken = crypto.randomUUID();
+  const claimed = await env.DB
+    .prepare(
+      `UPDATE scripture_lane_replacement_books
+          SET status = 'staging', mode = 'carry_forward',
+              updated_at = unixepoch(), error_json = NULL,
+              staging_claim_token = ?4
+        WHERE job_id = ?1 AND book = ?2
+          AND (
+            status IN ('pending', 'retryable_error', 'failed')
+            OR (status = 'staging' AND updated_at < unixepoch() - ?3)
+          )
+        RETURNING book`,
+    )
+    .bind(jobId, book, STAGING_CLAIM_STALE_SECONDS, claimToken)
+    .first<{ book: string }>();
+  if (!claimed) {
+    const cur = await env.DB
+      .prepare(
+        `SELECT status FROM scripture_lane_replacement_books WHERE job_id = ?1 AND book = ?2`,
+      )
+      .bind(jobId, book)
+      .first<{ status: string }>();
+    return { status: cur?.status ?? "skipped" };
+  }
+
+  const stillOurs = async (): Promise<boolean> => {
+    const row = await env.DB
+      .prepare(
+        `SELECT 1 FROM scripture_lane_replacement_books
+          WHERE job_id = ?1 AND book = ?2 AND staging_claim_token = ?3`,
+      )
+      .bind(jobId, book, claimToken)
+      .first();
+    return !!row;
+  };
+
+  // Transition the job to staging on the first book (mirror stageBook).
+  if (job.status === "reserved") {
+    await env.DB
+      .prepare(
+        `UPDATE scripture_lane_replacement SET status = 'staging'
+          WHERE job_id = ?1 AND status = 'reserved'`,
+      )
+      .bind(jobId)
+      .run();
+  }
+
+  if (!(await stillOurs())) return { status: "lost_claim" };
+
+  // Token-gated pre-delete of any partial copy this job already wrote for the
+  // book × DESTINATION generation. verses/book_usfm_meta are attributable via
+  // created_by_job_id; book_resource_syncs has no such column, but the whole
+  // destination generation belongs to this job so scoping by (book, resource,
+  // source_generation = destGen) is safe. Predecessor rows are NEVER touched.
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `DELETE FROM verses
+          WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+            AND created_by_job_id = ?4
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_replacement_books
+               WHERE job_id = ?4 AND book = ?1 AND staging_claim_token = ?5
+            )`,
+      )
+      .bind(book, bv, destGen, jobId, claimToken),
+    env.DB
+      .prepare(
+        `DELETE FROM book_usfm_meta
+          WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+            AND created_by_job_id = ?4
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_replacement_books
+               WHERE job_id = ?4 AND book = ?1 AND staging_claim_token = ?5
+            )`,
+      )
+      .bind(book, bv, destGen, jobId, claimToken),
+    env.DB
+      .prepare(
+        `DELETE FROM book_resource_syncs
+          WHERE book = ?1 AND resource = ?2 AND source_generation = ?3
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_replacement_books
+               WHERE job_id = ?4 AND book = ?1 AND staging_claim_token = ?5
+            )`,
+      )
+      .bind(book, scriptureResource, destGen, jobId, claimToken),
+  ]);
+
+  // Predecessor size — the completeness bar the copy must clear.
+  const predCount = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM verses
+        WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`,
+    )
+    .bind(book, bv, predGen)
+    .first<{ n: number }>();
+  const predecessorVerses = predCount?.n ?? 0;
+
+  // Chunked, server-side INSERT ... SELECT. NOT EXISTS makes each chunk skip
+  // rows already copied (idempotent, crash-resume-safe); LIMIT bounds each
+  // statement and the loop runs ceil(verses / CHUNK) times.
+  const copyStmt = env.DB.prepare(
+    `INSERT INTO verses (
+       book, chapter, verse, verse_end, bible_version, source_generation,
+       content_json, plain_text, created_by_job_id
+     )
+     SELECT src.book, src.chapter, src.verse, src.verse_end, src.bible_version, ?4,
+            src.content_json, src.plain_text, ?5
+       FROM verses src
+      WHERE src.book = ?1 AND src.bible_version = ?2 AND src.source_generation = ?3
+        AND NOT EXISTS (
+          SELECT 1 FROM verses d
+           WHERE d.book = src.book AND d.chapter = src.chapter AND d.verse = src.verse
+             AND d.bible_version = src.bible_version AND d.source_generation = ?4
+        )
+        AND EXISTS (
+          SELECT 1 FROM scripture_lane_replacement_books
+           WHERE job_id = ?5 AND book = ?1 AND staging_claim_token = ?6
+        )
+      ORDER BY src.chapter, src.verse
+      LIMIT ?7`,
+  );
+  for (;;) {
+    if (!(await stillOurs())) return { status: "lost_claim" };
+    const r = await copyStmt
+      .bind(book, bv, predGen, destGen, jobId, claimToken, CARRY_FORWARD_CHUNK)
+      .run();
+    if ((r.meta?.changes ?? 0) === 0) break;
+  }
+
+  // Carry the book header + scripture watermark forward too (single statements,
+  // token-gated). Without the book_resource_syncs watermark the export
+  // freshness gate would treat the copied book as un-synced under the new
+  // generation and could refetch/revert it.
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `INSERT OR REPLACE INTO book_usfm_meta (
+           book, bible_version, source_generation, headers_json, created_by_job_id
+         )
+         SELECT book, bible_version, ?4, headers_json, ?5
+           FROM book_usfm_meta
+          WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_replacement_books
+               WHERE job_id = ?5 AND book = ?1 AND staging_claim_token = ?6
+            )`,
+      )
+      .bind(book, bv, predGen, destGen, jobId, claimToken),
+    env.DB
+      .prepare(
+        `INSERT OR REPLACE INTO book_resource_syncs (
+           book, resource, source_generation, source_owner, source_repo, source_ref,
+           source_sha, synced_at, origin
+         )
+         SELECT book, resource, ?4, source_owner, source_repo, source_ref,
+                source_sha, unixepoch(), origin
+           FROM book_resource_syncs
+          WHERE book = ?1 AND resource = ?2 AND source_generation = ?3
+            AND EXISTS (
+              SELECT 1 FROM scripture_lane_replacement_books
+               WHERE job_id = ?5 AND book = ?1 AND staging_claim_token = ?6
+            )`,
+      )
+      .bind(book, scriptureResource, predGen, destGen, jobId, claimToken),
+  ]);
+
+  // Fail closed: a destination shorter than the predecessor must never activate.
+  const destCount = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM verses
+        WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+          AND created_by_job_id = ?4`,
+    )
+    .bind(book, bv, destGen, jobId)
+    .first<{ n: number }>();
+  const copied = destCount?.n ?? 0;
+
+  if (copied < predecessorVerses) {
+    await env.DB
+      .prepare(
+        `UPDATE scripture_lane_replacement_books
+            SET status = 'retryable_error',
+                error_json = ?1,
+                updated_at = unixepoch()
+          WHERE job_id = ?2 AND book = ?3 AND staging_claim_token = ?4`,
+      )
+      .bind(
+        JSON.stringify({
+          error: "incomplete_carry_forward",
+          copied,
+          predecessor: predecessorVerses,
+          predecessorGeneration: predGen,
+          generation: destGen,
+        }),
+        jobId,
+        book,
+        claimToken,
+      )
+      .run();
+    return { status: "retryable_error" };
+  }
+
+  const ok = await env.DB
+    .prepare(
+      `UPDATE scripture_lane_replacement_books
+          SET status = 'carried_forward',
+              mode = 'carry_forward',
+              completeness_json = ?1,
+              error_json = NULL,
+              updated_at = unixepoch()
+        WHERE job_id = ?2 AND book = ?3 AND staging_claim_token = ?4`,
+    )
+    .bind(
+      JSON.stringify({
+        verses: copied,
+        predecessorVerses,
+        carriedForward: true,
+        predecessorGeneration: predGen,
+      }),
+      jobId,
+      book,
+      claimToken,
+    )
+    .run();
+  if ((ok.meta?.changes ?? 0) !== 1) return { status: "lost_claim" };
+
+  return { status: "carried_forward" };
+}
+
 /** DTO fields published with every lane-aware response. */
 export function lanePublicState(row: LaneStateRow): Record<string, unknown> {
   return {

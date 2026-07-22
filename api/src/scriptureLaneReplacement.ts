@@ -19,6 +19,7 @@ import {
   recoverOrphanedReservation,
   requireLaneState,
   snapshotRequiredBooks,
+  STAGING_CLAIM_STALE_SECONDS,
 } from "./scriptureLane.ts";
 import { dcsRawUrl, fetchText, BOOK_NUMBERS, fileCommitSha } from "./dcsSources.ts";
 import { extractVersesForRange, extractUsfmHeaders } from "./importParsers.ts";
@@ -26,8 +27,12 @@ import { extractVersesForRange, extractUsfmHeaders } from "./importParsers.ts";
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const EXPORT_LEASE_TTL_MS = 120_000;
-/** Stale staging reclaim: Worker died mid-fetch/insert of a book. */
-export const STAGING_CLAIM_STALE_SECONDS = 600;
+/**
+ * Stale staging reclaim: Worker died mid-fetch/insert of a book. Defined in
+ * ./scriptureLane (shared with copyBookForward) and re-exported here so existing
+ * importers of this symbol keep working.
+ */
+export { STAGING_CLAIM_STALE_SECONDS };
 export const EXPORT_ABANDON_GRACE_MS = 600_000;
 
 const CHUNK = 80;
