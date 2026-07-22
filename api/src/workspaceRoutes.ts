@@ -182,7 +182,8 @@ workspaceRoutes.post("/pool", async (c) => {
     databaseUuid: typeof body.databaseUuid === "string" ? body.databaseUuid : undefined,
   });
   if (!result.ok) {
-    return c.json({ error: result.error }, result.error === "slug_taken" ? 409 : 400);
+    const conflict = result.error === "slug_taken" || result.error === "binding_taken";
+    return c.json({ error: result.error }, conflict ? 409 : 400);
   }
   return c.json({ ok: true, slot: result.slot }, 201);
 });

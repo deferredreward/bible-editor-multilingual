@@ -15,6 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { SignJWT } from "jose";
 import { attachAuth, requireCsrf } from "./auth.ts";
+import { blockViewerWrites } from "./viewerGuard.ts";
 import { workspaceRoutes } from "./workspaceRoutes.ts";
 
 function assert(cond, msg) {
@@ -99,10 +100,14 @@ async function makeToken({ sub = "1", role = "editor", username = "alice" } = {}
     .sign(KEY);
 }
 
+// Mirrors index.ts's production middleware order: blockViewerWrites runs on
+// /api/* BEFORE the workspace router, so this app regresses the interaction
+// (a super-admin with a stale viewer-role token must still reach /pool/claim).
 function buildApp() {
   const app = new Hono();
   app.use("*", attachAuth);
   app.use("*", requireCsrf);
+  app.use("/api/*", blockViewerWrites);
   app.route("/api/workspaces", workspaceRoutes);
   return app;
 }
@@ -146,6 +151,14 @@ console.log("[gating] pool endpoints require a super-admin");
   // Unauthenticated too.
   assert((await req(app, env, "GET", "/api/workspaces/pool")).status === 401, "unauthenticated GET /pool -> 401");
 
+  // A plain viewer (not super-admin) is stopped by blockViewerWrites BEFORE the
+  // route even runs — the multi-segment /pool/claim path isn't in the viewer
+  // write allowlist, so the guard returns viewer_read_only.
+  seedUser(db, { id: 9, username: "vic" });
+  const viewerTok = await makeToken({ sub: "9", username: "vic", role: "viewer" });
+  const blocked = await req(app, env, "POST", "/api/workspaces/pool/claim", { token: viewerTok, body: { org: "X", label: "X" } });
+  assert(blocked.status === 403 && (await blocked.json()).reason === "viewer_read_only", "viewer non-super-admin blocked by viewer guard");
+
   // Registering must not have happened.
   assert(db.prepare("SELECT COUNT(*) AS n FROM workspaces").get().n === 0, "no pool rows written by forbidden requests");
 }
@@ -158,7 +171,10 @@ console.log("[super-admin] register a slot, claim it, see it in the snapshot");
   seedUser(db, { id: 2, username: "ada" });
   const app = buildApp();
   const env = baseEnv(db, { DB_POOL1: { prepare: () => ({}) }, DB_POOL2: { prepare: () => ({}) } });
-  const tok = await makeToken({ sub: "2", username: "ada", role: "viewer" }); // super-admin regardless of claim role
+  // role=viewer on purpose: a super-admin must reach these routes even with a
+  // stale viewer-role token — blockViewerWrites (wired into buildApp above) lets
+  // super-admins through ahead of the route's isSuperAdmin gate (finding #3).
+  const tok = await makeToken({ sub: "2", username: "ada", role: "viewer" });
 
   const reg1 = await req(app, env, "POST", "/api/workspaces/pool", { token: tok, body: { binding: "DB_POOL1" } });
   assert(reg1.status === 201, "register DB_POOL1 -> 201");

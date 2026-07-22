@@ -68,7 +68,7 @@ const liveBinding = () => ({ prepare: () => ({}) });
 // env: real registry DB on DB/SHARED_DB, plus two live pool bindings.
 function makeEnv(db, extra = {}) {
   const d1 = makeD1(db);
-  return { DB: d1, SHARED_DB: d1, DB_POOL1: liveBinding(), DB_POOL2: liveBinding(), ...extra };
+  return { DB: d1, SHARED_DB: d1, DB_POOL1: liveBinding(), DB_POOL2: liveBinding(), DB_POOL3: liveBinding(), ...extra };
 }
 
 function rowBySlug(db, slug) {
@@ -95,8 +95,15 @@ console.log("[registerPoolSlot] registers a live binding as an 'available' slot"
   const dead = await registerPoolSlot(env, { binding: "DB_NOT_DECLARED" });
   assert(!dead.ok && dead.error === "binding_not_live", "binding not live on env -> binding_not_live");
 
-  const dup = await registerPoolSlot(env, { binding: "DB_POOL1" });
-  assert(!dup.ok && dup.error === "slug_taken", "duplicate derived slug -> slug_taken");
+  // Same binding under a DIFFERENT slug must be rejected — one binding = one
+  // physical DB = one workspace, else two orgs could be claimed onto it. (This
+  // check runs before the slug check, so re-registering DB_POOL1 is binding_taken.)
+  const dupBinding = await registerPoolSlot(env, { binding: "DB_POOL2", slug: "another-slug" });
+  assert(!dupBinding.ok && dupBinding.error === "binding_taken", "binding already registered -> binding_taken");
+
+  // A NEW binding whose slug collides with an existing one -> slug_taken.
+  const dupSlug = await registerPoolSlot(env, { binding: "DB_POOL3", slug: "pool1" });
+  assert(!dupSlug.ok && dupSlug.error === "slug_taken", "new binding, colliding slug -> slug_taken");
 
   const empty = await registerPoolSlot(env, { binding: "" });
   assert(!empty.ok && empty.error === "invalid_binding", "empty binding -> invalid_binding");
@@ -149,6 +156,23 @@ console.log("[claimWorkspace] skips available slots whose binding isn't deployed
   const claim = await claimWorkspace(env, { org: "RealOrg", label: "Real" });
   assert(claim && claim.workspace.slug === "pool1", "dead-binding slot skipped, live slot claimed");
   assert(rowBySlug(db, "ghost").status === "available", "dead-binding slot left untouched");
+}
+
+// ── claimWorkspace: never assigns two orgs to the same physical DB ──────────
+
+console.log("[claimWorkspace] skips an available slot whose binding is already claimed");
+{
+  const db = freshDb();
+  const env = makeEnv(db);
+  // OrgA already holds DB_POOL1. A stray available row ALSO points at DB_POOL1
+  // (inserted directly — registerPoolSlot would reject it). A live DB_POOL2 too.
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('a', 'A', 'OrgA', 'DB_POOL1', 'claimed')").run();
+  db.prepare("INSERT INTO workspaces (slug, binding, status) VALUES ('dup1', 'DB_POOL1', 'available')").run();
+  db.prepare("INSERT INTO workspaces (slug, binding, status) VALUES ('slot2', 'DB_POOL2', 'available')").run();
+
+  const claim = await claimWorkspace(env, { org: "OrgB", label: "B" });
+  assert(claim && claim.workspace.binding === "DB_POOL2", "in-use binding skipped; claim lands on the free DB_POOL2");
+  assert(rowBySlug(db, "dup1").status === "available", "the duplicate-binding slot was left unclaimed");
 }
 
 // ── claimWorkspace: pre-existing claimed row for org is returned as-is ───────

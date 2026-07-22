@@ -321,7 +321,14 @@ export async function claimWorkspace(
   if (label.length === 0 || label.length > 64) throw new Error("claimWorkspace: label must be 1..64 chars");
 
   const existing = await findClaimedByOrg(env, db, org);
-  if (existing) return { workspace: existing, alreadyClaimed: true };
+  if (existing) {
+    // Re-prime this isolate's cache even on the idempotent path: the org may
+    // have been claimed by another isolate since we primed, so our cached
+    // roster could be missing this row (which subsequent requests here must
+    // resolve). Cheap, and claims are rare.
+    await invalidateAndReprime(env);
+    return { workspace: existing, alreadyClaimed: true };
+  }
 
   const candidates = await db
     .prepare(`SELECT id, slug, binding FROM workspaces WHERE status = 'available' ORDER BY id`)
@@ -330,6 +337,15 @@ export async function claimWorkspace(
   for (const cand of candidates.results ?? []) {
     if (!SLUG_RE.test(cand.slug)) continue; // corrupt slot row; never claim into it
     if (!bindingIsLiveD1(env, cand.binding)) continue; // binding not deployed yet
+    // Never assign two orgs to the same physical database: skip an available
+    // slot whose binding is already held by a claimed row. registerPoolSlot
+    // rejects duplicate-binding registration, but this closes the residual
+    // window where two available rows briefly share a binding.
+    const inUse = await db
+      .prepare(`SELECT 1 AS x FROM workspaces WHERE binding = ?1 AND status = 'claimed' LIMIT 1`)
+      .bind(cand.binding)
+      .first<{ x: number }>();
+    if (inUse) continue;
 
     let claimed = false;
     try {
@@ -345,9 +361,14 @@ export async function claimWorkspace(
     } catch (e) {
       // UNIQUE(org): a concurrent login already claimed a slot for this org
       // between the findClaimedByOrg check above and this UPDATE. Recover by
-      // handing back that claim instead of erroring.
+      // handing back that claim instead of erroring — repriming first so this
+      // isolate's roster includes the winner's row (otherwise a later request
+      // here would fail to resolve the slug and fall back to list[0]).
       const raced = await findClaimedByOrg(env, db, org);
-      if (raced) return { workspace: raced, alreadyClaimed: true };
+      if (raced) {
+        await invalidateAndReprime(env);
+        return { workspace: raced, alreadyClaimed: true };
+      }
       throw e; // any other constraint failure is genuinely unexpected
     }
     if (!claimed) continue; // lost the race for THIS slot; try the next
@@ -404,7 +425,7 @@ export async function getPoolStatus(env: Env): Promise<PoolStatus> {
   return { counts, slots };
 }
 
-export type RegisterPoolError = "invalid_binding" | "binding_not_live" | "invalid_slug" | "slug_taken";
+export type RegisterPoolError = "invalid_binding" | "binding_not_live" | "invalid_slug" | "slug_taken" | "binding_taken";
 
 export interface RegisterPoolResult {
   ok: boolean;
@@ -434,6 +455,15 @@ export async function registerPoolSlot(
   if (!SLUG_RE.test(slug)) return { ok: false, error: "invalid_slug" };
 
   const db = sharedDb(env);
+  // One binding = one physical database = at most one workspace. Registering
+  // the same binding under a second slug would let two orgs be claimed onto the
+  // same D1 and corrupt each other's data, so reject a binding already present
+  // in ANY row (available, claimed, or a WORKSPACES-seeded one).
+  const clash = await db
+    .prepare(`SELECT slug FROM workspaces WHERE binding = ?1 LIMIT 1`)
+    .bind(binding)
+    .first<{ slug: string }>();
+  if (clash) return { ok: false, error: "binding_taken" };
   try {
     await db
       .prepare(`INSERT INTO workspaces (slug, binding, database_uuid, status) VALUES (?1, ?2, ?3, 'available')`)
