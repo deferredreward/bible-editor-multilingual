@@ -24,7 +24,7 @@
 ## Escalated / blocked on a human (not a code change Claude can land alone)
 
 - **Apply migration `0043_pipeline_job_source_generation.sql`** — local (`bible_editor_dev --local`) and prod (`bible_editor --remote --env production`) before relying on pipeline source stamps or `staging` book-status CAS. Code landed on `feat/scripture-repo-preferences`; D1 not applied this session.
-- **Apply migration `0058_scripture_lane_carry_forward.sql`** — local (`bible_editor_dev --local`) and, when PR-2 lands, prod. Adds `mode` + `carried_forward` to `scripture_lane_replacement_books` for issue #94 carry-forward. PR-1 code (`copyBookForward` in `scriptureLane.ts`) is DORMANT — nothing calls it yet — so applying is only strictly needed before PR-2 wires startReplacement/routes/UI. (DEV fork only; never `--env production` here.)
+- **Apply migration `0059_scripture_lane_carry_forward.sql`** — local (`bible_editor_dev --local`) and, when PR-2 lands, prod. Adds `mode` + `carried_forward` to `scripture_lane_replacement_books` for issue #94 carry-forward. PR-1 code (`copyBookForward` in `scriptureLane.ts`) is DORMANT — nothing calls it yet — so applying is only strictly needed before PR-2 wires startReplacement/routes/UI. (DEV fork only; never `--env production` here.)
 - **Prod `DEU 27:22` TN content-dup** — 2 live PRISTINE notes, same content (occ 1, quote `שֹׁכֵב֙ עִם`,
   note "See how you translated 'lies with'…") under ids `y3oq` + `oi0y` (both valid ids — a pure
   doubling, not a digit-first id). The new reimport Guard 2 PREVENTS new doubles but does NOT remediate

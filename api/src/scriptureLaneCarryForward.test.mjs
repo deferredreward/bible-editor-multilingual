@@ -7,7 +7,7 @@
 // lives here rather than in the FSM module — it can be unit-tested directly.
 //
 // The schema mirrors the current migrations: scripture_lane_replacement_books
-// as of 0043 (+ 'staging') / 0045 (+ staging_claim_token) / 0058 (+ mode,
+// as of 0043 (+ 'staging') / 0045 (+ staging_claim_token) / 0059 (+ mode,
 // + 'carried_forward'); verses/book_usfm_meta with created_by_job_id (0042);
 // book_resource_syncs with source_repo in the PK (0044).
 

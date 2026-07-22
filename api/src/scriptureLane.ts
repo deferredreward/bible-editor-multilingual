@@ -578,7 +578,7 @@ interface CarryForwardJobRow {
  *   never be activated.
  *
  * PR-1 (issue #94): DORMANT. Nothing calls this yet; startReplacement / routes
- * / UI wiring is PR-2. Requires migration 0058 (`mode` column, `carried_forward`
+ * / UI wiring is PR-2. Requires migration 0059 (`mode` column, `carried_forward`
  * status).
  */
 export async function copyBookForward(
