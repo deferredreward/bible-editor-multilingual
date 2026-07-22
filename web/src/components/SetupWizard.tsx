@@ -20,7 +20,7 @@ import { UpstreamSourcePicker } from "./UpstreamSourcePicker";
 import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneTargetModeStep";
 import { RepoRef } from "./SourceOverrideField";
 import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
-import { SETUP_STEPS, type LaneKey } from "../lib/setupWizard";
+import { SETUP_STEPS, shouldPrefillFromCurrent, wizardApply409, type LaneKey } from "../lib/setupWizard";
 
 // Pinned duration (ms) for each StepContent's expand/collapse Collapse. Fixed —
 // not MUI's default 'auto', which scales with content height and would make the
@@ -87,15 +87,25 @@ export function SetupWizard() {
   // already populated (409 lane_source_change_requires_migration). We offer to
   // revert each to the current config's repo so the admin isn't stuck.
   const [migrationLanes, setMigrationLanes] = useState<LaneKey[]>([]);
+  // Set when a same-org re-run tripped 409 project_not_empty (a non-lane repo
+  // was edited, shifting the data/export identity) — offer "revert ALL repos".
+  const [revertAll, setRevertAll] = useState(false);
 
-  // Pre-fill lane target repos from the CURRENT config once (populated re-runs),
-  // so re-opening Setup doesn't accidentally propose a source change.
+  // On a POPULATED re-run (the DB is already configured for THIS org), pre-fill
+  // ALL target repos — lane AND non-lane — from the current config once, so
+  // re-opening Setup proposes NO data/export identity change by default. NEVER
+  // on a fresh org: there the live config is the default preset (a different
+  // org) and detect()'s inference (e.g. ru_rlob) must win — prefilling would
+  // clobber it back to en_ult/en_ust and break the target repo/export.
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || !draft.draft || !projectConfig) return;
+    if (!shouldPrefillFromCurrent(projectConfig.org, draft.draft.org)) return;
     prefilled.current = true;
-    if (projectConfig.repos?.lit) draft.setRepo("lit", projectConfig.repos.lit);
-    if (projectConfig.repos?.sim) draft.setRepo("sim", projectConfig.repos.sim);
+    for (const key of RESOURCE_KEYS) {
+      const repo = projectConfig.repos?.[key];
+      if (repo) draft.setRepo(key, repo);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.draft, projectConfig]);
 
@@ -103,6 +113,18 @@ export function SetupWizard() {
     const current = projectConfig?.repos?.[lane];
     if (current) draft.setRepo(lane, current);
     setMigrationLanes((ls) => ls.filter((l) => l !== lane));
+  };
+
+  // Reset every target repo to the current config (all lanes + non-lane repos) —
+  // the escape hatch when a same-org re-run's edits tripped the identity guard.
+  const revertAllRepos = () => {
+    if (!projectConfig) return;
+    for (const key of RESOURCE_KEYS) {
+      const repo = projectConfig.repos?.[key];
+      if (repo) draft.setRepo(key, repo);
+    }
+    setRevertAll(false);
+    setApplyError(null);
   };
 
   // Scroll the newly-active step's HEADER to the top of the viewport on change,
@@ -155,6 +177,7 @@ export function SetupWizard() {
     setApplyError(null);
     setLaneModeError(null);
     setMigrationLanes([]);
+    setRevertAll(false);
     try {
       await applyProjectOverrides("custom-gl", draft.buildOverrides());
       setApplied(true);
@@ -163,20 +186,24 @@ export function SetupWizard() {
       if (e instanceof ApiError && e.status === 409) {
         const body = e.body as { error?: string; detail?: { lanes?: string[] } } | undefined;
         const code = body?.error;
-        if (code === "lane_source_change_requires_migration") {
-          // Configure-only: the backend refuses to change a populated lane's
-          // source. Surface it non-trappingly with a per-lane revert affordance.
+        // Same-org re-run? Then a project_not_empty is an identity edit the admin
+        // can fix by reverting repos — NOT the different-org "recreate the DB"
+        // tenancy stop. wizardApply409 picks the right message + revert affordance.
+        const sameOrg = shouldPrefillFromCurrent(projectConfig?.org, draft.draft?.org);
+        const { messageKey, revert } = wizardApply409(code, sameOrg);
+        if (revert === "lanes") {
           const lanes = (body?.detail?.lanes ?? []).filter(
             (l): l is LaneKey => l === "lit" || l === "sim",
           );
           setMigrationLanes(lanes);
           setApplyError(
-            t("setup.laneSourceMigration", {
-              lanes: lanes.map((l) => t(`setup.lane.${l}`)).join(", "),
-            }),
+            t(messageKey, { lanes: lanes.map((l) => t(`setup.lane.${l}`)).join(", ") }),
           );
+        } else if (revert === "allRepos") {
+          setRevertAll(true);
+          setApplyError(t(messageKey));
         } else {
-          setApplyError(code === "project_not_empty" ? t("setup.projectNotEmpty") : t("setup.laneBusy"));
+          setApplyError(t(messageKey));
         }
       } else {
         setApplyError(t("setup.applyFailed"));
@@ -284,7 +311,7 @@ export function SetupWizard() {
             )}
             {applyError && (
               <Alert
-                severity={migrationLanes.length > 0 ? "warning" : "error"}
+                severity={migrationLanes.length > 0 || revertAll ? "warning" : "error"}
                 sx={{ mt: 1.5 }}
               >
                 {applyError}
@@ -304,6 +331,16 @@ export function SetupWizard() {
                 })}
               </Button>
             ))}
+            {revertAll && (
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{ mt: 1, mr: 1 }}
+                onClick={revertAllRepos}
+              >
+                {t("setup.revertAllRepos")}
+              </Button>
+            )}
             {laneModeError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
                 {laneModeError}

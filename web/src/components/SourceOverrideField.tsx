@@ -10,6 +10,8 @@ import {
   verifyErrorKind,
   clearedOverrideSelection,
   pendingOverrideSelection,
+  overrideFieldInitialUrl,
+  shouldClearOverrideOnBlur,
   type SourceVerifyState,
 } from "../lib/setupWizard";
 
@@ -48,7 +50,14 @@ export function SourceOverrideField({
 }) {
   const { t } = useTranslation();
   const sel = state.resourceSource[resource] ?? { mode: "upstream" };
-  const [url, setUrl] = useState("");
+  // Mount showing the ALREADY-VERIFIED override's URL, not an empty box — a fresh
+  // remount (e.g. this field appears in both Step 2 and Step 3's LaneCard) whose
+  // display field was empty would otherwise be treated as a user-clear on the
+  // next focus+blur and silently drop the verified override.
+  const [url, setUrl] = useState(() => overrideFieldInitialUrl(sel, state.upstreamOrg));
+  // Whether the user has actually edited this field. A blur only acts on a
+  // touched field — an untouched mounted field never clears or re-verifies.
+  const [touched, setTouched] = useState(false);
   const [verify, setVerify] = useState<SourceVerifyState>(
     sel.mode === "override" && sel.repo
       ? { status: "verified", org: sel.org ?? state.upstreamOrg, repo: sel.repo }
@@ -56,12 +65,17 @@ export function SourceOverrideField({
   );
 
   const onVerify = async () => {
+    // Ignore blur on a field the user never touched: it's just the mounted
+    // display of an existing selection (verified override or empty pending).
+    if (!touched) return;
     const raw = url.trim();
-    if (!raw) {
-      setVerify({ status: "idle" });
-      // Clearing the field must clear any prior verified override — otherwise a
-      // deleted URL leaves a stale ref in the draft that Apply would persist.
-      state.setResourceSource(resource, clearedOverrideSelection(rowChecked));
+    if (raw === "") {
+      if (shouldClearOverrideOnBlur(touched, url)) {
+        setVerify({ status: "idle" });
+        // A genuine user-clear drops the override; clearedOverrideSelection maps
+        // to blank (or upstream when the owning row is checked).
+        state.setResourceSource(resource, clearedOverrideSelection(rowChecked));
+      }
       return;
     }
     setVerify({ status: "verifying" });
@@ -87,7 +101,10 @@ export function SourceOverrideField({
         label={t("setup.sourceUrlLabel")}
         placeholder="https://git.door43.org/BibleAquifer/ar_tn"
         value={url}
-        onChange={(e) => setUrl(e.target.value)}
+        onChange={(e) => {
+          setTouched(true);
+          setUrl(e.target.value);
+        }}
         onBlur={() => void onVerify()}
         disabled={verify.status === "verifying"}
         InputProps={{

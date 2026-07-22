@@ -24,6 +24,11 @@ import {
   jobActionable,
   replacementSpinnerVisible,
   describeBookError,
+  shouldPrefillFromCurrent,
+  overrideFieldInitialUrl,
+  shouldClearOverrideOnBlur,
+  wizardApply409,
+  detectOrg409Key,
 } from "./setupWizard.ts";
 import { defaultResourceSources } from "./orgDraft.ts";
 
@@ -48,6 +53,72 @@ test("toggleResourceChecked: checked pulls upstream, unchecked defaults to blank
 
 test("door43RepoUrl builds the canonical repo web URL", () => {
   assert.equal(door43RepoUrl("BibleAquifer", "ar_tn"), "https://git.door43.org/BibleAquifer/ar_tn");
+});
+
+test("shouldPrefillFromCurrent: only a same-org match (a re-run) prefills; a fresh org does not", () => {
+  // Fresh org: live config is the default preset (different org) → inference wins.
+  assert.equal(shouldPrefillFromCurrent("unfoldingWord", "BibleEditorMLTest"), false);
+  // Re-run: the DB is already configured for THIS org → prefill from current.
+  assert.equal(shouldPrefillFromCurrent("BibleEditorMLTest", "BibleEditorMLTest"), true);
+  // Missing either side → never prefill.
+  assert.equal(shouldPrefillFromCurrent("", "X"), false);
+  assert.equal(shouldPrefillFromCurrent("X", ""), false);
+  assert.equal(shouldPrefillFromCurrent(null, undefined), false);
+});
+
+test("overrideFieldInitialUrl: a verified override mounts showing its Door43 URL, not empty", () => {
+  // Same-org override → default org, so the URL uses the default upstream org.
+  assert.equal(
+    overrideFieldInitialUrl({ mode: "override", repo: "ar_tn" }, "unfoldingWord"),
+    "https://git.door43.org/unfoldingWord/ar_tn",
+  );
+  // Different-org override → its own org.
+  assert.equal(
+    overrideFieldInitialUrl({ mode: "override", org: "BibleAquifer", repo: "ar_tn" }, "unfoldingWord"),
+    "https://git.door43.org/BibleAquifer/ar_tn",
+  );
+  // Pending (repo-less) override, blank, or upstream → empty (nothing to show).
+  assert.equal(overrideFieldInitialUrl({ mode: "override" }, "unfoldingWord"), "");
+  assert.equal(overrideFieldInitialUrl({ mode: "blank" }, "unfoldingWord"), "");
+  assert.equal(overrideFieldInitialUrl(undefined, "unfoldingWord"), "");
+});
+
+test("shouldClearOverrideOnBlur: only a touched+emptied field clears; a mounted-empty display does not", () => {
+  // The defect: a fresh remount whose display field is empty but the override
+  // still exists must NOT be blanked on focus+blur.
+  assert.equal(shouldClearOverrideOnBlur(false, ""), false); // untouched empty → keep
+  assert.equal(shouldClearOverrideOnBlur(true, ""), true); // user emptied it → clear
+  assert.equal(shouldClearOverrideOnBlur(true, "  "), true); // whitespace-only → clear
+  assert.equal(shouldClearOverrideOnBlur(true, "https://x"), false); // has a value → verify, not clear
+  assert.equal(shouldClearOverrideOnBlur(false, "https://x"), false);
+});
+
+test("wizardApply409: maps the code (and re-run flag) to the right message + revert affordance", () => {
+  assert.deepEqual(wizardApply409("lane_source_change_requires_migration", false), {
+    messageKey: "setup.laneSourceMigration",
+    revert: "lanes",
+  });
+  // Same-org re-run identity change → revert-all, NOT the recreate-DB guidance.
+  assert.deepEqual(wizardApply409("project_not_empty", true), {
+    messageKey: "setup.identityChangedRevert",
+    revert: "allRepos",
+  });
+  // Genuinely different org → the real tenancy stop.
+  assert.deepEqual(wizardApply409("project_not_empty", false), {
+    messageKey: "setup.projectNotEmpty",
+    revert: "none",
+  });
+  // Anything else (e.g. lane_busy) → generic, no revert.
+  assert.deepEqual(wizardApply409("lane_busy", true), { messageKey: "setup.laneBusy", revert: "none" });
+});
+
+test("detectOrg409Key: same-org lane-source change never shows the recreate-DB message", () => {
+  assert.equal(
+    detectOrg409Key("lane_source_change_requires_migration"),
+    "preferences.detectOrg.laneSourceMigration",
+  );
+  assert.equal(detectOrg409Key("project_not_empty"), "preferences.detectOrg.projectNotEmpty");
+  assert.equal(detectOrg409Key(undefined), "preferences.detectOrg.projectNotEmpty");
 });
 
 test("laneUrlChoiceSelection makes the choice read as 'url' without committing a repo", () => {

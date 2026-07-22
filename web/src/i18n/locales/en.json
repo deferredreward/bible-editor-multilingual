@@ -294,6 +294,7 @@
       "exportOrgLabel": "Export org",
       "translationSourceToggle": "Translate from unfoldingWord's English source",
       "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org.",
+      "laneSourceMigration": "Changing the scripture source on a project that already has text is a migration. Keep the current source, or use \"Change scripture source\" in Preferences to do it deliberately.",
       "applyFailed": "Could not apply the configuration. Please try again."
     },
     "exportAdminOnly": "Only an admin can export the context pack.",
@@ -922,6 +923,8 @@
     "reviewIncomplete": "Some resource repositories are still missing or ambiguous. Resolve them before applying.",
     "laneSourceMigration": "Setup can't change the scripture source for {{lanes}} on a project that already has text — that's a migration. Revert the source below to keep the current one, or use \"Change scripture source\" in Preferences to do it deliberately.",
     "revertLaneSource": "Revert {{lane}} source to current ({{repo}})",
+    "identityChangedRevert": "This project already has data, so its org, export target, and resource repos can't change here. Revert your repo edits to the current configuration to apply a language or lane-mode tweak, or start from a fresh database to onboard a different org.",
+    "revertAllRepos": "Revert all repos to current configuration",
     "replacementStepIntro": "You changed the scripture source for an already-populated project, so the new text must be staged before it goes live. This step finishes that change; nothing changes for editors until you press Activate.",
     "replacementStart": "Stage the new text",
     "replacementIntro": "This stages the new source text book by book. When every book is ready, press Activate to switch the lane over.",

@@ -189,3 +189,73 @@ export function describeBookError(
 export function door43RepoUrl(org: string, repo: string): string {
   return `https://git.door43.org/${org}/${repo}`;
 }
+
+// ── Re-run prefill + 409 handling ────────────────────────────────────────────
+
+// Prefill the draft's target repos from the CURRENT config ONLY when the DB is
+// already configured for the org being set up (a re-run). On a FRESH org the
+// live config is the DEFAULT preset (a DIFFERENT org, e.g. unfoldingWord) and
+// detect()'s inference — e.g. ru_rlob — must win; prefilling would clobber it
+// back to en_ult/en_ust. Same-org match is the robust "already configured" signal.
+export function shouldPrefillFromCurrent(
+  currentConfigOrg: string | null | undefined,
+  detectedOrg: string | null | undefined,
+): boolean {
+  const a = (currentConfigOrg ?? "").trim();
+  const b = (detectedOrg ?? "").trim();
+  return a !== "" && b !== "" && a === b;
+}
+
+// The initial URL a SourceOverrideField shows: reconstruct the Door43 URL from an
+// already-VERIFIED override ({mode:'override', org?, repo}) so a freshly-mounted
+// field displays the verified source instead of an empty box (which a focus+blur
+// would then treat as a clear and silently drop the override). Empty for a
+// non-override or pending (repo-less) selection.
+export function overrideFieldInitialUrl(
+  sel: ResourceSource | undefined,
+  defaultOrg: string,
+): string {
+  if (sel && sel.mode === "override" && sel.repo && sel.repo.trim() !== "") {
+    return door43RepoUrl((sel.org ?? "").trim() || defaultOrg, sel.repo);
+  }
+  return "";
+}
+
+// A blur only CLEARS the override when the user actually emptied a field they had
+// touched — never when a freshly-mounted display field just happens to be empty.
+export function shouldClearOverrideOnBlur(touched: boolean, rawUrl: string): boolean {
+  return touched && rawUrl.trim() === "";
+}
+
+// Apply-time 409 handling for the wizard: map the server error code (+ whether
+// this is a same-org re-run) to a message key and the revert affordance to offer.
+//   lane_source_change_requires_migration → per-lane revert (keep current source)
+//   project_not_empty on a same-org re-run → the admin edited a repo that shifted
+//     the data/export identity; offer "revert ALL repos to current" (never the
+//     destroy-the-DB guidance, which only fits a genuinely different org)
+//   project_not_empty for a DIFFERENT org  → the real tenancy stop (recreate DB)
+export type Wizard409Revert = "lanes" | "allRepos" | "none";
+export interface Wizard409 {
+  messageKey: string;
+  revert: Wizard409Revert;
+}
+export function wizardApply409(code: string | undefined, sameOrgReRun: boolean): Wizard409 {
+  if (code === "lane_source_change_requires_migration") {
+    return { messageKey: "setup.laneSourceMigration", revert: "lanes" };
+  }
+  if (code === "project_not_empty") {
+    return sameOrgReRun
+      ? { messageKey: "setup.identityChangedRevert", revert: "allRepos" }
+      : { messageKey: "setup.projectNotEmpty", revert: "none" };
+  }
+  return { messageKey: "setup.laneBusy", revert: "none" };
+}
+
+// Preferences' OrgDetectionSection 409 mapping: the same-org populated lane-source
+// change must NOT show the different-org "recreate the database" guidance (that
+// would tell an admin to DESTROY their own data). Branch on the code.
+export function detectOrg409Key(code: string | undefined): string {
+  return code === "lane_source_change_requires_migration"
+    ? "preferences.detectOrg.laneSourceMigration"
+    : "preferences.detectOrg.projectNotEmpty";
+}
