@@ -32,8 +32,15 @@ import {
   translationSourceRepoRef,
   type DcsRepoOverrides,
 } from "./dcsSources";
-import type { RepoRef } from "./repoUrl";
+import { isIdent, parseDoor43SourceRef, type RepoRef } from "./repoUrl";
 import { getProjectConfig } from "./projectConfig.ts";
+import {
+  resolveBookNoteSourceRef,
+  listBookSourceOverrides,
+  setBookSourceOverride,
+  clearBookSourceOverride,
+  isBookSourceResource,
+} from "./bookSource.ts";
 import { populateReferencedArticles } from "./articlePopulate";
 import type { Context } from "hono";
 import { reimportBookFromDcs, recordResourceSync, resourceSourceRef, type Resource } from "./bookReimport";
@@ -112,6 +119,68 @@ books.get("/:book/lint", requireAuth, async (c) => {
 // POST /api/books/:book/aquifer-drafts — re-source this book's tN from Aquifer as
 // unapproved drafts merged onto the en_tn skeleton (admin-only).
 books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
+
+// ── Per-book source overrides (issue #103, Tier 1 step 1) ──────────────────
+// GET  /api/books/:book/sources — list this book's per-resource source overrides.
+// PUT  /api/books/:book/sources — set/clear one (admin). Takes effect on the next
+//   import of the book (POST /:book/import): the chosen source is fetched, its
+//   rows stamped source:<owner>/<repo>, and the book held out of reimport/export.
+books.get("/:book/sources", requireAuth, async (c) => {
+  const book = (c.req.param("book") ?? "").toUpperCase();
+  if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
+  const overrides = await listBookSourceOverrides(c.env, book);
+  return c.json({ book, overrides });
+});
+
+// Body: { resource, url } | { resource, org, repo } | { resource, clear: true }.
+// A pasted Door43 URL is parsed + ident-validated the same way #84's
+// verify-source does. REPO EXISTENCE is NOT checked here — the caller verifies
+// via GET /api/orgs/verify-source first, matching the decoupled project-wide flow.
+books.put("/:book/sources", requireAdmin, async (c) => {
+  const book = (c.req.param("book") ?? "").toUpperCase();
+  if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
+  let body: {
+    resource?: unknown;
+    url?: unknown;
+    org?: unknown;
+    repo?: unknown;
+    clear?: unknown;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const resource = typeof body.resource === "string" ? body.resource : "";
+  if (!isBookSourceResource(resource)) {
+    return c.json({ error: "unsupported_resource", resource }, 400);
+  }
+  if (body.clear === true) {
+    await clearBookSourceOverride(c.env, book, resource);
+    return c.json({ book, resource, cleared: true });
+  }
+  let org: string;
+  let repo: string;
+  if (typeof body.url === "string" && body.url.trim()) {
+    const parsed = parseDoor43SourceRef(body.url);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    org = parsed.org;
+    repo = parsed.repo;
+  } else if (typeof body.org === "string" && typeof body.repo === "string") {
+    org = body.org.trim();
+    repo = body.repo.trim();
+  } else {
+    return c.json({ error: "expected_url_or_org_repo" }, 400);
+  }
+  // Defense in depth: reject a non-ident org/repo before it can be persisted
+  // (the resolver re-validates on read, but never store a value we know is bad).
+  if (!isIdent(org) || !isIdent(repo)) {
+    return c.json({ error: "invalid_org_or_repo", org, repo }, 400);
+  }
+  const userId = currentUserId(c) ?? null;
+  await setBookSourceOverride(c.env, book, resource, org, repo, userId);
+  return c.json({ book, resource, org, repo });
+});
 
 books.post("/:book/import", requireEditor, async (c) => {
   const userId = currentUserId(c);
@@ -372,8 +441,15 @@ async function importBookFromDcs(
   // English translationSource, not the org's own repo. Drives the book_imports
   // marker (which holds the book out of the nightly reimport + export) and the
   // watermark identity below.
+  // tN honors a PER-BOOK source override (issue #103): resolution prefers the
+  // book's override, then the project-wide translationSource, then the org's own
+  // repo (null). An override applies even when translateFromSource is false —
+  // it is an explicit per-book decision. tQ stays project-wide-only until the
+  // per-book tQ fast-follow lands. Whatever non-org source is chosen flows
+  // through noteSource → sourceProvenance → book_imports.tn_source below, so the
+  // existing reimport/export hold-out (heldOutNoteResources) covers it unchanged.
   const noteSource: { tn: RepoRef | null; tq: RepoRef | null } = {
-    tn: opts.translateFromSource ? translationSourceRepoRef(cfg, "tn") : null,
+    tn: await resolveBookNoteSourceRef(env, cfg, book, "tn", !!opts.translateFromSource),
     tq: opts.translateFromSource ? translationSourceRepoRef(cfg, "tq") : null,
   };
 
