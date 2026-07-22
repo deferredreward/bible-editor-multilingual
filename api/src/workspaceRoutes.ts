@@ -60,8 +60,10 @@ async function hasRoleRow(env: Env, ws: Workspace, username: string | undefined)
 // actually enter. Non-members must not even learn the names of other orgs
 // (issue #93 — the previous "show-but-disable" behavior leaked the existence
 // and labels of every configured org to non-members). The currently-active
-// workspace is always included so a user can never be stranded with an empty
-// switcher. Every surfaced entry carries `allowed: true`.
+// workspace is included only when membership can't be confirmed (fail-closed
+// anti-strand); when membership is known it must be earned like any other, so a
+// forged be_ws cookie can't leak a non-member org. Every surfaced entry carries
+// `allowed: true`.
 workspaceRoutes.get("/", async (c) => {
   const workspaces = listWorkspaces(c.env);
   const current = c.env.WORKSPACE_SLUG ?? "default";
@@ -98,17 +100,23 @@ workspaceRoutes.get("/", async (c) => {
     if (await hasRoleRow(c.env, w, username)) roleAllowed.add(w.slug);
   }
 
-  // A workspace is visible when the user may actually switch to it: their
-  // current workspace (never strand them), a workspace a role row vouches for,
-  // or — when membership was confirmed — their DCS org. When membership is
-  // unknown (no token / DCS lookup failed) we fail closed to current-only plus
-  // role grants, exactly as before, but omit the rest rather than showing them
-  // disabled. Mirrors the POST /:slug allow logic so the list only ever offers
-  // workspaces the switch endpoint would accept.
+  // A workspace is visible when the user may actually switch to it: a workspace
+  // a role row vouches for, or — when membership was confirmed — their DCS org.
+  // Mirrors the POST /:slug allow logic so the list only ever offers workspaces
+  // the switch endpoint would accept.
+  //
+  // `current` is NOT unconditionally visible: it derives from the client's be_ws
+  // cookie (index.ts's resolveWorkspace runs pre-auth), so treating it as always
+  // allowed let a non-member forge be_ws=<any valid slug> and read that org's
+  // name/label with allowed:true even though POST /:slug would 403 — the exact
+  // leak #93 closes. It is surfaced ONLY as the fail-closed anti-strand fallback
+  // when membership is unknown (no token / DCS lookup down); when membership is
+  // known, current must earn visibility via a role row or confirmed org like any
+  // other workspace.
   const isVisible = (w: Workspace): boolean =>
-    w.slug === current ||
     roleAllowed.has(w.slug) ||
-    (!!memberOrgs && memberOrgs.has(w.org.toLowerCase()));
+    (!!memberOrgs && memberOrgs.has(w.org.toLowerCase())) ||
+    (!memberOrgs && w.slug === current);
 
   const visible = workspaces.filter(isVisible).map((w) => ({
     slug: w.slug,

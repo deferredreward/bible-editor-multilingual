@@ -214,7 +214,10 @@ console.log("[GET] non-super-admin: a user_roles grant surfaces a workspace whos
   const realFetch = globalThis.fetch;
   try {
     // org2's DB has a role row for the user; uw's does not. The user is a DCS
-    // member of neither org. Expect BOTH current (uw) and role-granted (org2).
+    // member of neither org; uw is merely their (cookie-derived) current
+    // workspace. Membership IS known here (empty set), so uw must NOT be
+    // surfaced — a forged/stale be_ws naming a non-member org can't leak that
+    // org's name (issue #93). Only the role-granted org2 shows.
     const dbUw = freshDb();
     seedUser(dbUw, { id: 22, username: "grace", token: "grace-token" });
     const dbOrg2 = freshDb();
@@ -240,7 +243,8 @@ console.log("[GET] non-super-admin: a user_roles grant surfaces a workspace whos
     assert(res.status === 200, "role-grant GET -> 200");
     const body = await res.json();
     const slugs = body.workspaces.map((w) => w.slug).sort();
-    assert(slugs.length === 2 && slugs[0] === "org2" && slugs[1] === "uw", "current + role-granted workspace both surfaced");
+    assert(slugs.length === 1 && slugs[0] === "org2", "known non-member: only role-granted org2 surfaced; cookie-current uw omitted");
+    assert(!body.workspaces.some((w) => w.slug === "uw"), "known non-member: current (uw) name not leaked");
     assert(body.workspaces.every((w) => w.allowed === true), "every surfaced entry is allowed");
   } finally {
     globalThis.fetch = realFetch;
