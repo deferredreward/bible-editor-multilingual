@@ -175,7 +175,7 @@ console.log("[GET] super-admin: every workspace allowed, DCS never called");
 
 // ── membership filtering from a stubbed /api/v1/user/orgs ──────────────────
 
-console.log("[GET] non-super-admin: allowed flags come from DCS org membership");
+console.log("[GET] non-super-admin: non-member orgs are OMITTED (not disabled), names never leaked (issue #93)");
 {
   const realFetch = globalThis.fetch;
   try {
@@ -194,9 +194,58 @@ console.log("[GET] non-super-admin: allowed flags come from DCS org membership")
     const body = await res.json();
     const uw = body.workspaces.find((w) => w.slug === "uw");
     const org2 = body.workspaces.find((w) => w.slug === "org2");
-    assert(uw.allowed === true, "member of unfoldingWord -> uw allowed");
-    assert(org2.allowed === false, "not a member of OrgTwo -> org2 not allowed");
+    assert(uw && uw.allowed === true, "member of unfoldingWord -> uw present + allowed");
+    assert(org2 === undefined, "not a member of OrgTwo -> org2 OMITTED from the list entirely");
+    assert(
+      !JSON.stringify(body).includes("OrgTwo") && !JSON.stringify(body).includes("Org Two"),
+      "non-member org's name/label never appears anywhere in the response",
+    );
+    assert(body.workspaces.length === 1, "only the one allowed workspace is surfaced");
     assert(body.membershipUnknown === undefined, "successful lookup has no membershipUnknown flag");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── role-row grant surfaces an outsider's workspace even without org membership ─
+
+console.log("[GET] non-super-admin: a user_roles grant surfaces a workspace whose org the user isn't in");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    // org2's DB has a role row for the user; uw's does not. The user is a DCS
+    // member of neither org; uw is merely their (cookie-derived) current
+    // workspace. Membership IS known here (empty set), so uw must NOT be
+    // surfaced — a forged/stale be_ws naming a non-member org can't leak that
+    // org's name (issue #93). Only the role-granted org2 shows.
+    const dbUw = freshDb();
+    seedUser(dbUw, { id: 22, username: "grace", token: "grace-token" });
+    const dbOrg2 = freshDb();
+    dbOrg2.exec(`CREATE TABLE user_roles (dcs_username TEXT COLLATE NOCASE, role TEXT);`);
+    dbOrg2.exec(`INSERT INTO user_roles (dcs_username, role) VALUES ('grace', 'editor');`);
+    globalThis.fetch = async (url) => jsonRes(firstPageOnly(url, [])); // member of no orgs
+    const app = buildApp();
+    const env = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DB: makeD1(dbUw),
+      DB2: makeD1(dbOrg2),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+      WORKSPACE_SLUG: "uw",
+      SUPER_ADMINS: "",
+    };
+    const tok = await makeToken({ sub: "22", username: "grace" });
+    const res = await req(app, env, "GET", "/api/workspaces", { token: tok });
+    assert(res.status === 200, "role-grant GET -> 200");
+    const body = await res.json();
+    const slugs = body.workspaces.map((w) => w.slug).sort();
+    assert(slugs.length === 1 && slugs[0] === "org2", "known non-member: only role-granted org2 surfaced; cookie-current uw omitted");
+    assert(!body.workspaces.some((w) => w.slug === "uw"), "known non-member: current (uw) name not leaked");
+    assert(body.workspaces.every((w) => w.allowed === true), "every surfaced entry is allowed");
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -204,7 +253,7 @@ console.log("[GET] non-super-admin: allowed flags come from DCS org membership")
 
 // ── failed membership lookup: fail closed to current-only, never stranded ──
 
-console.log("[GET] failed/absent membership lookup -> only current workspace allowed + membershipUnknown");
+console.log("[GET] failed/absent membership lookup -> only current workspace surfaced + membershipUnknown");
 {
   const realFetch = globalThis.fetch;
   try {
@@ -221,14 +270,13 @@ console.log("[GET] failed/absent membership lookup -> only current workspace all
     assert(resNoToken.status === 200, "no access token -> still 200 (never strand the user)");
     const bodyNoToken = await resNoToken.json();
     assert(bodyNoToken.membershipUnknown === true, "no access token -> membershipUnknown:true");
+    const uwNoToken = bodyNoToken.workspaces.find((w) => w.slug === "uw");
+    assert(uwNoToken && uwNoToken.allowed === true, "no access token -> current workspace (uw) still present + allowed");
     assert(
-      bodyNoToken.workspaces.find((w) => w.slug === "uw").allowed === true,
-      "no access token -> current workspace (uw) still allowed",
+      bodyNoToken.workspaces.find((w) => w.slug === "org2") === undefined,
+      "no access token -> non-current workspace OMITTED (name not leaked)",
     );
-    assert(
-      bodyNoToken.workspaces.find((w) => w.slug === "org2").allowed === false,
-      "no access token -> non-current workspace not allowed",
-    );
+    assert(bodyNoToken.workspaces.length === 1, "no access token -> only current workspace surfaced");
 
     // Case 2: access token present but the DCS call fails.
     const dbFailedFetch = freshDb();
@@ -242,9 +290,11 @@ console.log("[GET] failed/absent membership lookup -> only current workspace all
     assert(resFailedFetch.status === 200, "DCS fetch throws -> still 200");
     const bodyFailedFetch = await resFailedFetch.json();
     assert(bodyFailedFetch.membershipUnknown === true, "DCS fetch throws -> membershipUnknown:true");
+    const uwFailed = bodyFailedFetch.workspaces.find((w) => w.slug === "uw");
+    assert(uwFailed && uwFailed.allowed === true, "DCS fetch throws -> current workspace still present + allowed");
     assert(
-      bodyFailedFetch.workspaces.find((w) => w.slug === "uw").allowed === true,
-      "DCS fetch throws -> current workspace still allowed",
+      bodyFailedFetch.workspaces.find((w) => w.slug === "org2") === undefined,
+      "DCS fetch throws -> non-current workspace OMITTED",
     );
   } finally {
     globalThis.fetch = realFetch;
