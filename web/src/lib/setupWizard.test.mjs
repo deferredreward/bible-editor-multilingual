@@ -17,6 +17,12 @@ import {
   laneChoiceFromMode,
   toggleResourceChecked,
   door43RepoUrl,
+  laneUrlChoiceSelection,
+  clearedOverrideSelection,
+  upstreamLanguageOf,
+  jobActionable,
+  replacementSpinnerVisible,
+  describeBookError,
 } from "./setupWizard.ts";
 
 test("stepAfterApply skips to import when no lane is quarantined", () => {
@@ -83,4 +89,64 @@ test("toggleResourceChecked: checked pulls upstream, unchecked defaults to blank
 
 test("door43RepoUrl builds the canonical repo web URL", () => {
   assert.equal(door43RepoUrl("BibleAquifer", "ar_tn"), "https://git.door43.org/BibleAquifer/ar_tn");
+});
+
+test("laneUrlChoiceSelection makes the choice read as 'url' without committing a repo", () => {
+  const sel = laneUrlChoiceSelection();
+  assert.equal(laneChoiceFromMode(sel.mode), "url");
+  assert.equal(sel.repo, undefined); // nothing committed until a URL verifies
+});
+
+test("clearedOverrideSelection resets to upstream when checked, blank when not", () => {
+  assert.deepEqual(clearedOverrideSelection(true), { mode: "upstream" });
+  assert.deepEqual(clearedOverrideSelection(false), { mode: "blank" });
+});
+
+test("upstreamLanguageOf uses the inferred code, falling back to 'en'", () => {
+  assert.equal(upstreamLanguageOf("ar"), "ar");
+  assert.equal(upstreamLanguageOf("  es-419 "), "es-419");
+  assert.equal(upstreamLanguageOf(""), "en");
+  assert.equal(upstreamLanguageOf(null), "en");
+  assert.equal(upstreamLanguageOf(undefined), "en");
+});
+
+test("jobActionable is true only when a book needs retry/waive", () => {
+  assert.equal(jobActionable([{ status: "pending" }, { status: "artifact_ok" }]), false);
+  assert.equal(jobActionable([{ status: "retryable_error" }]), true);
+  assert.equal(jobActionable([{ status: "artifact_ok" }, { status: "failed" }]), true);
+  assert.equal(jobActionable([]), false);
+});
+
+test("replacementSpinnerVisible hides once ready or once a book needs action", () => {
+  // Genuinely staging → spin.
+  assert.equal(replacementSpinnerVisible("staging", [{ status: "pending" }]), true);
+  // Ready (awaiting Activate) → no spin.
+  assert.equal(replacementSpinnerVisible("ready", [{ status: "artifact_ok" }]), false);
+  // Stuck on a retryable book → no spin (action required panel shows instead).
+  assert.equal(replacementSpinnerVisible("staging", [{ status: "retryable_error" }]), false);
+});
+
+test("describeBookError maps sha_unavailable to a not-found location", () => {
+  const src = { owner: "BibleAquifer", repo: "ar_avd", ref: "master" };
+  assert.deepEqual(describeBookError(JSON.stringify({ error: "sha_unavailable" }), src), {
+    kind: "not_found",
+    location: "BibleAquifer/ar_avd@master",
+  });
+  // Bare (non-JSON) string form.
+  assert.deepEqual(describeBookError("sha_unavailable", src), {
+    kind: "not_found",
+    location: "BibleAquifer/ar_avd@master",
+  });
+  // No ref → omit the @ref suffix.
+  assert.deepEqual(describeBookError("sha_unavailable", { owner: "o", repo: "r" }), {
+    kind: "not_found",
+    location: "o/r",
+  });
+  // Other errors pass through as detail; empty → null.
+  assert.deepEqual(describeBookError(JSON.stringify({ error: "boom" }), src), {
+    kind: "other",
+    detail: "boom",
+  });
+  assert.equal(describeBookError(null, src), null);
+  assert.equal(describeBookError("", src), null);
 });

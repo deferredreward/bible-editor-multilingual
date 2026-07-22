@@ -103,6 +103,80 @@ export function toggleResourceChecked(checked: boolean): ResourceSource {
   return checked ? { mode: "upstream" } : { mode: "blank" };
 }
 
+// Selecting "A URL" for a lane's upstream (Step 3) must make the choice read as
+// 'url' so the SourceOverrideField renders — an 'override' with NO repo yet does
+// exactly that (laneChoiceFromMode('override') === 'url') while staying safe:
+// buildTranslationSource skips an override whose repo is empty, so nothing is
+// committed until a URL verifies.
+export function laneUrlChoiceSelection(): ResourceSource {
+  return { mode: "override" };
+}
+
+// The selection an override field resets to when its URL is cleared: back to
+// upstream when the owning row is checked, otherwise blank. Prevents a cleared
+// field from leaving a stale verified override in the draft.
+export function clearedOverrideSelection(rowChecked: boolean): ResourceSource {
+  return rowChecked ? { mode: "upstream" } : { mode: "blank" };
+}
+
+// The languageCode a translationSource should carry for a given upstream org:
+// the org's inferred language, falling back to 'en' only when unknown. A
+// non-unfoldingWord upstream must NOT keep 'en' or buildTranslationSource emits
+// the wrong source language.
+export function upstreamLanguageOf(inferredLanguageCode: string | null | undefined): string {
+  const c = (inferredLanguageCode ?? "").trim();
+  return c || "en";
+}
+
+// ── Replacement-job progress (Step 4b) ──────────────────────────────────────
+// A book that hit a retryable_error / failed needs admin action (retry/waive);
+// the job will otherwise sit in `staging` forever (e.g. a source repo missing a
+// book's USFM → sha_unavailable). "Actionable" drives both the "Action required"
+// panel and the spinner gate so the wizard never spins forever on a stuck job.
+export function jobActionable(books: ReadonlyArray<{ status: string }>): boolean {
+  return books.some((b) => b.status === "retryable_error" || b.status === "failed");
+}
+
+// The staging spinner shows ONLY while genuinely working: not once ready
+// (awaiting Activate) and not once a book needs action.
+export function replacementSpinnerVisible(
+  jobStatus: string | undefined,
+  books: ReadonlyArray<{ status: string }>,
+): boolean {
+  return jobStatus !== "ready" && !jobActionable(books);
+}
+
+export type BookErrorInfo =
+  | { kind: "not_found"; location: string }
+  | { kind: "other"; detail: string }
+  | null;
+
+// Explain WHY a book is stuck instead of showing a bare status. The common case
+// — the new source repo has no USFM for the book — surfaces as sha_unavailable;
+// map it to "Not found in <owner>/<repo>@<ref>" (location resolved from the
+// pending target's source) so the admin doesn't blindly retry an empty repo.
+export function describeBookError(
+  errorJson: string | null | undefined,
+  source: { owner: string; repo: string; ref?: string } | null | undefined,
+): BookErrorInfo {
+  if (!errorJson) return null;
+  let code: unknown = errorJson;
+  try {
+    const parsed = JSON.parse(errorJson);
+    code = parsed?.error ?? parsed?.code ?? parsed?.reason ?? errorJson;
+  } catch {
+    /* not JSON — treat the raw string as the code */
+  }
+  const codeStr = typeof code === "string" ? code : JSON.stringify(code);
+  if (codeStr.includes("sha_unavailable")) {
+    const location = source
+      ? `${source.owner}/${source.repo}${source.ref ? `@${source.ref}` : ""}`
+      : "";
+    return { kind: "not_found", location };
+  }
+  return { kind: "other", detail: codeStr };
+}
+
 // The canonical Door43 web URL for an org/repo — used to LINK a reader-friendly
 // `org: repo` chip to the actual repository.
 export function door43RepoUrl(org: string, repo: string): string {

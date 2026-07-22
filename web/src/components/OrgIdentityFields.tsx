@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Autocomplete, Box, CircularProgress, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Autocomplete, Box, Button, CircularProgress, Stack, TextField, Typography } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import { api } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
@@ -92,7 +92,27 @@ export function OrgIdentityFields({ state }: { state: OrgDraftState }) {
         </Stack>
       </Box>
 
-      {state.detectError && <Alert severity="warning">{state.detectError}</Alert>}
+      {state.detectError && (
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={state.loading}
+              onClick={() => {
+                // Manual retry — bypasses the once-per-org auto-detect guard.
+                if (workspaceOrg) state.setOrg(workspaceOrg);
+                void state.detect();
+              }}
+            >
+              {t("setup.retryDetection")}
+            </Button>
+          }
+        >
+          {state.detectError}
+        </Alert>
+      )}
 
       <Autocomplete<LangOption, false, false, true>
         freeSolo

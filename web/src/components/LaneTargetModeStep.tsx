@@ -9,7 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import { RepoRef, SourceOverrideField } from "./SourceOverrideField";
-import { laneChoiceFromMode, type LaneUpstreamChoice } from "../lib/setupWizard";
+import { laneChoiceFromMode, laneUrlChoiceSelection, type LaneUpstreamChoice } from "../lib/setupWizard";
 
 // Editing the text (default) vs aligning only. Both keep alignment writable;
 // "align" additionally freezes the text. Applied after Apply via lanePatch.
@@ -43,8 +43,12 @@ function LaneCard({
   const onUpstreamChoice = (choice: LaneUpstreamChoice) => {
     if (choice === "unfoldingWord") state.setResourceSource(lane, { mode: "upstream" });
     else if (choice === "none") state.setResourceSource(lane, { mode: "blank" });
-    else if (sel.mode !== "override") state.setResourceSource(lane, { mode: "blank" });
-    // 'url' keeps blank until a URL verifies (SourceOverrideField promotes it).
+    else if (choice === "url" && sel.mode !== "override") {
+      // Mark it override-pending (empty repo) so the choice reads as 'url' and
+      // the SourceOverrideField renders; buildTranslationSource skips an empty
+      // override, so nothing is committed until a URL verifies.
+      state.setResourceSource(lane, laneUrlChoiceSelection());
+    }
   };
 
   // Resolved FROM (upstream) for the inline hint.

@@ -1,5 +1,21 @@
 import { useEffect, useState } from "react";
-import { Alert, Box, Button, Chip, CircularProgress, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  FormControlLabel,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { useTranslation } from "react-i18next";
 import {
   api,
@@ -9,6 +25,9 @@ import {
   type LaneReplacementBook,
 } from "../sync/api";
 import { refreshProjectConfig } from "../hooks/useProjectConfig";
+import { bookName } from "../lib/bookNames";
+import { jobActionable, replacementSpinnerVisible, describeBookError } from "../lib/setupWizard";
+import type { LaneEditMode } from "./LaneTargetModeStep";
 
 // Known lane error codes (mirrors PreferencesWorkspace's LaneCard). Codes may
 // carry a `:detail` suffix (e.g. lane_busy:sim); split tolerates that.
@@ -47,14 +66,23 @@ function rawError(e: unknown): string {
 // polls per-book progress, offers retry/waive per book, and — once ready —
 // exposes an EXPLICIT Activate. Never auto-activates (owner decision): nothing
 // changes for editors until Activate is pressed.
+//
+// Two safety additions over the raw LaneCard driver:
+//   • A prominent SECOND confirmation (distinct from Apply) that lists the exact
+//     books whose text+alignment will be overwritten, gated on an explicit ack.
+//   • After Activate, the lane's Step-3 edit/align choice is (re)applied — a
+//     lane that went through replacement would otherwise land back in editable
+//     mode, dropping an "Aligning only" choice.
 export function LaneReplacementDriver({
   lane,
   label,
   laneState,
+  desiredMode,
 }: {
   lane: "lit" | "sim";
   label: string;
   laneState: LanePublicState;
+  desiredMode: LaneEditMode;
 }) {
   const { t } = useTranslation();
   const [starting, setStarting] = useState(false);
@@ -63,8 +91,14 @@ export function LaneReplacementDriver({
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<LaneReplacementJobResponse | null>(null);
 
+  // Confirm dialog state (item 9).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [ack, setAck] = useState(false);
+  const [affectedBooks, setAffectedBooks] = useState<string[] | null>(null);
+
   const replacementJobId = laneState.replacementJobId ?? null;
   const pendingTarget = laneState.pendingTarget;
+  const source = pendingTarget?.source ?? null;
 
   // Poll the job while one runs so per-book staging + readiness stay live.
   // Stops on a terminal status and refreshes the shared config (which clears
@@ -98,13 +132,28 @@ export function LaneReplacementDriver({
     };
   }, [lane, replacementJobId]);
 
-  const handleStart = async () => {
+  const openConfirm = async () => {
     if (!pendingTarget) return;
+    setAck(false);
+    setAffectedBooks(null);
+    setConfirmOpen(true);
+    // List the books whose text will be overwritten — the org's currently
+    // imported books (a replacement re-stages every one). Best-effort: on a
+    // failure the dialog still confirms, just without the itemized list.
+    try {
+      const res = await api.getBooks();
+      setAffectedBooks(res.books.map((b) => b.book));
+    } catch {
+      setAffectedBooks([]);
+    }
+  };
+
+  const handleConfirmStart = async () => {
+    if (!pendingTarget) return;
+    setConfirmOpen(false);
     setStarting(true);
     setError(null);
     try {
-      // The mandatory pending target carries the correct source/export/locks for
-      // the new generation — stage exactly it (confirm:true).
       await api.laneStartReplacement(lane, pendingTarget, true);
       await refreshProjectConfig().catch(() => {});
     } catch (e) {
@@ -112,6 +161,19 @@ export function LaneReplacementDriver({
     } finally {
       setStarting(false);
     }
+  };
+
+  // Apply the Step-3 edit/align choice once the lane exists again post-activate.
+  const applyDesiredMode = async () => {
+    const cfg = await refreshProjectConfig().catch(() => null);
+    const ls = cfg?.laneState?.[lane];
+    if (!ls || ls.replacementRequired) return;
+    const desiredReadOnly = desiredMode === "align";
+    if (ls.config.textReadOnly === desiredReadOnly && ls.config.alignmentWritable) return;
+    await api.lanePatch(lane, ls.configRevision, {
+      textReadOnly: desiredReadOnly,
+      alignmentWritable: true,
+    });
   };
 
   const handleActivate = async () => {
@@ -122,6 +184,8 @@ export function LaneReplacementDriver({
       // A fresh fencing UUID per activation guards against a split-brain export
       // completing a stale render after the flip.
       await api.laneActivate(lane, replacementJobId, crypto.randomUUID());
+      // Re-apply the lane's edit/align choice (dropped by the generation flip).
+      await applyDesiredMode();
       await refreshProjectConfig().catch(() => {});
     } catch (e) {
       setError(laneErrorMessage(t, rawError(e)));
@@ -166,6 +230,24 @@ export function LaneReplacementDriver({
   const pendingBooks = jobBooks.filter(
     (b) => b.status !== "artifact_ok" && b.status !== "absent_authorized",
   );
+  const actionable = jobActionable(jobBooks);
+  const spinning = replacementSpinnerVisible(jobStatus, jobBooks);
+
+  // Resolve a per-book tooltip: for a stuck book, say WHY (e.g. not found in the
+  // source) rather than a bare status.
+  const bookTooltip = (b: LaneReplacementBook): string => {
+    const retryable = b.status === "retryable_error" || b.status === "failed";
+    if (retryable) {
+      const info = describeBookError(
+        b.error_json,
+        source ? { owner: source.owner, repo: source.repo, ref: source.ref } : null,
+      );
+      if (info?.kind === "not_found") return t("setup.bookError.notFound", { location: info.location });
+      if (info?.kind === "other") return `${b.book}: ${info.detail}`;
+      return t("preferences.scriptureLanes.bookRetryHint", { book: b.book });
+    }
+    return `${b.book}: ${b.status}`;
+  };
 
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2 }}>
@@ -174,9 +256,7 @@ export function LaneReplacementDriver({
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
             {label}
           </Typography>
-          {pendingTarget && (
-            <Chip size="small" label={`${pendingTarget.source.owner}/${pendingTarget.source.repo}`} />
-          )}
+          {source && <Chip size="small" label={`${source.owner}/${source.repo}`} />}
         </Stack>
 
         <Typography variant="body2" color="text.secondary">
@@ -185,7 +265,7 @@ export function LaneReplacementDriver({
 
         {!replacementJobId && (
           <Box>
-            <Button variant="contained" onClick={handleStart} disabled={starting || !pendingTarget}>
+            <Button variant="contained" onClick={openConfirm} disabled={starting || !pendingTarget}>
               {starting ? <CircularProgress size={16} color="inherit" /> : t("setup.replacementStart")}
             </Button>
           </Box>
@@ -194,23 +274,24 @@ export function LaneReplacementDriver({
         {replacementJobId && (
           <Stack spacing={1}>
             <Stack direction="row" spacing={1} alignItems="center">
-              {jobStatus !== "ready" && <CircularProgress size={16} />}
+              {spinning && <CircularProgress size={16} />}
               <Typography variant="body2">
                 {jobStatus
                   ? t(`preferences.scriptureLanes.jobStatus.${jobStatus}`)
                   : t("preferences.scriptureLanes.jobRunning")}
               </Typography>
               {jobStatus === "ready" && (
-                <Button
-                  size="small"
-                  variant="contained"
-                  onClick={handleActivate}
-                  disabled={activating}
-                >
+                <Button size="small" variant="contained" onClick={handleActivate} disabled={activating}>
                   {activating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.activate")}
                 </Button>
               )}
             </Stack>
+
+            {actionable && (
+              <Alert severity="warning" variant="outlined">
+                {t("setup.replacementActionRequired")}
+              </Alert>
+            )}
 
             {jobBooks.length > 0 && (
               <Stack spacing={0.5}>
@@ -232,14 +313,7 @@ export function LaneReplacementDriver({
                             ? "default"
                             : "warning";
                     return (
-                      <Tooltip
-                        key={b.book}
-                        title={
-                          retryable
-                            ? t("preferences.scriptureLanes.bookRetryHint", { book: b.book })
-                            : `${b.book}: ${b.status}`
-                        }
-                      >
+                      <Tooltip key={b.book} title={bookTooltip(b)}>
                         <Chip
                           size="small"
                           color={color}
@@ -263,6 +337,53 @@ export function LaneReplacementDriver({
           </Alert>
         )}
       </Stack>
+
+      {/* Second confirmation (distinct from Apply) — item 9. */}
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{t("setup.replacementConfirmTitle", { lane: label })}</DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div">
+            {source && (
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                {t("setup.replacementConfirmSource", { owner: source.owner, repo: source.repo })}
+              </Typography>
+            )}
+            <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
+              {t("setup.replacementConfirmWarning")}
+            </Alert>
+            {affectedBooks == null ? (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <CircularProgress size={16} />
+                <Typography variant="body2">{t("setup.replacementConfirmLoadingBooks")}</Typography>
+              </Stack>
+            ) : affectedBooks.length > 0 ? (
+              <>
+                <Typography variant="body2" sx={{ mb: 0.5 }}>
+                  {t("setup.replacementConfirmBooksLead", { count: affectedBooks.length })}
+                </Typography>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                  {affectedBooks.map((b) => (
+                    <Chip key={b} size="small" label={`${bookName(b)} (${b})`} />
+                  ))}
+                </Box>
+              </>
+            ) : (
+              <Typography variant="body2">{t("setup.replacementConfirmNoBookList")}</Typography>
+            )}
+          </DialogContentText>
+          <FormControlLabel
+            sx={{ mt: 1.5 }}
+            control={<Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)} />}
+            label={t("setup.replacementConfirmAck")}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmOpen(false)}>{t("setup.back")}</Button>
+          <Button variant="contained" color="warning" disabled={!ack} onClick={handleConfirmStart}>
+            {t("setup.replacementConfirmButton")}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

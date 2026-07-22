@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
+  Button,
   Checkbox,
   CircularProgress,
   FormControlLabel,
@@ -12,28 +13,24 @@ import {
   Typography,
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
-import { api } from "../sync/api";
+import { api, ApiError } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import { RESOURCE_KEYS, UW_UPSTREAM_ORG, type ResourceKey } from "../lib/orgDraft";
 import { RepoRef, SourceOverrideField } from "./SourceOverrideField";
+import { upstreamLanguageOf } from "../lib/setupWizard";
+
+// Aligned grid template shared by every resource row so labels + the source
+// column line up vertically (item: "make the columns actually columnar").
+const ROW_GRID = { xs: "1fr", sm: "minmax(200px, max-content) 1fr" };
 
 // One resource row. Checked = pull from the default upstream at its inferred
 // repo. Unchecked reveals a choice: leave the resource blank (no upstream) or
 // paste a Door43 URL for a DIFFERENT source (possibly a different org), verified
 // on blur. Writes selections into the shared draft's resourceSource map.
-function ResourceSourceRow({
-  resource,
-  state,
-}: {
-  resource: ResourceKey;
-  state: OrgDraftState;
-}) {
+function ResourceSourceRow({ resource, state }: { resource: ResourceKey; state: OrgDraftState }) {
   const { t } = useTranslation();
   const sel = state.resourceSource[resource] ?? { mode: "upstream" };
   const checked = sel.mode === "upstream";
-  // Sub-mode when unchecked: a URL choice is remembered locally so the field
-  // stays open while the admin is still typing (mode is only promoted to
-  // 'override' once a URL verifies).
   const [urlChoice, setUrlChoice] = useState(sel.mode === "override");
 
   const onToggleChecked = (next: boolean) => {
@@ -41,7 +38,6 @@ function ResourceSourceRow({
       state.setResourceSource(resource, { mode: "upstream" });
       setUrlChoice(false);
     } else {
-      // Default an unchecked resource to blank until the admin opts into a URL.
       state.setResourceSource(resource, { mode: "blank" });
     }
   };
@@ -52,7 +48,6 @@ function ResourceSourceRow({
       state.setResourceSource(resource, { mode: "blank" });
     } else {
       setUrlChoice(true);
-      // Keep it blank (no upstream) until a URL actually verifies.
       if (sel.mode !== "override") state.setResourceSource(resource, { mode: "blank" });
     }
   };
@@ -60,80 +55,116 @@ function ResourceSourceRow({
   const upstreamRepo = state.upstreamRepos[resource];
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: ROW_GRID,
+        alignItems: "start",
+        columnGap: 2,
+        rowGap: 0.5,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        p: 1.5,
+      }}
+    >
       <FormControlLabel
+        sx={{ m: 0 }}
         control={
           <Checkbox size="small" checked={checked} onChange={(e) => onToggleChecked(e.target.checked)} />
         }
         label={
-          <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
-            <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 150 }}>
-              {t(`setup.resource.${resource}`)}
-            </Typography>
-            {checked && upstreamRepo && <RepoRef org={state.upstreamOrg} repo={upstreamRepo} />}
-          </Stack>
+          <Typography variant="body2" sx={{ fontWeight: 600, textAlign: "start" }}>
+            {t(`setup.resource.${resource}`)}
+          </Typography>
         }
       />
 
-      {!checked && (
-        <Box sx={{ pl: 4, pt: 0.5 }}>
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={urlChoice ? "url" : "blank"}
-            onChange={(_e, v) => v && onSubMode(v)}
-          >
-            <ToggleButton value="blank">{t("setup.leaveBlank")}</ToggleButton>
-            <ToggleButton value="url">{t("setup.useDifferentSource")}</ToggleButton>
-          </ToggleButtonGroup>
-
-          {urlChoice && <SourceOverrideField resource={resource} state={state} />}
-        </Box>
-      )}
+      <Box sx={{ minWidth: 0 }}>
+        {checked ? (
+          upstreamRepo ? (
+            <RepoRef org={state.upstreamOrg} repo={upstreamRepo} />
+          ) : (
+            <Typography variant="body2" color="warning.main">
+              {t("setup.reviewMissing")}
+            </Typography>
+          )
+        ) : (
+          <Stack spacing={0.5}>
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={urlChoice ? "url" : "blank"}
+              onChange={(_e, v) => v && onSubMode(v)}
+            >
+              <ToggleButton value="blank">{t("setup.leaveBlank")}</ToggleButton>
+              <ToggleButton value="url">{t("setup.useDifferentSource")}</ToggleButton>
+            </ToggleButtonGroup>
+            {urlChoice && <SourceOverrideField resource={resource} state={state} />}
+          </Stack>
+        )}
+      </Box>
     </Box>
   );
 }
 
 // Step 2 — "Sources (pull FROM)". The default upstream org (unfoldingWord) plus
 // one checked-by-default row per resource. DCS has no live org search, so the
-// upstream org is verify-on-blur (getInferredOrgConfig), not autocomplete.
+// upstream org is verify-on-blur (getInferredOrgConfig), not autocomplete. The
+// org must be VERIFIED before the wizard can advance/apply — except the
+// well-known unfoldingWord default, which needs no round-trip.
 export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
   const { t } = useTranslation();
   const [orgInput, setOrgInput] = useState(state.upstreamOrg);
   const [verifying, setVerifying] = useState(false);
-  const [orgError, setOrgError] = useState<string | null>(null);
+  // Distinguish a transient DCS failure (retry, don't hard-block) from a genuine
+  // "no such org" (invalid). null = no error.
+  const [errKind, setErrKind] = useState<"invalid" | "unreachable" | null>(null);
 
-  const onOrgBlur = async () => {
-    const org = orgInput.trim();
-    setOrgError(null);
-    if (!org) return;
-    if (org === UW_UPSTREAM_ORG) {
-      // The well-known default needs no round-trip.
-      state.setUpstreamOrg(org);
+  // The well-known default upstream is known-good — mark it verified without a
+  // round-trip so the happy path is never gated behind a network call.
+  useEffect(() => {
+    if (state.upstreamOrg === UW_UPSTREAM_ORG && !state.upstreamVerified) {
       state.setUpstreamVerified(true);
+    }
+  }, [state]);
+
+  const verifyOrg = async () => {
+    const org = orgInput.trim();
+    setErrKind(null);
+    if (!org) return;
+    state.setUpstreamOrg(org);
+    if (org === UW_UPSTREAM_ORG) {
+      state.setUpstreamVerified(true);
+      state.setUpstreamLanguageCode("en");
       return;
     }
     if (org === state.upstreamOrg && state.upstreamVerified) return;
-    state.setUpstreamOrg(org);
+    state.setUpstreamVerified(false);
     setVerifying(true);
     try {
       const res = await api.getInferredOrgConfig(org);
       state.setUpstreamVerified(true);
-      // Adopt any inferred repo names for this alternate upstream org so the
-      // rows show real repos rather than the default en_* names.
+      // A non-unfoldingWord upstream must carry ITS language, not 'en'.
+      state.setUpstreamLanguageCode(upstreamLanguageOf(res.proposal.languageCode));
+      // Adopt any inferred repo names for this alternate upstream org.
       const next = { ...state.upstreamRepos };
       for (const key of RESOURCE_KEYS) {
         const inferred = res.proposal.repos[key];
         if (inferred) next[key] = inferred;
       }
       state.setUpstreamRepos(next);
-    } catch {
+    } catch (e) {
       state.setUpstreamVerified(false);
-      setOrgError(t("setup.upstreamOrgError"));
+      // 5xx (DCS unreachable) is transient — allow retry, don't call it invalid.
+      const transient = e instanceof ApiError && e.status >= 500;
+      setErrKind(transient ? "unreachable" : "invalid");
     } finally {
       setVerifying(false);
     }
   };
+
+  const showBlockingGate = !state.upstreamVerified && state.upstreamOrg !== UW_UPSTREAM_ORG;
 
   return (
     <Stack spacing={2}>
@@ -141,23 +172,36 @@ export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
         {t("setup.sourcesIntro")}
       </Typography>
 
-      <TextField
-        size="small"
-        sx={{ maxWidth: 360 }}
-        label={t("setup.upstreamOrgLabel")}
-        value={orgInput}
-        onChange={(e) => setOrgInput(e.target.value)}
-        onBlur={() => void onOrgBlur()}
-        helperText={orgError ?? t("setup.upstreamOrgHelp")}
-        error={!!orgError}
-        InputProps={{
-          endAdornment: verifying ? <CircularProgress size={16} /> : undefined,
-        }}
-      />
+      <Stack direction="row" spacing={1} alignItems="flex-start">
+        <TextField
+          size="small"
+          sx={{ maxWidth: 360, flex: 1 }}
+          label={t("setup.upstreamOrgLabel")}
+          value={orgInput}
+          onChange={(e) => setOrgInput(e.target.value)}
+          onBlur={() => void verifyOrg()}
+          helperText={
+            errKind === "invalid"
+              ? t("setup.upstreamOrgError")
+              : errKind === "unreachable"
+                ? t("setup.upstreamOrgUnreachable")
+                : t("setup.upstreamOrgHelp")
+          }
+          error={errKind === "invalid"}
+          InputProps={{ endAdornment: verifying ? <CircularProgress size={16} /> : undefined }}
+        />
+        {(errKind === "unreachable" || (showBlockingGate && !verifying)) && (
+          <Button size="small" variant="outlined" onClick={() => void verifyOrg()} disabled={verifying}>
+            {t("setup.upstreamOrgRetry")}
+          </Button>
+        )}
+      </Stack>
 
-      {!state.upstreamVerified && state.upstreamOrg !== UW_UPSTREAM_ORG && (
-        <Alert severity="info" variant="outlined">
-          {t("setup.upstreamOrgUnverified")}
+      {showBlockingGate && (
+        <Alert severity={errKind === "unreachable" ? "warning" : "error"} variant="outlined">
+          {errKind === "unreachable"
+            ? t("setup.upstreamOrgUnreachable")
+            : t("setup.upstreamOrgUnverified")}
         </Alert>
       )}
 

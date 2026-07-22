@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -16,7 +16,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, importedSourceRepos, type ProjectConfig } from "../sync/api";
+import { api, ApiError, importedSourceRepos } from "../sync/api";
 import {
   applyProjectOverrides,
   isTranslationProject,
@@ -37,12 +37,17 @@ import { SETUP_STEPS, lanesNeedingReplacement, stepAfterApply, importErrorLane }
 // covers even the largest book many times over without risking a hung tab.
 const POPULATE_MAX_ROUNDS = 60;
 
-// Apply the edit/align choice to a lane once it exists post-Apply. "align" =
-// text frozen (read-only) but alignment writable; "edit" = both writable.
-// Skips quarantined lanes (a replacement carries its own locks) and any lane
-// already in the desired state. Non-fatal: the owner can adjust later in the
-// Scripture-lanes panel.
-async function applyLaneModes(cfg: ProjectConfig, laneMode: LaneModeMap) {
+// Apply the edit/align choice to each lane that exists post-Apply. "align" =
+// text frozen (read-only) but alignment writable; "edit" = both writable. Skips
+// quarantined lanes (a replacement carries its own locks — their mode is applied
+// after activation, in LaneReplacementDriver) and any lane already in the
+// desired state. Reads the FRESH config so configRevision isn't stale, and
+// RETURNS the lanes whose patch failed so the caller can block rather than
+// silently leave an "aligning only" lane editable (data-safety).
+async function applyLaneModes(laneMode: LaneModeMap): Promise<("lit" | "sim")[]> {
+  const cfg = await refreshProjectConfig().catch(() => null);
+  if (!cfg) return ["lit", "sim"];
+  const failed: ("lit" | "sim")[] = [];
   for (const lane of ["lit", "sim"] as const) {
     const ls = cfg.laneState?.[lane];
     if (!ls || ls.replacementRequired) continue;
@@ -54,9 +59,10 @@ async function applyLaneModes(cfg: ProjectConfig, laneMode: LaneModeMap) {
         alignmentWritable: true,
       });
     } catch {
-      /* non-fatal — surfaced nowhere fatal; owner can adjust in Scripture lanes */
+      failed.push(lane);
     }
   }
+  return failed;
 }
 
 // Admin-only guided onboarding for an org (owner-confirmed flow): confirm the
@@ -77,6 +83,19 @@ export function SetupWizard() {
   // Step 4 — apply.
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  // True once the custom-gl overrides were persisted — re-clicking Apply would
+  // 409, so after this only the lane-mode step can be retried.
+  const [applied, setApplied] = useState(false);
+  // Set when a post-apply lanePatch (edit/align) failed: block advancing and
+  // offer a retry, so an "Aligning only" lane is never left editable.
+  const [laneModeError, setLaneModeError] = useState<string | null>(null);
+
+  // Scroll the newly-active step to the top of the viewport on change, so the
+  // admin lands on the step header rather than below it (item 10).
+  const stepRefs = useRef<(HTMLElement | null)[]>([]);
+  useEffect(() => {
+    stepRefs.current[activeStep]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeStep]);
 
   // Step 5 — import + populate.
   const [book, setBook] = useState<string | null>(null);
@@ -93,16 +112,29 @@ export function SetupWizard() {
   const bookOptions = useMemo(() => BOOKS.map((b) => b.code), []);
   const quarantinedLanes = lanesNeedingReplacement(projectConfig?.laneState);
 
+  // Apply the lane edit/align modes, then advance. Shared by first-apply and the
+  // retry button so a lanePatch failure is recoverable without re-applying the
+  // (now-persisted) overrides.
+  const finishLaneModesAndAdvance = async () => {
+    const failed = await applyLaneModes(laneMode);
+    if (failed.length > 0) {
+      setLaneModeError(t("setup.laneModeFailed", { lanes: failed.join(", ") }));
+      return;
+    }
+    setLaneModeError(null);
+    const cfg = await refreshProjectConfig().catch(() => null);
+    setActiveStep(stepAfterApply(cfg?.laneState));
+  };
+
   const doApply = async () => {
-    if (!draft.complete) return;
+    if (!draft.complete || !draft.upstreamVerified) return;
     setApplying(true);
     setApplyError(null);
+    setLaneModeError(null);
     try {
-      const applied = await applyProjectOverrides("custom-gl", draft.buildOverrides());
-      await applyLaneModes(applied, laneMode);
-      // Re-read so any lanePatch + quarantine state is reflected before routing.
-      const finalCfg = await refreshProjectConfig().catch(() => applied);
-      setActiveStep(stepAfterApply(finalCfg.laneState));
+      await applyProjectOverrides("custom-gl", draft.buildOverrides());
+      setApplied(true);
+      await finishLaneModesAndAdvance();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         const code = (e.body as { error?: string } | undefined)?.error;
@@ -110,6 +142,15 @@ export function SetupWizard() {
       } else {
         setApplyError(t("setup.applyFailed"));
       }
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const retryLaneModes = async () => {
+    setApplying(true);
+    try {
+      await finishLaneModesAndAdvance();
     } finally {
       setApplying(false);
     }
@@ -198,7 +239,7 @@ export function SetupWizard() {
 
       <Stepper activeStep={activeStep} orientation="vertical">
         {/* Step 1 — Your organization */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.organization] = el; }}>
           <StepLabel>{t("setup.step.organization")}</StepLabel>
           <StepContent>
             <OrgIdentityFields state={draft} />
@@ -215,13 +256,17 @@ export function SetupWizard() {
         </Step>
 
         {/* Step 2 — Sources (pull FROM) */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.sources] = el; }}>
           <StepLabel>{t("setup.step.sources")}</StepLabel>
           <StepContent>
             <UpstreamSourcePicker state={draft} />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button onClick={() => setActiveStep(SETUP_STEPS.organization)}>{t("setup.back")}</Button>
-              <Button variant="contained" onClick={() => setActiveStep(SETUP_STEPS.lanes)}>
+              <Button
+                variant="contained"
+                disabled={!draft.upstreamVerified}
+                onClick={() => setActiveStep(SETUP_STEPS.lanes)}
+              >
                 {t("setup.next")}
               </Button>
             </Stack>
@@ -229,7 +274,7 @@ export function SetupWizard() {
         </Step>
 
         {/* Step 3 — Your scripture lanes: target + edit/align */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.lanes] = el; }}>
           <StepLabel>{t("setup.step.lanes")}</StepLabel>
           <StepContent>
             <LaneTargetModeStep state={draft} laneMode={laneMode} setLaneMode={setLaneMode} />
@@ -247,7 +292,7 @@ export function SetupWizard() {
         </Step>
 
         {/* Step 4 — Review & apply */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.review] = el; }}>
           <StepLabel>{t("setup.step.review")}</StepLabel>
           <StepContent>
             <ReviewSummary state={draft} laneMode={laneMode} />
@@ -256,29 +301,55 @@ export function SetupWizard() {
                 {t("setup.reviewIncomplete")}
               </Alert>
             )}
+            {!draft.upstreamVerified && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>
+                {t("setup.upstreamOrgUnverified")}
+              </Alert>
+            )}
             {applyError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
                 {applyError}
               </Alert>
             )}
+            {laneModeError && (
+              <Alert severity="error" sx={{ mt: 1.5 }}>
+                {laneModeError}
+              </Alert>
+            )}
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-              <Button onClick={() => setActiveStep(SETUP_STEPS.lanes)} disabled={applying}>
+              <Button
+                onClick={() => setActiveStep(SETUP_STEPS.lanes)}
+                disabled={applying || applied}
+              >
                 {t("setup.back")}
               </Button>
-              <Button
-                variant="contained"
-                onClick={doApply}
-                disabled={applying || !draft.complete}
-                startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
-              >
-                {applying ? t("setup.applying") : t("setup.applyButton")}
-              </Button>
+              {applied && laneModeError ? (
+                // Overrides already persisted; re-applying would 409. Only the
+                // failed lane-mode patch needs retrying.
+                <Button
+                  variant="contained"
+                  onClick={retryLaneModes}
+                  disabled={applying}
+                  startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
+                >
+                  {applying ? t("setup.applying") : t("setup.retryLaneMode")}
+                </Button>
+              ) : (
+                <Button
+                  variant="contained"
+                  onClick={doApply}
+                  disabled={applying || applied || !draft.complete || !draft.upstreamVerified}
+                  startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
+                >
+                  {applying ? t("setup.applying") : t("setup.applyButton")}
+                </Button>
+              )}
             </Stack>
           </StepContent>
         </Step>
 
         {/* Step 4b — Finish replacing a lane's text (conditional) */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.replacement] = el; }}>
           <StepLabel>{t("setup.step.replacement")}</StepLabel>
           <StepContent>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -294,7 +365,15 @@ export function SetupWizard() {
                   const ls = projectConfig?.laneState?.[lane];
                   if (!ls) return null;
                   const label = lane === "lit" ? draft.repos.lit || "ULT" : draft.repos.sim || "UST";
-                  return <LaneReplacementDriver key={lane} lane={lane} label={label} laneState={ls} />;
+                  return (
+                    <LaneReplacementDriver
+                      key={lane}
+                      lane={lane}
+                      label={label}
+                      laneState={ls}
+                      desiredMode={laneMode[lane]}
+                    />
+                  );
                 })}
               </Stack>
             )}
@@ -311,7 +390,7 @@ export function SetupWizard() {
         </Step>
 
         {/* Step 5 — Import first book */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.importBook] = el; }}>
           <StepLabel>{t("setup.step.importBook")}</StepLabel>
           <StepContent>
             <Typography variant="body2" sx={{ mb: 1.5 }}>
@@ -369,7 +448,7 @@ export function SetupWizard() {
         </Step>
 
         {/* Step 6 — done */}
-        <Step>
+        <Step ref={(el) => { stepRefs.current[SETUP_STEPS.done] = el; }}>
           <StepLabel>{t("setup.step.done")}</StepLabel>
           <StepContent>
             <Typography variant="subtitle1" gutterBottom>
@@ -457,12 +536,21 @@ function ReviewSummary({
           <Typography variant="overline" color="text.secondary">
             {t("setup.reviewFrom")}
           </Typography>
-          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(80px, max-content) 1fr",
+              columnGap: 1,
+              rowGap: 0.5,
+              alignItems: "baseline",
+              mt: 0.5,
+            }}
+          >
             {RESOURCE_KEYS.map((key) => {
               const ref = sourceRefFor(key);
               return (
-                <Stack key={key} direction="row" spacing={1} alignItems="baseline">
-                  <Typography variant="caption" sx={{ minWidth: 88, color: "text.secondary" }}>
+                <Box key={key} sx={{ display: "contents" }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", textAlign: "start" }}>
                     {t(`setup.resource.${key}`)}
                   </Typography>
                   {ref ? (
@@ -472,41 +560,53 @@ function ReviewSummary({
                       {t("setup.upstreamNone")}
                     </Typography>
                   )}
-                </Stack>
+                </Box>
               );
             })}
-          </Stack>
+          </Box>
         </Box>
         {/* TO */}
         <Box sx={{ flex: 1, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
           <Typography variant="overline" color="text.secondary">
             {t("setup.reviewTo", { org: targetOrg })}
           </Typography>
-          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(80px, max-content) 1fr",
+              columnGap: 1,
+              rowGap: 0.5,
+              alignItems: "baseline",
+              mt: 0.5,
+            }}
+          >
             {RESOURCE_KEYS.map((key) => {
               const repo = state.repos[key];
               const isLane = key === "lit" || key === "sim";
               return (
-                <Stack key={key} direction="row" spacing={1} alignItems="baseline">
-                  <Typography variant="caption" sx={{ minWidth: 88, color: "text.secondary" }}>
+                <Box key={key} sx={{ display: "contents" }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", textAlign: "start" }}>
                     {t(`setup.resource.${key}`)}
                   </Typography>
-                  {repo ? (
-                    <RepoRef org={targetOrg} repo={repo} />
-                  ) : (
-                    <Typography variant="body2" color="warning.main">
-                      {t("setup.reviewMissing")}
-                    </Typography>
-                  )}
-                  {isLane && repo && (
-                    <Typography variant="caption" color="text.secondary">
-                      · {t(`setup.laneEditMode.${laneMode[key as "lit" | "sim"]}`)}
-                    </Typography>
-                  )}
-                </Stack>
+                  <Box sx={{ minWidth: 0 }}>
+                    {repo ? (
+                      <RepoRef org={targetOrg} repo={repo} />
+                    ) : (
+                      <Typography variant="body2" component="span" color="warning.main">
+                        {t("setup.reviewMissing")}
+                      </Typography>
+                    )}
+                    {isLane && repo && (
+                      <Typography variant="caption" component="span" color="text.secondary">
+                        {" · "}
+                        {t(`setup.laneEditMode.${laneMode[key as "lit" | "sim"]}`)}
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
               );
             })}
-          </Stack>
+          </Box>
         </Box>
       </Stack>
     </Stack>

@@ -941,7 +941,24 @@
     "replacementStart": "Stage the new text",
     "replacementIntro": "This stages the new source text book by book. When every book is ready, press Activate to switch the lane over.",
     "replacementNone": "No lane needs a text replacement. You can continue.",
-    "continueToImport": "Continue"
+    "continueToImport": "Continue",
+    "retryDetection": "Retry detection",
+    "upstreamOrgUnreachable": "Door43 is unreachable right now — retry to verify this org.",
+    "upstreamOrgRetry": "Retry",
+    "laneModeFailed": "Couldn't set {{lanes}} to the chosen edit/align mode — retry before continuing so the lane isn't left editable by mistake.",
+    "retryLaneMode": "Retry edit/align settings",
+    "replacementActionRequired": "Action required — retry or waive the flagged books below before this lane can be activated.",
+    "bookError": {
+      "notFound": "Not found in {{location}}"
+    },
+    "replacementConfirmTitle": "Replace the text in {{lane}}?",
+    "replacementConfirmSource": "New source: {{owner}}/{{repo}}",
+    "replacementConfirmWarning": "Activating will OVERWRITE the current text and alignment for the books below with the new source. This cannot be undone from here.",
+    "replacementConfirmLoadingBooks": "Loading the affected books…",
+    "replacementConfirmBooksLead": "{{count}} book(s) will be replaced:",
+    "replacementConfirmNoBookList": "The affected books couldn't be listed, but every imported book in this lane will be replaced.",
+    "replacementConfirmAck": "I understand existing text for these books will be replaced.",
+    "replacementConfirmButton": "Stage the replacement"
   },
   "books": {
     "GEN": { "name": "Genesis", "abbr": "Gen" },

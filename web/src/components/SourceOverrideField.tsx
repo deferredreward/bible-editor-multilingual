@@ -5,7 +5,12 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import type { ResourceKey } from "../lib/orgDraft";
-import { door43RepoUrl, verifyErrorKind, type SourceVerifyState } from "../lib/setupWizard";
+import {
+  door43RepoUrl,
+  verifyErrorKind,
+  clearedOverrideSelection,
+  type SourceVerifyState,
+} from "../lib/setupWizard";
 
 // A reader-friendly `org: repo` chip that links the repo name to its Door43 page.
 export function RepoRef({ org, repo }: { org: string; repo: string }) {
@@ -28,9 +33,13 @@ export function RepoRef({ org, repo }: { org: string; repo: string }) {
 export function SourceOverrideField({
   resource,
   state,
+  rowChecked = false,
 }: {
   resource: ResourceKey;
   state: OrgDraftState;
+  // Whether the owning resource row is checked (pull-from-upstream). Determines
+  // what an emptied URL resets to — upstream when checked, blank otherwise.
+  rowChecked?: boolean;
 }) {
   const { t } = useTranslation();
   const sel = state.resourceSource[resource] ?? { mode: "upstream" };
@@ -45,6 +54,9 @@ export function SourceOverrideField({
     const raw = url.trim();
     if (!raw) {
       setVerify({ status: "idle" });
+      // Clearing the field must clear any prior verified override — otherwise a
+      // deleted URL leaves a stale ref in the draft that Apply would persist.
+      state.setResourceSource(resource, clearedOverrideSelection(rowChecked));
       return;
     }
     setVerify({ status: "verifying" });
