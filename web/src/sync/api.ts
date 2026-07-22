@@ -616,6 +616,11 @@ export interface OrgMember {
   login: string;
   fullName: string;
   avatarUrl: string;
+  /** Live team-derived role (BE-Admins → admin, BE-Editors → editor), resolved
+   *  from Door43 team membership independent of whether the member has ever
+   *  signed in. Present only when team membership could be read (the
+   *  authenticated roster paths); absent on the public-members fallback. */
+  teamRole?: "admin" | "editor";
 }
 
 export interface OrgMembersResponse {
@@ -2201,6 +2206,13 @@ export const api = {
       `/api/admin/users/${encodeURIComponent(username)}`,
       { method: "DELETE" },
     ),
+  // Bulk-clears every manual allowlist grant so roles come from Door43 teams.
+  // `kept` names any manual admin preserved to keep the admin set non-empty
+  // (the caller if applicable); `removed` is everyone cleared.
+  adminPurgeManualGrants: () =>
+    request<{ removed: string[]; kept: string[] }>(`/api/admin/users/purge-manual`, {
+      method: "POST",
+    }),
 
   // ── Workspaces (org-per-D1) ──
   listWorkspaces: () => request<WorkspacesResponse>(`/api/workspaces`),
