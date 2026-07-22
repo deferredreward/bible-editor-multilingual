@@ -645,6 +645,61 @@ function d1Batch(db, fns) {
   console.log("  ✓ cancel keeps exports_blocked when replacement_required = 1");
 }
 
+// ── 7e. Back-out fully reverts: clears replacement_required + pendingTarget ──
+// backOutReplacement (issue #97) is DISTINCT from cancel/fail: it clears every
+// replacement flag — including replacement_required and pending_target_json —
+// so a stuck lane returns to its prior source, WITHOUT touching active_generation
+// or active_config_json (gen-1 content is preserved).
+
+{
+  const db = freshDb();
+  const priorConfig = SAMPLE_CFG_JSON;
+  const pendingTarget = JSON.stringify(bsojLaneConfig("sim"));
+  seedLane(db, "lit", {
+    activeGen: 1, nextGen: 3, configJson: priorConfig,
+    replacementJobId: "job-backout",
+    exportsBlocked: 1, replacementRequired: 1, pendingTargetJson: pendingTarget,
+  });
+  // seedLane has no exclusive_owner option — set it so its clearing is tested.
+  db.prepare(`UPDATE scripture_lane_state SET exclusive_owner = ?2 WHERE lane = ?1`)
+    .run("lit", "job:job-backout");
+  seedJob(db, "job-backout", "lit", 2, 1, "staging");
+  seedBookRow(db, "job-backout", "ZEC", "artifact_ok");
+  seedBookRow(db, "job-backout", "MAL", "retryable_error");
+
+  // Simulate backOutReplacement's batch.
+  d1Batch(db, [
+    () => db.prepare(`
+      UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
+      WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')
+    `).run("job-backout"),
+    () => db.prepare(`
+      UPDATE scripture_lane_state
+        SET replacement_job_id = NULL,
+            exclusive_owner = NULL,
+            exports_blocked = 0,
+            replacement_required = 0,
+            pending_target_json = NULL,
+            updated_at = unixepoch()
+      WHERE lane = ?1 AND replacement_job_id = ?2
+    `).run("lit", "job-backout"),
+  ]);
+
+  const lane = getLane(db, "lit");
+  assert.equal(lane.replacement_job_id, null, "job detached after back-out");
+  assert.equal(lane.exclusive_owner, null, "exclusive_owner cleared");
+  assert.equal(lane.exports_blocked, 0, "exports unblocked after back-out");
+  assert.equal(lane.replacement_required, 0, "replacement_required CLEARED (unlike cancel)");
+  assert.equal(lane.pending_target_json, null, "pending target CLEARED (unlike cancel)");
+  assert.equal(lane.active_generation, 1, "active_generation untouched (gen-1 content preserved)");
+  assert.equal(lane.active_config_json, priorConfig, "active config still the prior source");
+
+  const job = getJob(db, "job-backout");
+  assert.equal(job.status, "cancelled");
+  assert.ok(job.completed_at, "completed_at timestamp set");
+  console.log("  ✓ back-out clears replacement_required + pendingTarget, reverts to prior source");
+}
+
 // ── 8. BSOJ: replacement_required blocks normal reads ───────────────────────
 // activeGenerationForBibleVersion returns null when replacement_required = 1.
 // We test the D1 row shape + the decision logic without calling the async fn.

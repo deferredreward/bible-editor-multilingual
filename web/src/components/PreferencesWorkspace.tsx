@@ -6,8 +6,14 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   FormControlLabel,
   IconButton,
@@ -64,6 +70,7 @@ import {
   useExamples,
   useContextExportStatus,
 } from "../hooks/useTranslationMemory";
+import { bookName } from "../lib/bookNames";
 import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
 import { detectOrg409Key } from "../lib/setupWizard";
@@ -423,6 +430,15 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
   const [job, setJob] = useState<LaneReplacementJobResponse | null>(null);
   const [activating, setActivating] = useState(false);
   const [busyBook, setBusyBook] = useState<string | null>(null);
+  // Confirm dialog + up-front source validation (issue #97).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [ack, setAck] = useState(false);
+  const [affectedBooks, setAffectedBooks] = useState<string[] | null>(null);
+  const [pendingSource, setPendingSource] = useState<{ owner: string; repo: string; ref: string } | null>(null);
+  const [impact, setImpact] = useState<{ books: number; verses: number } | null>(null);
+  // A transient DCS content-check failure ("couldn't check") is retryable, not a
+  // hard block — surfaced as a Retry affordance rather than a dead end.
+  const [sourceRetryable, setSourceRetryable] = useState(false);
 
   const replacementJobId = state?.replacementJobId ?? null;
 
@@ -485,22 +501,76 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
     }
   };
 
-  const handleValidateUrl = async () => {
-    if (!sourceUrl.trim()) return;
+  // Step 1: validate the pasted URL up front (issue #97, item 3). Before staging
+  // anything we confirm the source repo actually CONTAINS book files — an empty
+  // scaffolding-only repo is a trap. `hasBooks: false` is a hard block; a missing
+  // `hasBooks` (transient DCS content-API failure) is retryable, never a block.
+  // This check lives ONLY in this migration tool, not the configure wizard (a
+  // brand-new org's target repos are legitimately empty at configure time).
+  const handleChangeSource = async () => {
+    const url = sourceUrl.trim();
+    if (!url) return;
+    setValidating(true);
+    setError(null);
+    setSourceRetryable(false);
+    try {
+      let hasBooks: boolean | undefined;
+      try {
+        const verified = await api.verifySource(url, { checkBooks: true });
+        hasBooks = verified.hasBooks;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          setError(t("preferences.scriptureLanes.sourceNoRepo"));
+          return;
+        }
+        if (e instanceof ApiError && e.status === 400) {
+          setError(t("preferences.scriptureLanes.sourceInvalidUrl"));
+          return;
+        }
+        // 503 dcs_unavailable or network — transient, retryable (not a block).
+        setSourceRetryable(true);
+        setError(t("preferences.scriptureLanes.sourceCheckUnavailable"));
+        return;
+      }
+      if (hasBooks === false) {
+        setError(t("preferences.scriptureLanes.sourceNoBooks"));
+        return;
+      }
+      if (hasBooks === undefined) {
+        // Content check couldn't complete — treat as "couldn't check", retryable.
+        setSourceRetryable(true);
+        setError(t("preferences.scriptureLanes.sourceCheckUnavailable"));
+        return;
+      }
+
+      // Source has books → resolve it and open the confirm dialog (item 1).
+      const result = await api.laneValidate(lane, url);
+      setPendingSource(result.source);
+      setImpact({ books: result.impactBooks, verses: result.impactVerses });
+      setAck(false);
+      setAffectedBooks(null);
+      setConfirmOpen(true);
+      // List the exact books this lane will re-stage — from the lane's snapshot,
+      // never getBooks(). Best-effort: on failure the dialog still confirms.
+      api
+        .laneAffectedBooks(lane)
+        .then((r) => setAffectedBooks(r.books))
+        .catch(() => setAffectedBooks([]));
+    } catch (e) {
+      const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
+      setError(laneErrorMessage(t, raw));
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Step 2: user acknowledged the affected-books list → start the replacement.
+  const handleConfirmStart = async () => {
+    if (!pendingSource) return;
+    setConfirmOpen(false);
     setValidating(true);
     setError(null);
     try {
-      const result = await api.laneValidate(lane, sourceUrl.trim());
-      const confirmMsg = t("preferences.scriptureLanes.confirmReplace", {
-        books: result.impactBooks,
-        verses: result.impactVerses,
-        owner: result.source.owner,
-        repo: result.source.repo,
-      });
-      if (!window.confirm(confirmMsg)) {
-        setValidating(false);
-        return;
-      }
       // When the lane is in BSOJ transitional freeze, the mandatory pending
       // target carries the correct AVD/NAV locks/export — do not inherit the
       // quarantined LEGACY config's false locks / null export.
@@ -508,14 +578,14 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
       const exportCfg =
         base.export ??
         ({
-          owner: result.source.owner,
-          repo: result.source.repo,
-          baseRef: result.source.ref,
+          owner: pendingSource.owner,
+          repo: pendingSource.repo,
+          baseRef: pendingSource.ref,
           branchPolicy: "contributor_book_branch" as const,
         });
       await api.laneStartReplacement(lane, {
-        label: base.label === "LEGACY" ? `${result.source.repo}` : base.label,
-        source: result.source,
+        label: base.label === "LEGACY" ? `${pendingSource.repo}` : base.label,
+        source: pendingSource,
         export: exportCfg,
         textReadOnly: base.textReadOnly,
         alignmentWritable: base.alignmentWritable,
@@ -532,15 +602,21 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
     }
   };
 
-  const handleCancel = async () => {
+  // Full back-out (issue #97, item 2): abort the in-progress job AND revert the
+  // lane to its prior source. Unlike the old cancel, this clears
+  // replacement_required + pendingTarget so a lane stuck spinning on staging
+  // failures is fully unfrozen — gen-1 content is never overwritten.
+  const handleBackOut = async () => {
     if (!replacementJobId) return;
+    if (!window.confirm(t("preferences.scriptureLanes.confirmBackOut"))) return;
     setSaving(true);
     setError(null);
     try {
-      await api.laneCancelJob(lane, replacementJobId);
+      await api.laneBackOutJob(lane, replacementJobId);
       await refreshProjectConfig();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
+      setError(laneErrorMessage(t, raw));
     } finally {
       setSaving(false);
     }
@@ -671,9 +747,11 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                   {activating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.activate")}
                 </Button>
               )}
-              <Button size="small" color="error" onClick={handleCancel} disabled={saving}>
-                {t("preferences.scriptureLanes.cancel")}
-              </Button>
+              <Tooltip title={t("preferences.scriptureLanes.backOutHint")}>
+                <Button size="small" color="error" onClick={handleBackOut} disabled={saving}>
+                  {t("preferences.scriptureLanes.backOut")}
+                </Button>
+              </Tooltip>
             </Stack>
 
             {jobBooks.length > 0 && (
@@ -700,8 +778,8 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                         key={b.book}
                         title={
                           retryable
-                            ? t("preferences.scriptureLanes.bookRetryHint", { book: b.book })
-                            : `${b.book}: ${b.status}`
+                            ? t("preferences.scriptureLanes.bookRetryHint", { book: bookName(b.book) })
+                            : `${bookName(b.book)} (${b.book}): ${b.status}`
                         }
                       >
                         <Chip
@@ -737,7 +815,7 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
             <Button
               size="small"
               variant="outlined"
-              onClick={handleValidateUrl}
+              onClick={handleChangeSource}
               disabled={!sourceUrl.trim() || validating}
             >
               {validating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.changeSource")}
@@ -745,9 +823,76 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
           </Stack>
         )}
 
-        {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+        {error && (
+          <Alert
+            severity={sourceRetryable ? "warning" : "error"}
+            onClose={() => setError(null)}
+            action={
+              sourceRetryable ? (
+                <Button color="inherit" size="small" onClick={handleChangeSource} disabled={validating}>
+                  {t("preferences.scriptureLanes.sourceRetry")}
+                </Button>
+              ) : undefined
+            }
+          >
+            {error}
+          </Alert>
+        )}
         {successMsg && <Alert severity="success" onClose={() => setSuccessMsg(null)}>{successMsg}</Alert>}
       </Stack>
+
+      {/* Confirm dialog listing the exact books this lane will re-stage (item 1). */}
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{t("preferences.scriptureLanes.confirmTitle", { lane: label })}</DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div">
+            {pendingSource && (
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                {t("preferences.scriptureLanes.confirmSource", {
+                  owner: pendingSource.owner,
+                  repo: pendingSource.repo,
+                })}
+              </Typography>
+            )}
+            <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
+              {t("preferences.scriptureLanes.confirmWarning", {
+                books: impact?.books ?? 0,
+                verses: impact?.verses ?? 0,
+              })}
+            </Alert>
+            {affectedBooks == null ? (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <CircularProgress size={16} />
+                <Typography variant="body2">{t("preferences.scriptureLanes.confirmLoadingBooks")}</Typography>
+              </Stack>
+            ) : affectedBooks.length > 0 ? (
+              <>
+                <Typography variant="body2" sx={{ mb: 0.5 }}>
+                  {t("preferences.scriptureLanes.confirmBooksLead", { count: affectedBooks.length })}
+                </Typography>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                  {affectedBooks.map((b) => (
+                    <Chip key={b} size="small" label={`${bookName(b)} (${b})`} />
+                  ))}
+                </Box>
+              </>
+            ) : (
+              <Typography variant="body2">{t("preferences.scriptureLanes.confirmNoBookList")}</Typography>
+            )}
+          </DialogContentText>
+          <FormControlLabel
+            sx={{ mt: 1.5 }}
+            control={<Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)} />}
+            label={t("preferences.scriptureLanes.confirmAck")}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmOpen(false)}>{t("preferences.scriptureLanes.confirmBack")}</Button>
+          <Button variant="contained" color="warning" disabled={!ack} onClick={handleConfirmStart}>
+            {t("preferences.scriptureLanes.confirmButton")}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

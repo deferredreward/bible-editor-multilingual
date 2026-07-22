@@ -153,12 +153,14 @@ export function LaneReplacementDriver({
     setAck(false);
     setAffectedBooks(null);
     setConfirmOpen(true);
-    // List the books whose text will be overwritten — the org's currently
-    // imported books (a replacement re-stages every one). Best-effort: on a
-    // failure the dialog still confirms, just without the itemized list.
+    // List the books whose text will be overwritten — the exact set this lane
+    // will re-stage, from the lane's required-books snapshot (issue #97), NOT
+    // getBooks() (which reflects the whole DB, not this lane's imported
+    // generation, and can fail independently). Best-effort: on a failure the
+    // dialog still confirms, just without the itemized list.
     try {
-      const res = await api.getBooks();
-      setAffectedBooks(res.books.map((b) => b.book));
+      const res = await api.laneAffectedBooks(lane);
+      setAffectedBooks(res.books);
     } catch {
       setAffectedBooks([]);
     }
