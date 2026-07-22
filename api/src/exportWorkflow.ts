@@ -100,7 +100,7 @@ import {
   getLatestContextExportStats,
 } from "./contextExportResults.ts";
 import type { TermImport } from "./translationMemoryLib.ts";
-import { workspaceEnv, resolveWorkspace } from "./workspaces.ts";
+import { workspaceEnv, resolveWorkspace, primeWorkspaces } from "./workspaces.ts";
 
 export interface ExportParams {
   // Workspace slug this run belongs to. Workflows don't inherit the
@@ -194,6 +194,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // the default binding regardless of which org queued the run. Re-point it
     // once, here, so the ~60 `this.env` reads below are all workspace-correct.
     // With WORKSPACES unset this resolves to the same default binding as before.
+    // Prime the shared-DB workspace registry first so `params.workspace` can be
+    // resolved to a registry-only slug (fails soft to the WORKSPACES env var).
+    await primeWorkspaces(this.env);
     (this as unknown as { env: Env }).env = workspaceEnv(this.env, resolveWorkspace(this.env, params.workspace ?? null));
 
     // Folds the resolved workspace slug in so two orgs starting in the same

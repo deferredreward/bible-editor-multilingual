@@ -71,42 +71,176 @@ function parseEntry(env: Env, entry: unknown): Workspace | null {
   return ws;
 }
 
+// Parses ONLY the entries the WORKSPACES env var yields — no implicit-default
+// fallback. Returns [] when the var is unset/empty/malformed or every entry is
+// invalid. This is the seed set copied into the registry table on first boot,
+// so it must NOT include the synthetic implicit default (that stays dynamic —
+// see parseWorkspacesFromEnv).
+function parseEnvEntries(env: Env): Workspace[] {
+  const result: Workspace[] = [];
+  const raw = (env.WORKSPACES ?? "").trim();
+  if (!raw) return result;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const seen = new Set<string>();
+      for (const entry of parsed) {
+        const ws = parseEntry(env, entry);
+        if (!ws) continue;
+        if (seen.has(ws.slug)) {
+          console.warn("workspaces: dropping duplicate slug", ws.slug);
+          continue;
+        }
+        seen.add(ws.slug);
+        result.push(ws);
+      }
+    } else {
+      console.warn("workspaces: WORKSPACES var is not a JSON array");
+    }
+  } catch (e) {
+    console.warn("workspaces: failed to parse WORKSPACES var", e instanceof Error ? e.message : String(e));
+  }
+  return result;
+}
+
 // Memoized per `env` object — this runs on every request, and re-parsing the
 // same JSON string per-request would be wasteful.
 const cache = new WeakMap<object, Workspace[]>();
 
-export function listWorkspaces(env: Env): Workspace[] {
+// The env-var-and-implicit-default roster, exactly as before the registry
+// existed. This is the FALLBACK the synchronous list/resolve functions return
+// whenever the registry hasn't been (or couldn't be) primed for this isolate,
+// which is what keeps the WORKSPACES-unset path byte-for-byte identical to
+// today (a single dynamic implicit default that still honors VIEWER_ORG).
+function parseWorkspacesFromEnv(env: Env): Workspace[] {
   const cached = cache.get(env as object);
   if (cached) return cached;
 
-  let result: Workspace[] = [];
-  const raw = (env.WORKSPACES ?? "").trim();
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const seen = new Set<string>();
-        for (const entry of parsed) {
-          const ws = parseEntry(env, entry);
-          if (!ws) continue;
-          if (seen.has(ws.slug)) {
-            console.warn("workspaces: dropping duplicate slug", ws.slug);
-            continue;
-          }
-          seen.add(ws.slug);
-          result.push(ws);
-        }
-      } else {
-        console.warn("workspaces: WORKSPACES var is not a JSON array");
-      }
-    } catch (e) {
-      console.warn("workspaces: failed to parse WORKSPACES var", e instanceof Error ? e.message : String(e));
-    }
-  }
+  let result = parseEnvEntries(env);
   if (result.length === 0) result = [implicitWorkspace(env)];
 
   cache.set(env as object, result);
   return result;
+}
+
+// ── Registry (shared-DB table) ───────────────────────────────────────────────
+//
+// The roster's source of truth is the `workspaces` table on the SHARED DB
+// (migration 0058). It is loaded ONCE per isolate by primeWorkspaces() — an
+// async step the fetch/scheduled/Workflow entry points await before calling the
+// synchronous list/resolve functions below. The load result is memoized per
+// shared-DB binding (stable for an isolate's lifetime) so subsequent requests
+// pay nothing.
+//
+// HARD INVARIANT (unchanged from the env-var era): a bad/missing/empty registry
+// read must NEVER throw or 500. It fails soft to the WORKSPACES env var and then
+// the implicit default. That ordering — registry → env var → default — is why
+// primeWorkspaces swallows every error and why the sync functions fall through
+// to parseWorkspacesFromEnv whenever the registry yielded nothing.
+
+interface RegistryLoad {
+  // Non-null only when the registry produced ≥1 valid `claimed` workspace.
+  // null means "primed, but the registry was empty/unavailable" → use the
+  // env-var fallback (recomputed fresh so VIEWER_ORG stays dynamic).
+  workspaces: Workspace[] | null;
+}
+
+// Keyed on the shared-DB binding object, which is stable across requests within
+// one isolate — so the D1 read happens at most once per isolate, not per env
+// clone (workspaceEnv() hands out a fresh env object per request).
+const registryState = new WeakMap<object, RegistryLoad>();
+
+// Shape of a row from the `workspaces` table (claimed rows only; see readRegistry).
+interface WorkspaceRow {
+  slug: string;
+  label: string | null;
+  org: string | null;
+  binding: string;
+  exportOwner: string | null;
+}
+
+async function readRegistry(db: D1Database): Promise<WorkspaceRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT slug, label, org, binding, export_owner AS exportOwner
+         FROM workspaces
+        WHERE status = 'claimed'
+        ORDER BY id`,
+    )
+    .all<WorkspaceRow>();
+  return res.results ?? [];
+}
+
+// Best-effort copy of the env-var roster into an empty registry, as `claimed`
+// rows. INSERT OR IGNORE so a race between two cold isolates (or the UNIQUE
+// slug/org constraints) can't throw. Failure here is non-fatal: the caller
+// still uses `entries` for this isolate, and the next boot retries the seed.
+async function seedRegistry(db: D1Database, entries: Workspace[]): Promise<void> {
+  const stmts = entries.map((w) =>
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO workspaces (slug, label, org, binding, export_owner, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'claimed')`,
+      )
+      .bind(w.slug, w.label, w.org, w.binding, w.exportOwner ?? null),
+  );
+  if (stmts.length) await db.batch(stmts);
+}
+
+// Loads the registry into the per-isolate cache. Idempotent (once per shared-DB
+// binding), async, and NEVER throws — any failure leaves the cache marking the
+// fallback path. Awaited by the entry points (index.ts fetch/scheduled,
+// exportWorkflow) before any synchronous resolveWorkspace/listWorkspaces call.
+export async function primeWorkspaces(env: Env): Promise<void> {
+  const db = sharedDb(env);
+  if (!db) return;
+  if (registryState.has(db as object)) return;
+
+  let workspaces: Workspace[] | null = null;
+  try {
+    const rows = await readRegistry(db);
+    if (rows.length > 0) {
+      // D1 returns NULLs; parseEntry wants missing optionals as `undefined`
+      // (a null exportOwner would otherwise be rejected as the wrong type).
+      const parsed: Workspace[] = [];
+      const seen = new Set<string>();
+      for (const r of rows) {
+        const ws = parseEntry(env, {
+          slug: r.slug,
+          label: r.label,
+          org: r.org,
+          binding: r.binding,
+          exportOwner: r.exportOwner ?? undefined,
+        });
+        if (!ws || seen.has(ws.slug)) continue;
+        seen.add(ws.slug);
+        parsed.push(ws);
+      }
+      workspaces = parsed.length > 0 ? parsed : null;
+    } else {
+      // Empty registry: seed it from the WORKSPACES env var (never the implicit
+      // default — that must stay dynamic). Nothing to seed → stay on fallback.
+      const seed = parseEnvEntries(env);
+      if (seed.length > 0) {
+        await seedRegistry(db, seed);
+        workspaces = seed;
+      }
+    }
+  } catch (e) {
+    console.warn(
+      "workspaces: registry prime failed, falling back to WORKSPACES env var",
+      e instanceof Error ? e.message : String(e),
+    );
+    workspaces = null;
+  }
+  registryState.set(db as object, { workspaces });
+}
+
+export function listWorkspaces(env: Env): Workspace[] {
+  const db = sharedDb(env);
+  const state = db ? registryState.get(db as object) : undefined;
+  if (state?.workspaces && state.workspaces.length > 0) return state.workspaces;
+  return parseWorkspacesFromEnv(env);
 }
 
 // ── Login-time workspace resolution ─────────────────────────────────────────
