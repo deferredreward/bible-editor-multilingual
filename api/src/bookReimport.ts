@@ -41,8 +41,9 @@
 
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
-import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, heldOutNoteResources, NT_BOOKS } from "./dcsSources";
+import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, NT_BOOKS } from "./dcsSources";
 import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
+import { heldOutChapters, isChapterHeldOut, NOTHING_HELD_OUT, type HeldOut } from "./bookSource.ts";
 import {
   collectSourceWords,
   extractVersesForRange,
@@ -271,19 +272,28 @@ async function runReimport(
   // are whole-book files; chapter filtering happens after parse.
   const want = new Set(resources);
 
-  // Held-out note resources: this book's tn/tq did not come from the configured
-  // org repo — either rebuilt on the current en_tn skeleton from Aquifer (POST
-  // /aquifer-drafts) or imported straight from the English translationSource
-  // because the org's own file was stale/absent. Either way a DCS reimport from
-  // the configured tn/tq repo (e.g. an older BSOJ/ar_tn) would clobber/prune
-  // those source-keyed rows, so skip that resource entirely for the book. Other
-  // resources (verses/twl) reimport normally.
+  // Held-out note chapters (issue #103): a book's tn/tq chapters that did NOT
+  // come from the configured org repo — whole-book (Aquifer rebuild, the English
+  // translationSource fallback: the book_imports marker) OR specific chapter
+  // ranges (per-chapter override). A DCS reimport from the configured repo would
+  // clobber/prune those source-keyed rows, so hold them out. `.all` → drop the
+  // resource entirely (don't even fetch it); a partial set → keep the resource
+  // for its OWNED chapters and skip only the held-out chapters in the loop + prune.
+  const heldOut: Partial<Record<"tn" | "tq", HeldOut>> = {};
   if (want.has("tn") || want.has("tq")) {
     const prov = await env.DB.prepare(`SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`)
       .bind(book)
       .first<{ tn_source: string | null; tq_source: string | null }>();
-    for (const r of heldOutNoteResources(prov)) want.delete(r);
+    for (const r of ["tn", "tq"] as const) {
+      if (!want.has(r)) continue;
+      const marker = r === "tn" ? prov?.tn_source : prov?.tq_source;
+      const h = await heldOutChapters(env, cfg, book, r, marker);
+      heldOut[r] = h;
+      if (h.all) want.delete(r);
+    }
   }
+  const tnHeld = heldOut.tn ?? NOTHING_HELD_OUT;
+  const tqHeld = heldOut.tq ?? NOTHING_HELD_OUT;
 
   // Scripture-lane guard: a frozen lane (open replacement) or a lane that still
   // requires a replacement must not accept a scripture reimport — it would
@@ -316,8 +326,8 @@ async function runReimport(
   // not-fetched so it can't drive the apply OR the prune; the existing dcs_404
   // tally below records the miss. Verses are exempt (never row-pruned; a short
   // USFM just no-ops its missing chapters).
-  if (tnRaw && (await tsvFetchLooksTruncated(env, book, "tn", tnRaw))) tnRaw = null;
-  if (tqRaw && (await tsvFetchLooksTruncated(env, book, "tq", tqRaw))) tqRaw = null;
+  if (tnRaw && (await tsvFetchLooksTruncated(env, book, "tn", tnRaw, tnHeld))) tnRaw = null;
+  if (tqRaw && (await tsvFetchLooksTruncated(env, book, "tq", tqRaw, tqHeld))) tqRaw = null;
   if (twlRaw && (await tsvFetchLooksTruncated(env, book, "twl", twlRaw))) twlRaw = null;
 
   const perResource: Record<Resource, ReimportCounts> = {
@@ -344,11 +354,11 @@ async function runReimport(
       continue;
     }
 
-    if (want.has("tn") && tnRaw) {
+    if (want.has("tn") && tnRaw && !isChapterHeldOut(tnHeld, chapter)) {
       const c = await reimportTsvForChapter(env, book, chapter, tnRaw, "tn", userId);
       addCounts(perResource.tn, c);
     }
-    if (want.has("tq") && tqRaw) {
+    if (want.has("tq") && tqRaw && !isChapterHeldOut(tqHeld, chapter)) {
       const c = await reimportTsvForChapter(env, book, chapter, tqRaw, "tq", userId);
       addCounts(perResource.tq, c);
     }
@@ -375,11 +385,19 @@ async function runReimport(
   // rows. softDeleteRemovedTsvRows compares against the WHOLE file's id set and
   // only touches pristine rows in covered chapters (see its guardrails).
   const tsvRawByKind: Record<TsvKind, string | null> = { tn: tnRaw, tq: tqRaw, twl: twlRaw };
+  const heldByKind: Partial<Record<TsvKind, HeldOut>> = { tn: tnHeld, tq: tqHeld };
   for (const kind of ["tn", "tq", "twl"] as TsvKind[]) {
     const raw = tsvRawByKind[kind];
     if (!want.has(kind) || !raw) continue;
+    // Prune ONLY the non-held-out chapters. A held-out chapter's rows came from a
+    // different source and are (correctly) absent from the org master file — if
+    // the prune saw them it would soft-delete every one (the twl_PSA/HAB
+    // data-loss signature, re-created per chapter). twl is never held out.
+    const held = heldByKind[kind];
+    const pruneChapters = held ? chapters.filter((ch) => !isChapterHeldOut(held, ch)) : chapters;
+    if (pruneChapters.length === 0) continue;
     try {
-      const res = await softDeleteRemovedTsvRows(env, book, kind, raw, chapters);
+      const res = await softDeleteRemovedTsvRows(env, book, kind, raw, pruneChapters);
       perResource[kind].deleted += res.deleted;
       perResource[kind].skipped_locked += res.skippedLocked;
     } catch (e) {
@@ -890,15 +908,27 @@ async function tsvFetchLooksTruncated(
   book: string,
   kind: TsvKind,
   raw: string,
+  held?: HeldOut,
 ): Promise<boolean> {
-  const liveRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM ${kind}_rows WHERE book = ?1 AND deleted_at IS NULL`,
+  // Compare like-for-like: EXCLUDE held-out chapters (issue #103) from both
+  // sides. For a partial-source book the org file legitimately lacks the
+  // cross-sourced chapters, so counting them on the live side would read the
+  // org file as a catastrophic shrink and drop the whole reimport — starving the
+  // OWNED chapters of their self-heal. The guard must judge only the chapters the
+  // org file is expected to carry.
+  const isHeld = (chapter: number) => (held ? isChapterHeldOut(held, chapter) : false);
+  const liveRows = await env.DB.prepare(
+    `SELECT chapter, COUNT(*) AS n FROM ${kind}_rows WHERE book = ?1 AND deleted_at IS NULL GROUP BY chapter`,
   )
     .bind(book)
-    .first<{ n: number }>();
-  const live = Number(liveRow?.n ?? 0);
+    .all<{ chapter: number; n: number }>();
+  let live = 0;
+  for (const r of liveRows.results ?? []) if (!isHeld(Number(r.chapter))) live += Number(r.n);
   let incoming = 0;
-  for (const r of parseTsv(raw).rows) if (parseTsvRow(r, kind)) incoming++;
+  for (const r of parseTsv(raw).rows) {
+    const p = parseTsvRow(r, kind);
+    if (p && !isHeld(p.chapter)) incoming++;
+  }
   if (!isCatastrophicTsvShrink(live, incoming)) return false;
   console.error(
     "reimport: incoming TSV is a catastrophic shrink vs live D1 — treating as a truncated fetch (no apply/prune/watermark)",
@@ -1692,6 +1722,11 @@ interface StagedResource {
   r2Key: string | null;    // staged file location when changed
   /** Source identity captured at plan time — used for watermarks + write gates. */
   src: ResourceSourceRef | null;
+  /** Per-chapter hold-out (issue #103). Chapters sourced off the org repo are
+   *  applied/pruned from neither this staged org file nor the export — a whole-
+   *  book hold-out is dropped at plan time (never staged), so this only ever
+   *  carries a PARTIAL set. Absent → nothing held out. */
+  held?: HeldOut;
 }
 
 interface ReimportPlan {
@@ -2034,11 +2069,12 @@ async function planAndStageBookResources(
   const maxChapter = maxRow?.m ?? 0;
   if (maxChapter < 1) return { maxChapter, entries: [] };
 
-  // Same held-out guard runReimport applies: a book whose tn/tq came from
-  // Aquifer or the English translationSource must never be re-fetched from the
-  // configured org repo. This chunked path had NO provenance check, so the
-  // nightly self-heal would have clobbered those rows — treat a held-out
-  // resource as a no-op entry (never fetch, never watermark). Only queried
+  // Same held-out guard runReimport applies (issue #103): a book whose tn/tq
+  // came from Aquifer, the English translationSource, or a per-chapter override
+  // must never be re-fetched from the configured org repo for the held-out
+  // chapters. `.all` (whole-book) → a no-op entry (never fetch/watermark, as
+  // before). A PARTIAL set → still stage the org file for the OWNED chapters and
+  // carry the held-out ranges so the chunk apply + prune skip them. Only queried
   // when tn/tq are actually requested, matching the guard in runReimport.
   const needsNoteProv = resources.some((r) => r === "tn" || r === "tq");
   const [cfg, prov] = await Promise.all([
@@ -2050,12 +2086,17 @@ async function planAndStageBookResources(
           .first<{ tn_source: string | null; tq_source: string | null }>()
       : Promise.resolve(null),
   ]);
-  const heldOut = heldOutNoteResources(prov);
+  const heldByResource: Partial<Record<"tn" | "tq", HeldOut>> = {};
+  for (const r of ["tn", "tq"] as const) {
+    if (!resources.includes(r)) continue;
+    heldByResource[r] = await heldOutChapters(env, cfg, book, r, r === "tn" ? prov?.tn_source : prov?.tq_source);
+  }
 
   const entries: StagedResource[] = [];
   for (const resource of resources) {
     if (resource === "tn" || resource === "tq") {
-      if (heldOut.has(resource)) {
+      const held = heldByResource[resource];
+      if (held?.all) {
         entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null });
         continue;
       }
@@ -2088,14 +2129,21 @@ async function planAndStageBookResources(
     // the reimport-sync step only stamps watermarks for entries with a masterSha.
     if (
       (resource === "tn" || resource === "tq" || resource === "twl") &&
-      (await tsvFetchLooksTruncated(env, book, resource, raw))
+      (await tsvFetchLooksTruncated(
+        env,
+        book,
+        resource,
+        raw,
+        resource === "tn" || resource === "tq" ? heldByResource[resource] : undefined,
+      ))
     ) {
       entries.push({ resource, changed: false, masterSha: null, r2Key: null, src });
       continue;
     }
     const r2Key = `reimport-stage/${instanceId}/${book}/${resource}`;
     await env.BLOBS.put(r2Key, raw);
-    entries.push({ resource, changed: true, masterSha, r2Key, src });
+    const held = resource === "tn" || resource === "tq" ? heldByResource[resource] : undefined;
+    entries.push({ resource, changed: true, masterSha, r2Key, src, held });
   }
   return { maxChapter, entries };
 }
@@ -2158,6 +2206,14 @@ async function reimportStagedChunk(
     if (changedTsv[k]) changedSets[k] = new Set(changedTsv[k]);
   }
 
+  // Per-chapter hold-out (issue #103): chapters this resource sourced off the org
+  // repo must not be applied from the staged org file. (Whole-book hold-out never
+  // reaches here — planAndStageBookResources drops it as a no-op entry.)
+  const heldByKind: Partial<Record<TsvKind, HeldOut>> = {};
+  for (const e of staged) {
+    if ((e.resource === "tn" || e.resource === "tq") && e.held) heldByKind[e.resource] = e.held;
+  }
+
   for (let chapter = startChapter; chapter <= endChapter; chapter++) {
     const lock = await activePipelineForChapter(env, book, chapter);
     if (lock) {
@@ -2167,6 +2223,8 @@ async function reimportStagedChunk(
     for (const kind of ["tn", "tq", "twl"] as TsvKind[]) {
       const byCh = rowsByChapter[kind];
       if (!byCh) continue;
+      const held = heldByKind[kind];
+      if (held && isChapterHeldOut(held, chapter)) continue;  // sourced off-org — don't clobber
       const set = changedSets[kind];
       if (set && !set.has(chapter)) continue;  // chapter unchanged — skip the row loop
       addCounts(perResource[kind], await applyTsvRows(env, book, kind, byCh.get(chapter) ?? [], userId));
@@ -2234,13 +2292,19 @@ export async function runChunkedReimport(
   for (const e of changed) {
     const kind = e.resource;
     if (kind === "ult" || kind === "ust" || !e.r2Key) continue;
-    const chs = changedTsv[kind];
+    let chs = changedTsv[kind];
     if (!chs || chs.length === 0) continue;
+    // Never prune a held-out chapter: its rows came from another source and are
+    // (correctly) absent from the org master file — the prune would soft-delete
+    // every one (the twl_PSA/HAB signature, per chapter).
+    if (e.held) chs = chs.filter((ch) => !isChapterHeldOut(e.held!, ch));
+    if (chs.length === 0) continue;
     const r2Key = e.r2Key;
+    const pruneChs = chs;
     await step.do(`reimport-prune-${book}-${kind}`, async () => {
       const raw = await readStaged(env, r2Key);
       if (raw == null) return { deleted: 0, skippedLocked: 0 };
-      const res = await softDeleteRemovedTsvRows(env, book, kind, raw, chs);
+      const res = await softDeleteRemovedTsvRows(env, book, kind, raw, pruneChs);
       if (res.deleted > 0 || res.skippedLocked > 0) {
         console.log("reimport pruned rows removed on master", { book, resource: kind, ...res });
       }

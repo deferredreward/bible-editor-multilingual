@@ -32,8 +32,19 @@ import {
   translationSourceRepoRef,
   type DcsRepoOverrides,
 } from "./dcsSources";
-import type { RepoRef } from "./repoUrl";
-import { getProjectConfig } from "./projectConfig.ts";
+import { isIdent, parseDoor43SourceRef, type RepoRef } from "./repoUrl";
+import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
+import {
+  planBookNoteSources,
+  listBookSourceOverrides,
+  setBookSourceRange,
+  clearBookSourceOverride,
+  clearBookSourceRange,
+  isBookSourceResource,
+  WHOLE_BOOK_START,
+  WHOLE_BOOK_END,
+  type ResolvedSourceRange,
+} from "./bookSource.ts";
 import { populateReferencedArticles } from "./articlePopulate";
 import type { Context } from "hono";
 import { reimportBookFromDcs, recordResourceSync, resourceSourceRef, type Resource } from "./bookReimport";
@@ -112,6 +123,106 @@ books.get("/:book/lint", requireAuth, async (c) => {
 // POST /api/books/:book/aquifer-drafts — re-source this book's tN from Aquifer as
 // unapproved drafts merged onto the en_tn skeleton (admin-only).
 books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
+
+// ── Per-book / per-chapter-range source overrides (issue #103) ─────────────
+// GET  /api/books/:book/sources — list this book's per-resource source ranges.
+// PUT  /api/books/:book/sources — set/clear one range (admin). Takes effect on
+//   the next import of the book (POST /:book/import): the chosen source is
+//   fetched per chapter range, its rows stamped, and those chapters held out of
+//   the nightly reimport/export.
+books.get("/:book/sources", requireAuth, async (c) => {
+  const book = (c.req.param("book") ?? "").toUpperCase();
+  if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
+  const overrides = await listBookSourceOverrides(c.env, book);
+  return c.json({ book, overrides });
+});
+
+// Body:
+//   set whole book : { resource, url|org+repo }
+//   set a range    : { resource, url|org+repo, chapterStart, chapterEnd }
+//   clear a range  : { resource, clear: true, chapterStart }
+//   clear resource : { resource, clear: true }
+// A pasted Door43 URL is parsed + ident-validated the same way #84's
+// verify-source does. REPO EXISTENCE is NOT checked here — the caller verifies
+// via GET /api/orgs/verify-source first, matching the decoupled project-wide flow.
+books.put("/:book/sources", requireAdmin, async (c) => {
+  const book = (c.req.param("book") ?? "").toUpperCase();
+  if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
+  let body: {
+    resource?: unknown;
+    url?: unknown;
+    org?: unknown;
+    repo?: unknown;
+    clear?: unknown;
+    chapterStart?: unknown;
+    chapterEnd?: unknown;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const resource = typeof body.resource === "string" ? body.resource : "";
+  if (!isBookSourceResource(resource)) {
+    return c.json({ error: "unsupported_resource", resource }, 400);
+  }
+  const hasStart = body.chapterStart !== undefined;
+  const hasEnd = body.chapterEnd !== undefined;
+
+  // CLEAR is handled first, and needs only chapterStart (chapterEnd is irrelevant
+  // when removing a range by its start) — so the both-bounds check below, which
+  // applies to SET, must not reject a clear that carries just chapterStart.
+  if (body.clear === true) {
+    if (hasStart) {
+      const cs = Number(body.chapterStart);
+      if (!Number.isInteger(cs)) return c.json({ error: "invalid_range" }, 400);
+      await clearBookSourceRange(c.env, book, resource, cs);
+      return c.json({ book, resource, chapterStart: cs, cleared: true });
+    }
+    await clearBookSourceOverride(c.env, book, resource);
+    return c.json({ book, resource, cleared: true });
+  }
+
+  // SET. Chapter bounds absent → whole book (0, 999). A partial pair (only one of
+  // the two) is rejected — it's almost certainly a client mistake.
+  if (hasStart !== hasEnd) {
+    return c.json({ error: "range_needs_both_bounds" }, 400);
+  }
+  const chapterStart = hasStart ? Number(body.chapterStart) : WHOLE_BOOK_START;
+  const chapterEnd = hasEnd ? Number(body.chapterEnd) : WHOLE_BOOK_END;
+  if (hasStart && (!Number.isInteger(chapterStart) || !Number.isInteger(chapterEnd))) {
+    return c.json({ error: "invalid_range" }, 400);
+  }
+
+  let org: string;
+  let repo: string;
+  if (typeof body.url === "string" && body.url.trim()) {
+    const parsed = parseDoor43SourceRef(body.url);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    org = parsed.org;
+    repo = parsed.repo;
+  } else if (typeof body.org === "string" && typeof body.repo === "string") {
+    org = body.org.trim();
+    repo = body.repo.trim();
+  } else {
+    return c.json({ error: "expected_url_or_org_repo" }, 400);
+  }
+  // Defense in depth: reject a non-ident org/repo before it can be persisted
+  // (the resolver re-validates on read, but never store a value we know is bad).
+  if (!isIdent(org) || !isIdent(repo)) {
+    return c.json({ error: "invalid_org_or_repo", org, repo }, 400);
+  }
+  const userId = currentUserId(c) ?? null;
+  try {
+    await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, org, repo, userId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "overlapping_range") return c.json({ error: msg }, 409);
+    if (msg === "invalid_range" || msg === "invalid_org_or_repo") return c.json({ error: msg }, 400);
+    throw e;
+  }
+  return c.json({ book, resource, chapterStart, chapterEnd, org, repo });
+});
 
 books.post("/:book/import", requireEditor, async (c) => {
   const userId = currentUserId(c);
@@ -341,6 +452,96 @@ interface ImportCounts {
   sources: { tn: string | null; tq: string | null };
 }
 
+// Fetch each per-chapter-range source file for a note resource (issue #103
+// Tier 2). Returns [{ range, raw }] in range order; THROWS if any configured
+// range's file cannot be fetched — a missing range source must fail the import,
+// never silently leave those chapters to the base source.
+async function fetchRangeNoteFiles(
+  env: Env,
+  cfg: ProjectConfig,
+  book: string,
+  resource: "tn" | "tq",
+  ranges: ResolvedSourceRange[],
+): Promise<Array<{ range: ResolvedSourceRange; raw: string }>> {
+  const out: Array<{ range: ResolvedSourceRange; raw: string }> = [];
+  for (const range of ranges) {
+    const urls = dcsUrls(env, cfg, book, { [resource]: range.ref });
+    if (!urls) throw new Error(`unknown book: ${book}`);
+    const url = urls[resource];
+    const raw = await fetchText(url);
+    if (raw == null) {
+      throw new Error(
+        `range source ${range.ref.owner}/${range.ref.repo} has no ${resource} file for ${book} ` +
+          `(chapters ${range.chapter_start}-${range.chapter_end}): ${url}`,
+      );
+    }
+    out.push({ range, raw });
+  }
+  return out;
+}
+
+// Merge multiple per-chapter source files into one book's note rows (issue #103
+// Tier 2). The base file contributes only chapters NOT covered by any range;
+// each range file contributes only its own chapters. With no ranges this is a
+// single unfiltered insert — byte-for-byte the Tier 1 path.
+//
+// The whole-book DELETE has already run (caller), so these are pure inserts into
+// an empty book. A cross-source ID collision (two source repos using the same tn
+// id for the SAME book in DIFFERENT chapters) surfaces as a loud INSERT failure —
+// rare, and far safer than silently overwriting a row from another chapter.
+// (Follow-up: re-mint colliding range-file ids preserving alignment.)
+// Pre-wipe collision scan (issue #103). Returns the first row id that would be
+// inserted from TWO different source files in the merge (base non-covered
+// chapters + each range's chapters), or null if none. Mirrors insertMergedNotes'
+// exact partitioning so it predicts the real insert set. No ranges → no merge →
+// null (a single file's internal duplicates are the pre-existing bare-INSERT
+// concern, unchanged here).
+function mergedNoteIdCollision(
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+): string | null {
+  if (ranges.length === 0) return null;
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  const seen = new Set<string>();
+  const scan = (raw: string | null, include: (ch: number) => boolean): string | null => {
+    if (!raw) return null;
+    for (const r of parseTsv(raw).rows) {
+      const id = r["ID"];
+      if (!id) continue;
+      const [ch] = refParts(r["Reference"] ?? "");
+      if (!include(ch)) continue;
+      if (seen.has(id)) return id;
+      seen.add(id);
+    }
+    return null;
+  };
+  const baseDup = scan(baseRaw, (ch) => !covered(ch));
+  if (baseDup) return baseDup;
+  for (const { range, raw } of rangeFiles) {
+    const dup = scan(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+    if (dup) return dup;
+  }
+  return null;
+}
+
+async function insertMergedNotes(
+  insert: (raw: string | null, filter?: (ch: number) => boolean) => Promise<number>,
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+  renew: () => Promise<void>,
+): Promise<number> {
+  if (ranges.length === 0) return insert(baseRaw);
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  let total = await insert(baseRaw, (ch) => !covered(ch));
+  for (const { range, raw } of rangeFiles) {
+    await renew();
+    total += await insert(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+  }
+  return total;
+}
+
 async function importBookFromDcs(
   env: Env,
   book: string,
@@ -368,13 +569,24 @@ async function importBookFromDcs(
     throw new Error("not_a_translation_project");
   }
 
-  // Per-resource note provenance: non-null = this resource came from the
-  // English translationSource, not the org's own repo. Drives the book_imports
-  // marker (which holds the book out of the nightly reimport + export) and the
-  // watermark identity below.
+  // Per-resource note source plan (issue #103). Each resolves, in precedence
+  // order: per-chapter-range override → whole-book override → project-wide
+  // translationSource → org's own repo. `base` is the source for chapters NOT
+  // covered by a cross-org range (project-wide, or null = org's own); `ranges`
+  // are the cross-org per-chapter ranges to splice in.
+  //
+  // `noteSource.tn/tq` = the BASE ref. It drives (a) the base-file fetch URL and
+  // (b) the book_imports.tn_source/tq_source marker: a non-null base means the
+  // WHOLE book is off-org → whole-book hold-out marker; a null base (org's own
+  // for uncovered chapters) with ranges → marker stays NULL and the range table
+  // (heldOutChapters) drives PER-CHAPTER hold-out. This keeps the base fetch,
+  // the 404 fallback, and provenance stamping exactly as before for a book with
+  // no per-chapter ranges (Tier 1), and correct for a partially-sourced book.
+  const tnPlan = await planBookNoteSources(env, cfg, book, "tn", !!opts.translateFromSource);
+  const tqPlan = await planBookNoteSources(env, cfg, book, "tq", !!opts.translateFromSource);
   const noteSource: { tn: RepoRef | null; tq: RepoRef | null } = {
-    tn: opts.translateFromSource ? translationSourceRepoRef(cfg, "tn") : null,
-    tq: opts.translateFromSource ? translationSourceRepoRef(cfg, "tq") : null,
+    tn: tnPlan.base,
+    tq: tqPlan.base,
   };
 
   // Use lane source refs from active config for scripture USFM URLs
@@ -525,6 +737,34 @@ async function importBookFromDcs(
     throw err;
   }
 
+  // Per-chapter-range note sources (issue #103 Tier 2): fetch each cross-org
+  // range's tn/tq file so the insert can splice its chapters into the book. A
+  // configured range whose file cannot be fetched is a HARD error — we must NOT
+  // silently fall back to the base source for those chapters (that would import
+  // the wrong content and skip the intended per-chapter hold-out).
+  const tnRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tn", tnPlan.ranges);
+  const tqRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tq", tqPlan.ranges);
+
+  // Detect cross-source ID collisions BEFORE the destructive wipe (issue #103).
+  // The merge inserts base rows + range rows with a bare INSERT; if two source
+  // files reuse the same row id (for DIFFERENT chapters) the second insert throws
+  // on the (book, id) PK — but by then the book has been wiped and half-inserted,
+  // and the stale book_imports marker would send the next non-force import down
+  // the already-imported fast path, leaving the book stuck partial. Failing here
+  // (before any wipe) keeps the collision a clean no-op the admin can resolve.
+  for (const [resource, baseRaw, ranges, files] of [
+    ["tn", tnRaw, tnPlan.ranges, tnRangeFiles],
+    ["tq", tqRaw, tqPlan.ranges, tqRangeFiles],
+  ] as const) {
+    const dup = mergedNoteIdCollision(baseRaw, ranges, files);
+    if (dup) {
+      throw new Error(
+        `merge source ${resource} id collision: '${dup}' appears in more than one source for ${book}; ` +
+          `resolve the overlapping sources before importing (no changes were made)`,
+      );
+    }
+  }
+
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
   // the destructive wipe to a transactional lane-state predicate: DELETE only
   // while both lanes are still free at the expected generation (EXISTS). A
@@ -661,9 +901,15 @@ async function importBookFromDcs(
     counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen, null);
 
     await renewBoth();
-    counts.tn = await insertTnRows(env, book, tnRaw, userId, litGen, simGen);
+    counts.tn = await insertMergedNotes(
+      (raw, filter) => insertTnRows(env, book, raw, userId, litGen, simGen, filter),
+      tnRaw, tnPlan.ranges, tnRangeFiles, renewBoth,
+    );
     await renewBoth();
-    counts.tq = await insertTqRows(env, book, tqRaw, userId, litGen, simGen);
+    counts.tq = await insertMergedNotes(
+      (raw, filter) => insertTqRows(env, book, raw, userId, litGen, simGen, filter),
+      tqRaw, tqPlan.ranges, tqRangeFiles, renewBoth,
+    );
     await renewBoth();
     counts.twl = await insertTwlRows(env, book, twlRaw, userId, litGen, simGen);
 
@@ -819,6 +1065,7 @@ async function insertTnRows(
   userId: number,
   litGen: number,
   simGen: number,
+  chapterFilter?: (chapter: number) => boolean,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -854,6 +1101,10 @@ async function insertTnRows(
     if (!id) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
+    // Per-chapter-range merge (issue #103 Tier 2): skip rows whose chapter this
+    // pass doesn't own, so the base file and each range file each contribute only
+    // their assigned chapters into one merged book.
+    if (chapterFilter && !chapterFilter(ch)) continue;
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {
@@ -891,6 +1142,7 @@ async function insertTqRows(
   userId: number,
   litGen: number,
   simGen: number,
+  chapterFilter?: (chapter: number) => boolean,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -926,6 +1178,8 @@ async function insertTqRows(
     if (!id) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
+    // Per-chapter-range merge (issue #103 Tier 2) — see insertTnRows.
+    if (chapterFilter && !chapterFilter(ch)) continue;
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {
