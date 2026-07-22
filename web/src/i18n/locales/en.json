@@ -225,6 +225,17 @@
         "last_admin": "Can't remove or demote the last remaining admin.",
         "not_found": "That user isn't in the allowlist."
       },
+      "purge": {
+        "button": "Clear manual grants",
+        "confirmTitle": "Clear all manual grants?",
+        "confirmIntro": "This removes every manually granted role below so access comes from Door43 teams instead. Team members keep their role (it re-applies at their next sign-in).",
+        "willLoseAccess": "These users are not on a Door43 team and will lose access:",
+        "teamBacked": "These users are on a Door43 team and keep their role:",
+        "confirm": "Clear grants",
+        "none": "There are no manual grants to clear.",
+        "done": "Cleared {{count}} manual grant(s).",
+        "doneKept": "Cleared {{count}} manual grant(s); kept {{kept}} as the last admin."
+      },
       "reconcile": {
         "allowlistHeading": "Manually granted roles (allowlist)",
         "allowlistNote": "Editor and admin access held in this app. This is not the Door43 org roster — it's who has been granted a role here.",

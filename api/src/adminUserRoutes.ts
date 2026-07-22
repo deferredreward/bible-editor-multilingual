@@ -11,8 +11,10 @@ import type { Env } from "./index";
 // see adminUsers.test.mjs, which imports this file rather than re-testing
 // its logic in isolation.
 import { requireAuth, requireAdmin, currentUserId, currentUserDcsToken, lookupUserRole } from "./auth.ts";
+import type { Role } from "./auth.ts";
 import { sharedDb } from "./workspaces.ts";
 import { getProjectConfig } from "./projectConfig.ts";
+import { teamRoleNames, type TeamRoleNames } from "./dcsTeams.ts";
 
 export const adminUsers = new Hono<{
   Bindings: Env;
@@ -87,7 +89,13 @@ adminUsers.get("/", async (c) => {
 const MEMBERS_PAGE_SIZE = 50;
 const MEMBERS_MAX_PAGES = 20;
 
-type OrgMember = { login: string; fullName: string; avatarUrl: string };
+// `teamRole` is the LIVE Door43 team-derived role for this member, resolved by
+// listing the org's role-teams (see resolveOrgTeamRoles). It is present only
+// when team membership could actually be read (the authenticated fetch paths),
+// and is independent of whether the member has ever signed in — that is the
+// whole point of the fix: a BE-Admins member who never logged in has no
+// user_roles row yet, but their effective role is still admin.
+type OrgMember = { login: string; fullName: string; avatarUrl: string; teamRole?: Role };
 
 // Paginates one of DCS's org-member-listing endpoints ("members" — full
 // roster, requires the caller to be a member/owner of the org — or
@@ -118,6 +126,91 @@ async function fetchOrgMembers(
     if (page === MEMBERS_MAX_PAGES) truncated = true;
   }
   return { ok: true, members, truncated };
+}
+
+type DcsTeamSummary = { id?: number; name?: string };
+type DcsTeamMember = { login?: string };
+
+// Resolves each org member's LIVE team-derived role by reading the org's
+// role-teams directly, so the roster can show the correct effective role
+// BEFORE a member has ever signed in (their user_roles row only appears at
+// their own first login/switch — see syncTeamRoleForUser in dcsTeams.ts).
+//
+// Cheap: list the org's teams once, then fetch members of only the two teams
+// whose names match the configured admin/editor teams. Admin wins over editor,
+// matching roleFromTeams' precedence in dcsTeams.ts.
+//
+// Best-effort: returns an empty map on ANY failure (non-2xx, network,
+// unparseable). A team read that can't complete must degrade the APP ROLE
+// column to "whatever user_roles says", never break the roster — the same
+// fail-soft posture the org-members route already takes for the member list.
+// Requires the same membership as /orgs/{org}/members, so it's only called on
+// the authenticated fetch paths, never the public_members last resort.
+async function resolveOrgTeamRoles(
+  base: string,
+  org: string,
+  headers: Record<string, string>,
+  names: TeamRoleNames,
+): Promise<Map<string, Role>> {
+  const roles = new Map<string, Role>();
+  const adminTeam = names.admin.trim().toLowerCase();
+  const editorTeam = names.editor.trim().toLowerCase();
+  try {
+    const teams: DcsTeamSummary[] = [];
+    for (let page = 1; page <= MEMBERS_MAX_PAGES; page++) {
+      const res = await fetch(
+        `${base}/api/v1/orgs/${encodeURIComponent(org)}/teams?limit=${MEMBERS_PAGE_SIZE}&page=${page}`,
+        { headers },
+      );
+      if (!res.ok) return roles; // can't establish team membership — degrade
+      const batch = (await res.json()) as unknown;
+      if (!Array.isArray(batch)) return roles;
+      teams.push(...(batch as DcsTeamSummary[]));
+      if (batch.length < MEMBERS_PAGE_SIZE) break;
+    }
+
+    // Only the two role-teams matter. Map each to the app role it grants so a
+    // team read is done at most twice regardless of how many teams the org has.
+    const roleTeams: Array<{ id: number; role: Role }> = [];
+    for (const t of teams) {
+      if (typeof t.id !== "number") continue;
+      const name = (t.name ?? "").trim().toLowerCase();
+      if (name === adminTeam) roleTeams.push({ id: t.id, role: "admin" });
+      else if (name === editorTeam) roleTeams.push({ id: t.id, role: "editor" });
+    }
+
+    for (const { id, role } of roleTeams) {
+      for (let page = 1; page <= MEMBERS_MAX_PAGES; page++) {
+        const res = await fetch(
+          `${base}/api/v1/teams/${id}/members?limit=${MEMBERS_PAGE_SIZE}&page=${page}`,
+          { headers },
+        );
+        if (!res.ok) break; // this team's members are unknown; keep what we have
+        const batch = (await res.json()) as unknown;
+        if (!Array.isArray(batch)) break;
+        for (const m of batch as DcsTeamMember[]) {
+          const login = (m.login ?? "").toLowerCase();
+          if (!login) continue;
+          // Admin wins: never let an editor-team row downgrade an admin-team row.
+          if (role === "admin" || !roles.has(login)) roles.set(login, role);
+        }
+        if (batch.length < MEMBERS_PAGE_SIZE) break;
+      }
+    }
+  } catch {
+    return roles; // network error — degrade to user_roles-only APP ROLE
+  }
+  return roles;
+}
+
+// Stamps each member's `teamRole` from a resolved login→role map (keyed
+// lowercase, since Gitea logins are case-insensitive). Returns a new array.
+function withTeamRoles(members: OrgMember[], teamRoles: Map<string, Role>): OrgMember[] {
+  if (teamRoles.size === 0) return members;
+  return members.map((m) => {
+    const role = teamRoles.get(m.login.toLowerCase());
+    return role ? { ...m, teamRole: role } : m;
+  });
 }
 
 // GET /api/admin/users/org-members — the LIVE Door43 org roster.
@@ -165,16 +258,19 @@ adminUsers.get("/org-members", async (c) => {
     return c.json({ org, members: [], truncated: false });
   }
 
+  const names = teamRoleNames(c.env);
+
   // (1) Admin's own DCS token — full roster (incl. private members). Any
   // failure (missing/expired token, non-2xx, network) falls through to (2).
   const adminToken = await currentUserDcsToken(c);
   if (adminToken) {
+    const authHeaders = { Accept: "application/json", Authorization: `token ${adminToken}` };
     try {
-      const own = await fetchOrgMembers(base, org, "members", {
-        Accept: "application/json",
-        Authorization: `token ${adminToken}`,
-      });
-      if (own.ok) return c.json({ org, members: own.members, truncated: own.truncated });
+      const own = await fetchOrgMembers(base, org, "members", authHeaders);
+      if (own.ok) {
+        const teamRoles = await resolveOrgTeamRoles(base, org, authHeaders, names);
+        return c.json({ org, members: withTeamRoles(own.members, teamRoles), truncated: own.truncated });
+      }
     } catch {
       // Network error on the admin-token attempt — fall through to (2).
     }
@@ -186,7 +282,10 @@ adminUsers.get("/org-members", async (c) => {
 
   try {
     const full = await fetchOrgMembers(base, org, "members", headers);
-    if (full.ok) return c.json({ org, members: full.members, truncated: full.truncated });
+    if (full.ok) {
+      const teamRoles = await resolveOrgTeamRoles(base, org, headers, names);
+      return c.json({ org, members: withTeamRoles(full.members, teamRoles), truncated: full.truncated });
+    }
 
     if (full.status === 401 || full.status === 403) {
       // public_members is readable WITHOUT auth. Deliberately omit the
@@ -214,6 +313,75 @@ adminUsers.get("/org-members", async (c) => {
   } catch {
     return c.json({ org, members: [], error: "network", truncated: false });
   }
+});
+
+// POST /api/admin/users/purge-manual — bulk-clear the seeded/hand-added
+// allowlist so roles come from Door43 teams instead. Removes every
+// source='manual' row; team-derived rows (source='dcs_team') are untouched,
+// and a team-backed user whose manual row is cleared simply re-acquires the
+// role from their team on their next sign-in (teams win — see dcsTeams.ts).
+//
+// Admin-set safety: dcs_team admins survive the purge regardless, so the admin
+// set is only at risk when EVERY admin is a manual row. In that case one manual
+// admin is KEPT — the caller if they're among them (an admin must not be able
+// to lock themselves out), else the first — mirroring the last-admin guard in
+// PUT/DELETE. Anything kept is reported so the UI can say so. This does NOT
+// refuse to remove manual-only non-admins who thereby lose access: clearing
+// them is the whole intent (the UI warns which ones up front); the guard only
+// protects the ability to administer the project at all.
+adminUsers.post("/purge-manual", async (c) => {
+  // Clear stashed manual grants on team-derived rows FIRST, and unconditionally
+  // (a stash can exist even when no visible `source='manual'` row does). When a
+  // team signal took over a manual row, syncTeamRole stashes the prior grant in
+  // manual_role and RESTORES it if the user later leaves the Door43 team (see
+  // dcsTeams.ts). Left in place, a purged grant would silently resurface on
+  // team departure — handing back the very access this action revokes. After a
+  // purge, teams are the source of truth in both directions, so the stash must
+  // go too. Wrapped: manual_role arrives with migration 0057, and the purge
+  // must still work in the deploy-before-migrate window (nothing stashed yet).
+  try {
+    await c.env.DB.prepare(
+      `UPDATE user_roles SET manual_role = NULL WHERE source = 'dcs_team' AND manual_role IS NOT NULL`,
+    ).run();
+  } catch {
+    // No manual_role column yet (pre-0057) — nothing could have been stashed.
+  }
+
+  const { results: manualRows } = await c.env.DB.prepare(
+    `SELECT dcs_username AS username, role AS role FROM user_roles WHERE source = 'manual'`,
+  ).all<{ username: string; role: string }>();
+
+  if (manualRows.length === 0) return c.json({ removed: [], kept: [] });
+
+  const nonManualAdmins = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM user_roles WHERE role = 'admin' AND source != 'manual'`,
+  ).first<{ n: number }>();
+
+  const kept: string[] = [];
+  if ((nonManualAdmins?.n ?? 0) === 0) {
+    const manualAdmins = manualRows.filter((r) => r.role === "admin").map((r) => r.username);
+    if (manualAdmins.length > 0) {
+      const caller = (c.get("username") ?? "").toLowerCase();
+      const keep = manualAdmins.find((u) => u.toLowerCase() === caller) ?? manualAdmins[0];
+      kept.push(keep);
+    }
+  }
+
+  const keptSet = new Set(kept.map((u) => u.toLowerCase()));
+  const toRemove = manualRows.map((r) => r.username).filter((u) => !keptSet.has(u.toLowerCase()));
+  if (toRemove.length === 0) return c.json({ removed: [], kept });
+
+  // Delete by explicit username list rather than a self-referential
+  // `DELETE ... WHERE source='manual' AND (SELECT COUNT admins)` — a COUNT
+  // subquery over the same table being deleted from is order-dependent and
+  // hazardous. The kept row is already excluded from the list, so a plain
+  // IN-delete is both correct and can't empty the admin set.
+  const placeholders = toRemove.map((_v, i) => `?${i + 1}`).join(",");
+  await c.env.DB.prepare(`DELETE FROM user_roles WHERE dcs_username IN (${placeholders})`)
+    .bind(...toRemove)
+    .run();
+
+  return c.json({ removed: toRemove, kept });
 });
 
 const PutBody = z.object({

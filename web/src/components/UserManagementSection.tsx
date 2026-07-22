@@ -5,6 +5,10 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   MenuItem,
   Snackbar,
@@ -62,6 +66,8 @@ export function UserManagementSection() {
   const [newRole, setNewRole] = useState<"admin" | "editor">("editor");
   const [adding, setAdding] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purging, setPurging] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(false);
@@ -144,6 +150,24 @@ export function UserManagementSection() {
     await load();
   };
 
+  const handlePurge = async () => {
+    setPurging(true);
+    try {
+      const res = await api.adminPurgeManualGrants();
+      if (res.kept.length > 0) {
+        setMsg(t("preferences.users.purge.doneKept", { count: res.removed.length, kept: res.kept.join(", ") }));
+      } else {
+        setMsg(t("preferences.users.purge.done", { count: res.removed.length }));
+      }
+    } catch (e) {
+      setMsg(errorMessage(t, e));
+    } finally {
+      setPurging(false);
+      setPurgeOpen(false);
+    }
+    await load();
+  };
+
   // ── Reconciliation data (read-only) ──
   // Match logins case-insensitively — Gitea itself is case-insensitive on
   // usernames, and allowlist rows may differ in casing from the DCS roster.
@@ -158,6 +182,20 @@ export function UserManagementSection() {
   const rosterUnavailable =
     !!orgMembers && !orgMembers.partial && (!!orgMembers.error || orgMembers.members.length === 0);
   const orgName = orgMembers?.org || "";
+
+  // ── Manual-grant purge partition (issue #2) ──
+  // Only source='manual' rows are cleared by the purge. Split them by whether
+  // a live Door43 team backs the same login (from the roster's teamRole), so
+  // the confirm can warn which users would actually LOSE access (manual-only,
+  // no team) versus which keep it (team re-applies on next sign-in). If team
+  // data couldn't be read, everyone lands in "will lose" — the conservative,
+  // honest split rather than a falsely reassuring one.
+  const manualUsers = (users ?? []).filter((u) => (u.source ?? "manual") === "manual");
+  const teamRoleLogins = new Set(
+    (orgMembers?.members ?? []).filter((m) => m.teamRole).map((m) => m.login.toLowerCase()),
+  );
+  const manualTeamBacked = manualUsers.filter((u) => teamRoleLogins.has(u.username.toLowerCase()));
+  const manualWillLose = manualUsers.filter((u) => !teamRoleLogins.has(u.username.toLowerCase()));
 
   return (
     <Box component="section" aria-labelledby="user-management-heading">
@@ -219,9 +257,27 @@ export function UserManagementSection() {
         )
       ) : (
         <>
-        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-          {t("preferences.users.reconcile.allowlistHeading")}
-        </Typography>
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{ mb: 0.5 }}
+        >
+          <Typography variant="subtitle2">
+            {t("preferences.users.reconcile.allowlistHeading")}
+          </Typography>
+          <Button
+            size="small"
+            color="warning"
+            variant="outlined"
+            startIcon={<DeleteOutlineIcon />}
+            onClick={() => setPurgeOpen(true)}
+            disabled={manualUsers.length === 0}
+          >
+            {t("preferences.users.purge.button")}
+          </Button>
+        </Stack>
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
           {t("preferences.users.reconcile.allowlistNote")}
         </Typography>
@@ -363,7 +419,16 @@ export function UserManagementSection() {
                   <span>{t("preferences.users.reconcile.statusColumn")}</span>
                 </Box>
                 {orgMembers.members.map((m) => {
-                  const role = roleByLogin.get(m.login.toLowerCase());
+                  // Prefer the LIVE team-derived role (present even before the
+                  // member has ever signed in) over the synced user_roles row;
+                  // fall back to the allowlist row for manual-only grants. This
+                  // is what makes a BE-Admins member who never logged in show
+                  // "Admin (Door43 team)" instead of "no app role" (issue #1).
+                  const allowRow = roleByLogin.get(m.login.toLowerCase());
+                  const effectiveRole = m.teamRole ?? allowRow?.role;
+                  const effectiveSource: "dcs_team" | "manual" | undefined = m.teamRole
+                    ? "dcs_team"
+                    : allowRow?.source;
                   return (
                     <Box
                       key={m.login}
@@ -388,18 +453,18 @@ export function UserManagementSection() {
                           </Typography>
                         ) : null}
                       </Typography>
-                      {role ? (
+                      {effectiveRole ? (
                         <Chip
                           size="small"
-                          color={role.role === "admin" ? "primary" : "default"}
+                          color={effectiveRole === "admin" ? "primary" : "default"}
                           variant="outlined"
                           label={t("preferences.users.reconcile.hasRole", {
                             role:
-                              role.role === "admin"
+                              effectiveRole === "admin"
                                 ? t("preferences.users.roleAdmin")
                                 : t("preferences.users.roleEditor"),
                             source:
-                              role.source === "dcs_team"
+                              effectiveSource === "dcs_team"
                                 ? t("preferences.users.reconcile.sourceTeam")
                                 : t("preferences.users.reconcile.sourceManual"),
                           })}
@@ -427,6 +492,55 @@ export function UserManagementSection() {
         </Box>
         </>
       )}
+
+      <Dialog open={purgeOpen} onClose={() => !purging && setPurgeOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>{t("preferences.users.purge.confirmTitle")}</DialogTitle>
+        <DialogContent>
+          {manualUsers.length === 0 ? (
+            <Typography variant="body2">{t("preferences.users.purge.none")}</Typography>
+          ) : (
+            <>
+              <Typography variant="body2" sx={{ mb: 1.5 }}>
+                {t("preferences.users.purge.confirmIntro")}
+              </Typography>
+              {manualWillLose.length > 0 && (
+                <Alert severity="warning" sx={{ mb: 1.5 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                    {t("preferences.users.purge.willLoseAccess")}
+                  </Typography>
+                  <Typography variant="body2">
+                    {manualWillLose.map((u) => u.username).join(", ")}
+                  </Typography>
+                </Alert>
+              )}
+              {manualTeamBacked.length > 0 && (
+                <Alert severity="info">
+                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                    {t("preferences.users.purge.teamBacked")}
+                  </Typography>
+                  <Typography variant="body2">
+                    {manualTeamBacked.map((u) => u.username).join(", ")}
+                  </Typography>
+                </Alert>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPurgeOpen(false)} disabled={purging}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            color="warning"
+            variant="contained"
+            onClick={() => void handlePurge()}
+            disabled={purging || manualUsers.length === 0}
+            startIcon={purging ? <CircularProgress size={16} color="inherit" /> : <DeleteOutlineIcon />}
+          >
+            {t("preferences.users.purge.confirm")}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar open={!!msg} autoHideDuration={4000} onClose={() => setMsg(null)} message={msg ?? ""} />
     </Box>

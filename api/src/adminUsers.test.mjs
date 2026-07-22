@@ -756,4 +756,245 @@ console.log("[GET org-members] expired admin token + service 403 → public_memb
   }
 }
 
+// ── GET /org-members attaches LIVE team roles (issue: team admins with no
+// login yet). The roster's APP ROLE must reflect Door43 team membership
+// (BE-Admins → admin, BE-Editors → editor) even for members who have never
+// signed in and therefore have no user_roles row. Resolved by listing the
+// org's role-teams + their members, admin winning over editor. ─────────────
+
+function jsonRes(body) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+console.log("[GET org-members] attaches teamRole from live Door43 team membership (admin wins)");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("/public_members")) return jsonRes([]);
+      if (u.includes("/teams/1/members")) return jsonRes([{ login: "Haneenf" }, { login: "bothuser" }]);
+      if (u.includes("/teams/2/members")) return jsonRes([{ login: "eddie" }, { login: "bothuser" }]);
+      if (/\/orgs\/[^/]+\/teams\?/.test(u))
+        return jsonRes([
+          { id: 1, name: "BE-Admins" },
+          { id: 2, name: "BE-Editors" },
+          { id: 3, name: "Owners" },
+        ]);
+      if (u.includes("/members"))
+        return jsonRes([
+          { login: "Haneenf", full_name: "Haneen F" },
+          { login: "eddie" },
+          { login: "bothuser" },
+          { login: "norole" },
+        ]);
+      return new Response("nope", { status: 404 });
+    };
+    // No seeded user_roles rows at all — proves teamRole comes from LIVE team
+    // membership, not the allowlist.
+    const env = baseEnv(freshDb(), "svc-token");
+    const res = await req(app, env, "GET", "/api/admin/users/org-members", { token: adminTok });
+    assert(res.status === 200, "200");
+    const body = await res.json();
+    const byLogin = Object.fromEntries(body.members.map((m) => [m.login, m.teamRole]));
+    assert(byLogin.Haneenf === "admin", "BE-Admins member (never logged in) resolves to admin");
+    assert(byLogin.eddie === "editor", "BE-Editors member resolves to editor");
+    assert(byLogin.bothuser === "admin", "member in both teams: admin wins over editor");
+    assert(byLogin.norole === undefined, "member on no role-team has no teamRole");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[GET org-members] team-listing failure degrades gracefully — roster returned without teamRole");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      // The org-member list succeeds, but every team read 500s.
+      if (u.includes("/teams")) return new Response("boom", { status: 500 });
+      if (u.includes("/members")) return jsonRes([{ login: "Haneenf" }, { login: "eddie" }]);
+      return new Response("nope", { status: 404 });
+    };
+    const env = baseEnv(freshDb(), "svc-token");
+    const res = await req(app, env, "GET", "/api/admin/users/org-members", { token: adminTok });
+    assert(res.status === 200, "200 (roster still returned)");
+    const body = await res.json();
+    assert(body.members.length === 2, "both members present despite team-read failure");
+    assert(
+      body.members.every((m) => m.teamRole === undefined),
+      "no teamRole attached when the team listing couldn't be read (degrade, not break)",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[GET org-members] public_members fallback carries no team roles (teams need org membership)");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("/public_members")) return jsonRes([{ login: "publicuser" }]);
+      // /members 403s (service account not a member), teams would too.
+      return new Response("forbidden", { status: 403 });
+    };
+    const env = baseEnv(freshDb(), "svc-token");
+    const res = await req(app, env, "GET", "/api/admin/users/org-members", { token: adminTok });
+    const body = await res.json();
+    assert(body.partial === true, "partial public roster");
+    assert(
+      body.members.every((m) => m.teamRole === undefined),
+      "public_members members have no teamRole (team endpoints require membership)",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── POST /purge-manual — bulk-clear manual grants (issue #2) ────────────────
+// Removes every source='manual' row so roles come from Door43 teams. dcs_team
+// rows are untouched. At least one admin is always preserved (the caller when
+// every admin is manual), mirroring the last-admin guard.
+
+console.log("[POST purge-manual] clears all manual rows, leaves dcs_team rows, when a team admin survives");
+{
+  const realFetch = globalThis.fetch;
+  stubDcsOk();
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const db = freshDb();
+    db.exec(
+      `INSERT INTO user_roles (dcs_username, role, source) VALUES
+         ('ada','admin','manual'),
+         ('bob','editor','manual'),
+         ('teamadmin','admin','dcs_team'),
+         ('teameditor','editor','dcs_team')`,
+    );
+    const env = baseEnv(db, "svc-token");
+    const res = await req(app, env, "POST", "/api/admin/users/purge-manual", { token: adminTok });
+    assert(res.status === 200, "200");
+    const body = await res.json();
+    assert(body.kept.length === 0, "nothing kept — a dcs_team admin already guarantees a non-empty admin set");
+    assert(body.removed.sort().join(",") === "ada,bob", `both manual rows removed (got ${body.removed})`);
+    const remaining = db.prepare("SELECT dcs_username FROM user_roles ORDER BY dcs_username").all();
+    assert(
+      remaining.map((r) => r.dcs_username).join(",") === "teamadmin,teameditor",
+      "only dcs_team rows survive the purge",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[POST purge-manual] keeps the caller as the last admin when every admin is manual");
+{
+  const realFetch = globalThis.fetch;
+  stubDcsOk();
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const db = freshDb();
+    db.exec(
+      `INSERT INTO user_roles (dcs_username, role, source) VALUES
+         ('ada','admin','manual'),
+         ('carol','admin','manual'),
+         ('bob','editor','manual')`,
+    );
+    const env = baseEnv(db, "svc-token");
+    const res = await req(app, env, "POST", "/api/admin/users/purge-manual", { token: adminTok });
+    const body = await res.json();
+    assert(body.kept.join(",") === "ada", `caller (ada) kept as the last admin (got ${body.kept})`);
+    assert(body.removed.sort().join(",") === "bob,carol", `everyone else removed (got ${body.removed})`);
+    const remaining = db.prepare("SELECT dcs_username FROM user_roles").all();
+    assert(remaining.length === 1 && remaining[0].dcs_username === "ada", "only the kept admin remains");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[POST purge-manual] clears stashed manual_role on team rows so a purged grant can't resurface");
+{
+  const realFetch = globalThis.fetch;
+  stubDcsOk();
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const db = freshDb();
+    // bob: had a manual editor grant, then joined BE-Editors and signed in, so
+    // syncTeamRole took the row over (source='dcs_team') and STASHED the prior
+    // manual grant in manual_role. A purge must clear that stash — otherwise
+    // when bob later leaves the team, syncTeamRole restores it and bob keeps
+    // access the purge was meant to revoke.
+    db.exec(
+      `INSERT INTO user_roles (dcs_username, role, source, manual_role) VALUES
+         ('teamadmin','admin','dcs_team',NULL),
+         ('bob','editor','dcs_team','editor'),
+         ('carol','editor','manual',NULL)`,
+    );
+    const env = baseEnv(db, "svc-token");
+    const res = await req(app, env, "POST", "/api/admin/users/purge-manual", { token: adminTok });
+    assert(res.status === 200, "200");
+    const body = await res.json();
+    assert(body.removed.join(",") === "carol", `visible manual row removed (got ${body.removed})`);
+    const bob = db.prepare("SELECT role, source, manual_role FROM user_roles WHERE dcs_username='bob'").get();
+    assert(bob.role === "editor" && bob.source === "dcs_team", "bob's live team role is untouched");
+    assert(bob.manual_role === null, "bob's stashed manual grant is cleared — it can't resurface on team departure");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[POST purge-manual] no manual rows → empty result, nothing changed");
+{
+  const realFetch = globalThis.fetch;
+  stubDcsOk();
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const db = freshDb();
+    db.exec(`INSERT INTO user_roles (dcs_username, role, source) VALUES ('teamadmin','admin','dcs_team')`);
+    const env = baseEnv(db, "svc-token");
+    const res = await req(app, env, "POST", "/api/admin/users/purge-manual", { token: adminTok });
+    const body = await res.json();
+    assert(body.removed.length === 0 && body.kept.length === 0, "no-op result");
+    assert(db.prepare("SELECT COUNT(*) AS n FROM user_roles").get().n === 1, "dcs_team row untouched");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[POST purge-manual] auth-gated: no cookie → 401, editor → 403");
+{
+  const realFetch = globalThis.fetch;
+  stubDcsOk();
+  try {
+    const app = buildApp();
+    const editorTok = await makeToken({ role: "editor", sub: "2", username: "eddie" });
+    const env = () => baseEnv(seed(freshDb(), [{ username: "ada", role: "admin" }]), "svc-token");
+    assert(
+      (await req(app, env(), "POST", "/api/admin/users/purge-manual")).status === 401,
+      "POST no cookie → 401",
+    );
+    assert(
+      (await req(app, env(), "POST", "/api/admin/users/purge-manual", { token: editorTok })).status === 403,
+      "POST editor → 403",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("adminUsers: all assertions passed");
