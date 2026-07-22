@@ -850,6 +850,58 @@ export async function copyBookForward(
   return { status: "carried_forward" };
 }
 
+export interface ReplacementBookPlan {
+  /** Books to stage from the NEW source (book row `mode='staged'`). */
+  staged: string[];
+  /** Books to copy forward from the predecessor generation (`mode='carry_forward'`). */
+  carryForward: string[];
+}
+
+/**
+ * Decide, for a replacement job, which of the current generation's books are
+ * re-staged from the new source and which are carried forward unchanged
+ * (issue #94, selective replacement).
+ *
+ * `requiredBooks` is the full set of books with active verses
+ * (`snapshotRequiredBooks`). Every one MUST land in exactly one bucket — a book
+ * left in neither is emptied on the generation flip (the JOL/MAL data-loss trap
+ * that carry-forward exists to prevent).
+ *
+ * `replaceBooks` is the optional caller selection = the books to stage from the
+ * new source:
+ *  - `undefined` → replace ALL (`staged = requiredBooks`, none carried). This is
+ *    byte-for-byte the pre-#94 whole-lane replacement, so any caller that does
+ *    not pass a selection is completely unchanged.
+ *  - provided → MUST be a subset of `requiredBooks`. An unknown book throws
+ *    (`unknown_books`, 400) rather than being silently dropped, so a UI can never
+ *    believe it replaced a book that was actually ignored. The complement of the
+ *    selection is carried forward.
+ *
+ * Both buckets preserve `requiredBooks` order for deterministic book-row
+ * insertion and status display.
+ */
+export function planReplacementBooks(
+  requiredBooks: string[],
+  replaceBooks?: string[],
+): ReplacementBookPlan {
+  if (replaceBooks === undefined) {
+    return { staged: [...requiredBooks], carryForward: [] };
+  }
+  const required = new Set(requiredBooks);
+  const unknown = replaceBooks.filter((b) => !required.has(b));
+  if (unknown.length > 0) {
+    throw Object.assign(new Error("unknown_books"), {
+      status: 400,
+      detail: { unknown, required: requiredBooks },
+    });
+  }
+  const replace = new Set(replaceBooks);
+  return {
+    staged: requiredBooks.filter((b) => replace.has(b)),
+    carryForward: requiredBooks.filter((b) => !replace.has(b)),
+  };
+}
+
 /** DTO fields published with every lane-aware response. */
 export function lanePublicState(row: LaneStateRow): Record<string, unknown> {
   return {
