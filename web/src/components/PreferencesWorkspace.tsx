@@ -438,6 +438,9 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
   // the new source; unchecking keeps its current content (carried forward).
   // Defaults to all-checked = replace all (unchanged whole-lane behavior).
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
+  // Per-book existing-content stats (issue #94): verses + translator-edit count,
+  // shown so the user can see which books hold edits before overwriting them.
+  const [bookStats, setBookStats] = useState<Record<string, { verses: number; edited: number }>>({});
   const [pendingSource, setPendingSource] = useState<{ owner: string; repo: string; ref: string } | null>(null);
   const [impact, setImpact] = useState<{ books: number; verses: number } | null>(null);
   // A transient DCS content-check failure ("couldn't check") is retryable, not a
@@ -566,10 +569,12 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
         .then((r) => {
           setAffectedBooks(r.books);
           setSelectedBooks(new Set(r.books)); // default: replace all
+          setBookStats(r.stats ?? {});
         })
         .catch(() => {
           setAffectedBooks([]);
           setSelectedBooks(new Set());
+          setBookStats({});
         });
     } catch (e) {
       const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
@@ -908,23 +913,34 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
                   {affectedBooks.map((b) => {
                     const selected = selectedBooks.has(b);
+                    const stat = bookStats[b];
+                    const edited = stat?.edited ?? 0;
+                    const label = edited > 0 ? `${bookName(b)} (${b}) ✎${edited}` : `${bookName(b)} (${b})`;
                     return (
-                      <Chip
+                      <Tooltip
                         key={b}
-                        size="small"
-                        label={`${bookName(b)} (${b})`}
-                        color={selected ? "warning" : "default"}
-                        variant={selected ? "filled" : "outlined"}
-                        aria-pressed={selected}
-                        onClick={() =>
-                          setSelectedBooks((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(b)) next.delete(b);
-                            else next.add(b);
-                            return next;
-                          })
+                        title={
+                          stat
+                            ? t("preferences.scriptureLanes.bookStatTip", { verses: stat.verses, edited })
+                            : ""
                         }
-                      />
+                      >
+                        <Chip
+                          size="small"
+                          label={label}
+                          color={selected ? "warning" : "default"}
+                          variant={selected ? "filled" : "outlined"}
+                          aria-pressed={selected}
+                          onClick={() =>
+                            setSelectedBooks((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(b)) next.delete(b);
+                              else next.add(b);
+                              return next;
+                            })
+                          }
+                        />
+                      </Tooltip>
                     );
                   })}
                 </Box>
@@ -934,6 +950,11 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                     keep: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
                   })}
                 </Typography>
+                {affectedBooks.some((b) => (bookStats[b]?.edited ?? 0) > 0) && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+                    {t("preferences.scriptureLanes.confirmBooksEditedHint")}
+                  </Typography>
+                )}
               </>
             ) : (
               <Typography variant="body2">{t("preferences.scriptureLanes.confirmNoBookList")}</Typography>

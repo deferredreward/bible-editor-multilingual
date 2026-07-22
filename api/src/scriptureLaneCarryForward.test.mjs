@@ -15,7 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { copyBookForward } from "./scriptureLane.ts";
+import { copyBookForward, laneBookStats } from "./scriptureLane.ts";
 
 // ── D1 adapter over node:sqlite ───────────────────────────────────────────────
 
@@ -370,6 +370,26 @@ test("fails closed when the destination cannot be fully copied", async () => {
   assert.equal(err.error, "incomplete_carry_forward");
   assert.equal(err.predecessor, predN);
   assert.ok(err.copied < predN, "records that the copy fell short");
+});
+
+test("laneBookStats reports per-book verse and translator-edit counts for the generation", async () => {
+  const db = freshDb();
+  const env = makeEnv(db);
+  seedVerses(db, "MAL", { gen: 1, chapters: 2, perChapter: 3 }); // 6 verses, unedited
+  seedVerses(db, "JOL", { gen: 1, chapters: 1, perChapter: 4 }); // 4 verses
+  // Two JOL verses carry a translator edit.
+  db.prepare(
+    `UPDATE verses SET updated_by = 7 WHERE book='JOL' AND chapter=1 AND verse IN (1,2) AND bible_version=? AND source_generation=1`,
+  ).run(BV);
+  // A different generation must not bleed into the gen-1 stats.
+  seedVerses(db, "MAL", { gen: 2, chapters: 5, perChapter: 5 });
+
+  const stats = await laneBookStats(env, BV, 1);
+  assert.equal(stats.MAL.verses, 6);
+  assert.equal(stats.MAL.edited, 0);
+  assert.equal(stats.JOL.verses, 4);
+  assert.equal(stats.JOL.edited, 2, "counts only updated_by-set verses");
+  assert.equal(Object.keys(stats).length, 2, "gen-2 rows excluded from the gen-1 query");
 });
 
 test("JOL/MAL regression: un-selected books are NOT emptied by a subset stage", async () => {
