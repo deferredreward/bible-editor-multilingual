@@ -626,6 +626,9 @@ export interface OrgMembersResponse {
   error?: string;
   /** True when the roster exceeded the page cap and is incomplete. */
   truncated: boolean;
+  /** True when `members`/`error` came from a public-members fallback (the
+   *  service account can't see full org membership) rather than a full roster. */
+  partial?: boolean;
 }
 
 export interface AquiferDraftsResponse {

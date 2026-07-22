@@ -488,4 +488,62 @@ console.log("[DELETE] missing row → 404");
   }
 }
 
+// ── GET /org-members public-members fallback (issue #78) ───────────────────
+// When the service account can see the org but isn't itself a member,
+// `/orgs/{org}/members` 401s/403s even though the org is real. Rather than
+// going straight to an empty "unreachable" panel, the route should retry
+// against `/orgs/{org}/public_members` and flag the result `partial`.
+
+console.log("[GET org-members] 403 on /members falls back to /public_members, flagged partial");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    const calls = [];
+    globalThis.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).includes("/public_members")) {
+        return new Response(JSON.stringify([{ login: "publicuser", full_name: "Public User" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("forbidden", { status: 403 });
+    };
+    const env = baseEnv(freshDb(), "svc-token");
+    const res = await req(app, env, "GET", "/api/admin/users/org-members", { token: adminTok });
+    assert(res.status === 200, "200 even though /members 403'd");
+    const body = await res.json();
+    assert(body.partial === true, "flagged partial");
+    assert(body.error === "dcs_403_public_only", `error is dcs_403_public_only (got ${body.error})`);
+    assert(body.members.length === 1 && body.members[0].login === "publicuser", "public_members roster returned");
+    assert(
+      calls.some((u) => u.includes("/members?")) && calls.some((u) => u.includes("/public_members?")),
+      "tried /members then fell back to /public_members",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+console.log("[GET org-members] 403 on both /members and /public_members → empty, non-partial error");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const app = buildApp();
+    const adminTok = await makeToken({ role: "admin", sub: "1", username: "ada" });
+    globalThis.fetch = async () => new Response("forbidden", { status: 403 });
+    const env = baseEnv(freshDb(), "svc-token");
+    const res = await req(app, env, "GET", "/api/admin/users/org-members", { token: adminTok });
+    assert(res.status === 200, "still 200 (fail-soft)");
+    const body = await res.json();
+    assert(!body.partial, "not flagged partial when the fallback also fails");
+    assert(body.error === "dcs_403", `error is dcs_403 (got ${body.error})`);
+    assert(body.members.length === 0, "empty roster");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("adminUsers: all assertions passed");

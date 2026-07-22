@@ -89,6 +89,37 @@ const MEMBERS_MAX_PAGES = 20;
 
 type OrgMember = { login: string; fullName: string; avatarUrl: string };
 
+// Paginates one of DCS's org-member-listing endpoints ("members" — full
+// roster, requires the caller to be a member/owner of the org — or
+// "public_members", visible to anyone). Returns either the full member list
+// or the non-ok status that stopped pagination, so the caller can decide
+// whether to fall back.
+async function fetchOrgMembers(
+  base: string,
+  org: string,
+  endpoint: "members" | "public_members",
+  headers: Record<string, string>,
+): Promise<{ ok: true; members: OrgMember[]; truncated: boolean } | { ok: false; status: number }> {
+  const members: OrgMember[] = [];
+  let truncated = false;
+  for (let page = 1; page <= MEMBERS_MAX_PAGES; page++) {
+    const res = await fetch(
+      `${base}/api/v1/orgs/${encodeURIComponent(org)}/${endpoint}?limit=${MEMBERS_PAGE_SIZE}&page=${page}`,
+      { headers },
+    );
+    if (!res.ok) return { ok: false, status: res.status };
+    const batch = (await res.json()) as unknown;
+    if (!Array.isArray(batch)) return { ok: false, status: 0 };
+    for (const m of batch as Array<{ login?: string; full_name?: string; avatar_url?: string }>) {
+      if (m.login) members.push({ login: m.login, fullName: m.full_name ?? "", avatarUrl: m.avatar_url ?? "" });
+    }
+    if (batch.length < MEMBERS_PAGE_SIZE) break;
+    // Last allowed page still full — the roster is longer than we fetched.
+    if (page === MEMBERS_MAX_PAGES) truncated = true;
+  }
+  return { ok: true, members, truncated };
+}
+
 // GET /api/admin/users/org-members — the LIVE Door43 org roster.
 //
 // Unlike GET /api/admin/users (which reads the local user_roles allowlist),
@@ -101,6 +132,14 @@ type OrgMember = { login: string; fullName: string; avatarUrl: string };
 // empty members list and an `error` string, mirroring the fail-open tolerance
 // used for DCS lookups elsewhere (auth.ts, the PUT canonicalization above). A
 // DCS outage must degrade the reconciliation view, not break the whole page.
+//
+// `/orgs/{org}/members` only returns the full roster to a caller who is
+// themselves a member/owner of that org (see issue #78) — if DCS_SERVICE_TOKEN's
+// account isn't, DCS answers 401/403 even though the org and token are both
+// otherwise fine. Rather than going straight to an empty "unreachable" panel,
+// fall back to `/orgs/{org}/public_members` (visible to anyone) and flag the
+// response as `partial` so the UI can explain *why* the list may be incomplete
+// instead of hiding it entirely.
 adminUsers.get("/org-members", async (c) => {
   const { org } = await getProjectConfig(c.env);
   const base = (c.env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
@@ -114,31 +153,28 @@ adminUsers.get("/org-members", async (c) => {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (c.env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${c.env.DCS_SERVICE_TOKEN}`;
 
-  const members: OrgMember[] = [];
   try {
-    let truncated = false;
-    for (let page = 1; page <= MEMBERS_MAX_PAGES; page++) {
-      const res = await fetch(
-        `${base}/api/v1/orgs/${encodeURIComponent(org)}/members?limit=${MEMBERS_PAGE_SIZE}&page=${page}`,
-        { headers },
-      );
-      if (!res.ok) {
-        return c.json({ org, members: [], error: `dcs_${res.status}`, truncated: false });
+    const full = await fetchOrgMembers(base, org, "members", headers);
+    if (full.ok) return c.json({ org, members: full.members, truncated: full.truncated });
+
+    if (full.status === 401 || full.status === 403) {
+      const pub = await fetchOrgMembers(base, org, "public_members", headers);
+      if (pub.ok) {
+        return c.json({
+          org,
+          members: pub.members,
+          truncated: pub.truncated,
+          error: `dcs_${full.status}_public_only`,
+          partial: true,
+        });
       }
-      const batch = (await res.json()) as unknown;
-      if (!Array.isArray(batch)) {
-        return c.json({ org, members: [], error: "dcs_bad_body", truncated: false });
-      }
-      for (const m of batch as Array<{ login?: string; full_name?: string; avatar_url?: string }>) {
-        if (m.login) {
-          members.push({ login: m.login, fullName: m.full_name ?? "", avatarUrl: m.avatar_url ?? "" });
-        }
-      }
-      if (batch.length < MEMBERS_PAGE_SIZE) break;
-      // Last allowed page still full — the roster is longer than we fetched.
-      if (page === MEMBERS_MAX_PAGES) truncated = true;
     }
-    return c.json({ org, members, truncated });
+    return c.json({
+      org,
+      members: [],
+      error: full.status === 0 ? "dcs_bad_body" : `dcs_${full.status}`,
+      truncated: false,
+    });
   } catch {
     return c.json({ org, members: [], error: "network", truncated: false });
   }
