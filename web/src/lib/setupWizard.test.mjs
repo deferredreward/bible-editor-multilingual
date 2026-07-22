@@ -18,11 +18,18 @@ import {
   door43RepoUrl,
   laneUrlChoiceSelection,
   clearedOverrideSelection,
+  pendingOverrideSelection,
+  isUnverifiedOverride,
+  unverifiedOverrideResources,
+  hasUnverifiedOverride,
+  laneModeMatches,
+  replacementContinueEnabled,
   upstreamLanguageOf,
   jobActionable,
   replacementSpinnerVisible,
   describeBookError,
 } from "./setupWizard.ts";
+import { defaultResourceSources } from "./orgDraft.ts";
 
 test("stepAfterApply goes straight to done when no lane is quarantined", () => {
   assert.equal(stepAfterApply(null), SETUP_STEPS.done);
@@ -79,6 +86,59 @@ test("laneUrlChoiceSelection makes the choice read as 'url' without committing a
 test("clearedOverrideSelection resets to upstream when checked, blank when not", () => {
   assert.deepEqual(clearedOverrideSelection(true), { mode: "upstream" });
   assert.deepEqual(clearedOverrideSelection(false), { mode: "blank" });
+});
+
+test("a failed verify (incl. 503) does NOT blank the source — it stays a pending override", () => {
+  // The load-bearing claim: verification failure must not silently persist as
+  // "no source". pendingOverrideSelection is an override with no repo.
+  const pending = pendingOverrideSelection();
+  assert.equal(pending.mode, "override");
+  assert.equal(pending.repo, undefined);
+  assert.notDeepEqual(pending, { mode: "blank" }); // NOT blanked
+  assert.equal(isUnverifiedOverride(pending), true);
+});
+
+test("isUnverifiedOverride: pending override yes; verified/blank/upstream no", () => {
+  assert.equal(isUnverifiedOverride({ mode: "override" }), true);
+  assert.equal(isUnverifiedOverride({ mode: "override", repo: "  " }), true);
+  assert.equal(isUnverifiedOverride({ mode: "override", org: "X", repo: "ar_tn" }), false);
+  assert.equal(isUnverifiedOverride({ mode: "blank" }), false);
+  assert.equal(isUnverifiedOverride({ mode: "upstream" }), false);
+  assert.equal(isUnverifiedOverride(undefined), false);
+});
+
+test("hasUnverifiedOverride / unverifiedOverrideResources gate on any pending override", () => {
+  const clean = defaultResourceSources(); // all upstream
+  assert.equal(hasUnverifiedOverride(clean), false);
+  assert.deepEqual(unverifiedOverrideResources(clean), []);
+
+  // A 503 during tn verify left tn a pending override.
+  const withPending = { ...defaultResourceSources(), tn: pendingOverrideSelection() };
+  assert.equal(hasUnverifiedOverride(withPending), true);
+  assert.deepEqual(unverifiedOverrideResources(withPending), ["tn"]);
+
+  // A genuine clear (blank) does NOT block.
+  const cleared = { ...defaultResourceSources(), tn: clearedOverrideSelection(false) };
+  assert.equal(hasUnverifiedOverride(cleared), false);
+});
+
+test("laneModeMatches confirms the live config equals the desired mode", () => {
+  // Aligning only: text frozen, alignment writable.
+  assert.equal(laneModeMatches({ textReadOnly: true, alignmentWritable: true }, "align"), true);
+  // Post-activation default (editable) with an align choice → NOT a match (the
+  // silent-failure case that must block Continue).
+  assert.equal(laneModeMatches({ textReadOnly: false, alignmentWritable: true }, "align"), false);
+  // Editing: text writable, alignment writable.
+  assert.equal(laneModeMatches({ textReadOnly: false, alignmentWritable: true }, "edit"), true);
+  assert.equal(laneModeMatches({ textReadOnly: true, alignmentWritable: true }, "edit"), false);
+  assert.equal(laneModeMatches(null, "edit"), false);
+});
+
+test("replacementContinueEnabled requires every replaced lane confirmed done", () => {
+  assert.equal(replacementContinueEnabled(["lit"], { lit: true }), true);
+  assert.equal(replacementContinueEnabled(["lit", "sim"], { lit: true }), false); // sim not done
+  assert.equal(replacementContinueEnabled(["lit", "sim"], { lit: true, sim: true }), true);
+  assert.equal(replacementContinueEnabled([], {}), true); // nothing to replace
 });
 
 test("upstreamLanguageOf uses the inferred code, falling back to 'en'", () => {

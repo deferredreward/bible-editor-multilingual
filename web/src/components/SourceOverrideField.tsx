@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, CircularProgress, Link, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, CircularProgress, Link, Stack, TextField, Typography } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { useTranslation } from "react-i18next";
 import { api, ApiError } from "../sync/api";
@@ -9,6 +9,7 @@ import {
   door43RepoUrl,
   verifyErrorKind,
   clearedOverrideSelection,
+  pendingOverrideSelection,
   type SourceVerifyState,
 } from "../lib/setupWizard";
 
@@ -27,9 +28,13 @@ export function RepoRef({ org, repo }: { org: string; repo: string }) {
 
 // The pasted-URL → verified-source machine, shared by Step 2's per-resource row
 // and Step 3's per-lane upstream control so the two can never drift. Manages its
-// own url text + verify state; a success writes an { mode:'override', org, repo }
-// selection into the shared draft, a failure leaves the resource blank (never a
-// bad ref). A pasted URL may point at a DIFFERENT org than the default upstream.
+// own url text + verify state. A success writes { mode:'override', org, repo }.
+// A verification FAILURE (400/404 invalid OR 503/unreachable transient) must NOT
+// blank the resource — that would silently persist a valid custom source (chosen
+// during a DCS blip) as omitted. Instead it stays a PENDING override (no repo),
+// which the Apply gate blocks on until the user re-verifies or genuinely clears
+// the field. Only an emptied field (a real user clear) blanks the source.
+// A pasted URL may point at a DIFFERENT org than the default upstream.
 export function SourceOverrideField({
   resource,
   state,
@@ -67,7 +72,9 @@ export function SourceOverrideField({
     } catch (e) {
       const status = e instanceof ApiError ? e.status : undefined;
       setVerify({ status: "error", kind: verifyErrorKind(status) });
-      state.setResourceSource(resource, { mode: "blank" });
+      // Do NOT blank on failure — keep it a pending override so Apply is blocked
+      // (a transient 503 must never silently drop a real source to "omitted").
+      state.setResourceSource(resource, pendingOverrideSelection());
     }
   };
 
@@ -97,6 +104,15 @@ export function SourceOverrideField({
           severity={verify.kind === "unreachable" ? "warning" : "error"}
           variant="outlined"
           sx={{ py: 0 }}
+          action={
+            // A transient DCS failure is retryable with the same URL; an invalid
+            // URL needs an edit (re-blur re-verifies) so no retry button there.
+            verify.kind === "unreachable" ? (
+              <Button color="inherit" size="small" onClick={() => void onVerify()}>
+                {t("setup.upstreamOrgRetry")}
+              </Button>
+            ) : undefined
+          }
         >
           {t(`setup.sourceUrlError.${verify.kind}`)}
         </Alert>

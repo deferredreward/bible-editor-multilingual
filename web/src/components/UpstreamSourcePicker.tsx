@@ -17,7 +17,7 @@ import { api, ApiError } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import { RESOURCE_KEYS, UW_UPSTREAM_ORG, type ResourceKey } from "../lib/orgDraft";
 import { RepoRef, SourceOverrideField } from "./SourceOverrideField";
-import { upstreamLanguageOf } from "../lib/setupWizard";
+import { upstreamLanguageOf, pendingOverrideSelection } from "../lib/setupWizard";
 
 // Aligned grid template shared by every resource row so labels + the source
 // column line up vertically (item: "make the columns actually columnar").
@@ -48,7 +48,10 @@ function ResourceSourceRow({ resource, state }: { resource: ResourceKey; state: 
       state.setResourceSource(resource, { mode: "blank" });
     } else {
       setUrlChoice(true);
-      if (sel.mode !== "override") state.setResourceSource(resource, { mode: "blank" });
+      // Opting into a custom URL marks the resource a PENDING override (no repo
+      // yet) so Apply is blocked until a URL verifies — it must not fall through
+      // to blank and silently omit the source the user intended to set.
+      if (sel.mode !== "override") state.setResourceSource(resource, pendingOverrideSelection());
     }
   };
 
@@ -210,6 +213,16 @@ export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
           <ResourceSourceRow key={resource} resource={resource} state={state} />
         ))}
       </Stack>
+
+      {state.hasUnverifiedOverride && (
+        <Alert severity="warning" variant="outlined">
+          {t("setup.unverifiedOverride", {
+            resources: state.unverifiedOverrideResources
+              .map((r) => t(`setup.resource.${r}`))
+              .join(", "),
+          })}
+        </Alert>
+      )}
     </Stack>
   );
 }

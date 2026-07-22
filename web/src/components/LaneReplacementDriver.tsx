@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -26,7 +26,12 @@ import {
 } from "../sync/api";
 import { refreshProjectConfig } from "../hooks/useProjectConfig";
 import { bookName } from "../lib/bookNames";
-import { jobActionable, replacementSpinnerVisible, describeBookError } from "../lib/setupWizard";
+import {
+  jobActionable,
+  replacementSpinnerVisible,
+  describeBookError,
+  laneModeMatches,
+} from "../lib/setupWizard";
 import type { LaneEditMode } from "./LaneTargetModeStep";
 
 // Known lane error codes (mirrors PreferencesWorkspace's LaneCard). Codes may
@@ -70,19 +75,25 @@ function rawError(e: unknown): string {
 // Two safety additions over the raw LaneCard driver:
 //   • A prominent SECOND confirmation (distinct from Apply) that lists the exact
 //     books whose text+alignment will be overwritten, gated on an explicit ack.
-//   • After Activate, the lane's Step-3 edit/align choice is (re)applied — a
-//     lane that went through replacement would otherwise land back in editable
-//     mode, dropping an "Aligning only" choice.
+//   • After Activate, the lane's Step-3 edit/align choice is (re)applied AND
+//     CONFIRMED against the live config. If that patch silently fails, the lane
+//     is NOT reported done (onComplete is withheld) — an explicit error + Retry
+//     is shown and the wizard's Continue stays blocked, so an "Aligning only"
+//     lane can never be left text-editable.
 export function LaneReplacementDriver({
   lane,
   label,
   laneState,
   desiredMode,
+  onComplete,
 }: {
   lane: "lit" | "sim";
   label: string;
   laneState: LanePublicState;
   desiredMode: LaneEditMode;
+  // Called once the lane is fully done: activated AND its edit/align mode
+  // confirmed applied. Gates the wizard's Continue.
+  onComplete: () => void;
 }) {
   const { t } = useTranslation();
   const [starting, setStarting] = useState(false);
@@ -90,6 +101,11 @@ export function LaneReplacementDriver({
   const [busyBook, setBusyBook] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<LaneReplacementJobResponse | null>(null);
+  // Post-activation edit/align confirmation phase.
+  const [modeStatus, setModeStatus] = useState<"idle" | "confirming" | "confirmed" | "error">("idle");
+  // Keep onComplete out of confirmMode's dep set (parent passes an inline arrow).
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   // Confirm dialog state (item 9).
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -163,18 +179,34 @@ export function LaneReplacementDriver({
     }
   };
 
-  // Apply the Step-3 edit/align choice once the lane exists again post-activate.
-  const applyDesiredMode = async () => {
-    const cfg = await refreshProjectConfig().catch(() => null);
-    const ls = cfg?.laneState?.[lane];
-    if (!ls || ls.replacementRequired) return;
-    const desiredReadOnly = desiredMode === "align";
-    if (ls.config.textReadOnly === desiredReadOnly && ls.config.alignmentWritable) return;
-    await api.lanePatch(lane, ls.configRevision, {
-      textReadOnly: desiredReadOnly,
-      alignmentWritable: true,
-    });
-  };
+  // Apply the Step-3 edit/align choice once the lane exists again post-activate,
+  // then CONFIRM the live config actually matches. Only a confirmed match reports
+  // the lane done (onComplete); a failed patch → error state (blocks Continue).
+  const confirmMode = useCallback(async () => {
+    setModeStatus("confirming");
+    try {
+      let cfg = await refreshProjectConfig();
+      let ls = cfg.laneState?.[lane];
+      // Patch only if the live config doesn't already match the desired mode.
+      if (ls && !ls.replacementRequired && !laneModeMatches(ls.config, desiredMode)) {
+        await api.lanePatch(lane, ls.configRevision, {
+          textReadOnly: desiredMode === "align",
+          alignmentWritable: true,
+        });
+        cfg = await refreshProjectConfig();
+        ls = cfg.laneState?.[lane];
+      }
+      if (ls && !ls.replacementRequired && laneModeMatches(ls.config, desiredMode)) {
+        setModeStatus("confirmed");
+        onCompleteRef.current();
+      } else {
+        // Patch didn't take (or lane still quarantined) — do NOT report success.
+        setModeStatus("error");
+      }
+    } catch {
+      setModeStatus("error");
+    }
+  }, [lane, desiredMode]);
 
   const handleActivate = async () => {
     if (!replacementJobId) return;
@@ -184,15 +216,31 @@ export function LaneReplacementDriver({
       // A fresh fencing UUID per activation guards against a split-brain export
       // completing a stale render after the flip.
       await api.laneActivate(lane, replacementJobId, crypto.randomUUID());
-      // Re-apply the lane's edit/align choice (dropped by the generation flip).
-      await applyDesiredMode();
-      await refreshProjectConfig().catch(() => {});
+      // Re-apply + confirm the lane's edit/align choice (dropped by the flip).
+      await confirmMode();
     } catch (e) {
       setError(laneErrorMessage(t, rawError(e)));
     } finally {
       setActivating(false);
     }
   };
+
+  // Safety net: if the lane is already activated (no longer quarantined, no job)
+  // but the mode hasn't been confirmed yet, run confirmation once. Covers a
+  // config refetch that cleared quarantine outside the Activate button.
+  const autoConfirmed = useRef(false);
+  useEffect(() => {
+    if (
+      !laneState.replacementRequired &&
+      !laneState.replacementJobId &&
+      modeStatus === "idle" &&
+      !activating &&
+      !autoConfirmed.current
+    ) {
+      autoConfirmed.current = true;
+      void confirmMode();
+    }
+  }, [laneState.replacementRequired, laneState.replacementJobId, modeStatus, activating, confirmMode]);
 
   const handleRetryBook = async (book: string) => {
     if (!replacementJobId) return;
@@ -227,6 +275,10 @@ export function LaneReplacementDriver({
 
   const jobStatus = job?.job.status;
   const jobBooks: LaneReplacementBook[] = job?.books ?? [];
+  // Activated = generation flipped (no longer quarantined, no live job); the
+  // edit/align confirmation phase runs here.
+  const activated = !laneState.replacementRequired && !replacementJobId;
+  const modeLabel = t(`setup.laneEditMode.${desiredMode}`);
   const pendingBooks = jobBooks.filter(
     (b) => b.status !== "artifact_ok" && b.status !== "absent_authorized",
   );
@@ -263,12 +315,40 @@ export function LaneReplacementDriver({
           {t("setup.replacementIntro")}
         </Typography>
 
-        {!replacementJobId && (
+        {laneState.replacementRequired && !replacementJobId && (
           <Box>
             <Button variant="contained" onClick={openConfirm} disabled={starting || !pendingTarget}>
               {starting ? <CircularProgress size={16} color="inherit" /> : t("setup.replacementStart")}
             </Button>
           </Box>
+        )}
+
+        {activated && (
+          <Stack spacing={1}>
+            {(modeStatus === "confirming" || modeStatus === "idle") && (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <CircularProgress size={16} />
+                <Typography variant="body2">{t("setup.laneModeConfirming")}</Typography>
+              </Stack>
+            )}
+            {modeStatus === "confirmed" && (
+              <Alert severity="success" variant="outlined">
+                {t("setup.laneModeConfirmed", { mode: modeLabel })}
+              </Alert>
+            )}
+            {modeStatus === "error" && (
+              <Alert
+                severity="error"
+                action={
+                  <Button color="inherit" size="small" onClick={() => void confirmMode()}>
+                    {t("setup.upstreamOrgRetry")}
+                  </Button>
+                }
+              >
+                {t("setup.laneModeRetryError", { lane: label, mode: modeLabel })}
+              </Alert>
+            )}
+          </Stack>
         )}
 
         {replacementJobId && (

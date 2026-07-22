@@ -4,7 +4,13 @@
 // after Apply, the import-error → replacement-step routing, the per-resource
 // source-URL verify state machine, and the lane upstream-choice mapping.
 
-import type { ResourceSource, ResourceSourceMode } from "./orgDraft";
+import {
+  RESOURCE_KEYS,
+  type ResourceSource,
+  type ResourceSourceMode,
+  type ResourceSourceMap,
+  type ResourceKey,
+} from "./orgDraft.ts";
 
 // The wizard's step order (configure-only flow). `replacement` (a.k.a. "4b") is
 // conditional — only entered when a lane comes back quarantined after Apply
@@ -102,9 +108,61 @@ export function laneUrlChoiceSelection(): ResourceSource {
 
 // The selection an override field resets to when its URL is cleared: back to
 // upstream when the owning row is checked, otherwise blank. Prevents a cleared
-// field from leaving a stale verified override in the draft.
+// field from leaving a stale verified override in the draft. This is the ONLY
+// path that blanks a resource that was pointed at a URL — a genuine user clear.
 export function clearedOverrideSelection(rowChecked: boolean): ResourceSource {
   return rowChecked ? { mode: "upstream" } : { mode: "blank" };
+}
+
+// The selection to persist when a pasted URL FAILS to verify (400/404 invalid OR
+// 503/unreachable transient). Critically NOT blank — a valid custom source that
+// hit a DCS blip must not be silently persisted as omitted. It stays an override
+// with NO repo (pending), which `isUnverifiedOverride` flags so Apply is blocked
+// until the user re-verifies or explicitly clears.
+export function pendingOverrideSelection(): ResourceSource {
+  return { mode: "override" };
+}
+
+// A resource is an UNVERIFIED override when it's in override mode but carries no
+// verified repo yet (the user pointed it at a URL that hasn't resolved). Such a
+// selection must block Apply rather than silently serialize to "no source".
+export function isUnverifiedOverride(sel: ResourceSource | undefined): boolean {
+  if (!sel || sel.mode !== "override") return false;
+  return !(sel.repo && sel.repo.trim());
+}
+
+// Every resource currently sitting on an unverified override — used to gate
+// Apply/Next and to tell the user which resources still need a valid source.
+export function unverifiedOverrideResources(map: ResourceSourceMap): ResourceKey[] {
+  return RESOURCE_KEYS.filter((k) => isUnverifiedOverride(map[k]));
+}
+
+export function hasUnverifiedOverride(map: ResourceSourceMap): boolean {
+  return unverifiedOverrideResources(map).length > 0;
+}
+
+// ── Post-activation lane-mode confirmation (Step 4b) ─────────────────────────
+// After a lane's generation flips on Activate, its edit/align choice must be
+// re-applied — and CONFIRMED. A lane is only "done" when its live config matches
+// the desired mode: align → text read-only + alignment writable; edit → text
+// writable + alignment writable. If the post-activation lanePatch silently
+// failed, this returns false and the wizard must NOT let the user Continue.
+export function laneModeMatches(
+  config: { textReadOnly: boolean; alignmentWritable: boolean } | null | undefined,
+  desiredMode: "edit" | "align",
+): boolean {
+  if (!config) return false;
+  const desiredReadOnly = desiredMode === "align";
+  return config.textReadOnly === desiredReadOnly && config.alignmentWritable === true;
+}
+
+// The replacement step's Continue is enabled only once EVERY lane that went
+// through replacement is confirmed done (activated AND its mode applied).
+export function replacementContinueEnabled(
+  lanesToReplace: ReadonlyArray<LaneKey>,
+  done: Partial<Record<LaneKey, boolean>>,
+): boolean {
+  return lanesToReplace.every((l) => done[l] === true);
 }
 
 // The languageCode a translationSource should carry for a given upstream org:

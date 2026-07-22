@@ -21,7 +21,13 @@ import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneT
 import { LaneReplacementDriver } from "./LaneReplacementDriver";
 import { RepoRef } from "./SourceOverrideField";
 import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
-import { SETUP_STEPS, lanesNeedingReplacement, stepAfterApply } from "../lib/setupWizard";
+import {
+  SETUP_STEPS,
+  lanesNeedingReplacement,
+  stepAfterApply,
+  replacementContinueEnabled,
+  type LaneKey,
+} from "../lib/setupWizard";
 
 // Apply the edit/align choice to each lane that exists post-Apply. "align" =
 // text frozen (read-only) but alignment writable; "edit" = both writable. Skips
@@ -78,14 +84,19 @@ export function SetupWizard() {
   // offer a retry, so an "Aligning only" lane is never left editable.
   const [laneModeError, setLaneModeError] = useState<string | null>(null);
 
+  // The lanes that Apply quarantined (a source migration), captured when routing
+  // to the replacement step, plus which have finished (activated + mode
+  // confirmed). Continue is gated on ALL of them being done.
+  const [lanesToReplace, setLanesToReplace] = useState<LaneKey[]>([]);
+  const [laneDone, setLaneDone] = useState<Partial<Record<LaneKey, boolean>>>({});
+  const markLaneDone = (lane: LaneKey) => setLaneDone((d) => ({ ...d, [lane]: true }));
+
   // Scroll the newly-active step to the top of the viewport on change, so the
   // admin lands on the step header rather than below it (item 10).
   const stepRefs = useRef<(HTMLElement | null)[]>([]);
   useEffect(() => {
     stepRefs.current[activeStep]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [activeStep]);
-
-  const quarantinedLanes = lanesNeedingReplacement(projectConfig?.laneState);
 
   // Apply the lane edit/align modes, then advance. Shared by first-apply and the
   // retry button so a lanePatch failure is recoverable without re-applying the
@@ -98,11 +109,18 @@ export function SetupWizard() {
     }
     setLaneModeError(null);
     const cfg = await refreshProjectConfig().catch(() => null);
-    setActiveStep(stepAfterApply(cfg?.laneState));
+    const next = stepAfterApply(cfg?.laneState);
+    if (next === SETUP_STEPS.replacement) {
+      // Capture the quarantined lanes so their drivers stay mounted through
+      // activation + mode confirmation (they leave `laneState` once activated).
+      setLanesToReplace(lanesNeedingReplacement(cfg?.laneState));
+      setLaneDone({});
+    }
+    setActiveStep(next);
   };
 
   const doApply = async () => {
-    if (!draft.complete || !draft.upstreamVerified) return;
+    if (!draft.complete || !draft.upstreamVerified || draft.hasUnverifiedOverride) return;
     setApplying(true);
     setApplyError(null);
     setLaneModeError(null);
@@ -167,7 +185,7 @@ export function SetupWizard() {
               <Button onClick={() => setActiveStep(SETUP_STEPS.organization)}>{t("setup.back")}</Button>
               <Button
                 variant="contained"
-                disabled={!draft.upstreamVerified}
+                disabled={!draft.upstreamVerified || draft.hasUnverifiedOverride}
                 onClick={() => setActiveStep(SETUP_STEPS.lanes)}
               >
                 {t("setup.next")}
@@ -209,6 +227,15 @@ export function SetupWizard() {
                 {t("setup.upstreamOrgUnverified")}
               </Alert>
             )}
+            {draft.hasUnverifiedOverride && (
+              <Alert severity="warning" sx={{ mt: 1.5 }}>
+                {t("setup.unverifiedOverride", {
+                  resources: draft.unverifiedOverrideResources
+                    .map((r) => t(`setup.resource.${r}`))
+                    .join(", "),
+                })}
+              </Alert>
+            )}
             {applyError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
                 {applyError}
@@ -241,7 +268,13 @@ export function SetupWizard() {
                 <Button
                   variant="contained"
                   onClick={doApply}
-                  disabled={applying || applied || !draft.complete || !draft.upstreamVerified}
+                  disabled={
+                    applying ||
+                    applied ||
+                    !draft.complete ||
+                    !draft.upstreamVerified ||
+                    draft.hasUnverifiedOverride
+                  }
                   startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
                 >
                   {applying ? t("setup.applying") : t("setup.applyButton")}
@@ -259,13 +292,17 @@ export function SetupWizard() {
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
               {t("setup.replacementStepIntro")}
             </Typography>
-            {quarantinedLanes.length === 0 ? (
+            {lanesToReplace.length === 0 ? (
               <Alert severity="success" variant="outlined">
                 {t("setup.replacementNone")}
               </Alert>
             ) : (
               <Stack spacing={2}>
-                {quarantinedLanes.map((lane) => {
+                {/* Drive by the CAPTURED set (not the live quarantine list): a lane
+                    leaves `laneState.replacementRequired` the moment it activates,
+                    but its driver must stay mounted to confirm the edit/align mode
+                    before the lane counts as done. */}
+                {lanesToReplace.map((lane) => {
                   const ls = projectConfig?.laneState?.[lane];
                   if (!ls) return null;
                   const label = lane === "lit" ? draft.repos.lit || "ULT" : draft.repos.sim || "UST";
@@ -276,19 +313,25 @@ export function SetupWizard() {
                       label={label}
                       laneState={ls}
                       desiredMode={laneMode[lane]}
+                      onComplete={() => markLaneDone(lane)}
                     />
                   );
                 })}
               </Stack>
             )}
-            <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
               <Button
                 variant="contained"
                 onClick={() => setActiveStep(SETUP_STEPS.done)}
-                disabled={quarantinedLanes.length > 0}
+                disabled={!replacementContinueEnabled(lanesToReplace, laneDone)}
               >
                 {t("setup.replacementContinue")}
               </Button>
+              {!replacementContinueEnabled(lanesToReplace, laneDone) && (
+                <Typography variant="caption" color="text.secondary">
+                  {t("setup.replacementContinueBlocked")}
+                </Typography>
+              )}
             </Stack>
           </StepContent>
         </Step>
