@@ -29,6 +29,12 @@ import {
   type LaneKey,
 } from "../lib/setupWizard";
 
+// Pinned duration (ms) for each StepContent's expand/collapse Collapse. Fixed —
+// not MUI's default 'auto', which scales with content height and would make the
+// post-transition scroll delay unpredictable. The scroll-to-header effect waits
+// this long (plus a small buffer) before scrolling.
+const STEP_COLLAPSE_MS = 260;
+
 // Apply the edit/align choice to each lane that exists post-Apply. "align" =
 // text frozen (read-only) but alignment writable; "edit" = both writable. Skips
 // quarantined lanes (a replacement carries its own locks — their mode is applied
@@ -91,11 +97,35 @@ export function SetupWizard() {
   const [laneDone, setLaneDone] = useState<Partial<Record<LaneKey, boolean>>>({});
   const markLaneDone = (lane: LaneKey) => setLaneDone((d) => ({ ...d, [lane]: true }));
 
-  // Scroll the newly-active step to the top of the viewport on change, so the
-  // admin lands on the step header rather than below it (item 10).
+  // Scroll the newly-active step's HEADER to the top of the viewport on change,
+  // so the admin lands on "N. <title>" rather than below it. The ref sits on the
+  // <Step> root, whose top edge IS the numbered StepLabel header.
+  //
+  // Timing is the whole game here: MUI's StepContent Collapse animates the old
+  // step closed and the new one open over STEP_COLLAPSE_MS (pinned below so this
+  // delay is deterministic — the default 'auto' duration scales with content
+  // height and is unpredictable). Scrolling synchronously on activeStep change
+  // targets a stale mid-animation layout, and the post-expansion shift then
+  // leaves the header above the viewport (the reported "lands at the bottom of
+  // the next step" bug). So defer until after the transition settles. Skip the
+  // initial mount so opening Setup doesn't yank the page.
   const stepRefs = useRef<(HTMLElement | null)[]>([]);
+  const firstScrollRun = useRef(true);
   useEffect(() => {
-    stepRefs.current[activeStep]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (firstScrollRun.current) {
+      firstScrollRun.current = false;
+      return;
+    }
+    const el = stepRefs.current[activeStep];
+    if (!el) return;
+    const timer = setTimeout(() => {
+      // rAF so the scroll runs on a frame after the transition's final layout is
+      // committed, not the same tick the timeout fires.
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }, STEP_COLLAPSE_MS + 60);
+    return () => clearTimeout(timer);
   }, [activeStep]);
 
   // Apply the lane edit/align modes, then advance. Shared by first-apply and the
@@ -162,7 +192,7 @@ export function SetupWizard() {
         {/* Step 1 — Your organization */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.organization] = el; }}>
           <StepLabel>{t("setup.step.organization")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <OrgIdentityFields state={draft} />
             <Box sx={{ mt: 2 }}>
               <Button
@@ -179,7 +209,7 @@ export function SetupWizard() {
         {/* Step 2 — Sources (pull FROM) */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.sources] = el; }}>
           <StepLabel>{t("setup.step.sources")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <UpstreamSourcePicker state={draft} />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button onClick={() => setActiveStep(SETUP_STEPS.organization)}>{t("setup.back")}</Button>
@@ -197,7 +227,7 @@ export function SetupWizard() {
         {/* Step 3 — Your scripture lanes: target + edit/align */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.lanes] = el; }}>
           <StepLabel>{t("setup.step.lanes")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <LaneTargetModeStep state={draft} laneMode={laneMode} setLaneMode={setLaneMode} />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button onClick={() => setActiveStep(SETUP_STEPS.sources)}>{t("setup.back")}</Button>
@@ -215,7 +245,7 @@ export function SetupWizard() {
         {/* Step 4 — Review & apply */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.review] = el; }}>
           <StepLabel>{t("setup.step.review")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <ReviewSummary state={draft} laneMode={laneMode} />
             {!draft.complete && (
               <Alert severity="warning" sx={{ mt: 1.5 }}>
@@ -288,7 +318,7 @@ export function SetupWizard() {
             a source migration for an already-populated project) */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.replacement] = el; }}>
           <StepLabel>{t("setup.step.replacement")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
               {t("setup.replacementStepIntro")}
             </Typography>
@@ -339,7 +369,7 @@ export function SetupWizard() {
         {/* Step 5 — Configured */}
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.done] = el; }}>
           <StepLabel>{t("setup.step.done")}</StepLabel>
-          <StepContent>
+          <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <Typography variant="subtitle1" gutterBottom>
               {t("setup.doneTitle")}
             </Typography>
