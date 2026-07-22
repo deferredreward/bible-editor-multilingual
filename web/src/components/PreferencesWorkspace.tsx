@@ -439,6 +439,10 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
   // A transient DCS content-check failure ("couldn't check") is retryable, not a
   // hard block — surfaced as a Retry affordance rather than a dead end.
   const [sourceRetryable, setSourceRetryable] = useState(false);
+  // Set when the up-front source check couldn't confirm book presence (transient
+  // DCS failure omitted `hasBooks`). Not a block (issue #97) — the confirm dialog
+  // just cautions that presence is unverified; Cancel/back-out is the safety net.
+  const [sourceUnverified, setSourceUnverified] = useState(false);
 
   const replacementJobId = state?.replacementJobId ?? null;
 
@@ -513,6 +517,7 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
     setValidating(true);
     setError(null);
     setSourceRetryable(false);
+    setSourceUnverified(false);
     try {
       let hasBooks: boolean | undefined;
       try {
@@ -536,14 +541,14 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
         setError(t("preferences.scriptureLanes.sourceNoBooks"));
         return;
       }
-      if (hasBooks === undefined) {
-        // Content check couldn't complete — treat as "couldn't check", retryable.
-        setSourceRetryable(true);
-        setError(t("preferences.scriptureLanes.sourceCheckUnavailable"));
-        return;
-      }
+      // `hasBooks === undefined` means the content check couldn't complete (a
+      // transient DCS content-API failure). Per issue #97 this is NOT a hard
+      // block — only a confirmed `false` blocks. Proceed to the confirm dialog,
+      // flagging the source as unverified so the dialog cautions the user; they
+      // can back out with Cancel if the books turn out to be missing.
+      setSourceUnverified(hasBooks === undefined);
 
-      // Source has books → resolve it and open the confirm dialog (item 1).
+      // Resolve the source and open the confirm dialog (item 1).
       const result = await api.laneValidate(lane, url);
       setPendingSource(result.source);
       setImpact({ books: result.impactBooks, verses: result.impactVerses });
@@ -860,6 +865,11 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                 verses: impact?.verses ?? 0,
               })}
             </Alert>
+            {sourceUnverified && (
+              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
+                {t("preferences.scriptureLanes.confirmSourceUnverified")}
+              </Alert>
+            )}
             {affectedBooks == null ? (
               <Stack direction="row" spacing={1} alignItems="center">
                 <CircularProgress size={16} />

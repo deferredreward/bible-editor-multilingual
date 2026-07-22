@@ -366,6 +366,7 @@
       "confirmLoadingBooks": "Listing the affected books…",
       "confirmBooksLead": "{{count}} book(s) will be replaced:",
       "confirmNoBookList": "The affected books couldn't be listed, but every imported book in this lane will be replaced.",
+      "confirmSourceUnverified": "We couldn't confirm this source contains book files (Door43 was briefly unreachable). You can proceed, but if the staged books come back empty, use Cancel to back out without overwriting your current content.",
       "confirmAck": "I understand this replaces the text and alignment for the books listed above.",
       "confirmBack": "Back",
       "confirmButton": "Start replacement",
