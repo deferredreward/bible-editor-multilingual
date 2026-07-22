@@ -434,6 +434,10 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [ack, setAck] = useState(false);
   const [affectedBooks, setAffectedBooks] = useState<string[] | null>(null);
+  // Per-book replace/keep selection (issue #94). A checked book is re-staged from
+  // the new source; unchecking keeps its current content (carried forward).
+  // Defaults to all-checked = replace all (unchanged whole-lane behavior).
+  const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [pendingSource, setPendingSource] = useState<{ owner: string; repo: string; ref: string } | null>(null);
   const [impact, setImpact] = useState<{ books: number; verses: number } | null>(null);
   // A transient DCS content-check failure ("couldn't check") is retryable, not a
@@ -559,8 +563,14 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
       // never getBooks(). Best-effort: on failure the dialog still confirms.
       api
         .laneAffectedBooks(lane)
-        .then((r) => setAffectedBooks(r.books))
-        .catch(() => setAffectedBooks([]));
+        .then((r) => {
+          setAffectedBooks(r.books);
+          setSelectedBooks(new Set(r.books)); // default: replace all
+        })
+        .catch(() => {
+          setAffectedBooks([]);
+          setSelectedBooks(new Set());
+        });
     } catch (e) {
       const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
       setError(laneErrorMessage(t, raw));
@@ -588,13 +598,20 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
           baseRef: pendingSource.ref,
           branchPolicy: "contributor_book_branch" as const,
         });
+      // Resolve the per-book selection. undefined → replace all (unchanged path);
+      // a subset (including empty = keep everything) is sent explicitly and the
+      // un-selected books are carried forward server-side.
+      const books = affectedBooks ?? [];
+      const allSelected = books.length > 0 && books.every((b) => selectedBooks.has(b));
+      const replaceBooks =
+        books.length === 0 || allSelected ? undefined : books.filter((b) => selectedBooks.has(b));
       await api.laneStartReplacement(lane, {
         label: base.label === "LEGACY" ? `${pendingSource.repo}` : base.label,
         source: pendingSource,
         export: exportCfg,
         textReadOnly: base.textReadOnly,
         alignmentWritable: base.alignmentWritable,
-      }, true);
+      }, true, replaceBooks);
       await refreshProjectConfig();
       setSourceUrl("");
       setSuccessMsg(t("preferences.scriptureLanes.replacementStarted"));
@@ -878,13 +895,45 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
             ) : affectedBooks.length > 0 ? (
               <>
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
-                  {t("preferences.scriptureLanes.confirmBooksLead", { count: affectedBooks.length })}
+                  {t("preferences.scriptureLanes.confirmBooksSelectLead", { count: affectedBooks.length })}
                 </Typography>
+                <Stack direction="row" spacing={1} sx={{ mb: 0.75 }}>
+                  <Button size="small" onClick={() => setSelectedBooks(new Set(affectedBooks))}>
+                    {t("preferences.scriptureLanes.confirmBooksSelectAll")}
+                  </Button>
+                  <Button size="small" onClick={() => setSelectedBooks(new Set())}>
+                    {t("preferences.scriptureLanes.confirmBooksSelectNone")}
+                  </Button>
+                </Stack>
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                  {affectedBooks.map((b) => (
-                    <Chip key={b} size="small" label={`${bookName(b)} (${b})`} />
-                  ))}
+                  {affectedBooks.map((b) => {
+                    const selected = selectedBooks.has(b);
+                    return (
+                      <Chip
+                        key={b}
+                        size="small"
+                        label={`${bookName(b)} (${b})`}
+                        color={selected ? "warning" : "default"}
+                        variant={selected ? "filled" : "outlined"}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          setSelectedBooks((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(b)) next.delete(b);
+                            else next.add(b);
+                            return next;
+                          })
+                        }
+                      />
+                    );
+                  })}
                 </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
+                  {t("preferences.scriptureLanes.confirmBooksSummary", {
+                    replace: affectedBooks.filter((b) => selectedBooks.has(b)).length,
+                    keep: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
+                  })}
+                </Typography>
               </>
             ) : (
               <Typography variant="body2">{t("preferences.scriptureLanes.confirmNoBookList")}</Typography>

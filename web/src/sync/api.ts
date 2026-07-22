@@ -2159,10 +2159,20 @@ export const api = {
     lane: "lit" | "sim",
     config: LanePublicState["config"],
     confirm: boolean,
+    // Optional per-book selection (issue #94): the books to STAGE from the new
+    // source. Omit to replace every book (unchanged whole-lane behavior); the
+    // un-selected books are carried forward from the current generation. Must be
+    // a subset of laneAffectedBooks — the server 400s (`unknown_books`) otherwise.
+    replaceBooks?: string[],
   ) =>
     request<{ job: unknown; books: unknown[] }>(
       `/api/project-config/lanes/${lane}/replacements`,
-      { method: "POST", body: JSON.stringify({ config, confirm }) },
+      {
+        method: "POST",
+        body: JSON.stringify(
+          replaceBooks ? { config, confirm, replaceBooks } : { config, confirm },
+        ),
+      },
     ),
 
   // The exact book set a replacement on this lane would re-stage (issue #97),

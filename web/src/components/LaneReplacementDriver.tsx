@@ -111,6 +111,9 @@ export function LaneReplacementDriver({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [ack, setAck] = useState(false);
   const [affectedBooks, setAffectedBooks] = useState<string[] | null>(null);
+  // Per-book replace/keep selection (issue #94): checked → re-staged from the new
+  // source; unchecked → kept unchanged (carried forward). Defaults to replace-all.
+  const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
 
   const replacementJobId = laneState.replacementJobId ?? null;
   const pendingTarget = laneState.pendingTarget;
@@ -161,8 +164,10 @@ export function LaneReplacementDriver({
     try {
       const res = await api.laneAffectedBooks(lane);
       setAffectedBooks(res.books);
+      setSelectedBooks(new Set(res.books)); // default: replace all
     } catch {
       setAffectedBooks([]);
+      setSelectedBooks(new Set());
     }
   };
 
@@ -172,7 +177,13 @@ export function LaneReplacementDriver({
     setStarting(true);
     setError(null);
     try {
-      await api.laneStartReplacement(lane, pendingTarget, true);
+      // undefined → replace all (unchanged); a subset (incl. empty = keep all) is
+      // sent explicitly and the un-selected books are carried forward server-side.
+      const books = affectedBooks ?? [];
+      const allSelected = books.length > 0 && books.every((b) => selectedBooks.has(b));
+      const replaceBooks =
+        books.length === 0 || allSelected ? undefined : books.filter((b) => selectedBooks.has(b));
+      await api.laneStartReplacement(lane, pendingTarget, true, replaceBooks);
       await refreshProjectConfig().catch(() => {});
     } catch (e) {
       setError(laneErrorMessage(t, rawError(e)));
@@ -441,13 +452,45 @@ export function LaneReplacementDriver({
             ) : affectedBooks.length > 0 ? (
               <>
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
-                  {t("setup.replacementConfirmBooksLead", { count: affectedBooks.length })}
+                  {t("setup.replacementConfirmBooksSelectLead", { count: affectedBooks.length })}
                 </Typography>
+                <Stack direction="row" spacing={1} sx={{ mb: 0.75 }}>
+                  <Button size="small" onClick={() => setSelectedBooks(new Set(affectedBooks))}>
+                    {t("setup.replacementConfirmBooksSelectAll")}
+                  </Button>
+                  <Button size="small" onClick={() => setSelectedBooks(new Set())}>
+                    {t("setup.replacementConfirmBooksSelectNone")}
+                  </Button>
+                </Stack>
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                  {affectedBooks.map((b) => (
-                    <Chip key={b} size="small" label={`${bookName(b)} (${b})`} />
-                  ))}
+                  {affectedBooks.map((b) => {
+                    const selected = selectedBooks.has(b);
+                    return (
+                      <Chip
+                        key={b}
+                        size="small"
+                        label={`${bookName(b)} (${b})`}
+                        color={selected ? "warning" : "default"}
+                        variant={selected ? "filled" : "outlined"}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          setSelectedBooks((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(b)) next.delete(b);
+                            else next.add(b);
+                            return next;
+                          })
+                        }
+                      />
+                    );
+                  })}
                 </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
+                  {t("setup.replacementConfirmBooksSummary", {
+                    replace: affectedBooks.filter((b) => selectedBooks.has(b)).length,
+                    keep: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
+                  })}
+                </Typography>
               </>
             ) : (
               <Typography variant="body2">{t("setup.replacementConfirmNoBookList")}</Typography>
