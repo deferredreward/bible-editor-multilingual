@@ -10,7 +10,7 @@
 // the editor, and a pristine-preserving re-pull is offered via the existing
 // ImportFromDoor43Dialog. Mirrors the TemplateWorkspace/ArticleWorkspace shape.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Accordion,
   AccordionDetails,
@@ -50,6 +50,7 @@ import {
   classifyAiTranslateResult,
   mainPaneState,
   type ImportIntent,
+  type BooksFetchStatus,
 } from "../lib/importIntent";
 import { startBookAiTranslate } from "../lib/aiTranslate";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
@@ -75,16 +76,40 @@ interface Props {
 export function ImportWorkspace({ book, target, onNavigate, onBack, onOpenBook }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Explicit tri-state: a FAILED GET /api/books must NOT collapse into an empty
+  // "not-imported" list (that would re-expose the destructive import path for an
+  // already-imported book). "error" is surfaced as a retry, never as "ready".
+  const [booksStatus, setBooksStatus] = useState<BooksFetchStatus>("loading");
+  // Mirror of booksStatus for logic inside the async callback (no stale closure).
+  const statusRef = useRef<BooksFetchStatus>("loading");
+  const setStatus = useCallback((s: BooksFetchStatus) => {
+    statusRef.current = s;
+    setBooksStatus(s);
+  }, []);
   const [search, setSearch] = useState("");
 
   const refetchBooks = useCallback(() => {
+    // Only show the blocking "loading" gate before we've EVER loaded (initial
+    // load or a retry from error). A background refresh (e.g. after an import)
+    // keeps the known-good list so the pane doesn't flash/unmount.
+    if (statusRef.current !== "loaded") setStatus("loading");
     return api
       .getBooks()
-      .then((r) => setBooks(r.books))
-      .catch(() => setBooks([]))
-      .finally(() => setLoading(false));
-  }, []);
+      .then((r) => {
+        setBooks(r.books);
+        setStatus("loaded");
+      })
+      .catch(() => {
+        // Only regress to the error gate when we have NO good list yet. A
+        // background-refresh failure keeps the last known-good statuses rather
+        // than blanking them — but an initial failure must never present a
+        // bogus all-"not imported" list (the safety hole).
+        if (statusRef.current !== "loaded") {
+          setBooks([]);
+          setStatus("error");
+        }
+      });
+  }, [setStatus]);
 
   useEffect(() => {
     void refetchBooks();
@@ -132,7 +157,11 @@ export function ImportWorkspace({ book, target, onNavigate, onBack, onOpenBook }
             </Typography>
           </Stack>
           <Typography variant="caption" color="text.secondary">
-            {t("import.importedCount", { n: books.length, total: BOOKS.length })}
+            {booksStatus === "loaded"
+              ? t("import.importedCount", { n: books.length, total: BOOKS.length })
+              : booksStatus === "error"
+                ? t("import.loadFailed")
+                : " "}
           </Typography>
           <TextField
             size="small"
@@ -145,9 +174,20 @@ export function ImportWorkspace({ book, target, onNavigate, onBack, onOpenBook }
         </Stack>
 
         <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-          {loading && books.length === 0 ? (
+          {booksStatus === "loading" ? (
             <Stack alignItems="center" sx={{ p: 3 }}>
               <CircularProgress size={20} />
+            </Stack>
+          ) : booksStatus === "error" ? (
+            // Don't render the canonical list with all-"not imported" chips when
+            // we couldn't fetch status — that's misleading. Offer a retry.
+            <Stack spacing={1.5} sx={{ p: 2 }} alignItems="flex-start">
+              <Typography variant="body2" color="text.secondary">
+                {t("import.loadFailed")}
+              </Typography>
+              <Button size="small" variant="outlined" onClick={() => void refetchBooks()}>
+                {t("import.retry")}
+              </Button>
             </Stack>
           ) : (
             rows.map((b) => {
@@ -200,10 +240,11 @@ export function ImportWorkspace({ book, target, onNavigate, onBack, onOpenBook }
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         {(() => {
-          // Gate on books-loaded: until GET /api/books resolves we don't know
-          // this book's imported status, and rendering the pane early would flash
-          // a destructive-looking "Import" button for an already-imported book.
-          const pane = mainPaneState(!!book, !loading);
+          // Gate on a SUCCESSFUL books fetch: until GET /api/books resolves we
+          // don't know this book's imported status. A failed fetch must render
+          // an error+retry — NEVER the pane, whose empty-list "not imported"
+          // state would offer a destructive Import for an imported book.
+          const pane = mainPaneState(!!book, booksStatus);
           if (pane === "empty") {
             return (
               <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }}>
@@ -217,6 +258,18 @@ export function ImportWorkspace({ book, target, onNavigate, onBack, onOpenBook }
             return (
               <Stack alignItems="center" justifyContent="center" sx={{ height: "100%" }}>
                 <CircularProgress size={24} />
+              </Stack>
+            );
+          }
+          if (pane === "error") {
+            return (
+              <Stack alignItems="center" justifyContent="center" spacing={2} sx={{ height: "100%", px: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {t("import.loadFailed")}
+                </Typography>
+                <Button variant="outlined" onClick={() => void refetchBooks()}>
+                  {t("import.retry")}
+                </Button>
               </Stack>
             );
           }

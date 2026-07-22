@@ -81,6 +81,8 @@
     "notImported": "Not imported",
     "notImportedYet": "Not imported yet.",
     "selectBook": "Select a book to import.",
+    "loadFailed": "Couldn't load the book list.",
+    "retry": "Retry",
     "summaryHint": "{{chapters}} chapters · {{tn}} notes · {{tq}} questions",
     "intentLegend": "What do you want to do?",
     "intentTranslate": "Translate a new book",

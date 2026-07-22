@@ -84,17 +84,27 @@ export function classifyAiTranslateResult(r: {
   return "success";
 }
 
+/** Status of the GET /api/books fetch that establishes imported/not-imported. */
+export type BooksFetchStatus = "loading" | "loaded" | "error";
+
 /**
  * What the Import workspace's main pane should show. The book's imported status
- * is only known once the GET /api/books list resolves — until then we must not
- * render the intent toggle / action (a deep-link to an imported book would
- * briefly look un-imported and offer a destructive-looking "Import" button).
+ * is only known once the GET /api/books list resolves SUCCESSFULLY — until then
+ * we must not render the intent toggle / import action.
+ *
+ * SAFETY-CRITICAL: a FAILED fetch must NEVER be treated as "ready". If it were,
+ * an empty books list would make an already-imported book look un-imported and
+ * offer the destructive "Import" action — the exact invariant violation we're
+ * guarding. So `error` returns "error" (a retry state), never "ready", and
+ * `loading`/`error` both dominate the `empty` (no-book) case so the pane is
+ * never wedged on a stale "select a book" while the list is actually broken.
  */
 export function mainPaneState(
   hasBook: boolean,
-  booksLoaded: boolean,
-): "empty" | "loading" | "ready" {
+  booksStatus: BooksFetchStatus,
+): "empty" | "loading" | "error" | "ready" {
+  if (booksStatus === "loading") return "loading";
+  if (booksStatus === "error") return "error";
   if (!hasBook) return "empty";
-  if (!booksLoaded) return "loading";
   return "ready";
 }

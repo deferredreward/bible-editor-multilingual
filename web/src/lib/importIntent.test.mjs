@@ -91,17 +91,35 @@ test("classifyAiTranslate: clean run (no failures) → success", () => {
   assert.equal(classifyAiTranslateResult({ started: 3, skipped: 2, failed: 0 }), "success");
 });
 
-// ── mainPaneState: don't render the pane before imported-status is known ──
+// ── mainPaneState: don't render the pane before imported-status is KNOWN ──
 
-test("mainPaneState: no book selected → empty (regardless of load state)", () => {
-  assert.equal(mainPaneState(false, false), "empty");
-  assert.equal(mainPaneState(false, true), "empty");
+test("mainPaneState: no book selected + loaded → empty", () => {
+  assert.equal(mainPaneState(false, "loaded"), "empty");
 });
 
-test("mainPaneState: book selected but books not loaded → loading (gate the pane)", () => {
-  assert.equal(mainPaneState(true, false), "loading");
+test("mainPaneState: book selected but books still loading → loading (gate the pane)", () => {
+  assert.equal(mainPaneState(true, "loading"), "loading");
 });
 
 test("mainPaneState: book selected and books loaded → ready", () => {
-  assert.equal(mainPaneState(true, true), "ready");
+  assert.equal(mainPaneState(true, "loaded"), "ready");
+});
+
+// SAFETY: a FAILED books fetch must NEVER be "ready" — otherwise an empty list
+// makes an imported book look un-imported and re-exposes the destructive Import.
+test("SAFETY: books fetch error → 'error' (non-ready), never 'ready-not-imported'", () => {
+  assert.equal(mainPaneState(true, "error"), "error");
+  assert.equal(mainPaneState(false, "error"), "error");
+});
+
+test("SAFETY invariant: mainPaneState never returns 'ready' unless status is 'loaded'", () => {
+  for (const hasBook of [true, false]) {
+    for (const status of ["loading", "error"]) {
+      assert.notEqual(
+        mainPaneState(hasBook, status),
+        "ready",
+        `hasBook=${hasBook} status=${status} must not be ready`,
+      );
+    }
+  }
 });
