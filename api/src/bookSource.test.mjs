@@ -7,7 +7,11 @@
 //
 // Not a test framework; a failed assert exits non-zero.
 
-import { resolveEffectiveNoteSource, isBookSourceResource } from "./bookSource.ts";
+import {
+  resolveEffectiveNoteSource,
+  isBookSourceResource,
+  getBookSourceOverride,
+} from "./bookSource.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -124,4 +128,48 @@ function run() {
   console.log("bookSource/resolver: all assertions passed");
 }
 
+// getBookSourceOverride read-failure policy (regression for the Codex #106
+// finding): a "no such table" error (migration not applied) → null (safe: no
+// table means no override), but ANY OTHER read error must THROW rather than be
+// swallowed as "no override" — swallowing would let an import of an overridden
+// book silently pull from the wrong repo and clobber its notes + hold-out.
+async function runReadFailurePolicy() {
+  const envThatThrows = (msg) => ({
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return {
+              first() {
+                throw new Error(msg);
+              },
+            };
+          },
+        };
+      },
+    },
+  });
+
+  const missing = await getBookSourceOverride(
+    envThatThrows("D1_ERROR: no such table: book_source_overrides"),
+    "MRK",
+    "tn",
+  );
+  assert(missing === null, "getBookSourceOverride: missing table → null (safe no-override)");
+
+  let threw = false;
+  try {
+    await getBookSourceOverride(envThatThrows("D1_ERROR: network connection lost"), "MRK", "tn");
+  } catch {
+    threw = true;
+  }
+  assert(threw, "getBookSourceOverride: transient error → THROWS (never a silent no-override)");
+
+  console.log("bookSource/read-failure policy: all assertions passed");
+}
+
 run();
+runReadFailurePolicy().catch((e) => {
+  console.error("threw:", e);
+  process.exit(1);
+});

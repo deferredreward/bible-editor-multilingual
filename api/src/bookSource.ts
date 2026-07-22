@@ -47,6 +47,14 @@ function orgOwnRepoFor(cfg: ProjectConfig, resource: BookSourceResource): string
   return cfg.repos[resource];
 }
 
+// A D1/SQLite "no such table" error — the one read failure safe to treat as
+// "no override configured" (see getBookSourceOverride). Matched on message; D1
+// surfaces the underlying SQLite text ("no such table: book_source_overrides").
+export function isMissingTableError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /no such table/i.test(msg);
+}
+
 // ── Storage ──────────────────────────────────────────────────────────────
 
 export async function getBookSourceOverride(
@@ -60,13 +68,18 @@ export async function getBookSourceOverride(
       .bind(book, resource)
       .first<{ org: string; repo: string }>();
     return row ? { org: row.org, repo: row.repo } : null;
-  } catch {
-    // Table missing (migration 0058 not yet applied) or a transient D1 error.
-    // This runs on EVERY book import; a throw here would break all imports until
-    // the migration lands. "No override" is the correct safe default — the
-    // import falls back to the project-wide / org's own source exactly as before
-    // this feature existed. Mirrors getProjectConfig's table-missing fallback.
-    return null;
+  } catch (e) {
+    // ONLY "table does not exist" (migration 0058 not yet applied) is safe to
+    // treat as "no override": if the table cannot exist, no override can exist,
+    // so falling back to the prior behavior loses nothing — and this runs on
+    // EVERY book import, so an unconditional throw would break all imports until
+    // the migration lands. Any OTHER error (transient D1 failure, schema drift)
+    // must NOT be swallowed: a configured override we merely failed to READ would
+    // otherwise let the import pull from the wrong repo, clobber the overridden
+    // notes, and drop the source:… hold-out. Rethrow so the import fails and
+    // retries instead of silently corrupting.
+    if (isMissingTableError(e)) return null;
+    throw e;
   }
 }
 
@@ -82,9 +95,12 @@ export async function listBookSourceOverrides(
       .bind(book)
       .all<{ resource: string; org: string; repo: string; updated_at: number }>();
     return rs.results ?? [];
-  } catch {
-    // Table missing (migration not applied) → no overrides, not a 500.
-    return [];
+  } catch (e) {
+    // Same distinction as getBookSourceOverride: table-missing → no overrides;
+    // any other error is real and must surface (rethrow → 500) rather than
+    // masquerade as an empty list.
+    if (isMissingTableError(e)) return [];
+    throw e;
   }
 }
 
