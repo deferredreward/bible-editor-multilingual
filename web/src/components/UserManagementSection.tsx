@@ -151,8 +151,12 @@ export function UserManagementSection() {
   const orgLoginSet = new Set((orgMembers?.members ?? []).map((m) => m.login.toLowerCase()));
   // Only trust "is / isn't an org member" once we actually have a roster:
   // an errored or empty fetch must not flag every allowlist entry as an outsider.
-  const haveRoster = !!orgMembers && !orgMembers.error && orgMembers.members.length > 0;
-  const rosterUnavailable = !!orgMembers && (!!orgMembers.error || orgMembers.members.length === 0);
+  // A `partial` roster (public-members fallback — see issue #78) still has an
+  // `error` code attached for diagnostics, but it's real, displayable data, not
+  // an unavailable state.
+  const haveRoster = !!orgMembers && (!orgMembers.error || orgMembers.partial) && orgMembers.members.length > 0;
+  const rosterUnavailable =
+    !!orgMembers && !orgMembers.partial && (!!orgMembers.error || orgMembers.members.length === 0);
   const orgName = orgMembers?.org || "";
 
   return (
@@ -326,6 +330,11 @@ export function UserManagementSection() {
             <Alert severity="info">{t("preferences.users.reconcile.unavailable")}</Alert>
           ) : (
             <>
+              {orgMembers.partial && (
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  {t("preferences.users.reconcile.partial", { org: orgName })}
+                </Alert>
+              )}
               {orgMembers.truncated && (
                 <Alert severity="warning" sx={{ mb: 1 }}>
                   {t("preferences.users.reconcile.truncated")}
