@@ -289,3 +289,44 @@ export function detectOrg409Key(code: string | undefined): string {
     ? "preferences.detectOrg.laneSourceMigration"
     : "preferences.detectOrg.projectNotEmpty";
 }
+
+// ── Populated-lane source lock (stop the migration 409 loop) ─────────────────
+// The backend rejects a config PUT that changes the source of a POPULATED lane
+// (lane_source_change_requires_migration), comparing the lane's ACTIVE source
+// (scripture_lane_state.active_config_json.source) against the wizard's desired
+// {org, repos.lit}. So on a populated project the wizard must LOCK the lane
+// source to that active baseline and never propose a change.
+export interface LanePublicLike {
+  config?: { source?: { owner?: string; repo?: string } };
+  replacementRequired?: boolean;
+  populated?: boolean;
+}
+
+// A lane whose source is established (has verses, or is mid-migration) — its
+// source is locked in Setup. A fresh/empty lane stays freely choosable.
+export function laneSourceEstablished(ls: LanePublicLike | null | undefined): boolean {
+  return !!ls && (!!ls.populated || !!ls.replacementRequired);
+}
+
+// The active source repo the wizard must lock a populated lane to (the 409
+// baseline). Empty when unavailable.
+export function laneActiveSourceRepo(ls: LanePublicLike | null | undefined): string {
+  return ls?.config?.source?.repo ?? "";
+}
+
+// Whether the wizard CAN produce a config whose lane source equals the active
+// source. desired.source.owner is always the org being configured, so an
+// established lane is reconcilable ONLY when its active source owner is that same
+// org AND it isn't mid-migration. The mltest drift (active owner unfoldingWord,
+// or replacement_required) is NOT reconcilable — Apply must be blocked (not
+// looped), directing the admin to the deliberate Change-Source tool.
+export function laneSourceReconcilable(
+  ls: LanePublicLike | null | undefined,
+  orgBeingConfigured: string,
+): boolean {
+  if (!laneSourceEstablished(ls)) return true;
+  if (ls?.replacementRequired) return false;
+  const owner = ls?.config?.source?.owner ?? "";
+  const org = (orgBeingConfigured ?? "").trim();
+  return owner !== "" && org !== "" && owner === org;
+}

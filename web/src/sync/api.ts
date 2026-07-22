@@ -1422,6 +1422,9 @@ export interface LanePublicState {
   replacementJobId: string | null;
   exportsBlocked: boolean;
   replacementRequired: boolean;
+  // True when this lane already has verses (from getProjectConfig's overlay). The
+  // Setup wizard locks a populated lane's source so it can't propose a change.
+  populated?: boolean;
   config: {
     label: string;
     source: { owner: string; repo: string; ref: string };

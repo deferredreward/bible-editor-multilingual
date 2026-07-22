@@ -20,7 +20,17 @@ import { UpstreamSourcePicker } from "./UpstreamSourcePicker";
 import { LaneTargetModeStep, type LaneEditMode, type LaneModeMap } from "./LaneTargetModeStep";
 import { RepoRef } from "./SourceOverrideField";
 import { RESOURCE_KEYS, buildTranslationSource, type ResourceKey } from "../lib/orgDraft";
-import { SETUP_STEPS, shouldPrefillFromCurrent, wizardApply409, type LaneKey } from "../lib/setupWizard";
+import {
+  SETUP_STEPS,
+  shouldPrefillFromCurrent,
+  wizardApply409,
+  laneSourceEstablished,
+  laneActiveSourceRepo,
+  laneSourceReconcilable,
+  type LaneKey,
+} from "../lib/setupWizard";
+
+const LANE_KEYS: LaneKey[] = ["lit", "sim"];
 
 // Pinned duration (ms) for each StepContent's expand/collapse Collapse. Fixed —
 // not MUI's default 'auto', which scales with content height and would make the
@@ -91,20 +101,42 @@ export function SetupWizard() {
   // was edited, shifting the data/export identity) — offer "revert ALL repos".
   const [revertAll, setRevertAll] = useState(false);
 
-  // On a POPULATED re-run (the DB is already configured for THIS org), pre-fill
-  // ALL target repos — lane AND non-lane — from the current config once, so
-  // re-opening Setup proposes NO data/export identity change by default. NEVER
-  // on a fresh org: there the live config is the default preset (a different
-  // org) and detect()'s inference (e.g. ru_rlob) must win — prefilling would
-  // clobber it back to en_ult/en_ust and break the target repo/export.
+  // ── Populated-lane source lock (stops the migration-409 loop) ──────────────
+  // A lane that already has verses (or is mid-migration) has its source LOCKED to
+  // the live ACTIVE source — the exact baseline the backend 409 compares against
+  // (from laneState, NOT projectConfig.repos, which overlayLaneLabels can already
+  // have rewritten to the lane's active source anyway). We lock the Step-3 target
+  // field and, when the active source can't be reproduced by the configure-only
+  // model (foreign owner / mid-migration — the mltest drift), block Apply with a
+  // clear message instead of offering a revert that can never win.
+  const laneState = projectConfig?.laneState;
+  const detectedOrg = draft.draft?.org ?? "";
+  const lockedLanes = LANE_KEYS.filter((l) => laneSourceEstablished(laneState?.[l]));
+  const blockedLanes = LANE_KEYS.filter((l) => !laneSourceReconcilable(laneState?.[l], detectedOrg));
+
+  // Pre-fill once. Locked lanes take their repo from the ACTIVE source (the 409
+  // baseline); non-lane repos come from the current config on a same-org re-run
+  // (so re-running proposes no identity change). Never prefills a fresh org's
+  // lanes — there laneState has no verses, nothing is locked, and detect()'s
+  // inference wins. The lane field is disabled once locked, so no re-clobber.
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || !draft.draft || !projectConfig) return;
-    if (!shouldPrefillFromCurrent(projectConfig.org, draft.draft.org)) return;
     prefilled.current = true;
-    for (const key of RESOURCE_KEYS) {
-      const repo = projectConfig.repos?.[key];
-      if (repo) draft.setRepo(key, repo);
+    for (const lane of LANE_KEYS) {
+      if (laneSourceEstablished(laneState?.[lane])) {
+        const repo = laneActiveSourceRepo(laneState?.[lane]);
+        if (repo) draft.setRepo(lane, repo);
+      }
+    }
+    // Non-lane prefill: same-org re-run, keyed on exportOrg (NOT `org`, which
+    // overlayLaneLabels rewrites to the lane's active-source owner and would read
+    // foreign on a mid-migration project).
+    if (shouldPrefillFromCurrent(projectConfig.exportOrg, draft.draft.org)) {
+      for (const key of ["tn", "tq", "twl", "tw", "ta"] as const) {
+        const repo = projectConfig.repos?.[key];
+        if (repo) draft.setRepo(key, repo);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.draft, projectConfig]);
@@ -172,7 +204,14 @@ export function SetupWizard() {
   };
 
   const doApply = async () => {
-    if (!draft.complete || !draft.upstreamVerified || draft.hasUnverifiedOverride) return;
+    if (
+      !draft.complete ||
+      !draft.upstreamVerified ||
+      draft.hasUnverifiedOverride ||
+      blockedLanes.length > 0
+    ) {
+      return;
+    }
     setApplying(true);
     setApplyError(null);
     setLaneModeError(null);
@@ -271,7 +310,12 @@ export function SetupWizard() {
         <Step ref={(el) => { stepRefs.current[SETUP_STEPS.lanes] = el; }}>
           <StepLabel>{t("setup.step.lanes")}</StepLabel>
           <StepContent transitionDuration={STEP_COLLAPSE_MS}>
-            <LaneTargetModeStep state={draft} laneMode={laneMode} setLaneMode={setLaneMode} />
+            <LaneTargetModeStep
+              state={draft}
+              laneMode={laneMode}
+              setLaneMode={setLaneMode}
+              lockedLanes={lockedLanes}
+            />
             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
               <Button onClick={() => setActiveStep(SETUP_STEPS.sources)}>{t("setup.back")}</Button>
               <Button
@@ -290,6 +334,13 @@ export function SetupWizard() {
           <StepLabel>{t("setup.step.review")}</StepLabel>
           <StepContent transitionDuration={STEP_COLLAPSE_MS}>
             <ReviewSummary state={draft} laneMode={laneMode} />
+            {blockedLanes.length > 0 && (
+              <Alert severity="error" sx={{ mt: 1.5 }}>
+                {t("setup.laneSourceLockedBlocked", {
+                  lanes: blockedLanes.map((l) => t(`setup.lane.${l}`)).join(", "),
+                })}
+              </Alert>
+            )}
             {!draft.complete && (
               <Alert severity="warning" sx={{ mt: 1.5 }}>
                 {t("setup.reviewIncomplete")}
@@ -373,7 +424,8 @@ export function SetupWizard() {
                     applied ||
                     !draft.complete ||
                     !draft.upstreamVerified ||
-                    draft.hasUnverifiedOverride
+                    draft.hasUnverifiedOverride ||
+                    blockedLanes.length > 0
                   }
                   startIcon={applying ? <CircularProgress size={16} color="inherit" /> : undefined}
                 >

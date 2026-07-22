@@ -568,6 +568,23 @@ test("applyProjectConfig: changing a POPULATED lane's source rejects 409 lane_so
   assert.equal(afterLit.replacement_required, 0, "lane not quarantined");
 });
 
+test("applyProjectConfig: a populated lane whose source is UNCHANGED applies with no 409 (the wizard lock)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // Populate the lit lane, then re-apply the SAME config (lit still ar_glt) — the
+  // wizard locks a populated lane's source to the active source, so desired ===
+  // active and applyProjectConfig must NOT return lane_source_change_requires_migration.
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  const result = await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL);
+  assert.equal(result.ok, true, "same-source apply on a populated lane succeeds — no 409, no loop");
+});
+
 test("applyProjectConfig: changing a lane's source on an EMPTY lane still installs (fresh org path)", async () => {
   const db = freshDb();
   seedConfig(db, "en-unfoldingword");

@@ -577,6 +577,13 @@ export async function overlayLaneLabels(env: Env, cfg: ProjectConfig): Promise<P
   // An already-activated sibling lane keeps its real label.
   const litCfg = parseLaneConfig(lit.active_config_json);
   const simCfg = parseLaneConfig(sim.active_config_json);
+  // Per-lane populated flag (same count the config-apply 409 uses): the Setup
+  // wizard locks a lane's source when it's populated so it can never propose a
+  // source change (which would 409 lane_source_change_requires_migration).
+  const [litVerses, simVerses] = await Promise.all([
+    countLaneVerses(env, "lit"),
+    countLaneVerses(env, "sim"),
+  ]);
   return {
     ...cfg,
     litLabel: lit.replacement_required ? "…" : litCfg.label,
@@ -588,10 +595,25 @@ export async function overlayLaneLabels(env: Env, cfg: ProjectConfig): Promise<P
     },
     org: litCfg.source.owner || cfg.org,
     laneState: {
-      lit: lanePublicState(lit),
-      sim: lanePublicState(sim),
+      lit: { ...lanePublicState(lit), populated: litVerses > 0 },
+      sim: { ...lanePublicState(sim), populated: simVerses > 0 },
     },
   } as ProjectConfig;
+}
+
+// Count verses for a lane's bible_version (ALL generations) — the same predicate
+// applyProjectConfig uses to decide verseCount>0, so `populated` here agrees
+// with whether a source change would be rejected.
+async function countLaneVerses(env: Env, lane: LaneKey): Promise<number> {
+  try {
+    const row = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM verses WHERE bible_version = ?1`)
+      .bind(bibleVersionForLane(lane))
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 // Re-export PRESETS touch for tests that seed BSOJ

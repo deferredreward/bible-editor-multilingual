@@ -903,6 +903,7 @@
     },
     "targetRepoLabel": "Target repository",
     "targetRepoHelp": "Your org's repo for this lane. Pre-filled but editable — it needn't be {lang}_glt (e.g. ru_rlob, ar_avd).",
+    "targetRepoLocked": "Locked — this project already has text. To change the scripture source, use \"Change scripture source\" in Preferences.",
     "laneEditModeLabel": "What are translators doing in this lane?",
     "laneEditMode": {
       "edit": "Editing the text",
@@ -926,6 +927,7 @@
     "revertLaneSource": "Revert {{lane}} source to current ({{repo}})",
     "identityChangedRevert": "This project already has data, so its org, export target, and resource repos can't change here. Revert your repo edits to the current configuration to apply a language or lane-mode tweak, or start from a fresh database to onboard a different org.",
     "revertAllRepos": "Revert all repos to current configuration",
+    "laneSourceLockedBlocked": "The scripture source for {{lanes}} can't be reconciled here — it's mid source-change (or points at a different org). Finish or cancel it in \"Change scripture source\" in Preferences before applying Setup.",
     "replacementStepIntro": "You changed the scripture source for an already-populated project, so the new text must be staged before it goes live. This step finishes that change; nothing changes for editors until you press Activate.",
     "replacementStart": "Stage the new text",
     "replacementIntro": "This stages the new source text book by book. When every book is ready, press Activate to switch the lane over.",

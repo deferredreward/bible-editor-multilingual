@@ -27,12 +27,16 @@ function LaneCard({
   state,
   laneMode,
   setLaneMode,
+  locked,
 }: {
   lane: "lit" | "sim";
   labelKey: string;
   state: OrgDraftState;
   laneMode: LaneEditMode;
   setLaneMode: (m: LaneEditMode) => void;
+  // The lane's source repo is locked (populated project) — read-only, changed
+  // only via the deliberate Change-Source tool.
+  locked: boolean;
 }) {
   const { t } = useTranslation();
   const sel = state.resourceSource[lane] ?? { mode: "upstream" };
@@ -74,7 +78,8 @@ function LaneCard({
           label={t("setup.targetRepoLabel")}
           value={targetRepo}
           onChange={(e) => state.setRepo(lane, e.target.value)}
-          helperText={t("setup.targetRepoHelp")}
+          disabled={locked}
+          helperText={locked ? t("setup.targetRepoLocked") : t("setup.targetRepoHelp")}
           placeholder={lane === "lit" ? "ru_rlob" : "es-419_gst"}
         />
 
@@ -132,10 +137,14 @@ export function LaneTargetModeStep({
   state,
   laneMode,
   setLaneMode,
+  lockedLanes = [],
 }: {
   state: OrgDraftState;
   laneMode: LaneModeMap;
   setLaneMode: (lane: "lit" | "sim", m: LaneEditMode) => void;
+  // Lanes whose source is locked (populated project) — the target repo field is
+  // read-only for these; the source is changed via the Change-Source tool.
+  lockedLanes?: ReadonlyArray<"lit" | "sim">;
 }) {
   const { t } = useTranslation();
   return (
@@ -151,6 +160,7 @@ export function LaneTargetModeStep({
           state={state}
           laneMode={laneMode[key]}
           setLaneMode={(m) => setLaneMode(key, m)}
+          locked={lockedLanes.includes(key)}
         />
       ))}
     </Stack>

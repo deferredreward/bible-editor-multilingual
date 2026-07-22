@@ -31,6 +31,9 @@ import {
   detectOrg409Key,
   shouldCheckBooks,
   resolveVerifiedSource,
+  laneSourceEstablished,
+  laneActiveSourceRepo,
+  laneSourceReconcilable,
 } from "./setupWizard.ts";
 import { defaultResourceSources } from "./orgDraft.ts";
 
@@ -150,6 +153,51 @@ test("resolveVerifiedSource: non-scripture overrides are unaffected by the book 
   assert.deepEqual(resolveVerifiedSource("tn", false), { ok: true });
   assert.deepEqual(resolveVerifiedSource("tw", undefined), { ok: true });
   assert.deepEqual(resolveVerifiedSource("ta", true), { ok: true });
+});
+
+test("laneSourceEstablished: a lane with verses or mid-migration is locked; a fresh lane isn't", () => {
+  assert.equal(laneSourceEstablished({ populated: true }), true);
+  assert.equal(laneSourceEstablished({ replacementRequired: true }), true);
+  assert.equal(laneSourceEstablished({ populated: false, replacementRequired: false }), false);
+  assert.equal(laneSourceEstablished(undefined), false);
+});
+
+test("laneActiveSourceRepo returns the active source repo (the 409 baseline)", () => {
+  assert.equal(laneActiveSourceRepo({ config: { source: { owner: "X", repo: "en_glt" } } }), "en_glt");
+  assert.equal(laneActiveSourceRepo({}), "");
+  assert.equal(laneActiveSourceRepo(undefined), "");
+});
+
+test("laneSourceReconcilable: a fresh lane is fine; a normal populated same-org lane is fine", () => {
+  // Fresh/empty → freely choosable.
+  assert.equal(laneSourceReconcilable(undefined, "MyOrg"), true);
+  assert.equal(laneSourceReconcilable({ populated: false }, "MyOrg"), true);
+  // Normal populated lane whose active source owner is the org → reconcilable
+  // (lock to active repo makes desired === active, no 409).
+  assert.equal(
+    laneSourceReconcilable({ populated: true, config: { source: { owner: "MyOrg", repo: "ar_glt" } } }, "MyOrg"),
+    true,
+  );
+});
+
+test("laneSourceReconcilable: mltest drift (foreign owner / mid-migration) is NOT reconcilable → block", () => {
+  // The mltest quarantine: active source owner unfoldingWord, being configured as
+  // BibleEditorMLTest — desired.owner can never equal unfoldingWord → block, not loop.
+  assert.equal(
+    laneSourceReconcilable(
+      { populated: true, config: { source: { owner: "unfoldingWord", repo: "en_ult" } } },
+      "BibleEditorMLTest",
+    ),
+    false,
+  );
+  // A lane mid-migration (replacement_required) is never reconcilable here.
+  assert.equal(
+    laneSourceReconcilable(
+      { replacementRequired: true, config: { source: { owner: "MyOrg", repo: "ar_glt" } } },
+      "MyOrg",
+    ),
+    false,
+  );
 });
 
 test("laneUrlChoiceSelection makes the choice read as 'url' without committing a repo", () => {
