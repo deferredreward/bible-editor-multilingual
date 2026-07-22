@@ -2106,6 +2106,15 @@ export const api = {
       { method: "POST", body: JSON.stringify({ config, confirm }) },
     ),
 
+  // The exact book set a replacement on this lane would re-stage (issue #97),
+  // from the lane's required-books snapshot of the active generation. Used to
+  // list affected books in the confirm dialog + staging view — NOT getBooks(),
+  // which reflects the whole DB rather than this lane's imported generation.
+  laneAffectedBooks: (lane: "lit" | "sim") =>
+    request<{ books: string[] }>(
+      `/api/project-config/lanes/${lane}/affected-books`,
+    ),
+
   laneGetJob: (lane: "lit" | "sim", jobId: string) =>
     request<LaneReplacementJobResponse>(
       `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}`,
@@ -2114,6 +2123,16 @@ export const api = {
   laneCancelJob: (lane: "lit" | "sim", jobId: string) =>
     request<{ ok: boolean }>(
       `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST" },
+    ),
+
+  // Full back-out (issue #97): abort an in-progress replacement AND revert the
+  // lane to its prior source — clears replacement_required + pendingTarget that
+  // /cancel keeps, without overwriting gen-1 content. This is the escape hatch
+  // for a lane stuck spinning on staging failures.
+  laneBackOutJob: (lane: "lit" | "sim", jobId: string) =>
+    request<{ ok: boolean }>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/back-out`,
       { method: "POST" },
     ),
 

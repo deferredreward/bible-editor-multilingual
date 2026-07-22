@@ -706,6 +706,53 @@ export async function cancelReplacement(
   ]);
 }
 
+/**
+ * Full back-out of an in-progress replacement (issue #97). Distinct from
+ * cancelReplacement / failReplacement, which deliberately KEEP
+ * replacement_required set (so a BSOJ transitional lane stays quarantined until
+ * a successful activation). A back-out is an explicit admin abort of the
+ * "Change scripture source" tool: it returns the lane to its PRIOR source by
+ * clearing every replacement flag — replacement_job_id, exclusive_owner,
+ * exports_blocked, replacement_required, pending_target_json — WITHOUT touching
+ * active_generation or active_config_json. gen-1 content is never overwritten;
+ * the active config already holds the prior source, so clearing the freeze
+ * simply re-exposes it.
+ */
+export async function backOutReplacement(
+  env: Env,
+  jobId: string,
+): Promise<void> {
+  const job = await getJob(env, jobId);
+  if (!job) throw Object.assign(new Error("job_not_found"), { status: 404 });
+  // A completed job already flipped the pointer — backing it out would strand
+  // the lane on a generation with no job. Refuse; only in-flight jobs back out.
+  if (job.status === "completed") {
+    throw Object.assign(new Error("job_terminal"), { status: 409, detail: { status: job.status } });
+  }
+  if (job.status === "cancelled") return; // idempotent
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
+        WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')`,
+    ).bind(jobId),
+    // Clear the full freeze AND the replacement_required/pending_target that the
+    // non-cancel paths preserve. Guarded on our job so a lane taken over by a
+    // concurrent workflow is a no-op. active_generation / active_config_json are
+    // intentionally untouched — the prior source stays active.
+    env.DB.prepare(
+      `UPDATE scripture_lane_state
+          SET replacement_job_id = NULL,
+              exclusive_owner = NULL,
+              exports_blocked = 0,
+              replacement_required = 0,
+              pending_target_json = NULL,
+              updated_at = unixepoch()
+        WHERE lane = ?1 AND replacement_job_id = ?2`,
+    ).bind(job.lane, jobId),
+  ]);
+}
+
 export async function failReplacement(
   env: Env,
   jobId: string,

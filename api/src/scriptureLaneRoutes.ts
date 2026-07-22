@@ -13,6 +13,8 @@ import {
   parseLaneConfig,
   lanePublicState,
   assertLaneWritable,
+  bibleVersionForLane,
+  snapshotRequiredBooks,
 } from "./scriptureLane.ts";
 import {
   startReplacement,
@@ -20,6 +22,7 @@ import {
   markReadyIfComplete,
   activateReplacement,
   cancelReplacement,
+  backOutReplacement,
   retryBook,
   waiveBook,
   getJob,
@@ -95,6 +98,22 @@ scriptureLaneRoutes.post("/:lane/validate", requireAdmin, async (c) => {
     impactVerses: countRow?.verses ?? 0,
     laneState: lanePublicState(state),
   });
+});
+
+// GET /:lane/affected-books — the exact book set a replacement would re-stage
+// (issue #97). Computed from the lane's required-books snapshot of the ACTIVE
+// generation — the same signal startReplacement feeds into the job — so the
+// confirm dialog and staging view can list precisely what will be replaced.
+// Deliberately NOT the whole-DB /api/books list (which doesn't reflect this
+// lane's imported generation and can fail independently). Admin-only, matching
+// its sibling replacement routes.
+scriptureLaneRoutes.get("/:lane/affected-books", requireAdmin, async (c) => {
+  const lane = c.req.param("lane");
+  if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
+  const state = await requireLaneState(c.env, lane);
+  const bv = bibleVersionForLane(lane);
+  const snap = await snapshotRequiredBooks(c.env, bv, state.active_generation);
+  return c.json({ books: snap.books });
 });
 
 // POST /:lane/replacements — start a replacement job (admin)
@@ -297,6 +316,33 @@ scriptureLaneRoutes.post("/:lane/replacements/:jobId/cancel", requireAdmin, asyn
   } catch (e: unknown) {
     const err = e as Error & { status?: number };
     return c.json({ error: err.message }, (err.status as 404) ?? 500);
+  }
+});
+
+// POST /:lane/replacements/:jobId/back-out — full abort + revert to prior source
+// (issue #97). Distinct from /cancel: this clears replacement_required and
+// pending_target_json too, so a lane that was stuck (staging spinning on
+// failures, or a mandatory quarantine the admin chooses to abandon) is fully
+// unfrozen and reverts to its prior source without overwriting gen-1 content.
+scriptureLaneRoutes.post("/:lane/replacements/:jobId/back-out", requireAdmin, async (c) => {
+  const lane = c.req.param("lane");
+  if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
+  const jid = c.req.param("jobId");
+  try {
+    await backOutReplacement(c.env, jid);
+    // Freeze lifted (reverted to the predecessor generation) — refresh tabs.
+    c.executionCtx.waitUntil(
+      (async () => {
+        await broadcastLaneEvent(
+          c.env,
+          await buildLaneEvent(c.env, lane, jid, "lane.replacement_settled"),
+        );
+      })(),
+    );
+    return c.json({ ok: true });
+  } catch (e: unknown) {
+    const err = e as Error & { status?: number; detail?: unknown };
+    return c.json({ error: err.message, detail: err.detail }, (err.status as 404 | 409) ?? 500);
   }
 });
 
