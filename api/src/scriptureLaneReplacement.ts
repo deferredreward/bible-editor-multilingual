@@ -19,6 +19,7 @@ import {
   recoverOrphanedReservation,
   requireLaneState,
   snapshotRequiredBooks,
+  STAGING_CLAIM_STALE_SECONDS,
 } from "./scriptureLane.ts";
 import { dcsRawUrl, fetchText, BOOK_NUMBERS, fileCommitSha } from "./dcsSources.ts";
 import { extractVersesForRange, extractUsfmHeaders } from "./importParsers.ts";
@@ -26,8 +27,12 @@ import { extractVersesForRange, extractUsfmHeaders } from "./importParsers.ts";
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const EXPORT_LEASE_TTL_MS = 120_000;
-/** Stale staging reclaim: Worker died mid-fetch/insert of a book. */
-export const STAGING_CLAIM_STALE_SECONDS = 600;
+/**
+ * Stale staging reclaim: Worker died mid-fetch/insert of a book. Defined in
+ * ./scriptureLane (shared with copyBookForward) and re-exported here so existing
+ * importers of this symbol keep working.
+ */
+export { STAGING_CLAIM_STALE_SECONDS };
 export const EXPORT_ABANDON_GRACE_MS = 600_000;
 
 const CHUNK = 80;
@@ -551,7 +556,15 @@ export async function markReadyIfComplete(
   const books = await getJobBooks(env, jobId);
   const pending: string[] = [];
   for (const b of books) {
-    if (b.status !== "artifact_ok" && b.status !== "absent_authorized") {
+    // `carried_forward` (issue #94) is a complete terminal state alongside
+    // artifact_ok/absent_authorized: the book's predecessor content was copied
+    // into the new generation, so it is ready to activate. (No book reaches this
+    // status until PR-2 drives copyBookForward, so this is inert today.)
+    if (
+      b.status !== "artifact_ok" &&
+      b.status !== "carried_forward" &&
+      b.status !== "absent_authorized"
+    ) {
       pending.push(b.book);
     }
   }
