@@ -41,6 +41,14 @@ override points at its own repo.
 - **Tier 2**: per-chapter-range merge within a book + per-range provenance.
 - **UI**: import panel (per-book × per-resource grid, verify-on-blur via `/api/orgs/verify-source`).
 
+## PR #109 (feat/issue-103-followups → main; SUPERSEDES #106)
+Merged current main in (main landed #105/#107/#108); renumbered migrations to 0060/0061.
+Pre-merge review: Codex found 3 (2 High, 1 Med), all FIXED + verified:
+(1) truncation guard counted all D1 rows not just owned chapters → dropped partial-book reimport;
+(2) cross-source id collision threw AFTER the wipe → stuck partial (now pre-wipe scan, fails clean);
+(3) PUT clear path rejected by the both-bounds check → UI Remove broken.
+167 API tests + typecheck + web build green. Recommend CLOSING #106 once #109 merges.
+
 ## Follow-ups branch (feat/issue-103-followups, stacked on #106)
 All #103 follow-ups, built on top of PR #106:
 - **tQ widening** + **range-capable storage** (migration 0059 rebuilds book_source_overrides
