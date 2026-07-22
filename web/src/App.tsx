@@ -31,7 +31,7 @@ type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
   | { view: "templates"; templateId: string | null }
-  | { view: "import"; book: string | null }
+  | { view: "import"; book: string | null; chapter: number | null; verse: number | null }
   | { view: "preferences"; section: PrefsSection };
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
@@ -71,9 +71,14 @@ function parseHash(): Location {
   if (tm) {
     return { view: "templates", templateId: decodeURIComponent(tm[1] ?? "") || null };
   }
-  const im = location.hash.match(/^#\/import(?:\/([A-Za-z0-9]+))?$/);
+  const im = location.hash.match(/^#\/import(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/);
   if (im) {
-    return { view: "import", book: im[1] ? im[1].toUpperCase() : null };
+    return {
+      view: "import",
+      book: im[1] ? im[1].toUpperCase() : null,
+      chapter: im[2] ? parseInt(im[2], 10) : null,
+      verse: im[3] ? parseInt(im[3], 10) : null,
+    };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
   if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
@@ -517,11 +522,12 @@ export function App() {
         ) : loc.view === "import" ? (
           <ImportWorkspace
             book={loc.book}
+            target={loc.chapter ? { chapter: loc.chapter, verse: loc.verse ?? 1 } : null}
             onBack={backToScripture}
             onNavigate={(b) => {
               location.hash = b ? `#/import/${b}` : `#/import`;
             }}
-            onOpenBook={(b) => navigate(b, 1)}
+            onOpenBook={(b, chapter, verse) => navigate(b, chapter ?? 1, verse ?? undefined)}
           />
         ) : (
           <Shell

@@ -23,32 +23,60 @@ export interface AiTranslateResult {
 // notes = default translate; questions = translate with resourceType: "tq".
 const RESOURCE_RUNS: TranslateRequestOptions[] = [{}, { resourceType: "tq" }];
 
+// Cap in-flight pipeline starts. A whole book (e.g. Psalms → 2×150 = 300 starts)
+// must not fire sequentially — that spins the UI for a minute and lets one hung
+// request stall everything behind it. A small pool keeps it responsive while
+// staying gentle on the bot's start endpoint.
+const START_CONCURRENCY = 4;
+
+interface StartUnit {
+  chapter: number;
+  translate: TranslateRequestOptions;
+}
+
 /**
  * Start AI-translate (notes + questions) across the given chapters of `book`.
- * Best-effort: never throws — returns a per-run tally instead.
+ * Best-effort with bounded concurrency: never throws — returns a per-run tally.
  */
 export async function startBookAiTranslate(
   book: string,
   chapters: number[],
 ): Promise<AiTranslateResult> {
   const result: AiTranslateResult = { started: 0, skipped: 0, failed: 0 };
+
+  // Flatten to a work queue of (chapter × resource) units, then drain it with a
+  // fixed pool of workers so at most START_CONCURRENCY requests are in flight.
+  const units: StartUnit[] = [];
   for (const translate of RESOURCE_RUNS) {
-    for (const chapter of chapters) {
-      try {
-        const res = await pipelineStore.start({
-          pipelineType: "translate",
-          book,
-          startChapter: chapter,
-          endChapter: chapter,
-          sessionKey: getSessionKey(),
-          translate,
-        });
-        if (res.status === "already_running") result.skipped++;
-        else result.started++;
-      } catch {
-        result.failed++;
-      }
-    }
+    for (const chapter of chapters) units.push({ chapter, translate });
   }
+
+  let next = 0;
+  const runOne = async (unit: StartUnit) => {
+    try {
+      const res = await pipelineStore.start({
+        pipelineType: "translate",
+        book,
+        startChapter: unit.chapter,
+        endChapter: unit.chapter,
+        sessionKey: getSessionKey(),
+        translate: unit.translate,
+      });
+      if (res.status === "already_running") result.skipped++;
+      else result.started++;
+    } catch {
+      result.failed++;
+    }
+  };
+
+  const worker = async () => {
+    while (next < units.length) {
+      const unit = units[next++];
+      await runOne(unit);
+    }
+  };
+
+  const pool = Math.min(START_CONCURRENCY, units.length);
+  await Promise.all(Array.from({ length: pool }, () => worker()));
   return result;
 }

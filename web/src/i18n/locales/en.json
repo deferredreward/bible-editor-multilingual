@@ -101,6 +101,7 @@
     "aiTranslateDesc": "Draft translation notes and questions for the whole book with AI. You can review each chapter in the editor.",
     "aiTranslateStarted": "Started AI Translate: {{started}} runs queued{{suffix}}.",
     "aiTranslateSkipped": " ({{skipped}} already running)",
+    "aiTranslatePartial": "Started {{started}} AI Translate runs, but {{failed}} chapter runs failed to start — retry to queue the rest.",
     "aiTranslateNone": "Nothing to translate — no chapters found.",
     "aiTranslateFailedAll": "Couldn't start AI Translate."
   },

@@ -43,7 +43,14 @@ import {
   type BookSummary,
 } from "../sync/api";
 import { BOOKS, bookName, bookAbbr } from "../lib/bookNames";
-import { defaultIntent, importActionFor, type ImportIntent } from "../lib/importIntent";
+import {
+  defaultIntent,
+  importActionFor,
+  repullDefaultRange,
+  classifyAiTranslateResult,
+  mainPaneState,
+  type ImportIntent,
+} from "../lib/importIntent";
 import { startBookAiTranslate } from "../lib/aiTranslate";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
@@ -51,15 +58,21 @@ import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
 interface Props {
   /** Selected book (from #/import/:book), or null on the bare #/import route. */
   book: string | null;
+  /**
+   * Pending scripture target carried through the route (#/import/BOOK/CH/VERSE),
+   * e.g. from a reference-box nav to an un-imported book. "Open in editor" lands
+   * here after import instead of resetting to 1:1.
+   */
+  target: { chapter: number; verse: number } | null;
   /** Set the hash to #/import/:book (or #/import when null). */
   onNavigate: (book: string | null) => void;
   /** Return to the last scripture location. */
   onBack: () => void;
-  /** Open a book in the scripture editor (#/{book}/1). */
-  onOpenBook: (book: string) => void;
+  /** Open a book in the scripture editor (defaults to chapter 1, verse 1). */
+  onOpenBook: (book: string, chapter?: number, verse?: number) => void;
 }
 
-export function ImportWorkspace({ book, onNavigate, onBack, onOpenBook }: Props) {
+export function ImportWorkspace({ book, target, onNavigate, onBack, onOpenBook }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -186,21 +199,38 @@ export function ImportWorkspace({ book, onNavigate, onBack, onOpenBook }: Props)
 
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-        {!book ? (
-          <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }}>
-            <Typography variant="body2" color="text.secondary">
-              {t("import.selectBook")}
-            </Typography>
-          </Stack>
-        ) : (
-          <BookImportPane
-            key={book}
-            book={book}
-            imported={importedSet.has(book)}
-            onImported={refetchBooks}
-            onOpenBook={onOpenBook}
-          />
-        )}
+        {(() => {
+          // Gate on books-loaded: until GET /api/books resolves we don't know
+          // this book's imported status, and rendering the pane early would flash
+          // a destructive-looking "Import" button for an already-imported book.
+          const pane = mainPaneState(!!book, !loading);
+          if (pane === "empty") {
+            return (
+              <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {t("import.selectBook")}
+                </Typography>
+              </Stack>
+            );
+          }
+          if (pane === "loading") {
+            return (
+              <Stack alignItems="center" justifyContent="center" sx={{ height: "100%" }}>
+                <CircularProgress size={24} />
+              </Stack>
+            );
+          }
+          return (
+            <BookImportPane
+              key={book!}
+              book={book!}
+              imported={importedSet.has(book!)}
+              target={target}
+              onImported={refetchBooks}
+              onOpenBook={onOpenBook}
+            />
+          );
+        })()}
       </Box>
     </Box>
   );
@@ -209,11 +239,12 @@ export function ImportWorkspace({ book, onNavigate, onBack, onOpenBook }: Props)
 interface PaneProps {
   book: string;
   imported: boolean;
+  target: { chapter: number; verse: number } | null;
   onImported: () => Promise<void> | void;
-  onOpenBook: (book: string) => void;
+  onOpenBook: (book: string, chapter?: number, verse?: number) => void;
 }
 
-function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
+function BookImportPane({ book, imported, target, onImported, onOpenBook }: PaneProps) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
@@ -223,6 +254,7 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   // Import succeeded this session — reflect the "imported" state immediately
   // (the parent's books refetch is async) and reveal the post-import actions.
@@ -231,23 +263,35 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
 
   const effectiveImported = imported || justImported;
 
-  const loadSummary = useCallback(() => {
-    api
-      .getBookSummary(book)
-      .then(setSummary)
-      .catch(() => setSummary(null));
+  // Returns the fresh summary too, so callers that need the chapter list right
+  // away (AI-translate immediately after import) don't race the state update.
+  const loadSummary = useCallback(async (): Promise<BookSummary | null> => {
+    try {
+      const s = await api.getBookSummary(book);
+      setSummary(s);
+      return s;
+    } catch {
+      setSummary(null);
+      return null;
+    }
   }, [book]);
 
   useEffect(() => {
-    loadSummary();
+    void loadSummary();
   }, [loadSummary]);
 
   const action = importActionFor(effectiveImported, intent);
+
+  const openBook = useCallback(
+    () => onOpenBook(book, target?.chapter, target?.verse),
+    [onOpenBook, book, target],
+  );
 
   const runImport = useCallback(
     async (translateFromSource: boolean) => {
       setBusy(true);
       setError(null);
+      setWarning(null);
       setMessage(null);
       try {
         const res = await api.importBook(
@@ -262,7 +306,9 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
         );
         setJustImported(true);
         await onImported();
-        loadSummary();
+        // Await the summary so AI-translate (which reads the chapter list) is
+        // armed with real chapters the moment its button appears.
+        await loadSummary();
       } catch (e) {
         const body =
           e instanceof ApiError ? (e.body as { error?: string; message?: string } | undefined) : undefined;
@@ -276,17 +322,27 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
   );
 
   const runAiTranslate = useCallback(async () => {
-    const chapters = (summary?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+    // Prefer loaded chapters; if the summary hasn't landed yet (e.g. a fresh
+    // deep-link), fetch it fresh rather than reporting "nothing to translate".
+    let chapters = (summary?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+    if (chapters.length === 0) {
+      const fresh = await loadSummary();
+      chapters = (fresh?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+    }
     if (chapters.length === 0) {
       setMessage(t("import.aiTranslateNone"));
       return;
     }
     setAiBusy(true);
     setError(null);
+    setWarning(null);
     try {
       const res = await startBookAiTranslate(book, chapters);
-      if (res.started === 0 && res.skipped === 0) {
+      const verdict = classifyAiTranslateResult(res);
+      if (verdict === "failed") {
         setError(t("import.aiTranslateFailedAll"));
+      } else if (verdict === "partial") {
+        setWarning(t("import.aiTranslatePartial", { started: res.started, failed: res.failed }));
       } else {
         const suffix = res.skipped ? t("import.aiTranslateSkipped", { skipped: res.skipped }) : "";
         setMessage(t("import.aiTranslateStarted", { started: res.started, suffix }));
@@ -294,12 +350,19 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
     } finally {
       setAiBusy(false);
     }
-  }, [book, summary, t]);
+  }, [book, summary, loadSummary, t]);
 
+  const chapterNumbers = useMemo(
+    () => (summary?.chapters ?? []).map((c) => c.chapter),
+    [summary],
+  );
   const chapterCount = summary?.chapters.length ?? 0;
   const tnTotal = summary?.chapters.reduce((s, c) => s + c.tn, 0) ?? 0;
   const tqTotal = summary?.chapters.reduce((s, c) => s + c.tq, 0) ?? 0;
-  const showAiTranslate = effectiveImported && justImported && intent === "translate" && isTranslation;
+  // Available for ANY imported, translation-eligible book — not just the one
+  // imported this session — so already-imported books (the everyday case) can
+  // be AI-translated from here too.
+  const showAiTranslate = effectiveImported && isTranslation;
 
   return (
     <Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 760, mx: "auto" }}>
@@ -389,7 +452,7 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
             <Button
               variant="contained"
               startIcon={<OpenInNewIcon />}
-              onClick={() => onOpenBook(book)}
+              onClick={openBook}
             >
               {t("import.openButton")}
             </Button>
@@ -431,6 +494,11 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
           {message}
         </Alert>
       )}
+      {warning && (
+        <Alert severity="warning" sx={{ mt: 2 }} onClose={() => setWarning(null)}>
+          {warning}
+        </Alert>
+      )}
       {error && (
         <Alert severity="error" sx={{ mt: 2 }} onClose={() => setError(null)}>
           {error}
@@ -442,10 +510,13 @@ function BookImportPane({ book, imported, onImported, onOpenBook }: PaneProps) {
         onClose={() => setRepullOpen(false)}
         book={book}
         currentChapter={1}
+        // Default the re-pull to the WHOLE book so accepting it refreshes every
+        // chapter, not just chapter 1. The user can still narrow the range.
+        initialRef={repullDefaultRange(chapterNumbers)}
         onMessage={(m) => setMessage(m)}
         onImported={() => {
           void onImported();
-          loadSummary();
+          void loadSummary();
         }}
       />
     </Box>

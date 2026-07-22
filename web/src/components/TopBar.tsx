@@ -240,8 +240,16 @@ export function TopBar({
   // one routes to the deliberate IMPORT surface (#/import/:book), where the user
   // picks an intent (translate a new book vs load existing work) before any
   // destructive import runs. Already-imported books navigate as before.
-  const goToImport = (code: string) => {
-    location.hash = `#/import/${code}`;
+  // Optionally carries the requested chapter[:verse] through the route so a
+  // reference like "MAT 5:3" for an un-imported book lands at 5:3 after import
+  // (Open in editor reads it) instead of silently resetting to 1:1.
+  const goToImport = (code: string, targetChapter?: number, verse?: number) => {
+    const parts = [`#/import/${code}`];
+    if (targetChapter && targetChapter > 0) {
+      parts.push(String(targetChapter));
+      if (verse && verse > 0) parts.push(String(verse));
+    }
+    location.hash = parts.join("/");
   };
 
   const chapterList = (summary?.chapters ?? []).map((c) => c.chapter);
@@ -274,7 +282,7 @@ export function TopBar({
     if (importedSet.has(targetBook)) {
       onNavigate(targetBook, targetChapter, verse);
     } else {
-      goToImport(targetBook);
+      goToImport(targetBook, targetChapter, verse);
     }
   };
 

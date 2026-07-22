@@ -48,3 +48,53 @@ export function importActionFor(imported: boolean, intent: ImportIntent): Import
   // Empty book: a full bootstrap is safe. Intent only picks the source.
   return { kind: "import", translateFromSource: intent === "translate" };
 }
+
+/**
+ * The default range string to seed the Re-pull (ImportFromDoor43Dialog) input
+ * with, from a book's chapter list. The whole book, so accepting the default
+ * refreshes everything (not just chapter 1) — the user can still narrow it:
+ *   • []          → "1"          (unknown; a safe single-chapter fallback)
+ *   • [7]         → "7"          (single chapter — no range needed)
+ *   • [1,2,…,50]  → "1-50"       (span the whole book)
+ * Chapters may arrive unsorted; we span min…max so gaps don't truncate it.
+ */
+export function repullDefaultRange(chapters: number[]): string {
+  if (chapters.length === 0) return "1";
+  const sorted = [...chapters].sort((a, b) => a - b);
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  return first === last ? String(first) : `${first}-${last}`;
+}
+
+/**
+ * Classify a whole-book AI-translate run so the UI never reports a clean
+ * success when per-chapter starts actually failed. `startBookAiTranslate` is
+ * best-effort and tallies started/skipped/failed:
+ *   • nothing started or already-running → "failed" (surface an error)
+ *   • some started but ≥1 failed          → "partial" (surface a warning)
+ *   • everything started/already-running  → "success"
+ */
+export function classifyAiTranslateResult(r: {
+  started: number;
+  skipped: number;
+  failed: number;
+}): "success" | "partial" | "failed" {
+  if (r.started === 0 && r.skipped === 0) return "failed";
+  if (r.failed > 0) return "partial";
+  return "success";
+}
+
+/**
+ * What the Import workspace's main pane should show. The book's imported status
+ * is only known once the GET /api/books list resolves — until then we must not
+ * render the intent toggle / action (a deep-link to an imported book would
+ * briefly look un-imported and offer a destructive-looking "Import" button).
+ */
+export function mainPaneState(
+  hasBook: boolean,
+  booksLoaded: boolean,
+): "empty" | "loading" | "ready" {
+  if (!hasBook) return "empty";
+  if (!booksLoaded) return "loading";
+  return "ready";
+}
