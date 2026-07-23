@@ -30,9 +30,7 @@ function writePersisted(cfg: ProjectConfig) {
 }
 
 const persisted = readPersisted();
-let cache: ProjectConfigResponse | null = persisted
-  ? { config: persisted, presets: [] }
-  : null;
+let cache: ProjectConfigResponse | null = persisted ? { config: persisted } : null;
 let inflight: Promise<ProjectConfigResponse> | null = null;
 const subscribers = new Set<(c: ProjectConfigResponse) => void>();
 
@@ -86,7 +84,7 @@ export async function setProjectMode(
   mode: "authoring" | "translation",
 ): Promise<ProjectConfig> {
   const res = await api.patchProjectMode(mode);
-  publish({ config: res.config, presets: cache?.presets ?? [] });
+  publish({ config: res.config });
   return res.config;
 }
 
@@ -98,17 +96,14 @@ export async function applyProjectOverrides(
   overrides: Record<string, unknown> | null,
 ): Promise<ProjectConfig> {
   const res = await api.putProjectConfigWithOverrides(preset, overrides);
-  publish({ config: res.config, presets: cache?.presets ?? [] });
+  publish({ config: res.config });
   return res.config;
 }
 
 // Publish an externally-obtained config update (e.g. from a lane PATCH
 // response) through the shared cache so every subscriber re-renders.
 export function updateProjectConfig(cfg: ProjectConfig): void {
-  publish({
-    config: cfg,
-    presets: cache?.presets ?? [],
-  });
+  publish({ config: cfg });
 }
 
 // Force a fresh fetch from the server and publish. Useful after lane mutations

@@ -1543,19 +1543,8 @@ export interface ProjectConfig {
     sim: LanePublicState;
   };
 }
-export interface ProjectPreset {
-  preset: string;
-  org: string;
-  languageCode: string;
-  languageName: string;
-  languageTitle: string;
-  direction: "ltr" | "rtl";
-  reposVerified: boolean;
-  isTranslation: boolean;
-}
 export interface ProjectConfigResponse {
   config: ProjectConfig;
-  presets: ProjectPreset[];
 }
 
 // PR B: draft-only manifest inference response — applies nothing.
