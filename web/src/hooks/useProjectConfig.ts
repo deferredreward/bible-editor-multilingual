@@ -1,10 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  api,
-  type ProjectConfig,
-  type ProjectConfigResponse,
-  type ProjectPreset,
-} from "../sync/api";
+import { api, type ProjectConfig, type ProjectConfigResponse } from "../sync/api";
 
 // The active per-project source config (org/language/direction/labels +
 // translationSource). Mirrors useNoteTemplates: one shared fetch, a
@@ -84,39 +79,6 @@ export function useProjectConfig(): ProjectConfig | null {
   return val;
 }
 
-export function useProjectPresets(): ProjectPreset[] {
-  const [val, setVal] = useState<ProjectPreset[]>(() => cache?.presets ?? []);
-  useEffect(() => {
-    let mounted = true;
-    load()
-      .then((res) => {
-        if (mounted) setVal(res.presets);
-      })
-      .catch(() => {
-        /* keep cached value */
-      });
-    const subscriber = (res: ProjectConfigResponse) => setVal(res.presets);
-    subscribers.add(subscriber);
-    return () => {
-      mounted = false;
-      subscribers.delete(subscriber);
-    };
-  }, []);
-  return val;
-}
-
-// Project mode is global server state, not a local UI preference. Publish the
-// PUT response through the same shared cache used by every mode-dependent
-// component so TopBar, Articles, and translation review UI update immediately.
-export async function selectProjectPreset(preset: string): Promise<ProjectConfig> {
-  const res = await api.putProjectConfig(preset);
-  publish({
-    config: res.config,
-    presets: cache?.presets ?? [],
-  });
-  return res.config;
-}
-
 // Persist the editor/translator mode override (admin only) and publish the
 // updated config through the shared cache so every mode-dependent component
 // (TopBar articles, Preferences memory, translation UI) re-renders at once.
@@ -129,7 +91,8 @@ export async function setProjectMode(
 }
 
 // PR B: apply a custom-gl draft (or any explicit override set) — always sends
-// `overrides` explicitly, unlike selectProjectPreset above.
+// `overrides` explicitly (unlike a preset switch with overrides omitted, which
+// preserves whatever is already stored).
 export async function applyProjectOverrides(
   preset: string,
   overrides: Record<string, unknown> | null,

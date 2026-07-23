@@ -29,7 +29,6 @@ import {
   overrideFieldInitialUrl,
   shouldClearOverrideOnBlur,
   wizardApply409,
-  detectOrg409Key,
   shouldCheckBooks,
   resolveVerifiedSource,
   laneSourceEstablished,
@@ -116,15 +115,6 @@ test("wizardApply409: maps the code (and re-run flag) to the right message + rev
   });
   // Anything else (e.g. lane_busy) → generic, no revert.
   assert.deepEqual(wizardApply409("lane_busy", true), { messageKey: "setup.laneBusy", revert: "none" });
-});
-
-test("detectOrg409Key: same-org lane-source change never shows the recreate-DB message", () => {
-  assert.equal(
-    detectOrg409Key("lane_source_change_requires_migration"),
-    "preferences.detectOrg.laneSourceMigration",
-  );
-  assert.equal(detectOrg409Key("project_not_empty"), "preferences.detectOrg.projectNotEmpty");
-  assert.equal(detectOrg409Key(undefined), "preferences.detectOrg.projectNotEmpty");
 });
 
 test("shouldCheckBooks: only scripture (lit/sim) pull-sources are book-checked", () => {

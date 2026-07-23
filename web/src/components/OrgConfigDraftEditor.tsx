@@ -1,25 +1,13 @@
 import { useState } from "react";
-import {
-  Alert,
-  Chip,
-  FormControlLabel,
-  MenuItem,
-  Stack,
-  Switch,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Stack, TextField } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type InferredOrgConfigResponse } from "../sync/api";
 import {
-  RESOURCE_KEYS,
   UW_UPSTREAM_ORG,
   UW_UPSTREAM_LANG,
   UW_UPSTREAM_REPOS,
   defaultResourceSources,
-  allResourceSources,
   buildTranslationSource,
-  translationSourceOnFor,
   type ResourceKey,
   type ResourceSource,
   type ResourceSourceMap,
@@ -27,12 +15,8 @@ import {
 import { resolveResourceLanguage, type ResolvedResourceLanguage } from "../lib/isoLanguages";
 import { hasUnverifiedOverride, unverifiedOverrideResources } from "../lib/setupWizard";
 
-// The seven repo roles a custom-gl override must carry, in display order.
-export const RESOURCE_ROLES = RESOURCE_KEYS;
-
-// Shared draft-editor state for manifest inference (PR B). Used both by the
-// single-shot OrgDetectionSection in Preferences and by the multi-step Setup
-// wizard, so the override-building logic lives in exactly one place.
+// Shared draft-editor state for manifest inference (PR B), used by the
+// multi-step Setup wizard.
 export interface OrgDraftState {
   org: string;
   setOrg: (v: string) => void;
@@ -43,14 +27,6 @@ export interface OrgDraftState {
   /** Editable resolved repo per role (verified prefilled, ambiguous picked). */
   repos: Record<string, string>;
   setRepo: (role: string, v: string) => void;
-  /**
-   * Legacy all-or-nothing translationSource toggle. Backed by `resourceSource`:
-   * reads true when ANY resource is non-blank; setting it flips EVERY resource
-   * to upstream (on) or blank (off). The existing wizard/Preferences UI drives
-   * only this; the per-resource model below lands in the follow-up wizard PR.
-   */
-  translationSourceOn: boolean;
-  setTranslationSourceOn: (v: boolean) => void;
   // ── Per-resource upstream model (owner decision — not yet wired to UI) ──
   /** Upstream org each resource is pulled FROM (single org for all; #84 is per-resource org). */
   upstreamOrg: string;
@@ -82,8 +58,6 @@ export interface OrgDraftState {
   setExportOrg: (v: string) => void;
   /** Run inference for the entered org. */
   detect: () => Promise<void>;
-  /** Clear the draft back to the pre-detection state. */
-  reset: () => void;
   /** True once every missing/ambiguous role is resolved. */
   complete: boolean;
   /** Assemble the custom-gl overrides object for PUT /api/project-config. */
@@ -115,20 +89,9 @@ export function useOrgDraft(): OrgDraftState {
   const setResourceSource = (key: ResourceKey, sel: ResourceSource) =>
     setResourceSourceState((s) => ({ ...s, [key]: sel }));
 
-  const translationSourceOn = translationSourceOnFor(resourceSource);
-  const setTranslationSourceOn = (v: boolean) =>
-    setResourceSourceState(allResourceSources(v ? "upstream" : "blank"));
-
   const seedResourceLanguage = (uiLangCode: string) =>
     setResourceLang(resolveResourceLanguage(draft?.proposal ?? null, uiLangCode));
   const setResourceLanguage = (lang: ResolvedResourceLanguage | null) => setResourceLang(lang);
-
-  const reset = () => {
-    setDraft(null);
-    setDetectError(null);
-    setRepos({});
-    setResourceLang(null);
-  };
 
   const detect = async () => {
     const trimmed = org.trim();
@@ -205,8 +168,6 @@ export function useOrgDraft(): OrgDraftState {
     detectError,
     repos,
     setRepo,
-    translationSourceOn,
-    setTranslationSourceOn,
     upstreamOrg,
     setUpstreamOrg,
     upstreamLanguageCode,
@@ -226,76 +187,9 @@ export function useOrgDraft(): OrgDraftState {
     exportOrg,
     setExportOrg,
     detect,
-    reset,
     complete,
     buildOverrides,
   };
-}
-
-// Renders the per-role rows (verified read-only, ambiguous select, missing
-// warning), the translationSource toggle, and the export-org field. Presentation
-// only — all state lives in the shared `useOrgDraft` instance passed in.
-export function OrgDraftFields({ state }: { state: OrgDraftState }) {
-  const { t } = useTranslation();
-  const { draft, repos, setRepo, translationSourceOn, setTranslationSourceOn, exportOrg, setExportOrg } = state;
-  if (!draft) return null;
-  return (
-    <Stack spacing={1}>
-      {!draft.manifestFound && (
-        <Alert severity="warning" variant="outlined">
-          {t("preferences.detectOrg.manifestMissing")}
-        </Alert>
-      )}
-      {RESOURCE_ROLES.map((role) => {
-        const verified = draft.proposal.repos[role];
-        const ambiguous = draft.ambiguous.find((a) => a.role === role);
-        const missing = draft.missing.includes(role);
-        return (
-          <Stack key={role} direction="row" spacing={1} alignItems="center">
-            <Chip size="small" label={role} sx={{ width: 48 }} />
-            {verified ? (
-              <Typography variant="body2">{verified}</Typography>
-            ) : ambiguous ? (
-              <TextField
-                select
-                size="small"
-                value={repos[role] ?? ""}
-                onChange={(e) => setRepo(role, e.target.value)}
-                sx={{ minWidth: 200 }}
-                helperText={t("preferences.detectOrg.ambiguousRole")}
-              >
-                {ambiguous.candidates.map((cand) => (
-                  <MenuItem key={cand} value={cand}>
-                    {cand}
-                  </MenuItem>
-                ))}
-              </TextField>
-            ) : missing ? (
-              <Typography variant="body2" color="error.main">
-                {t("preferences.detectOrg.missingRoles")}
-              </Typography>
-            ) : null}
-          </Stack>
-        );
-      })}
-      <FormControlLabel
-        control={
-          <Switch
-            size="small"
-            checked={translationSourceOn}
-            onChange={(_, v) => setTranslationSourceOn(v)}
-          />
-        }
-        label={t("preferences.detectOrg.translationSourceToggle")}
-      />
-      <TextField
-        size="small"
-        label={t("preferences.detectOrg.exportOrgLabel")}
-        value={exportOrg}
-        onChange={(e) => setExportOrg(e.target.value)}
-      />
-    </Stack>
-  );
 }
 
 // The two lane repo fields (lit/sim), editable. Used by the wizard's
