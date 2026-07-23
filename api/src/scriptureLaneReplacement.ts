@@ -16,6 +16,7 @@ import {
   configHash,
   copyBookForward,
   getLaneState,
+  laneScriptureResource,
   parseLaneConfig,
   planReplacementBooks,
   recoverOrphanedReservation,
@@ -751,6 +752,14 @@ export async function cancelReplacement(
  * active_generation or active_config_json. gen-1 content is never overwritten;
  * the active config already holds the prior source, so clearing the freeze
  * simply re-exposes it.
+ *
+ * Also deletes whatever this job already staged into its OWN generation
+ * (issue #102): a cancelled job's generation is exclusively its own — nothing
+ * else reads or writes `source_generation = job.generation` — so it's safe to
+ * unconditionally sweep `verses` / `book_usfm_meta` / `book_resource_syncs` for
+ * that generation, rather than dropping only what a live per-book claim token
+ * would gate (stageBook/copyBookForward guard mid-flight writes that way, but
+ * here the whole job is being abandoned).
  */
 export async function backOutReplacement(
   env: Env,
@@ -764,6 +773,10 @@ export async function backOutReplacement(
     throw Object.assign(new Error("job_terminal"), { status: 409, detail: { status: job.status } });
   }
   if (job.status === "cancelled") return; // idempotent
+
+  const lane = job.lane as LaneKey;
+  const bv = bibleVersionForLane(lane);
+  const scriptureResource = laneScriptureResource(lane);
 
   await env.DB.batch([
     env.DB.prepare(
@@ -784,6 +797,19 @@ export async function backOutReplacement(
               updated_at = unixepoch()
         WHERE lane = ?1 AND replacement_job_id = ?2`,
     ).bind(job.lane, jobId),
+    // Sweep whatever was staged into this (now-abandoned) generation. Scoped by
+    // bible_version/source_generation alone — this generation belongs solely to
+    // this job, so no claim-token gate is needed the way stageBook's mid-flight
+    // deletes require.
+    env.DB.prepare(
+      `DELETE FROM verses WHERE bible_version = ?1 AND source_generation = ?2`,
+    ).bind(bv, job.generation),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta WHERE bible_version = ?1 AND source_generation = ?2`,
+    ).bind(bv, job.generation),
+    env.DB.prepare(
+      `DELETE FROM book_resource_syncs WHERE resource = ?1 AND source_generation = ?2`,
+    ).bind(scriptureResource, job.generation),
   ]);
 }
 
