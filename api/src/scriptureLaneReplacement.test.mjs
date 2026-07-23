@@ -102,6 +102,19 @@ CREATE TABLE book_usfm_meta (
   PRIMARY KEY (book, bible_version, source_generation)
 );
 
+CREATE TABLE book_resource_syncs (
+  book TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  source_generation INTEGER NOT NULL DEFAULT 1,
+  source_owner TEXT NOT NULL DEFAULT 'unfoldingWord',
+  source_repo TEXT NOT NULL DEFAULT '',
+  source_ref TEXT NOT NULL DEFAULT 'master',
+  source_sha TEXT,
+  synced_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  origin TEXT NOT NULL,
+  PRIMARY KEY (book, resource, source_generation, source_owner, source_repo, source_ref)
+);
+
 CREATE TABLE scripture_export_leases (
   lease_id TEXT PRIMARY KEY,
   lane TEXT NOT NULL CHECK (lane IN ('lit', 'sim')),
@@ -667,7 +680,34 @@ function d1Batch(db, fns) {
   seedBookRow(db, "job-backout", "ZEC", "artifact_ok");
   seedBookRow(db, "job-backout", "MAL", "retryable_error");
 
-  // Simulate backOutReplacement's batch.
+  // gen-1 (predecessor, must survive) + gen-2 (this job's staged rows, must be
+  // swept — issue #102: back-out left these orphaned).
+  db.prepare(`
+    INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json, created_by_job_id)
+    VALUES ('ZEC', 1, 1, 'ULT', 1, '{}', NULL)
+  `).run();
+  db.prepare(`
+    INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json, created_by_job_id)
+    VALUES ('ZEC', 1, 1, 'ULT', 2, '{}', 'job-backout')
+  `).run();
+  db.prepare(`
+    INSERT INTO book_usfm_meta (book, bible_version, source_generation, headers_json, created_by_job_id)
+    VALUES ('ZEC', 'ULT', 1, '{}', NULL)
+  `).run();
+  db.prepare(`
+    INSERT INTO book_usfm_meta (book, bible_version, source_generation, headers_json, created_by_job_id)
+    VALUES ('ZEC', 'ULT', 2, '{}', 'job-backout')
+  `).run();
+  db.prepare(`
+    INSERT INTO book_resource_syncs (book, resource, source_generation, origin)
+    VALUES ('ZEC', 'ult', 1, 'import')
+  `).run();
+  db.prepare(`
+    INSERT INTO book_resource_syncs (book, resource, source_generation, origin)
+    VALUES ('ZEC', 'ult', 2, 'import')
+  `).run();
+
+  // Simulate backOutReplacement's batch (incl. the #102 staged-row sweep).
   d1Batch(db, [
     () => db.prepare(`
       UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
@@ -683,6 +723,15 @@ function d1Batch(db, fns) {
             updated_at = unixepoch()
       WHERE lane = ?1 AND replacement_job_id = ?2
     `).run("lit", "job-backout"),
+    () => db.prepare(`
+      DELETE FROM verses WHERE bible_version = ?1 AND source_generation = ?2
+    `).run("ULT", 2),
+    () => db.prepare(`
+      DELETE FROM book_usfm_meta WHERE bible_version = ?1 AND source_generation = ?2
+    `).run("ULT", 2),
+    () => db.prepare(`
+      DELETE FROM book_resource_syncs WHERE resource = ?1 AND source_generation = ?2
+    `).run("ult", 2),
   ]);
 
   const lane = getLane(db, "lit");
@@ -697,7 +746,36 @@ function d1Batch(db, fns) {
   const job = getJob(db, "job-backout");
   assert.equal(job.status, "cancelled");
   assert.ok(job.completed_at, "completed_at timestamp set");
+
+  const gen1Verse = db.prepare(
+    `SELECT 1 FROM verses WHERE book='ZEC' AND bible_version='ULT' AND source_generation=1`,
+  ).get();
+  const gen2Verse = db.prepare(
+    `SELECT 1 FROM verses WHERE book='ZEC' AND bible_version='ULT' AND source_generation=2`,
+  ).get();
+  assert.ok(gen1Verse, "gen-1 verse survives back-out");
+  assert.equal(gen2Verse, undefined, "gen-2 staged verse swept on back-out (issue #102)");
+
+  const gen1Meta = db.prepare(
+    `SELECT 1 FROM book_usfm_meta WHERE book='ZEC' AND bible_version='ULT' AND source_generation=1`,
+  ).get();
+  const gen2Meta = db.prepare(
+    `SELECT 1 FROM book_usfm_meta WHERE book='ZEC' AND bible_version='ULT' AND source_generation=2`,
+  ).get();
+  assert.ok(gen1Meta, "gen-1 book_usfm_meta survives back-out");
+  assert.equal(gen2Meta, undefined, "gen-2 staged book_usfm_meta swept on back-out (issue #102)");
+
+  const gen1Sync = db.prepare(
+    `SELECT 1 FROM book_resource_syncs WHERE book='ZEC' AND resource='ult' AND source_generation=1`,
+  ).get();
+  const gen2Sync = db.prepare(
+    `SELECT 1 FROM book_resource_syncs WHERE book='ZEC' AND resource='ult' AND source_generation=2`,
+  ).get();
+  assert.ok(gen1Sync, "gen-1 book_resource_syncs survives back-out");
+  assert.equal(gen2Sync, undefined, "gen-2 staged book_resource_syncs swept on back-out (issue #102)");
+
   console.log("  ✓ back-out clears replacement_required + pendingTarget, reverts to prior source");
+  console.log("  ✓ back-out sweeps orphaned gen-2 verses/book_usfm_meta/book_resource_syncs (#102)");
 }
 
 // ── 8. BSOJ: replacement_required blocks normal reads ───────────────────────
