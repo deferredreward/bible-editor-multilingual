@@ -1621,19 +1621,10 @@ export const api = {
   // translationSource). Readable by any authenticated user; drives the
   // translation-mode UI gate. Fetched once per session by useProjectConfig.
   getProjectConfig: () => request<ProjectConfigResponse>(`/api/project-config`),
-  // Switch the global project preset. `overrides` is intentionally omitted so
-  // the server preserves any existing custom repos/labels/panes/direction — a
-  // preset switch must not silently erase them. (Pass overrides: null only for
-  // an explicit reset flow, which this selector doesn't offer.)
-  putProjectConfig: (preset: string) =>
-    request<{ config: ProjectConfig }>(`/api/project-config`, {
-      method: "PUT",
-      body: JSON.stringify({ preset }),
-    }),
   // PR B: apply a full override set (custom-gl activation, or any explicit
-  // org/repo/translationSource change). Unlike putProjectConfig above, this
-  // always supplies `overrides` explicitly — the server's override-lifecycle
-  // rule only preserves stored overrides when the field is OMITTED.
+  // org/repo/translationSource change). Always supplies `overrides`
+  // explicitly — the server's override-lifecycle rule only preserves stored
+  // overrides when the field is OMITTED.
   putProjectConfigWithOverrides: (preset: string, overrides: Record<string, unknown> | null) =>
     request<{ config: ProjectConfig }>(`/api/project-config`, {
       method: "PUT",

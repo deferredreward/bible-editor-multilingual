@@ -1,18 +1,8 @@
 import { useState } from "react";
-import {
-  Alert,
-  Chip,
-  FormControlLabel,
-  MenuItem,
-  Stack,
-  Switch,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Stack, TextField } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type InferredOrgConfigResponse } from "../sync/api";
 import {
-  RESOURCE_KEYS,
   UW_UPSTREAM_ORG,
   UW_UPSTREAM_LANG,
   UW_UPSTREAM_REPOS,
@@ -26,9 +16,6 @@ import {
 } from "../lib/orgDraft";
 import { resolveResourceLanguage, type ResolvedResourceLanguage } from "../lib/isoLanguages";
 import { hasUnverifiedOverride, unverifiedOverrideResources } from "../lib/setupWizard";
-
-// The seven repo roles a custom-gl override must carry, in display order.
-export const RESOURCE_ROLES = RESOURCE_KEYS;
 
 // Shared draft-editor state for manifest inference (PR B). Used both by the
 // single-shot OrgDetectionSection in Preferences and by the multi-step Setup
@@ -230,72 +217,6 @@ export function useOrgDraft(): OrgDraftState {
     complete,
     buildOverrides,
   };
-}
-
-// Renders the per-role rows (verified read-only, ambiguous select, missing
-// warning), the translationSource toggle, and the export-org field. Presentation
-// only — all state lives in the shared `useOrgDraft` instance passed in.
-export function OrgDraftFields({ state }: { state: OrgDraftState }) {
-  const { t } = useTranslation();
-  const { draft, repos, setRepo, translationSourceOn, setTranslationSourceOn, exportOrg, setExportOrg } = state;
-  if (!draft) return null;
-  return (
-    <Stack spacing={1}>
-      {!draft.manifestFound && (
-        <Alert severity="warning" variant="outlined">
-          {t("preferences.detectOrg.manifestMissing")}
-        </Alert>
-      )}
-      {RESOURCE_ROLES.map((role) => {
-        const verified = draft.proposal.repos[role];
-        const ambiguous = draft.ambiguous.find((a) => a.role === role);
-        const missing = draft.missing.includes(role);
-        return (
-          <Stack key={role} direction="row" spacing={1} alignItems="center">
-            <Chip size="small" label={role} sx={{ width: 48 }} />
-            {verified ? (
-              <Typography variant="body2">{verified}</Typography>
-            ) : ambiguous ? (
-              <TextField
-                select
-                size="small"
-                value={repos[role] ?? ""}
-                onChange={(e) => setRepo(role, e.target.value)}
-                sx={{ minWidth: 200 }}
-                helperText={t("preferences.detectOrg.ambiguousRole")}
-              >
-                {ambiguous.candidates.map((cand) => (
-                  <MenuItem key={cand} value={cand}>
-                    {cand}
-                  </MenuItem>
-                ))}
-              </TextField>
-            ) : missing ? (
-              <Typography variant="body2" color="error.main">
-                {t("preferences.detectOrg.missingRoles")}
-              </Typography>
-            ) : null}
-          </Stack>
-        );
-      })}
-      <FormControlLabel
-        control={
-          <Switch
-            size="small"
-            checked={translationSourceOn}
-            onChange={(_, v) => setTranslationSourceOn(v)}
-          />
-        }
-        label={t("preferences.detectOrg.translationSourceToggle")}
-      />
-      <TextField
-        size="small"
-        label={t("preferences.detectOrg.exportOrgLabel")}
-        value={exportOrg}
-        onChange={(e) => setExportOrg(e.target.value)}
-      />
-    </Stack>
-  );
 }
 
 // The two lane repo fields (lit/sim), editable. Used by the wizard's

@@ -297,15 +297,6 @@ export function wizardApply409(code: string | undefined, sameOrgReRun: boolean):
   return { messageKey: "setup.laneBusy", revert: "none" };
 }
 
-// Preferences' OrgDetectionSection 409 mapping: the same-org populated lane-source
-// change must NOT show the different-org "recreate the database" guidance (that
-// would tell an admin to DESTROY their own data). Branch on the code.
-export function detectOrg409Key(code: string | undefined): string {
-  return code === "lane_source_change_requires_migration"
-    ? "preferences.detectOrg.laneSourceMigration"
-    : "preferences.detectOrg.projectNotEmpty";
-}
-
 // ── Populated-lane source lock (stop the migration 409 loop) ─────────────────
 // The backend rejects a config PUT that changes the source of a POPULATED lane
 // (lane_source_change_requires_migration), comparing the lane's ACTIVE source

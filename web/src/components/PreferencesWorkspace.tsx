@@ -58,10 +58,7 @@ import {
 } from "../sync/api";
 import {
   useProjectConfig,
-  useProjectPresets,
   isTranslationProject,
-  selectProjectPreset,
-  applyProjectOverrides,
   refreshProjectConfig,
 } from "../hooks/useProjectConfig";
 import {
@@ -72,8 +69,7 @@ import {
 } from "../hooks/useTranslationMemory";
 import { bookName } from "../lib/bookNames";
 import { MarkdownView } from "./MarkdownView";
-import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
-import { detectOrg409Key, defaultReplaceSelection } from "../lib/setupWizard";
+import { defaultReplaceSelection } from "../lib/setupWizard";
 import { SetupWizard } from "./SetupWizard";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { UserManagementSection } from "./UserManagementSection";
@@ -326,7 +322,6 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
             // memory pages, where they used to repeat on every section).
             <Stack spacing={3}>
               <SetupWizard />
-              <ProjectModeControl cfg={cfg} role={role} />
               {cfg && <ScriptureLanesSection cfg={cfg} />}
             </Stack>
           ) : section === "localization" && role === "admin" ? (
@@ -984,201 +979,6 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
-  );
-}
-
-function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Role }) {
-  const { t } = useTranslation();
-  const presets = useProjectPresets();
-  const [selected, setSelected] = useState(cfg?.preset ?? "");
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ severity: "success" | "error" | "info"; text: string } | null>(null);
-  const canChange = role === "admin";
-
-  useEffect(() => {
-    if (cfg?.preset) setSelected(cfg.preset);
-  }, [cfg?.preset]);
-
-  const apply = async () => {
-    if (!cfg || !selected || selected === cfg.preset || !canChange) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      await selectProjectPreset(selected);
-      // PUT now returns overlay laneState, but re-fetch so a partial/older
-      // worker response cannot leave the shared cache without lane rows.
-      await refreshProjectConfig().catch(() => {});
-      setMessage({ severity: "success", text: t("preferences.projectModeSaved") });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 403) {
-        setMessage({ severity: "error", text: t("preferences.projectModeForbidden") });
-      } else if (e instanceof ApiError && e.status === 409) {
-        // Two distinct 409s reach here: lane_busy (a real replacement job) and
-        // project_not_empty (the target org already has data). Show the actual
-        // reason — a blanket "replacement in progress" sent people hunting for
-        // a job that doesn't exist.
-        const code = (e.body as { error?: string } | undefined)?.error;
-        setMessage({
-          severity: "error",
-          text:
-            code === "project_not_empty"
-              ? t("preferences.projectModeNotEmpty")
-              : t("preferences.projectModeLaneBusy"),
-        });
-      } else {
-        setMessage({ severity: "error", text: t("preferences.projectModeFailed") });
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Box
-      component="section"
-      aria-labelledby="project-mode-heading"
-      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, mb: 3 }}
-    >
-      <Stack spacing={1.5}>
-        <Box>
-          <Typography id="project-mode-heading" variant="h6">
-            {t("preferences.projectModeTitle")}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {t("preferences.projectModeIntro")}
-          </Typography>
-        </Box>
-        {!cfg ? (
-          <CircularProgress size={22} />
-        ) : (
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "flex-start" }}>
-            <TextField
-              select
-              size="small"
-              label={t("preferences.projectModeLabel")}
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-              disabled={!canChange || saving || presets.length === 0}
-              sx={{ minWidth: 320 }}
-              helperText={!canChange ? t("preferences.projectModeForbidden") : undefined}
-            >
-              {presets.map((preset) => (
-                <MenuItem key={preset.preset} value={preset.preset}>
-                  {preset.isTranslation
-                    ? t("preferences.translationPreset", {
-                        language: preset.languageTitle,
-                        org: preset.org,
-                      })
-                    : t("preferences.authoringPreset", {
-                        language: preset.languageTitle,
-                        org: preset.org,
-                      })}
-                  {!preset.reposVerified ? ` · ${t("preferences.presetUnverified")}` : ""}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Button
-              variant="contained"
-              onClick={apply}
-              disabled={!canChange || saving || !selected || selected === cfg.preset}
-              startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
-            >
-              {saving ? t("preferences.applyingProjectMode") : t("preferences.applyProjectMode")}
-            </Button>
-          </Stack>
-        )}
-        {canChange && (
-          <Typography variant="caption" color="text.secondary">
-            {t("preferences.projectModeOrgLockHint")}
-          </Typography>
-        )}
-        {message && <Alert severity={message.severity}>{message.text}</Alert>}
-      </Stack>
-      {canChange && <OrgDetectionSection />}
-    </Box>
-  );
-}
-
-// PR B: draft-first manifest inference. Detect an org's repos, complete any
-// missing/ambiguous roles, choose translationSource/exportOrg explicitly, then
-// apply via the custom-gl preset. Applies NOTHING until "Apply" is pressed.
-// The draft state + override-building live in the shared useOrgDraft hook, so
-// this single-shot control and the Setup wizard can never drift apart.
-function OrgDetectionSection() {
-  const { t } = useTranslation();
-  const draft = useOrgDraft();
-  const [applying, setApplying] = useState(false);
-  const [message, setMessage] = useState<{ severity: "success" | "error"; text: string } | null>(null);
-
-  const apply = async () => {
-    if (!draft.complete) return;
-    setApplying(true);
-    setMessage(null);
-    try {
-      await applyProjectOverrides("custom-gl", draft.buildOverrides());
-      await refreshProjectConfig().catch(() => {});
-      setMessage({ severity: "success", text: t("preferences.detectOrg.applied") });
-      draft.reset();
-      draft.setOrg("");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        // Branch on the code: a same-org populated lane-source change now returns
-        // lane_source_change_requires_migration — mapping that to the different-org
-        // "recreate the database" guidance would tell an admin to DESTROY their
-        // own data. Only project_not_empty means "different org, recreate DB".
-        const code = (e.body as { error?: string } | undefined)?.error;
-        setMessage({ severity: "error", text: t(detectOrg409Key(code)) });
-      } else {
-        setMessage({ severity: "error", text: t("preferences.detectOrg.applyFailed") });
-      }
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  return (
-    <Box sx={{ borderTop: "1px dashed", borderColor: "divider", pt: 1.5, mt: 1.5 }}>
-      <Typography variant="subtitle2">{t("preferences.detectOrg.label")}</Typography>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-        <TextField
-          size="small"
-          placeholder="BibleEditorMLTest"
-          value={draft.org}
-          onChange={(e) => draft.setOrg(e.target.value)}
-          disabled={draft.loading}
-        />
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => {
-            setMessage(null);
-            void draft.detect();
-          }}
-          disabled={draft.loading || !draft.org.trim()}
-        >
-          {draft.loading ? <CircularProgress size={16} /> : t("preferences.detectOrg.button")}
-        </Button>
-      </Stack>
-      {draft.detectError && <Alert severity="error" sx={{ mt: 1 }}>{draft.detectError}</Alert>}
-      {draft.draft && (
-        <Box sx={{ mt: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
-          <OrgDraftFields state={draft} />
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-            {t("preferences.detectOrg.laneHint")}
-          </Typography>
-          <Box sx={{ mt: 1 }}>
-            <Button variant="contained" onClick={apply} disabled={!draft.complete || applying}>
-              {applying ? t("preferences.detectOrg.applying") : t("preferences.detectOrg.apply")}
-            </Button>
-          </Box>
-        </Box>
-      )}
-      {message && (
-        <Alert severity={message.severity} sx={{ mt: 1 }} onClose={() => setMessage(null)}>
-          {message.text}
-        </Alert>
-      )}
     </Box>
   );
 }
