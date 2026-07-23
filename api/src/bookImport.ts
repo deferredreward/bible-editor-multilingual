@@ -628,7 +628,17 @@ async function insertMergedNotes(
   renew: () => Promise<void>,
   aquiferInserts: Array<{ run: () => Promise<number> }> = [],
 ): Promise<number> {
-  if (ranges.length === 0) return insert(baseRaw);
+  if (ranges.length === 0) {
+    // No cross-source ranges: the base file is the whole book (Tier 1 fast path).
+    // Still run any aquifer inserts — belt-and-suspenders, since a non-empty
+    // aquiferInserts should always coincide with an aquifer range in `ranges`.
+    let baseOnly = await insert(baseRaw);
+    for (const { run } of aquiferInserts) {
+      await renew();
+      baseOnly += await run();
+    }
+    return baseOnly;
+  }
   // `covered` spans BOTH dcs and aquifer ranges so the base file never re-inserts
   // a chapter a cross-source range owns. Order: base → dcs range files → aquifer
   // ranges last (their id minting reads the ids base+dcs already landed).
