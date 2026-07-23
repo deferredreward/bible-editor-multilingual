@@ -28,7 +28,7 @@
 //   DEV_AUTH_ENABLED + localhost gated) and viewers must be able to hold a
 //   session.
 import type { Context, MiddlewareHandler } from "hono";
-import { currentUserId, currentUserRole } from "./auth.ts";
+import { currentUserId, currentUserRole, isSuperAdmin } from "./auth.ts";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -54,6 +54,15 @@ export const blockViewerWrites: MiddlewareHandler = async (c: Context, next) => 
   if (currentUserId(c) === null) return next(); // anonymous → per-route 401
   const role = currentUserRole(c);
   if (role === "admin" || role === "editor") return next();
+  // Super admins are privileged everywhere and manage super-admin-gated routes
+  // (e.g. the spare-pool endpoints in workspaceRoutes.ts) that gate on
+  // isSuperAdmin, NOT on the JWT role claim. They normally mint as role=admin
+  // and pass above, but a stale viewer-role token (e.g. added to SUPER_ADMINS
+  // after minting, before refresh) must not be blocked here ahead of the
+  // route's own super-admin gate. isSuperAdmin never grants write access to a
+  // non-super-admin, so this doesn't widen the viewer surface.
+  const username = c.get("username") as string | undefined;
+  if (username && isSuperAdmin(c.env, username)) return next();
   if (isViewerWritable(method, c.req.path)) return next();
   return c.json({ error: "forbidden", reason: "viewer_read_only" }, 403);
 };

@@ -110,6 +110,12 @@ export interface Env {
   // don't need new fields here to be *usable* — this one is just so
   // wrangler-generated types have somewhere to declare a real example.
   DB_MLTEST?: D1Database;
+  // Spare-pool slot binding (issue #81): a pre-provisioned, migrated, empty D1
+  // declared in wrangler.toml and registered as an `available` workspace-
+  // registry row, then claimed for an org at onboard. Like DB_MLTEST this is an
+  // example declaration — the pool lookup resolves bindings by string, so
+  // additional DB_POOL<n> slots are usable without their own field here.
+  DB_POOL1?: D1Database;
 }
 
 // Cron patterns must match the [env.production.triggers] crons list in

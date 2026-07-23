@@ -57,6 +57,21 @@ database_name = "bible_editor_mltest_dev"
 database_id = "52e0b62e-8720-4024-ab4e-2898d2c94ac7"
 migrations_dir = "migrations"
 
+# ── Spare-pool slots (issue #81) ─────────────────────────────────────────────
+# Pre-provisioned, empty, MIGRATED D1 databases declared as native bindings so
+# the hot path stays native (no D1 HTTP API at request time). Each is then
+# registered as an `available` workspace-registry row and claimed for an org at
+# onboard (POST /api/workspaces/pool → /pool/claim; see docs/workspace-pool.md).
+# Uncomment + fill a real database_id per slot to grow the pool (requires a
+# redeploy — native bindings are fixed at deploy time). Keep bindings named
+# DB_POOL<n> so registerPoolSlot's default slug derivation ("pool<n>") applies.
+#
+# [[d1_databases]]
+# binding = "DB_POOL1"
+# database_name = "bible_editor_pool1_dev"
+# database_id = "REPLACE_WITH_wrangler_d1_create_id"
+# migrations_dir = "migrations"
+
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "bible-editor-blobs-dev"
