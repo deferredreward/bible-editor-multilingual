@@ -31,6 +31,7 @@ import {
   replacementSpinnerVisible,
   describeBookError,
   laneModeMatches,
+  defaultReplaceSelection,
 } from "../lib/setupWizard";
 import type { LaneEditMode } from "./LaneTargetModeStep";
 
@@ -166,7 +167,8 @@ export function LaneReplacementDriver({
     try {
       const res = await api.laneAffectedBooks(lane);
       setAffectedBooks(res.books);
-      setSelectedBooks(new Set(res.books)); // default: replace all
+      // Default: replace unedited books, KEEP books with work done (#94).
+      setSelectedBooks(new Set(defaultReplaceSelection(res.books, res.stats)));
       setBookStats(res.stats ?? {});
     } catch {
       setAffectedBooks([]);

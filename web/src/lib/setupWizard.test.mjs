@@ -20,6 +20,7 @@ import {
   unverifiedOverrideResources,
   hasUnverifiedOverride,
   laneModeMatches,
+  defaultReplaceSelection,
   upstreamLanguageOf,
   jobActionable,
   replacementSpinnerVisible,
@@ -304,4 +305,37 @@ test("describeBookError maps sha_unavailable to a not-found location", () => {
   });
   assert.equal(describeBookError(null, src), null);
   assert.equal(describeBookError("", src), null);
+});
+
+// ── defaultReplaceSelection (issue #94 smart default) ────────────────────────
+
+test("defaultReplaceSelection keeps books with work done, replaces the rest", () => {
+  const books = ["GEN", "JOL", "MAL", "OBA"];
+  const stats = {
+    GEN: { verses: 50, edited: 0 },
+    JOL: { verses: 73, edited: 12 }, // edited → keep (excluded)
+    MAL: { verses: 55, edited: 0 },
+    OBA: { verses: 21, edited: 1 }, // edited → keep (excluded)
+  };
+  // Only the unedited books default to replace.
+  assert.deepEqual(defaultReplaceSelection(books, stats), ["GEN", "MAL"]);
+});
+
+test("defaultReplaceSelection: no stats → replace all (unchanged whole-lane default)", () => {
+  const books = ["GEN", "JOL", "MAL"];
+  assert.deepEqual(defaultReplaceSelection(books, undefined), books);
+  assert.deepEqual(defaultReplaceSelection(books, {}), books);
+});
+
+test("defaultReplaceSelection: all books edited → replace none (all kept)", () => {
+  const books = ["JOL", "OBA"];
+  const stats = { JOL: { verses: 73, edited: 1 }, OBA: { verses: 21, edited: 21 } };
+  assert.deepEqual(defaultReplaceSelection(books, stats), []);
+});
+
+test("defaultReplaceSelection: a book missing from stats defaults to replace", () => {
+  // A book with no stats entry is treated as unedited (edited defaults to 0).
+  const books = ["GEN", "JOL"];
+  const stats = { JOL: { verses: 73, edited: 4 } };
+  assert.deepEqual(defaultReplaceSelection(books, stats), ["GEN"]);
 });

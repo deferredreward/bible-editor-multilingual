@@ -156,6 +156,22 @@ export function laneModeMatches(
   return config.textReadOnly === desiredReadOnly && config.alignmentWritable === true;
 }
 
+// Default per-book replace/keep selection for the Change-Source checklist
+// (issue #94). The set returned is the books to REPLACE (stage from the new
+// source) by default; every other affected book is kept (carried forward).
+//
+// Books with work already done — any verse edited by a translator, i.e.
+// stats[book].edited > 0 — default to KEPT (excluded from the returned set) so a
+// plain confirm never overwrites edited/aligned content. Books with no edits
+// (or with no stats available) default to REPLACE, preserving the original
+// whole-lane behavior when the server sends no stats.
+export function defaultReplaceSelection(
+  books: ReadonlyArray<string>,
+  stats?: Record<string, { verses: number; edited: number }>,
+): string[] {
+  return books.filter((b) => ((stats?.[b]?.edited ?? 0) === 0));
+}
+
 // The languageCode a translationSource should carry for a given upstream org:
 // the org's inferred language, falling back to 'en' only when unknown. A
 // non-unfoldingWord upstream must NOT keep 'en' or buildTranslationSource emits

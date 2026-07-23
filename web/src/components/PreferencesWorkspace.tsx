@@ -73,7 +73,7 @@ import {
 import { bookName } from "../lib/bookNames";
 import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
-import { detectOrg409Key } from "../lib/setupWizard";
+import { detectOrg409Key, defaultReplaceSelection } from "../lib/setupWizard";
 import { SetupWizard } from "./SetupWizard";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { UserManagementSection } from "./UserManagementSection";
@@ -568,7 +568,8 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
         .laneAffectedBooks(lane)
         .then((r) => {
           setAffectedBooks(r.books);
-          setSelectedBooks(new Set(r.books)); // default: replace all
+          // Default: replace unedited books, KEEP books with work done (#94).
+          setSelectedBooks(new Set(defaultReplaceSelection(r.books, r.stats)));
           setBookStats(r.stats ?? {});
         })
         .catch(() => {
