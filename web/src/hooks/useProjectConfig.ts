@@ -91,7 +91,8 @@ export async function setProjectMode(
 }
 
 // PR B: apply a custom-gl draft (or any explicit override set) — always sends
-// `overrides` explicitly, unlike selectProjectPreset above.
+// `overrides` explicitly (unlike a preset switch with overrides omitted, which
+// preserves whatever is already stored).
 export async function applyProjectOverrides(
   preset: string,
   overrides: Record<string, unknown> | null,

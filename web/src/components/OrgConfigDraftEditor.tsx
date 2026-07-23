@@ -17,9 +17,8 @@ import {
 import { resolveResourceLanguage, type ResolvedResourceLanguage } from "../lib/isoLanguages";
 import { hasUnverifiedOverride, unverifiedOverrideResources } from "../lib/setupWizard";
 
-// Shared draft-editor state for manifest inference (PR B). Used both by the
-// single-shot OrgDetectionSection in Preferences and by the multi-step Setup
-// wizard, so the override-building logic lives in exactly one place.
+// Shared draft-editor state for manifest inference (PR B), used by the
+// multi-step Setup wizard.
 export interface OrgDraftState {
   org: string;
   setOrg: (v: string) => void;
