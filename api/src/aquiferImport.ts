@@ -61,7 +61,10 @@ function isTranslatedNote(note: string | null, languageCode: string, enNote: str
 
 const ALPHA = "abcdefghijklmnopqrstuvwxyz";
 const ALNUM = ALPHA + "0123456789";
-function mintId(live: Set<string>): string {
+// Exported for reuse by the per-chapter-range Aquifer import path (bookImport.ts):
+// mint a 4-char sticky id (letter + 3 alnum) not already in `live`, mutating the
+// set. pickId keeps a preferred (inherited en_tn) id when free, else mints.
+export function mintId(live: Set<string>): string {
   for (let tries = 0; tries < 100; tries++) {
     const buf = new Uint8Array(4);
     crypto.getRandomValues(buf);
@@ -71,7 +74,7 @@ function mintId(live: Set<string>): string {
   }
   throw new Error("could not mint a free tn id");
 }
-function pickId(preferred: string | null, live: Set<string>): string {
+export function pickId(preferred: string | null, live: Set<string>): string {
   if (preferred && !live.has(preferred)) { live.add(preferred); return preferred; }
   return mintId(live);
 }

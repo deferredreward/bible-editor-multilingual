@@ -19,10 +19,13 @@ import {
   refParts,
 } from "./importParsers";
 import { requireAuth, requireEditor, requireAdmin, currentUserId, currentUserRole } from "./auth";
-import { aquiferDrafts } from "./aquiferImport.ts";
+import { aquiferDrafts, AQUIFER_SOURCE, pickId } from "./aquiferImport.ts";
+import { convertAquiferBook, type EnRow, type ResolvedNote } from "./aquiferConvert.ts";
+import { aquiferJsonUrl, aquiferLangFor } from "./aquiferSources.ts";
 import {
   BOOK_NUMBERS,
   dcsUrls,
+  dcsRawUrl,
   dcsResourceFile,
   fileCommitSha,
   fetchText,
@@ -43,6 +46,7 @@ import {
   isBookSourceResource,
   WHOLE_BOOK_START,
   WHOLE_BOOK_END,
+  AQUIFER_ORG_SENTINEL,
   type ResolvedSourceRange,
 } from "./bookSource.ts";
 import { populateReferencedArticles } from "./articlePopulate";
@@ -150,6 +154,7 @@ books.put("/:book/sources", requireAdmin, async (c) => {
   if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
   let body: {
     resource?: unknown;
+    kind?: unknown;
     url?: unknown;
     org?: unknown;
     repo?: unknown;
@@ -194,6 +199,36 @@ books.put("/:book/sources", requireAdmin, async (c) => {
     return c.json({ error: "invalid_range" }, 400);
   }
 
+  const userId = currentUserId(c) ?? null;
+
+  // Aquifer variant: no url/org/repo — the aqLang is derived from the project's
+  // language. tN only; a chapter range is required (whole-book Aquifer belongs to
+  // the aquifer-drafts route, which does merge-and-preserve). The stored row is
+  // kind='aquifer', org=sentinel, repo=aqLang.
+  if (body.kind === "aquifer") {
+    if (resource !== "tn") return c.json({ error: "aquifer_tn_only" }, 400);
+    if (!hasStart) return c.json({ error: "aquifer_needs_range" }, 400);
+    const cfg = await getProjectConfig(c.env);
+    const aqLang = aquiferLangFor(cfg.languageCode);
+    if (!aqLang) return c.json({ error: "aquifer_language_unavailable", languageCode: cfg.languageCode }, 400);
+    try {
+      await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, "aquifer", AQUIFER_ORG_SENTINEL, aqLang, userId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "overlapping_range") return c.json({ error: msg }, 409);
+      if (
+        msg === "invalid_range" ||
+        msg === "aquifer_needs_range" ||
+        msg === "aquifer_tn_only" ||
+        msg === "invalid_aquifer_lang"
+      ) {
+        return c.json({ error: msg }, 400);
+      }
+      throw e;
+    }
+    return c.json({ book, resource, chapterStart, chapterEnd, kind: "aquifer", aqLang });
+  }
+
   let org: string;
   let repo: string;
   if (typeof body.url === "string" && body.url.trim()) {
@@ -212,9 +247,8 @@ books.put("/:book/sources", requireAdmin, async (c) => {
   if (!isIdent(org) || !isIdent(repo)) {
     return c.json({ error: "invalid_org_or_repo", org, repo }, 400);
   }
-  const userId = currentUserId(c) ?? null;
   try {
-    await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, org, repo, userId);
+    await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, "dcs", org, repo, userId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === "overlapping_range") return c.json({ error: msg }, 409);
@@ -465,19 +499,80 @@ async function fetchRangeNoteFiles(
 ): Promise<Array<{ range: ResolvedSourceRange; raw: string }>> {
   const out: Array<{ range: ResolvedSourceRange; raw: string }> = [];
   for (const range of ranges) {
-    const urls = dcsUrls(env, cfg, book, { [resource]: range.ref });
+    if (range.source.kind !== "dcs") continue; // aquifer ranges take the JSON path
+    const ref = range.source.ref;
+    const urls = dcsUrls(env, cfg, book, { [resource]: ref });
     if (!urls) throw new Error(`unknown book: ${book}`);
     const url = urls[resource];
     const raw = await fetchText(url);
     if (raw == null) {
       throw new Error(
-        `range source ${range.ref.owner}/${range.ref.repo} has no ${resource} file for ${book} ` +
+        `range source ${ref.owner}/${ref.repo} has no ${resource} file for ${book} ` +
           `(chapters ${range.chapter_start}-${range.chapter_end}): ${url}`,
       );
     }
     out.push({ range, raw });
   }
   return out;
+}
+
+// Aquifer per-chapter-range notes (issue #103 follow-up). Fetches the en_tn
+// skeleton ONCE (via the project's translationSource) plus the Aquifer JSON for
+// the book, converts with the shared converter, and returns each range's notes
+// filtered to its chapters. tN only. A missing translationSource, en_tn file, or
+// Aquifer JSON is a HARD error — never silently fall back to the base source for
+// those chapters (that would import the wrong content and skip the hold-out).
+async function fetchAquiferRangeNotes(
+  env: Env,
+  cfg: ProjectConfig,
+  book: string,
+  ranges: ResolvedSourceRange[],
+): Promise<Array<{ range: ResolvedSourceRange; aqLang: string; notes: ResolvedNote[] }>> {
+  const aquiferRanges = ranges.filter((r) => r.source.kind === "aquifer");
+  if (aquiferRanges.length === 0) return [];
+
+  // en_tn skeleton — the join target Aquifer notes graft onto.
+  const enRef = translationSourceRepoRef(cfg, "tn");
+  if (!enRef) throw new Error("aquifer_requires_translation_source");
+  const enRaw = await fetchText(dcsRawUrl(env, enRef.owner, enRef.repo, `tn_${book}.tsv`));
+  if (enRaw == null) {
+    throw new Error(`aquifer range: en_tn fetch failed for ${book} (${enRef.owner}/${enRef.repo})`);
+  }
+  const enRows: EnRow[] = parseTsv(enRaw).rows
+    .map((r) => ({
+      Reference: r["Reference"] ?? "",
+      ID: r["ID"] ?? "",
+      Tags: r["Tags"] ?? "",
+      SupportReference: r["SupportReference"] ?? "",
+      Quote: r["Quote"] ?? "",
+      Occurrence: r["Occurrence"] ?? "",
+      Note: r["Note"] ?? "",
+    }))
+    .filter((r) => r.ID);
+
+  // All aquifer ranges for a book share the project-derived aqLang; fetch+convert once.
+  const aqLang = aquiferRanges[0].source.kind === "aquifer" ? aquiferRanges[0].source.aqLang : "";
+  const aqUrl = aquiferJsonUrl(aqLang, book);
+  if (!aqUrl) throw new Error(`aquifer range: no Aquifer URL for ${book} (${aqLang})`);
+  const aqRaw = await fetchText(aqUrl);
+  if (aqRaw == null) throw new Error(`aquifer range: Aquifer JSON fetch failed for ${book} (${aqLang}): ${aqUrl}`);
+  let aqItems: unknown;
+  try {
+    aqItems = JSON.parse(aqRaw);
+  } catch {
+    throw new Error(`aquifer range: Aquifer JSON parse failed for ${book} (${aqLang})`);
+  }
+  if (!Array.isArray(aqItems)) throw new Error(`aquifer range: Aquifer JSON shape unexpected for ${book}`);
+
+  const { notes } = convertAquiferBook(aqItems as Parameters<typeof convertAquiferBook>[0], enRows);
+
+  return aquiferRanges.map((range) => {
+    const inRange = notes.filter((n) => {
+      const [ch] = refParts(n.ref);
+      return ch >= range.chapter_start && ch <= range.chapter_end;
+    });
+    return { range, aqLang, notes: inRange };
+  });
 }
 
 // Merge multiple per-chapter source files into one book's note rows (issue #103
@@ -531,13 +626,31 @@ async function insertMergedNotes(
   ranges: ResolvedSourceRange[],
   rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
   renew: () => Promise<void>,
+  aquiferInserts: Array<{ run: () => Promise<number> }> = [],
 ): Promise<number> {
-  if (ranges.length === 0) return insert(baseRaw);
+  if (ranges.length === 0) {
+    // No cross-source ranges: the base file is the whole book (Tier 1 fast path).
+    // Still run any aquifer inserts — belt-and-suspenders, since a non-empty
+    // aquiferInserts should always coincide with an aquifer range in `ranges`.
+    let baseOnly = await insert(baseRaw);
+    for (const { run } of aquiferInserts) {
+      await renew();
+      baseOnly += await run();
+    }
+    return baseOnly;
+  }
+  // `covered` spans BOTH dcs and aquifer ranges so the base file never re-inserts
+  // a chapter a cross-source range owns. Order: base → dcs range files → aquifer
+  // ranges last (their id minting reads the ids base+dcs already landed).
   const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
   let total = await insert(baseRaw, (ch) => !covered(ch));
   for (const { range, raw } of rangeFiles) {
     await renew();
     total += await insert(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+  }
+  for (const { run } of aquiferInserts) {
+    await renew();
+    total += await run();
   }
   return total;
 }
@@ -745,6 +858,12 @@ async function importBookFromDcs(
   const tnRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tn", tnPlan.ranges);
   const tqRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tq", tqPlan.ranges);
 
+  // Aquifer per-chapter ranges (tN only) — fetch + convert BEFORE the wipe so a
+  // missing source fails loudly with no destructive change (same contract as the
+  // DCS range files). tqPlan never carries aquifer ranges (resolveRangeSource
+  // rejects aquifer for tq), so there is no tq equivalent.
+  const tnAquiferRanges = await fetchAquiferRangeNotes(env, cfg, book, tnPlan.ranges);
+
   // Detect cross-source ID collisions BEFORE the destructive wipe (issue #103).
   // The merge inserts base rows + range rows with a bare INSERT; if two source
   // files reuse the same row id (for DIFFERENT chapters) the second insert throws
@@ -904,6 +1023,9 @@ async function importBookFromDcs(
     counts.tn = await insertMergedNotes(
       (raw, filter) => insertTnRows(env, book, raw, userId, litGen, simGen, filter),
       tnRaw, tnPlan.ranges, tnRangeFiles, renewBoth,
+      tnAquiferRanges.map(({ notes, aqLang }) => ({
+        run: () => insertAquiferRangeNotes(env, book, notes, userId, litGen, simGen, aqLang),
+      })),
     );
     await renewBoth();
     counts.tq = await insertMergedNotes(
@@ -1126,6 +1248,87 @@ async function insertTnRows(
         litGen, simGen,
       ),
       auditStmt.bind(id, book, userId, JSON.stringify(payload)),
+    );
+    expected++;
+    if (batch.length >= CHUNK) await flush();
+  }
+  await flush();
+  if (landed !== expected) throw new Error("lane_state_changed_during_import");
+  return landed;
+}
+
+// Insert a chapter range's Aquifer tN notes as unapproved drafts (issue #103
+// follow-up). Mirrors the insert in aquiferImport.ts — translation_state
+// 'ai_draft', draft_meta_json.source='aquifer', review_kind for unverified
+// matches — but runs in the wipe-and-import path (a fresh, empty book) so it does
+// NO dedup/preserve, and it is fenced by bothLanesFreeSql like the other bootstrap
+// inserts. Runs LAST in the merge, so it seeds its id minter from the ids the
+// base + DCS ranges already landed and mints around any collision (an inherited
+// en_tn id can never clash with a base row).
+async function insertAquiferRangeNotes(
+  env: Env,
+  book: string,
+  notes: ResolvedNote[],
+  userId: number,
+  litGen: number,
+  simGen: number,
+  aqLang: string,
+): Promise<number> {
+  if (notes.length === 0) return 0;
+
+  // Live ids for this book (base + dcs ranges already inserted), INCLUDING any
+  // soft-deleted rows — the PK is (book, id) and a tombstone keeps its slot.
+  const usedIds = new Set(
+    ((await env.DB.prepare(`SELECT id FROM tn_rows WHERE book = ?1`).bind(book).all<{ id: string }>()).results ?? [])
+      .map((r) => r.id),
+  );
+
+  const insertStmt = env.DB.prepare(
+    `INSERT INTO tn_rows
+       (id, book, chapter, verse, ref_raw, tags, support_reference, quote, occurrence, note,
+        version, updated_by, updated_at, sort_order, preserve,
+        translation_state, draft_meta_json, pre_draft_json, review_kind, review_reason)
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+        1, ?11, ?12, ?13, 1, 'ai_draft', ?14, ?15, ?16, ?17
+      WHERE ${bothLanesFreeSql("?18", "?19")}`,
+  );
+  const auditStmt = env.DB.prepare(
+    `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
+     SELECT 'tn', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5
+      WHERE changes() > 0`,
+  );
+
+  const now = Math.floor(Date.now() / 1000);
+  const nextSort = makeVerseSortOrder();
+  let expected = 0;
+  let landed = 0;
+  let batch: D1PreparedStatement[] = [];
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const results = await env.DB.batch(batch);
+    for (let i = 0; i < results.length; i += 2) {
+      if ((results[i]?.meta?.changes ?? 0) > 0) landed++;
+    }
+    batch = [];
+  };
+
+  for (const note of notes) {
+    const id = pickId(note.enId, usedIds);
+    const [ch, v] = refParts(note.ref);
+    const draftMeta = JSON.stringify({
+      source: AQUIFER_SOURCE, aqLang, aquiferContentId: note.aquiferContentId, joinMethod: note.joinMethod,
+    });
+    const preDraft = JSON.stringify({ note: "", tags: null });
+    const reviewKind = note.reviewReason ? "aquifer_unverified" : null;
+    batch.push(
+      insertStmt.bind(
+        id, book, ch, v, note.ref,
+        note.tags, note.supportReference, note.quote, note.occurrence, note.note,
+        userId, now, nextSort(ch, v),
+        draftMeta, preDraft, reviewKind, note.reviewReason,
+        litGen, simGen,
+      ),
+      auditStmt.bind(id, book, userId, JSON.stringify({ ref: note.ref, source: AQUIFER_SOURCE }), AQUIFER_SOURCE),
     );
     expected++;
     if (batch.length >= CHUNK) await flush();

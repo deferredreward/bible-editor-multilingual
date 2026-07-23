@@ -27,9 +27,18 @@ import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig";
 import { normalizeSourceRef, translationSourceRepoRef } from "./dcsSources.ts";
 import { isIdent, type RepoRef } from "./repoUrl.ts";
+import { isAquiferLang } from "./aquiferSources.ts";
 
 // Resources that support a per-book/range override. tN + tQ only (see header).
 export type BookSourceResource = "tn" | "tq";
+
+// A range's source kind. 'dcs' → a DCS org/repo (org/repo columns hold idents).
+// 'aquifer' → the Aquifer JSON source (tN only; org is the 'aquifer' sentinel,
+// repo holds the aqLang, e.g. 'arb'). See migration 0062.
+export type SourceKind = "dcs" | "aquifer";
+
+// The 'aquifer' org sentinel stored for an Aquifer range (org/repo are NOT NULL).
+export const AQUIFER_ORG_SENTINEL = "aquifer";
 
 export const BOOK_SOURCE_RESOURCES: readonly BookSourceResource[] = ["tn", "tq"];
 
@@ -50,6 +59,7 @@ export interface BookSourceOverride {
 export interface BookSourceRange {
   chapter_start: number;
   chapter_end: number;
+  kind: SourceKind;
   org: string;
   repo: string;
 }
@@ -98,7 +108,7 @@ export async function getBookSourceRanges(
   try {
     const rs = await env.DB
       .prepare(
-        `SELECT chapter_start, chapter_end, org, repo FROM book_source_overrides
+        `SELECT chapter_start, chapter_end, kind, org, repo FROM book_source_overrides
           WHERE book = ? AND resource = ? ORDER BY chapter_start`,
       )
       .bind(book, resource)
@@ -128,12 +138,20 @@ export async function listBookSourceOverrides(
   env: Env,
   book: string,
 ): Promise<
-  Array<{ resource: string; chapter_start: number; chapter_end: number; org: string; repo: string; updated_at: number }>
+  Array<{
+    resource: string;
+    chapter_start: number;
+    chapter_end: number;
+    kind: string;
+    org: string;
+    repo: string;
+    updated_at: number;
+  }>
 > {
   try {
     const rs = await env.DB
       .prepare(
-        `SELECT resource, chapter_start, chapter_end, org, repo, updated_at
+        `SELECT resource, chapter_start, chapter_end, kind, org, repo, updated_at
            FROM book_source_overrides WHERE book = ? ORDER BY resource, chapter_start`,
       )
       .bind(book)
@@ -141,6 +159,7 @@ export async function listBookSourceOverrides(
         resource: string;
         chapter_start: number;
         chapter_end: number;
+        kind: string;
         org: string;
         repo: string;
         updated_at: number;
@@ -162,24 +181,40 @@ export async function setBookSourceOverride(
   repo: string,
   userId: number | null,
 ): Promise<void> {
-  await setBookSourceRange(env, book, resource, WHOLE_BOOK_START, WHOLE_BOOK_END, org, repo, userId);
+  await setBookSourceRange(env, book, resource, WHOLE_BOOK_START, WHOLE_BOOK_END, "dcs", org, repo, userId);
 }
 
-// Upsert ONE chapter range. Validates idents and the range bounds, and rejects a
-// range that would overlap a DIFFERENT existing range for the same (book,
-// resource) — overlapping ranges make per-chapter resolution ambiguous. A range
-// with the same chapter_start replaces the existing one (ON CONFLICT).
+// Upsert ONE chapter range. Validates the source (per kind) and the range
+// bounds, and rejects a range that would overlap a DIFFERENT existing range for
+// the same (book, resource) — overlapping ranges make per-chapter resolution
+// ambiguous. A range with the same chapter_start replaces the existing one
+// (ON CONFLICT).
+//
+//   kind='dcs'     — org/repo are DCS idents (isIdent, re-validated on read).
+//   kind='aquifer' — tN ONLY, repo holds the aqLang (allowlist-validated), org is
+//                    the 'aquifer' sentinel. A whole-book Aquifer range is
+//                    rejected: whole-book Aquifer belongs to the aquifer-drafts
+//                    route (merge-and-preserve), not the wipe-and-import path.
 export async function setBookSourceRange(
   env: Env,
   book: string,
   resource: BookSourceResource,
   chapterStart: number,
   chapterEnd: number,
+  kind: SourceKind,
   org: string,
   repo: string,
   userId: number | null,
 ): Promise<void> {
-  if (!isIdent(org) || !isIdent(repo)) throw new Error("invalid_org_or_repo");
+  if (kind === "aquifer") {
+    if (resource !== "tn") throw new Error("aquifer_tn_only");
+    if (!isAquiferLang(repo)) throw new Error("invalid_aquifer_lang");
+    if (chapterStart === WHOLE_BOOK_START && chapterEnd === WHOLE_BOOK_END) {
+      throw new Error("aquifer_needs_range");
+    }
+  } else if (!isIdent(org) || !isIdent(repo)) {
+    throw new Error("invalid_org_or_repo");
+  }
   if (
     !Number.isInteger(chapterStart) ||
     !Number.isInteger(chapterEnd) ||
@@ -196,13 +231,13 @@ export async function setBookSourceRange(
   }
   await env.DB
     .prepare(
-      `INSERT INTO book_source_overrides (book, resource, chapter_start, chapter_end, org, repo, updated_at, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?)
+      `INSERT INTO book_source_overrides (book, resource, chapter_start, chapter_end, kind, org, repo, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), ?)
        ON CONFLICT(book, resource, chapter_start) DO UPDATE SET
-         chapter_end = excluded.chapter_end, org = excluded.org, repo = excluded.repo,
+         chapter_end = excluded.chapter_end, kind = excluded.kind, org = excluded.org, repo = excluded.repo,
          updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
     )
-    .bind(book, resource, chapterStart, chapterEnd, org, repo, userId)
+    .bind(book, resource, chapterStart, chapterEnd, kind, org, repo, userId)
     .run();
 }
 
@@ -281,13 +316,44 @@ export async function resolveBookNoteSourceRef(
   return resolveEffectiveNoteSource(cfg, resource, raw, translateFromSource);
 }
 
-// A resolved cross-org source for a chapter range: only ranges whose override
-// genuinely points at a DIFFERENT repo than the base source survive here (the
-// org's-own no-op and non-ident guards happen in resolveEffectiveNoteSource).
+// A resolved note source for a chapter range: either a DCS repo ref or the
+// Aquifer JSON source (identified by its aqLang). A discriminated union so the
+// import path can branch: fetch-a-TSV (dcs) vs fetch-JSON-and-convert (aquifer).
+export type ResolvedNoteSource =
+  | { kind: "dcs"; ref: RepoRef }
+  | { kind: "aquifer"; aqLang: string };
+
+// Resolve ONE stored range to its effective note source, or null if the range
+// does not point at a genuine cross-source (org's-own no-op, non-ident DCS ref,
+// invalid/ineligible Aquifer range). translateFromSource is intentionally false:
+// a range override is explicit and flag-independent.
+//
+// SECURITY: dcs goes through resolveEffectiveNoteSource (normalizeSourceRef
+// re-validation); aquifer bypasses that cleanly — it has no org/repo — but its
+// aqLang is allowlist-validated (isAquiferLang) so it can never become a
+// path-traversal in aquiferJsonUrl.
+export function resolveRangeSource(
+  cfg: ProjectConfig,
+  resource: BookSourceResource,
+  range: { kind: SourceKind; org: string; repo: string },
+): ResolvedNoteSource | null {
+  if (range.kind === "aquifer") {
+    // Aquifer is tN-only and never the org's own repo → always a cross-source.
+    if (resource !== "tn") return null;
+    if (!isAquiferLang(range.repo)) return null;
+    return { kind: "aquifer", aqLang: range.repo };
+  }
+  const ref = resolveEffectiveNoteSource(cfg, resource, { org: range.org, repo: range.repo }, false);
+  return ref ? { kind: "dcs", ref } : null;
+}
+
+// A resolved cross-source range: only ranges whose override genuinely points at a
+// DIFFERENT source than the base survive here (the org's-own no-op / non-ident /
+// invalid-aquifer guards happen in resolveRangeSource).
 export interface ResolvedSourceRange {
   chapter_start: number;
   chapter_end: number;
-  ref: RepoRef;
+  source: ResolvedNoteSource;
 }
 
 // The import/reimport/export plan for a book's note resource:
@@ -309,13 +375,16 @@ export function planNoteSourcesFromRanges(
   const resolved: ResolvedSourceRange[] = [];
   let wholeBookBase: RepoRef | null = null;
   for (const r of ranges) {
-    const ref = resolveEffectiveNoteSource(cfg, resource, { org: r.org, repo: r.repo }, translateFromSource);
-    if (!ref) continue; // non-ident or org's-own no-op → not a cross-org range
+    const source = resolveRangeSource(cfg, resource, r);
+    if (!source) continue; // non-ident / org's-own no-op / invalid aquifer → skip
     if (isWholeBook(r)) {
-      wholeBookBase = ref; // a whole-book override replaces the base entirely
+      // A whole-book DCS override replaces the base entirely (Tier 1). Aquifer is
+      // never a base (it can't be the project-wide fallback and is write-rejected
+      // whole-book) — skip defensively.
+      if (source.kind === "dcs") wholeBookBase = source.ref;
       continue;
     }
-    resolved.push({ chapter_start: r.chapter_start, chapter_end: r.chapter_end, ref });
+    resolved.push({ chapter_start: r.chapter_start, chapter_end: r.chapter_end, source });
   }
   resolved.sort((a, b) => a.chapter_start - b.chapter_start);
   return { base: wholeBookBase ?? base, ranges: resolved };
@@ -332,14 +401,14 @@ export async function planBookNoteSources(
   return planNoteSourcesFromRanges(cfg, resource, ranges, translateFromSource);
 }
 
-// The cross-org RepoRef for a specific CHAPTER, or null if that chapter falls to
-// the base source. Used by reimport/export to decide per-chapter hold-out.
+// The cross-source for a specific CHAPTER, or null if that chapter falls to the
+// base source. Used by reimport/export to decide per-chapter hold-out.
 export function sourceRefForChapter(
   plan: { base: RepoRef | null; ranges: ResolvedSourceRange[] },
   chapter: number,
-): RepoRef | null {
+): ResolvedNoteSource | null {
   for (const r of plan.ranges) {
-    if (rangeCoversChapter(r, chapter)) return r.ref;
+    if (rangeCoversChapter(r, chapter)) return r.source;
   }
   return null;
 }
@@ -379,8 +448,8 @@ export function heldOutChaptersFromRanges(
   if (marker) return { all: true };
   const out: Array<{ start: number; end: number }> = [];
   for (const r of ranges) {
-    const ref = resolveEffectiveNoteSource(cfg, resource, { org: r.org, repo: r.repo }, false);
-    if (!ref) continue; // org's-own no-op or non-ident → not held out
+    const source = resolveRangeSource(cfg, resource, r);
+    if (!source) continue; // org's-own no-op / non-ident / invalid aquifer → not held out
     if (isWholeBook(r)) return { all: true };
     out.push({ start: r.chapter_start, end: r.chapter_end });
   }
