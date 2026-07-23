@@ -73,12 +73,24 @@ curl -X POST https://<dev-worker>/api/workspaces/pool/claim \
   slot (HTTP 200, `alreadyClaimed: true`) and consumes nothing.
 - `503 pool_exhausted` when no live `available` slot remains — add capacity.
 
-**Auto-claiming at first admin login (the OAuth-callback wiring) is PR-3.** This
-endpoint is the seam it will reuse (`claimWorkspace` in `workspaces.ts`).
+## Auto-claim at first admin login (PR-3)
+
+Implemented in `api/src/workspaceProvision.ts`, wired into the OAuth callback
+(`callbackDcsAuth` in `auth.ts`). When a sign-in resolves to **no** workspace
+(the user matches no configured org) and the user is a **BE-Admins** admin of one
+of their Door43 orgs that has no workspace yet, the callback claims a spare-pool
+slot for that org and re-resolves — landing them in a freshly provisioned
+workspace as admin instead of the denied screen. It never breaks sign-in: if the
+pool is exhausted, DCS is unreachable, or the user isn't an admin, it falls
+through to the existing behavior (and logs `spare pool is exhausted` so you know
+to add capacity). Only the first unclaimed admin org is claimed per login.
+
+The manual `POST /api/workspaces/pool/claim` above still works for onboarding an
+org whose admin hasn't logged in yet, or for a super-admin provisioning ahead of
+time.
 
 ## Not yet built (later PRs of #81)
 
-- PR-3: auto-claim at first admin login (BE-Admins team member of an unclaimed org).
 - Dynamic DB creation via the D1 HTTP API + a runtime migration runner (to make
   step 1–2 above a super-admin/cron action instead of a manual wrangler run; the
   binding declaration + redeploy in step 3–4 remain inherent to native bindings).

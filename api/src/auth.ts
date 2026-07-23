@@ -38,6 +38,7 @@ import {
   WORKSPACE_COOKIE,
 } from "./workspaces.ts";
 import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
+import { autoClaimAdminOrg } from "./workspaceProvision.ts";
 
 // Isolate-level memoization for ensureWorkspaceUser (below), keyed
 // `${WORKSPACE_SLUG}:${userId}` — once mirrored this isolate, never repeat
@@ -723,6 +724,38 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
         memberOrgs,
         roleSlugs,
       });
+    }
+  }
+  // Auto-provision on first admin login (issue #81, PR-3): still no workspace
+  // match, but the user is a Door43 admin (BE-Admins) of one of their orgs that
+  // has no workspace yet. Claim a spare-pool slot for it and re-resolve so they
+  // land in their freshly provisioned workspace instead of the denied screen.
+  // Everything downstream (team sync, allowlist gate, project_config seed) then
+  // runs against the new wsEnv. NEVER breaks sign-in — any failure leaves the
+  // resolution untouched and the pre-existing deny path stands.
+  if (resolution.reason === "no_match") {
+    try {
+      const claimed = await autoClaimAdminOrg(c.env, {
+        accessToken,
+        memberOrgs,
+        existingOrgs: new Set(workspaces.map((w) => w.org.toLowerCase())),
+      });
+      if (claimed) {
+        // claimWorkspace re-primed this isolate's registry cache, so the
+        // refreshed roster includes the just-claimed workspace.
+        resolution = resolveLoginWorkspace({
+          workspaces: listWorkspaces(c.env),
+          cookieSlug,
+          lastUsedSlug,
+          memberOrgs,
+          roleSlugs,
+        });
+      }
+    } catch (e) {
+      console.warn(
+        "[workspaces] auto-claim on admin login failed",
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
   const wsEnv = workspaceEnv(c.env, resolution.workspace);
