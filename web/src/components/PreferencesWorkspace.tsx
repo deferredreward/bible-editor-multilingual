@@ -317,8 +317,8 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
               switch orgs; it self-fetches and renders read-only for single-org. */}
           <WorkspaceSwitcher variant="expanded" />
           {section === "setup" && role === "admin" ? (
-            // Setup is the single home for project configuration — the mode
-            // selector + scripture-lane controls live here (moved out of the
+            // Setup is the single home for project configuration — the Setup
+            // wizard + scripture-lane controls live here (moved out of the
             // memory pages, where they used to repeat on every section).
             <Stack spacing={3}>
               <SetupWizard />

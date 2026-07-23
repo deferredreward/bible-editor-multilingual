@@ -7,9 +7,7 @@ import {
   UW_UPSTREAM_LANG,
   UW_UPSTREAM_REPOS,
   defaultResourceSources,
-  allResourceSources,
   buildTranslationSource,
-  translationSourceOnFor,
   type ResourceKey,
   type ResourceSource,
   type ResourceSourceMap,
@@ -29,14 +27,6 @@ export interface OrgDraftState {
   /** Editable resolved repo per role (verified prefilled, ambiguous picked). */
   repos: Record<string, string>;
   setRepo: (role: string, v: string) => void;
-  /**
-   * Legacy all-or-nothing translationSource toggle. Backed by `resourceSource`:
-   * reads true when ANY resource is non-blank; setting it flips EVERY resource
-   * to upstream (on) or blank (off). The existing wizard/Preferences UI drives
-   * only this; the per-resource model below lands in the follow-up wizard PR.
-   */
-  translationSourceOn: boolean;
-  setTranslationSourceOn: (v: boolean) => void;
   // ── Per-resource upstream model (owner decision — not yet wired to UI) ──
   /** Upstream org each resource is pulled FROM (single org for all; #84 is per-resource org). */
   upstreamOrg: string;
@@ -68,8 +58,6 @@ export interface OrgDraftState {
   setExportOrg: (v: string) => void;
   /** Run inference for the entered org. */
   detect: () => Promise<void>;
-  /** Clear the draft back to the pre-detection state. */
-  reset: () => void;
   /** True once every missing/ambiguous role is resolved. */
   complete: boolean;
   /** Assemble the custom-gl overrides object for PUT /api/project-config. */
@@ -101,20 +89,9 @@ export function useOrgDraft(): OrgDraftState {
   const setResourceSource = (key: ResourceKey, sel: ResourceSource) =>
     setResourceSourceState((s) => ({ ...s, [key]: sel }));
 
-  const translationSourceOn = translationSourceOnFor(resourceSource);
-  const setTranslationSourceOn = (v: boolean) =>
-    setResourceSourceState(allResourceSources(v ? "upstream" : "blank"));
-
   const seedResourceLanguage = (uiLangCode: string) =>
     setResourceLang(resolveResourceLanguage(draft?.proposal ?? null, uiLangCode));
   const setResourceLanguage = (lang: ResolvedResourceLanguage | null) => setResourceLang(lang);
-
-  const reset = () => {
-    setDraft(null);
-    setDetectError(null);
-    setRepos({});
-    setResourceLang(null);
-  };
 
   const detect = async () => {
     const trimmed = org.trim();
@@ -191,8 +168,6 @@ export function useOrgDraft(): OrgDraftState {
     detectError,
     repos,
     setRepo,
-    translationSourceOn,
-    setTranslationSourceOn,
     upstreamOrg,
     setUpstreamOrg,
     upstreamLanguageCode,
@@ -212,7 +187,6 @@ export function useOrgDraft(): OrgDraftState {
     exportOrg,
     setExportOrg,
     detect,
-    reset,
     complete,
     buildOverrides,
   };
