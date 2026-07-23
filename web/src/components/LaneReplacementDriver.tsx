@@ -31,6 +31,7 @@ import {
   replacementSpinnerVisible,
   describeBookError,
   laneModeMatches,
+  defaultReplaceSelection,
 } from "../lib/setupWizard";
 import type { LaneEditMode } from "./LaneTargetModeStep";
 
@@ -166,7 +167,8 @@ export function LaneReplacementDriver({
     try {
       const res = await api.laneAffectedBooks(lane);
       setAffectedBooks(res.books);
-      setSelectedBooks(new Set(res.books)); // default: replace all
+      // Default: replace unedited books, KEEP books with work done (#94).
+      setSelectedBooks(new Set(defaultReplaceSelection(res.books, res.stats)));
       setBookStats(res.stats ?? {});
     } catch {
       setAffectedBooks([]);
@@ -177,6 +179,11 @@ export function LaneReplacementDriver({
 
   const handleConfirmStart = async () => {
     if (!pendingTarget) return;
+    // Never submit before the book list + stats have loaded: affectedBooks==null
+    // would collapse to replaceBooks=undefined (replace all) and overwrite the
+    // edited books the smart default keeps. The Confirm button is also disabled
+    // in this state; this guard is the belt-and-suspenders.
+    if (affectedBooks == null) return;
     setConfirmOpen(false);
     setStarting(true);
     setError(null);
@@ -522,7 +529,12 @@ export function LaneReplacementDriver({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmOpen(false)}>{t("setup.back")}</Button>
-          <Button variant="contained" color="warning" disabled={!ack} onClick={handleConfirmStart}>
+          <Button
+            variant="contained"
+            color="warning"
+            disabled={!ack || affectedBooks == null}
+            onClick={handleConfirmStart}
+          >
             {t("setup.replacementConfirmButton")}
           </Button>
         </DialogActions>

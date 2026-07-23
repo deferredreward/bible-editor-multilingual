@@ -73,7 +73,7 @@ import {
 import { bookName } from "../lib/bookNames";
 import { MarkdownView } from "./MarkdownView";
 import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
-import { detectOrg409Key } from "../lib/setupWizard";
+import { detectOrg409Key, defaultReplaceSelection } from "../lib/setupWizard";
 import { SetupWizard } from "./SetupWizard";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { UserManagementSection } from "./UserManagementSection";
@@ -568,7 +568,8 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
         .laneAffectedBooks(lane)
         .then((r) => {
           setAffectedBooks(r.books);
-          setSelectedBooks(new Set(r.books)); // default: replace all
+          // Default: replace unedited books, KEEP books with work done (#94).
+          setSelectedBooks(new Set(defaultReplaceSelection(r.books, r.stats)));
           setBookStats(r.stats ?? {});
         })
         .catch(() => {
@@ -587,6 +588,11 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
   // Step 2: user acknowledged the affected-books list → start the replacement.
   const handleConfirmStart = async () => {
     if (!pendingSource) return;
+    // Never submit before the book list + stats have loaded: affectedBooks==null
+    // would collapse to replaceBooks=undefined (replace all) and overwrite the
+    // edited books the smart default keeps. The Confirm button is also disabled
+    // in this state; this guard is the belt-and-suspenders.
+    if (affectedBooks == null) return;
     setConfirmOpen(false);
     setValidating(true);
     setError(null);
@@ -968,7 +974,12 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmOpen(false)}>{t("preferences.scriptureLanes.confirmBack")}</Button>
-          <Button variant="contained" color="warning" disabled={!ack} onClick={handleConfirmStart}>
+          <Button
+            variant="contained"
+            color="warning"
+            disabled={!ack || affectedBooks == null}
+            onClick={handleConfirmStart}
+          >
             {t("preferences.scriptureLanes.confirmButton")}
           </Button>
         </DialogActions>
