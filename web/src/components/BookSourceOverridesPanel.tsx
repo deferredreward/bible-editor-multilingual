@@ -59,14 +59,21 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
 
   // Add-form state.
   const [resource, setResource] = useState<Resource>("tn");
+  const [sourceType, setSourceType] = useState<"dcs" | "aquifer">("dcs");
   const [fromCh, setFromCh] = useState("");
   const [toCh, setToCh] = useState("");
   const [url, setUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Aquifer is tN-only and always needs a chapter range (whole-book Aquifer uses
+  // the "Pull Aquifer drafts" tool instead). Force resource back to tN when the
+  // source type flips to Aquifer.
+  const isAquifer = sourceType === "aquifer";
+
   const resetForm = () => {
     setResource("tn");
+    setSourceType("dcs");
     setFromCh("");
     setToCh("");
     setUrl("");
@@ -83,18 +90,33 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
       setFormError(t("import.sources.rangeNeedsBoth"));
       return;
     }
+    // Aquifer requires a range (whole-book Aquifer → Pull Aquifer drafts).
+    if (isAquifer && !(hasFrom && hasTo)) {
+      setFormError(t("import.sources.aquiferNeedsRange"));
+      return;
+    }
     setSaving(true);
     try {
-      // Verify the pasted URL → { org, repo } before the PUT; send org+repo.
-      const verified = await api.verifySource(url.trim());
-      await api.setBookSource(book, {
-        resource,
-        org: verified.org,
-        repo: verified.repo,
-        ...(hasFrom && hasTo
-          ? { chapterStart: Number(fromCh), chapterEnd: Number(toCh) }
-          : {}),
-      });
+      if (isAquifer) {
+        // No repo to verify — the aqLang is derived server-side from the project.
+        await api.setBookSource(book, {
+          resource: "tn",
+          kind: "aquifer",
+          chapterStart: Number(fromCh),
+          chapterEnd: Number(toCh),
+        });
+      } else {
+        // Verify the pasted URL → { org, repo } before the PUT; send org+repo.
+        const verified = await api.verifySource(url.trim());
+        await api.setBookSource(book, {
+          resource,
+          org: verified.org,
+          repo: verified.repo,
+          ...(hasFrom && hasTo
+            ? { chapterStart: Number(fromCh), chapterEnd: Number(toCh) }
+            : {}),
+        });
+      }
       await refetch();
       resetForm();
     } catch (e) {
@@ -102,8 +124,10 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
         const code = (e.body as { error?: string } | undefined)?.error;
         // 409 overlap is the common, actionable mistake — call it out plainly.
         if (code === "overlapping_range") setFormError(t("import.sources.overlap"));
-        else if (code === "range_needs_both_bounds")
-          setFormError(t("import.sources.rangeNeedsBoth"));
+        else if (code === "range_needs_both_bounds" || code === "aquifer_needs_range")
+          setFormError(t("import.sources.aquiferNeedsRange"));
+        else if (code === "aquifer_language_unavailable")
+          setFormError(t("import.sources.aquiferLangUnavailable"));
         else if (e.status === 403) setFormError(t("import.sources.adminOnly"));
         else setFormError(t("import.sources.saveFailed"));
       } else {
@@ -112,7 +136,7 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
     } finally {
       setSaving(false);
     }
-  }, [book, resource, fromCh, toCh, url, refetch, t]);
+  }, [book, resource, sourceType, isAquifer, fromCh, toCh, url, refetch, t]);
 
   const handleRemove = useCallback(
     async (o: BookSourceOverride) => {
@@ -179,7 +203,13 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
                       end: o.chapter_end,
                     })}
               </Typography>
-              <RepoRef org={o.org} repo={o.repo} />
+              {o.kind === "aquifer" ? (
+                <Typography variant="body2">
+                  {t("import.sources.sourceAquifer", { lang: o.repo })}
+                </Typography>
+              ) : (
+                <RepoRef org={o.org} repo={o.repo} />
+              )}
               {admin && (
                 <Button size="small" color="inherit" onClick={() => void handleRemove(o)}>
                   {t("import.sources.remove")}
@@ -198,8 +228,22 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
           <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }} alignItems="center">
             <Select
               size="small"
+              value={sourceType}
+              onChange={(e) => {
+                const next = e.target.value as "dcs" | "aquifer";
+                setSourceType(next);
+                if (next === "aquifer") setResource("tn"); // Aquifer is tN-only
+              }}
+              sx={{ minWidth: 160 }}
+            >
+              <MenuItem value="dcs">{t("import.sources.sourceTypeDcs")}</MenuItem>
+              <MenuItem value="aquifer">{t("import.sources.sourceTypeAquifer")}</MenuItem>
+            </Select>
+            <Select
+              size="small"
               value={resource}
               onChange={(e) => setResource(e.target.value as Resource)}
+              disabled={isAquifer}
               sx={{ minWidth: 140 }}
             >
               <MenuItem value="tn">{t("import.sources.resourceTn")}</MenuItem>
@@ -222,21 +266,27 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
               sx={{ width: 96 }}
             />
           </Stack>
-          <TextField
-            size="small"
-            fullWidth
-            sx={{ maxWidth: 480 }}
-            label={t("import.sources.urlLabel")}
-            placeholder="https://git.door43.org/BibleAquifer/ar_tn"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            disabled={saving}
-          />
+          {isAquifer ? (
+            <Typography variant="caption" color="text.secondary">
+              {t("import.sources.aquiferWholeBookHint")}
+            </Typography>
+          ) : (
+            <TextField
+              size="small"
+              fullWidth
+              sx={{ maxWidth: 480 }}
+              label={t("import.sources.urlLabel")}
+              placeholder="https://git.door43.org/BibleAquifer/ar_tn"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              disabled={saving}
+            />
+          )}
           <Stack direction="row" spacing={1} alignItems="center">
             <Button
               variant="contained"
               size="small"
-              disabled={saving || url.trim() === ""}
+              disabled={saving || (isAquifer ? fromCh.trim() === "" || toCh.trim() === "" : url.trim() === "")}
               startIcon={saving ? <CircularProgress size={14} color="inherit" /> : undefined}
               onClick={() => void handleAdd()}
             >

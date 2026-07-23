@@ -906,10 +906,13 @@ export interface BookListEntry {
 // One per-book / per-chapter-range resource source override (api/src/bookSource.ts).
 // A whole-book override uses chapter_start=0, chapter_end=999; a range override
 // carries its real [start, end] bounds. Only "tn" and "tq" are overridable.
+// `kind` discriminates a DCS org/repo source from an Aquifer source (tN-only; for
+// Aquifer, org is the "aquifer" sentinel and repo holds the aqLang, e.g. "arb").
 export interface BookSourceOverride {
   resource: "tn" | "tq";
   chapter_start: number;
   chapter_end: number;
+  kind: "dcs" | "aquifer";
   org: string;
   repo: string;
   updated_at: number;
@@ -1671,14 +1674,17 @@ export const api = {
       `/api/books/${encodeURIComponent(book)}/sources`,
     ),
 
-  // Set an override (admin only; non-admins get 403). Pass a verified org+repo
-  // (not a raw URL — verify it first with verifySource). Both chapterStart and
+  // Set an override (admin only; non-admins get 403). For a DCS source, pass a
+  // verified org+repo (verify it first with verifySource). Both chapterStart and
   // chapterEnd together set a range; omitting both sets the whole book. A range
   // that overlaps an existing one answers 409 { error: "overlapping_range" }.
+  // For Aquifer, pass kind:"aquifer" with a chapter range (tN only; the aqLang is
+  // derived server-side from the project language — no url/org/repo, no verify).
   setBookSource: (
     book: string,
     body: {
       resource: "tn" | "tq";
+      kind?: "aquifer";
       url?: string;
       org?: string;
       repo?: string;
