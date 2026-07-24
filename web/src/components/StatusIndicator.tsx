@@ -15,6 +15,7 @@ import CloudQueueIcon from "@mui/icons-material/CloudQueue";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import EditNoteIcon from "@mui/icons-material/EditNote";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { SyncStatusBar, useSyncSummary } from "./SyncStatusBar";
 import { PipelineStatusBar, pipelineHasAnything } from "./PipelineStatusBar";
@@ -64,7 +65,7 @@ export function StatusIndicator({
 }: Props) {
   const { t } = useTranslation();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const { pending, conflicts, failed, effectivelyOffline } = useSyncSummary();
+  const { pending, conflicts, failed, effectivelyOffline, draftCount } = useSyncSummary();
   const { current, updateAvailable } = useAppVersion();
 
   // Light read of the shared pipeline job list purely to pick the outer
@@ -92,7 +93,7 @@ export function StatusIndicator({
       j.state === "failed",
   );
 
-  const needsAttention = flagCount > 0 || pipelineNeedsAttention || updateAvailable;
+  const needsAttention = flagCount > 0 || draftCount > 0 || pipelineNeedsAttention || updateAvailable;
 
   let icon = <CloudDoneIcon sx={{ fontSize: 17 }} />;
   let label = t("topbar.status.savedLabel");
@@ -113,6 +114,14 @@ export function StatusIndicator({
     icon = <CloudQueueIcon sx={{ fontSize: 17 }} />;
     label = t("topbar.status.savingLabel", { count: pending });
     colorSx = { color: "primary.main", borderColor: "primary.main" };
+  } else if (draftCount > 0) {
+    // Unsaved local typing (stashed in IndexedDB but not yet Saved). Mirrors
+    // the old inline SyncStatusBar's amber "N unsaved" chip — without this the
+    // merged indicator reads a misleading green "Saved" while edits are still
+    // pending a Save click.
+    icon = <EditNoteIcon sx={{ fontSize: 17 }} />;
+    label = `${draftCount} ${t("sync.unsaved")}`;
+    colorSx = { color: "#E59D33", borderColor: "#E59D33" };
   }
 
   return (
@@ -153,9 +162,15 @@ export function StatusIndicator({
           {t("topbar.status.title")}
         </Typography>
 
-        {/* Save state — a plain sentence in the common "all clear" case,
-            the real interactive chip(s) when something needs a decision. */}
-        {conflicts.length === 0 && failed.length === 0 && !effectivelyOffline && pending === 0 ? (
+        {/* Save state — a plain sentence in the common "all clear" case, the
+            real interactive chip(s) when something needs a decision or there
+            are unsaved drafts (draftCount>0 routes here so the embedded bar
+            shows its clickable "N unsaved" jump chip). */}
+        {conflicts.length === 0 &&
+        failed.length === 0 &&
+        !effectivelyOffline &&
+        pending === 0 &&
+        draftCount === 0 ? (
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, px: 1.75, py: 1 }}>
             <CloudDoneIcon sx={{ fontSize: 18, color: "#3F9CA0" }} />
             <Typography variant="body2">{t("topbar.status.allSaved")}</Typography>
