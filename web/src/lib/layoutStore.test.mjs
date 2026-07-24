@@ -136,9 +136,9 @@ const userSpec = {
 {
   console.log("\n[mutators] setActiveLayoutId");
   installStorage();
-  const s = setActiveLayoutId("builtin:bp-review");
-  assert(s.activeLayoutId === "builtin:bp-review", "returned store updated");
-  assert(loadLayoutStore().activeLayoutId === "builtin:bp-review", "persisted");
+  const s = setActiveLayoutId("builtin:flexible");
+  assert(s.activeLayoutId === "builtin:flexible", "returned store updated");
+  assert(loadLayoutStore().activeLayoutId === "builtin:flexible", "persisted");
 }
 {
   console.log("\n[mutators] upsert then delete userLayout");

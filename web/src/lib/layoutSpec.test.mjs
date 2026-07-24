@@ -16,13 +16,13 @@ function assert(cond, msg) {
   }
 }
 
-// A bp-review-like nested tree: vertical split (scripture on top; a horizontal
+// A Flexible-like nested tree: vertical split (scripture on top; a horizontal
 // split of two resource regions below). Returned fresh each call so mutations
 // in `rejects` never leak between cases.
 const validSpec = () => ({
   v: 2,
-  id: "builtin:bp-review",
-  name: "Book Package Review",
+  id: "builtin:flexible",
+  name: "Flexible",
   builtin: true,
   rail: { visible: true },
   root: {

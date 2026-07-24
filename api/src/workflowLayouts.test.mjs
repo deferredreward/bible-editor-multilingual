@@ -78,17 +78,19 @@ test("every built-in layout passes a structural shape check", () => {
 
 test("translate-* layouts are gated by translationSource", () => {
   const authoringIds = builtinLayoutsFor(authoring).map((l) => l.id);
-  assert.deepEqual(authoringIds, [CLASSIC_LAYOUT_ID, "builtin:bp-review"]);
+  assert.deepEqual(authoringIds, [CLASSIC_LAYOUT_ID, "builtin:flexible"]);
   assert.ok(!authoringIds.includes("builtin:translate-notes"));
-  assert.ok(!authoringIds.includes("builtin:translate-words"));
 
   const translationIds = builtinLayoutsFor(translation).map((l) => l.id);
   assert.deepEqual(translationIds, [
     CLASSIC_LAYOUT_ID,
-    "builtin:bp-review",
+    "builtin:flexible",
     "builtin:translate-notes",
-    "builtin:translate-words",
   ]);
+
+  // translate-words is retired: it must not exist for any project kind.
+  assert.ok(!authoringIds.includes("builtin:translate-words"));
+  assert.ok(!translationIds.includes("builtin:translate-words"));
 });
 
 test("every translate-* layout carries requires: translation", () => {

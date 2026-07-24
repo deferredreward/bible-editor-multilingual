@@ -94,14 +94,14 @@ function translateNotes(cfg: ProjectConfig | null): LayoutSpec {
   };
 }
 
-// Book Package Review (round 6): the nested flexible view. Scripture across the
+// Flexible: the nested flexible container (round 6). Scripture across the
 // top (columns mode); resources split into two movable columns below —
 // notes + associated tA on the left, words + associated tW + questions on the
 // right. Rail visible.
-const bpReview: LayoutSpec = {
+const flexible: LayoutSpec = {
   v: 2,
-  id: "builtin:bp-review",
-  name: "Book Package Review",
+  id: "builtin:flexible",
+  name: "Flexible",
   builtin: true,
   rail: { visible: true },
   root: {
@@ -148,50 +148,13 @@ const bpReview: LayoutSpec = {
   },
 };
 
-// Translate Words: narrow tW article-list nav on the left, editable article
-// (source|target, pairAxis horizontal) on the right. Rail hidden.
-const translateWords: LayoutSpec = {
-  v: 2,
-  id: "builtin:translate-words",
-  name: "Translate Words",
-  builtin: true,
-  requires: "translation",
-  rail: { visible: false },
-  root: {
-    kind: "split",
-    orientation: "horizontal",
-    children: [
-      {
-        kind: "region",
-        id: "list",
-        size: 0.2,
-        display: "stacked",
-        panels: [{ id: "list-1", type: "articleList", config: { resourceType: "tw" } }],
-      },
-      {
-        kind: "region",
-        id: "article",
-        size: 0.8,
-        display: "stacked",
-        panels: [
-          {
-            id: "tw-1",
-            type: "twArticle",
-            config: { pairAxis: "horizontal", showOccurrences: false },
-          },
-        ],
-      },
-    ],
-  },
-};
-
 // All built-ins whose `requires` is satisfied by the given config. Classic and
-// BP Review are always available; the two translate-* layouts are shown only on
-// a translation project.
+// Flexible are always available; Translate Notes is shown only on a translation
+// project.
 export function getBuiltinLayouts(cfg: ProjectConfig | null): LayoutSpec[] {
-  const out: LayoutSpec[] = [classic, bpReview];
+  const out: LayoutSpec[] = [classic, flexible];
   if (isTranslationProject(cfg)) {
-    out.push(translateNotes(cfg), translateWords);
+    out.push(translateNotes(cfg));
   }
   return out;
 }

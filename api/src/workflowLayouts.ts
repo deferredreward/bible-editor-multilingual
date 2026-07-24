@@ -4,7 +4,7 @@
 // byte-identical bundled fallback (web/src/lib/builtinLayouts.ts) for offline
 // resilience and validates whatever the server sends against its panel registry.
 //
-// The four specs below MUST stay structurally identical (ids, names, region
+// The three specs below MUST stay structurally identical (ids, names, region
 // ids, panel ids, sizes, orientations) to the client's getBuiltinLayouts so a
 // project rendering server layouts looks the same as one on the fallback. The
 // client's validateLayoutSpec / validateLayoutAgainstRegistry catch any drift at
@@ -169,14 +169,14 @@ function translateNotes(config: ProjectConfig): LayoutSpec {
   };
 }
 
-// Book Package Review (round 6): the nested flexible view. Scripture across the
+// Flexible: the nested flexible container (round 6). Scripture across the
 // top (columns mode); resources split into two movable columns below —
 // notes + associated tA on the left, words + associated tW + questions on the
 // right. Rail visible.
-const bpReview: LayoutSpec = {
+const flexible: LayoutSpec = {
   v: 2,
-  id: "builtin:bp-review",
-  name: "Book Package Review",
+  id: "builtin:flexible",
+  name: "Flexible",
   builtin: true,
   rail: { visible: true },
   root: {
@@ -223,51 +223,14 @@ const bpReview: LayoutSpec = {
   },
 };
 
-// Translate Words: narrow tW article-list nav on the left, editable article
-// (source|target, pairAxis horizontal) on the right. Rail hidden.
-const translateWords: LayoutSpec = {
-  v: 2,
-  id: "builtin:translate-words",
-  name: "Translate Words",
-  builtin: true,
-  requires: "translation",
-  rail: { visible: false },
-  root: {
-    kind: "split",
-    orientation: "horizontal",
-    children: [
-      {
-        kind: "region",
-        id: "list",
-        size: 0.2,
-        display: "stacked",
-        panels: [{ id: "list-1", type: "articleList", config: { resourceType: "tw" } }],
-      },
-      {
-        kind: "region",
-        id: "article",
-        size: 0.8,
-        display: "stacked",
-        panels: [
-          {
-            id: "tw-1",
-            type: "twArticle",
-            config: { pairAxis: "horizontal", showOccurrences: false },
-          },
-        ],
-      },
-    ],
-  },
-};
-
 // All built-ins whose `requires` is satisfied by the given config. Classic and
-// BP Review are always available; the two translate-* layouts are shown only on
-// a translation project. Order matches the client's getBuiltinLayouts so the
-// server list and the bundled fallback are identical.
+// Flexible are always available; Translate Notes is shown only on a translation
+// project. Order matches the client's getBuiltinLayouts so the server list and
+// the bundled fallback are identical.
 export function builtinLayoutsFor(config: ProjectConfig): LayoutSpec[] {
-  const out: LayoutSpec[] = [classic, bpReview];
+  const out: LayoutSpec[] = [classic, flexible];
   if (isTranslationConfig(config)) {
-    out.push(translateNotes(config), translateWords);
+    out.push(translateNotes(config));
   }
   return out;
 }
