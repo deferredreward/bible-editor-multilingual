@@ -247,7 +247,7 @@ translationMemory.get("/terms", requireEditor, async (c) => {
   binds.push(limit);
   const rows = await c.env.DB.prepare(
     `SELECT ${TERM_COLS} FROM terminology WHERE ${conds.join(" AND ")}
-      ORDER BY concept_id, source_term, id LIMIT ?${binds.length}`,
+      ORDER BY concept_id, source_term, status, id LIMIT ?${binds.length}`,
   )
     .bind(...binds)
     .all<TermRow>();
@@ -280,17 +280,20 @@ translationMemory.post("/terms", requireEditor, async (c) => {
   const invariantError = termInvariantError({ status, replacement });
   if (invariantError) return c.json({ error: "validation_failed", issues: [{ message: invariantError }] }, 400);
 
-  // Pre-check the same normalized identity the unique index (0040) enforces,
+  // Pre-check the same normalized identity the unique index (0063) enforces,
   // so a duplicate manual add gets a clean 409 instead of an uncaught D1
-  // constraint violation.
+  // constraint violation. target_term is part of that identity: a second
+  // rendering of the same concept is legitimate (CONTEXT-REPO-CONTRACT.md
+  // §3.3), and COALESCE mirrors the index (SQLite NULLs never collide).
   const dup = await c.env.DB.prepare(
     `SELECT ${TERM_COLS} FROM terminology
       WHERE deleted_at IS NULL
         AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?1))
         AND LOWER(TRIM(source_term)) = LOWER(TRIM(?2))
-        AND status = ?3`,
+        AND LOWER(TRIM(COALESCE(target_term, ''))) = LOWER(TRIM(COALESCE(?3, '')))
+        AND status = ?4`,
   )
-    .bind(d.concept_id, d.source_term, status)
+    .bind(d.concept_id, d.source_term, d.target_term ?? null, status)
     .first<TermRow>();
   if (dup) return c.json({ error: "duplicate_term", current: dup }, 409);
 
@@ -323,9 +326,10 @@ translationMemory.post("/terms", requireEditor, async (c) => {
         WHERE deleted_at IS NULL
           AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?1))
           AND LOWER(TRIM(source_term)) = LOWER(TRIM(?2))
-          AND status = ?3`,
+          AND LOWER(TRIM(COALESCE(target_term, ''))) = LOWER(TRIM(COALESCE(?3, '')))
+          AND status = ?4`,
     )
-      .bind(d.concept_id, d.source_term, status)
+      .bind(d.concept_id, d.source_term, d.target_term ?? null, status)
       .first<TermRow>();
     return c.json({ error: "duplicate_term", current }, 409);
   }
@@ -369,15 +373,16 @@ translationMemory.patch("/terms/:id", requireEditor, async (c) => {
 
   // Same duplicate pre-check as POST /terms — a rename that collides with a
   // different existing row should be a clean 409, not an uncaught constraint
-  // violation from the unique index (0040).
+  // violation from the unique index (0063, which now includes target_term).
   const dup = await c.env.DB.prepare(
     `SELECT ${TERM_COLS} FROM terminology
       WHERE deleted_at IS NULL AND id != ?1
         AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?2))
         AND LOWER(TRIM(source_term)) = LOWER(TRIM(?3))
-        AND status = ?4`,
+        AND LOWER(TRIM(COALESCE(target_term, ''))) = LOWER(TRIM(COALESCE(?4, '')))
+        AND status = ?5`,
   )
-    .bind(id, merged.concept_id, merged.source_term, merged.status)
+    .bind(id, merged.concept_id, merged.source_term, merged.target_term, merged.status)
     .first<TermRow>();
   if (dup) return c.json({ error: "duplicate_term", current: dup }, 409);
 
@@ -414,9 +419,10 @@ translationMemory.patch("/terms/:id", requireEditor, async (c) => {
         WHERE deleted_at IS NULL AND id != ?1
           AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?2))
           AND LOWER(TRIM(source_term)) = LOWER(TRIM(?3))
-          AND status = ?4`,
+          AND LOWER(TRIM(COALESCE(target_term, ''))) = LOWER(TRIM(COALESCE(?4, '')))
+          AND status = ?5`,
     )
-      .bind(id, merged.concept_id, merged.source_term, merged.status)
+      .bind(id, merged.concept_id, merged.source_term, merged.target_term, merged.status)
       .first<TermRow>();
     return c.json({ error: "duplicate_term", current }, 409);
   }
@@ -451,7 +457,7 @@ translationMemory.delete("/terms/:id", requireEditor, async (c) => {
 translationMemory.get("/terms/export", requireEditor, async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT concept_id, source_term, target_term, status, replacement, comment, tw_link
-       FROM terminology WHERE deleted_at IS NULL ORDER BY concept_id, source_term, id`,
+       FROM terminology WHERE deleted_at IS NULL ORDER BY concept_id, source_term, status, id`,
   ).all<TermImport>();
   // excelSafe: this CSV's whole purpose is to be opened in a spreadsheet, so
   // formula-leading cells get the quote guard (stripped again on re-import).
@@ -468,22 +474,35 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
   const dryRun = c.req.query("dryRun") === "1" || c.req.query("dryRun") === "true";
   const text = await c.req.text();
   if (!text.trim()) return c.json({ error: "empty_body" }, 400);
-  const { terms, errors } = parseTermsCsv(text);
+  const { terms, errors, warnings } = parseTermsCsv(text);
   const deduped = dedupeTerms(terms);
 
-  // Which of these already exist (by termKey) → update vs add.
+  // Which of these already exist (by termKey) → update vs add. target_term is
+  // selected because it is part of the identity termKey() computes (0063).
   const existingRows = await c.env.DB.prepare(
-    `SELECT concept_id, source_term, status FROM terminology WHERE deleted_at IS NULL`,
-  ).all<{ concept_id: string; source_term: string; status: string }>();
+    `SELECT concept_id, source_term, target_term, status FROM terminology WHERE deleted_at IS NULL`,
+  ).all<{ concept_id: string; source_term: string; target_term: string | null; status: string }>();
   const existingKeys = new Set((existingRows.results ?? []).map((r) => termKey(r)));
   let added = 0;
   let updated = 0;
   for (const t of deduped) (existingKeys.has(termKey(t)) ? updated++ : added++);
 
-  if (dryRun) return c.json({ dryRun: true, added, updated, parseErrors: errors, total: deduped.length });
+  if (dryRun)
+    return c.json({
+      dryRun: true,
+      added,
+      updated,
+      parseErrors: errors,
+      parseWarnings: warnings,
+      total: deduped.length,
+    });
 
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
+  // With target_term now part of the identity (0063), `SET target_term = ?1` is a
+  // no-op by construction — the matched row already holds that rendering. Left
+  // in place to keep the statement shape; the update path now only meaningfully
+  // changes replacement / comment / tw_link / source_status.
   // Upsert each row: UPDATE by the same trim+lowercase identity termKey() uses
   // (so applied writes agree with the dry-run count above, and case/whitespace-
   // variant CSV rows update in place instead of creating a duplicate); INSERT
@@ -503,8 +522,20 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
             WHERE deleted_at IS NULL
               AND LOWER(TRIM(concept_id)) = LOWER(TRIM(?7))
               AND LOWER(TRIM(source_term)) = LOWER(TRIM(?8))
+              AND LOWER(TRIM(COALESCE(target_term, ''))) = LOWER(TRIM(COALESCE(?10, '')))
               AND status = ?9`,
-        ).bind(t.target_term, t.replacement, t.comment, t.tw_link, now, userId ?? null, t.concept_id, t.source_term, t.status),
+        ).bind(
+          t.target_term,
+          t.replacement,
+          t.comment,
+          t.tw_link,
+          now,
+          userId ?? null,
+          t.concept_id,
+          t.source_term,
+          t.status,
+          t.target_term,
+        ),
       ),
     );
     results.forEach((r, idx) => {
@@ -538,7 +569,14 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
     }
   }
   queueContextExport(c);
-  return c.json({ dryRun: false, added, updated, parseErrors: errors, total: deduped.length });
+  return c.json({
+    dryRun: false,
+    added,
+    updated,
+    parseErrors: errors,
+    parseWarnings: warnings,
+    total: deduped.length,
+  });
 });
 
 // GET /terms/count — cheap count for the language-memory chip.

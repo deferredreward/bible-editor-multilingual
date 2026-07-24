@@ -37,11 +37,36 @@ export type TermImport = {
   tw_link: string | null;
 };
 
-// Dedup/upsert identity: a concept's rendering is identified by
-// (concept_id, source_term, status) — the same concept can hold a preferred and
-// a forbidden rendering of the same source term without colliding.
-export function termKey(t: { concept_id: string; source_term: string; status: string }): string {
-  return `${t.concept_id.trim().toLowerCase()}\u0000${t.source_term.trim().toLowerCase()}\u0000${t.status}`;
+// Dedup/upsert identity: a concept's *rendering* is identified by
+// (concept_id, source_term, target_term, status). target_term is part of the key
+// because docs/CONTEXT-REPO-CONTRACT.md §3.3 states that "one concept MAY have
+// several preferred/admitted rows — sense-dependent renderings are legitimate;
+// do not treat the table as one-term-one-string". Under the old three-part key a
+// second, equally-valid `preferred` rendering silently overwrote the first.
+// Mirrored in SQL by the unique index rebuilt in migration 0063.
+//
+// Null-safety: null / undefined / whitespace-only target_term all normalize to
+// the empty string, so `do_not_translate` rows (empty target by contract) still
+// collide with each other. The SQL side uses COALESCE(target_term, '') for the
+// same reason — SQLite treats NULLs as always-distinct in a UNIQUE index.
+//
+// Known pre-existing caveat: JS `.toLowerCase()` is full-Unicode while SQLite's
+// `LOWER()` is ASCII-only, so the two normalizations can diverge for cased
+// non-ASCII text (Greek, say). That was already true of source_term before
+// target_term joined the key, and the importer's per-row unique-violation retry
+// fallback already degrades safely when the two disagree.
+//
+// Deliberately NOT NFC-normalized here: SQL cannot normalize, so doing it in JS
+// would make the key and the index disagree — strictly worse than the
+// Arabic/Hebrew non-issue (those scripts are case-less, so LOWER() is a no-op).
+export function termKey(t: {
+  concept_id: string;
+  source_term: string;
+  target_term: string | null | undefined;
+  status: string;
+}): string {
+  const target = (t.target_term ?? "").trim().toLowerCase();
+  return `${t.concept_id.trim().toLowerCase()}\u0000${t.source_term.trim().toLowerCase()}\u0000${target}\u0000${t.status}`;
 }
 
 // Parse an `If-Match` header (bare or quoted integer). Shared by every
@@ -121,7 +146,12 @@ export function parseCsvRows(text: string): string[][] {
 
 export type CsvParseResult = {
   terms: TermImport[];
+  // Hard row failures — the row was dropped.
   errors: { line: number; message: string }[];
+  // Soft findings — the row was kept, but the operator should know. Currently
+  // just genuine duplicates (same full 4-part termKey), which used to collapse
+  // silently in dedupeTerms; last-wins still applies, it's just no longer mute.
+  warnings: { line: number; message: string }[];
 };
 
 // Parse a terminology CSV. Requires a header row naming at least concept_id,
@@ -130,7 +160,10 @@ export type CsvParseResult = {
 export function parseTermsCsv(text: string): CsvParseResult {
   const rows = parseCsvRows(text);
   const errors: CsvParseResult["errors"] = [];
-  if (rows.length === 0) return { terms: [], errors: [{ line: 0, message: "empty file" }] };
+  const warnings: CsvParseResult["warnings"] = [];
+  // First line each termKey was seen on, so a duplicate can name its original.
+  const seenAt = new Map<string, number>();
+  if (rows.length === 0) return { terms: [], errors: [{ line: 0, message: "empty file" }], warnings };
 
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const col = (name: string) => header.indexOf(name);
@@ -142,7 +175,11 @@ export function parseTermsCsv(text: string): CsvParseResult {
   const iComment = col("comment");
   const iTw = col("tw_link");
   if (iConcept < 0 || iSource < 0) {
-    return { terms: [], errors: [{ line: 1, message: "header must include concept_id and source_term" }] };
+    return {
+      terms: [],
+      errors: [{ line: 1, message: "header must include concept_id and source_term" }],
+      warnings,
+    };
   }
 
   const terms: TermImport[] = [];
@@ -172,7 +209,7 @@ export function parseTermsCsv(text: string): CsvParseResult {
       errors.push({ line, message: invariantError });
       continue;
     }
-    terms.push({
+    const term: TermImport = {
       concept_id,
       source_term,
       target_term: nullable(at(cells, iTarget)),
@@ -180,9 +217,23 @@ export function parseTermsCsv(text: string): CsvParseResult {
       replacement,
       comment: nullable(at(cells, iComment)),
       tw_link: nullable(at(cells, iTw)),
-    });
+    };
+    // A genuine duplicate is a collision on the *full* identity (concept, source,
+    // rendering, status). Two rows differing only by target_term are legitimate
+    // sibling renderings (CONTEXT-REPO-CONTRACT.md §3.3) and warn about nothing.
+    const key = termKey(term);
+    const first = seenAt.get(key);
+    if (first !== undefined) {
+      warnings.push({
+        line,
+        message: `duplicate of line ${first} (same concept, source term, rendering and status) — the later row wins`,
+      });
+    } else {
+      seenAt.set(key, line);
+    }
+    terms.push(term);
   }
-  return { terms, errors };
+  return { terms, errors, warnings };
 }
 
 // The forbidden→replacement invariant (docs/CONTEXT-REPO-CONTRACT.md §3.3): a
@@ -238,7 +289,9 @@ export function serializeTermsCsv(
 }
 
 // Dedup an import batch, last-wins on termKey collisions, so a single upload
-// with two rows for the same (concept, source, status) doesn't double-insert.
+// with two rows for the same (concept, source, target, status) doesn't
+// double-insert. Rows that differ only by target_term are distinct renderings of
+// the same concept (CONTEXT-REPO-CONTRACT.md §3.3) and are all kept.
 export function dedupeTerms(terms: readonly TermImport[]): TermImport[] {
   const byKey = new Map<string, TermImport>();
   for (const t of terms) byKey.set(termKey(t), t);

@@ -124,20 +124,146 @@ console.log("[serializeTermsCsv] round-trips through parse");
   assert(out.startsWith("concept_id,source_term,target_term,status,replacement,comment,tw_link"), "canonical header emitted");
 }
 
-console.log("[termKey + dedupeTerms] identity + last-wins dedup");
+console.log("[termKey + dedupeTerms] identity is (concept, source, target, status)");
 {
-  const a = { concept_id: "kt/God", source_term: "God ", status: "preferred" };
-  const b = { concept_id: "kt/god", source_term: "god", status: "preferred" };
-  assert(termKey(a) === termKey(b), "termKey is case/space-insensitive on concept+source");
+  const a = { concept_id: "kt/God", source_term: "God ", target_term: " \u0627\u0644\u0644\u0647", status: "preferred" };
+  const b = { concept_id: "kt/god", source_term: "god", target_term: "\u0627\u0644\u0644\u0647 ", status: "preferred" };
+  assert(termKey(a) === termKey(b), "termKey is case/space-insensitive on concept+source+target");
+
+  const row = (target_term, status, extra = {}) => ({
+    concept_id: "kt/god",
+    source_term: "God",
+    target_term,
+    status,
+    replacement: null,
+    comment: null,
+    tw_link: null,
+    ...extra,
+  });
+
+  // Rows that differ only by target_term are distinct renderings now, not a
+  // collision (CONTEXT-REPO-CONTRACT.md section 3.3).
+  const distinct = dedupeTerms([row("first", "preferred"), row("second", "preferred")]);
+  assert(distinct.length === 2, "rows differing only by target_term are distinct renderings");
+
+  // Status is still part of the identity.
+  const byStatus = dedupeTerms([row("x", "preferred"), row("x", "forbidden", { replacement: "y" })]);
+  assert(byStatus.length === 2, "same rendering under a different status is still distinct");
+
+  // A true full-key duplicate still collapses last-wins.
+  const dupes = dedupeTerms([
+    row(" \u0646\u0639\u0645\u0629", "preferred", { comment: "first upload" }),
+    row("\u0646\u0639\u0645\u0629 ", "preferred", { comment: "second upload" }),
+  ]);
+  assert(dupes.length === 1, "full-key duplicate collapses to one row");
+  assert(dupes[0].comment === "second upload", "last-wins on a true collision");
+}
+
+console.log("[termKey] null-safe target_term (the do_not_translate case)");
+{
+  const base = { concept_id: "names/yhwh", source_term: "YHWH", status: "do_not_translate" };
+  const k = termKey({ ...base, target_term: null });
+  assert(termKey({ ...base, target_term: undefined }) === k, "undefined target_term matches null");
+  assert(termKey({ ...base }) === k, "absent target_term matches null");
+  assert(termKey({ ...base, target_term: "" }) === k, "empty-string target_term matches null");
+  assert(termKey({ ...base, target_term: "   " }) === k, "whitespace-only target_term matches null");
+  assert(termKey({ ...base, target_term: "\u064a\u0647\u0648\u0647" }) !== k, "a real rendering differs from the empty one");
+
+  const dnt = (target_term) => ({
+    concept_id: "names/yhwh",
+    source_term: "YHWH",
+    target_term,
+    status: "do_not_translate",
+    replacement: null,
+    comment: null,
+    tw_link: null,
+  });
+  assert(dedupeTerms([dnt(null), dnt(""), dnt("  ")]).length === 1, "empty-target DNT rows still collide with each other");
+}
+
+console.log("[contract \u00a73.3] one concept holds several equally-valid renderings");
+{
+  // Straight from the real Arabic termbase: three preferred renderings of
+  // "therefore", two admitted renderings of "pastor". None may be lost.
+  const mk = (concept_id, source_term, target_term, status) => ({
+    concept_id,
+    source_term,
+    target_term,
+    status,
+    replacement: null,
+    comment: null,
+    tw_link: null,
+  });
   const batch = [
-    { concept_id: "kt/god", source_term: "God", status: "preferred", target_term: "first", replacement: null, comment: null, tw_link: null },
-    { concept_id: "kt/god", source_term: "God", status: "preferred", target_term: "second", replacement: null, comment: null, tw_link: null },
-    { concept_id: "kt/god", source_term: "God", status: "forbidden", target_term: "x", replacement: null, comment: null, tw_link: null },
+    mk("other/therefore", "therefore", "\u0645\u0646 \u062b\u064e\u0645\u064e\u0651", "preferred"),
+    mk("other/therefore", "therefore", "\u0648\u0628\u0630\u0644\u0643", "preferred"),
+    mk("other/therefore", "therefore", "\u0648\u0647\u0643\u0630\u0627", "preferred"),
+    mk("kt/pastor", "pastor", "\u0642\u0627\u0626\u062f \u0627\u0644\u0643\u0646\u064a\u0633\u0629", "admitted"),
+    mk("kt/pastor", "pastor", "\u0627\u0644\u0645\u0639\u0644\u0650\u0651\u0645", "admitted"),
   ];
   const deduped = dedupeTerms(batch);
-  assert(deduped.length === 2, "same (concept,source,status) collapses; different status kept");
-  const pref = deduped.find((t) => t.status === "preferred");
-  assert(pref.target_term === "second", "last-wins on collision");
+  assert(deduped.length === 5, "all five sibling renderings survive dedup");
+  const therefore = deduped.filter((t) => t.concept_id === "other/therefore");
+  assert(therefore.length === 3, "three preferred renderings kept under one concept");
+  assert(new Set(therefore.map((t) => t.target_term)).size === 3, "the three renderings are the three distinct strings");
+  assert(deduped.filter((t) => t.concept_id === "kt/pastor").length === 2, "two admitted renderings kept");
+}
+
+console.log("[parseTermsCsv] duplicate rows warn (but still last-wins)");
+{
+  const csv =
+    "concept_id,source_term,target_term,status\n" +
+    "kt/grace,grace,\u0646\u0639\u0645\u0629,preferred\n" +
+    "kt/grace,grace,\u0646\u0639\u0645\u0629,preferred\n";
+  const { terms, errors, warnings } = parseTermsCsv(csv);
+  assert(errors.length === 0, "a duplicate is not a hard error");
+  assert(warnings.length === 1, "one duplicate warning");
+  assert(warnings[0].line === 3, "warning carries the later row's line");
+  assert(/line 2/.test(warnings[0].message), "warning names the first occurrence's line");
+  assert(/later row wins/.test(warnings[0].message), "warning states the last-wins outcome");
+  assert(dedupeTerms(terms).length === 1, "still collapses to one term");
+}
+
+console.log("[parseTermsCsv] near-miss (same concept+source+status, different rendering) never warns");
+{
+  const csv =
+    "concept_id,source_term,target_term,status\n" +
+    "other/therefore,therefore,\u0648\u0628\u0630\u0644\u0643,preferred\n" +
+    "other/therefore,therefore,\u0648\u0647\u0643\u0630\u0627,preferred\n";
+  const { terms, errors, warnings } = parseTermsCsv(csv);
+  assert(errors.length === 0 && warnings.length === 0, "sibling renderings produce no errors and no warnings");
+  assert(dedupeTerms(terms).length === 2, "both renderings survive");
+}
+
+console.log("[parseTermsCsv] warnings is total across early-return paths");
+{
+  assert(Array.isArray(parseTermsCsv("").warnings), "empty file still returns a warnings array");
+  assert(parseTermsCsv("").warnings.length === 0, "empty file has no warnings");
+  assert(Array.isArray(parseTermsCsv("foo,bar\n1,2\n").warnings), "bad header still returns a warnings array");
+  assert(parseTermsCsv("foo,bar\n1,2\n").warnings.length === 0, "bad header has no warnings");
+}
+
+console.log("[serializeTermsCsv] sibling renderings survive a CSV round-trip");
+{
+  const mk = (target_term) => ({
+    concept_id: "other/therefore",
+    source_term: "therefore",
+    target_term,
+    status: "preferred",
+    replacement: null,
+    comment: null,
+    tw_link: null,
+  });
+  const original = [mk("\u0645\u0646 \u062b\u064e\u0645\u064e\u0651"), mk("\u0648\u0628\u0630\u0644\u0643"), mk("\u0648\u0647\u0643\u0630\u0627")];
+  const reparsed = parseTermsCsv(serializeTermsCsv(original));
+  assert(reparsed.errors.length === 0, "no parse errors on re-import");
+  assert(reparsed.warnings.length === 0, "no duplicate warnings \u2014 they are distinct renderings");
+  assert(reparsed.terms.length === 3, "all three preferred rows survive serialize -> parse");
+  assert(
+    reparsed.terms.map((t) => t.target_term).join("|") === original.map((t) => t.target_term).join("|"),
+    "renderings round-trip in order, none lost",
+  );
+  assert(dedupeTerms(reparsed.terms).length === 3, "and none collapse in dedup");
 }
 
 console.log("[parseIfMatch] bare/quoted integers, rejects garbage");
