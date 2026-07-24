@@ -11,10 +11,8 @@ import {
   DialogContentText,
   DialogTitle,
   Button,
-  IconButton,
   Tooltip,
 } from "@mui/material";
-import LogoutIcon from "@mui/icons-material/Logout";
 import GridViewIcon from "@mui/icons-material/GridView";
 import { useChapter } from "../hooks/useChapter";
 import { useChapterRoom } from "../hooks/useChapterRoom";
@@ -70,12 +68,8 @@ import {
   type ReadingLineHandle,
 } from "./SideBySideAligner";
 import { TopBar } from "./TopBar";
-import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
-import { ExportUsfmButton } from "./ExportUsfmButton";
-import { BookLintIndicator } from "./BookLintIndicator";
-import { LogosSyncToggle } from "./LogosSyncToggle";
+import { ExportUsfmButton, type ExportUsfmButtonHandle } from "./ExportUsfmButton";
 import { PipelineMenu } from "./PipelineMenu";
-import { PipelineStatusBar } from "./PipelineStatusBar";
 import { pipelineStore, getSessionKey, type PipelineJob } from "../sync/pipelineStore";
 import { onOutboxResult } from "../sync/outbox";
 import { AiCompletionToasts } from "./AiCompletionToasts";
@@ -176,9 +170,20 @@ interface Props {
   onLogout?: () => void;
   // Current signed-in user id, for the checkoff lane shading (you vs others).
   meUserId?: number | null;
+  // Current signed-in username, for the TopBar Account menu's identity line.
+  meUsername?: string | null;
 }
 
-export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, onLogout, meUserId = null }: Props) {
+export function Shell({
+  book,
+  chapter,
+  initialVerse = 1,
+  onNavigate,
+  bookHook,
+  onLogout,
+  meUserId = null,
+  meUsername = null,
+}: Props) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const {
@@ -413,6 +418,10 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
   const [splitRatio, setSplitRatio] = useState<number | null>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+  // TopBar's "More ▸ Export USFM" menu item opens this component's scope/
+  // version Menu via its imperative handle — see the trigger-less
+  // <ExportUsfmButton hideTrigger /> mounted below.
+  const exportUsfmRef = useRef<ExportUsfmButtonHandle>(null);
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -2311,12 +2320,21 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
         <TopBar
           book={book}
           chapter={chapter}
+          verse={activeVerse}
           onNavigate={(b, c, v) => {
             setActiveVerse(v ?? 1);
             setActiveNoteId(null);
             setActiveWordId(null);
             onNavigate?.(b, c, v);
           }}
+          pipelineToast={pipelineToast}
+          onPipelineToastClear={() => setPipelineToast(null)}
+          lintFlagIssues={bookLint.flagIssues}
+          lintFlagCount={bookLint.flagCount}
+          lintEscalateCount={bookLint.escalateCount}
+          onGoToLintIssue={goToLintIssue}
+          username={meUsername}
+          onLogout={onLogout}
         />
         <Box sx={{ p: 4, display: "flex", alignItems: "center", gap: 2 }}>
           {status === "error" ? (
@@ -2561,6 +2579,7 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
       <TopBar
         book={book}
         chapter={chapter}
+        verse={activeVerse}
         onNavigate={(b, c, v) => {
           runWithDirtyGate(() => {
             setActiveVerse(v ?? 1);
@@ -2578,37 +2597,25 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
             onImported={() => void refetch()}
           />
         }
-        pipelineStatus={
-          <PipelineStatusBar
-            toast={pipelineToast}
-            onToastClear={() => setPipelineToast(null)}
-          />
-        }
-        logosSyncToggle={
-          <LogosSyncToggle book={book} chapter={chapter} verse={activeVerse} />
-        }
-        workspaceSwitcher={<WorkspaceSwitcher variant="indicator" />}
-        lintIndicator={
-          <BookLintIndicator
-            book={book}
-            flagIssues={bookLint.flagIssues}
-            flagCount={bookLint.flagCount}
-            escalateCount={bookLint.escalateCount}
-            onGoToIssue={goToLintIssue}
-          />
-        }
-        exportMenu={
-          <ExportUsfmButton
-            book={book}
-            chapter={chapter}
-            enabledVersions={displayedVersions}
-            chapterVersesFor={(version) =>
-              data ? Object.values(data.verses[version] ?? {}) : []
-            }
-          />
-        }
+        pipelineToast={pipelineToast}
+        onPipelineToastClear={() => setPipelineToast(null)}
+        lintFlagIssues={bookLint.flagIssues}
+        lintFlagCount={bookLint.flagCount}
+        lintEscalateCount={bookLint.escalateCount}
+        onGoToLintIssue={goToLintIssue}
+        onOpenExportMenu={(anchorEl) => exportUsfmRef.current?.openMenu(anchorEl)}
+        username={meUsername}
+        onLogout={onLogout}
         railCollapsed={railCollapsed}
         onToggleRail={toggleRail}
+      />
+      <ExportUsfmButton
+        ref={exportUsfmRef}
+        hideTrigger
+        book={book}
+        chapter={chapter}
+        enabledVersions={displayedVersions}
+        chapterVersesFor={(version) => (data ? Object.values(data.verses[version] ?? {}) : [])}
       />
       {chapterLock && (
         <Alert
@@ -2665,32 +2672,6 @@ export function Shell({ book, chapter, initialVerse = 1, onNavigate, bookHook, o
               onToggleLane={toggleLane}
               onHideLane={toggleLaneVisible}
             />
-            <Box
-              sx={{
-                flexShrink: 0,
-                bgcolor: "grey.50",
-                borderRight: "1px solid",
-                borderColor: "divider",
-                borderTop: "1px solid",
-                borderTopColor: "divider",
-                p: 0.5,
-              }}
-            >
-              <Tooltip title={t("shell.signOut")} placement="right">
-                <IconButton
-                  size="small"
-                  onClick={onLogout}
-                  sx={{
-                    width: "100%",
-                    borderRadius: 0.5,
-                    color: "text.disabled",
-                    "&:hover": { color: "text.secondary" },
-                  }}
-                >
-                  <LogoutIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-            </Box>
           </Box>
         )}
         <Box

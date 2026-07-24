@@ -1,9 +1,12 @@
-// Org (workspace) switcher. Three variants share one data source + switch flow:
+// Org (workspace) switcher. Variants share one data source + switch flow:
 //   • "expanded" (top of Preferences, ALL roles) — the canonical, interactive org
 //     switch. Renders even for a single-org deployment (read-only current-org note).
 //   • "indicator" (TopBar) — a compact, NON-interactive chip showing the current
 //     org; clicking it navigates to Preferences where the real switch lives.
 //     Renders nothing for a single-org deployment (nothing to switch to).
+//   • "menuItem" (TopBar Account menu) — same non-interactive
+//     navigate-to-Preferences behavior as "indicator", styled as a MenuItem row
+//     instead of a chip so it sits naturally inside another menu.
 //   • "menu" (legacy default) — the old top-bar dropdown; retained for safety.
 // The switch flow (guard pending outbox ops → api.switchWorkspace → persist →
 // full reload) is identical across variants — see handleSelect below.
@@ -32,7 +35,7 @@ import { api, ApiError, type WorkspaceInfo } from "../sync/api";
 import { outbox, isOpPending } from "../sync/outbox";
 import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "../sync/workspace";
 
-type Variant = "menu" | "indicator" | "expanded";
+type Variant = "menu" | "indicator" | "expanded" | "menuItem";
 
 export function WorkspaceSwitcher({ variant = "menu" }: { variant?: Variant }) {
   const { t } = useTranslation();
@@ -136,6 +139,28 @@ export function WorkspaceSwitcher({ variant = "menu" }: { variant?: Variant }) {
           sx={{ color: "text.secondary", cursor: "pointer", maxWidth: 200 }}
         />
       </Tooltip>
+    );
+  }
+
+  // ── Account-menu row (TopBar) ──────────────────────────────────────────────
+  // Same non-interactive "go switch it in Preferences" behavior as
+  // "indicator", just laid out as a MenuItem row instead of a chip.
+  if (variant === "menuItem") {
+    if (!multiOrg) return null;
+    return (
+      <MenuItem
+        onClick={() => {
+          location.hash = "#/preferences";
+        }}
+      >
+        <ListItemIcon>
+          <BusinessIcon fontSize="small" sx={{ color: "text.secondary" }} />
+        </ListItemIcon>
+        <ListItemText
+          primary={t("workspace.title")}
+          secondary={`${currentWorkspace?.label ?? current} · ${t("topbar.account.switchHint")}`}
+        />
+      </MenuItem>
     );
   }
 

@@ -186,7 +186,7 @@ function StateIcon({ state }: { state: PipelineState }) {
   return <PauseCircleOutlineIcon fontSize="small" color="warning" />;
 }
 
-interface ToastMsg {
+export interface ToastMsg {
   id: number;
   text: string;
   kind: "success" | "error" | "info";
@@ -199,9 +199,18 @@ interface ToastMsg {
 interface Props {
   toast?: ToastMsg | null;
   onToastClear?: () => void;
+  // The merged TopBar "Status" indicator mounts an always-live instance with
+  // hideChip so the Snackbar toast keeps firing regardless of whether the
+  // Status popover is open; the popover's own "AI pipelines" row mounts a
+  // second, normal instance (no toast — the always-live one already owns
+  // that) for the interactive running/queued/failed job list. Known trade-off:
+  // the "already running — let me point you at it" auto-focus (see
+  // pipelineStore.onFocusRequest) needs a live chip to anchor to, so it only
+  // fires from the popover-embedded instance while that popover is open.
+  hideChip?: boolean;
 }
 
-export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
+export function PipelineStatusBar({ toast, onToastClear, hideChip }: Props = {}) {
   const { t } = useTranslation();
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -291,7 +300,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
 
   return (
     <>
-      {hasAnything && (
+      {hasAnything && !hideChip && (
         <Box ref={chipRef} sx={{ display: "inline-flex" }}>
           <Chip
             icon={<AutoAwesomeIcon />}

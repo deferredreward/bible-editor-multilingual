@@ -10,16 +10,10 @@ import {
   DialogTitle,
   FormControlLabel,
   IconButton,
-  ListItemIcon,
-  ListItemText,
-  Menu,
-  MenuItem,
   Stack,
   Tooltip,
 } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
-import MoreVertIcon from "@mui/icons-material/MoreVert";
-import CheckIcon from "@mui/icons-material/Check";
 import { useTranslation } from "react-i18next";
 
 // USFM 3-letter code (lowercase) → Logos Bible abbreviation.
@@ -58,6 +52,34 @@ const STORAGE_KEY = "be:logosSyncEnabled";
 const WARNING_HIDDEN_KEY = "be:logosSyncWarningHidden";
 const LOGOS_HIDDEN_KEY = "be:logosHidden";
 
+// Visibility now lives one level up (the TopBar "More ▸ View" menu, per the
+// top-bar redesign) instead of the widget's own kebab menu. Default is
+// OFF/hidden for anyone who's never touched the setting — only an explicit
+// "false" (the user turned it on) shows the widget by default. Existing
+// installs that had explicitly hidden or shown it keep that choice.
+function readLogosVisible(): boolean {
+  try {
+    return localStorage.getItem(LOGOS_HIDDEN_KEY) === "false";
+  } catch {
+    return false;
+  }
+}
+
+// Shared by the TopBar's View-menu toggle and this widget's own mount guard
+// so both reflect the same persisted flag without a context provider.
+export function useLogosSyncVisible(): [boolean, (next: boolean) => void] {
+  const [visible, setVisibleState] = useState<boolean>(readLogosVisible);
+  const setVisible = (next: boolean) => {
+    setVisibleState(next);
+    try {
+      localStorage.setItem(LOGOS_HIDDEN_KEY, String(!next));
+    } catch {
+      /* quota or private mode — soft fail */
+    }
+  };
+  return [visible, setVisible];
+}
+
 interface Props {
   book: string;
   chapter: number;
@@ -75,33 +97,17 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
   });
   const [warnOpen, setWarnOpen] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
-  const [hidden, setHidden] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(LOGOS_HIDDEN_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
-  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
   // Debounced auto-follow when enabled. Custom-scheme navigation hands off
   // to the OS — the page itself does not navigate. Note: Logos has no
-  // no-focus mode, so each fire raises its window. Suppressed while the
-  // widget is hidden so a hidden clicker never steals OS focus.
+  // no-focus mode, so each fire raises its window. The parent only mounts
+  // this component when the widget is visible (see useLogosSyncVisible), so
+  // no separate "hidden" guard is needed here.
   useEffect(() => {
-    if (!enabled || hidden) return;
+    if (!enabled) return;
     const timer = window.setTimeout(() => fireLogos(book, chapter, verse), 400);
     return () => window.clearTimeout(timer);
-  }, [enabled, hidden, book, chapter, verse]);
-
-  const persistHidden = (v: boolean) => {
-    setHidden(v);
-    try {
-      localStorage.setItem(LOGOS_HIDDEN_KEY, String(v));
-    } catch {
-      /* ignore */
-    }
-  };
+  }, [enabled, book, chapter, verse]);
 
   const persistEnabled = (v: boolean) => {
     setEnabled(v);
@@ -142,48 +148,6 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
     persistEnabled(true);
     setWarnOpen(false);
   };
-
-  // Shared settings menu: houses the "Hide Logos button" toggle so the widget
-  // can be dismissed — and recovered — without opening Preferences.
-  const settingsMenu = (
-    <Menu
-      anchorEl={menuAnchor}
-      open={Boolean(menuAnchor)}
-      onClose={() => setMenuAnchor(null)}
-    >
-      <MenuItem
-        onClick={() => {
-          persistHidden(!hidden);
-          setMenuAnchor(null);
-        }}
-      >
-        <ListItemIcon sx={{ visibility: hidden ? "visible" : "hidden" }}>
-          <CheckIcon fontSize="small" />
-        </ListItemIcon>
-        <ListItemText>{t("logos.hideButton")}</ListItemText>
-      </MenuItem>
-    </Menu>
-  );
-
-  // Hidden: collapse to a tiny, low-opacity kebab so the user can bring the
-  // clicker back. Auto-follow is already suppressed by the effect guard above.
-  if (hidden) {
-    return (
-      <>
-        <Tooltip title={t("logos.settingsTooltip")}>
-          <IconButton
-            size="small"
-            onClick={(e) => setMenuAnchor(e.currentTarget)}
-            aria-label={t("logos.settingsTooltip")}
-            sx={{ opacity: 0.35, "&:hover": { opacity: 0.8 } }}
-          >
-            <MoreVertIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        {settingsMenu}
-      </>
-    );
-  }
 
   return (
     <Stack
@@ -233,17 +197,6 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
           }}
         />
       </Tooltip>
-      <Tooltip title={t("logos.settingsTooltip")}>
-        <IconButton
-          size="small"
-          onClick={(e) => setMenuAnchor(e.currentTarget)}
-          aria-label={t("logos.settingsTooltip")}
-          sx={{ opacity: 0.6, "&:hover": { opacity: 1 } }}
-        >
-          <MoreVertIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
-      {settingsMenu}
       <Dialog open={warnOpen} onClose={() => setWarnOpen(false)}>
         <DialogTitle>{t("logos.enableTitle")}</DialogTitle>
         <DialogContent>

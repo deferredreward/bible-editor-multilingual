@@ -164,6 +164,37 @@
       "editor": "Editor",
       "translator": "Translator",
       "tooltip": "Switch between Editor and Translator mode"
+    },
+    "status": {
+      "title": "Status",
+      "allSaved": "All edits saved to the cloud",
+      "noPipelines": "No AI pipelines running",
+      "issuesToCleanUp_one": "{{book}} — {{count}} issue to clean up",
+      "issuesToCleanUp_other": "{{book}} — {{count}} issues to clean up",
+      "buildUpToDate": "build {{commit}} · up to date",
+      "savedLabel": "Saved",
+      "savingLabel": "Saving {{count}}",
+      "offlineLabel": "Offline",
+      "conflictsLabel_one": "{{count}} conflict",
+      "conflictsLabel_other": "{{count}} conflicts",
+      "failedLabel_one": "{{count}} failed",
+      "failedLabel_other": "{{count}} failed"
+    },
+    "more": {
+      "title": "More",
+      "content": "Content",
+      "resources": "Resources",
+      "view": "View",
+      "importTitle": "Import from Door43",
+      "importSecondary": "Pull ULT/UST, notes & questions in",
+      "exportTitle": "Export USFM",
+      "exportSecondary": "Download this chapter or book",
+      "showLogosSync": "Show Logos sync"
+    },
+    "account": {
+      "mode": "Mode",
+      "organization": "Organization",
+      "switchHint": "switch"
     }
   },
   "translation": {
