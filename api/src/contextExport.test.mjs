@@ -5,6 +5,7 @@ import {
   renderManifestYaml,
   renderBriefMd,
   renderContextPack,
+  renderInstructionsMd,
   buildValidatedExamples,
   renderValidatedJsonl,
   hasMinimumContent,
@@ -56,7 +57,7 @@ console.log("contextExport — manifest / brief");
   assert(m.includes("exported_at: 2026-07-14T12:00:00Z"), "manifest ISO time without ms");
 
   const brief = renderBriefMd(
-    { audience: "teams", purpose: "notes", register: "formal", script_notes: "RTL", instructions_md: null },
+    { audience: "teams", purpose: "notes", register: "formal", script_notes: "RTL", instructions_md: null, common_issues_md: null },
     "العربية",
     "ar",
   );
@@ -154,6 +155,7 @@ console.log("contextExport — full pack + omission rules");
       register: "default",
       script_notes: null,
       instructions_md: null,
+      common_issues_md: null,
     },
     terms: [],
     tnRows: [],
@@ -180,6 +182,7 @@ console.log("contextExport — full pack + omission rules");
         register: "default",
         script_notes: null,
         instructions_md: null,
+        common_issues_md: null,
       },
       terms: 0,
       examplesTn: 0,
@@ -195,6 +198,7 @@ console.log("contextExport — full pack + omission rules");
         register: "default",
         script_notes: null,
         instructions_md: null,
+        common_issues_md: null,
       },
       terms: 0,
       examplesTn: 0,
@@ -212,12 +216,48 @@ console.log("contextExport — full pack + omission rules");
         register: "default",
         script_notes: null,
         instructions_md: null,
+        common_issues_md: null,
       },
       terms: 1,
       examplesTn: 0,
       examplesTq: 0,
     }),
     "one term satisfies semantic gate",
+  );
+  // Common issues alone (everything else null/default/zero) must satisfy the
+  // semantic gate — a project whose only content is a pasted "common issues"
+  // doc must not be discarded as scaffold-only.
+  assert(
+    hasSemanticContent({
+      prefs: {
+        audience: null,
+        purpose: null,
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+        common_issues_md: "Translators keep confusing grace and mercy.",
+      },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "common_issues_md alone satisfies semantic gate",
+  );
+  assert(
+    !hasSemanticContent({
+      prefs: {
+        audience: null,
+        purpose: null,
+        register: "default",
+        script_notes: null,
+        instructions_md: null,
+        common_issues_md: "   ",
+      },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+    }),
+    "whitespace-only common_issues_md fails semantic gate",
   );
 
   const withTerms = renderContextPack({
@@ -228,6 +268,7 @@ console.log("contextExport — full pack + omission rules");
       register: "informal",
       script_notes: null,
       instructions_md: "Do the thing\n",
+      common_issues_md: null,
     },
     terms: [
       {
@@ -252,6 +293,127 @@ console.log("contextExport — full pack + omission rules");
   assert(
     withTerms.ok && withTerms.files.some((f) => f.path === "instructions.md"),
     "emits instructions when present",
+  );
+}
+
+console.log("contextExport — partial source: sourceless resource is SKIPPED, export still succeeds");
+{
+  // Regression (PR #86 review): tN source blank in Setup (skipped:['tn']) with a
+  // VALIDATED tN row + a sourced tQ row. The empty tn source map must NOT trip
+  // missing_en_source — the tN row is skipped, and tQ examples + prefs + terms
+  // still export. Before the fix, this failed the WHOLE context export.
+  const r = renderContextPack({
+    cfg,
+    prefs: {
+      audience: "teams",
+      purpose: "notes",
+      register: "formal",
+      script_notes: null,
+      instructions_md: "Keep it simple\n",
+      common_issues_md: null,
+    },
+    terms: [
+      {
+        concept_id: "kt/grace",
+        source_term: "grace",
+        target_term: "نعمة",
+        status: "preferred",
+        replacement: null,
+        comment: null,
+        tw_link: null,
+      },
+    ],
+    // A validated tN row with NO EN source (tn skipped) + a tQ row WITH source.
+    tnRows: [
+      { id: "n1", book: "TIT", ref_raw: "1:1", support_reference: "figs-metaphor", quote: null, note: "ملاحظة", updated_at: 10 },
+    ],
+    tqRows: [
+      { id: "q1", book: "TIT", ref_raw: "1:1", question: "من؟", response: "الله.", updated_at: 20 },
+    ],
+    sources: {
+      tn: new Map(), // empty — tn was skipped (no upstream source)
+      tq: new Map([[sourceRowKey("TIT", "q1"), { question: "Who?", response: "God." }]]),
+    },
+    skipped: ["tn"],
+  });
+  assert(r.ok, "export SUCCEEDS despite a sourceless tN with validated rows (no missing_en_source)");
+  assert(r.ok && r.stats.examplesTn === 0, "tN examples empty (skipped resource)");
+  assert(r.ok && r.stats.examplesTq === 1, "tQ example still exported (sourced resource)");
+  assert(r.ok && r.stats.terms === 1, "terms still exported");
+  assert(r.ok && r.files.some((f) => f.path === "instructions.md"), "prefs/instructions still exported");
+  assert(
+    r.ok && r.files.some((f) => f.path === "examples/validated.jsonl"),
+    "validated.jsonl emitted from the tQ example",
+  );
+
+  // Without skipped, the same empty tn map WOULD fail (proves skipped is what saves it).
+  const wouldFail = renderContextPack({
+    cfg,
+    prefs: { audience: null, purpose: null, register: "default", script_notes: null, instructions_md: null, common_issues_md: null },
+    terms: [],
+    tnRows: [
+      { id: "n1", book: "TIT", ref_raw: "1:1", support_reference: null, quote: null, note: "ملاحظة", updated_at: 10 },
+    ],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+  });
+  assert(!wouldFail.ok && wouldFail.reason.includes("missing_en_source:tn"), "empty tn map without skipped still hard-fails (control)");
+}
+
+console.log("contextExport — renderInstructionsMd");
+{
+  const basePrefs = { audience: null, purpose: null, register: "default", script_notes: null };
+
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: null, common_issues_md: null }) === null,
+    "both empty → null",
+  );
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: "  ", common_issues_md: "   " }) === null,
+    "both whitespace-only → null",
+  );
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: "Do the thing", common_issues_md: null }) ===
+      "Do the thing\n",
+    "only instructions_md → its text + trailing newline, no heading",
+  );
+  assert(
+    renderInstructionsMd({ ...basePrefs, instructions_md: null, common_issues_md: "Watch for false friends." }) ===
+      "## Common issues\n\nWatch for false friends.\n",
+    "only common_issues_md → heading followed by the text",
+  );
+  assert(
+    renderInstructionsMd({
+      ...basePrefs,
+      instructions_md: "Do the thing",
+      common_issues_md: "Watch for false friends.",
+    }) === "Do the thing\n\n## Common issues\n\nWatch for false friends.\n",
+    "both → instructions first, blank line, then heading + issues",
+  );
+
+  // Regression: common_issues_md alone must not be silently dropped from the
+  // rendered pack — instructions.md must still be emitted.
+  const onlyCommonIssues = renderContextPack({
+    cfg,
+    prefs: {
+      audience: null,
+      purpose: null,
+      register: "default",
+      script_notes: null,
+      instructions_md: null,
+      common_issues_md: "Avoid the colloquial future particle in narrative.",
+    },
+    terms: [],
+    tnRows: [],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+    exportedAt: new Date("2026-07-14T12:00:00Z"),
+  });
+  assert(
+    onlyCommonIssues.ok &&
+      onlyCommonIssues.files.find((f) => f.path === "instructions.md")?.content ===
+        "## Common issues\n\nAvoid the colloquial future particle in narrative.\n",
+    "renderContextPack emits instructions.md when only common_issues_md is set",
   );
 }
 

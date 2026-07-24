@@ -15,6 +15,7 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import { MarkdownView } from "./MarkdownView";
 import { fetchTwArticle, twArticleDcsUrl, twShort, type TwArticleSource } from "../lib/twArticle";
+import { resolveSourceRef } from "../lib/sourceRef";
 import { useProjectConfig } from "../hooks/useProjectConfig";
 
 interface Props {
@@ -31,21 +32,27 @@ function titleFromMarkdown(md: string, fallback: string): string {
 
 export function TwArticleDialog({ articleId, onClose }: Props) {
   const cfg = useProjectConfig();
-  // A GL project reads tW articles from its translationSource (English source
-  // repo); non-translation projects read their own org's tW repo. Default (null
-  // cfg) falls back to unfoldingWord/en_tw inside twArticle.
+  // A GL project reads tW articles from its translationSource (source repo, which
+  // may live in a DIFFERENT org than translationSource.org); non-translation
+  // projects read their own org's tW repo. Default (null cfg) falls back to
+  // unfoldingWord/en_tw inside twArticle. translationSource.repos (and cfg.repos)
+  // can be PARTIAL — the applicable tW repo may be blank (role left blank in
+  // Setup). resolveSourceRef gives { org, repo } | null for the translation
+  // branch; guard so we never fetch `${org}/undefined/...` and show a clear
+  // "no tW source configured" message instead.
   const source: TwArticleSource | undefined = cfg
     ? cfg.translationSource
-      ? { org: cfg.translationSource.org, repo: cfg.translationSource.repos.tw }
-      : { org: cfg.org, repo: cfg.repos.tw }
+      ? (resolveSourceRef(cfg.translationSource, "tw") ?? undefined)
+      : (cfg.repos.tw ? { org: cfg.org, repo: cfg.repos.tw } : undefined)
     : undefined;
+  const noSource = !!cfg && !source;
   const sourceKey = source ? `${source.org}/${source.repo}` : "";
 
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    if (!articleId) return;
+    if (!articleId || noSource) return;
     let cancelled = false;
     setMarkdown(null);
     setError(false);
@@ -63,7 +70,9 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
   }, [articleId, sourceKey]);
 
   const open = articleId !== null;
-  const dcsUrl = twArticleDcsUrl(articleId, source);
+  // No source configured → no DCS link (it would otherwise resolve to the
+  // unfoldingWord/en_tw default and mislead).
+  const dcsUrl = noSource ? "" : twArticleDcsUrl(articleId, source);
   const title = markdown ? titleFromMarkdown(markdown, twShort(articleId)) : twShort(articleId);
 
   return (
@@ -95,7 +104,11 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
         </Box>
       </Box>
       <DialogContent dividers>
-        {error ? (
+        {noSource ? (
+          <Typography color="text.secondary" variant="body2">
+            No Translation Words source is configured for this project.
+          </Typography>
+        ) : error ? (
           <Typography color="error" variant="body2">
             Couldn&rsquo;t load this article.{" "}
             {dcsUrl && (

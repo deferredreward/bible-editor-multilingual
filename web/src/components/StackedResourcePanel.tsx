@@ -29,6 +29,7 @@ import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
 import { useSourceQuestions } from "../hooks/useSourceQuestions";
+import { resolveSourceRef } from "../lib/sourceRef";
 import { sortBySortOrder, groupByVerse } from "./resourcePanelShared";
 import type { ResourceColumnProps } from "./ResourceColumn";
 
@@ -102,10 +103,7 @@ export function StackedResourcePanel({
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
   const sourceProjection = useMemo(
-    () =>
-      projectConfig?.translationSource
-        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tn }
-        : null,
+    () => resolveSourceRef(projectConfig?.translationSource, "tn"),
     [projectConfig],
   );
   const sourceNotes = useSourceNotes(translationMode ? book : null, sourceProjection);
@@ -137,10 +135,7 @@ export function StackedResourcePanel({
     };
   }, [translationMode, book]);
   const sourceQuestionProjection = useMemo(
-    () =>
-      projectConfig?.translationSource
-        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tq }
-        : null,
+    () => resolveSourceRef(projectConfig?.translationSource, "tq"),
     [projectConfig],
   );
   const sourceQuestions = useSourceQuestions(translationMode ? book : null, sourceQuestionProjection);

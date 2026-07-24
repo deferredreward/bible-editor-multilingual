@@ -275,7 +275,11 @@ articles.post("/:resource/add", requireEditor, async (c) => {
 
   const res = await populateSingleArticle(c.env, resource, parsed.data.id);
   if ("error" in res) {
-    if (res.error === "not_translation_project" || res.error === "unparseable_id") {
+    if (
+      res.error === "not_translation_project" ||
+      res.error === "no_source_configured" ||
+      res.error === "unparseable_id"
+    ) {
       return c.json({ error: res.error }, 400);
     }
     if (res.error === "source_not_found") return c.json({ error: res.error }, 404);

@@ -108,8 +108,8 @@ const ChainStep = z
 const TranslateOptions = z
   .object({
     // Which row-keyed TSV resource to translate. Defaults to 'tn' (the pilot);
-    // 'tq' translates translationQuestions. The server picks the matching source
-    // repo (src.repos[resourceType]) and passes resourceType through to the bot,
+    // 'tq' translates translationQuestions. The server resolves the matching
+    // source org+repo (resolveSourceRef) and passes resourceType through to the bot,
     // which selects the TSV parser + target repo. Row-keyed TSV resources are
     // tn|tq; article resources (tw|ta) use articleId/articleUrl instead of a
     // book/chapter scope (bp-assistant articles envelope, INTEGRATION.md §7).
@@ -134,6 +134,8 @@ const TranslateOptions = z
     targetOrg: z.string().min(1).max(64).optional(),
     sourceRef: z.string().min(3).max(200).optional(),
     contextRef: z.string().min(3).max(200).optional(),
+    literalRef: z.string().min(3).max(200).optional(),
+    simplifiedRef: z.string().min(3).max(200).optional(),
   })
   .strict();
 
@@ -1116,14 +1118,26 @@ pipelines.post("/start", requireEditor, async (c) => {
     const cfg = await getProjectConfig(c.env);
     let translateOptions = buildTranslateOptions(cfg, parsed.data.translate);
     if (!translateOptions) {
-      return c.json(
-        {
-          error: "not_a_gl_project",
-          message:
-            "Translate is only available for gateway-language projects (this project has no translation source). Switch the project config to a GL preset first.",
-        },
-        400,
-      );
+      // Two distinct null causes: the project has no translationSource at all
+      // (not a GL project), OR it has one but the chosen resource's source repo
+      // was left blank in Setup (no source to translate FROM for that resource).
+      const rt = parsed.data.translate?.resourceType ?? "tn";
+      return cfg.translationSource
+        ? c.json(
+            {
+              error: "no_source_for_resource",
+              message: `Translate is unavailable for ${rt}: this project's translation source has no ${rt} repo configured. Configure a source repo for ${rt} (or leave it blank and translate a different resource).`,
+            },
+            400,
+          )
+        : c.json(
+            {
+              error: "not_a_gl_project",
+              message:
+                "Translate is only available for gateway-language projects (this project has no translation source). Switch the project config to a GL preset first.",
+            },
+            400,
+          );
     }
     // Inject the pinned contextRef from the latest successful context-pack
     // export (prefs/terminology reach the bot through that repo). Owner comes

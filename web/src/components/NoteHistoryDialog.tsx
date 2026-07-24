@@ -394,10 +394,10 @@ function FieldPreview({
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',
           fontSize: rtl ? 20 : 13,
-          direction: rtl ? "rtl" : "ltr",
-          textAlign: rtl ? "right" : "left",
+          textAlign: "start",
           color: value ? "text.primary" : "text.disabled",
         }}
+        dir={rtl ? "rtl" : "ltr"}
       >
         {value || "(empty)"}
       </Box>
@@ -446,9 +446,9 @@ function DiffPreview({
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',
           fontSize: rtl ? 20 : 13,
-          direction: rtl ? "rtl" : "ltr",
-          textAlign: rtl ? "right" : "left",
+          textAlign: "start",
         }}
+        dir={rtl ? "rtl" : "ltr"}
       >
         {identical && fromStr === "" && toStr === "" ? (
           <Box component="span" sx={{ color: "text.disabled" }}>

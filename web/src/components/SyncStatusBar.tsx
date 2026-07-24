@@ -15,7 +15,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import EditNoteIcon from "@mui/icons-material/EditNote";
-import { onOutboxResult, outbox, type OutboxOp, type OpTarget } from "../sync/outbox";
+import { onOutboxResult, outbox, isOpPending, type OutboxOp, type OpTarget } from "../sync/outbox";
 import { drafts, type DraftRecord, type DraftMeta } from "../sync/drafts";
 
 // If we believe we're online but haven't seen a successful save in this
@@ -48,18 +48,27 @@ function formatDraftMeta(m: DraftMeta): string {
   return `${m.rowKind.toUpperCase()} ${m.book} ${m.chapter}:${m.verse}`;
 }
 
-interface Props {
-  // Optional so the bar still renders standalone (e.g. in a stripped TopBar).
-  // When present, the "N unsaved" chip becomes a menu that jumps to each draft.
-  onNavigate?: (book: string, chapter: number, verse?: number) => void;
+export interface SyncSummary {
+  pending: number;
+  conflicts: OutboxOp[];
+  failed: OutboxOp[];
+  effectivelyOffline: boolean;
+  online: boolean;
+  draftCount: number;
+  activeDrafts: DraftRecord[];
+  quarantinedDrafts: DraftRecord[];
 }
 
-export function SyncStatusBar({ onNavigate }: Props = {}) {
-  const { t } = useTranslation();
+// Shared save-state computation. Extracted so the merged TopBar "Status"
+// indicator can pick a label/color for its outer chip using the exact same
+// priority logic (conflicts > failed > offline > saving > saved) that
+// SyncStatusBar itself uses for its embedded detail view — one source of
+// truth for "what does the save state actually say right now".
+export function useSyncSummary(): SyncSummary {
   const [ops, setOps] = useState<OutboxOp[]>([]);
   useEffect(() => outbox.subscribe(setOps), []);
 
-  // Draft count chip — unsaved typing the user hasn't clicked Save on yet.
+  // Draft count — unsaved typing the user hasn't clicked Save on yet.
   // Distinct from outbox "saving N": those are in-flight to the server;
   // drafts haven't left the browser.
   const [draftList, setDraftList] = useState<DraftRecord[]>([]);
@@ -92,16 +101,9 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     }),
   []);
 
-  const pending = ops.filter((o) => o.status === "pending" || o.status === "in_flight").length;
+  const pending = ops.filter(isOpPending).length;
   const conflicts = ops.filter((o) => o.status === "conflict");
   const failed = ops.filter((o) => o.status === "failed");
-
-  // "Discard all" permanently deletes queued edits — gate it behind an
-  // explicit confirm so it can't be a one-misclick data loss.
-  const [confirmDiscardAll, setConfirmDiscardAll] = useState(false);
-
-  // Anchor for the "N unsaved" jump menu (only used when onNavigate is wired).
-  const [draftMenuEl, setDraftMenuEl] = useState<null | HTMLElement>(null);
 
   // Tick once a second when pending > 0 so the "stale progress" heuristic
   // can flip the pill to offline-style without waiting for the next outbox
@@ -113,6 +115,36 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
     return () => clearInterval(t);
   }, [pending]);
   const effectivelyOffline = !online || (pending > 0 && now - lastSuccessAt > STALE_PROGRESS_MS);
+
+  return { pending, conflicts, failed, effectivelyOffline, online, draftCount, activeDrafts, quarantinedDrafts };
+}
+
+interface Props {
+  // Optional so the bar still renders standalone (e.g. in a stripped TopBar).
+  // When present, the "N unsaved" chip becomes a menu that jumps to each draft.
+  onNavigate?: (book: string, chapter: number, verse?: number) => void;
+  // The merged TopBar "Status" indicator mounts two instances of this
+  // component: one always-live (hideInlineChip) so the conflict/failed
+  // floating panel and discard dialog keep working regardless of whether the
+  // Status popover is open, and one embedded inside that popover
+  // (hideFloating) as the interactive "Save state" row. Neither prop defaults
+  // to true — a standalone `<SyncStatusBar />` (used nowhere else today, kept
+  // for tests/back-compat) still renders everything, as before.
+  hideInlineChip?: boolean;
+  hideFloating?: boolean;
+}
+
+export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Props = {}) {
+  const { t } = useTranslation();
+  const { pending, conflicts, failed, effectivelyOffline, online, draftCount, activeDrafts, quarantinedDrafts } =
+    useSyncSummary();
+
+  // "Discard all" permanently deletes queued edits — gate it behind an
+  // explicit confirm so it can't be a one-misclick data loss.
+  const [confirmDiscardAll, setConfirmDiscardAll] = useState(false);
+
+  // Anchor for the "N unsaved" jump menu (only used when onNavigate is wired).
+  const [draftMenuEl, setDraftMenuEl] = useState<null | HTMLElement>(null);
 
   const resolveAllConflicts = async () => {
     for (const op of conflicts) {
@@ -278,11 +310,13 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
 
   return (
     <>
-      <Stack direction="row" spacing={0.5} alignItems="center">
-        {draftsChip}
-        {inline}
-      </Stack>
-      {onNavigate && (
+      {!hideInlineChip && (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          {draftsChip}
+          {inline}
+        </Stack>
+      )}
+      {!hideInlineChip && onNavigate && (
         <Menu
           anchorEl={draftMenuEl}
           open={Boolean(draftMenuEl) && draftCount > 0}
@@ -308,7 +342,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
           ))}
         </Menu>
       )}
-      {showFloating && (
+      {!hideFloating && showFloating && (
         <Box
           sx={{
             position: "fixed",
@@ -532,7 +566,7 @@ export function SyncStatusBar({ onNavigate }: Props = {}) {
       <Dialog
         // Auto-closes if the failed list empties out from under it (retry /
         // auto-revival) — nothing left to discard.
-        open={confirmDiscardAll && failed.length > 0}
+        open={!hideFloating && confirmDiscardAll && failed.length > 0}
         onClose={() => setConfirmDiscardAll(false)}
       >
         <DialogTitle>

@@ -8,6 +8,7 @@ import { WordsPanelBody } from "./WordsPanel";
 import { QuestionsPanelBody } from "./QuestionsPanel";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
+import { resolveSourceRef } from "../lib/sourceRef";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { NotesPanelBody } from "./NotesPanel";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
@@ -326,11 +327,14 @@ export function ResourceColumn({
   // The English root project sees the unchanged card.
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
+  // translationSource.repos is PARTIAL and PER-RESOURCE: a resource left blank in
+  // Setup has no upstream source, and a resource may point at a DIFFERENT org.
+  // resolveSourceRef returns { org, repo } | null; null (no tN source) makes
+  // useSourceNotes short-circuit (no `${org}/undefined/...` fetch) and the source
+  // block cleanly omit — distinct from a genuine 404. Null here means "no tN
+  // source configured", NOT "not a translation project" (translationMode stays true).
   const sourceProjection = useMemo(
-    () =>
-      projectConfig?.translationSource
-        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tn }
-        : null,
+    () => resolveSourceRef(projectConfig?.translationSource, "tn"),
     [projectConfig],
   );
   // Published source-language tN for this book, indexed by row id (matched
@@ -371,11 +375,10 @@ export function ResourceColumn({
     };
   }, [translationMode, book]);
   // tQ analogues of the source projection + stats above.
+  // Same partial/per-resource guard as sourceProjection above (tQ): null when the
+  // tQ source repo is absent → no undefined fetch, source block cleanly omitted.
   const sourceQuestionProjection = useMemo(
-    () =>
-      projectConfig?.translationSource
-        ? { org: projectConfig.translationSource.org, repo: projectConfig.translationSource.repos.tq }
-        : null,
+    () => resolveSourceRef(projectConfig?.translationSource, "tq"),
     [projectConfig],
   );
   const sourceQuestions = useSourceQuestions(translationMode ? book : null, sourceQuestionProjection);
@@ -911,6 +914,11 @@ export function ResourceColumn({
           <iframe
             src={SEARCH_IFRAME_URL}
             title={t("shell.search")}
+            // sandbox grants only what a search tool needs (its own scripts,
+            // storage, forms, and opening result links in a new tab);
+            // referrerPolicy keeps our URL out of the external site's logs.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            referrerPolicy="no-referrer"
             style={{ width: "100%", height: "100%", border: 0 }}
           />
         </Box>

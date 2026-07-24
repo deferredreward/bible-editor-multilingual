@@ -280,7 +280,7 @@ function QuestionCardInner({
                   fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
                   whiteSpace: "pre-wrap",
                   overflowWrap: "break-word",
-                  textAlign: "left",
+                  textAlign: "start",
                   fontWeight: 600,
                 }}
               >
@@ -296,7 +296,7 @@ function QuestionCardInner({
                     fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
                     whiteSpace: "pre-wrap",
                     overflowWrap: "break-word",
-                    textAlign: "left",
+                    textAlign: "start",
                   }}
                 >
                   {sourceQuestion.response}

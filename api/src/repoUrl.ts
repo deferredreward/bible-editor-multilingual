@@ -74,6 +74,23 @@ export function isIdent(s: string): boolean {
   return /^[A-Za-z0-9._~-]+$/.test(s);
 }
 
+/**
+ * Parse a pasted Door43 source URL (or bare `owner/repo`) into `{ org, repo }`
+ * for a per-resource translation source. Reuses normalizeDoor43RepoUrl (so it
+ * accepts the repo root, /src|/raw/branch paths, trailing slash, and bare
+ * owner/repo) and additionally strips a trailing `.git` from the repo name.
+ * Rejects non-Door43 hosts and anything that isn't owner/repo-shaped.
+ */
+export function parseDoor43SourceRef(
+  input: string,
+): { ok: true; org: string; repo: string } | { ok: false; error: string } {
+  const norm = normalizeDoor43RepoUrl(input);
+  if (!norm.ok) return norm;
+  const repo = norm.ref.repo.replace(/\.git$/i, "");
+  if (!isIdent(repo)) return { ok: false, error: "invalid_owner_or_repo" };
+  return { ok: true, org: norm.ref.owner, repo };
+}
+
 export function repoRefEquals(a: RepoRef, b: RepoRef): boolean {
   return (
     a.owner.toLowerCase() === b.owner.toLowerCase() &&

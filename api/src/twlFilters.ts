@@ -28,7 +28,12 @@ export interface TwlDeletedEntry {
 // reinsert, and SQLite reuses rowids after a table is emptied, so a same-sized
 // re-import would keep an unchanged rowid signature and serve stale filters.
 // last_synced is stamped fresh (unixepoch()) on every import, so it always moves.
-let unlinkedCache: { sig: string; rows: TwlUnlinkedEntry[] } | null = null;
+//
+// Keyed by workspace slug (folded into the map key alongside "book" below):
+// the isolate is shared across every workspace, and these rows are per-
+// workspace D1 content, so an unkeyed cache would serve workspace A's
+// deny-lists to workspace B.
+const unlinkedCache = new Map<string, { sig: string; rows: TwlUnlinkedEntry[] }>();
 const deletedCache = new Map<string, { sig: string; rows: TwlDeletedEntry[] }>();
 
 async function tableSig(env: Env, table: string): Promise<string> {
@@ -40,20 +45,24 @@ async function tableSig(env: Env, table: string): Promise<string> {
 
 twlFilters.get("/:book", async (c) => {
   const book = c.req.param("book").toUpperCase();
+  const wsKey = c.env.WORKSPACE_SLUG ?? "default";
 
   const unlinkedSig = await tableSig(c.env, "twl_unlinked_words");
-  if (!unlinkedCache || unlinkedCache.sig !== unlinkedSig) {
+  let uCached = unlinkedCache.get(wsKey);
+  if (!uCached || uCached.sig !== unlinkedSig) {
     const r = await c.env.DB.prepare(
       `SELECT norm_orig_words, tw_link FROM twl_unlinked_words`,
     ).all<{ norm_orig_words: string; tw_link: string }>();
-    unlinkedCache = {
+    uCached = {
       sig: unlinkedSig,
       rows: r.results.map((x) => ({ normOrigWords: x.norm_orig_words, twLink: x.tw_link })),
     };
+    unlinkedCache.set(wsKey, uCached);
   }
 
   const deletedSig = await tableSig(c.env, "twl_deleted_rows");
-  let dCached = deletedCache.get(book);
+  const deletedKey = `${wsKey}:${book}`;
+  let dCached = deletedCache.get(deletedKey);
   if (!dCached || dCached.sig !== deletedSig) {
     const r = await c.env.DB.prepare(
       `SELECT reference, norm_orig_words FROM twl_deleted_rows WHERE book = ?`,
@@ -64,8 +73,8 @@ twlFilters.get("/:book", async (c) => {
       sig: deletedSig,
       rows: r.results.map((x) => ({ reference: x.reference, normOrigWords: x.norm_orig_words })),
     };
-    deletedCache.set(book, dCached);
+    deletedCache.set(deletedKey, dCached);
   }
 
-  return c.json({ unlinked: unlinkedCache.rows, deleted: dCached.rows });
+  return c.json({ unlinked: uCached.rows, deleted: dCached.rows });
 });

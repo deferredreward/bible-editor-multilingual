@@ -92,9 +92,10 @@ interface Props {
   resource: "tw" | "ta";
   articleId: string | null;
   onNavigate: (resource: "tw" | "ta", articleId: string) => void;
+  onBack: () => void;
 }
 
-export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
+export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Props) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
@@ -219,7 +220,7 @@ export function ArticleWorkspace({ resource, articleId, onNavigate }: Props) {
         <Stack spacing={1} sx={{ p: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
           <Stack direction="row" alignItems="center" spacing={0.5}>
             <Tooltip title={t("articles.backToScripture")}>
-              <IconButton size="small" onClick={() => { location.hash = "#/"; }} sx={{ ml: -0.5 }}>
+              <IconButton size="small" onClick={onBack} sx={{ ml: -0.5 }}>
                 <ArrowBackIcon fontSize="small" />
               </IconButton>
             </Tooltip>

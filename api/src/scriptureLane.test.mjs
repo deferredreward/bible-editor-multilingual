@@ -9,6 +9,7 @@ import {
   allowVersePatch,
   activeVersesWhere,
   origSourceGeneration,
+  planReplacementBooks,
 } from "./scriptureLane.ts";
 import { PRESETS } from "./projectConfig.ts";
 
@@ -120,6 +121,55 @@ import { PRESETS } from "./projectConfig.ts";
 
 {
   assert.equal(origSourceGeneration(), 1);
+}
+
+// ── planReplacementBooks (issue #94 selective replacement) ───────────────────
+
+const REQUIRED = ["GEN", "JOL", "MAL", "OBA"];
+
+// undefined selection → replace all, nothing carried (unchanged whole-lane path)
+{
+  const plan = planReplacementBooks(REQUIRED);
+  assert.deepEqual(plan.staged, REQUIRED);
+  assert.deepEqual(plan.carryForward, []);
+  // returns a copy, not the same array reference
+  assert.notEqual(plan.staged, REQUIRED);
+}
+
+// subset selection → staged = selected, carryForward = complement (both in
+// requiredBooks order regardless of the selection's order)
+{
+  const plan = planReplacementBooks(REQUIRED, ["MAL", "GEN"]);
+  assert.deepEqual(plan.staged, ["GEN", "MAL"]);
+  assert.deepEqual(plan.carryForward, ["JOL", "OBA"]);
+}
+
+// empty selection → replace nothing, carry everything forward
+{
+  const plan = planReplacementBooks(REQUIRED, []);
+  assert.deepEqual(plan.staged, []);
+  assert.deepEqual(plan.carryForward, REQUIRED);
+}
+
+// full selection → carryForward empty (equivalent to whole-lane replace)
+{
+  const plan = planReplacementBooks(REQUIRED, [...REQUIRED]);
+  assert.deepEqual(plan.staged, REQUIRED);
+  assert.deepEqual(plan.carryForward, []);
+}
+
+// unknown book → throws unknown_books (400), never silently dropped
+{
+  let threw = null;
+  try {
+    planReplacementBooks(REQUIRED, ["MAL", "REV"]);
+  } catch (e) {
+    threw = e;
+  }
+  assert.ok(threw, "expected planReplacementBooks to throw on an unknown book");
+  assert.equal(threw.message, "unknown_books");
+  assert.equal(threw.status, 400);
+  assert.deepEqual(threw.detail.unknown, ["REV"]);
 }
 
 console.log("scriptureLane tests passed");

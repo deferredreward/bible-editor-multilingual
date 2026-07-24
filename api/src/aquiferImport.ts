@@ -21,7 +21,7 @@
 import type { Context } from "hono";
 import type { Env } from "./index";
 import { currentUserId } from "./auth";
-import { BOOK_NUMBERS, dcsRawUrl, fetchText } from "./dcsSources";
+import { BOOK_NUMBERS, dcsRawUrl, fetchText, resolveSourceRef } from "./dcsSources";
 import { getProjectConfig } from "./projectConfig.ts";
 import { makeVerseSortOrder, parseTsv, refParts } from "./importParsers";
 import { aquiferJsonUrl, aquiferLangFor } from "./aquiferSources.ts";
@@ -61,7 +61,10 @@ function isTranslatedNote(note: string | null, languageCode: string, enNote: str
 
 const ALPHA = "abcdefghijklmnopqrstuvwxyz";
 const ALNUM = ALPHA + "0123456789";
-function mintId(live: Set<string>): string {
+// Exported for reuse by the per-chapter-range Aquifer import path (bookImport.ts):
+// mint a 4-char sticky id (letter + 3 alnum) not already in `live`, mutating the
+// set. pickId keeps a preferred (inherited en_tn) id when free, else mints.
+export function mintId(live: Set<string>): string {
   for (let tries = 0; tries < 100; tries++) {
     const buf = new Uint8Array(4);
     crypto.getRandomValues(buf);
@@ -71,7 +74,7 @@ function mintId(live: Set<string>): string {
   }
   throw new Error("could not mint a free tn id");
 }
-function pickId(preferred: string | null, live: Set<string>): string {
+export function pickId(preferred: string | null, live: Set<string>): string {
   if (preferred && !live.has(preferred)) { live.add(preferred); return preferred; }
   return mintId(live);
 }
@@ -113,8 +116,19 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     if (!Array.isArray(aqItems)) return c.json({ error: "aquifer_json_shape", book }, 502);
 
     const src = cfg.translationSource;
-    const enRaw = await fetchText(dcsRawUrl(env, src.org, src.repos.tn, `tn_${book}.tsv`));
-    if (!enRaw) return c.json({ error: "en_tn_fetch_failed", book, org: src.org, repo: src.repos.tn }, 502);
+    // translationSource.repos is PARTIAL and per-resource — a tN role left blank
+    // in Setup has no upstream source, and it may point at a DIFFERENT org than
+    // src.org. Resolve org+repo through the shared accessor. Report a missing
+    // source DISTINCTLY rather than fetching `${org}/undefined/...` and
+    // mislabeling it en_tn_fetch_failed (502): the Aquifer converter needs the
+    // English tN to pair against, so a missing source is a configuration gap
+    // (400), not a transient fetch failure.
+    const tnSrc = resolveSourceRef(src, "tn");
+    if (!tnSrc) {
+      return c.json({ error: "no_source_configured", resource: "tn", book, org: src.org }, 400);
+    }
+    const enRaw = await fetchText(dcsRawUrl(env, tnSrc.org, tnSrc.repo, `tn_${book}.tsv`));
+    if (!enRaw) return c.json({ error: "en_tn_fetch_failed", book, org: tnSrc.org, repo: tnSrc.repo }, 502);
     const enRows: EnRow[] = parseTsv(enRaw).rows.map((r) => ({
       Reference: r["Reference"] ?? "",
       ID: r["ID"] ?? "",

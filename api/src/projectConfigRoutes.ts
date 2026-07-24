@@ -6,12 +6,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
-import { requireAuth, requireAdmin } from "./auth";
+import { requireAuth, requireAdmin } from "./auth.ts";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
 import { builtinLayoutsFor } from "./workflowLayouts.ts";
-import { overlayLaneLabels } from "./scriptureLane";
-import { scriptureLaneRoutes } from "./scriptureLaneRoutes";
-import { applyProjectConfig } from "./projectConfigApply.ts";
+import { isIdent } from "./repoUrl.ts";
+import { overlayLaneLabels } from "./scriptureLane.ts";
+import { scriptureLaneRoutes } from "./scriptureLaneRoutes.ts";
+import { applyProjectConfig, applyProjectMode } from "./projectConfigApply.ts";
 
 export const projectConfig = new Hono<{
   Bindings: Env;
@@ -69,11 +70,27 @@ projectConfig.get("/", async (c) => {
 
 // Loose shape check for translationSource only when the key is present
 // (custom-gl's stricter isIdent/completeness guard runs in applyProjectConfig).
-const TranslationSourceShape = z
+// SECURITY: org + per-resource repo/org are interpolated into git.door43.org URL
+// path segments (dcsUrls/dcsRawUrl). Only the custom-gl APPLY path used to
+// isIdent-validate them; a translationSource override merged via a NON-custom
+// preset reaches materialize UNCHECKED. Validate at THIS persist boundary for
+// EVERY preset so a traversal value (org/repo with '/', '..') can never be
+// stored. `languageCode` stays loose (it's not a URL path segment).
+const Ident = z.string().refine(isIdent, { message: "not_a_valid_ident" });
+// Exported for the persist-boundary regression test (projectConfigRoutes.test.mjs):
+// a non-ident override org/repo must be REJECTED here for EVERY preset, so it can
+// never be stored via a non-custom preset override.
+export const TranslationSourceShape = z
   .object({
-    org: z.string(),
+    org: Ident,
     languageCode: z.string(),
-    repos: z.record(z.string(), z.string()),
+    // Per-resource value is a bare repo string OR an { org?, repo } ref (a
+    // resource sourced from a different org via a pasted Door43 URL). Both the
+    // repo and the optional override org must be valid idents.
+    repos: z.record(
+      z.string(),
+      z.union([Ident, z.object({ org: Ident.optional(), repo: Ident })]),
+    ),
   })
   .nullable();
 
@@ -126,9 +143,38 @@ projectConfig.put("/", requireAdmin, async (c) => {
       if (result.error === "lane_busy") {
         body.hint = "Finish or cancel the in-flight scripture source replacement before switching project mode.";
       }
+      if (result.error === "lane_source_change_requires_migration") {
+        body.hint = "This project already has scripture text; changing a lane's source is a migration. Keep the current source, or use the deliberate Change scripture source tool (replacement flow).";
+      }
       return c.json(body, result.status);
     }
     return c.json({ config: await overlayLaneLabels(c.env, result.config) });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: "write_failed", detail: msg }, 500);
+  }
+});
+
+// Admin-only editor/translator mode toggle. Independent of the preset: it only
+// writes the `mode` override, which is identity-preserving (never trips the
+// project_not_empty guard), so it succeeds on a populated DB where a full
+// preset PUT would be blocked.
+const ModeBody = z.object({ mode: z.enum(["authoring", "translation"]) });
+
+projectConfig.patch("/mode", requireAdmin, async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const parsed = ModeBody.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  }
+  try {
+    const cfg = await applyProjectMode(c.env, parsed.data.mode);
+    return c.json({ config: await overlayLaneLabels(c.env, cfg) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ error: "write_failed", detail: msg }, 500);

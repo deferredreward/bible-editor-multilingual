@@ -146,7 +146,10 @@ export function parseTermsCsv(text: string): CsvParseResult {
   }
 
   const terms: TermImport[] = [];
-  const at = (r: string[], i: number): string => (i >= 0 && i < r.length ? r[i].trim() : "");
+  // stripFormulaGuard undoes the excelSafe prefix so re-importing a
+  // downloaded export doesn't accumulate quote marks.
+  const at = (r: string[], i: number): string =>
+    i >= 0 && i < r.length ? stripFormulaGuard(r[i].trim()) : "";
   const nullable = (s: string): string | null => (s === "" ? null : s);
   for (let r = 1; r < rows.length; r++) {
     const line = r + 1;
@@ -193,19 +196,41 @@ export function termInvariantError(t: { status: string; replacement: string | nu
   return null;
 }
 
+// Spreadsheet apps treat a cell whose first char is = + - @ (or a stray
+// tab/CR) as a formula, so an editor-authored term like "=HYPERLINK(...)"
+// would execute on a teammate's machine when they open the CSV in Excel.
+// The guard prefixes Excel's own text marker ('); parseTermsCsv strips it
+// back off, so a download → re-import round-trip is lossless.
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+function stripFormulaGuard(s: string): string {
+  return s.startsWith("'") && FORMULA_LEAD.test(s.slice(1)) ? s.slice(1) : s;
+}
+
 // Quote a cell only when it contains a comma, quote, or newline (RFC-4180).
-function csvCell(v: string | null | undefined): string {
-  const s = v == null ? "" : String(v);
+function csvCell(v: string | null | undefined, excelSafe: boolean): string {
+  let s = v == null ? "" : String(v);
+  if (excelSafe && FORMULA_LEAD.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 // Serialize terms back to CSV with the canonical header row.
-export function serializeTermsCsv(terms: readonly TermImport[]): string {
+//
+// excelSafe applies the formula-injection guard above. It is opt-in because
+// the two consumers want different bytes: the browser download (/terms/export)
+// lands in Excel and gets the guard; the DCS context-repo copy
+// (terminology/terms.csv) is a machine-read contract (CONTEXT-REPO-CONTRACT.md)
+// consumed by bp-assistant, whose cells must not change underneath the bot.
+export function serializeTermsCsv(
+  terms: readonly TermImport[],
+  opts: { excelSafe?: boolean } = {},
+): string {
+  const excelSafe = opts.excelSafe === true;
   const lines = [TERM_CSV_HEADER.join(",")];
   for (const t of terms) {
     lines.push(
       [t.concept_id, t.source_term, t.target_term, t.status, t.replacement, t.comment, t.tw_link]
-        .map(csvCell)
+        .map((v) => csvCell(v, excelSafe))
         .join(","),
     );
   }

@@ -3,6 +3,7 @@
 // from the same origin as the Worker).
 
 import type { LayoutSpec } from "../lib/layoutSpec";
+import { getWorkspaceSlug, setWorkspaceSlug } from "./workspace";
 
 export type RowKind = "tn" | "tq" | "twl";
 
@@ -263,6 +264,12 @@ export interface PipelineConflictBody {
 
 const CSRF_COOKIE_NAME = "be_csrf";
 
+// Guards the workspace-mismatch reload below from looping forever if the
+// server keeps disagreeing with what we just reconciled to (shouldn't
+// happen, but must never reload-loop the tab). Mirrors App.tsx's
+// WS_RECONCILED_KEY for the boot-time reconciliation path.
+const WS_MISMATCH_RELOAD_KEY = "bible-editor.ws-mismatch-reloaded";
+
 function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
   const prefix = `${name}=`;
@@ -443,6 +450,13 @@ async function request<T>(
     const csrf = getCsrfToken();
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
+  // Stamp this tab's own notion of the active workspace on every request.
+  // The server (requireWorkspaceMatch in api/src/workspaces.ts) compares it
+  // against the workspace it actually resolved the request against (from the
+  // be_ws cookie) and 409s workspace_mismatch on a mismatch — the signal that
+  // a SIBLING tab switched orgs and this tab is now stale. See the 409
+  // handling below and outbox.ts's dispatch().
+  headers["X-Workspace"] = getWorkspaceSlug();
 
   const timeoutMs = init?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   let signal = init?.signal ?? undefined;
@@ -510,6 +524,39 @@ async function request<T>(
       } catch {
         /* ignore — status alone is enough to classify the error */
       }
+      // workspace_mismatch: the server resolved this request against a
+      // different org than the X-Workspace header claimed (see
+      // requireWorkspaceMatch in api/src/workspaces.ts) — a SIBLING tab
+      // switched orgs and this tab's localStorage slug is now stale.
+      // Reconcile onto the server's slug and reload so this tab re-derives
+      // its outbox database + config from the org it's actually talking to.
+      // Guarded by a sessionStorage flag (same shape as App.tsx's boot
+      // reconciliation) so a persistent disagreement can't reload-loop.
+      //
+      // Do NOT treat this as fatal here: still throw ApiError below so
+      // outbox.ts's dispatch() can classify it distinctly from a version
+      // conflict (409 + `current`) — the op stays queued, it belongs to the
+      // OTHER workspace's outbox and will drain once the user is back there.
+      if ((body as { error?: string } | null)?.error === "workspace_mismatch") {
+        const expected = (body as { expected?: string }).expected;
+        if (expected && expected !== getWorkspaceSlug()) {
+          let alreadyReloaded = false;
+          try {
+            alreadyReloaded = sessionStorage.getItem(WS_MISMATCH_RELOAD_KEY) === "1";
+          } catch {
+            /* private mode */
+          }
+          if (!alreadyReloaded) {
+            setWorkspaceSlug(expected);
+            try {
+              sessionStorage.setItem(WS_MISMATCH_RELOAD_KEY, "1");
+            } catch {
+              /* private mode */
+            }
+            location.reload();
+          }
+        }
+      }
       // csrf_mismatch is recoverable, not fatal: the be_csrf cookie expired
       // (or was cleared) while the session itself is still valid. A refresh
       // re-mints the cookie via setSessionCookies, so the retry reads a fresh
@@ -553,6 +600,62 @@ async function request<T>(
 
 export type Role = "admin" | "editor" | "viewer";
 
+// user_roles allowlist row (api/src/adminUserRoutes.ts). role is really only
+// "admin"|"editor" here (viewers come from DCS org membership, not this
+// table) but Role is reused since the narrower union buys nothing.
+export interface AdminUser {
+  username: string;
+  role: Role;
+  addedAt: number | null;
+  addedBy: string | null;
+  /** "manual" = granted in this panel; "dcs_team" = derived from Door43 team membership. */
+  source?: "manual" | "dcs_team";
+}
+
+/** A live Door43 org member (from GET /api/admin/users/org-members), not the allowlist. */
+export interface OrgMember {
+  login: string;
+  fullName: string;
+  avatarUrl: string;
+  /** Live team-derived role (BE-Admins → admin, BE-Editors → editor), resolved
+   *  from Door43 team membership independent of whether the member has ever
+   *  signed in. Present only when team membership could be read (the
+   *  authenticated roster paths); absent on the public-members fallback. */
+  teamRole?: "admin" | "editor";
+}
+
+export interface OrgMembersResponse {
+  /** The project's configured org that was queried. */
+  org: string;
+  members: OrgMember[];
+  /** Set when DCS was unreachable / errored — members is empty; page stays usable. */
+  error?: string;
+  /** True when the roster exceeded the page cap and is incomplete. */
+  truncated: boolean;
+  /** True when `members`/`error` came from a public-members fallback (the
+   *  service account can't see full org membership) rather than a full roster. */
+  partial?: boolean;
+}
+
+export interface AquiferDraftsResponse {
+  ok: true;
+  book: string;
+  aqLang: string;
+  approved: number;
+  inserted: number;
+  replaced: number;
+  skippedApproved: number;
+  report: {
+    enRows: number;
+    aqItems: number;
+    matchedQuote: number;
+    matchedOrdinal: number;
+    matchedIntro: number;
+    unmatched: number;
+    flagged: number;
+  };
+}
+
 export interface MeResponse {
   userId: number;
   username: string | null;
@@ -562,6 +665,40 @@ export interface MeResponse {
   lastBook: string | null;
   lastChapter: number | null;
   lastVerse: number | null;
+  // The server's active workspace slug for this session's be_ws cookie.
+  // Absent on an older/cached response — callers treat that as "no reconciliation
+  // needed" (see App.tsx boot reconciliation).
+  workspace?: string;
+  // Whether `workspace` is the FALLBACK workspace (first entry in WORKSPACES,
+  // or the sole implicit "default" one) — see workspace.ts's
+  // getWorkspaceIsFallback / outbox.ts's outboxDbName. Absent alongside
+  // `workspace` on an older/cached response.
+  workspaceIsFallback?: boolean;
+}
+
+// One org-per-D1 workspace the switcher can offer. For non-super-admins the
+// server now OMITS workspaces the user may not enter (issue #93 — showing them
+// disabled leaked other orgs' names), so every entry a non-super-admin receives
+// is one they're allowed into and carries `allowed: true`. Super admins still
+// receive every configured workspace, also all `allowed: true`. The flag is
+// retained for the (now-defensive) disabled render path and forward
+// compatibility.
+export interface WorkspaceInfo {
+  slug: string;
+  label: string;
+  org: string;
+  allowed: boolean;
+  // Whether this is the FALLBACK workspace (first entry in WORKSPACES, or the
+  // sole implicit "default" one) — see workspace.ts's getWorkspaceIsFallback.
+  isFallback: boolean;
+}
+
+export interface WorkspacesResponse {
+  current: string;
+  workspaces: WorkspaceInfo[];
+  // Set when the server couldn't confirm Door43 org membership (no token, or
+  // the DCS lookup failed) — the `allowed` flags may be stale/incomplete.
+  membershipUnknown?: boolean;
 }
 
 export type AlertSeverity = "error" | "warning" | "info";
@@ -767,6 +904,21 @@ export interface BookListEntry {
   imported_at: number;
 }
 
+// One per-book / per-chapter-range resource source override (api/src/bookSource.ts).
+// A whole-book override uses chapter_start=0, chapter_end=999; a range override
+// carries its real [start, end] bounds. Only "tn" and "tq" are overridable.
+// `kind` discriminates a DCS org/repo source from an Aquifer source (tN-only; for
+// Aquifer, org is the "aquifer" sentinel and repo holds the aqLang, e.g. "arb").
+export interface BookSourceOverride {
+  resource: "tn" | "tq";
+  chapter_start: number;
+  chapter_end: number;
+  kind: "dcs" | "aquifer";
+  org: string;
+  repo: string;
+  updated_at: number;
+}
+
 // Mirrors api/src/bookReimport.ts. Counts of rows/verses touched per
 // resource by a single POST /api/books/:book/reimport call.
 export type ReimportResource = "ult" | "ust" | "tn" | "tq" | "twl";
@@ -795,6 +947,28 @@ export interface ReimportResponse {
   book: string;
   perResource: Record<ReimportResource, ReimportCounts>;
   totals: ReimportCounts;
+}
+
+// Error bodies for the admin-only `force` re-import (POST
+// /api/books/:book/import with { force: true }). 403 when the caller is not an
+// admin; 409 when the book carries local note/question edits and the request
+// did not also set `confirmDiscardEdits`.
+export interface ImportHasLocalEditsBody {
+  error: "has_local_edits";
+  book: string;
+  tn: number;
+  tq: number;
+  twl: number;
+  verses: number;
+}
+
+// Display form of the import response's note-source provenance: the stored
+// value is `source:<owner>/<repo>` (see SOURCE_PROVENANCE_PREFIX in the API);
+// the prefix is a storage detail, not something to show a translator.
+export function importedSourceRepos(sources?: { tn: string | null; tq: string | null }): string[] {
+  return [...new Set(
+    [sources?.tn, sources?.tq].filter((s): s is string => !!s).map((s) => s.replace(/^source:/, "")),
+  )];
 }
 
 // Translation-note AI draft endpoint (proxied through this Worker; the
@@ -858,6 +1032,8 @@ export interface TranslateRequestOptions {
   targetOrg?: string;
   sourceRef?: string;
   contextRef?: string;
+  literalRef?: string;
+  simplifiedRef?: string;
 }
 
 // tW / tA markdown article file (article_units). Keyed by (resource, path).
@@ -878,6 +1054,10 @@ export interface ArticleUnit {
   latest_source?: string | null;
 }
 
+// ── UI localization overrides (migration 0052) ──
+// A nested {namespace:{key:"text"}} bag mirroring the i18next resource shape.
+export type L10nBag = { [k: string]: string | L10nBag };
+
 // ── Translation preferences & memory (migration 0040) ──
 export const TERM_STATUSES = ["preferred", "admitted", "deprecated", "forbidden", "do_not_translate"] as const;
 export type TermStatus = (typeof TERM_STATUSES)[number];
@@ -891,6 +1071,7 @@ export interface TranslationPrefs {
   register: Register;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   assisted_mode: 0 | 1;
   version: number;
@@ -903,6 +1084,7 @@ export type TranslationPrefsInput = {
   register: Register;
   script_notes: string | null;
   instructions_md: string | null;
+  common_issues_md: string | null;
   notes: string | null;
   // assisted_mode removed: the server injects contextRef whenever a successful
   // context export exists — there is no client-settable gate any more.
@@ -978,6 +1160,69 @@ export interface ArticleUnitMeta {
   updated_at: number;
   has_target: 0 | 1;
   latest_source?: string | null;
+}
+
+// ── Note templates (migration 0054) ──
+// A single translatable note-template unit. Mirrors ArticleUnit, but a template
+// is one indivisible markdown body (no title/sub-title parts): source_md is the
+// English sheet text (column C), target_md is the translation (NULL = not
+// started).
+export interface TemplateUnit {
+  template_id: string;
+  support_ref: string;
+  sheet_order: number | null;
+  type: string | null;
+  source_md: string;
+  source_hash: string;
+  origin: string;
+  target_md: string | null;
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  draft_meta_json: string | null;
+  pre_draft_json?: string | null;
+  version: number;
+  updated_by: number | null;
+  updated_at: number;
+  deleted_at: number | null;
+  latest_source?: string | null;
+}
+
+// Lightweight rail item (source_md/target_md excluded server-side for weight).
+export interface TemplateUnitMeta {
+  template_id: string;
+  support_ref: string;
+  type: string | null;
+  sheet_order: number | null;
+  origin: string;
+  has_target: 0 | 1;
+  translation_state: "ai_draft" | "edited" | "validated" | null;
+  version: number;
+  // 1 when a source change demoted the draft and the target is now stale.
+  stale_source: 0 | 1;
+}
+
+// One English-source revision (newest first).
+export interface TemplateSourceRevision {
+  source_hash: string;
+  source_md: string;
+  seen_at: number;
+}
+
+// Target-side history entry — the same word-diff-ready shape RowHistoryEntry
+// uses, narrowed to the single `target_md` content field.
+export interface TemplateHistoryEntry {
+  version: number;
+  action: string;
+  created_at: number;
+  user: RowHistoryUser | null;
+  patch: { target_md?: string | null };
+  snapshot: { target_md: string | null };
+  synthetic: boolean;
+  restored_from_version: number | null;
+}
+
+export interface TemplateHistory {
+  source: TemplateSourceRevision[];
+  target: TemplateHistoryEntry[];
 }
 
 export type PipelineState =
@@ -1205,6 +1450,9 @@ export interface LanePublicState {
   replacementJobId: string | null;
   exportsBlocked: boolean;
   replacementRequired: boolean;
+  // True when this lane already has verses (from getProjectConfig's overlay). The
+  // Setup wizard locks a populated lane's source so it can't propose a change.
+  populated?: boolean;
   config: {
     label: string;
     source: { owner: string; repo: string; ref: string };
@@ -1281,27 +1529,23 @@ export interface ProjectConfig {
   translationSource: {
     org: string;
     languageCode: string;
-    repos: Record<string, string>;
+    // Per-resource value is a bare repo string (org = `org` above) OR an
+    // { org?, repo } ref pointing the resource at a different org. PARTIAL: an
+    // absent role has no upstream source. Read via lib/sourceRef.resolveSourceRef,
+    // never directly.
+    repos: Record<string, string | { org?: string; repo: string }>;
   } | null;
+  // Explicit editor/translator workflow mode (always materialized concrete by
+  // the server; derives from translationSource when no override is set).
+  mode: "authoring" | "translation";
   reposVerified: boolean;
   laneState?: {
     lit: LanePublicState;
     sim: LanePublicState;
   };
 }
-export interface ProjectPreset {
-  preset: string;
-  org: string;
-  languageCode: string;
-  languageName: string;
-  languageTitle: string;
-  direction: "ltr" | "rtl";
-  reposVerified: boolean;
-  isTranslation: boolean;
-}
 export interface ProjectConfigResponse {
   config: ProjectConfig;
-  presets: ProjectPreset[];
   // Server-shipped built-in layout defaults (flexible-layouts). Optional so an
   // older server (or the localStorage cache, which stores only `config`) makes
   // the client fall back to its bundled built-ins. Validated against the panel
@@ -1372,47 +1616,121 @@ export const api = {
   // translationSource). Readable by any authenticated user; drives the
   // translation-mode UI gate. Fetched once per session by useProjectConfig.
   getProjectConfig: () => request<ProjectConfigResponse>(`/api/project-config`),
-  // Switch the global project preset. `overrides` is intentionally omitted so
-  // the server preserves any existing custom repos/labels/panes/direction — a
-  // preset switch must not silently erase them. (Pass overrides: null only for
-  // an explicit reset flow, which this selector doesn't offer.)
-  putProjectConfig: (preset: string) =>
-    request<{ config: ProjectConfig }>(`/api/project-config`, {
-      method: "PUT",
-      body: JSON.stringify({ preset }),
-    }),
   // PR B: apply a full override set (custom-gl activation, or any explicit
-  // org/repo/translationSource change). Unlike putProjectConfig above, this
-  // always supplies `overrides` explicitly — the server's override-lifecycle
-  // rule only preserves stored overrides when the field is OMITTED.
+  // org/repo/translationSource change). Always supplies `overrides`
+  // explicitly — the server's override-lifecycle rule only preserves stored
+  // overrides when the field is OMITTED.
   putProjectConfigWithOverrides: (preset: string, overrides: Record<string, unknown> | null) =>
     request<{ config: ProjectConfig }>(`/api/project-config`, {
       method: "PUT",
       body: JSON.stringify({ preset, overrides }),
+    }),
+  // Toggle the editor/translator mode only (admin). Independent of the preset;
+  // the server merges the `mode` override into overrides_json — identity-
+  // preserving, so it succeeds even on a populated DB.
+  patchProjectMode: (mode: "authoring" | "translation") =>
+    request<{ config: ProjectConfig }>(`/api/project-config/mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
     }),
 
   // PR B: draft-only manifest inference for a Door43 org. Applies nothing.
   getInferredOrgConfig: (org: string) =>
     request<InferredOrgConfigResponse>(`/api/orgs/${encodeURIComponent(org)}/inferred-config`),
 
+  // Resolve a pasted Door43 source URL (or bare owner/repo) into a verified
+  // { org, repo } for the Setup wizard's per-resource source override. On a 2xx
+  // the repo is confirmed to exist on DCS. Throws ApiError on 400 (garbage /
+  // unsupported host), 404 (repo_not_found), or 503 (dcs_unavailable — transient,
+  // NOT a real "does not exist"); callers classify via lib/setupWizard.verifyErrorKind.
+  // `checkBooks` additionally verifies the repo CONTAINS USFM book files (a
+  // scripture lane source that only has scaffolding is a trap). `hasBooks` is
+  // present only when checked and the content lookup succeeded; a transient
+  // contents-API failure OMITS it (treat missing as "couldn't check", not empty).
+  verifySource: (url: string, opts?: { checkBooks?: boolean }) =>
+    request<{ ok: true; org: string; repo: string; fullName?: string; hasBooks?: boolean }>(
+      `/api/orgs/verify-source?url=${encodeURIComponent(url)}${opts?.checkBooks ? "&checkBooks=1" : ""}`,
+    ),
+
+  // Per-book resource source overrides (issue #103). Whole-book override rows
+  // come back as (chapter_start=0, chapter_end=999); range rows carry their real
+  // bounds. Readable by any authenticated user; the PUT below is admin-only.
+  getBookSources: (book: string) =>
+    request<{ book: string; overrides: BookSourceOverride[] }>(
+      `/api/books/${encodeURIComponent(book)}/sources`,
+    ),
+
+  // Set an override (admin only; non-admins get 403). For a DCS source, pass a
+  // verified org+repo (verify it first with verifySource). Both chapterStart and
+  // chapterEnd together set a range; omitting both sets the whole book. A range
+  // that overlaps an existing one answers 409 { error: "overlapping_range" }.
+  // For Aquifer, pass kind:"aquifer" with a chapter range (tN only; the aqLang is
+  // derived server-side from the project language — no url/org/repo, no verify).
+  setBookSource: (
+    book: string,
+    body: {
+      resource: "tn" | "tq";
+      kind?: "aquifer";
+      url?: string;
+      org?: string;
+      repo?: string;
+      chapterStart?: number;
+      chapterEnd?: number;
+    },
+  ) =>
+    request<{ ok: true }>(`/api/books/${encodeURIComponent(book)}/sources`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  // Clear one range (pass chapterStart) or a whole resource's overrides (omit
+  // chapterStart). Admin only. Same PUT endpoint, distinguished by `clear`.
+  clearBookSource: (
+    book: string,
+    body: { resource: "tn" | "tq"; chapterStart?: number },
+  ) =>
+    request<{ ok: true }>(`/api/books/${encodeURIComponent(book)}/sources`, {
+      method: "PUT",
+      body: JSON.stringify({ ...body, clear: true }),
+    }),
+
   getBooks: () => request<{ books: BookListEntry[] }>(`/api/books`),
 
   // Trigger a server-side import of a book from DCS. Long-running: ~5-60s
   // depending on book size, so the caller gets a wider timeout.
-  importBook: (book: string) =>
-    request<{
+  // `translateFromSource` pulls tN/tQ from the project's configured English
+  // source repos instead of the org's own; `sources` reports which resources
+  // actually came from the source (also set when the server falls back on its
+  // own because the org's file is missing), e.g. "source:unfoldingWord/en_tn".
+  // `force` (admin-only) bypasses the already-imported short-circuit and does a
+  // full wipe-and-reload; the server answers 403 `forbidden` for non-admins and
+  // 409 `has_local_edits` (with tn/tq/twl/verses counts) unless `confirmDiscardEdits`
+  // is also set. See ImportHasLocalEditsBody for those bodies.
+  importBook: (
+    book: string,
+    opts?: { translateFromSource?: boolean; force?: boolean; confirmDiscardEdits?: boolean },
+  ) => {
+    const body: Record<string, true> = {};
+    if (opts?.translateFromSource) body.translateFromSource = true;
+    if (opts?.force) body.force = true;
+    if (opts?.confirmDiscardEdits) body.confirmDiscardEdits = true;
+    return request<{
       ok: true;
       book: string;
       alreadyImported?: boolean;
+      forced?: boolean;
       verses?: number;
       tn?: number;
       tq?: number;
       twl?: number;
       fetched?: { ult: boolean; ust: boolean; orig: boolean; tn: boolean; tq: boolean; twl: boolean };
+      sources?: { tn: string | null; tq: string | null };
     }>(`/api/books/${encodeURIComponent(book)}/import`, {
       method: "POST",
       timeoutMs: 120_000,
-    }),
+      ...(Object.keys(body).length ? { body: JSON.stringify(body) } : {}),
+    });
+  },
 
   // Non-destructive per-chapter, per-resource re-import from Door43. Only
   // overwrites rows that have never been touched by a human; counts are
@@ -1590,6 +1908,63 @@ export const api = {
       body: JSON.stringify(opts ?? {}),
     }),
 
+  // ── Note templates (migration 0054) ──
+  // Rail list (metadata only; source_md/target_md excluded server-side).
+  getTemplates: (opts?: { includeDeleted?: boolean }) =>
+    request<{ units: TemplateUnitMeta[] }>(
+      `/api/templates${opts?.includeDeleted ? "?includeDeleted=1" : ""}`,
+    ),
+
+  // Full unit (source_md + target_md) for the editor.
+  getTemplate: (id: string) =>
+    request<TemplateUnit>(`/api/templates/unit?id=${encodeURIComponent(id)}`),
+
+  // Save the translation. If-Match version CAS (409 on mismatch, 428 if the
+  // header is missing). Editing an ai_draft/validated unit demotes it to
+  // 'edited' server-side.
+  patchTemplate: (id: string, expectedVersion: number, targetMd: string) =>
+    request<TemplateUnit>(`/api/templates/unit?id=${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+      body: JSON.stringify({ target_md: targetMd }),
+    }),
+
+  // "Draft with AI" — generates a translation for this unit's target_md via
+  // the uw-bt-bot proxy and persists it server-side as translation_state=
+  // 'ai_draft' in the same request (templates have no separate apply step).
+  // If-Match CAS like patchTemplate; long timeout since generation can take a
+  // while (mirrors api.tnQuick's 120s ceiling).
+  draftTemplate: (id: string, expectedVersion: number, signal?: AbortSignal) =>
+    request<TemplateUnit>(`/api/templates/unit/draft?id=${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "If-Match": String(expectedVersion) },
+      signal,
+      timeoutMs: 120_000,
+    }),
+
+  // "Approve" — value=true → 'validated'; value=false → 'edited'. Non-version-
+  // bumping; 404 if the unit has no translation to (un)validate.
+  validateTemplate: (id: string, value: boolean) =>
+    request<TemplateUnit>(`/api/templates/unit/validate?id=${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value ? 1 : 0 }),
+    }),
+
+  // Source revisions + word-diff-ready target history for the history dialog.
+  getTemplateHistory: (id: string) =>
+    request<TemplateHistory>(`/api/templates/unit/history?id=${encodeURIComponent(id)}`),
+
+  // ── UI localization overrides (migration 0052) ──
+  getL10nOverrides: () =>
+    request<{ overrides: Record<string, L10nBag>; versions: Record<string, number> }>(`/api/l10n/overrides`),
+  putL10nOverrides: (lang: string, expectedVersion: number, overrides: L10nBag) =>
+    request<{ version: number }>(`/api/l10n/overrides/${lang}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+      body: JSON.stringify(overrides),
+    }),
+
   // ── Translation preferences & memory (migration 0040) ──
   getTranslationPrefs: () => request<{ prefs: TranslationPrefs }>(`/api/translation-memory/prefs`),
   putTranslationPrefs: (expectedVersion: number, patch: Partial<TranslationPrefsInput>) =>
@@ -1609,6 +1984,10 @@ export const api = {
         dryDcs: opts?.dryDcs,
         shrinkOverride: opts?.shrinkOverride,
       }),
+    }),
+  aquiferDrafts: (book: string) =>
+    request<AquiferDraftsResponse>(`/api/books/${encodeURIComponent(book)}/aquifer-drafts`, {
+      method: "POST",
     }),
   getTerms: (opts?: { status?: string; q?: string }) => {
     const qs = new URLSearchParams();
@@ -1772,10 +2151,35 @@ export const api = {
     lane: "lit" | "sim",
     config: LanePublicState["config"],
     confirm: boolean,
+    // Optional per-book selection (issue #94): the books to STAGE from the new
+    // source. Omit to replace every book (unchanged whole-lane behavior); the
+    // un-selected books are carried forward from the current generation. Must be
+    // a subset of laneAffectedBooks — the server 400s (`unknown_books`) otherwise.
+    replaceBooks?: string[],
   ) =>
     request<{ job: unknown; books: unknown[] }>(
       `/api/project-config/lanes/${lane}/replacements`,
-      { method: "POST", body: JSON.stringify({ config, confirm }) },
+      {
+        method: "POST",
+        body: JSON.stringify(
+          replaceBooks ? { config, confirm, replaceBooks } : { config, confirm },
+        ),
+      },
+    ),
+
+  // The exact book set a replacement on this lane would re-stage (issue #97),
+  // from the lane's required-books snapshot of the active generation. Used to
+  // list affected books in the confirm dialog + staging view — NOT getBooks(),
+  // which reflects the whole DB rather than this lane's imported generation.
+  laneAffectedBooks: (lane: "lit" | "sim") =>
+    request<{
+      books: string[];
+      // Per-book existing-content stats (issue #94): verse count + how many
+      // verses have a translator edit. Lets the checklist show what each book
+      // holds before it's overwritten. Absent on older servers.
+      stats?: Record<string, { verses: number; edited: number }>;
+    }>(
+      `/api/project-config/lanes/${lane}/affected-books`,
     ),
 
   laneGetJob: (lane: "lit" | "sim", jobId: string) =>
@@ -1786,6 +2190,16 @@ export const api = {
   laneCancelJob: (lane: "lit" | "sim", jobId: string) =>
     request<{ ok: boolean }>(
       `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST" },
+    ),
+
+  // Full back-out (issue #97): abort an in-progress replacement AND revert the
+  // lane to its prior source — clears replacement_required + pendingTarget that
+  // /cancel keeps, without overwriting gen-1 content. This is the escape hatch
+  // for a lane stuck spinning on staging failures.
+  laneBackOutJob: (lane: "lit" | "sim", jobId: string) =>
+    request<{ ok: boolean }>(
+      `/api/project-config/lanes/${lane}/replacements/${encodeURIComponent(jobId)}/back-out`,
       { method: "POST" },
     ),
 
@@ -1826,4 +2240,45 @@ export const api = {
         body: JSON.stringify({ ...patch, configRevision }),
       },
     ),
+
+  // ── Admin user allowlist (migration 0016) ──
+  adminListUsers: () => request<{ users: AdminUser[] }>(`/api/admin/users`),
+  // Live DCS org roster (NOT the allowlist) for reconciliation — see issue #64.
+  // Fails soft server-side, so a 200 with { error, members: [] } is normal when
+  // DCS is unreachable; callers surface that inline rather than treating it as
+  // a hard failure.
+  adminListOrgMembers: () => request<OrgMembersResponse>(`/api/admin/users/org-members`),
+  // wasTeamManaged: the row belonged to Door43 team sync BEFORE this edit
+  // (post-edit it reads source='manual' — the admin just took ownership), so
+  // the edit will be re-taken at the user's next team check while they stay
+  // on the team. Optional so older cached responses stay type-compatible.
+  adminSetUserRole: (username: string, role: "admin" | "editor") =>
+    request<{ user: AdminUser; wasTeamManaged?: boolean; dcsVerified: boolean }>(
+      `/api/admin/users/${encodeURIComponent(username)}`,
+      { method: "PUT", body: JSON.stringify({ role }) },
+    ),
+  adminRemoveUser: (username: string) =>
+    // wasTeamDerived: the removed row came from a Door43 team, so the user's
+    // next team check re-creates it — removal only sticks once they're taken
+    // out of the team on Door43.
+    request<{ ok: true; wasTeamDerived?: boolean }>(
+      `/api/admin/users/${encodeURIComponent(username)}`,
+      { method: "DELETE" },
+    ),
+  // Bulk-clears every manual allowlist grant so roles come from Door43 teams.
+  // `kept` names any manual admin preserved to keep the admin set non-empty
+  // (the caller if applicable); `removed` is everyone cleared.
+  adminPurgeManualGrants: () =>
+    request<{ removed: string[]; kept: string[] }>(`/api/admin/users/purge-manual`, {
+      method: "POST",
+    }),
+
+  // ── Workspaces (org-per-D1) ──
+  listWorkspaces: () => request<WorkspacesResponse>(`/api/workspaces`),
+  // Sets the be_ws cookie server-side. 404 unknown_workspace / 403
+  // workspace_forbidden are surfaced to callers as ApiError.
+  switchWorkspace: (slug: string) =>
+    request<{ ok: true; slug: string }>(`/api/workspaces/${encodeURIComponent(slug)}`, {
+      method: "POST",
+    }),
 };

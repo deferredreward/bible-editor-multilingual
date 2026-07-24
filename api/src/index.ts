@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { chapters } from "./chapters";
 import { rows } from "./rows";
 import { verses } from "./verses";
@@ -16,11 +17,18 @@ import { pendingImports } from "./pendingImports";
 import { alerts } from "./alerts";
 import { projectConfig } from "./projectConfigRoutes";
 import { orgRoutes } from "./orgRoutes";
+import { adminUsers } from "./adminUserRoutes";
 import { articles } from "./articles";
 import { translationMemory } from "./translationMemory";
+import { l10n } from "./l10n";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
-import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId, verifyToken } from "./auth";
+import { templates } from "./templates";
+import { syncTemplates } from "./templateSync";
+import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
+import { workspaceRoutes } from "./workspaceRoutes";
+import { blockViewerWrites } from "./viewerGuard";
+import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch, primeWorkspaces } from "./workspaces";
 
 export interface Env {
   DB: D1Database;
@@ -56,16 +64,58 @@ export interface Env {
   // DCS org whose members get read-only ("viewer") access when not on the
   // editor allowlist. Defaults to "unfoldingWord" when unset.
   VIEWER_ORG?: string;
+  // Door43 team names, inside the configured project org, whose members are
+  // granted admin / editor at sign-in (api/src/dcsTeams.ts). Default to
+  // "BE-Admins" / "BE-Editors" when unset.
+  DCS_TEAM_ADMIN?: string;
+  DCS_TEAM_EDITOR?: string;
   // Shared service token for the uw-bt-bot AI endpoint. Set via
   // `wrangler secret put BT_API_TOKEN`. Absence disables /api/tn-quick.
   BT_API_TOKEN?: string;
   // Override the bot URL (defaults to https://uw-bt-bot.fly.dev/api/tn-quick
   // when unset). Useful for staging / local bot dev.
   TN_QUICK_URL?: string;
+  // Override the bot URL for single-unit note-template drafting (defaults to
+  // https://uw-bt-bot.fly.dev/api/template-quick when unset). See
+  // api/src/templates.ts POST /unit/draft.
+  TEMPLATE_QUICK_URL?: string;
   // Base URL for the bp-assistant pipeline API (POST /api/pipeline/start,
   // GET /api/pipeline/:jobId). Defaults to the prod bot at uw-bt-bot.fly.dev
   // when unset.
   PIPELINE_API_BASE?: string;
+  // ── Workspaces (org-per-D1) ────────────────────────────────────────────
+  // JSON array of {slug,label,org,binding,exportOwner?} — see workspaces.ts.
+  // Unset/empty/malformed means "one implicit workspace on the DB binding
+  // above", so every existing deployment is unaffected until this is set.
+  WORKSPACES?: string;
+  // Second binding to the SAME database as DB — holds org-independent state
+  // (accounts, sessions, lexicon, alignment frequencies, UI-string overrides)
+  // so switching workspaces doesn't log a user out or blank their lexicon.
+  // Falls back to DB when unset (single-workspace deployments).
+  SHARED_DB?: D1Database;
+  // Set per-request by the fetch() wrapper below to the resolved workspace's
+  // slug ("default" when WORKSPACES is unset) — never configured directly.
+  WORKSPACE_SLUG?: string;
+  // The original, never-swapped env, stamped by workspaceEnv(). Bindings must
+  // always be looked up here so resolving a second workspace from an already-
+  // swapped env can't hand back the currently-active database.
+  BASE_ENV?: Env;
+  // Comma-separated DCS usernames (case-insensitive) who may switch to any
+  // workspace regardless of DCS org membership.
+  SUPER_ADMINS?: string;
+  // Placeholder for an additional org's D1 binding — declared here AND in
+  // wrangler.toml when a new workspace is provisioned (see the WORKSPACES
+  // comment in wrangler.toml for the full add-an-org steps). The workspace
+  // lookup itself is by string via `(env as any)[binding]`, so new bindings
+  // don't need new fields here to be *usable* — this one is just so
+  // wrangler-generated types have somewhere to declare a real example.
+  DB_MLTEST?: D1Database;
+  // Spare-pool slot binding (issue #81): a pre-provisioned, migrated, empty D1
+  // declared in wrangler.toml and registered as an `available` workspace-
+  // registry row, then claimed for an org at onboard. Like DB_MLTEST this is an
+  // example declaration — the pool lookup resolves bindings by string, so
+  // additional DB_POOL<n> slots are usable without their own field here.
+  DB_POOL1?: D1Database;
 }
 
 // Cron patterns must match the [env.production.triggers] crons list in
@@ -105,13 +155,21 @@ app.use("*", (c, next) => {
   return cors({
     origin: (origin) => (origin && list.includes(origin) ? origin : null),
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation"],
+    allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-CSRF-Token", "X-Source-Generation", "X-Workspace"],
     exposeHeaders: ["ETag"],
   })(c, next);
 });
 
 app.use("*", attachAuth);
+app.use("*", requireWorkspaceMatch);
 app.use("*", requireCsrf);
+// Viewer read-only backstop: 403 any authenticated non-editor/non-admin
+// mutation under /api outside the exact self-scoped allowlist (auth/session,
+// own location, workspace switch, own alert dismiss — see viewerGuard.ts).
+// Scoped to /api so non-API paths keep the normal SPA/asset fallthrough.
+// Per-route requireEditor/requireAdmin guards remain the primary gate — this
+// catches future write routes added without one.
+app.use("/api/*", blockViewerWrites);
 
 // Defense-in-depth response headers. CSP locks the SPA to its own bundle
 // (no third-party scripts/styles aside from inline styles emotion/MUI need).
@@ -125,12 +183,34 @@ app.use("*", requireCsrf);
 // into a different MIME than what we send. Applied to every response.
 app.use("*", async (c, next) => {
   await next();
+  // connect-src pins WebSockets to this deployment's own host instead of the
+  // bare wss:/ws: schemes (any host — which would have handed an XSS a free
+  // exfiltration channel). The explicit wss://host + ws://host entries cover
+  // browsers that don't extend 'self' to WebSocket upgrades; the only WS the
+  // SPA opens is same-host (wsClient.ts builds it from location.host).
+  const host = new URL(c.req.url).host;
   c.res.headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss: ws: https://git.door43.org; frame-src 'self' https://swunrow.pythonanywhere.com",
+    `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://${host} ws://${host} https://git.door43.org; frame-src 'self' https://swunrow.pythonanywhere.com`,
   );
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   c.res.headers.set("X-Content-Type-Options", "nosniff");
+});
+
+// Global error handler. Without it, an unexpected throw in any handler returns
+// Hono's default plain-text 500 — inconsistent with this API's JSON error
+// shape and leaking the stack in some runtimes. HTTPException instances carry
+// their own intended response, so honor those; everything else becomes a
+// generic JSON 500 (details go to the log, not the client).
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
+  console.error(
+    "unhandled error",
+    c.req.method,
+    c.req.path,
+    err instanceof Error ? (err.stack ?? err.message) : String(err),
+  );
+  return c.json({ error: "internal_error" }, 500);
 });
 
 app.get("/api/health", (c) =>
@@ -193,42 +273,36 @@ app.route("/api/pending-imports", pendingImports);
 app.route("/api/alerts", alerts);
 app.route("/api/project-config", projectConfig);
 app.route("/api/orgs", orgRoutes);
+app.route("/api/workspaces", workspaceRoutes);
+app.route("/api/admin/users", adminUsers);
 app.route("/api/articles", articles);
+app.route("/api/templates", templates);
 app.route("/api/translation-memory", translationMemory);
+app.route("/api/l10n", l10n);
 
 // WebSocket upgrade into the ChapterRoom DO. WS handshakes are normal HTTP
-// upgrades, so they carry the Access cookie (same-origin) and attachAuth has
-// already stamped userId on the context. Old bearer.<jwt> subprotocol path
-// remains read here only for the cutover window — drop once all clients are
-// on cookies. Forward the raw request to the DO; it echoes the subprotocol
-// back so the handshake completes.
+// upgrades, so they carry the be_access cookie (same-origin) and attachAuth
+// has already stamped userId on the context — that cookie is the only auth
+// path (wsClient.ts opens the socket with no subprotocol). The earlier
+// bearer.<jwt> subprotocol fallback has been removed alongside the HTTP Bearer
+// fallback. Forward the raw request to the DO; it echoes any subprotocol back
+// so the handshake completes.
 app.get("/api/ws/chapter/:book/:chapter", async (c) => {
   if (c.req.header("upgrade") !== "websocket") {
     return c.text("expected websocket", 426);
   }
-  // Cookie path: attachAuth has already stamped userId for browser clients.
-  // Subprotocol bearer.<jwt> fallback covers cutover-era clients that still
-  // hold a localStorage token; drop once we're confident nobody does.
-  let authed = currentUserId(c) !== null;
-  if (!authed) {
-    const protoHeader = c.req.header("sec-websocket-protocol") ?? "";
-    const proto = protoHeader
-      .split(",")
-      .map((s) => s.trim())
-      .find((s) => s.startsWith("bearer."));
-    const token = proto ? proto.slice("bearer.".length) : "";
-    if (token) {
-      const claims = await verifyToken(token, c.env);
-      if (claims) authed = true;
-    }
-  }
-  if (!authed) return c.text("unauthorized", 401);
+  if (currentUserId(c) === null) return c.text("unauthorized", 401);
 
   const book = c.req.param("book").toUpperCase();
   const chapter = parseInt(c.req.param("chapter"), 10);
   if (!Number.isFinite(chapter)) return c.text("invalid chapter", 400);
 
-  const id = c.env.CHAPTER_ROOM.idFromName(`${book}:${chapter}`);
+  // Workspace-scoped DO name so orgs don't share a ChapterRoom. ChapterRoom
+  // holds only ephemeral presence/fanout state (no durable data), so folding
+  // the slug into the name here (which changes "GEN:1" -> "default:GEN:1"
+  // when WORKSPACES is unset) is safe — no data to migrate, worst case is a
+  // dropped in-flight WS connection on first deploy.
+  const id = c.env.CHAPTER_ROOM.idFromName(`${c.env.WORKSPACE_SLUG ?? "default"}:${book}:${chapter}`);
   return c.env.CHAPTER_ROOM.get(id).fetch(c.req.raw);
 });
 
@@ -245,9 +319,10 @@ app.notFound((c) => {
   return c.json({ error: "not_found", path: c.req.path }, 404);
 });
 
-export default {
-  fetch: app.fetch,
-  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
+// Runs the existing per-cron body once, against a single (already
+// workspace-resolved) env. Split out of the exported `scheduled()` so that
+// handler can loop it once per workspace — see the loop below for why.
+async function runScheduledTick(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
     // Two crons share this handler — wrangler.toml has the full list. The
     // 05:30 one kicks the nightly DCS-export Workflow; the 5-min one polls
     // every non-terminal pipeline_job so the auto-apply step lands even
@@ -311,12 +386,17 @@ export default {
       // merge it. Manual /api/exports/run leaves validateAndMerge unset so
       // tests don't accidentally trigger the auto-merge.
       //
-      // Deterministic per-day instance id: a double-fire of the cron (or a
-      // retried scheduled event) rejects on the duplicate id instead of
-      // running two overlapping nightly exports.
+      // Deterministic per-day-per-workspace instance id: a double-fire of the
+      // cron (or a retried scheduled event) rejects on the duplicate id
+      // instead of running two overlapping nightly exports for the same org;
+      // the workspace slug keeps two orgs' same-day runs from colliding.
       const day = new Date(controller.scheduledTime).toISOString().slice(0, 10);
+      const wsSlug = env.WORKSPACE_SLUG ?? "default";
       try {
-        await env.EXPORT_WORKFLOW.create({ id: `nightly-${day}`, params: { validateAndMerge: true } });
+        await env.EXPORT_WORKFLOW.create({
+          id: `nightly-${wsSlug}-${day}`,
+          params: { validateAndMerge: true, workspace: env.WORKSPACE_SLUG },
+        });
       } catch (e) {
         console.log("nightly export already created for", day, e instanceof Error ? e.message : String(e));
       }
@@ -334,6 +414,21 @@ export default {
         await populateReferencedArticles(env, { maxFetches: 200 });
       } catch (e) {
         console.error("cron populateReferencedArticles failed", e instanceof Error ? e.message : String(e));
+      }
+      // Note-template sync backstop: refresh template_units from the Google
+      // Sheet at most every 6 hours. Isolated from both the pipeline poll and
+      // article population above — a sync failure (sheet down, etc.) must not
+      // break either.
+      try {
+        const state = await env.DB.prepare(
+          `SELECT last_synced_at FROM template_sync_state WHERE id = 1`,
+        ).first<{ last_synced_at: number | null }>();
+        const staleSeconds = 6 * 60 * 60;
+        if (state?.last_synced_at == null || Math.floor(Date.now() / 1000) - state.last_synced_at > staleSeconds) {
+          await syncTemplates(env);
+        }
+      } catch (e) {
+        console.error("cron syncTemplates failed", e instanceof Error ? e.message : String(e));
       }
       // Stale-lock sweep for book_import_locks. Imports take 5-60s in
       // practice; anything past 10 minutes is a Worker that died mid-import
@@ -360,8 +455,42 @@ export default {
       // Workflow in reimportOnly mode — scheduled() has no WorkflowStep context,
       // and the Workflow path chunks by chapter (so a large book can't blow the
       // 10-min step limit) and SHA-skips unchanged files. See exportWorkflow.ts.
-      await env.EXPORT_WORKFLOW.create({ params: { reimportOnly: true } });
+      await env.EXPORT_WORKFLOW.create({ params: { reimportOnly: true, workspace: env.WORKSPACE_SLUG } });
       return;
+    }
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    // The only place the workspace swap happens: resolve which org this
+    // request belongs to (be_ws cookie, else the first/default workspace),
+    // then hand the Hono app a clone of env with DB/VIEWER_ORG/etc. pointed
+    // at that workspace. Every route file still just reads c.env.DB.
+    //
+    // primeWorkspaces() loads the roster from the shared-DB registry table once
+    // per isolate (fails soft to the WORKSPACES env var, then the implicit
+    // default) so the synchronous resolveWorkspace below reads it. It's a no-op
+    // after the first request in this isolate.
+    await primeWorkspaces(env);
+    const ws = resolveWorkspace(env, parseWorkspaceCookie(request));
+    return app.fetch(request, workspaceEnv(env, ws), ctx);
+  },
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // Run the nightly export / job-poll body once per workspace. One org's
+    // failure (a bad D1 binding, an export error) must not skip the others,
+    // so each iteration gets its own try/catch and logs rather than throws.
+    // With WORKSPACES unset this is exactly one iteration against DB, same
+    // as before workspaces existed.
+    await primeWorkspaces(env);
+    for (const ws of listWorkspaces(env)) {
+      try {
+        await runScheduledTick(controller, workspaceEnv(env, ws), ctx);
+      } catch (e) {
+        console.error("scheduled tick failed for workspace", {
+          slug: ws.slug,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -16,7 +16,7 @@
 // POINTER/METADATA state, matching the plan's scope.
 
 import type { Env } from "./index";
-import { PRESETS, DEFAULT_PRESET, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
+import { PRESETS, DEFAULT_PRESET, presetForOrg, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
 import { isIdent } from "./repoUrl.ts";
 import {
   configHash,
@@ -36,13 +36,15 @@ const RESOURCE_KEYS: ResourceKey[] = ["lit", "sim", "tn", "tq", "twl", "tw", "ta
 export type ValidationResult = { ok: true } | { ok: false; error: string; detail?: unknown };
 
 /**
- * custom-gl completeness + isIdent guard: org, exportOrg, all seven repos, and
- * every nested translationSource repo must be PRESENT and isIdent-VALID
- * ("non-empty" is insufficient for URL-building values — a value like
- * "../foo" or an empty string would corrupt every dcsUrls()/dcsRawUrl() call
- * built from it). translationSource must be explicitly an object or `null`
- * (the key must be present — custom-gl has no preset default to fall back
- * on). lit repo must differ from sim repo.
+ * custom-gl completeness + isIdent guard: org, exportOrg, and all seven MY-ORG
+ * repos must be PRESENT and isIdent-VALID ("non-empty" is insufficient for
+ * URL-building values — a value like "../foo" or an empty string would corrupt
+ * every dcsUrls()/dcsRawUrl() call built from it). translationSource must be
+ * explicitly an object or `null` (the key must be present — custom-gl has no
+ * preset default to fall back on); when it IS an object, its `org` and
+ * `languageCode` are required, but its `repos` map is PARTIAL — each present
+ * role must be isIdent-valid, absent roles are allowed (an unchecked upstream
+ * resource is simply omitted). lit repo must differ from sim repo.
  */
 export function validateCustomGlOverrides(
   overrides: Record<string, unknown> | null | undefined,
@@ -90,10 +92,40 @@ export function validateCustomGlOverrides(
     if (!tsRepos || typeof tsRepos !== "object") {
       return { ok: false, error: "custom_gl_invalid_translation_source" };
     }
+    // Partial + per-resource source override: a translationSource repo map may
+    // carry only SOME of the seven roles (a resource whose upstream box is
+    // unchecked is simply omitted). Each PRESENT value is EITHER a bare
+    // isIdent-valid repo name (org = translationSource.org) OR an { org?, repo }
+    // ref pointing the resource at a DIFFERENT org (a pasted Door43 URL). When it
+    // is a ref, `repo` is required + isIdent-valid and `org`, when present, must
+    // be isIdent-valid too. ABSENT keys are allowed.
+    //
+    // CONTRACT for readers of translationSource.repos[key]: a missing role means
+    // "this resource has NO upstream source" and MUST be handled gracefully
+    // (skip / render an empty state) — NEVER fetched as an `${org}/undefined`
+    // repo. Route every read through the shared accessor (dcsSources.ts
+    // resolveSourceRef, which translationSourceRepoRef delegates to) and branch
+    // on its null. The guarded readers: dcsSources.translationSourceRepoRef,
+    // articlePopulate (populate/refresh/add), translateOptions.buildTranslateOptions,
+    // contextSourceFetch.fetchEnSourceMaps, aquiferImport, and the web source
+    // panes (ResourceColumn, TwArticleDialog) via web resolveSourceRef.
     const tr = tsRepos as Record<string, unknown>;
     for (const key of RESOURCE_KEYS) {
+      if (!(key in tr)) continue;
       const v = tr[key];
-      if (typeof v !== "string" || !isIdent(v)) {
+      if (typeof v === "string") {
+        if (!isIdent(v)) {
+          return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
+        }
+      } else if (v && typeof v === "object" && !Array.isArray(v)) {
+        const vo = v as Record<string, unknown>;
+        if (typeof vo.repo !== "string" || !isIdent(vo.repo)) {
+          return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
+        }
+        if (vo.org !== undefined && (typeof vo.org !== "string" || !isIdent(vo.org))) {
+          return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
+        }
+      } else {
         return { ok: false, error: "custom_gl_invalid_translation_source", detail: { role: key } };
       }
     }
@@ -308,6 +340,44 @@ export function isAbortError(e: unknown): boolean {
   return /constraint/i.test(msg);
 }
 
+// ── Mode-only apply ──────────────────────────────────────────────────────────
+
+/**
+ * Set the editor/translator `mode` override without disturbing anything else.
+ * A mode change is IDENTITY-PRESERVING: `dataExportIdentity` ignores `mode`
+ * (it's org|export|non-lane-repos), and `mode` never feeds a scripture lane's
+ * config, so this can never trip the project_not_empty tenancy guard nor need
+ * lane reconciliation — even on a fully populated DB. We therefore MERGE `mode`
+ * into the existing overrides_json (preserving any custom org/repos/labels) and
+ * write the config row directly, rather than routing through applyProjectConfig.
+ */
+export async function applyProjectMode(
+  env: Env,
+  mode: "authoring" | "translation",
+): Promise<ProjectConfig> {
+  const row = await readConfigRowUncached(env);
+  // No stored row yet: fall back to THIS workspace's org preset (mirrors
+  // getProjectConfig's workspace-aware fallback) rather than DEFAULT_PRESET —
+  // otherwise a first mode-toggle on a workspace with no config row silently
+  // re-pins it to the English root org.
+  const preset = row?.preset ?? presetForOrg(env.VIEWER_ORG ?? "") ?? DEFAULT_PRESET;
+  let overrides: Record<string, unknown> = {};
+  if (row?.overrides_json) {
+    try {
+      const parsed = JSON.parse(row.overrides_json) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        overrides = parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* malformed blob — fall back to a fresh overrides object carrying only mode */
+    }
+  }
+  const overridesJson = JSON.stringify({ ...overrides, mode });
+  await configWriteStmt(env, preset, overridesJson).run();
+  clearProjectConfigCache(env);
+  return materialize(preset, overridesJson);
+}
+
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export type ApplyResult =
@@ -373,6 +443,26 @@ export async function applyProjectConfig(
     plans.push(planLaneCommit(lane, row.active_config_json, row.config_revision, desiredCfg, verseCount));
   }
 
+  // Configure-only tenancy rule (owner decision): a config PUT must NEVER stage a
+  // scripture-source change on a POPULATED lane. planLaneCommit only produces a
+  // "quarantine" plan when a lane already has verses AND its source changed — the
+  // old behaviour that set replacement_required + pending_target and let the (now
+  // removed) in-wizard staging step run. That step was a trap (an empty new source
+  // can only fail; a valid one overwrites existing verses). Reject the WHOLE apply
+  // atomically, writing NOTHING (we return before the batch is built), and name the
+  // lane(s) so the UI can offer to revert. A deliberate source migration goes
+  // through the replacement FSM (laneValidate → laneStartReplacement → activate),
+  // NOT this path. An EMPTY lane (verseCount 0) still plans "install" and applies.
+  const migrationLanes = plans.filter((p) => p.needsUpdate && p.action === "quarantine").map((p) => p.lane);
+  if (migrationLanes.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: "lane_source_change_requires_migration",
+      detail: { lanes: migrationLanes },
+    };
+  }
+
   const stmts: D1PreparedStatement[] = [configWriteStmt(env, preset, overridesJsonForWrite)];
   for (const plan of plans) {
     if (!plan.needsUpdate) continue;
@@ -386,6 +476,6 @@ export async function applyProjectConfig(
     if (isAbortError(e)) return { ok: false, status: 409, error: "lane_conflict" };
     throw e;
   }
-  clearProjectConfigCache();
+  clearProjectConfigCache(env);
   return { ok: true, config: desiredCfg };
 }

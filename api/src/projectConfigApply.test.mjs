@@ -241,6 +241,129 @@ test("validateCustomGlOverrides: valid translationSource object passes", () => {
   assert.equal(r.ok, true);
 });
 
+// ── translationSource: partial + per-resource repo override (PR foundation) ──
+
+test("validateCustomGlOverrides: PARTIAL translationSource repos passes (some roles absent)", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      // only tn/tq sourced from upstream; the other five roles are omitted (blank)
+      repos: { tn: "en_tn", tq: "en_tq" },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: an OVERRIDE repo name (any valid ident) passes", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      // lit pulled from a DIFFERENT repo within the same upstream org
+      repos: { lit: "en_glt", tn: "en_tn" },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: empty translationSource repos object passes (all blank)", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: {} },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: a PRESENT translationSource repo that is not an ident rejects", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: "en_tn", tq: "bad/tq repo" },
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+  assert.deepEqual(r.detail, { role: "tq" });
+});
+
+test("validateCustomGlOverrides: a PRESENT-but-empty translationSource repo rejects", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "" } },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+});
+
+// ── translationSource: per-resource { org, repo } override (issue #84 slice) ──
+
+test("validateCustomGlOverrides: a per-resource { org, repo } ref passes", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      // tn sourced from a DIFFERENT org; tq stays a bare string (default org).
+      repos: { tn: { org: "BibleAquifer", repo: "ar_tn" }, tq: "en_tq" },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: an org-less { repo } ref passes (default org)", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: { repo: "en_tn" } },
+    },
+  });
+  assert.equal(r.ok, true);
+});
+
+test("validateCustomGlOverrides: a { org, repo } ref with an invalid org rejects", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: { org: "bad org!", repo: "ar_tn" } },
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+  assert.deepEqual(r.detail, { role: "tn" });
+});
+
+test("validateCustomGlOverrides: a ref missing repo (or non-ident repo) rejects", () => {
+  const noRepo = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: { org: "BibleAquifer" } } },
+  });
+  assert.equal(noRepo.ok, false);
+  assert.equal(noRepo.error, "custom_gl_invalid_translation_source");
+  const badRepo = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: { org: "BibleAquifer", repo: "ar tn!" } } },
+  });
+  assert.equal(badRepo.ok, false);
+});
+
+test("validateCustomGlOverrides: partial translationSource still requires a valid org", () => {
+  const r = validateCustomGlOverrides({
+    ...VALID_CUSTOM_GL,
+    translationSource: { org: "bad org!", languageCode: "en", repos: { tn: "en_tn" } },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "custom_gl_invalid_translation_source");
+});
+
 // ── resolveOverridesIntent (override lifecycle) ────────────────────────────
 
 test("resolveOverridesIntent: explicit overrides always win, same preset", () => {
@@ -413,6 +536,98 @@ test("applyProjectConfig: non-lane repo change (same org) on a populated custom-
   const result = await applyProjectConfig(env, "custom-gl", changed);
   assert.equal(result.ok, false);
   assert.equal(result.error, "project_not_empty");
+});
+
+test("applyProjectConfig: changing a POPULATED lane's source rejects 409 lane_source_change_requires_migration, zero writes", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  // Install custom-gl (MyOrg/ar_glt for lit) on the empty DB, then populate the
+  // LIT lane so a subsequent source change would have to overwrite verses.
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  const before = db.prepare(`SELECT * FROM project_config WHERE id=1`).get();
+  const beforeLit = db.prepare(`SELECT * FROM scripture_lane_state WHERE lane='lit'`).get();
+  // Same org/exportOrg/non-lane repos — ONLY the lit lane repo changes. The
+  // tenancy guard ignores lit/sim, so this reaches lane planning and must reject
+  // (not quarantine).
+  const changed = { ...VALID_CUSTOM_GL, repos: { ...VALID_CUSTOM_GL.repos, lit: "ar_glt_v2" } };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.equal(result.error, "lane_source_change_requires_migration");
+  assert.deepEqual(result.detail, { lanes: ["lit"] });
+  // Nothing applied: config row untouched, and the lane was NOT quarantined.
+  assert.deepEqual(db.prepare(`SELECT * FROM project_config WHERE id=1`).get(), before, "config zero writes");
+  const afterLit = db.prepare(`SELECT * FROM scripture_lane_state WHERE lane='lit'`).get();
+  assert.deepEqual(afterLit, beforeLit, "lane untouched — no replacement_required, no pending_target");
+  assert.equal(afterLit.replacement_required, 0, "lane not quarantined");
+});
+
+test("applyProjectConfig: a populated lane whose source is UNCHANGED applies with no 409 (the wizard lock)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // Populate the lit lane, then re-apply the SAME config (lit still ar_glt) — the
+  // wizard locks a populated lane's source to the active source, so desired ===
+  // active and applyProjectConfig must NOT return lane_source_change_requires_migration.
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  const result = await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL);
+  assert.equal(result.ok, true, "same-source apply on a populated lane succeeds — no 409, no loop");
+});
+
+test("applyProjectConfig: changing a lane's source on an EMPTY lane still installs (fresh org path)", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // No verses seeded — lit lane is empty, so a source change is a clean install.
+  const changed = { ...VALID_CUSTOM_GL, repos: { ...VALID_CUSTOM_GL.repos, lit: "ar_glt_v2" } };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
+  assert.equal(result.ok, true, "empty lane source change installs");
+  const litCfg = JSON.parse(db.prepare(`SELECT active_config_json FROM scripture_lane_state WHERE lane='lit'`).get().active_config_json);
+  assert.equal(litCfg.source.repo, "ar_glt_v2", "lane source updated in place");
+  assert.equal(db.prepare(`SELECT replacement_required FROM scripture_lane_state WHERE lane='lit'`).get().replacement_required, 0, "not quarantined");
+});
+
+test("applyProjectConfig: a non-lane change (translationSource) on a populated DB with UNCHANGED lane source still succeeds", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  assert.equal((await applyProjectConfig(env, "custom-gl", VALID_CUSTOM_GL)).ok, true);
+  // Populate the DB, but keep every lane source identical.
+  db.prepare(`INSERT INTO tn_rows (id, book, deleted_at) VALUES ('a','GEN',NULL)`).run();
+  db.prepare(
+    `INSERT INTO verses (book, chapter, verse, bible_version, source_generation, content_json)
+     VALUES ('GEN', 1, 1, 'ULT', 1, '{}')`,
+  ).run();
+  // Only translationSource changes (null → an upstream object). This is NOT a
+  // data/export identity change and NOT a lane-source change, so it must apply.
+  const changed = {
+    ...VALID_CUSTOM_GL,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl", tw: "en_tw", ta: "en_ta" },
+    },
+  };
+  const result = await applyProjectConfig(env, "custom-gl", changed);
+  assert.equal(result.ok, true, "non-lane, non-identity change on populated DB succeeds");
+  assert.ok(
+    db.prepare(`SELECT overrides_json FROM project_config WHERE id=1`).get().overrides_json.includes("unfoldingWord"),
+    "translationSource persisted",
+  );
 });
 
 test("applyProjectConfig: switching to a different preset without overrides clears stored overrides", async () => {

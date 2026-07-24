@@ -29,7 +29,14 @@ export function parseTwId(idOrLink: string | null | undefined): TwArticleRef | n
   const m =
     idOrLink.match(/\/bible\/([^/]+)\/([^/]+?)(?:\.md)?$/) ??
     idOrLink.match(/^([^/]+)\/([^/]+?)(?:\.md)?$/);
-  return m ? { cat: m[1], art: m[2] } : null;
+  if (!m) return null;
+  // Real cat/art values are plain slugs ("kt", "names", "god", "melchizedek").
+  // tw_link is a shared, editor-writable TWL field, so reject anything else —
+  // a "..", "%2F", "?" or "#" segment would otherwise steer the built DCS URL
+  // to a different path than the one the dialog labels it as.
+  const slug = /^[A-Za-z0-9_-]+$/;
+  if (!slug.test(m[1]) || !slug.test(m[2])) return null;
+  return { cat: m[1], art: m[2] };
 }
 
 // rc://*/tw/dict/bible/names/moab → names/moab; bare id passes through.
@@ -39,15 +46,22 @@ export function twShort(idOrLink: string | null | undefined): string {
 }
 
 // Rendered Gitea preview page — the "View on DCS" link target (human-facing).
+// cat/art come from shared, editor-writable TWL rows: percent-encode them so
+// a crafted tw_link (embedded %2F, ?, #, ..) can't steer the URL to a
+// different path or repo on DCS than the one the dialog labels it as.
 export function twArticleDcsUrl(idOrLink: string | null | undefined, source?: TwArticleSource): string {
   const ref = parseTwId(idOrLink);
-  return ref ? `${twBase(source)}/src/branch/master/bible/${ref.cat}/${ref.art}.md` : "";
+  return ref
+    ? `${twBase(source)}/src/branch/master/bible/${encodeURIComponent(ref.cat)}/${encodeURIComponent(ref.art)}.md`
+    : "";
 }
 
 // Raw markdown — what the in-app viewer fetches and renders.
 export function twArticleRawUrl(idOrLink: string | null | undefined, source?: TwArticleSource): string {
   const ref = parseTwId(idOrLink);
-  return ref ? `${twBase(source)}/raw/branch/master/bible/${ref.cat}/${ref.art}.md` : "";
+  return ref
+    ? `${twBase(source)}/raw/branch/master/bible/${encodeURIComponent(ref.cat)}/${encodeURIComponent(ref.art)}.md`
+    : "";
 }
 
 // Door43 serves raw .md with permissive CORS (node-twl-generator relies on the

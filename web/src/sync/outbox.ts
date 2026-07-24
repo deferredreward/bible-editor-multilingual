@@ -21,8 +21,28 @@ import {
 import { backoffMs } from "./backoff";
 import { classifyRowPatchConflict } from "./rowConflict";
 import { isLaneFrozen, laneFreezeReason } from "./laneFreeze";
+import { getWorkspaceSlug, getWorkspaceIsFallback } from "./workspace";
 
-const DB_NAME = "bible-editor-outbox";
+// Namespaced per workspace so switching Door43 orgs can never drain one org's
+// queued edits into another org's D1 database — without this, an edit queued
+// offline while in org A would ship to org B after a workspace switch. Do NOT
+// "simplify" this back to a fixed name.
+//
+// Back-compat: pre-workspaces installs have a populated unsuffixed
+// "bible-editor-outbox" database with real unsynced edits. The FALLBACK
+// workspace (first entry in WORKSPACES, or the sole implicit "default" one —
+// see workspace.ts's getWorkspaceIsFallback) keeps using that original name so
+// no queued edit is orphaned by this deploy. This must key off "is this the
+// fallback workspace", NOT off the literal slug "default": the moment
+// WORKSPACES is first configured, the fallback workspace gets a real slug
+// (e.g. "bsoj"), and keying off the literal string would strand any edits
+// queued before that deploy in a database no longer reachable by any slug.
+// Only non-fallback slugs get the "-{slug}" suffix.
+function outboxDbName(): string {
+  const slug = getWorkspaceSlug();
+  return getWorkspaceIsFallback() ? "bible-editor-outbox" : `bible-editor-outbox-${slug}`;
+}
+
 const DB_VERSION = 1;
 const STORE = "ops";
 
@@ -133,12 +153,22 @@ export interface OutboxOp {
   quarantined?: string;
 }
 
+// Ops still awaiting a settled outcome — either queued or on the wire. Shared
+// by SyncStatusBar's "saving N" pill and WorkspaceSwitcher's pre-switch guard
+// (an unsaved edit must finish syncing before a workspace switch, since the
+// outbox is about to be renamed to the new org's database).
+export function isOpPending(op: OutboxOp): boolean {
+  return op.status === "pending" || op.status === "in_flight";
+}
+
 type Subscriber = (ops: OutboxOp[]) => void;
 
 let dbp: Promise<IDBPDatabase> | null = null;
 function db() {
   if (!dbp) {
-    dbp = openDB(DB_NAME, DB_VERSION, {
+    // Resolved at first-open time (not module load) so it picks up a slug
+    // written during boot reconciliation (see App.tsx) before any op is queued.
+    dbp = openDB(outboxDbName(), DB_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains(STORE)) {
           const store = db.createObjectStore(STORE, { keyPath: "id" });
@@ -701,6 +731,19 @@ async function dispatch(op: OutboxOp): Promise<Result> {
         // Lane-specific terminal errors: the verse's generation is stale or a
         // replacement is active — retrying won't help; quarantine immediately.
         const errCode = (e.body as { error?: string } | null)?.error;
+        if (errCode === "workspace_mismatch") {
+          // This tab's X-Workspace header (its own notion of the active org)
+          // no longer matches the workspace the server resolved the request
+          // against — a SIBLING tab switched orgs out from under it (see
+          // api.ts's request() and workspaces.ts's requireWorkspaceMatch).
+          // This is NOT a version conflict: don't surface a merge prompt,
+          // don't burn the retry-attempt cap (reason doesn't start with
+          // "transient"). The op still belongs to — and is valid against —
+          // the OTHER workspace's outbox database; leave it queued as-is. Once
+          // api.ts's reload lands the user back where their outbox agrees
+          // with the server, it drains normally.
+          return { kind: "retry", reason: "workspace_mismatch" };
+        }
         if (
           errCode === "source_generation_mismatch" ||
           errCode === "lane_replacement_required" ||

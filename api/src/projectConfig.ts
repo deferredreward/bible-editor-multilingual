@@ -35,6 +35,26 @@ import type { Env } from "./index";
 
 export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl" | "tw" | "ta";
 
+/**
+ * A per-resource translation-source repo pointer. Historically this was a bare
+ * repo string under the single `translationSource.org`; it can now ALSO be an
+ * `{ org?, repo }` ref so a resource can be sourced from a DIFFERENT org than
+ * the default upstream (a pasted Door43 URL → org+repo). Both shapes are
+ * persisted-JSON compatible and normalize through `resolveSourceRef`
+ * (dcsSources.ts): a bare string, or an object with `org` omitted, both mean
+ * "use `translationSource.org`". `translationSource.org` stays the default /
+ * primary org for reader-friendly display and for non-overridden resources.
+ */
+export type TranslationSourceRef = string | { org?: string; repo: string };
+
+/**
+ * The editor/translator workflow mode. Independent from `translationSource`
+ * (which is the DATA source): `mode` drives which UI affordances show, and is
+ * an OPTIONAL override in overrides_json. When unset it DERIVES from
+ * translationSource for back-compat (see deriveMode / materialize).
+ */
+export type ProjectMode = "authoring" | "translation";
+
 export interface GlBiblePane {
   /** DCS repo under the project org, e.g. "ar_avd" */
   repo: string;
@@ -82,8 +102,24 @@ export interface ProjectConfig {
   translationSource: {
     org: string;
     languageCode: string;
-    repos: Record<ResourceKey, string>;
+    /**
+     * PARTIAL per-resource source map. A role absent from the map has NO
+     * upstream source (skip cleanly, never fetch an `undefined` repo). Each
+     * present value is a bare repo string (org = `org` above) OR an
+     * `{ org?, repo }` ref pointing the resource at a different org. Read every
+     * entry through `resolveSourceRef` (dcsSources.ts), never directly.
+     */
+    repos: Partial<Record<ResourceKey, TranslationSourceRef>>;
   } | null;
+  /**
+   * Explicit editor/translator workflow mode — the materialized value is ALWAYS
+   * concrete. Source of truth is an optional `mode` key in overrides_json; when
+   * that key is absent it derives to `translationSource != null ? "translation"
+   * : "authoring"`, so existing configs behave exactly as before until an admin
+   * toggles it. This is decoupled from `translationSource` on purpose: the mode
+   * changes which UI affordances show without changing the data source.
+   */
+  mode: ProjectMode;
   /** True when the org's repos were confirmed to exist on Door43 (2026-07-10 survey) */
   reposVerified: boolean;
   /**
@@ -122,7 +158,9 @@ const EN_REPOS: Record<ResourceKey, string> = {
 
 const UW_SOURCE = { org: "unfoldingWord", languageCode: "en", repos: EN_REPOS };
 
-export const PRESETS: Record<string, ProjectConfig> = {
+// Presets never hardcode `mode` — it's derived at materialize() time (or set
+// by an explicit overrides_json toggle), so the preset shape omits it.
+export const PRESETS: Record<string, Omit<ProjectConfig, "mode">> = {
   // The default — byte-for-byte the behavior the hardcoded mapping had.
   "en-unfoldingword": {
     preset: "en-unfoldingword",
@@ -275,14 +313,64 @@ export const PRESETS: Record<string, ProjectConfig> = {
 
 export const DEFAULT_PRESET = "en-unfoldingword";
 
+/**
+ * The preset id whose `org` matches `org` (case-insensitively), or null when no
+ * preset targets that org. Used to resolve a fresh workspace's DB to ITS org's
+ * preset instead of silently defaulting to the English root (en-unfoldingWord,
+ * whose translationSource is null → authoring/English mode). Hidden presets
+ * (custom-gl, org="") are skipped — they can't stand in for a real org.
+ */
+export function presetForOrg(org: string): string | null {
+  const target = org.trim().toLowerCase();
+  if (!target) return null;
+  for (const [id, preset] of Object.entries(PRESETS)) {
+    if (preset.hidden) continue;
+    if (preset.org.toLowerCase() === target) return id;
+  }
+  return null;
+}
+
+// The preset to materialize when a workspace's D1 has NO project_config row.
+// Prefer the preset that matches the request's workspace org (env.VIEWER_ORG,
+// stamped by workspaceEnv); fall back to the English root only when nothing
+// matches. This is READ-ONLY — it never writes a row (see getProjectConfig).
+function fallbackPreset(env: { VIEWER_ORG?: string }): string {
+  const org = env.VIEWER_ORG;
+  if (org) {
+    const match = presetForOrg(org);
+    if (match) return match;
+  }
+  return DEFAULT_PRESET;
+}
+
 // Per-isolate cache. Config changes are rare admin actions; a 60s TTL keeps
 // every request path from paying a D1 read while still converging quickly
 // after a PUT (which also clears the cache in-isolate).
-let cached: { cfg: ProjectConfig; at: number } | null = null;
+//
+// Keyed by workspace slug: the Worker isolate — and therefore this module-
+// level cache — is SHARED across every workspace a request might be routed
+// to (index.ts swaps env.DB per request, but this cache lives above that
+// swap). A single `cached` value would let workspace B's request read
+// workspace A's project config (org/exportOrg/repos) straight out of cache,
+// which can point an export at the wrong DCS repo. Keying by
+// env.WORKSPACE_SLUG keeps each workspace's entry isolated.
+const cached = new Map<string, { cfg: ProjectConfig; at: number }>();
 const CACHE_TTL_MS = 60_000;
 
-export function clearProjectConfigCache(): void {
-  cached = null;
+function workspaceKey(env: { WORKSPACE_SLUG?: string }): string {
+  return env.WORKSPACE_SLUG ?? "default";
+}
+
+// Clears one workspace's entry when called with an env (or slug); clears
+// every workspace's entry when called with no argument (existing callers
+// that predate workspaces rely on this no-arg behavior).
+export function clearProjectConfigCache(envOrSlug?: { WORKSPACE_SLUG?: string } | string): void {
+  if (envOrSlug === undefined) {
+    cached.clear();
+    return;
+  }
+  const key = typeof envOrSlug === "string" ? envOrSlug : workspaceKey(envOrSlug);
+  cached.delete(key);
 }
 
 interface ConfigRow {
@@ -296,12 +384,19 @@ interface ConfigRow {
 // Exported for the PR B atomic-apply path (projectConfigApply.ts), which must
 // compute the "would-be" materialized config from a direct uncached D1 read
 // BEFORE writing, to plan the empty-project guard and lane reconciliation.
+// Back-compat mode derivation: with no explicit `mode` override, translation
+// projects (translationSource set) default to "translation", author-only ones
+// (English root, custom-gl) to "authoring" — byte-for-byte the old behavior.
+export function deriveMode(translationSource: ProjectConfig["translationSource"]): ProjectMode {
+  return translationSource != null ? "translation" : "authoring";
+}
+
 export function materialize(preset: string, overridesJson: string | null): ProjectConfig {
   const base = PRESETS[preset] ?? PRESETS[DEFAULT_PRESET];
-  if (!overridesJson) return base;
+  if (!overridesJson) return { ...base, mode: deriveMode(base.translationSource) };
   try {
     const o = JSON.parse(overridesJson) as Partial<ProjectConfig>;
-    return {
+    const merged = {
       ...base,
       ...(o.org ? { org: o.org } : {}),
       ...(o.exportOrg ? { exportOrg: o.exportOrg } : {}),
@@ -337,14 +432,23 @@ export function materialize(preset: string, overridesJson: string | null): Proje
       ...(o.translationSource !== undefined ? { translationSource: o.translationSource } : {}),
       preset: base.preset,
     };
+    // mode: an explicit override wins; otherwise derive from the (possibly
+    // overridden) translationSource so pre-mode configs keep today's behavior.
+    const mode: ProjectMode =
+      o.mode === "authoring" || o.mode === "translation"
+        ? o.mode
+        : deriveMode(merged.translationSource);
+    return { ...merged, mode };
   } catch {
-    return base;
+    return { ...base, mode: deriveMode(base.translationSource) };
   }
 }
 
 export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
+  const key = workspaceKey(env);
   const now = Date.now();
-  if (cached && now - cached.at < CACHE_TTL_MS) return cached.cfg;
+  const entry = cached.get(key);
+  if (entry && now - entry.at < CACHE_TTL_MS) return entry.cfg;
   let row: ConfigRow | null;
   try {
     row = await env.DB
@@ -352,14 +456,18 @@ export async function getProjectConfig(env: Env): Promise<ProjectConfig> {
       .first<ConfigRow>();
   } catch {
     // Table missing (migration not yet applied) or transient D1 error. Fall
-    // back to the default preset for THIS request, but do NOT cache it — a
-    // transient error must not pin a GL project to unfoldingWord/en_* for the
+    // back to the workspace org's preset for THIS request, but do NOT cache it
+    // — a transient error must not pin a GL project to the wrong org for the
     // whole TTL (that would send import/reimport/export at the wrong org). The
     // next request retries the read.
-    return PRESETS[DEFAULT_PRESET];
+    return materialize(fallbackPreset(env), null);
   }
-  const cfg = row ? materialize(row.preset, row.overrides_json) : PRESETS[DEFAULT_PRESET];
-  cached = { cfg, at: now };
+  // No row (a freshly-selected workspace DB) — materialize the workspace org's
+  // own preset rather than blindly defaulting to the English root, which would
+  // drop a GL workspace into English authoring mode. Read path only: never
+  // written back (switch-time seeding in workspaceRoutes.ts persists it).
+  const cfg = row ? materialize(row.preset, row.overrides_json) : materialize(fallbackPreset(env), null);
+  cached.set(key, { cfg, at: now });
   return cfg;
 }
 
@@ -392,8 +500,27 @@ export async function writeProjectConfig(
     )
     .bind(preset, overridesJson)
     .run();
-  clearProjectConfigCache();
+  clearProjectConfigCache(env);
   return materialize(preset, overridesJson);
+}
+
+// Seed the project_config row from an org's preset ONLY when no row exists yet.
+// Unlike writeProjectConfig (INSERT … ON CONFLICT DO UPDATE), this is
+// INSERT … ON CONFLICT DO NOTHING, so a row that races in between a caller's
+// check-and-seed (e.g. a concurrent admin PUT /api/project-config) is left
+// untouched rather than clobbered back to NULL overrides. Idempotent and safe
+// to call unconditionally on workspace switch.
+export async function seedProjectConfigIfAbsent(env: Env, preset: string): Promise<void> {
+  if (!PRESETS[preset]) throw new Error(`unknown preset: ${preset}`);
+  await env.DB
+    .prepare(
+      `INSERT INTO project_config (id, preset, overrides_json, updated_at)
+       VALUES (1, ?, NULL, unixepoch())
+       ON CONFLICT(id) DO NOTHING`,
+    )
+    .bind(preset)
+    .run();
+  clearProjectConfigCache(env);
 }
 
 // The repo name for a role under this project (what dcsResourceFile consumes).

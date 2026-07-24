@@ -23,3 +23,16 @@ export function versionLabel(cfg: ProjectConfig | null, roleCode: string): strin
       return roleCode;
   }
 }
+
+// Text direction for a scripture pane. The originals are fixed by their script
+// (Hebrew RTL, Greek LTR); every other pane (ULT/UST and any GL/reference
+// bible) is in the project's own language, so it follows projectConfig.direction
+// — that's what makes an Arabic AVD/NAV pane read RTL even when the UI chrome is
+// LTR. This is direction ONLY; the Hebrew-original's larger font/size is keyed
+// separately (bibleVersion === "UHB") so RTL target text keeps the normal
+// reading font.
+export function versionIsRtl(cfg: ProjectConfig | null, roleCode: string): boolean {
+  if (roleCode === "UHB") return true;
+  if (roleCode === "UGNT") return false;
+  return cfg?.direction === "rtl";
+}

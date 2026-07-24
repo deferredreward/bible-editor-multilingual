@@ -46,6 +46,30 @@ console.log("[buildTranslateOptions] default (no overrides), ar-bsoj");
   assert(opts.direction === "rtl", "direction derived from config (ar → rtl)");
   assert(!("rowIds" in opts), "rowIds absent when not requested");
   assert(!("verseStart" in opts), "verseStart absent when not requested");
+  assert(
+    opts.literalRef === "BSOJ/ar_avd@master",
+    "literalRef derived from project's own org + repos.lit (target-language literal Bible)",
+  );
+  assert(
+    opts.simplifiedRef === "BSOJ/ar_nav@master",
+    "simplifiedRef derived from project's own org + repos.sim (target-language simplified Bible)",
+  );
+}
+
+console.log("[buildTranslateOptions] literalRef/simplifiedRef client override wins");
+{
+  const opts = buildTranslateOptions(arBsoj, {
+    literalRef: "RLOB/ru_custom_glt@master",
+    simplifiedRef: "RLOB/ru_custom_gst@master",
+  });
+  assert(
+    opts.literalRef === "RLOB/ru_custom_glt@master",
+    "literalRef client override wins over config-derived default",
+  );
+  assert(
+    opts.simplifiedRef === "RLOB/ru_custom_gst@master",
+    "simplifiedRef client override wins over config-derived default",
+  );
 }
 
 console.log("[buildTranslateOptions] explicit contextRef override → included");
@@ -113,6 +137,48 @@ console.log("[buildTranslateOptions] English root project → null (not_a_gl_pro
 {
   const opts = buildTranslateOptions(enRoot, undefined);
   assert(opts === null, "translationSource=null → null (caller turns into 400)");
+}
+
+console.log("[buildTranslateOptions] partial translationSource — resource with no source repo → null");
+{
+  // A GL project whose translationSource omits tq/tw/ta (blank in Setup): only
+  // tn is sourced. The chosen resource without a source repo must yield NO
+  // options (null → caller 400) rather than a `${org}/undefined@master` ref.
+  const partial = {
+    ...arBsoj,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "en_tn" } },
+  };
+  const tn = buildTranslateOptions(partial, undefined);
+  assert(tn !== null && tn.sourceRef === "unfoldingWord/en_tn@master", "sourced tn still builds a valid sourceRef");
+  assert(buildTranslateOptions(partial, { resourceType: "tq" }) === null, "tq (no source repo) → null, not undefined ref");
+  assert(buildTranslateOptions(partial, { resourceType: "tw" }) === null, "tw (no source repo) → null");
+  assert(buildTranslateOptions(partial, { resourceType: "ta" }) === null, "ta (no source repo) → null");
+  // An explicit client sourceRef override still wins even when the repo is absent.
+  const overridden = buildTranslateOptions(partial, { resourceType: "tw", sourceRef: "unfoldingWord/en_tw@abc123" });
+  assert(overridden !== null && overridden.sourceRef === "unfoldingWord/en_tw@abc123", "explicit sourceRef override wins over missing repo");
+}
+
+console.log("[buildTranslateOptions] per-resource org override → sourceRef uses THAT org (#84 slice)");
+{
+  // tn sourced from a DIFFERENT org than translationSource.org (pasted URL).
+  const perOrg = {
+    ...arBsoj,
+    translationSource: {
+      org: "unfoldingWord",
+      languageCode: "en",
+      repos: { tn: { org: "BibleAquifer", repo: "ar_tn" }, tq: "en_tq" },
+    },
+  };
+  const tn = buildTranslateOptions(perOrg, undefined);
+  assert(
+    tn !== null && tn.sourceRef === "BibleAquifer/ar_tn@master",
+    "tn sourceRef points at the override org+repo, not translationSource.org",
+  );
+  const tq = buildTranslateOptions(perOrg, { resourceType: "tq" });
+  assert(
+    tq !== null && tq.sourceRef === "unfoldingWord/en_tq@master",
+    "a legacy-string sibling role still resolves under the default org",
+  );
 }
 
 console.log("\ntranslateOptions: all assertions passed");

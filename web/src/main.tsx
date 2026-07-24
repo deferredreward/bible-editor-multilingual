@@ -14,7 +14,9 @@ import {
   type ThemeMode,
 } from "./theme";
 import i18n, { dirForLang, loadInitialUiLang, persistUiLang } from "./i18n";
+import { applyOverrides } from "./i18n/overrides";
 import { UiLangContext } from "./i18n/UiLangContext";
+import { api } from "./sync/api";
 import { App } from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { installCurlyQuotes } from "./lib/curlyQuotes";
@@ -88,6 +90,25 @@ function Root() {
   }, [scale]);
 
   const dir = dirForLang(lang);
+
+  // Fetch server-stored UI-string overrides once at boot and layer them over the
+  // bundled locales, so everyone picks up the org's latest wording without a
+  // rebuild (Localization tab; migration 0052). Fire-and-forget: a failure just
+  // leaves the bundled strings in place, and bindI18nStore repaints on apply.
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getL10nOverrides()
+      .then(({ overrides }) => {
+        if (!cancelled) applyOverrides(overrides);
+      })
+      .catch(() => {
+        /* offline / unauth — bundled strings stand */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     void i18n.changeLanguage(lang);

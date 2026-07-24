@@ -129,6 +129,9 @@ export function DocColumn({
   textCheck,
 }: Props) {
   const projectConfig = useProjectConfig();
+  // Hebrew original gets the enlarged SBL-Hebrew treatment; RTL direction alone
+  // (e.g. an Arabic pane) keeps the normal reading font.
+  const hebrewSource = bibleVersion === "UHB";
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLSpanElement | null>(null);
 
@@ -187,18 +190,18 @@ export function DocColumn({
         />
       </Stack>
       <Box
+        dir={rtl ? "rtl" : "ltr"}
         sx={(theme) => ({
           flex: 1,
           overflowY: "auto",
           px: 1.5,
           py: 1,
           lineHeight: 1.7,
-          fontSize: `calc(${rtl ? 21 : 15}px * var(--be-reading-scale, 1))`,
-          fontFamily: rtl
+          fontSize: `calc(${hebrewSource ? 21 : 15}px * var(--be-reading-scale, 1))`,
+          fontFamily: hebrewSource
             ? '"Times New Roman","SBL Hebrew","Cardo",serif'
             : '"Source Serif Pro","Cambria","Times New Roman",serif',
-          direction: rtl ? "rtl" : "ltr",
-          textAlign: rtl ? "right" : "left",
+          textAlign: "start",
           ...markHighlightSx(theme.palette.mode),
           ...draftDirtyBorderSx(),
         })}
@@ -625,7 +628,7 @@ function VerseSpan({
           fontWeight: isRange ? 700 : 600,
           color: isRange ? "#014263" : "#9aa0a6",
           verticalAlign: "1px",
-          marginRight: 4,
+          marginInlineEnd: 4,
           borderBottom:
             textShade !== "open" ? `2px solid ${LANE_FILL[textShade].bg}` : undefined,
         }}

@@ -72,7 +72,10 @@ export async function broadcastChapter(
   event: WsEvent,
 ): Promise<void> {
   try {
-    const id = env.CHAPTER_ROOM.idFromName(`${book}:${chapter}`);
+    // Workspace-scoped DO name (see index.ts's /api/ws/chapter route for the
+    // rationale) — ChapterRoom is ephemeral presence/fanout only, so folding
+    // the slug in here is safe even though it changes the DO name.
+    const id = env.CHAPTER_ROOM.idFromName(`${env.WORKSPACE_SLUG ?? "default"}:${book}:${chapter}`);
     const stub = env.CHAPTER_ROOM.get(id);
     await stub.fetch(
       new Request("http://do/broadcast", {

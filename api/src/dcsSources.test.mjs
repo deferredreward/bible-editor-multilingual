@@ -4,7 +4,16 @@
 //
 // Not a test framework; a failed assert exits non-zero.
 
-import { fetchText } from "./dcsSources.ts";
+import {
+  fetchText,
+  dcsUrls,
+  sourceProvenance,
+  translationSourceRepoRef,
+  heldOutNoteResources,
+  shouldFallBackOnStatus,
+  resolveSourceRef,
+  normalizeSourceRef,
+} from "./dcsSources.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -91,6 +100,190 @@ async function run() {
   console.error = origError;
   console.warn = origWarn;
   console.log("dcsSources/fetchText: all assertions passed");
+
+  runPure();
+}
+
+// ── Pure helpers: URL overrides + note-source provenance (no fetch/env/DB) ──
+
+const ENV = { DCS_BASE_URL: "https://git.door43.org" };
+const CFG = {
+  org: "BSOJ",
+  repos: {
+    lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl",
+    tw: "ar_tw", ta: "ar_ta",
+  },
+  translationSource: {
+    org: "unfoldingWord",
+    languageCode: "en",
+    repos: {
+      lit: "en_ult", sim: "en_ust", tn: "en_tn", tq: "en_tq", twl: "en_twl",
+      tw: "en_tw", ta: "en_ta",
+    },
+  },
+};
+
+function runPure() {
+  // No overrides → every URL points at the project's own org on master.
+  const plain = dcsUrls(ENV, CFG, "ZEC");
+  assert(plain.tn === "https://git.door43.org/BSOJ/ar_tn/raw/branch/master/tn_ZEC.tsv", "no overrides → tn from org repo");
+  assert(plain.tq === "https://git.door43.org/BSOJ/ar_tq/raw/branch/master/tq_ZEC.tsv", "no overrides → tq from org repo");
+  assert(plain.twl === "https://git.door43.org/BSOJ/ar_twl/raw/branch/master/twl_ZEC.tsv", "no overrides → twl from org repo");
+  assert(plain.ult === "https://git.door43.org/BSOJ/ar_avd/raw/branch/master/38-ZEC.usfm", "no overrides → lit from org repo");
+
+  // tn/tq overrides → those two URLs move to the override owner/repo/ref;
+  // twl and lit/sim are untouched.
+  const over = dcsUrls(ENV, CFG, "ZEC", {
+    tn: { owner: "unfoldingWord", repo: "en_tn", ref: "v86" },
+    tq: { owner: "unfoldingWord", repo: "en_tq", ref: "master" },
+  });
+  assert(over.tn === "https://git.door43.org/unfoldingWord/en_tn/raw/branch/v86/tn_ZEC.tsv", "tn override → owner/repo/ref honoured");
+  assert(over.tq === "https://git.door43.org/unfoldingWord/en_tq/raw/branch/master/tq_ZEC.tsv", "tq override → owner/repo honoured");
+  assert(over.twl === plain.twl, "tn/tq overrides leave twl on the org repo");
+  assert(over.ult === plain.ult && over.ust === plain.ust, "tn/tq overrides leave lit/sim untouched");
+
+  // Provenance marker + source repo refs.
+  assert(sourceProvenance("unfoldingWord", "en_tn") === "source:unfoldingWord/en_tn", "sourceProvenance shape");
+  const tnRef = translationSourceRepoRef(CFG, "tn");
+  assert(
+    tnRef.owner === "unfoldingWord" && tnRef.repo === "en_tn" && tnRef.ref === "master",
+    "translationSourceRepoRef(tn) → source org + en_tn on master",
+  );
+  assert(translationSourceRepoRef(CFG, "tq").repo === "en_tq", "translationSourceRepoRef(tq) → en_tq");
+  assert(
+    translationSourceRepoRef({ ...CFG, translationSource: null }, "tn") === null,
+    "no translationSource → null (authored project)",
+  );
+  // Partial translationSource: a role omitted from repos (blank in Setup) → null,
+  // NOT a RepoRef with an undefined repo (which would build org/undefined@master).
+  const partialCfg = {
+    ...CFG,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "en_tn" } },
+  };
+  assert(
+    translationSourceRepoRef(partialCfg, "tn").repo === "en_tn",
+    "partial source: present tn role → its RepoRef",
+  );
+  assert(
+    translationSourceRepoRef(partialCfg, "tq") === null,
+    "partial source: absent tq role → null (no undefined repo)",
+  );
+
+  // ── resolveSourceRef + normalizeSourceRef (the shared per-resource accessor) ──
+  // Backward-compat: a bare repo STRING resolves under the default (primary) org.
+  assert(
+    JSON.stringify(normalizeSourceRef("unfoldingWord", "en_tn")) ===
+      JSON.stringify({ org: "unfoldingWord", repo: "en_tn" }),
+    "normalizeSourceRef: bare string → { defaultOrg, repo }",
+  );
+  assert(normalizeSourceRef("unfoldingWord", undefined) === null, "normalizeSourceRef: undefined → null");
+  assert(normalizeSourceRef("unfoldingWord", "") === null, "normalizeSourceRef: blank string → null");
+  assert(normalizeSourceRef("unfoldingWord", { repo: "" }) === null, "normalizeSourceRef: blank repo ref → null");
+  // Per-resource org: an { org, repo } ref points at a DIFFERENT org.
+  assert(
+    JSON.stringify(normalizeSourceRef("unfoldingWord", { org: "BibleAquifer", repo: "ar_tn" })) ===
+      JSON.stringify({ org: "BibleAquifer", repo: "ar_tn" }),
+    "normalizeSourceRef: { org, repo } → honors the override org",
+  );
+  // An org-less ref falls back to the default org.
+  assert(
+    JSON.stringify(normalizeSourceRef("unfoldingWord", { repo: "en_tq" })) ===
+      JSON.stringify({ org: "unfoldingWord", repo: "en_tq" }),
+    "normalizeSourceRef: { repo } (no org) → default org",
+  );
+
+  // resolveSourceRef over a mixed/partial map: legacy string + per-resource org.
+  const mixedTs = {
+    org: "unfoldingWord",
+    languageCode: "en",
+    repos: { tn: "en_tn", tw: { org: "BibleAquifer", repo: "ar_tw" }, ta: { repo: "en_ta" } },
+  };
+  assert(
+    JSON.stringify(resolveSourceRef(mixedTs, "tn")) === JSON.stringify({ org: "unfoldingWord", repo: "en_tn" }),
+    "resolveSourceRef: legacy string role → default org",
+  );
+  assert(
+    JSON.stringify(resolveSourceRef(mixedTs, "tw")) === JSON.stringify({ org: "BibleAquifer", repo: "ar_tw" }),
+    "resolveSourceRef: per-resource org override honored",
+  );
+  assert(
+    JSON.stringify(resolveSourceRef(mixedTs, "ta")) === JSON.stringify({ org: "unfoldingWord", repo: "en_ta" }),
+    "resolveSourceRef: org-less object role → default org",
+  );
+  assert(resolveSourceRef(mixedTs, "tq") === null, "resolveSourceRef: absent role → null");
+  assert(resolveSourceRef(null, "tn") === null, "resolveSourceRef: no translationSource → null");
+
+  // translationSourceRepoRef delegates → a per-resource org override flows to the
+  // import/reimport RepoRef (owner is the override org, not translationSource.org).
+  const overrideOrgCfg = {
+    ...CFG,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: { org: "BibleAquifer", repo: "ar_tn" } } },
+  };
+  const overRef = translationSourceRepoRef(overrideOrgCfg, "tn");
+  assert(
+    overRef.owner === "BibleAquifer" && overRef.repo === "ar_tn" && overRef.ref === "master",
+    "translationSourceRepoRef: per-resource org override → owner is the override org",
+  );
+
+  // ── SECURITY: non-ident override org/repo must never yield a usable ref ──
+  // A non-custom-preset override reaches normalizeSourceRef UNVALIDATED. A path-
+  // traversal org/repo must resolve to null (treated as no-source), never a ref.
+  assert(
+    normalizeSourceRef("unfoldingWord", { org: "uW/../../other", repo: "x_tn" }) === null,
+    "normalizeSourceRef: traversal in org → null (no source)",
+  );
+  assert(
+    normalizeSourceRef("unfoldingWord", { repo: "../../../etc" }) === null,
+    "normalizeSourceRef: traversal in repo → null",
+  );
+  assert(normalizeSourceRef("unfoldingWord", "bad repo!") === null, "normalizeSourceRef: non-ident bare string → null");
+  const evilTs = {
+    org: "unfoldingWord",
+    languageCode: "en",
+    repos: { tn: { org: "a/../../b", repo: "x_tn" }, tq: "ok_tq" },
+  };
+  assert(resolveSourceRef(evilTs, "tn") === null, "resolveSourceRef: traversal org role → null");
+  assert(
+    JSON.stringify(resolveSourceRef(evilTs, "tq")) === JSON.stringify({ org: "unfoldingWord", repo: "ok_tq" }),
+    "resolveSourceRef: a valid sibling role still resolves (only the bad one is dropped)",
+  );
+
+  // Belt-and-suspenders: even if a slash-bearing owner/repo reached a URL builder
+  // (it can't via resolveSourceRef, but a legacy DcsRepoOverrides caller might),
+  // dcsUrls encodes the owner/repo segments so no traversal escapes.
+  const traversalUrls = dcsUrls(ENV, CFG, "ZEC", {
+    tn: { owner: "a/../../evil", repo: "x_tn", ref: "master" },
+  });
+  assert(
+    !traversalUrls.tn.includes("/../") && traversalUrls.tn.includes("a%2F..%2F..%2Fevil"),
+    "dcsUrls: owner/repo segments encoded — traversal neutralized",
+  );
+
+  // Held-out predicate — any non-null marker means "don't sync with the org repo".
+  const setOf = (p) => [...heldOutNoteResources(p)].sort().join(",");
+  assert(setOf(null) === "", "null provenance → nothing held out");
+  assert(setOf(undefined) === "", "undefined provenance → nothing held out");
+  assert(setOf({ tn_source: null, tq_source: null }) === "", "all-null provenance → nothing held out");
+  assert(setOf({ tn_source: "aquifer:arb" }) === "tn", "aquifer tn → tn held out");
+  assert(
+    setOf({ tn_source: "source:unfoldingWord/en_tn", tq_source: "source:unfoldingWord/en_tq" }) === "tn,tq",
+    "source-sourced tn+tq → both held out",
+  );
+  assert(setOf({ tq_source: "source:unfoldingWord/en_tq" }) === "tq", "source-sourced tq only → tq held out");
+
+  // Auto-fallback trigger: ONLY a hard 404 means "the org genuinely has no such
+  // file". Every transient failure must keep the import failing + retrying
+  // rather than silently substituting English notes.
+  assert(shouldFallBackOnStatus(404) === true, "404 → fall back to translation source");
+  assert(shouldFallBackOnStatus(0) === false, "network error (status 0) → no fallback");
+  assert(shouldFallBackOnStatus(500) === false, "5xx → no fallback");
+  assert(shouldFallBackOnStatus(502) === false, "502 → no fallback");
+  assert(shouldFallBackOnStatus(429) === false, "rate limit → no fallback");
+  // A truncated read surfaces as {status:200, text:null} — must not fall back.
+  assert(shouldFallBackOnStatus(200) === false, "truncated 200 → no fallback");
+  assert(shouldFallBackOnStatus(403) === false, "403 (auth) → no fallback");
+
+  console.log("dcsSources/pure helpers: all assertions passed");
 }
 
 run().catch((e) => {

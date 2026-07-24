@@ -18,10 +18,37 @@ import {
   parseTsv,
   refParts,
 } from "./importParsers";
-import { requireAuth, requireEditor, requireAdmin, currentUserId } from "./auth";
-import { aquiferDrafts } from "./aquiferImport.ts";
-import { BOOK_NUMBERS, dcsUrls, dcsResourceFile, fileCommitSha, fetchText, type LaneRepoOverrides } from "./dcsSources";
-import { getProjectConfig } from "./projectConfig.ts";
+import { requireAuth, requireEditor, requireAdmin, currentUserId, currentUserRole } from "./auth";
+import { aquiferDrafts, AQUIFER_SOURCE, pickId } from "./aquiferImport.ts";
+import { convertAquiferBook, type EnRow, type ResolvedNote } from "./aquiferConvert.ts";
+import { aquiferJsonUrl, aquiferLangFor } from "./aquiferSources.ts";
+import {
+  BOOK_NUMBERS,
+  dcsUrls,
+  dcsRawUrl,
+  dcsResourceFile,
+  fileCommitSha,
+  fetchText,
+  fetchTextWithStatus,
+  shouldFallBackOnStatus,
+  sourceProvenance,
+  translationSourceRepoRef,
+  type DcsRepoOverrides,
+} from "./dcsSources";
+import { isIdent, parseDoor43SourceRef, type RepoRef } from "./repoUrl";
+import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
+import {
+  planBookNoteSources,
+  listBookSourceOverrides,
+  setBookSourceRange,
+  clearBookSourceOverride,
+  clearBookSourceRange,
+  isBookSourceResource,
+  WHOLE_BOOK_START,
+  WHOLE_BOOK_END,
+  AQUIFER_ORG_SENTINEL,
+  type ResolvedSourceRange,
+} from "./bookSource.ts";
 import { populateReferencedArticles } from "./articlePopulate";
 import type { Context } from "hono";
 import { reimportBookFromDcs, recordResourceSync, resourceSourceRef, type Resource } from "./bookReimport";
@@ -101,6 +128,136 @@ books.get("/:book/lint", requireAuth, async (c) => {
 // unapproved drafts merged onto the en_tn skeleton (admin-only).
 books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
 
+// ── Per-book / per-chapter-range source overrides (issue #103) ─────────────
+// GET  /api/books/:book/sources — list this book's per-resource source ranges.
+// PUT  /api/books/:book/sources — set/clear one range (admin). Takes effect on
+//   the next import of the book (POST /:book/import): the chosen source is
+//   fetched per chapter range, its rows stamped, and those chapters held out of
+//   the nightly reimport/export.
+books.get("/:book/sources", requireAuth, async (c) => {
+  const book = (c.req.param("book") ?? "").toUpperCase();
+  if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
+  const overrides = await listBookSourceOverrides(c.env, book);
+  return c.json({ book, overrides });
+});
+
+// Body:
+//   set whole book : { resource, url|org+repo }
+//   set a range    : { resource, url|org+repo, chapterStart, chapterEnd }
+//   clear a range  : { resource, clear: true, chapterStart }
+//   clear resource : { resource, clear: true }
+// A pasted Door43 URL is parsed + ident-validated the same way #84's
+// verify-source does. REPO EXISTENCE is NOT checked here — the caller verifies
+// via GET /api/orgs/verify-source first, matching the decoupled project-wide flow.
+books.put("/:book/sources", requireAdmin, async (c) => {
+  const book = (c.req.param("book") ?? "").toUpperCase();
+  if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 404);
+  let body: {
+    resource?: unknown;
+    kind?: unknown;
+    url?: unknown;
+    org?: unknown;
+    repo?: unknown;
+    clear?: unknown;
+    chapterStart?: unknown;
+    chapterEnd?: unknown;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const resource = typeof body.resource === "string" ? body.resource : "";
+  if (!isBookSourceResource(resource)) {
+    return c.json({ error: "unsupported_resource", resource }, 400);
+  }
+  const hasStart = body.chapterStart !== undefined;
+  const hasEnd = body.chapterEnd !== undefined;
+
+  // CLEAR is handled first, and needs only chapterStart (chapterEnd is irrelevant
+  // when removing a range by its start) — so the both-bounds check below, which
+  // applies to SET, must not reject a clear that carries just chapterStart.
+  if (body.clear === true) {
+    if (hasStart) {
+      const cs = Number(body.chapterStart);
+      if (!Number.isInteger(cs)) return c.json({ error: "invalid_range" }, 400);
+      await clearBookSourceRange(c.env, book, resource, cs);
+      return c.json({ book, resource, chapterStart: cs, cleared: true });
+    }
+    await clearBookSourceOverride(c.env, book, resource);
+    return c.json({ book, resource, cleared: true });
+  }
+
+  // SET. Chapter bounds absent → whole book (0, 999). A partial pair (only one of
+  // the two) is rejected — it's almost certainly a client mistake.
+  if (hasStart !== hasEnd) {
+    return c.json({ error: "range_needs_both_bounds" }, 400);
+  }
+  const chapterStart = hasStart ? Number(body.chapterStart) : WHOLE_BOOK_START;
+  const chapterEnd = hasEnd ? Number(body.chapterEnd) : WHOLE_BOOK_END;
+  if (hasStart && (!Number.isInteger(chapterStart) || !Number.isInteger(chapterEnd))) {
+    return c.json({ error: "invalid_range" }, 400);
+  }
+
+  const userId = currentUserId(c) ?? null;
+
+  // Aquifer variant: no url/org/repo — the aqLang is derived from the project's
+  // language. tN only; a chapter range is required (whole-book Aquifer belongs to
+  // the aquifer-drafts route, which does merge-and-preserve). The stored row is
+  // kind='aquifer', org=sentinel, repo=aqLang.
+  if (body.kind === "aquifer") {
+    if (resource !== "tn") return c.json({ error: "aquifer_tn_only" }, 400);
+    if (!hasStart) return c.json({ error: "aquifer_needs_range" }, 400);
+    const cfg = await getProjectConfig(c.env);
+    const aqLang = aquiferLangFor(cfg.languageCode);
+    if (!aqLang) return c.json({ error: "aquifer_language_unavailable", languageCode: cfg.languageCode }, 400);
+    try {
+      await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, "aquifer", AQUIFER_ORG_SENTINEL, aqLang, userId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "overlapping_range") return c.json({ error: msg }, 409);
+      if (
+        msg === "invalid_range" ||
+        msg === "aquifer_needs_range" ||
+        msg === "aquifer_tn_only" ||
+        msg === "invalid_aquifer_lang"
+      ) {
+        return c.json({ error: msg }, 400);
+      }
+      throw e;
+    }
+    return c.json({ book, resource, chapterStart, chapterEnd, kind: "aquifer", aqLang });
+  }
+
+  let org: string;
+  let repo: string;
+  if (typeof body.url === "string" && body.url.trim()) {
+    const parsed = parseDoor43SourceRef(body.url);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    org = parsed.org;
+    repo = parsed.repo;
+  } else if (typeof body.org === "string" && typeof body.repo === "string") {
+    org = body.org.trim();
+    repo = body.repo.trim();
+  } else {
+    return c.json({ error: "expected_url_or_org_repo" }, 400);
+  }
+  // Defense in depth: reject a non-ident org/repo before it can be persisted
+  // (the resolver re-validates on read, but never store a value we know is bad).
+  if (!isIdent(org) || !isIdent(repo)) {
+    return c.json({ error: "invalid_org_or_repo", org, repo }, 400);
+  }
+  try {
+    await setBookSourceRange(c.env, book, resource, chapterStart, chapterEnd, "dcs", org, repo, userId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "overlapping_range") return c.json({ error: msg }, 409);
+    if (msg === "invalid_range" || msg === "invalid_org_or_repo") return c.json({ error: msg }, 400);
+    throw e;
+  }
+  return c.json({ book, resource, chapterStart, chapterEnd, org, repo });
+});
+
 books.post("/:book/import", requireEditor, async (c) => {
   const userId = currentUserId(c);
   if (!userId) return c.json({ error: "unauthorized" }, 401);
@@ -109,13 +266,80 @@ books.post("/:book/import", requireEditor, async (c) => {
   const num = BOOK_NUMBERS[book];
   if (!num) return c.json({ error: "unknown_book", book }, 400);
 
-  // Idempotency: already imported → fast path.
+  // Optional body: { translateFromSource?, force?, confirmDiscardEdits? }. A
+  // missing/invalid/empty body is normal (the UI's plain import posts nothing),
+  // so never 4xx on it. Parsed up here because `force` gates the two early
+  // returns below.
+  let body: { translateFromSource?: unknown; force?: unknown; confirmDiscardEdits?: unknown } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* no body → default options */
+  }
+  const translateFromSource = body?.translateFromSource === true;
+  const force = body?.force === true;
+
+  // force re-imports a book that is ALREADY imported — the only way to reach
+  // the translate-from-source path for a book that was bootstrapped before the
+  // feature existed (e.g. BSOJ/MAL). It wipes and re-loads the book, so it is
+  // admin-only; the normal (non-forced) import stays editor-accessible, hence
+  // the check lives here rather than on the route.
+  if (force && currentUserRole(c) !== "admin") {
+    return c.json({ error: "forbidden", detail: "force requires admin" }, 403);
+  }
+
+  if (force) {
+    // Safety gate: importBookFromDcs wipes tn_rows, tq_rows, twl_rows, verses
+    // (ULT/UST + original-language) and book_usfm_meta for the book, then
+    // re-inserts from DCS — so ANY of those tables can hold destroyed human
+    // work, not just tn/tq. (This gap — twl/verses edits sailing through with
+    // no 409 — is exactly what review of PR #54 flagged as a HIGH-severity
+    // data-loss bug: the UI's "Re-source notes from English" label gives an
+    // admin no reason to expect scripture loss.) Count rows that represent
+    // real human work in every wiped table — translation_state
+    // 'edited'/'validated' (migrations 0037/0038, tn/tq only — twl/verses have
+    // no translation_state column) or any row a user has touched (updated_by
+    // non-NULL, the same pristine predicate the reimport uses) — and refuse
+    // unless the caller has explicitly acknowledged the loss.
+    const edits = await c.env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tn,
+         (SELECT COUNT(*) FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND (translation_state IN ('edited','validated') OR updated_by IS NOT NULL)) AS tq,
+         (SELECT COUNT(*) FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+            AND updated_by IS NOT NULL) AS twl,
+         (SELECT COUNT(*) FROM verses WHERE book = ?1 AND updated_by IS NOT NULL) AS verses`,
+    )
+      .bind(book)
+      .first<{ tn: number; tq: number; twl: number; verses: number }>();
+    const tnEdits = edits?.tn ?? 0;
+    const tqEdits = edits?.tq ?? 0;
+    const twlEdits = edits?.twl ?? 0;
+    const verseEdits = edits?.verses ?? 0;
+    if (tnEdits + tqEdits + twlEdits + verseEdits > 0 && body?.confirmDiscardEdits !== true) {
+      return c.json(
+        { error: "has_local_edits", book, tn: tnEdits, tq: tqEdits, twl: twlEdits, verses: verseEdits },
+        409,
+      );
+    }
+    // Destructive + irreversible from the app's side: leave a trace of who did
+    // it, to what, and how much work it discarded.
+    console.warn("forced book import: wiping and re-loading from DCS", {
+      book,
+      userId,
+      translateFromSource,
+      discardedEdits: { tn: tnEdits, tq: tqEdits, twl: twlEdits, verses: verseEdits },
+    });
+  }
+
+  // Idempotency: already imported → fast path (skipped by force).
   const existing = await c.env.DB.prepare(
     `SELECT book, imported_at FROM book_imports WHERE book = ?1`,
   )
     .bind(book)
     .first<{ book: string; imported_at: number }>();
-  if (existing) {
+  if (existing && !force) {
     schedulePopulate(c, book);
     return c.json({ ok: true, book, alreadyImported: true, imported_at: existing.imported_at });
   }
@@ -133,6 +357,9 @@ books.post("/:book/import", requireEditor, async (c) => {
   // its UHB/UGNT source got stamped source_url='recovered' and could never be
   // re-imported — the marker made every later POST hit the alreadyImported fast
   // path above. This is exactly how ISA got stuck with Hebrew-only content.)
+  //
+  // force skips this too: a forced caller wants a real re-fetch, not a marker
+  // that re-registers whatever rows happen to be lying around.
   const present = await c.env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM verses   WHERE book = ?1 AND bible_version = 'ULT') AS ult,
@@ -150,7 +377,7 @@ books.post("/:book/import", requireEditor, async (c) => {
     present.tn > 0 &&
     present.tq > 0 &&
     present.twl > 0;
-  if (looksComplete) {
+  if (looksComplete && !force) {
     await c.env.DB.prepare(
       `INSERT OR IGNORE INTO book_imports (book, source_url, imported_at, imported_by)
        VALUES (?1, 'recovered', unixepoch(), ?2)`,
@@ -178,12 +405,16 @@ books.post("/:book/import", requireEditor, async (c) => {
   }
 
   try {
-    const result = await importBookFromDcs(c.env, book, num, userId);
+    const result = await importBookFromDcs(c.env, book, num, userId, { translateFromSource });
     schedulePopulate(c, book);
-    return c.json({ ok: true, book, ...result });
+    return c.json({ ok: true, book, ...result, ...(force ? { forced: true } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return c.json({ error: "import_failed", book, message: msg }, 502);
+    // A completeness failure where EVERY missing resource was a hard 404 is
+    // permanent (the org simply has no file for this book) — return 422 so a
+    // caller can distinguish it from a transient/mixed failure (kept at 502).
+    const permanent = !!(e && typeof e === "object" && (e as { permanent?: boolean }).permanent);
+    return c.json({ error: "import_failed", book, message: msg }, permanent ? 422 : 502);
   } finally {
     await c.env.DB.prepare(
       `DELETE FROM book_import_locks WHERE book = ?1`,
@@ -250,6 +481,178 @@ interface ImportCounts {
   tq: number;
   twl: number;
   fetched: { ult: boolean; ust: boolean; orig: boolean; tn: boolean; tq: boolean; twl: boolean };
+  /** Note-source provenance: 'source:<owner>/<repo>' when tn/tq came from the
+   *  English translationSource instead of the org's own repo, else null. */
+  sources: { tn: string | null; tq: string | null };
+}
+
+// Fetch each per-chapter-range source file for a note resource (issue #103
+// Tier 2). Returns [{ range, raw }] in range order; THROWS if any configured
+// range's file cannot be fetched — a missing range source must fail the import,
+// never silently leave those chapters to the base source.
+async function fetchRangeNoteFiles(
+  env: Env,
+  cfg: ProjectConfig,
+  book: string,
+  resource: "tn" | "tq",
+  ranges: ResolvedSourceRange[],
+): Promise<Array<{ range: ResolvedSourceRange; raw: string }>> {
+  const out: Array<{ range: ResolvedSourceRange; raw: string }> = [];
+  for (const range of ranges) {
+    if (range.source.kind !== "dcs") continue; // aquifer ranges take the JSON path
+    const ref = range.source.ref;
+    const urls = dcsUrls(env, cfg, book, { [resource]: ref });
+    if (!urls) throw new Error(`unknown book: ${book}`);
+    const url = urls[resource];
+    const raw = await fetchText(url);
+    if (raw == null) {
+      throw new Error(
+        `range source ${ref.owner}/${ref.repo} has no ${resource} file for ${book} ` +
+          `(chapters ${range.chapter_start}-${range.chapter_end}): ${url}`,
+      );
+    }
+    out.push({ range, raw });
+  }
+  return out;
+}
+
+// Aquifer per-chapter-range notes (issue #103 follow-up). Fetches the en_tn
+// skeleton ONCE (via the project's translationSource) plus the Aquifer JSON for
+// the book, converts with the shared converter, and returns each range's notes
+// filtered to its chapters. tN only. A missing translationSource, en_tn file, or
+// Aquifer JSON is a HARD error — never silently fall back to the base source for
+// those chapters (that would import the wrong content and skip the hold-out).
+async function fetchAquiferRangeNotes(
+  env: Env,
+  cfg: ProjectConfig,
+  book: string,
+  ranges: ResolvedSourceRange[],
+): Promise<Array<{ range: ResolvedSourceRange; aqLang: string; notes: ResolvedNote[] }>> {
+  const aquiferRanges = ranges.filter((r) => r.source.kind === "aquifer");
+  if (aquiferRanges.length === 0) return [];
+
+  // en_tn skeleton — the join target Aquifer notes graft onto.
+  const enRef = translationSourceRepoRef(cfg, "tn");
+  if (!enRef) throw new Error("aquifer_requires_translation_source");
+  const enRaw = await fetchText(dcsRawUrl(env, enRef.owner, enRef.repo, `tn_${book}.tsv`));
+  if (enRaw == null) {
+    throw new Error(`aquifer range: en_tn fetch failed for ${book} (${enRef.owner}/${enRef.repo})`);
+  }
+  const enRows: EnRow[] = parseTsv(enRaw).rows
+    .map((r) => ({
+      Reference: r["Reference"] ?? "",
+      ID: r["ID"] ?? "",
+      Tags: r["Tags"] ?? "",
+      SupportReference: r["SupportReference"] ?? "",
+      Quote: r["Quote"] ?? "",
+      Occurrence: r["Occurrence"] ?? "",
+      Note: r["Note"] ?? "",
+    }))
+    .filter((r) => r.ID);
+
+  // All aquifer ranges for a book share the project-derived aqLang; fetch+convert once.
+  const aqLang = aquiferRanges[0].source.kind === "aquifer" ? aquiferRanges[0].source.aqLang : "";
+  const aqUrl = aquiferJsonUrl(aqLang, book);
+  if (!aqUrl) throw new Error(`aquifer range: no Aquifer URL for ${book} (${aqLang})`);
+  const aqRaw = await fetchText(aqUrl);
+  if (aqRaw == null) throw new Error(`aquifer range: Aquifer JSON fetch failed for ${book} (${aqLang}): ${aqUrl}`);
+  let aqItems: unknown;
+  try {
+    aqItems = JSON.parse(aqRaw);
+  } catch {
+    throw new Error(`aquifer range: Aquifer JSON parse failed for ${book} (${aqLang})`);
+  }
+  if (!Array.isArray(aqItems)) throw new Error(`aquifer range: Aquifer JSON shape unexpected for ${book}`);
+
+  const { notes } = convertAquiferBook(aqItems as Parameters<typeof convertAquiferBook>[0], enRows);
+
+  return aquiferRanges.map((range) => {
+    const inRange = notes.filter((n) => {
+      const [ch] = refParts(n.ref);
+      return ch >= range.chapter_start && ch <= range.chapter_end;
+    });
+    return { range, aqLang, notes: inRange };
+  });
+}
+
+// Merge multiple per-chapter source files into one book's note rows (issue #103
+// Tier 2). The base file contributes only chapters NOT covered by any range;
+// each range file contributes only its own chapters. With no ranges this is a
+// single unfiltered insert — byte-for-byte the Tier 1 path.
+//
+// The whole-book DELETE has already run (caller), so these are pure inserts into
+// an empty book. A cross-source ID collision (two source repos using the same tn
+// id for the SAME book in DIFFERENT chapters) surfaces as a loud INSERT failure —
+// rare, and far safer than silently overwriting a row from another chapter.
+// (Follow-up: re-mint colliding range-file ids preserving alignment.)
+// Pre-wipe collision scan (issue #103). Returns the first row id that would be
+// inserted from TWO different source files in the merge (base non-covered
+// chapters + each range's chapters), or null if none. Mirrors insertMergedNotes'
+// exact partitioning so it predicts the real insert set. No ranges → no merge →
+// null (a single file's internal duplicates are the pre-existing bare-INSERT
+// concern, unchanged here).
+function mergedNoteIdCollision(
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+): string | null {
+  if (ranges.length === 0) return null;
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  const seen = new Set<string>();
+  const scan = (raw: string | null, include: (ch: number) => boolean): string | null => {
+    if (!raw) return null;
+    for (const r of parseTsv(raw).rows) {
+      const id = r["ID"];
+      if (!id) continue;
+      const [ch] = refParts(r["Reference"] ?? "");
+      if (!include(ch)) continue;
+      if (seen.has(id)) return id;
+      seen.add(id);
+    }
+    return null;
+  };
+  const baseDup = scan(baseRaw, (ch) => !covered(ch));
+  if (baseDup) return baseDup;
+  for (const { range, raw } of rangeFiles) {
+    const dup = scan(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+    if (dup) return dup;
+  }
+  return null;
+}
+
+async function insertMergedNotes(
+  insert: (raw: string | null, filter?: (ch: number) => boolean) => Promise<number>,
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+  renew: () => Promise<void>,
+  aquiferInserts: Array<{ run: () => Promise<number> }> = [],
+): Promise<number> {
+  if (ranges.length === 0) {
+    // No cross-source ranges: the base file is the whole book (Tier 1 fast path).
+    // Still run any aquifer inserts — belt-and-suspenders, since a non-empty
+    // aquiferInserts should always coincide with an aquifer range in `ranges`.
+    let baseOnly = await insert(baseRaw);
+    for (const { run } of aquiferInserts) {
+      await renew();
+      baseOnly += await run();
+    }
+    return baseOnly;
+  }
+  // `covered` spans BOTH dcs and aquifer ranges so the base file never re-inserts
+  // a chapter a cross-source range owns. Order: base → dcs range files → aquifer
+  // ranges last (their id minting reads the ids base+dcs already landed).
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  let total = await insert(baseRaw, (ch) => !covered(ch));
+  for (const { range, raw } of rangeFiles) {
+    await renew();
+    total += await insert(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+  }
+  for (const { run } of aquiferInserts) {
+    await renew();
+    total += await run();
+  }
+  return total;
 }
 
 async function importBookFromDcs(
@@ -257,6 +660,7 @@ async function importBookFromDcs(
   book: string,
   _num: string,
   userId: number,
+  opts: { translateFromSource?: boolean } = {},
 ): Promise<ImportCounts> {
   // Assert lanes not frozen before starting import. A frozen lane (an open
   // replacement job) or a lane that still requires a replacement (BSOJ
@@ -272,14 +676,42 @@ async function importBookFromDcs(
 
   const cfg = await getProjectConfig(env);
 
+  // Opting in to translate-from-source only makes sense on a translation
+  // project; without a configured translationSource there is nothing to pull.
+  if (opts.translateFromSource && !cfg.translationSource) {
+    throw new Error("not_a_translation_project");
+  }
+
+  // Per-resource note source plan (issue #103). Each resolves, in precedence
+  // order: per-chapter-range override → whole-book override → project-wide
+  // translationSource → org's own repo. `base` is the source for chapters NOT
+  // covered by a cross-org range (project-wide, or null = org's own); `ranges`
+  // are the cross-org per-chapter ranges to splice in.
+  //
+  // `noteSource.tn/tq` = the BASE ref. It drives (a) the base-file fetch URL and
+  // (b) the book_imports.tn_source/tq_source marker: a non-null base means the
+  // WHOLE book is off-org → whole-book hold-out marker; a null base (org's own
+  // for uncovered chapters) with ranges → marker stays NULL and the range table
+  // (heldOutChapters) drives PER-CHAPTER hold-out. This keeps the base fetch,
+  // the 404 fallback, and provenance stamping exactly as before for a book with
+  // no per-chapter ranges (Tier 1), and correct for a partially-sourced book.
+  const tnPlan = await planBookNoteSources(env, cfg, book, "tn", !!opts.translateFromSource);
+  const tqPlan = await planBookNoteSources(env, cfg, book, "tq", !!opts.translateFromSource);
+  const noteSource: { tn: RepoRef | null; tq: RepoRef | null } = {
+    tn: tnPlan.base,
+    tq: tqPlan.base,
+  };
+
   // Use lane source refs from active config for scripture USFM URLs
   const litCfg = activeLaneConfig(litState);
   const simCfg = activeLaneConfig(simState);
-  const laneOverrides: LaneRepoOverrides = {
+  const overrides: DcsRepoOverrides = {
     lit: litCfg.source,
     sim: simCfg.source,
+    ...(noteSource.tn ? { tn: noteSource.tn } : {}),
+    ...(noteSource.tq ? { tq: noteSource.tq } : {}),
   };
-  const urls = dcsUrls(env, cfg, book, laneOverrides);
+  const urls = dcsUrls(env, cfg, book, overrides);
   if (!urls) throw new Error(`unknown book: ${book}`);
   const origVersion = urls.origVersion;
 
@@ -289,7 +721,8 @@ async function importBookFromDcs(
   // a critical resource missing leaves it silently broken — see the ZEC
   // bootstrap that landed without TWLs. Fail loudly so the next attempt
   // succeeds cleanly.
-  const [ultRaw, ustRaw, origRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
+  // `let`: tn/tq may be replaced by the translation-source fallback below.
+  let [ultRaw, ustRaw, origRaw, tnRaw, tqRaw, twlRaw] = await Promise.all([
     fetchText(urls.ult),
     fetchText(urls.ust),
     fetchText(urls.orig),
@@ -298,15 +731,157 @@ async function importBookFromDcs(
     fetchText(urls.twl),
   ]);
 
-  const missing: string[] = [];
-  if (!ultRaw) missing.push(`ult (${urls.ult})`);
-  if (!ustRaw) missing.push(`ust (${urls.ust})`);
-  if (!origRaw) missing.push(`${origVersion.toLowerCase()} (${urls.orig})`);
-  if (!tnRaw) missing.push(`tn (${urls.tn})`);
-  if (!tqRaw) missing.push(`tq (${urls.tq})`);
-  if (!twlRaw) missing.push(`twl (${urls.twl})`);
+  // Automatic fallback: the org GENUINELY has no tn/tq file for this book. On a
+  // translation project the English source always carries one, so pull it from
+  // there rather than failing the whole import, and mark the provenance so the
+  // nightly reimport/export hold that resource out.
+  //
+  // 404-ONLY, deliberately. fetchText above collapses 404 / 5xx / network error
+  // / truncated read all into null, and substituting English on a transient
+  // failure would import the wrong language during a DCS outage AND permanently
+  // hold the book out of reimport+export. So we re-probe the org URL with
+  // fetchTextWithStatus and fall back only on a hard 404 (shouldFallBackOnStatus);
+  // anything else falls through to the missing/throw path below and is retried.
+  const noteUrls: Record<"tn" | "tq", string> = { tn: urls.tn, tq: urls.tq };
+  // The fallback (translation-source) URL actually attempted for a note
+  // resource, if any. Retained even when the fallback fetch fails so the
+  // failure-path classifier below can re-probe BOTH the primary AND the
+  // fallback and only mark the resource permanently missing when both are hard
+  // 404s (a transient fallback failure must not masquerade as permanent).
+  const noteFallbackAttempt: Partial<Record<"tn" | "tq", string>> = {};
+  // tn and tq are independent (disjoint noteSource/noteUrls keys), so run both
+  // fallback probes concurrently rather than serially — a book missing both
+  // files otherwise pays for 4 sequential DCS round-trips instead of 2 pairs
+  // in parallel. Each resource still does its OWN probe (fetchTextWithStatus)
+  // then its own primary-shaped fetch (fetchText, which retries once on
+  // network-error/truncation — that retry is the twl_PSA / HAB truncation
+  // guard, so it must stay fetchText and not be swapped for fetchTextWithStatus).
+  const [tnFallback, tqFallback] = await Promise.all(
+    (["tn", "tq"] as const).map(async (resource) => {
+      const raw = resource === "tn" ? tnRaw : tqRaw;
+      if (raw != null || noteSource[resource]) return null;
+      const ref = translationSourceRepoRef(cfg, resource);
+      if (!ref) return null;
+      const probe = await fetchTextWithStatus(env, noteUrls[resource]);
+      if (!shouldFallBackOnStatus(probe.status)) return null;
+      const fallbackUrls = dcsUrls(env, cfg, book, { ...overrides, [resource]: ref })!;
+      const url = fallbackUrls[resource];
+      noteFallbackAttempt[resource] = url;
+      const fetched = await fetchText(url);
+      if (fetched == null) return null;
+      console.warn("import: org note file absent; falling back to translation source", {
+        book,
+        resource,
+        url,
+      });
+      return { ref, url, fetched };
+    }),
+  );
+  if (tnFallback) {
+    noteSource.tn = tnFallback.ref;
+    noteUrls.tn = tnFallback.url;
+    tnRaw = tnFallback.fetched;
+  }
+  if (tqFallback) {
+    noteSource.tq = tqFallback.ref;
+    noteUrls.tq = tqFallback.url;
+    tqRaw = tqFallback.fetched;
+  }
+
+  const missing: Array<{ label: string; url: string }> = [];
+  if (!ultRaw) missing.push({ label: "ult", url: urls.ult });
+  if (!ustRaw) missing.push({ label: "ust", url: urls.ust });
+  if (!origRaw) missing.push({ label: origVersion.toLowerCase(), url: urls.orig });
+  if (!tnRaw) missing.push({ label: "tn", url: noteUrls.tn });
+  if (!tqRaw) missing.push({ label: "tq", url: noteUrls.tq });
+  if (!twlRaw) missing.push({ label: "twl", url: urls.twl });
   if (missing.length > 0) {
-    throw new Error(`DCS fetch failed for ${missing.length} resource(s); retry: ${missing.join("; ")}`);
+    // Re-probe each missing resource — on the failure path ONLY, never the
+    // happy path — to classify why it failed. A hard 404 means the org's repo
+    // genuinely has no file for this book (permanent: retrying won't help); a
+    // 5xx / network error / truncated read is transient (retry may succeed).
+    // fetchText collapses all of those to null, so the primary fetch above
+    // can't tell them apart; this second probe restores the distinction so the
+    // thrown message — and the HTTP status the route returns — can say which it
+    // is. See issue #58. (Extra DCS round-trips here are acceptable: the import
+    // has already failed.)
+    const classifyStatus = (probe: { status: number; truncated?: boolean }) => {
+      const permanent = probe.status === 404;
+      const reason = permanent
+        ? "missing (HTTP 404)"
+        : probe.status === 0
+          ? "transient (network error)"
+          : probe.truncated
+            ? "transient (truncated read)"
+            : probe.status === 200
+              ? // TOCTOU: the primary fetch returned null but the re-probe now
+                // succeeds — treat as transient, never emit "HTTP 200" as a reason.
+                "transient (recovered on re-check)"
+              : `transient (HTTP ${probe.status})`;
+      return { permanent, reason };
+    };
+    const classified = await Promise.all(
+      missing.map(async ({ label, url }) => {
+        const primary = classifyStatus(await fetchTextWithStatus(env, url));
+        // tn/tq that also attempted a translation-source fallback: the resource
+        // is only permanently missing when BOTH the org's primary URL and the
+        // fallback URL are hard 404s. If either probe is transient, retrying may
+        // still recover the resource, so classify the whole thing as transient.
+        const fallbackUrl =
+          label === "tn" || label === "tq" ? noteFallbackAttempt[label] : undefined;
+        if (fallbackUrl) {
+          const fallback = classifyStatus(await fetchTextWithStatus(env, fallbackUrl));
+          const permanent = primary.permanent && fallback.permanent;
+          const reason = permanent
+            ? "missing (HTTP 404 on org + fallback)"
+            : `org ${primary.reason}; fallback ${fallback.reason}`;
+          return { label, url, permanent, reason };
+        }
+        return { label, url, permanent: primary.permanent, reason: primary.reason };
+      }),
+    );
+    const allPermanent = classified.every((r) => r.permanent);
+    const detail = classified.map((r) => `${r.label} — ${r.reason} (${r.url})`).join("; ");
+    const message = allPermanent
+      ? `This org's repos have no file for ${missing.length} resource(s); retrying won't help: ${detail}`
+      : `DCS fetch failed for ${missing.length} resource(s); retry may succeed: ${detail}`;
+    const err = new Error(message) as Error & { permanent?: boolean };
+    err.permanent = allPermanent;
+    throw err;
+  }
+
+  // Per-chapter-range note sources (issue #103 Tier 2): fetch each cross-org
+  // range's tn/tq file so the insert can splice its chapters into the book. A
+  // configured range whose file cannot be fetched is a HARD error — we must NOT
+  // silently fall back to the base source for those chapters (that would import
+  // the wrong content and skip the intended per-chapter hold-out).
+  const tnRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tn", tnPlan.ranges);
+  const tqRangeFiles = await fetchRangeNoteFiles(env, cfg, book, "tq", tqPlan.ranges);
+
+  // Aquifer per-chapter ranges (tN only) — fetch + convert BEFORE the wipe so a
+  // missing source fails loudly with no destructive change (same contract as the
+  // DCS range files). tqPlan never carries aquifer ranges (resolveRangeSource
+  // rejects aquifer for tq), so there is no tq equivalent.
+  const tnAquiferRanges = await fetchAquiferRangeNotes(env, cfg, book, tnPlan.ranges);
+
+  // Detect cross-source ID collisions BEFORE the destructive wipe (issue #103).
+  // The merge inserts base rows + range rows with a bare INSERT; if two source
+  // files reuse the same row id (for DIFFERENT chapters) the second insert throws
+  // on the (book, id) PK — but by then the book has been wiped and half-inserted,
+  // and the stale book_imports marker would send the next non-force import down
+  // the already-imported fast path, leaving the book stuck partial. Failing here
+  // (before any wipe) keeps the collision a clean no-op the admin can resolve.
+  for (const [resource, baseRaw, ranges, files] of [
+    ["tn", tnRaw, tnPlan.ranges, tnRangeFiles],
+    ["tq", tqRaw, tqPlan.ranges, tqRangeFiles],
+  ] as const) {
+    const dup = mergedNoteIdCollision(baseRaw, ranges, files);
+    if (dup) {
+      throw new Error(
+        `merge source ${resource} id collision: '${dup}' appears in more than one source for ${book}; ` +
+          `resolve the overlapping sources before importing (no changes were made)`,
+      );
+    }
   }
 
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
@@ -426,6 +1001,10 @@ async function importBookFromDcs(
         tq: !!tqRaw,
         twl: !!twlRaw,
       },
+      sources: {
+        tn: noteSource.tn ? sourceProvenance(noteSource.tn.owner, noteSource.tn.repo) : null,
+        tq: noteSource.tq ? sourceProvenance(noteSource.tq.owner, noteSource.tq.repo) : null,
+      },
     };
 
     const renewBoth = async () => {
@@ -441,9 +1020,18 @@ async function importBookFromDcs(
     counts.verses += await insertVerses(env, book, origVersion, origRaw, olGen, null);
 
     await renewBoth();
-    counts.tn = await insertTnRows(env, book, tnRaw, userId, litGen, simGen);
+    counts.tn = await insertMergedNotes(
+      (raw, filter) => insertTnRows(env, book, raw, userId, litGen, simGen, filter),
+      tnRaw, tnPlan.ranges, tnRangeFiles, renewBoth,
+      tnAquiferRanges.map(({ notes, aqLang }) => ({
+        run: () => insertAquiferRangeNotes(env, book, notes, userId, litGen, simGen, aqLang),
+      })),
+    );
     await renewBoth();
-    counts.tq = await insertTqRows(env, book, tqRaw, userId, litGen, simGen);
+    counts.tq = await insertMergedNotes(
+      (raw, filter) => insertTqRows(env, book, raw, userId, litGen, simGen, filter),
+      tqRaw, tqPlan.ranges, tqRangeFiles, renewBoth,
+    );
     await renewBoth();
     counts.twl = await insertTwlRows(env, book, twlRaw, userId, litGen, simGen);
 
@@ -453,8 +1041,8 @@ async function importBookFromDcs(
       .map(([k]) => k)
       .join(",");
     const marker = await env.DB.prepare(
-      `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by)
-       SELECT ?1, ?2, unixepoch(), ?3
+      `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by, tn_source, tq_source)
+       SELECT ?1, ?2, unixepoch(), ?3, ?6, ?7
         WHERE EXISTS (
               SELECT 1 FROM scripture_lane_state
                WHERE lane = 'lit' AND replacement_job_id IS NULL
@@ -466,7 +1054,7 @@ async function importBookFromDcs(
                  AND replacement_required = 0 AND active_generation = ?5
             )`,
     )
-      .bind(book, `dcs:${sources}`, userId, litGen, simGen)
+      .bind(book, `dcs:${sources}`, userId, litGen, simGen, counts.sources.tn, counts.sources.tq)
       .run();
     if ((marker.meta?.changes ?? 0) !== 1) {
       throw new Error("lane_state_changed_during_import");
@@ -478,6 +1066,14 @@ async function importBookFromDcs(
     // nightly reimports that resource.
     for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
       if (!counts.fetched[resource]) continue;
+      // Skip source-pulled tn/tq: they're already held out of the nightly
+      // reimport (heldOutNoteResources), so a watermark here is write-only —
+      // nothing ever reads it. Recording one under the org's identity would
+      // also be a lie (resourceSourceRef no longer takes an override to say
+      // otherwise). An absent watermark correctly fails open to a refetch if
+      // provenance is later cleared.
+      if (resource === "tn" && noteSource.tn) continue;
+      if (resource === "tq" && noteSource.tq) continue;
       const file = dcsResourceFile(cfg, book, resource);
       if (!file) continue;
       const src = await resourceSourceRef(env, resource, cfg);
@@ -591,6 +1187,7 @@ async function insertTnRows(
   userId: number,
   litGen: number,
   simGen: number,
+  chapterFilter?: (chapter: number) => boolean,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -626,6 +1223,10 @@ async function insertTnRows(
     if (!id) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
+    // Per-chapter-range merge (issue #103 Tier 2): skip rows whose chapter this
+    // pass doesn't own, so the base file and each range file each contribute only
+    // their assigned chapters into one merged book.
+    if (chapterFilter && !chapterFilter(ch)) continue;
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {
@@ -656,6 +1257,87 @@ async function insertTnRows(
   return landed;
 }
 
+// Insert a chapter range's Aquifer tN notes as unapproved drafts (issue #103
+// follow-up). Mirrors the insert in aquiferImport.ts — translation_state
+// 'ai_draft', draft_meta_json.source='aquifer', review_kind for unverified
+// matches — but runs in the wipe-and-import path (a fresh, empty book) so it does
+// NO dedup/preserve, and it is fenced by bothLanesFreeSql like the other bootstrap
+// inserts. Runs LAST in the merge, so it seeds its id minter from the ids the
+// base + DCS ranges already landed and mints around any collision (an inherited
+// en_tn id can never clash with a base row).
+async function insertAquiferRangeNotes(
+  env: Env,
+  book: string,
+  notes: ResolvedNote[],
+  userId: number,
+  litGen: number,
+  simGen: number,
+  aqLang: string,
+): Promise<number> {
+  if (notes.length === 0) return 0;
+
+  // Live ids for this book (base + dcs ranges already inserted), INCLUDING any
+  // soft-deleted rows — the PK is (book, id) and a tombstone keeps its slot.
+  const usedIds = new Set(
+    ((await env.DB.prepare(`SELECT id FROM tn_rows WHERE book = ?1`).bind(book).all<{ id: string }>()).results ?? [])
+      .map((r) => r.id),
+  );
+
+  const insertStmt = env.DB.prepare(
+    `INSERT INTO tn_rows
+       (id, book, chapter, verse, ref_raw, tags, support_reference, quote, occurrence, note,
+        version, updated_by, updated_at, sort_order, preserve,
+        translation_state, draft_meta_json, pre_draft_json, review_kind, review_reason)
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+        1, ?11, ?12, ?13, 1, 'ai_draft', ?14, ?15, ?16, ?17
+      WHERE ${bothLanesFreeSql("?18", "?19")}`,
+  );
+  const auditStmt = env.DB.prepare(
+    `INSERT INTO edit_log (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
+     SELECT 'tn', ?1, ?2, ?3, NULL, 1, 'create', ?4, ?5
+      WHERE changes() > 0`,
+  );
+
+  const now = Math.floor(Date.now() / 1000);
+  const nextSort = makeVerseSortOrder();
+  let expected = 0;
+  let landed = 0;
+  let batch: D1PreparedStatement[] = [];
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const results = await env.DB.batch(batch);
+    for (let i = 0; i < results.length; i += 2) {
+      if ((results[i]?.meta?.changes ?? 0) > 0) landed++;
+    }
+    batch = [];
+  };
+
+  for (const note of notes) {
+    const id = pickId(note.enId, usedIds);
+    const [ch, v] = refParts(note.ref);
+    const draftMeta = JSON.stringify({
+      source: AQUIFER_SOURCE, aqLang, aquiferContentId: note.aquiferContentId, joinMethod: note.joinMethod,
+    });
+    const preDraft = JSON.stringify({ note: "", tags: null });
+    const reviewKind = note.reviewReason ? "aquifer_unverified" : null;
+    batch.push(
+      insertStmt.bind(
+        id, book, ch, v, note.ref,
+        note.tags, note.supportReference, note.quote, note.occurrence, note.note,
+        userId, now, nextSort(ch, v),
+        draftMeta, preDraft, reviewKind, note.reviewReason,
+        litGen, simGen,
+      ),
+      auditStmt.bind(id, book, userId, JSON.stringify({ ref: note.ref, source: AQUIFER_SOURCE }), AQUIFER_SOURCE),
+    );
+    expected++;
+    if (batch.length >= CHUNK) await flush();
+  }
+  await flush();
+  if (landed !== expected) throw new Error("lane_state_changed_during_import");
+  return landed;
+}
+
 async function insertTqRows(
   env: Env,
   book: string,
@@ -663,6 +1345,7 @@ async function insertTqRows(
   userId: number,
   litGen: number,
   simGen: number,
+  chapterFilter?: (chapter: number) => boolean,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -698,6 +1381,8 @@ async function insertTqRows(
     if (!id) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
+    // Per-chapter-range merge (issue #103 Tier 2) — see insertTnRows.
+    if (chapterFilter && !chapterFilter(ch)) continue;
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {

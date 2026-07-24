@@ -14,20 +14,27 @@ import type { LaneKey, ScriptureLaneConfig } from "./scriptureLane";
 import {
   bibleVersionForLane,
   configHash,
+  copyBookForward,
   getLaneState,
   parseLaneConfig,
+  planReplacementBooks,
   recoverOrphanedReservation,
   requireLaneState,
   snapshotRequiredBooks,
-} from "./scriptureLane";
-import { dcsRawUrl, fetchText, BOOK_NUMBERS, fileCommitSha } from "./dcsSources";
-import { extractVersesForRange, extractUsfmHeaders } from "./importParsers";
+  STAGING_CLAIM_STALE_SECONDS,
+} from "./scriptureLane.ts";
+import { dcsRawUrl, fetchText, BOOK_NUMBERS, fileCommitSha } from "./dcsSources.ts";
+import { extractVersesForRange, extractUsfmHeaders } from "./importParsers.ts";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const EXPORT_LEASE_TTL_MS = 120_000;
-/** Stale staging reclaim: Worker died mid-fetch/insert of a book. */
-export const STAGING_CLAIM_STALE_SECONDS = 600;
+/**
+ * Stale staging reclaim: Worker died mid-fetch/insert of a book. Defined in
+ * ./scriptureLane (shared with copyBookForward) and re-exported here so existing
+ * importers of this symbol keep working.
+ */
+export { STAGING_CLAIM_STALE_SECONDS };
 export const EXPORT_ABANDON_GRACE_MS = 600_000;
 
 const CHUNK = 80;
@@ -63,6 +70,8 @@ export interface ReplacementBookRow {
   job_id: string;
   book: string;
   status: string;
+  /** 'staged' (fetch from new source) | 'carry_forward' (copy predecessor gen). */
+  mode: string;
   source_owner: string | null;
   source_repo: string | null;
   source_ref: string | null;
@@ -100,6 +109,13 @@ export async function startReplacement(
   lane: LaneKey,
   pendingConfig: ScriptureLaneConfig,
   confirm: boolean,
+  /**
+   * Optional per-book selection (issue #94): the books to STAGE from the new
+   * source. Omitted → replace all (unchanged whole-lane behavior). When set, it
+   * must be a subset of the current generation's books; the complement is copied
+   * forward so un-selected books are never emptied on the generation flip.
+   */
+  replaceBooks?: string[],
 ): Promise<{ job: ReplacementJob; books: ReplacementBookRow[] }> {
   // Heal an orphan freeze before the "already active" pre-check so a dead
   // reservation doesn't permanently block the lane.
@@ -136,6 +152,12 @@ export async function startReplacement(
   // waits ORPHAN_RESERVATION_GRACE_SECONDS before reclaiming a missing job.
   const bv = bibleVersionForLane(lane);
   const snap = await snapshotRequiredBooks(env, bv, activeGeneration);
+
+  // Resolve the staged/carry-forward split BEFORE the CAS freeze so an unknown
+  // book selection surfaces as a 400 without ever freezing the lane. Throws
+  // `unknown_books` (status 400) for a selection outside the current generation.
+  const plan = planReplacementBooks(snap.books, replaceBooks);
+  const carryForwardSet = new Set(plan.carryForward);
 
   // Re-read: a concurrent start may have frozen while we were snapshotting.
   await reclaimStaleExclusiveOwner(env, lane);
@@ -192,12 +214,16 @@ export async function startReplacement(
   ];
 
   for (const book of snap.books) {
+    // Tag how each book reaches the new generation. staged → stageBook fetches
+    // it from the new source; carry_forward → copyBookForward copies the
+    // predecessor generation so it survives activation.
+    const mode = carryForwardSet.has(book) ? "carry_forward" : "staged";
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO scripture_lane_replacement_books (job_id, book, status, updated_at)
-         SELECT ?1, ?2, 'pending', unixepoch()
+        `INSERT INTO scripture_lane_replacement_books (job_id, book, status, mode, updated_at)
+         SELECT ?1, ?2, 'pending', ?3, unixepoch()
            FROM scripture_lane_replacement WHERE job_id = ?1`,
-      ).bind(id, book),
+      ).bind(id, book, mode),
     );
   }
 
@@ -551,7 +577,15 @@ export async function markReadyIfComplete(
   const books = await getJobBooks(env, jobId);
   const pending: string[] = [];
   for (const b of books) {
-    if (b.status !== "artifact_ok" && b.status !== "absent_authorized") {
+    // `carried_forward` (issue #94) is a complete terminal state alongside
+    // artifact_ok/absent_authorized: the book's predecessor content was copied
+    // into the new generation, so it is ready to activate. (No book reaches this
+    // status until PR-2 drives copyBookForward, so this is inert today.)
+    if (
+      b.status !== "artifact_ok" &&
+      b.status !== "carried_forward" &&
+      b.status !== "absent_authorized"
+    ) {
       pending.push(b.book);
     }
   }
@@ -706,6 +740,53 @@ export async function cancelReplacement(
   ]);
 }
 
+/**
+ * Full back-out of an in-progress replacement (issue #97). Distinct from
+ * cancelReplacement / failReplacement, which deliberately KEEP
+ * replacement_required set (so a BSOJ transitional lane stays quarantined until
+ * a successful activation). A back-out is an explicit admin abort of the
+ * "Change scripture source" tool: it returns the lane to its PRIOR source by
+ * clearing every replacement flag — replacement_job_id, exclusive_owner,
+ * exports_blocked, replacement_required, pending_target_json — WITHOUT touching
+ * active_generation or active_config_json. gen-1 content is never overwritten;
+ * the active config already holds the prior source, so clearing the freeze
+ * simply re-exposes it.
+ */
+export async function backOutReplacement(
+  env: Env,
+  jobId: string,
+): Promise<void> {
+  const job = await getJob(env, jobId);
+  if (!job) throw Object.assign(new Error("job_not_found"), { status: 404 });
+  // A completed job already flipped the pointer — backing it out would strand
+  // the lane on a generation with no job. Refuse; only in-flight jobs back out.
+  if (job.status === "completed") {
+    throw Object.assign(new Error("job_terminal"), { status: 409, detail: { status: job.status } });
+  }
+  if (job.status === "cancelled") return; // idempotent
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
+        WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')`,
+    ).bind(jobId),
+    // Clear the full freeze AND the replacement_required/pending_target that the
+    // non-cancel paths preserve. Guarded on our job so a lane taken over by a
+    // concurrent workflow is a no-op. active_generation / active_config_json are
+    // intentionally untouched — the prior source stays active.
+    env.DB.prepare(
+      `UPDATE scripture_lane_state
+          SET replacement_job_id = NULL,
+              exclusive_owner = NULL,
+              exports_blocked = 0,
+              replacement_required = 0,
+              pending_target_json = NULL,
+              updated_at = unixepoch()
+        WHERE lane = ?1 AND replacement_job_id = ?2`,
+    ).bind(job.lane, jobId),
+  ]);
+}
+
 export async function failReplacement(
   env: Env,
   jobId: string,
@@ -750,13 +831,20 @@ export async function retryBook(
     throw Object.assign(new Error("job_terminal"), { status: 409 });
   }
 
-  // Reset to pending so stageBook can re-run
+  // Reset to pending so the re-run can re-claim the book.
   await env.DB.prepare(
     `UPDATE scripture_lane_replacement_books
         SET status = 'pending', error_json = NULL, updated_at = unixepoch()
       WHERE job_id = ?1 AND book = ?2 AND status IN ('retryable_error', 'failed')`,
   ).bind(jobId, book).run();
 
+  // Dispatch by the book's mode: a carry_forward book (e.g. that hit the
+  // incomplete_carry_forward fail-closed guard) must re-run copyBookForward, not
+  // re-fetch from the new source.
+  const row = await env.DB.prepare(
+    `SELECT mode FROM scripture_lane_replacement_books WHERE job_id = ?1 AND book = ?2`,
+  ).bind(jobId, book).first<{ mode: string }>();
+  if (row?.mode === "carry_forward") return copyBookForward(env, jobId, book);
   return stageBook(env, jobId, book);
 }
 
@@ -777,6 +865,22 @@ export async function waiveBook(
   }
   if (job.status === "completed" || job.status === "cancelled" || job.status === "failed") {
     throw Object.assign(new Error("job_terminal"), { status: 409 });
+  }
+
+  // A carry_forward book (issue #94) must never be waived: `absent_authorized`
+  // leaves the book EMPTY on the new generation, and a carried book only ever
+  // exists because the predecessor generation HAS content for it
+  // (snapshotRequiredBooks lists only books with verses). Waiving it would
+  // silently drop that content — the exact data loss selective replacement
+  // prevents. The remedy for a failed carry-forward is retry, not waive.
+  const modeRow = await env.DB.prepare(
+    `SELECT mode FROM scripture_lane_replacement_books WHERE job_id = ?1 AND book = ?2`,
+  ).bind(jobId, book).first<{ mode: string }>();
+  if (modeRow?.mode === "carry_forward") {
+    throw Object.assign(new Error("cannot_waive_carry_forward"), {
+      status: 409,
+      detail: { book, reason: "carry_forward_books_must_be_retried_not_waived" },
+    });
   }
 
   // Only authorize absence for books that already failed staging — never for

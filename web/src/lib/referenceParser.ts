@@ -21,8 +21,10 @@ export type ParseRefResult =
 
 // Optional book group: one digit then letters (or `i`/`ii`/`iii` ordinals)
 // followed by letters, with an optional space inside. Then chapter or
-// chapter:verse.
-const PATTERN = /^(?:((?:[123]|i{1,3})\s*[a-z]+|[a-z]+)\s+)?(\d+)(?:\s*:\s*(\d+))?$/i;
+// chapter:verse. `\p{L}` (not `[a-z]`) so a localized book name/abbreviation
+// (e.g. "Génesis", non-Latin scripts) can reach resolveBook() instead of
+// being rejected by the pattern before it's even tried.
+const PATTERN = /^(?:((?:[123]|i{1,3})\s*[\p{L}]+|[\p{L}]+)\s+)?(\d+)(?:\s*:\s*(\d+))?$/iu;
 
 export function parseReference(input: string): ParseRefResult {
   const trimmed = input.trim();

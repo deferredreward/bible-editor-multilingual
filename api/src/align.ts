@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
+import { sharedDb } from "./workspaces.ts";
 
 // Alignment suggestions over the precomputed alignment-memory frequency table
 // (align_freq, populated offline by scripts/train-aligner.mjs from the gold
@@ -109,6 +110,11 @@ const MORPH_K = 5;
 // D1 caps prepared statements at 100 bind variables. The memory query also
 // binds `bible` at ?1, so keep strong chunks under that.
 const STRONG_CHUNK = 90;
+// Cap on the `keys`/`strongs` list. Unauthenticated route where each key fans
+// out to D1 chunks (STRONG_CHUNK), so bound the per-request work. Alignment
+// suggestions are requested per-verse (tens of keys), so 2000 never limits
+// legitimate use; over it is a clean 400 rather than silent truncation.
+export const MAX_ALIGN_KEYS = 2000;
 
 // One requested suggestion target. The client sends `keys` = ";"-separated
 // "rawStrong~morphClass" composites (morph class can contain commas for Greek,
@@ -128,6 +134,9 @@ align.get("/suggest", async (c) => {
       ? keysParam.split(";").map((s) => s.trim()).filter(Boolean)
       : (c.req.query("strongs") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (requestedRaw.length === 0) return c.json({ bible, suggestions: {} });
+  if (requestedRaw.length > MAX_ALIGN_KEYS) {
+    return c.json({ error: "too_many_keys", max: MAX_ALIGN_KEYS, got: requestedRaw.length }, 400);
+  }
 
   const reqs: SuggestReq[] = [];
   const allKeys = new Set<string>();
@@ -148,7 +157,7 @@ align.get("/suggest", async (c) => {
   for (let i = 0; i < keys.length; i += STRONG_CHUNK) {
     const chunk = keys.slice(i, i + STRONG_CHUNK);
     const placeholders = chunk.map((_v, j) => `?${j + 2}`).join(",");
-    const rs = await c.env.DB.prepare(
+    const rs = await sharedDb(c.env).prepare(
       `SELECT strong, surface, count FROM align_freq WHERE bible = ?1 AND strong IN (${placeholders})`,
     )
       .bind(bible, ...chunk)
@@ -168,7 +177,7 @@ align.get("/suggest", async (c) => {
     for (let i = 0; i < keys.length; i += STRONG_CHUNK) {
       const chunk = keys.slice(i, i + STRONG_CHUNK);
       const placeholders = chunk.map((_v, j) => `?${j + 2}`).join(",");
-      const rs = await c.env.DB.prepare(
+      const rs = await sharedDb(c.env).prepare(
         `SELECT strong, morph_class, surface, count FROM align_freq_morph WHERE bible = ?1 AND strong IN (${placeholders})`,
       )
         .bind(bible, ...chunk)
@@ -201,7 +210,7 @@ align.get("/suggest", async (c) => {
     const chunk = lexKeys.slice(i, i + STRONG_CHUNK);
     if (chunk.length === 0) break;
     const placeholders = chunk.map((_v, j) => `?${j + 1}`).join(",");
-    const rs = await c.env.DB.prepare(
+    const rs = await sharedDb(c.env).prepare(
       `SELECT strong, gloss, definition FROM lexicon_entries WHERE strong IN (${placeholders})`,
     )
       .bind(...chunk)

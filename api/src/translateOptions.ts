@@ -6,6 +6,7 @@
 // Contract of record: bp-bot/translate-pipeline/{PLAN.md,BIBLE-EDITOR-INTEGRATION.md}.
 
 import type { ProjectConfig } from "./projectConfig.ts";
+import { resolveSourceRef } from "./dcsSources.ts";
 
 // Client-supplied overrides (a top-level `translate:{…}` field on the start body).
 export type TranslateClientOptions = {
@@ -27,6 +28,10 @@ export type TranslateClientOptions = {
   targetOrg?: string;
   sourceRef?: string;
   contextRef?: string;
+  // Target-language literal / simplified Bible refs (org/repo@ref) the bot uses
+  // to make bold-quote and alternate-translation wording match the target Bible.
+  literalRef?: string;
+  simplifiedRef?: string;
 };
 
 // Build the bp-assistant `translate` options from the active project config,
@@ -45,10 +50,20 @@ export function buildTranslateOptions(
   const resourceType = o.resourceType ?? "tn";
   const targetLang = o.targetLang ?? cfg.languageCode;
   const targetOrg = o.targetOrg ?? cfg.exportOrg;
-  // Source is the published EN repo for the chosen resource, pinned to master by
-  // default; a caller can pin an exact SHA for reproducibility (the bot echoes
+  // Source is the published source repo for the chosen resource, pinned to master
+  // by default; a caller can pin an exact SHA for reproducibility (the bot echoes
   // the resolved SHA). resourceType selects which source repo (tn|tq|tw|ta).
-  const sourceRef = o.sourceRef ?? `${src.org}/${src.repos[resourceType]}@master`;
+  // translationSource.repos is PARTIAL and per-resource: a role whose upstream
+  // was left blank in Setup is omitted (NO source to translate FROM), and a role
+  // may point at a DIFFERENT org than src.org. Resolve org+repo through the
+  // shared accessor; emit no options (return null → caller 400) when there's no
+  // ref rather than a `${org}/undefined@master`. An explicit client sourceRef
+  // override still wins.
+  const resolved = resolveSourceRef(src, resourceType);
+  if (!o.sourceRef && !resolved) return null;
+  const sourceRef = o.sourceRef ?? `${resolved!.org}/${resolved!.repo}@master`;
+  const literalRef = o.literalRef ?? (cfg.repos.lit ? `${cfg.org}/${cfg.repos.lit}@master` : undefined);
+  const simplifiedRef = o.simplifiedRef ?? (cfg.repos.sim ? `${cfg.org}/${cfg.repos.sim}@master` : undefined);
   return {
     resourceType,
     targetLang,
@@ -64,6 +79,8 @@ export function buildTranslateOptions(
     // Once {org}/translation-context is created + populated (CONTEXT-REPO-CONTRACT.md),
     // a caller enables assisted output by passing translate.contextRef explicitly.
     ...(o.contextRef ? { contextRef: o.contextRef } : {}),
+    ...(literalRef ? { literalRef } : {}),
+    ...(simplifiedRef ? { simplifiedRef } : {}),
     // Editor delivery — the bot never pushes to Door43; it records an output
     // manifest and the editor pulls the files over the authenticated output
     // endpoint, applying them as ai_draft rows (docs/plan Design 1). 'branch'

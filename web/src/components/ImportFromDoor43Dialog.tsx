@@ -29,6 +29,12 @@ interface Props {
   onClose: () => void;
   book: string;
   currentChapter: number;
+  /**
+   * Optional seed for the chapter/range input each time the dialog opens.
+   * When set (e.g. "1-50" for a whole-book re-pull) it wins over currentChapter,
+   * so accepting the default refreshes the whole book rather than one chapter.
+   */
+  initialRef?: string;
   onMessage?: (msg: string) => void;
   /** Called after a successful import so the parent can refetch the chapter. */
   onImported?: () => void;
@@ -96,22 +102,24 @@ export function ImportFromDoor43Dialog({
   onClose,
   book,
   currentChapter,
+  initialRef,
   onMessage,
   onImported,
 }: Props) {
   const { t } = useTranslation();
   const [opts, setOpts] = useState<ResourceState>(() => loadOpts());
-  const [refInput, setRefInput] = useState<string>(String(currentChapter));
+  const [refInput, setRefInput] = useState<string>(initialRef ?? String(currentChapter));
   const [submitting, setSubmitting] = useState(false);
 
-  // Reload last-used resource selection and reset chapter input each time the
-  // dialog opens (chapter follows whatever the user is currently looking at).
+  // Reload last-used resource selection and reset the chapter/range input each
+  // time the dialog opens. `initialRef` (e.g. a whole-book "1-50" range) wins
+  // over currentChapter so the default re-pull refreshes everything.
   useEffect(() => {
     if (open) {
       setOpts(loadOpts());
-      setRefInput(String(currentChapter));
+      setRefInput(initialRef ?? String(currentChapter));
     }
-  }, [open, currentChapter]);
+  }, [open, currentChapter, initialRef]);
 
   const refParsed = useMemo(() => parseChapterRange(refInput, book), [refInput, book]);
   const nothingSelected = !opts.ult && !opts.ust && !opts.tn && !opts.tq && !opts.twl;

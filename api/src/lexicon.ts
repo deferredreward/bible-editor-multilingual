@@ -1,7 +1,17 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
+import { sharedDb } from "./workspaces.ts";
 
 export const lexicon = new Hono<{ Bindings: Env }>();
+
+// Cap on the bulk `?strongs=` list. This route is UNAUTHENTICATED, and each
+// key can fan out to a D1 query chunk (CHUNK below), so an unbounded list lets
+// one HTTP request trigger hundreds of D1 subrequests. The largest legitimate
+// batch is the unique Strong's numbers in one loaded chapter (a few hundred),
+// so 2000 leaves generous headroom while turning "unbounded" into "bounded".
+// Over the cap is a clean 400 rather than a silent truncation (which would
+// return wrong/partial results the client can't detect).
+export const MAX_STRONGS = 2000;
 
 export interface LexiconEntry {
   strong: string;
@@ -29,7 +39,7 @@ lexicon.get("/:strong", async (c) => {
   const raw = c.req.param("strong");
   const candidates = strongLookupKeys(raw);
   for (const k of candidates) {
-    const row = await c.env.DB.prepare(
+    const row = await sharedDb(c.env).prepare(
       `SELECT * FROM lexicon_entries WHERE strong = ?1`,
     )
       .bind(k)
@@ -44,6 +54,9 @@ lexicon.get("/", async (c) => {
   const raw = c.req.query("strongs") ?? "";
   const requested = raw.split(",").map((s) => s.trim()).filter(Boolean);
   if (requested.length === 0) return c.json({ entries: [] });
+  if (requested.length > MAX_STRONGS) {
+    return c.json({ error: "too_many_keys", max: MAX_STRONGS, got: requested.length }, 400);
+  }
 
   // Collect unique lookup keys with the request key they came from so the
   // client can match each returned entry back to the original raw strong.
@@ -64,7 +77,7 @@ lexicon.get("/", async (c) => {
   for (let i = 0; i < uniqueKeys.length; i += CHUNK) {
     const chunk = uniqueKeys.slice(i, i + CHUNK);
     const placeholders = chunk.map((_v, j) => `?${j + 1}`).join(",");
-    const rs = await c.env.DB.prepare(
+    const rs = await sharedDb(c.env).prepare(
       `SELECT * FROM lexicon_entries WHERE strong IN (${placeholders})`,
     )
       .bind(...chunk)

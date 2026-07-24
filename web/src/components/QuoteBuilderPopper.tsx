@@ -308,11 +308,11 @@ export function QuoteBuilderPopper({
                 Preview
               </Typography>
               <Typography
+                dir={sourceIsHebrew ? "rtl" : "ltr"}
                 sx={{
                   fontFamily: '"Times New Roman","SBL Hebrew","Cardo",serif',
                   fontSize: 19,
-                  direction: sourceIsHebrew ? "rtl" : "ltr",
-                  textAlign: sourceIsHebrew ? "right" : "left",
+                  textAlign: "start",
                   minHeight: 24,
                   color: preview ? "text.primary" : "text.disabled",
                 }}
@@ -368,11 +368,11 @@ function Section({
         {label}
       </Typography>
       <Box
+        dir={rtl ? "rtl" : "ltr"}
         sx={{
           display: "flex",
           flexWrap: "wrap",
           gap: 0.5,
-          direction: rtl ? "rtl" : "ltr",
           // justify-content stays flex-start for both directions. In RTL,
           // flex-start IS the visual right; flex-end would push wrapped
           // lines to the visual left and leave the 2nd line orphaned.

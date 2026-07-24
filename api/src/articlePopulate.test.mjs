@@ -199,7 +199,7 @@ console.log("parsers");
 // ── 2. planWork ordering + blocking ──────────────────────────────────────────
 console.log("planWork");
 {
-  const src = { org: "unfoldingWord", repos: { tw: "en_tw", ta: "en_ta" } };
+  const src = { refs: { tw: { org: "unfoldingWord", repo: "en_tw" }, ta: { org: "unfoldingWord", repo: "en_ta" } } };
   const referenced = [
     { resource: "tw", path: "bible/kt/god.md", article_id: "kt/god", part: "body" },
     { resource: "tw", path: "bible/kt/grace.md", article_id: "kt/grace", part: "body" },
@@ -248,6 +248,88 @@ console.log("planWork");
   ], src);
   assert.equal(otherSrc.length, 1, "other-source state does not block");
   console.log("  ✓ planWork ordering + fetch-state blocking");
+}
+
+// ── 2b. planWork skips resources with NO upstream repo (partial source) ───────
+console.log("planWork partial source");
+{
+  const referenced = [
+    { resource: "tw", path: "bible/kt/god.md", article_id: "kt/god", part: "body" },
+    { resource: "ta", path: "translate/figs-aside/01.md", article_id: "translate/figs-aside", part: "body" },
+  ];
+  // tw omitted from the source (blank in Setup); only ta has a repo.
+  const taOnly = planWork(referenced, [], [], { refs: { ta: { org: "unfoldingWord", repo: "en_ta" } } });
+  assert.deepEqual(
+    taOnly.map((p) => p.resource),
+    ["ta"],
+    "tw ref skipped when translationSource omits tw (never planned → never fetched as undefined)",
+  );
+  // No repos at all → nothing planned.
+  const none = planWork(referenced, [], [], { refs: {} });
+  assert.equal(none.length, 0, "empty source repos → nothing planned");
+  console.log("  ✓ planWork skips no-source resources");
+}
+
+// ── 2b'. planWork honors a PER-RESOURCE org override (issue #84 slice) ─────────
+console.log("planWork per-resource org");
+{
+  const referenced = [
+    { resource: "ta", path: "translate/figs-aside/01.md", article_id: "translate/figs-aside", part: "body" },
+  ];
+  // ta sourced from a DIFFERENT org than the default upstream.
+  const src = { refs: { ta: { org: "BibleAquifer", repo: "ar_ta" } } };
+  // A row stamped with the same org+repo is fresh (skipped)...
+  const fresh = planWork(
+    referenced,
+    [{ resource: "ta", path: "translate/figs-aside/01.md", source_org: "BibleAquifer", source_repo: "ar_ta", deleted_at: null }],
+    [],
+    src,
+  );
+  assert.equal(fresh.length, 0, "row stamped with the override org+repo is fresh");
+  // ...but a row stamped with the DEFAULT org (right repo, wrong org) is a mismatch → refetch.
+  const mismatch = planWork(
+    referenced,
+    [{ resource: "ta", path: "translate/figs-aside/01.md", source_org: "unfoldingWord", source_repo: "ar_ta", deleted_at: null }],
+    [],
+    src,
+  );
+  assert.equal(mismatch.length, 1, "same repo under a different org is an identity mismatch");
+  console.log("  ✓ planWork identity is per-resource org+repo");
+}
+
+// ── 2c. Driver never builds a `${org}/undefined` URL under a partial source ───
+console.log("driver partial source");
+{
+  const db = freshDb();
+  // custom-gl with a translationSource that has ONLY ta (tw omitted).
+  seedConfig(
+    db,
+    "custom-gl",
+    JSON.stringify({
+      org: "MyOrg",
+      exportOrg: "MyOrg",
+      repos: { lit: "x_glt", sim: "x_gst", tn: "x_tn", tq: "x_tq", twl: "x_twl", tw: "x_tw", ta: "x_ta" },
+      translationSource: { org: "unfoldingWord", languageCode: "en", repos: { ta: "en_ta" } },
+    }),
+  );
+  const env = makeEnv(db);
+  // Reference one tW (no source) and one tA (sourced).
+  db.prepare(`INSERT INTO twl_rows (id, book, tw_link) VALUES ('1','TIT','rc://en/tw/dict/bible/kt/god')`).run();
+  db.prepare(`INSERT INTO tn_rows (id, book, support_reference) VALUES ('n1','TIT','figs-aside')`).run();
+  const seenUrls = [];
+  const recordingFetch = async (_env, url) => {
+    seenUrls.push(url);
+    const m = url.match(/\/raw\/branch\/master\/(.+)$/);
+    const path = m ? m[1] : url;
+    if (path === "translate/figs-aside/01.md") return { status: 200, text: "# Aside\n" };
+    return { status: 404, text: null };
+  };
+  const r = await populateReferencedArticles(env, { deps: { fetch: recordingFetch } });
+  assert.ok(!seenUrls.some((u) => /undefined/.test(u)), "no fetch URL contains 'undefined'");
+  assert.ok(!seenUrls.some((u) => /\/en_tw\//.test(u) || /god\.md/.test(u)), "tW (no source) never fetched");
+  assert.ok(seenUrls.some((u) => /en_ta/.test(u)), "tA (sourced) fetched from en_ta");
+  assert.equal(r.processed, 1, "only the sourced tA article is populated");
+  console.log("  ✓ driver skips no-source resource, builds no undefined URL");
 }
 
 // ── 3. Upsert matrix (real SQL) ───────────────────────────────────────────────

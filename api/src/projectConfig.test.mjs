@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PRESETS, writeProjectConfig } from "./projectConfig.ts";
+import { PRESETS, presetForOrg, writeProjectConfig, getProjectConfig, clearProjectConfigCache } from "./projectConfig.ts";
 
 test("preset catalog identifies authoring and translation projects", () => {
   assert.equal(PRESETS["en-unfoldingword"].translationSource, null);
@@ -91,9 +91,116 @@ test("writeProjectConfig replaces overrides when an object is passed", async () 
   assert.equal(config.litLabel, "NEW");
 });
 
+// ── presetForOrg + fresh-workspace fallback (issue #61) ──────────────────────
+
+test("presetForOrg matches an org's preset case-insensitively; null when none", () => {
+  assert.equal(presetForOrg("BibleEditorMLTest"), "en-bible-editor-ml-test");
+  assert.equal(presetForOrg("bibleeditormltest"), "en-bible-editor-ml-test");
+  assert.equal(presetForOrg("BSOJ"), "ar-bsoj");
+  assert.equal(presetForOrg("unfoldingWord"), "en-unfoldingword");
+  assert.equal(presetForOrg("no-such-org"), null);
+  // Hidden preset (custom-gl, org="") and empty input never match.
+  assert.equal(presetForOrg(""), null);
+  assert.equal(presetForOrg("   "), null);
+});
+
+// A freshly-selected workspace DB has NO project_config row. getProjectConfig
+// must materialize THAT workspace org's preset (via VIEWER_ORG), not silently
+// default to the English root (which would land the user in authoring/English).
+test("getProjectConfig falls back to the workspace org's preset when no row exists", async () => {
+  const noRowDb = { prepare: () => ({ bind() { return this; }, async first() { return null; } }) };
+  clearProjectConfigCache();
+  const cfg = await getProjectConfig({ DB: noRowDb, VIEWER_ORG: "BibleEditorMLTest", WORKSPACE_SLUG: "ml-test" });
+  assert.equal(cfg.preset, "en-bible-editor-ml-test");
+  assert.equal(cfg.mode, "translation");
+  assert.notEqual(cfg.translationSource, null);
+  clearProjectConfigCache();
+});
+
+test("getProjectConfig no-row fallback keeps the English root when org is unknown", async () => {
+  const noRowDb = { prepare: () => ({ bind() { return this; }, async first() { return null; } }) };
+  clearProjectConfigCache();
+  const cfg = await getProjectConfig({ DB: noRowDb, VIEWER_ORG: "some-unmapped-org", WORKSPACE_SLUG: "other" });
+  assert.equal(cfg.preset, "en-unfoldingword");
+  assert.equal(cfg.translationSource, null);
+  clearProjectConfigCache();
+});
+
 test("writeProjectConfig rejects unknown presets", async () => {
   await assert.rejects(
     writeProjectConfig({ DB: {} }, "not-a-preset", null),
     /unknown preset/,
   );
+});
+
+// ── Workspace cache isolation ────────────────────────────────────────────────
+// Regression coverage for the live bug: getProjectConfig's cache is per-
+// isolate, and the same isolate serves every workspace. Without keying by
+// WORKSPACE_SLUG, workspace B's request could read workspace A's cached
+// config straight out of the module-scope cache — pointing an export at the
+// wrong DCS org. This reproduces exactly that cross-workspace read.
+
+// Counts D1 reads so a test can assert whether a call hit cache or the "DB".
+function countingConfigDb(preset, overridesJson = null) {
+  const state = { reads: 0 };
+  return {
+    state,
+    prepare(sql) {
+      return {
+        async first() {
+          if (!sql.includes("SELECT")) return null;
+          state.reads++;
+          return { preset, overrides_json: overridesJson };
+        },
+      };
+    },
+  };
+}
+
+test("getProjectConfig cache is isolated per workspace (isolate is shared across orgs)", async () => {
+  clearProjectConfigCache();
+  const dbA = countingConfigDb("ar-bsoj");
+  const dbB = countingConfigDb("en-bible-editor-ml-test");
+  const envA = { DB: dbA, WORKSPACE_SLUG: "a" };
+  const envB = { DB: dbB, WORKSPACE_SLUG: "b" };
+
+  const cfgA = await getProjectConfig(envA);
+  assert.equal(cfgA.org, "BSOJ");
+
+  // This is the exact live failure: a request for workspace B immediately
+  // after workspace A must get B's config, not A's cached one.
+  const cfgB = await getProjectConfig(envB);
+  assert.equal(cfgB.org, "BibleEditorMLTest");
+
+  // Re-fetching A must still come from A's own cache entry (no new D1 read)
+  // and must still be A's config, not clobbered by B's request in between.
+  const cfgA2 = await getProjectConfig(envA);
+  assert.equal(cfgA2.org, "BSOJ");
+  assert.equal(dbA.state.reads, 1, "second A call should hit A's cache, not re-read D1");
+  assert.equal(dbB.state.reads, 1);
+});
+
+test("clearProjectConfigCache(env) clears only that workspace's entry; no-arg clears all", async () => {
+  clearProjectConfigCache();
+  const dbA = countingConfigDb("ar-bsoj");
+  const dbB = countingConfigDb("en-bible-editor-ml-test");
+  const envA = { DB: dbA, WORKSPACE_SLUG: "a" };
+  const envB = { DB: dbB, WORKSPACE_SLUG: "b" };
+
+  await getProjectConfig(envA);
+  await getProjectConfig(envB);
+  assert.equal(dbA.state.reads, 1);
+  assert.equal(dbB.state.reads, 1);
+
+  clearProjectConfigCache(envA);
+  await getProjectConfig(envA);
+  assert.equal(dbA.state.reads, 2, "A's cache was cleared, so this re-reads D1");
+  await getProjectConfig(envB);
+  assert.equal(dbB.state.reads, 1, "B's cache must be untouched by clearing A");
+
+  clearProjectConfigCache();
+  await getProjectConfig(envA);
+  await getProjectConfig(envB);
+  assert.equal(dbA.state.reads, 3, "no-arg clear wipes A too");
+  assert.equal(dbB.state.reads, 2, "no-arg clear wipes B too");
 });

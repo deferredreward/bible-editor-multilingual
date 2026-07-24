@@ -1,5 +1,16 @@
 // USFM 3-letter codes (uppercase) with English names and common aliases.
 // Used by the TopBar book picker (typeahead) and the reference parser.
+//
+// `code` is the stable USFM/DCS identifier — it drives file names, import/
+// export paths, and API routes, and must never be swapped for a translated
+// display string. `name` here is the English fallback used to seed the
+// alias map (so typing "Genesis" still resolves even before i18n loads) and
+// as a last-resort display value; the actual localized display name/abbr
+// comes from the `books.<CODE>.name` / `books.<CODE>.abbr` i18next keys (see
+// i18n/locales/en.json) via bookName()/bookAbbr() below, which route through
+// i18next (including any runtime overrides from the Localization tab).
+
+import i18n from "../i18n";
 
 export interface BookInfo {
   code: string;
@@ -87,11 +98,38 @@ const ALIAS_MAP: Record<string, string> = (() => {
   return m;
 })();
 
+const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+
+/** Resolves free-text input (code, English alias, or the *current* locale's
+ *  translated name/abbr) to a stable book code. `ALIAS_MAP` only covers the
+ *  bundled English names/aliases, so a translated `books.<CODE>.name`/`.abbr`
+ *  (from a non-English locale or a runtime Localization override) is checked
+ *  as a fallback — otherwise pasting exactly what the UI displays wouldn't
+ *  resolve once a locale supplies a translated name. */
 export function resolveBook(input: string): string | null {
-  const key = input.trim().toLowerCase().replace(/\s+/g, "");
-  return ALIAS_MAP[key] ?? null;
+  const key = norm(input);
+  const direct = ALIAS_MAP[key];
+  if (direct) return direct;
+  for (const b of BOOKS) {
+    if (norm(bookName(b.code)) === key) return b.code;
+    if (norm(bookAbbr(b.code)) === key) return b.code;
+  }
+  return null;
 }
 
+/** Localized display name for a book code (e.g. "Zechariah"). Falls back to
+ *  the bundled English name, then to the raw code, if a translation is
+ *  missing. `code` itself is untouched — only the label shown to users. */
 export function bookName(code: string): string {
-  return BOOKS.find((b) => b.code === code.toUpperCase())?.name ?? code;
+  const upper = code.toUpperCase();
+  const fallback = BOOKS.find((b) => b.code === upper)?.name ?? code;
+  return i18n.t(`books.${upper}.name`, { defaultValue: fallback });
+}
+
+/** Localized short abbreviation for a book code (e.g. "Zech"). Falls back to
+ *  the localized full name, then the raw code, if no abbreviation is set. */
+export function bookAbbr(code: string): string {
+  const upper = code.toUpperCase();
+  const fallback = bookName(code);
+  return i18n.t(`books.${upper}.abbr`, { defaultValue: fallback });
 }

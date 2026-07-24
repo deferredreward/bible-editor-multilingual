@@ -5,7 +5,7 @@
 
 import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig.ts";
-import { fetchText, dcsRawUrl } from "./dcsSources.ts";
+import { fetchText, dcsRawUrl, resolveSourceRef } from "./dcsSources.ts";
 import { parseTsv } from "./importParsers.ts";
 import {
   sourceRowKey,
@@ -15,7 +15,11 @@ import {
 } from "./contextExport.ts";
 
 export type SourceFetchResult =
-  | { ok: true; sources: EnSourceMaps }
+  // `skipped` lists resources ("tn"/"tq") that had validated rows but NO upstream
+  // source repo (blank in Setup) — their maps are empty and the caller proceeds
+  // without those examples. This is NOT a failure; only genuine fetch/truncation
+  // errors return { ok: false }.
+  | { ok: true; sources: EnSourceMaps; skipped: string[] }
   | { ok: false; reason: string };
 
 function booksOf(rows: readonly { book: string }[]): string[] {
@@ -78,31 +82,50 @@ export async function fetchEnSourceMaps(
   const sources: EnSourceMaps = { tn: new Map(), tq: new Map() };
   const bookCacheTn = new Map<string, Map<string, { note: string; quote: string | null }>>();
   const bookCacheTq = new Map<string, Map<string, { question: string; response: string }>>();
+  const skipped: string[] = [];
 
-  for (const book of booksOf(tnRows)) {
-    const path = `tn_${book}.tsv`;
-    const url = dcsRawUrl(env, src.org, src.repos.tn, path);
-    const raw = await fetchText(url);
-    if (raw == null) {
-      return { ok: false, reason: `en_fetch_failed:tn:${book}` };
+  // translationSource.repos is PARTIAL and per-resource: a resource left blank in
+  // Setup has NO upstream source, and a resource may point at a DIFFERENT org
+  // than src.org. Resolve each role's org+repo through the shared accessor. Skip
+  // a sourceless resource (its map stays empty) and continue with the OTHERS —
+  // NEVER fetch `${org}/undefined/...`, and never fail the whole export just
+  // because one resource is sourceless. Genuine fetch failures / truncation below
+  // still hard-fail. `tnSrc` captured after the guard so TS knows it's defined
+  // inside the loop.
+  const tnSrc = resolveSourceRef(src, "tn");
+  if (tnRows.length > 0 && !tnSrc) {
+    skipped.push("tn");
+  } else if (tnSrc) {
+    for (const book of booksOf(tnRows)) {
+      const path = `tn_${book}.tsv`;
+      const url = dcsRawUrl(env, tnSrc.org, tnSrc.repo, path);
+      const raw = await fetchText(url);
+      if (raw == null) {
+        return { ok: false, reason: `en_fetch_failed:tn:${book}` };
+      }
+      if (tsvLooksTruncated(raw)) {
+        return { ok: false, reason: `en_tsv_truncated:tn:${book}` };
+      }
+      bookCacheTn.set(book, indexTn(raw));
     }
-    if (tsvLooksTruncated(raw)) {
-      return { ok: false, reason: `en_tsv_truncated:tn:${book}` };
-    }
-    bookCacheTn.set(book, indexTn(raw));
   }
 
-  for (const book of booksOf(tqRows)) {
-    const path = `tq_${book}.tsv`;
-    const url = dcsRawUrl(env, src.org, src.repos.tq, path);
-    const raw = await fetchText(url);
-    if (raw == null) {
-      return { ok: false, reason: `en_fetch_failed:tq:${book}` };
+  const tqSrc = resolveSourceRef(src, "tq");
+  if (tqRows.length > 0 && !tqSrc) {
+    skipped.push("tq");
+  } else if (tqSrc) {
+    for (const book of booksOf(tqRows)) {
+      const path = `tq_${book}.tsv`;
+      const url = dcsRawUrl(env, tqSrc.org, tqSrc.repo, path);
+      const raw = await fetchText(url);
+      if (raw == null) {
+        return { ok: false, reason: `en_fetch_failed:tq:${book}` };
+      }
+      if (tsvLooksTruncated(raw)) {
+        return { ok: false, reason: `en_tsv_truncated:tq:${book}` };
+      }
+      bookCacheTq.set(book, indexTq(raw));
     }
-    if (tsvLooksTruncated(raw)) {
-      return { ok: false, reason: `en_tsv_truncated:tq:${book}` };
-    }
-    bookCacheTq.set(book, indexTq(raw));
   }
 
   for (const r of tnRows) {
@@ -117,5 +140,5 @@ export async function fetchEnSourceMaps(
     if (hit) sources.tq.set(sourceRowKey(r.book, r.id), hit);
   }
 
-  return { ok: true, sources };
+  return { ok: true, sources, skipped };
 }

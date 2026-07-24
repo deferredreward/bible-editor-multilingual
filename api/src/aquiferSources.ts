@@ -41,6 +41,17 @@ export function aquiferLangFor(languageCode: string): string | null {
   return AQUIFER_LANG[languageCode] ?? null;
 }
 
+// Allowlist of the Aquifer directory codes we know how to build a URL for. Used
+// to validate a STORED aqLang (book_source_overrides.repo for an Aquifer range)
+// on read — the aqLang is interpolated into aquiferJsonUrl's path, so an
+// arbitrary stored value could otherwise be a path-traversal vector. Membership
+// here is the security guard, analogous to normalizeSourceRef for DCS idents.
+const AQUIFER_LANG_SET: ReadonlySet<string> = new Set(Object.values(AQUIFER_LANG));
+
+export function isAquiferLang(v: string): boolean {
+  return AQUIFER_LANG_SET.has(v);
+}
+
 // Raw GitHub URL for a book's Aquifer notes JSON. Returns null for a bad code.
 export function aquiferJsonUrl(aqLang: string, book: string): string | null {
   const num = AQUIFER_BOOK_NUM[book];

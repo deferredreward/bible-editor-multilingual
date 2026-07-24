@@ -1,0 +1,22 @@
+-- Source-kind discriminator for per-book / per-chapter-range overrides
+-- (issue #103 follow-up: Aquifer as a per-chapter-range tN source).
+--
+-- book_source_overrides (0060 + 0061) stored a DCS org/repo per range. Aquifer
+-- is a DIFFERENT source type — GitHub JSON, tN-only, grafted onto the en_tn
+-- skeleton (api/src/aquiferConvert.ts) — with no meaningful DCS org/repo. Rather
+-- than overload org/repo with a magic sentinel that every consumer must special-
+-- case, add an explicit `kind` discriminator: 'dcs' (the existing behavior) or
+-- 'aquifer'. This keeps org/repo free for DCS idents and is extensible to future
+-- source kinds.
+--
+-- An Aquifer range is stored as kind='aquifer', org='aquifer' (sentinel),
+-- repo=<aqLang> (e.g. 'arb'); the resolver (api/src/bookSource.ts
+-- resolveRangeSource) validates the aqLang against an allowlist
+-- (aquiferSources.isAquiferLang) instead of the DCS-ident normalizeSourceRef
+-- path, and always treats it as a held-out cross-source range.
+--
+-- Existing rows default to 'dcs' → byte-for-byte the pre-migration behavior.
+-- The (kind, aqLang / org+repo) pairing is validated at the write boundary
+-- (bookSource.setBookSourceRange + the PUT /:book/sources route); SQLite's
+-- ADD COLUMN cannot carry a rich CHECK, so no schema-level constraint here.
+ALTER TABLE book_source_overrides ADD COLUMN kind TEXT NOT NULL DEFAULT 'dcs';

@@ -158,4 +158,60 @@ console.log("[escapeLikeParam] % and _ become literal in a LIKE pattern");
   assert(escapeLikeParam("grace") === "grace", "plain text unchanged");
 }
 
+console.log("[serializeTermsCsv excelSafe] formula-leading cells neutralized, round-trip lossless");
+{
+  const hostile = [
+    {
+      concept_id: "attack",
+      source_term: "=HYPERLINK(\"http://evil.example\",\"click\")",
+      target_term: "+cmd|' /C calc'!A0",
+      status: "preferred",
+      replacement: null,
+      comment: "-2+3+cmd|' /C calc'!A0",
+      tw_link: "@SUM(1+9)",
+    },
+    {
+      concept_id: "legit",
+      source_term: "grace",
+      target_term: "-suffix",
+      status: "preferred",
+      replacement: null,
+      comment: "'til next time",
+      tw_link: null,
+    },
+  ];
+
+  const safe = serializeTermsCsv(hostile, { excelSafe: true });
+  for (const line of safe.split("\r\n").slice(1)) {
+    for (const cell of parseCsvRows(line + "\n")[0] ?? []) {
+      assert(!/^[=+\-@\t\r]/.test(cell), `no cell starts with a formula char: ${JSON.stringify(cell)}`);
+    }
+  }
+
+  // Round-trip: download (excelSafe) → import strips the guard back off.
+  const roundTrip = parseTermsCsv(safe);
+  assert(roundTrip.errors.length === 0, "guarded CSV parses without errors");
+  assert(
+    roundTrip.terms[0].source_term === hostile[0].source_term,
+    "formula-leading source_term survives the round-trip unchanged",
+  );
+  assert(
+    roundTrip.terms[1].target_term === "-suffix",
+    "legitimate leading-hyphen term survives the round-trip unchanged",
+  );
+  assert(
+    roundTrip.terms[1].comment === "'til next time",
+    "apostrophe-leading text is NOT stripped (guard only precedes formula chars)",
+  );
+
+  // The DCS context-repo serialization is a machine-read contract — default
+  // (no excelSafe) must keep emitting the raw cell bytes.
+  const contract = serializeTermsCsv(hostile);
+  assert(
+    contract.includes("=HYPERLINK"),
+    "default serialization leaves cells untouched (CONTEXT-REPO-CONTRACT)",
+  );
+  assert(!contract.includes("'="), "default serialization adds no guard quotes");
+}
+
 console.log("\nAll translationMemoryLib tests passed.");

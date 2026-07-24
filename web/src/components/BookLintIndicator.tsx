@@ -17,6 +17,8 @@ import {
   Typography,
 } from "@mui/material";
 import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import { useTranslation } from "react-i18next";
 import type { BookLintIssue } from "../sync/api";
 
 // Kindle warning accent (#E59D33 from CLAUDE.md brand palette), matching the
@@ -35,6 +37,12 @@ interface Props {
   escalateCount: number;
   /** Navigate to (and, for TN issues, activate) the offending row. */
   onGoToIssue: (issue: BookLintIssue) => void;
+  /**
+   * "chip" (default) — the original standalone top-bar pill. "row" — a
+   * full-width link row for embedding inside another menu/popover (the
+   * merged Status indicator's "Lint" line).
+   */
+  variant?: "chip" | "row";
 }
 
 export function BookLintIndicator({
@@ -43,8 +51,10 @@ export function BookLintIndicator({
   flagCount,
   escalateCount,
   onGoToIssue,
+  variant = "chip",
 }: Props) {
-  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const { t } = useTranslation();
+  const anchorRef = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
 
   // Nothing to clean up — stay out of the way.
@@ -54,19 +64,52 @@ export function BookLintIndicator({
     escalateCount > 0 ? ` (+${escalateCount} integrity)` : ""
   } — click to review`;
 
+  const trigger =
+    variant === "row" ? (
+      <Box
+        ref={anchorRef}
+        component="button"
+        onClick={() => setOpen(true)}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.25,
+          width: "100%",
+          border: "none",
+          background: "transparent",
+          textAlign: "left",
+          cursor: "pointer",
+          font: "inherit",
+          color: "inherit",
+          px: 1.75,
+          py: 1,
+        }}
+      >
+        <ReportProblemOutlinedIcon sx={{ fontSize: 18, color: "warning.main" }} />
+        <Typography variant="body2" sx={{ flex: 1 }}>
+          {t("topbar.status.issuesToCleanUp", { book, count: flagCount })}
+        </Typography>
+        <ChevronRightIcon sx={{ fontSize: 18, color: "text.disabled" }} />
+      </Box>
+    ) : (
+      <Box ref={anchorRef} component="span" sx={{ display: "inline-flex" }}>
+        <Tooltip title={tooltip}>
+          <Chip
+            icon={<ReportProblemOutlinedIcon />}
+            label={flagCount}
+            size="small"
+            variant="outlined"
+            clickable
+            onClick={() => setOpen(true)}
+            sx={flagAccentSx}
+          />
+        </Tooltip>
+      </Box>
+    );
+
   return (
-    <Box ref={anchorRef} component="span" sx={{ display: "inline-flex" }}>
-      <Tooltip title={tooltip}>
-        <Chip
-          icon={<ReportProblemOutlinedIcon />}
-          label={flagCount}
-          size="small"
-          variant="outlined"
-          clickable
-          onClick={() => setOpen(true)}
-          sx={flagAccentSx}
-        />
-      </Tooltip>
+    <>
+      {trigger}
       <Menu
         anchorEl={anchorRef.current}
         open={open}
@@ -131,6 +174,6 @@ export function BookLintIndicator({
           </MenuItem>
         ))}
       </Menu>
-    </Box>
+    </>
   );
 }

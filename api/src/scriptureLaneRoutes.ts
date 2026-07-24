@@ -4,29 +4,34 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
-import { requireAuth, requireAdmin } from "./auth";
-import { normalizeDoor43RepoUrl } from "./repoUrl";
-import type { LaneKey, ScriptureLaneConfig } from "./scriptureLane";
+import { requireAuth, requireAdmin } from "./auth.ts";
+import { normalizeDoor43RepoUrl } from "./repoUrl.ts";
+import type { LaneKey, ScriptureLaneConfig } from "./scriptureLane.ts";
 import {
   requireLaneState,
   activeLaneConfig,
   parseLaneConfig,
   lanePublicState,
   assertLaneWritable,
-} from "./scriptureLane";
+  bibleVersionForLane,
+  snapshotRequiredBooks,
+  copyBookForward,
+  laneBookStats,
+} from "./scriptureLane.ts";
 import {
   startReplacement,
   stageBook,
   markReadyIfComplete,
   activateReplacement,
   cancelReplacement,
+  backOutReplacement,
   retryBook,
   waiveBook,
   getJob,
   getJobBooks,
-} from "./scriptureLaneReplacement";
-import { broadcastLaneEvent } from "./wsEvents";
-import type { WsEvent } from "./wsEvents";
+} from "./scriptureLaneReplacement.ts";
+import { broadcastLaneEvent } from "./wsEvents.ts";
+import type { WsEvent } from "./wsEvents.ts";
 
 export const scriptureLaneRoutes = new Hono<{
   Bindings: Env;
@@ -60,8 +65,11 @@ async function buildLaneEvent(
   };
 }
 
-// POST /:lane/validate — normalize a pasted URL and return source/export/impact
-scriptureLaneRoutes.post("/:lane/validate", async (c) => {
+// POST /:lane/validate — normalize a pasted URL and return source/export/impact.
+// Read-only dry-run, but it is the first step of the admin-only replacement
+// flow (the Preferences panel gates the whole lane surface on role === admin),
+// so it takes the same requireAdmin as its sibling routes.
+scriptureLaneRoutes.post("/:lane/validate", requireAdmin, async (c) => {
   const lane = c.req.param("lane");
   if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
 
@@ -94,6 +102,27 @@ scriptureLaneRoutes.post("/:lane/validate", async (c) => {
   });
 });
 
+// GET /:lane/affected-books — the exact book set a replacement would re-stage
+// (issue #97). Computed from the lane's required-books snapshot of the ACTIVE
+// generation — the same signal startReplacement feeds into the job — so the
+// confirm dialog and staging view can list precisely what will be replaced.
+// Deliberately NOT the whole-DB /api/books list (which doesn't reflect this
+// lane's imported generation and can fail independently). Admin-only, matching
+// its sibling replacement routes.
+scriptureLaneRoutes.get("/:lane/affected-books", requireAdmin, async (c) => {
+  const lane = c.req.param("lane");
+  if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
+  const state = await requireLaneState(c.env, lane);
+  const bv = bibleVersionForLane(lane);
+  // Book set + per-book existing-content stats (issue #94) so the checklist can
+  // show verse/edit counts. Both read the same active generation.
+  const [snap, stats] = await Promise.all([
+    snapshotRequiredBooks(c.env, bv, state.active_generation),
+    laneBookStats(c.env, bv, state.active_generation),
+  ]);
+  return c.json({ books: snap.books, stats });
+});
+
 // POST /:lane/replacements — start a replacement job (admin)
 const StartBody = z.object({
   config: z.object({
@@ -109,6 +138,10 @@ const StartBody = z.object({
     alignmentWritable: z.boolean(),
   }),
   confirm: z.boolean(),
+  // Optional per-book selection (issue #94): the books to stage from the new
+  // source. Omitted → replace all (unchanged behavior). Must be a subset of the
+  // lane's current books; the complement is carried forward (never emptied).
+  replaceBooks: z.array(z.string().min(1)).optional(),
 });
 
 scriptureLaneRoutes.post("/:lane/replacements", requireAdmin, async (c) => {
@@ -132,12 +165,14 @@ scriptureLaneRoutes.post("/:lane/replacements", requireAdmin, async (c) => {
       lane,
       parsed.data.config as ScriptureLaneConfig,
       parsed.data.confirm,
+      parsed.data.replaceBooks,
     );
     const jobId = result.job.job_id;
-    const books = result.books.map((b) => b.book);
     // After the freeze lands: tell open tabs to quarantine their edits, then
-    // stage each required book and mark the job ready once complete. All out of
-    // the request's hot path (waitUntil) so the admin gets an immediate 201.
+    // bring each book into the new generation and mark the job ready once
+    // complete. All out of the request's hot path (waitUntil) so the admin gets
+    // an immediate 201. Each book is either STAGED from the new source or
+    // CARRIED FORWARD from the predecessor generation, per its mode.
     c.executionCtx.waitUntil(
       (async () => {
         try {
@@ -145,13 +180,17 @@ scriptureLaneRoutes.post("/:lane/replacements", requireAdmin, async (c) => {
             c.env,
             await buildLaneEvent(c.env, lane, jobId, "lane.replacement_freeze"),
           );
-          for (const book of books) {
+          for (const b of result.books) {
             try {
-              await stageBook(c.env, jobId, book);
+              if (b.mode === "carry_forward") {
+                await copyBookForward(c.env, jobId, b.book);
+              } else {
+                await stageBook(c.env, jobId, b.book);
+              }
             } catch {
-              // stageBook records per-book retryable_error itself; a throw here
-              // is an unexpected job-state race — leave the book pending so an
-              // admin retry can re-run it.
+              // stageBook / copyBookForward record per-book retryable_error
+              // themselves; a throw here is an unexpected job-state race — leave
+              // the book pending so an admin retry can re-run it.
             }
           }
           await markReadyIfComplete(c.env, jobId);
@@ -294,6 +333,33 @@ scriptureLaneRoutes.post("/:lane/replacements/:jobId/cancel", requireAdmin, asyn
   } catch (e: unknown) {
     const err = e as Error & { status?: number };
     return c.json({ error: err.message }, (err.status as 404) ?? 500);
+  }
+});
+
+// POST /:lane/replacements/:jobId/back-out — full abort + revert to prior source
+// (issue #97). Distinct from /cancel: this clears replacement_required and
+// pending_target_json too, so a lane that was stuck (staging spinning on
+// failures, or a mandatory quarantine the admin chooses to abandon) is fully
+// unfrozen and reverts to its prior source without overwriting gen-1 content.
+scriptureLaneRoutes.post("/:lane/replacements/:jobId/back-out", requireAdmin, async (c) => {
+  const lane = c.req.param("lane");
+  if (!isLaneKey(lane)) return c.json({ error: "invalid_lane" }, 400);
+  const jid = c.req.param("jobId");
+  try {
+    await backOutReplacement(c.env, jid);
+    // Freeze lifted (reverted to the predecessor generation) — refresh tabs.
+    c.executionCtx.waitUntil(
+      (async () => {
+        await broadcastLaneEvent(
+          c.env,
+          await buildLaneEvent(c.env, lane, jid, "lane.replacement_settled"),
+        );
+      })(),
+    );
+    return c.json({ ok: true });
+  } catch (e: unknown) {
+    const err = e as Error & { status?: number; detail?: unknown };
+    return c.json({ error: err.message, detail: err.detail }, (err.status as 404 | 409) ?? 500);
   }
 });
 

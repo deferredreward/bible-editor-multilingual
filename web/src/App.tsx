@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
+import { TemplateWorkspace } from "./components/TemplateWorkspace";
+import { ImportWorkspace } from "./components/ImportWorkspace";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
+import { LocalizationInspector } from "./components/LocalizationInspector";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
 import {
@@ -17,10 +20,18 @@ import {
   type Role,
 } from "./sync/api";
 import { setPipelineUser } from "./sync/pipelineStore";
+import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "./sync/workspace";
+import {
+  WorkspaceChoiceDialog,
+  markChooseWsPending,
+  isChooseWsPending,
+} from "./components/WorkspaceChoiceDialog";
 
 type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
+  | { view: "templates"; templateId: string | null }
+  | { view: "import"; book: string | null; chapter: number | null; verse: number | null }
   | { view: "preferences"; section: PrefsSection };
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
@@ -35,6 +46,13 @@ const DEFAULT_BOOK = "OBA";
 // gone by the time we read this. Cleared on next successful sign-in.
 const SIGNED_OUT_KEY = "bible-editor.signed_out";
 
+// Guards the boot-time workspace reconciliation below from looping forever
+// if the server and localStorage can never agree (shouldn't happen, but a
+// persistent mismatch must not reload-loop the tab). Cleared once the two
+// agree so a later genuine mismatch (e.g. a stale cookie from another tab)
+// still gets one reconciliation attempt.
+const WS_RECONCILED_KEY = "bible-editor.ws-reconciled";
+
 function parseHash(): Location {
   const pm = location.hash.match(/^#\/preferences(?:\/(\w+))?$/);
   if (pm) {
@@ -47,6 +65,19 @@ function parseHash(): Location {
       view: "article",
       resource: am[1] as "tw" | "ta",
       articleId: decodeURIComponent(am[2] ?? "") || null,
+    };
+  }
+  const tm = location.hash.match(/^#\/templates(?:\/(.+))?$/);
+  if (tm) {
+    return { view: "templates", templateId: decodeURIComponent(tm[1] ?? "") || null };
+  }
+  const im = location.hash.match(/^#\/import(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/);
+  if (im) {
+    return {
+      view: "import",
+      book: im[1] ? im[1].toUpperCase() : null,
+      chapter: im[2] ? parseInt(im[2], 10) : null,
+      verse: im[3] ? parseInt(im[3], 10) : null,
     };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
@@ -178,6 +209,21 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
 
 export function App() {
   const [loc, setLoc] = useState<Location>(() => parseHash());
+  // ?_choose_ws=1: the OAuth callback matched this account to SEVERAL Door43
+  // orgs with no usable history and landed the session in the first match —
+  // offer a one-time picker. Persisted to sessionStorage (markChooseWsPending)
+  // because the workspace-reconciliation effect below may reload the tab once
+  // before the dialog is seen; the initializer runs before useAuthGate's so
+  // the flag survives its own history.replaceState URL cleanup too.
+  const [chooseWs, setChooseWs] = useState<boolean>(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("_choose_ws")) {
+      history.replaceState(null, "", location.pathname + location.hash);
+      markChooseWsPending();
+      return true;
+    }
+    return isChooseWsPending();
+  });
   const [auth, setAuth] = useAuthGate();
   const [sessionExpired, setSessionExpired] = useState(false);
   // useBook is hoisted here so its chapter cache survives Shell remounts
@@ -204,6 +250,22 @@ export function App() {
         : `#/${book}/${chapter}`;
   };
 
+  // Remember the last scripture location so leaving preferences/articles
+  // returns here instead of the default landing book (Obadiah). Only tracks
+  // chapter views; a fresh load straight into preferences keeps the default.
+  const lastScriptureRef = useRef<{ book: string; chapter: number; verse: number }>({
+    book: DEFAULT_BOOK,
+    chapter: 1,
+    verse: 1,
+  });
+  if (loc.view === "chapter") {
+    lastScriptureRef.current = { book: loc.book, chapter: loc.chapter, verse: loc.verse };
+  }
+  const backToScripture = () => {
+    const { book, chapter, verse } = lastScriptureRef.current;
+    navigate(book, chapter, verse);
+  };
+
   // Hydrate from server-side last-position. Fires once per auth session,
   // only when `loc` is the default book — a bookmarked deep link (which
   // makes `loc` non-default on mount) always wins. Reset on sign-out so the
@@ -217,6 +279,36 @@ export function App() {
     if (!isDefaultLoc(loc)) return;
     navigate(me.lastBook, me.lastChapter, me.lastVerse);
   }, [auth, loc]);
+
+  // Workspace reconciliation. The server's be_ws cookie is the source of
+  // truth for which org's D1 database we're talking to; localStorage is just
+  // the client's mirror, and the outbox's IndexedDB name is derived from it
+  // (see sync/outbox.ts). If they disagree — e.g. localStorage predates this
+  // feature, or was left over from a different session on this device — pull
+  // the server's value into localStorage and reload ONCE so the outbox opens
+  // under the correct name from a cold start. Absent `me.workspace` means an
+  // older cached /api/auth/me response; do nothing.
+  useEffect(() => {
+    if (auth.kind !== "ready") return;
+    const serverWs = auth.me?.workspace;
+    if (serverWs === undefined) return;
+    const serverIsFallback = auth.me?.workspaceIsFallback;
+    if (serverWs === getWorkspaceSlug()) {
+      // Slug already agrees — still sync the fallback flag (it's cheap and
+      // keeps outbox.ts's outboxDbName() correct even if it was never set,
+      // e.g. an install that predates the fallback flag).
+      if (serverIsFallback !== undefined) setWorkspaceIsFallback(serverIsFallback);
+      try { sessionStorage.removeItem(WS_RECONCILED_KEY); } catch { /* private mode */ }
+      return;
+    }
+    let alreadyTried = false;
+    try { alreadyTried = sessionStorage.getItem(WS_RECONCILED_KEY) === "1"; } catch { /* private mode */ }
+    if (alreadyTried) return; // already reloaded once this session — don't loop
+    setWorkspaceSlug(serverWs);
+    if (serverIsFallback !== undefined) setWorkspaceIsFallback(serverIsFallback);
+    try { sessionStorage.setItem(WS_RECONCILED_KEY, "1"); } catch { /* private mode */ }
+    location.reload();
+  }, [auth]);
 
   // Debounced push of the current location to the server so the next sign-in
   // on a different device / after a logout can land back here.
@@ -344,6 +436,7 @@ export function App() {
 
   return (
     <Box sx={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+      <LocalizationInspector />
       {alerts.length > 0 && (
         // Float the alert stack so it doesn't push Shell down — the outer
         // flex column's children can't actually shrink (Shell's internal
@@ -370,7 +463,9 @@ export function App() {
               sx={{ borderRadius: 0, py: 0.5 }}
             >
               {a.message}
-              {a.linkUrl && (
+              {/* Scheme check: linkUrl is server-authored, but React doesn't
+                  block javascript: hrefs — only render a link for https. */}
+              {a.linkUrl && /^https:\/\//.test(a.linkUrl) && (
                 <>
                   {" — "}
                   <Link
@@ -399,6 +494,7 @@ export function App() {
           <PreferencesWorkspace
             section={loc.section}
             role={auth.role}
+            onBack={backToScripture}
             onNavigate={(s) => {
               location.hash = `#/preferences/${s}`;
             }}
@@ -407,12 +503,31 @@ export function App() {
           <ArticleWorkspace
             resource={loc.resource}
             articleId={loc.articleId}
+            onBack={backToScripture}
             onNavigate={(r, a) => {
               // Empty articleId (e.g. switching resource with nothing selected)
               // must not emit a trailing slash — `#/articles/ta/` fails the
               // article regex and misparses as a chapter.
               location.hash = a ? `#/articles/${r}/${encodeURIComponent(a)}` : `#/articles/${r}`;
             }}
+          />
+        ) : loc.view === "templates" ? (
+          <TemplateWorkspace
+            templateId={loc.templateId}
+            onBack={backToScripture}
+            onNavigate={(id) => {
+              location.hash = id ? `#/templates/${encodeURIComponent(id)}` : `#/templates`;
+            }}
+          />
+        ) : loc.view === "import" ? (
+          <ImportWorkspace
+            book={loc.book}
+            target={loc.chapter ? { chapter: loc.chapter, verse: loc.verse ?? 1 } : null}
+            onBack={backToScripture}
+            onNavigate={(b) => {
+              location.hash = b ? `#/import/${b}` : `#/import`;
+            }}
+            onOpenBook={(b, chapter, verse) => navigate(b, chapter ?? 1, verse ?? undefined)}
           />
         ) : (
           <Shell
@@ -424,6 +539,7 @@ export function App() {
             bookHook={bookHook}
             onLogout={handleSignOut}
             meUserId={auth.kind === "ready" ? auth.me?.userId ?? null : null}
+            meUsername={auth.kind === "ready" ? auth.me?.username ?? null : null}
           />
         )}
       </Box>
@@ -443,6 +559,7 @@ export function App() {
           Your session expired — sign in to keep saving. Queued edits will sync after sign-in.
         </Alert>
       </Snackbar>
+      {chooseWs && <WorkspaceChoiceDialog onClose={() => setChooseWs(false)} />}
     </Box>
   );
 }

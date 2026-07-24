@@ -61,8 +61,9 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
-import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, type ReimportResource } from "./dcsSources";
+import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
+import { listRangeHeldOutKeys } from "./bookSource.ts";
 import {
   laneForBibleVersion,
   assertLaneWritable,
@@ -99,8 +100,14 @@ import {
   getLatestContextExportStats,
 } from "./contextExportResults.ts";
 import type { TermImport } from "./translationMemoryLib.ts";
+import { workspaceEnv, resolveWorkspace, primeWorkspaces } from "./workspaces.ts";
 
 export interface ExportParams {
+  // Workspace slug this run belongs to. Workflows don't inherit the
+  // per-request env clone (see run() below), so this is how a queued run
+  // knows which org's D1 binding to use. Absent = the default workspace
+  // (pre-workspaces behavior).
+  workspace?: string;
   // Restrict the run to one book. Useful for manual /api/exports/run.
   book?: string;
   // Restrict the run to one resource family.
@@ -181,7 +188,27 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     contextResult: ContextPackStepResult | null;
   }> {
     const params = event.payload ?? {};
-    const instanceId = `export-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
+
+    // Workflows don't inherit the per-request env clone that index.ts's fetch
+    // wrapper builds, so this.env is the RAW Worker env — this.env.DB would be
+    // the default binding regardless of which org queued the run. Re-point it
+    // once, here, so the ~60 `this.env` reads below are all workspace-correct.
+    // With WORKSPACES unset this resolves to the same default binding as before.
+    // Prime the shared-DB workspace registry first so `params.workspace` can be
+    // resolved to a registry-only slug (fails soft to the WORKSPACES env var).
+    await primeWorkspaces(this.env);
+    (this as unknown as { env: Env }).env = workspaceEnv(this.env, resolveWorkspace(this.env, params.workspace ?? null));
+
+    // Folds the resolved workspace slug in so two orgs starting in the same
+    // millisecond can't share an R2 staging prefix — instanceId is used as the
+    // key prefix for both export snapshots (exports/<instanceId>/...) and
+    // reimport staging (reimport-stage/<instanceId>/...), and the latter is
+    // read back and applied to D1, so a collision would let one org import
+    // another org's staged content. This is NOT the Workflow instance id
+    // passed to EXPORT_WORKFLOW.create() (that's `nightly-${slug}-${day}` in
+    // index.ts, already workspace-scoped for its own dedup purpose) — just the
+    // R2 key prefix, which had no such scoping before.
+    const instanceId = `export-${this.env.WORKSPACE_SLUG ?? "default"}-${new Date(event.timestamp).toISOString().replace(/[:.]/g, "-")}`;
 
     const dcsAllowed = !params.dryDcs && !!this.env.DCS_SERVICE_TOKEN;
 
@@ -215,18 +242,35 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       ? [params.resource]
       : ALL_RESOURCES;
 
-    // Books whose tn was re-sourced from Aquifer (POST /aquifer-drafts) are held
-    // out of tn EXPORT: their rows are en_tn-based drafts, and until validated
-    // their export snapshot is empty — exporting would push blank/unapproved
-    // notes over the DCS tn repo. Export-direction handling for Aquifer books is
-    // deferred (see STATE.md); until then, skip tn for them. Other resources
-    // (verses/tq/twl) export normally. Mirrors the reimport skip in bookReimport.
-    const aquiferTnBooks = new Set(
-      await step.do("list-aquifer-tn-books", async () => {
+    // Books whose tn/tq did NOT come from the configured org repo — re-sourced
+    // from Aquifer (POST /aquifer-drafts), imported from the English
+    // translationSource, or set to a per-book/per-chapter-range override (#103) —
+    // are held out of that resource's EXPORT: their rows are source-keyed drafts,
+    // and until validated their export snapshot is empty — exporting would push
+    // blank/unapproved (or another org's) notes over the DCS tn/tq repo.
+    // Export-direction handling for these books is deferred (see STATE.md); until
+    // then, skip the held-out resource. Other resources (verses/twl) export
+    // normally. Mirrors the reimport skip in bookReimport.
+    //
+    // Two sources of hold-out: (a) the whole-book book_imports marker, and (b) the
+    // range table (#103 Tier 2). A PARTIALLY-sourced book has NO marker (its base
+    // is the org's own repo), so (b) is what stops it from rendering the
+    // cross-sourced chapters over master. NOTE: this is whole-RESOURCE skip, so a
+    // partial book's OWNED chapters don't publish either — a documented limitation;
+    // the merge-export that publishes owned chapters is a follow-up (STATE.md).
+    const heldOutNotes = new Set(
+      await step.do("list-held-out-note-books", async () => {
+        const cfg = await getProjectConfig(this.env);
         const rs = await this.env.DB.prepare(
-          `SELECT book FROM book_imports WHERE tn_source LIKE 'aquifer:%'`,
-        ).all<{ book: string }>();
-        return rs.results.map((r) => r.book);
+          `SELECT book, tn_source, tq_source FROM book_imports
+            WHERE tn_source IS NOT NULL OR tq_source IS NOT NULL`,
+        ).all<{ book: string; tn_source: string | null; tq_source: string | null }>();
+        // step.do must return a JSON-serializable value → "BOOK:resource" strings.
+        const markerKeys = rs.results.flatMap((r) =>
+          [...heldOutNoteResources(r)].map((res) => `${r.book}:${res}`),
+        );
+        const rangeKeys = await listRangeHeldOutKeys(this.env, cfg);
+        return [...new Set([...markerKeys, ...rangeKeys])];
       }),
     );
 
@@ -284,7 +328,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const results: StepResult[] = [];
     for (const resource of resources) {
       for (const book of books) {
-        if (resource === "tn" && aquiferTnBooks.has(book)) continue; // Aquifer-sourced tn: not exported yet (see above)
+        // Aquifer- / English-source-sourced tn or tq: not exported yet (see above)
+        if ((resource === "tn" || resource === "tq") && heldOutNotes.has(`${book}:${resource}`)) continue;
         const stepName = `export-${book}-${resource}`;
         try {
           const result = await step.do(
@@ -466,7 +511,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     // Load prefs / terms / validated rows from D1.
     const prefsRow = await this.env.DB.prepare(
-      `SELECT audience, purpose, register, script_notes, instructions_md
+      `SELECT audience, purpose, register, script_notes, instructions_md, common_issues_md
          FROM translation_prefs WHERE id = 1`,
     ).first<TranslationPrefsForRender>();
     const prefs: TranslationPrefsForRender = prefsRow ?? {
@@ -475,6 +520,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       register: "default",
       script_notes: null,
       instructions_md: null,
+      common_issues_md: null,
     };
 
     const termRs = await this.env.DB.prepare(
@@ -498,6 +544,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const tqRows = tqRs.results ?? [];
 
     const sourceFetch = await fetchEnSourceMaps(this.env, cfg, tnRows, tqRows);
+    // A resource whose translationSource repo was left blank in Setup has NO
+    // upstream source: fetchEnSourceMaps SKIPS it (empty map) and still fetches
+    // the sourced resources, returning ok with `skipped`. That must NOT fail the
+    // whole context export — prefs, terms, and the resources that DO have a
+    // source still publish. Only genuine fetch failures (en_fetch_failed /
+    // truncation / network) land in the !ok branch and hard-fail as before.
     if (!sourceFetch.ok) {
       await finalizeContextExport(this.env, resultId, {
         status: "failed",
@@ -505,6 +557,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       });
           await this.recordSnapshot("CONTEXT", "ctx", null, null, 0, sourceFetch.reason);
       return empty("failed", sourceFetch.reason);
+    }
+    if (sourceFetch.skipped.length > 0) {
+      console.log(
+        `context export: no upstream source for [${sourceFetch.skipped.join(", ")}] — exporting without those examples`,
+      );
     }
 
     // CAS retry loop: re-render from D1 on parent conflict (max 3).
@@ -520,6 +577,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         tnRows,
         tqRows,
         sources: sourceFetch.sources,
+        skipped: sourceFetch.skipped,
       });
       if (!rendered.ok) {
         await finalizeContextExport(this.env, resultId, {

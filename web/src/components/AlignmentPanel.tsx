@@ -1567,6 +1567,7 @@ function AlignmentCards({
   );
   return (
     <Box
+      dir="rtl"
       sx={{
         display: "flex",
         flexWrap: "wrap",
@@ -1575,7 +1576,6 @@ function AlignmentCards({
         // Card visual order follows Hebrew reading flow (RTL) — the cards
         // are sorted by source position by displayGroups, and RTL lays the
         // first card to the right.
-        direction: "rtl",
         pt: 0.5,
       }}
     >
@@ -1647,7 +1647,7 @@ function AlignmentCards({
               </IconButton>
             </Tooltip>
           )}
-          <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5} sx={{ direction: "ltr" }}>
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5} dir="ltr">
             {g.targets.length === 0 ? (
               ghost ? (
                 <GhostChip
@@ -1746,6 +1746,7 @@ function DropTargetCard({
         if (sourceId) onSourceDrop(sourceId);
       }}
       data-group-id={groupId}
+      dir="ltr"
       sx={{
         position: "relative",
         bgcolor: isMergeTarget || showOver ? "primary.50" : "background.paper",
@@ -1764,7 +1765,6 @@ function DropTargetCard({
         flex: "0 1 auto",
         display: "flex",
         flexDirection: "column",
-        direction: "ltr",
         opacity: isBeingDragged ? 0.4 : 1,
         transition: "opacity 0.12s, border-color 0.12s, background-color 0.12s",
       }}

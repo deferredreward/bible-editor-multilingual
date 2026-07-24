@@ -40,6 +40,14 @@ const DELAY_MS = Number(opt("--delay-ms", "1200"));
 const FIXTURE = opt("--fixture", null);
 const FORCE_FAIL = has("--fail");
 const DCS_RAW = "https://git.door43.org";
+// The pipeline apply path pins bot-supplied rawUrls to env.DCS_BASE_URL's
+// origin (api/src/rawUrlPin.ts — a deliberate anti-SSRF guard, not something
+// to weaken). To satisfy it in the smoke suite, dev-smoke.mjs points
+// DCS_BASE_URL at THIS server's own origin, so the TSV rawUrls this stub
+// hands back are same-origin. That means this server must also transparently
+// stand in for the real DCS host for everything else (org manifests, book
+// USFM/TN/TQ/TWL) — hence the reverse-proxy fallback below.
+const DCS_PROXY_TARGET = opt("--dcs-base", DCS_RAW).replace(/\/$/, "");
 
 // jobId → { book, startChapter, endChapter, options, createdAt, tsv|null, error|null }
 const jobs = new Map();
@@ -144,6 +152,11 @@ function send(res, code, obj) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+
+  // --- health (Playwright webServer readiness probe) ---
+  if (req.method === "GET" && url.pathname === "/health") {
+    return send(res, 200, { ok: true });
+  }
 
   // --- start ---
   if (req.method === "POST" && url.pathname === "/api/pipeline/start") {
@@ -326,6 +339,25 @@ const server = http.createServer(async (req, res) => {
     const buf = Buffer.from(job.tsv, "utf8");
     res.writeHead(200, { "Content-Type": "text/tab-separated-values", "Content-Length": buf.length });
     return res.end(buf);
+  }
+
+  // --- reverse-proxy anything else to the real DCS host (see DCS_PROXY_TARGET
+  // comment above) — org manifests, book raw USFM/TSV, repo listings, etc. All
+  // real DCS reads the app makes are GET, so that's all this forwards. ---
+  if (req.method === "GET" || req.method === "HEAD") {
+    try {
+      const target = `${DCS_PROXY_TARGET}${url.pathname}${url.search}`;
+      const upstream = await fetch(target, { method: req.method });
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      const headers = {};
+      const ct = upstream.headers.get("content-type");
+      if (ct) headers["Content-Type"] = ct;
+      res.writeHead(upstream.status, headers);
+      return res.end(buf);
+    } catch (e) {
+      res.writeHead(502, { "Content-Type": "text/plain" });
+      return res.end(`proxy error: ${e}`);
+    }
   }
 
   res.writeHead(404, { "Content-Type": "text/plain" });

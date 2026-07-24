@@ -50,6 +50,35 @@ function fireLogos(book: string, chapter: number, verse: number) {
 
 const STORAGE_KEY = "be:logosSyncEnabled";
 const WARNING_HIDDEN_KEY = "be:logosSyncWarningHidden";
+const LOGOS_HIDDEN_KEY = "be:logosHidden";
+
+// Visibility now lives one level up (the TopBar "More ▸ View" menu, per the
+// top-bar redesign) instead of the widget's own kebab menu. Default is
+// OFF/hidden for anyone who's never touched the setting — only an explicit
+// "false" (the user turned it on) shows the widget by default. Existing
+// installs that had explicitly hidden or shown it keep that choice.
+function readLogosVisible(): boolean {
+  try {
+    return localStorage.getItem(LOGOS_HIDDEN_KEY) === "false";
+  } catch {
+    return false;
+  }
+}
+
+// Shared by the TopBar's View-menu toggle and this widget's own mount guard
+// so both reflect the same persisted flag without a context provider.
+export function useLogosSyncVisible(): [boolean, (next: boolean) => void] {
+  const [visible, setVisibleState] = useState<boolean>(readLogosVisible);
+  const setVisible = (next: boolean) => {
+    setVisibleState(next);
+    try {
+      localStorage.setItem(LOGOS_HIDDEN_KEY, String(!next));
+    } catch {
+      /* quota or private mode — soft fail */
+    }
+  };
+  return [visible, setVisible];
+}
 
 interface Props {
   book: string;
@@ -71,7 +100,9 @@ export function LogosSyncToggle({ book, chapter, verse }: Props) {
 
   // Debounced auto-follow when enabled. Custom-scheme navigation hands off
   // to the OS — the page itself does not navigate. Note: Logos has no
-  // no-focus mode, so each fire raises its window.
+  // no-focus mode, so each fire raises its window. The parent only mounts
+  // this component when the widget is visible (see useLogosSyncVisible), so
+  // no separate "hidden" guard is needed here.
   useEffect(() => {
     if (!enabled) return;
     const timer = window.setTimeout(() => fireLogos(book, chapter, verse), 400);

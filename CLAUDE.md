@@ -99,7 +99,7 @@ node scripts/import-book.mjs ZEC      # generates scripts/out/import-ZEC.sql
 node scripts/import-lexicon.mjs       # UHAL + UGL → scripts/out/import-lexicon.sql
 ```
 
-Fresh git worktree: run `scripts/worktree-init.ps1` from the worktree root to junction `node_modules` from main (skips `npm install`). If you bump deps in the branch, delete the junctions and run `npm install` so changes don't leak into main.
+Fresh git worktree: run `scripts/worktree-init.ps1` from the worktree root — it runs a real (cache-fast) `npm install` so the worktree is self-contained. **Teardown: always use `scripts/worktree-cleanup.ps1` (dry-run by default; `-Remove '<path>'` to delete one). Never `rm -rf` / `Remove-Item -Recurse` a worktree by hand.** The init script no longer junctions `node_modules` from main: junctions were a Windows footgun — a recursive delete of a worktree followed the junction and wiped main's `node_modules` and (via npm's `@bible-editor` workspace links) main's `web/`+`api/` source. `worktree-cleanup.ps1` safely unlinks any leftover junctions (link only, never the target) before deleting, and an overnight scheduled task runs it (auto-removes merged+clean+idle worktrees past a 72h grace; flags the rest for review).
 
 ## Architecture
 
@@ -164,6 +164,15 @@ Run order:
 5. Stale localStorage state from earlier sessions is a recurring trap — when in doubt, `localStorage.removeItem('bible-editor.auth.token'); location.reload();` to force a fresh sign-in.
 
 ### Deploy
+
+> **`npm run deploy` ships to PRODUCTION.** It resolves to `wrangler deploy --env production` (`api/package.json` `deploy` script). Do **not** use it for a dev push — it got us once already. To deploy the **dev** worker (`bible-editor-api-dev`), build the SPA then run a plain `wrangler deploy` (no `--env`) from `api/`:
+> ```sh
+> npm run build:web                              # from repo root → web/dist
+> cd api && npx wrangler deploy                  # NO --env → dev worker bible-editor-api-dev
+> ```
+> Same rule for D1: a plain `--remote` migration targets the **dev** databases (`bible_editor_dev`, `bible_editor_mltest_dev`); prod requires `--env production`. So `--remote` without `--env production` is the safe dev target.
+>
+> **Non-interactive gotcha:** two Cloudflare accounts are authed on this box, so `wrangler deploy` / `d1 ... --remote` fail with *"More than one account available… non-interactive mode"*. Export `CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242` (unfoldingWord — where all three DBs `bible_editor`, `bible_editor_dev`, `bible_editor_mltest_dev` and the workers live) for the command. Only prod `bible_editor` is targeted by name+`--env production`, so dev commands that name the `_dev` DBs never touch it.
 
 Single command from repo root: `npm run deploy` builds `web/dist` then runs `wrangler deploy --env production` from `api/`. The Worker serves both `/api/*` and the SPA. See [`docs/deploy.md`](docs/deploy.md) for first-time provisioning (D1 create, R2 bucket, secrets `JWT_SIGNING_KEY` / `DCS_CLIENT_ID` / `DCS_CLIENT_SECRET` / `DCS_SERVICE_TOKEN` / `BT_API_TOKEN`).
 

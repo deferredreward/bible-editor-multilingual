@@ -1,12 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
   FormControlLabel,
   IconButton,
+  InputAdornment,
   MenuItem,
   Snackbar,
   Stack,
@@ -25,6 +36,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DownloadIcon from "@mui/icons-material/Download";
 import UploadIcon from "@mui/icons-material/Upload";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useTranslation } from "react-i18next";
 import {
   api,
@@ -46,10 +58,7 @@ import {
 } from "../sync/api";
 import {
   useProjectConfig,
-  useProjectPresets,
   isTranslationProject,
-  selectProjectPreset,
-  applyProjectOverrides,
   refreshProjectConfig,
 } from "../hooks/useProjectConfig";
 import {
@@ -58,9 +67,25 @@ import {
   useExamples,
   useContextExportStatus,
 } from "../hooks/useTranslationMemory";
+import { bookName } from "../lib/bookNames";
 import { MarkdownView } from "./MarkdownView";
-import { useOrgDraft, OrgDraftFields } from "./OrgConfigDraftEditor";
+import { defaultReplaceSelection } from "../lib/setupWizard";
 import { SetupWizard } from "./SetupWizard";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { UserManagementSection } from "./UserManagementSection";
+import { UiLanguageControl } from "./TopBar";
+import { UI_LANGUAGES, dirForLang } from "../i18n";
+import {
+  flattenEn,
+  currentValue,
+  flatFromBag,
+  mergedLocale,
+  placeholdersOf,
+  saveOverridePatch,
+  type StringRow,
+} from "../i18n/overrides";
+import { useLocalizationMode, setLocalizationModeEnabled } from "../i18n/localizationMode";
+import SearchIcon from "@mui/icons-material/Search";
 
 const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
   running: "preferences.exportStatus.running",
@@ -100,14 +125,23 @@ function laneErrorMessage(
   return raw;
 }
 
-export type Section = "brief" | "instructions" | "terminology" | "examples" | "setup";
+export type Section =
+  | "brief"
+  | "instructions"
+  | "commonIssues"
+  | "terminology"
+  | "examples"
+  | "setup"
+  | "localization"
+  | "users";
 // Memory sections shown in the rail when a translation project + memory are
-// available. "setup" is admin-only and gated separately (it must show even on a
-// fresh/empty/author-only DB), so it is not part of this list.
-export const SECTIONS: Section[] = ["brief", "instructions", "terminology", "examples"];
-// Every routable section (memory + the admin-only setup wizard) — used for
-// hash-route validation in App.tsx.
-export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup"];
+// available. "setup", "localization", and "users" are admin-only and gated
+// separately (they must show regardless of project type / memory), so they
+// aren't listed.
+export const SECTIONS: Section[] = ["brief", "instructions", "commonIssues", "terminology", "examples"];
+// Every routable section (memory + the admin-only setup wizard, localization
+// editor, and user management) — used for hash-route validation in App.tsx.
+export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup", "localization", "users"];
 
 // Term-status → semantic palette (design §10). Not the violet AI identity —
 // status is not an AI-draft state.
@@ -126,17 +160,35 @@ function statusColor(status: TermStatus): string {
   }
 }
 
+// Memory is now one long scrollable page; the rail items and deep links jump to
+// a section by scrolling its wrapper (id `pref-sec-<key>`) into view rather than
+// swapping panes. Guarded so a missing element (section not mounted / memory not
+// available) is a no-op.
+function scrollToSection(key: Section) {
+  document.getElementById(`pref-sec-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 interface Props {
   onNavigate: (section: Section) => void;
+  onBack: () => void;
   section: Section;
   role: Role;
 }
 
-export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
+export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Props) {
   const { t } = useTranslation();
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
   const memoryAvailable = isTranslation && !isReadOnly();
+
+  // Deep-link / rail-driven anchor scroll: when the routed section is a memory
+  // section and the long page is available, scroll it into view. Runs on mount
+  // and whenever `section` changes (a rail click rewrites the hash → new prop).
+  useEffect(() => {
+    if (memoryAvailable && SECTIONS.includes(section)) {
+      scrollToSection(section);
+    }
+  }, [section, memoryAvailable]);
 
   return (
     <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
@@ -157,17 +209,16 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
             <Tooltip title={t("preferences.backToScripture")}>
               <IconButton
                 size="small"
-                onClick={() => {
-                  location.hash = "#/";
-                }}
+                onClick={onBack}
                 sx={{ ml: -0.5 }}
               >
                 <ArrowBackIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }}>
               {t("preferences.title")}
             </Typography>
+            <UiLanguageControl />
           </Stack>
           <Typography variant="caption" color="text.secondary">
             {cfg?.languageTitle ?? cfg?.languageName ?? cfg?.languageCode}
@@ -180,7 +231,10 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
             return (
               <Box
                 key={s}
-                onClick={() => onNavigate(s)}
+                onClick={() => {
+                  onNavigate(s);
+                  scrollToSection(s);
+                }}
                 sx={{
                   px: 1.5,
                   py: 0.9,
@@ -215,19 +269,66 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
               </Typography>
             </Box>
           )}
+          {role === "admin" && (
+            <Box
+              onClick={() => onNavigate("localization")}
+              sx={{
+                px: 1.5,
+                py: 0.9,
+                cursor: "pointer",
+                borderInlineStart: "3px solid",
+                borderColor: section === "localization" ? "primary.main" : "transparent",
+                bgcolor:
+                  section === "localization" ? (theme) => alpha(theme.palette.primary.main, 0.08) : "transparent",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: section === "localization" ? 700 : 400 }}>
+                {t("preferences.section.localization")}
+              </Typography>
+            </Box>
+          )}
+          {role === "admin" && (
+            <Box
+              onClick={() => onNavigate("users")}
+              sx={{
+                px: 1.5,
+                py: 0.9,
+                cursor: "pointer",
+                borderInlineStart: "3px solid",
+                borderColor: section === "users" ? "primary.main" : "transparent",
+                bgcolor: section === "users" ? (theme) => alpha(theme.palette.primary.main, 0.08) : "transparent",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: section === "users" ? 700 : 400 }}>
+                {t("preferences.section.users")}
+              </Typography>
+            </Box>
+          )}
         </Box>
       </Box>
 
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
+          {/* Org switcher — the single canonical spot, visible to ALL roles.
+              Non-admins have no Setup rail entry, so this is their only route to
+              switch orgs; it self-fetches and renders read-only for single-org. */}
+          <WorkspaceSwitcher variant="expanded" />
           {section === "setup" && role === "admin" ? (
-            <SetupWizard />
-          ) : (
-          <>
-          <ProjectModeControl cfg={cfg} role={role} />
-          {role === "admin" && cfg && <ScriptureLanesSection cfg={cfg} />}
-          {cfg === null ? null : !isTranslation ? (
+            // Setup is the single home for project configuration — the Setup
+            // wizard + scripture-lane controls live here (moved out of the
+            // memory pages, where they used to repeat on every section).
+            <Stack spacing={3}>
+              <SetupWizard />
+              {cfg && <ScriptureLanesSection cfg={cfg} />}
+            </Stack>
+          ) : section === "localization" && role === "admin" ? (
+            <LocalizationSection />
+          ) : section === "users" && role === "admin" ? (
+            <UserManagementSection />
+          ) : cfg === null ? null : !isTranslation ? (
             <Alert severity="info" variant="outlined">
               {t("preferences.glOnly")}
             </Alert>
@@ -236,14 +337,28 @@ export function PreferencesWorkspace({ onNavigate, section, role }: Props) {
               {t("preferences.editorOnly")}
             </Alert>
           ) : (
-            <>
-              {section === "brief" && <BriefSection />}
-              {section === "instructions" && <InstructionsSection />}
-              {section === "terminology" && <TerminologySection direction={cfg?.direction ?? "ltr"} />}
-              {section === "examples" && <ExamplesSection />}
-            </>
-          )}
-          </>
+            // One long scrollable memory page. Every section is always mounted
+            // and anchored by `id="pref-sec-<key>"`; the rail items + deep links
+            // scroll to these anchors (see scrollToSection). Each section renders
+            // its own heading (preferences.section.*), which serves as the
+            // visible anchor label — no duplicate heading needed.
+            <Stack spacing={4} divider={<Divider />}>
+              <Box id="pref-sec-brief" sx={{ scrollMarginTop: "16px" }}>
+                <BriefSection />
+              </Box>
+              <Box id="pref-sec-instructions" sx={{ scrollMarginTop: "16px" }}>
+                <InstructionsSection />
+              </Box>
+              <Box id="pref-sec-commonIssues" sx={{ scrollMarginTop: "16px" }}>
+                <CommonIssuesSection />
+              </Box>
+              <Box id="pref-sec-terminology" sx={{ scrollMarginTop: "16px" }}>
+                <TerminologySection direction={cfg?.direction ?? "ltr"} />
+              </Box>
+              <Box id="pref-sec-examples" sx={{ scrollMarginTop: "16px" }}>
+                <ExamplesSection />
+              </Box>
+            </Stack>
           )}
         </Box>
       </Box>
@@ -310,6 +425,26 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
   const [job, setJob] = useState<LaneReplacementJobResponse | null>(null);
   const [activating, setActivating] = useState(false);
   const [busyBook, setBusyBook] = useState<string | null>(null);
+  // Confirm dialog + up-front source validation (issue #97).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [ack, setAck] = useState(false);
+  const [affectedBooks, setAffectedBooks] = useState<string[] | null>(null);
+  // Per-book replace/keep selection (issue #94). A checked book is re-staged from
+  // the new source; unchecking keeps its current content (carried forward).
+  // Defaults to all-checked = replace all (unchanged whole-lane behavior).
+  const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
+  // Per-book existing-content stats (issue #94): verses + translator-edit count,
+  // shown so the user can see which books hold edits before overwriting them.
+  const [bookStats, setBookStats] = useState<Record<string, { verses: number; edited: number }>>({});
+  const [pendingSource, setPendingSource] = useState<{ owner: string; repo: string; ref: string } | null>(null);
+  const [impact, setImpact] = useState<{ books: number; verses: number } | null>(null);
+  // A transient DCS content-check failure ("couldn't check") is retryable, not a
+  // hard block — surfaced as a Retry affordance rather than a dead end.
+  const [sourceRetryable, setSourceRetryable] = useState(false);
+  // Set when the up-front source check couldn't confirm book presence (transient
+  // DCS failure omitted `hasBooks`). Not a block (issue #97) — the confirm dialog
+  // just cautions that presence is unverified; Cancel/back-out is the safety net.
+  const [sourceUnverified, setSourceUnverified] = useState(false);
 
   const replacementJobId = state?.replacementJobId ?? null;
 
@@ -372,22 +507,91 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
     }
   };
 
-  const handleValidateUrl = async () => {
-    if (!sourceUrl.trim()) return;
+  // Step 1: validate the pasted URL up front (issue #97, item 3). Before staging
+  // anything we confirm the source repo actually CONTAINS book files — an empty
+  // scaffolding-only repo is a trap. `hasBooks: false` is a hard block; a missing
+  // `hasBooks` (transient DCS content-API failure) is retryable, never a block.
+  // This check lives ONLY in this migration tool, not the configure wizard (a
+  // brand-new org's target repos are legitimately empty at configure time).
+  const handleChangeSource = async () => {
+    const url = sourceUrl.trim();
+    if (!url) return;
+    setValidating(true);
+    setError(null);
+    setSourceRetryable(false);
+    setSourceUnverified(false);
+    try {
+      let hasBooks: boolean | undefined;
+      try {
+        const verified = await api.verifySource(url, { checkBooks: true });
+        hasBooks = verified.hasBooks;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          setError(t("preferences.scriptureLanes.sourceNoRepo"));
+          return;
+        }
+        if (e instanceof ApiError && e.status === 400) {
+          setError(t("preferences.scriptureLanes.sourceInvalidUrl"));
+          return;
+        }
+        // 503 dcs_unavailable or network — transient, retryable (not a block).
+        setSourceRetryable(true);
+        setError(t("preferences.scriptureLanes.sourceCheckUnavailable"));
+        return;
+      }
+      if (hasBooks === false) {
+        setError(t("preferences.scriptureLanes.sourceNoBooks"));
+        return;
+      }
+      // `hasBooks === undefined` means the content check couldn't complete (a
+      // transient DCS content-API failure). Per issue #97 this is NOT a hard
+      // block — only a confirmed `false` blocks. Proceed to the confirm dialog,
+      // flagging the source as unverified so the dialog cautions the user; they
+      // can back out with Cancel if the books turn out to be missing.
+      setSourceUnverified(hasBooks === undefined);
+
+      // Resolve the source and open the confirm dialog (item 1).
+      const result = await api.laneValidate(lane, url);
+      setPendingSource(result.source);
+      setImpact({ books: result.impactBooks, verses: result.impactVerses });
+      setAck(false);
+      setAffectedBooks(null);
+      setConfirmOpen(true);
+      // List the exact books this lane will re-stage — from the lane's snapshot,
+      // never getBooks(). Best-effort: on failure the dialog still confirms.
+      api
+        .laneAffectedBooks(lane)
+        .then((r) => {
+          setAffectedBooks(r.books);
+          // Default: replace unedited books, KEEP books with work done (#94).
+          setSelectedBooks(new Set(defaultReplaceSelection(r.books, r.stats)));
+          setBookStats(r.stats ?? {});
+        })
+        .catch(() => {
+          setAffectedBooks([]);
+          setSelectedBooks(new Set());
+          setBookStats({});
+        });
+    } catch (e) {
+      const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
+      setError(laneErrorMessage(t, raw));
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Step 2: user acknowledged the affected-books list → start the replacement.
+  const handleConfirmStart = async () => {
+    if (!pendingSource) return;
+    // Never submit before the book list + stats have loaded: affectedBooks==null
+    // would collapse to replaceBooks=undefined (replace all) and overwrite the
+    // edited books the smart default keeps. The Confirm button is also disabled
+    // in this state; this guard is the belt-and-suspenders.
+    if (affectedBooks == null) return;
+    setConfirmOpen(false);
     setValidating(true);
     setError(null);
     try {
-      const result = await api.laneValidate(lane, sourceUrl.trim());
-      const confirmMsg = t("preferences.scriptureLanes.confirmReplace", {
-        books: result.impactBooks,
-        verses: result.impactVerses,
-        owner: result.source.owner,
-        repo: result.source.repo,
-      });
-      if (!window.confirm(confirmMsg)) {
-        setValidating(false);
-        return;
-      }
       // When the lane is in BSOJ transitional freeze, the mandatory pending
       // target carries the correct AVD/NAV locks/export — do not inherit the
       // quarantined LEGACY config's false locks / null export.
@@ -395,18 +599,25 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
       const exportCfg =
         base.export ??
         ({
-          owner: result.source.owner,
-          repo: result.source.repo,
-          baseRef: result.source.ref,
+          owner: pendingSource.owner,
+          repo: pendingSource.repo,
+          baseRef: pendingSource.ref,
           branchPolicy: "contributor_book_branch" as const,
         });
+      // Resolve the per-book selection. undefined → replace all (unchanged path);
+      // a subset (including empty = keep everything) is sent explicitly and the
+      // un-selected books are carried forward server-side.
+      const books = affectedBooks ?? [];
+      const allSelected = books.length > 0 && books.every((b) => selectedBooks.has(b));
+      const replaceBooks =
+        books.length === 0 || allSelected ? undefined : books.filter((b) => selectedBooks.has(b));
       await api.laneStartReplacement(lane, {
-        label: base.label === "LEGACY" ? `${result.source.repo}` : base.label,
-        source: result.source,
+        label: base.label === "LEGACY" ? `${pendingSource.repo}` : base.label,
+        source: pendingSource,
         export: exportCfg,
         textReadOnly: base.textReadOnly,
         alignmentWritable: base.alignmentWritable,
-      }, true);
+      }, true, replaceBooks);
       await refreshProjectConfig();
       setSourceUrl("");
       setSuccessMsg(t("preferences.scriptureLanes.replacementStarted"));
@@ -419,15 +630,21 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
     }
   };
 
-  const handleCancel = async () => {
+  // Full back-out (issue #97, item 2): abort the in-progress job AND revert the
+  // lane to its prior source. Unlike the old cancel, this clears
+  // replacement_required + pendingTarget so a lane stuck spinning on staging
+  // failures is fully unfrozen — gen-1 content is never overwritten.
+  const handleBackOut = async () => {
     if (!replacementJobId) return;
+    if (!window.confirm(t("preferences.scriptureLanes.confirmBackOut"))) return;
     setSaving(true);
     setError(null);
     try {
-      await api.laneCancelJob(lane, replacementJobId);
+      await api.laneBackOutJob(lane, replacementJobId);
       await refreshProjectConfig();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      const raw = e instanceof ApiError ? (e.body as { error?: string })?.error || e.message : String(e);
+      setError(laneErrorMessage(t, raw));
     } finally {
       setSaving(false);
     }
@@ -558,9 +775,11 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                   {activating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.activate")}
                 </Button>
               )}
-              <Button size="small" color="error" onClick={handleCancel} disabled={saving}>
-                {t("preferences.scriptureLanes.cancel")}
-              </Button>
+              <Tooltip title={t("preferences.scriptureLanes.backOutHint")}>
+                <Button size="small" color="error" onClick={handleBackOut} disabled={saving}>
+                  {t("preferences.scriptureLanes.backOut")}
+                </Button>
+              </Tooltip>
             </Stack>
 
             {jobBooks.length > 0 && (
@@ -587,8 +806,8 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                         key={b.book}
                         title={
                           retryable
-                            ? t("preferences.scriptureLanes.bookRetryHint", { book: b.book })
-                            : `${b.book}: ${b.status}`
+                            ? t("preferences.scriptureLanes.bookRetryHint", { book: bookName(b.book) })
+                            : `${bookName(b.book)} (${b.book}): ${b.status}`
                         }
                       >
                         <Chip
@@ -624,7 +843,7 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
             <Button
               size="small"
               variant="outlined"
-              onClick={handleValidateUrl}
+              onClick={handleChangeSource}
               disabled={!sourceUrl.trim() || validating}
             >
               {validating ? <CircularProgress size={16} /> : t("preferences.scriptureLanes.changeSource")}
@@ -632,183 +851,134 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
           </Stack>
         )}
 
-        {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+        {error && (
+          <Alert
+            severity={sourceRetryable ? "warning" : "error"}
+            onClose={() => setError(null)}
+            action={
+              sourceRetryable ? (
+                <Button color="inherit" size="small" onClick={handleChangeSource} disabled={validating}>
+                  {t("preferences.scriptureLanes.sourceRetry")}
+                </Button>
+              ) : undefined
+            }
+          >
+            {error}
+          </Alert>
+        )}
         {successMsg && <Alert severity="success" onClose={() => setSuccessMsg(null)}>{successMsg}</Alert>}
       </Stack>
-    </Box>
-  );
-}
 
-function ProjectModeControl({ cfg, role }: { cfg: ProjectConfig | null; role: Role }) {
-  const { t } = useTranslation();
-  const presets = useProjectPresets();
-  const [selected, setSelected] = useState(cfg?.preset ?? "");
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ severity: "success" | "error" | "info"; text: string } | null>(null);
-  const canChange = role === "admin";
-
-  useEffect(() => {
-    if (cfg?.preset) setSelected(cfg.preset);
-  }, [cfg?.preset]);
-
-  const apply = async () => {
-    if (!cfg || !selected || selected === cfg.preset || !canChange) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      await selectProjectPreset(selected);
-      // PUT now returns overlay laneState, but re-fetch so a partial/older
-      // worker response cannot leave the shared cache without lane rows.
-      await refreshProjectConfig().catch(() => {});
-      setMessage({ severity: "success", text: t("preferences.projectModeSaved") });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 403) {
-        setMessage({ severity: "error", text: t("preferences.projectModeForbidden") });
-      } else if (e instanceof ApiError && e.status === 409) {
-        setMessage({ severity: "error", text: t("preferences.projectModeLaneBusy") });
-      } else {
-        setMessage({ severity: "error", text: t("preferences.projectModeFailed") });
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Box
-      component="section"
-      aria-labelledby="project-mode-heading"
-      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, mb: 3 }}
-    >
-      <Stack spacing={1.5}>
-        <Box>
-          <Typography id="project-mode-heading" variant="h6">
-            {t("preferences.projectModeTitle")}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {t("preferences.projectModeIntro")}
-          </Typography>
-        </Box>
-        {!cfg ? (
-          <CircularProgress size={22} />
-        ) : (
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "flex-start" }}>
-            <TextField
-              select
-              size="small"
-              label={t("preferences.projectModeLabel")}
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-              disabled={!canChange || saving || presets.length === 0}
-              sx={{ minWidth: 320 }}
-              helperText={!canChange ? t("preferences.projectModeForbidden") : undefined}
-            >
-              {presets.map((preset) => (
-                <MenuItem key={preset.preset} value={preset.preset}>
-                  {preset.isTranslation
-                    ? t("preferences.translationPreset", {
-                        language: preset.languageTitle,
-                        org: preset.org,
-                      })
-                    : t("preferences.authoringPreset", {
-                        language: preset.languageTitle,
-                        org: preset.org,
-                      })}
-                  {!preset.reposVerified ? ` · ${t("preferences.presetUnverified")}` : ""}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Button
-              variant="contained"
-              onClick={apply}
-              disabled={!canChange || saving || !selected || selected === cfg.preset}
-              startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
-            >
-              {saving ? t("preferences.applyingProjectMode") : t("preferences.applyProjectMode")}
-            </Button>
-          </Stack>
-        )}
-        {message && <Alert severity={message.severity}>{message.text}</Alert>}
-      </Stack>
-      {canChange && <OrgDetectionSection />}
-    </Box>
-  );
-}
-
-// PR B: draft-first manifest inference. Detect an org's repos, complete any
-// missing/ambiguous roles, choose translationSource/exportOrg explicitly, then
-// apply via the custom-gl preset. Applies NOTHING until "Apply" is pressed.
-// The draft state + override-building live in the shared useOrgDraft hook, so
-// this single-shot control and the Setup wizard can never drift apart.
-function OrgDetectionSection() {
-  const { t } = useTranslation();
-  const draft = useOrgDraft();
-  const [applying, setApplying] = useState(false);
-  const [message, setMessage] = useState<{ severity: "success" | "error"; text: string } | null>(null);
-
-  const apply = async () => {
-    if (!draft.complete) return;
-    setApplying(true);
-    setMessage(null);
-    try {
-      await applyProjectOverrides("custom-gl", draft.buildOverrides());
-      await refreshProjectConfig().catch(() => {});
-      setMessage({ severity: "success", text: t("preferences.detectOrg.applied") });
-      draft.reset();
-      draft.setOrg("");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        setMessage({ severity: "error", text: t("preferences.detectOrg.projectNotEmpty") });
-      } else {
-        setMessage({ severity: "error", text: t("preferences.detectOrg.applyFailed") });
-      }
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  return (
-    <Box sx={{ borderTop: "1px dashed", borderColor: "divider", pt: 1.5, mt: 1.5 }}>
-      <Typography variant="subtitle2">{t("preferences.detectOrg.label")}</Typography>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-        <TextField
-          size="small"
-          placeholder="BibleEditorMLTest"
-          value={draft.org}
-          onChange={(e) => draft.setOrg(e.target.value)}
-          disabled={draft.loading}
-        />
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => {
-            setMessage(null);
-            void draft.detect();
-          }}
-          disabled={draft.loading || !draft.org.trim()}
-        >
-          {draft.loading ? <CircularProgress size={16} /> : t("preferences.detectOrg.button")}
-        </Button>
-      </Stack>
-      {draft.detectError && <Alert severity="error" sx={{ mt: 1 }}>{draft.detectError}</Alert>}
-      {draft.draft && (
-        <Box sx={{ mt: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
-          <OrgDraftFields state={draft} />
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-            {t("preferences.detectOrg.laneHint")}
-          </Typography>
-          <Box sx={{ mt: 1 }}>
-            <Button variant="contained" onClick={apply} disabled={!draft.complete || applying}>
-              {applying ? t("preferences.detectOrg.applying") : t("preferences.detectOrg.apply")}
-            </Button>
-          </Box>
-        </Box>
-      )}
-      {message && (
-        <Alert severity={message.severity} sx={{ mt: 1 }} onClose={() => setMessage(null)}>
-          {message.text}
-        </Alert>
-      )}
+      {/* Confirm dialog listing the exact books this lane will re-stage (item 1). */}
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{t("preferences.scriptureLanes.confirmTitle", { lane: label })}</DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div">
+            {pendingSource && (
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                {t("preferences.scriptureLanes.confirmSource", {
+                  owner: pendingSource.owner,
+                  repo: pendingSource.repo,
+                })}
+              </Typography>
+            )}
+            <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
+              {t("preferences.scriptureLanes.confirmWarning", {
+                books: impact?.books ?? 0,
+                verses: impact?.verses ?? 0,
+              })}
+            </Alert>
+            {sourceUnverified && (
+              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
+                {t("preferences.scriptureLanes.confirmSourceUnverified")}
+              </Alert>
+            )}
+            {affectedBooks == null ? (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <CircularProgress size={16} />
+                <Typography variant="body2">{t("preferences.scriptureLanes.confirmLoadingBooks")}</Typography>
+              </Stack>
+            ) : affectedBooks.length > 0 ? (
+              <>
+                <Typography variant="body2" sx={{ mb: 0.5 }}>
+                  {t("preferences.scriptureLanes.confirmBooksSelectLead", { count: affectedBooks.length })}
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ mb: 0.75 }}>
+                  <Button size="small" onClick={() => setSelectedBooks(new Set(affectedBooks))}>
+                    {t("preferences.scriptureLanes.confirmBooksSelectAll")}
+                  </Button>
+                  <Button size="small" onClick={() => setSelectedBooks(new Set())}>
+                    {t("preferences.scriptureLanes.confirmBooksSelectNone")}
+                  </Button>
+                </Stack>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                  {affectedBooks.map((b) => {
+                    const selected = selectedBooks.has(b);
+                    const stat = bookStats[b];
+                    const edited = stat?.edited ?? 0;
+                    const label = edited > 0 ? `${bookName(b)} (${b}) ✎${edited}` : `${bookName(b)} (${b})`;
+                    return (
+                      <Tooltip
+                        key={b}
+                        title={
+                          stat
+                            ? t("preferences.scriptureLanes.bookStatTip", { verses: stat.verses, edited })
+                            : ""
+                        }
+                      >
+                        <Chip
+                          size="small"
+                          label={label}
+                          color={selected ? "warning" : "default"}
+                          variant={selected ? "filled" : "outlined"}
+                          aria-pressed={selected}
+                          onClick={() =>
+                            setSelectedBooks((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(b)) next.delete(b);
+                              else next.add(b);
+                              return next;
+                            })
+                          }
+                        />
+                      </Tooltip>
+                    );
+                  })}
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
+                  {t("preferences.scriptureLanes.confirmBooksSummary", {
+                    replace: affectedBooks.filter((b) => selectedBooks.has(b)).length,
+                    keep: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
+                  })}
+                </Typography>
+                {affectedBooks.some((b) => (bookStats[b]?.edited ?? 0) > 0) && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+                    {t("preferences.scriptureLanes.confirmBooksEditedHint")}
+                  </Typography>
+                )}
+              </>
+            ) : (
+              <Typography variant="body2">{t("preferences.scriptureLanes.confirmNoBookList")}</Typography>
+            )}
+          </DialogContentText>
+          <FormControlLabel
+            sx={{ mt: 1.5 }}
+            control={<Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)} />}
+            label={t("preferences.scriptureLanes.confirmAck")}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmOpen(false)}>{t("preferences.scriptureLanes.confirmBack")}</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            disabled={!ack || affectedBooks == null}
+            onClick={handleConfirmStart}
+          >
+            {t("preferences.scriptureLanes.confirmButton")}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
@@ -904,6 +1074,289 @@ function useSaveState() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   return { saving, setSaving, msg, setMsg, clear: () => setMsg(null) };
+}
+
+// ── Localization editor (admin-only; migration 0052) ────────────────────────
+// Edits the CURRENTLY-selected UI language against the English source. English
+// column is read-only reference; the right column is the editable translation.
+// Saves the whole language bag to the server (If-Match CAS) and applies it live
+// via i18next, so the edit shows immediately and reaches other users on their
+// next load. Export downloads the merged locale JSON for committing back.
+function LocalizationSection() {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const langLabel = UI_LANGUAGES.find((l) => l.code === lang)?.label ?? lang;
+  const isEnglish = lang === "en";
+
+  const rows = useMemo<StringRow[]>(() => flattenEn(), []);
+  const save = useSaveState();
+  const [version, setVersion] = useState<number | null>(null);
+  const [stored, setStored] = useState<Record<string, string>>({}); // saved overrides, path→text
+  const [draft, setDraft] = useState<Record<string, string>>({}); // unsaved edits, path→text
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  // Perf (#77): ~3,218 keys means rendering every row's pair of TextFields at
+  // once briefly freezes the main thread on open. Namespace groups are
+  // collapsed by default (Accordion `unmountOnExit` means collapsed groups
+  // mount ZERO fields), and a non-empty search auto-expands only the groups
+  // that actually matched — so the common "hunt for a key" path only ever
+  // mounts a small, filtered set of rows.
+  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
+  const localizationModeOn = useLocalizationMode();
+
+  // Load this language's stored overrides + version so the first save sends the
+  // right If-Match and untouched overrides aren't wiped on a whole-bag PUT.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setDraft({});
+    api
+      .getL10nOverrides()
+      .then(({ overrides, versions }) => {
+        if (cancelled) return;
+        setStored(flatFromBag(overrides[lang] ?? {}));
+        setVersion(versions[lang] ?? 0);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStored({});
+          setVersion(0);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.path.toLowerCase().includes(q) || r.english.toLowerCase().includes(q));
+  }, [rows, query]);
+
+  // Group rows by top-level namespace, preserving en.json order.
+  const groups = useMemo(() => {
+    const m = new Map<string, StringRow[]>();
+    for (const r of filtered) {
+      const list = m.get(r.ns);
+      if (list) list.push(r);
+      else m.set(r.ns, [r]);
+    }
+    return [...m.entries()];
+  }, [filtered]);
+
+  const valueFor = (path: string): string =>
+    path in draft ? draft[path] : (currentValue(lang, path) ?? "");
+  const dirtyCount = Object.keys(draft).length;
+
+  const onSave = async () => {
+    if (version == null || dirtyCount === 0) return;
+    save.setSaving(true);
+    try {
+      // Whole-bag replace = prior stored overrides + this session's edits.
+      const outcome = await saveOverridePatch(lang, version, stored, draft);
+      if (outcome.ok) {
+        setStored({ ...stored, ...draft });
+        setVersion(outcome.version);
+        setDraft({});
+        save.setMsg(t("preferences.saved"));
+      } else if (outcome.kind === "conflict") {
+        // Another admin's write won — reload their overrides + version so the
+        // next save has the right If-Match. Unsaved draft is kept.
+        save.setMsg(t("preferences.conflict"));
+        try {
+          const { overrides, versions } = await api.getL10nOverrides();
+          setStored(flatFromBag(overrides[lang] ?? {}));
+          setVersion(versions[lang] ?? 0);
+        } catch {
+          /* leave state; user can retry */
+        }
+      } else if (outcome.kind === "forbidden") {
+        save.setMsg(t("preferences.saveForbidden"));
+      } else {
+        save.setMsg(t("preferences.saveFailed"));
+      }
+    } finally {
+      save.setSaving(false);
+    }
+  };
+
+  const onExport = () => {
+    const json = JSON.stringify(mergedLocale(lang), null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${lang}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+        <Typography variant="h6">{t("preferences.section.localization")}</Typography>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" size="small" startIcon={<DownloadIcon />} onClick={onExport}>
+            {t("preferences.localization.export")}
+          </Button>
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<SaveIcon />}
+            disabled={save.saving || dirtyCount === 0}
+            onClick={onSave}
+          >
+            {dirtyCount > 0
+              ? t("preferences.localization.saveCount", { count: dirtyCount })
+              : t("preferences.save")}
+          </Button>
+        </Stack>
+      </Stack>
+      <Typography variant="body2" color="text.secondary">
+        {isEnglish
+          ? t("preferences.localization.introEnglish")
+          : t("preferences.localization.intro", { language: langLabel })}
+      </Typography>
+
+      <FormControlLabel
+        control={
+          <Switch
+            checked={localizationModeOn}
+            onChange={(e) => setLocalizationModeEnabled(e.target.checked)}
+          />
+        }
+        label={t("preferences.localization.inspectMode")}
+      />
+
+      <TextField
+        size="small"
+        fullWidth
+        placeholder={t("preferences.localization.searchPlaceholder")}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon fontSize="small" />
+            </InputAdornment>
+          ),
+        }}
+      />
+
+      {loading ? (
+        <CircularProgress size={22} />
+      ) : filtered.length === 0 ? (
+        <Alert severity="info" variant="outlined">
+          {t("preferences.localization.noMatches")}
+        </Alert>
+      ) : (
+        <Stack spacing={1}>
+          {groups.map(([ns, list]) => {
+            // A live search forces every matching group open (the filtered
+            // set is already small); otherwise only manually-expanded groups
+            // mount their rows.
+            const isSearching = query.trim().length > 0;
+            const isOpen = isSearching || manualExpanded.has(ns);
+            return (
+              <Accordion
+                key={ns}
+                expanded={isOpen}
+                disableGutters
+                onChange={(_e, next) => {
+                  if (isSearching) return; // search already forces this open
+                  setManualExpanded((prev) => {
+                    const nextSet = new Set(prev);
+                    if (next) nextSet.add(ns);
+                    else nextSet.delete(ns);
+                    return nextSet;
+                  });
+                }}
+                slotProps={{ transition: { unmountOnExit: true } }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="overline" color="text.secondary">
+                    {ns} ({list.length})
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Stack spacing={1.5}>
+                    {list.map((r) => {
+                      const value = valueFor(r.path);
+                      const dropped =
+                        r.path in draft &&
+                        placeholdersOf(r.english).filter((p) => !value.includes(p));
+                      const hasWarning = Array.isArray(dropped) && dropped.length > 0;
+                      const fieldId = `l10n-${lang}-${r.path}`;
+                      return (
+                        <Box key={r.path}>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ fontFamily: "monospace", display: "block", mb: 0.25 }}
+                          >
+                            {r.path}
+                          </Typography>
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            spacing={1}
+                            alignItems={{ sm: "flex-start" }}
+                          >
+                            <TextField
+                              id={`${fieldId}-en`}
+                              name={`${fieldId}-en`}
+                              size="small"
+                              fullWidth
+                              value={r.english}
+                              InputProps={{ readOnly: true }}
+                              variant="filled"
+                              multiline
+                              maxRows={6}
+                            />
+                            <TextField
+                              id={`${fieldId}-override`}
+                              name={`${fieldId}-override`}
+                              size="small"
+                              fullWidth
+                              dir={dirForLang(lang)}
+                              value={value}
+                              onChange={(e) => setDraft((d) => ({ ...d, [r.path]: e.target.value }))}
+                              placeholder={isEnglish ? undefined : r.english}
+                              multiline
+                              maxRows={6}
+                              error={hasWarning}
+                              helperText={
+                                hasWarning
+                                  ? t("preferences.localization.placeholderWarning", {
+                                      tokens: (dropped as string[]).join(", "),
+                                    })
+                                  : undefined
+                              }
+                            />
+                          </Stack>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                </AccordionDetails>
+              </Accordion>
+            );
+          })}
+        </Stack>
+      )}
+
+      <Snackbar
+        open={!!save.msg}
+        autoHideDuration={4000}
+        onClose={save.clear}
+        message={save.msg ?? ""}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
+    </Stack>
+  );
 }
 
 // ── Brief ──────────────────────────────────────────────────────────────────
@@ -1010,8 +1463,22 @@ function BriefSection() {
   );
 }
 
-// ── Instructions ─────────────────────────────────────────────────────────────
-function InstructionsSection() {
+// ── Instructions / Common issues (shared markdown-pref editor) ────────────────
+// Server caps: instructions_md 20000 chars, common_issues_md 50000 chars
+// (see PutPrefsBody in api/src/translationMemory.ts) — keep maxChars below in sync.
+function MarkdownPrefSection({
+  field,
+  titleKey,
+  introKey,
+  placeholderKey,
+  maxChars,
+}: {
+  field: "instructions_md" | "common_issues_md";
+  titleKey: string;
+  introKey: string;
+  placeholderKey: string;
+  maxChars: number;
+}) {
   const { t } = useTranslation();
   const { prefs, loading, refetch } = useTranslationPrefs(true);
   const [value, setValue] = useState("");
@@ -1019,14 +1486,16 @@ function InstructionsSection() {
   const save = useSaveState();
 
   useEffect(() => {
-    if (prefs) setValue(prefs.instructions_md ?? "");
-  }, [prefs]);
+    if (prefs) setValue(prefs[field] ?? "");
+  }, [prefs, field]);
+
+  const overLimit = value.length > maxChars;
 
   const onSave = async () => {
     if (!prefs) return;
     save.setSaving(true);
     try {
-      await api.putTranslationPrefs(prefs.version, { instructions_md: value || null });
+      await api.putTranslationPrefs(prefs.version, { [field]: value || null });
       save.setMsg(t("preferences.saved"));
       refetch();
     } catch (e) {
@@ -1035,6 +1504,8 @@ function InstructionsSection() {
         refetch();
       } else if (e instanceof ApiError && e.status === 403) {
         save.setMsg(t("preferences.saveForbidden"));
+      } else if (e instanceof ApiError && e.status === 400) {
+        save.setMsg(t("preferences.saveTooLong"));
       } else {
         save.setMsg(t("preferences.saveFailed"));
       }
@@ -1048,7 +1519,7 @@ function InstructionsSection() {
   return (
     <Stack spacing={2}>
       <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Typography variant="h6">{t("preferences.section.instructions")}</Typography>
+        <Typography variant="h6">{t(titleKey)}</Typography>
         <ToggleButton
           size="small"
           value="preview"
@@ -1061,7 +1532,7 @@ function InstructionsSection() {
         </ToggleButton>
       </Stack>
       <Alert severity="info" variant="outlined" sx={{ py: 0.25 }}>
-        {t("preferences.instructionsIntro")}
+        {t(introKey)}
       </Alert>
       {preview ? (
         <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, minHeight: 200 }}>
@@ -1074,17 +1545,47 @@ function InstructionsSection() {
           multiline
           minRows={10}
           fullWidth
-          placeholder={t("preferences.instructionsPlaceholder")}
+          placeholder={t(placeholderKey)}
+          error={overLimit}
+          helperText={
+            overLimit
+              ? t("preferences.charCountOver", { count: value.length, max: maxChars })
+              : t("preferences.charCount", { count: value.length, max: maxChars })
+          }
           slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
         />
       )}
       <Box>
-        <Button variant="contained" startIcon={<SaveIcon />} onClick={onSave} disabled={save.saving}>
+        <Button variant="contained" startIcon={<SaveIcon />} onClick={onSave} disabled={save.saving || overLimit}>
           {t("preferences.save")}
         </Button>
       </Box>
       <Snackbar open={!!save.msg} autoHideDuration={3000} onClose={save.clear} message={save.msg ?? ""} />
     </Stack>
+  );
+}
+
+function InstructionsSection() {
+  return (
+    <MarkdownPrefSection
+      field="instructions_md"
+      titleKey="preferences.section.instructions"
+      introKey="preferences.instructionsIntro"
+      placeholderKey="preferences.instructionsPlaceholder"
+      maxChars={20000}
+    />
+  );
+}
+
+function CommonIssuesSection() {
+  return (
+    <MarkdownPrefSection
+      field="common_issues_md"
+      titleKey="preferences.section.commonIssues"
+      introKey="preferences.commonIssuesIntro"
+      placeholderKey="preferences.commonIssuesPlaceholder"
+      maxChars={50000}
+    />
   );
 }
 
