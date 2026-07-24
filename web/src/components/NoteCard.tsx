@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, memo, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
   Paper,
   Stack,
@@ -38,6 +38,7 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import CheckIcon from "@mui/icons-material/Check";
+import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import { alpha } from "@mui/material/styles";
 import { useTranslation } from "react-i18next";
 import type { TnRow } from "../sync/api";
@@ -47,6 +48,7 @@ import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { CatalogPicker } from "./CatalogPicker";
 import { shortSupport } from "../lib/supportReference";
 import { TCM, buildSH } from "../lib/noteTemplates";
+import { getLockUnapprovedDrafts } from "../lib/editorPrefs";
 import { drafts, rowKey, draftDirtyBorderSx } from "../sync/drafts";
 
 const NoteHistoryDialog = lazy(() =>
@@ -372,7 +374,16 @@ function NoteCardInner({
   // Folding it into readOnly makes every body input non-interactive and hides
   // the add/delete buttons for free (they already gate on !readOnly).
   const trashed = row.trashed_at != null;
-  const readOnly = trashed || (locked && !isPreserved && !isHint);
+  // Editor-mode approval lock. In Editor (authoring) mode a note still sitting in
+  // raw "ai_draft" state — AI or Aquifer output nobody has approved — is read-only:
+  // approval happens in Translator mode, and an editor shouldn't touch unapproved
+  // machine output. Human-edited ("edited") and approved ("validated") notes are
+  // unaffected, as are English-root projects (translation_state is null there).
+  // Gated by a client pref (default ON) so it can graduate to the Preferences pane;
+  // when the flag is off, Editor mode behaves exactly as before. See editorPrefs.ts.
+  const isUnapprovedAiDraft = !translationMode && row.translation_state === "ai_draft";
+  const lockUnapproved = isUnapprovedAiDraft && getLockUnapprovedDrafts();
+  const readOnly = trashed || lockUnapproved || (locked && !isPreserved && !isHint);
   const [quote, setQuote] = useState(tsvToDisplay(row.quote));
   const [note, setNote] = useState(tsvToDisplay(row.note));
   // Find-highlight: the active match note shows a read view (with the match
@@ -893,8 +904,18 @@ function NoteCardInner({
   // State chip descriptor for the header. null → no chip (English root project,
   // or a non-null-but-uninteresting case). Colors mirror the mockup: violet for
   // AI draft, blue for edited, green for validated, neutral for untranslated.
-  const stateChip: { label: string; color: string } | null = !translationMode
-    ? null
+  const stateChip: { label: string; color: string; icon?: ReactElement } | null = !translationMode
+    ? // Editor mode: surface (and, via readOnly above, enforce) the unapproved
+      // state of raw AI/Aquifer drafts so an editor sees they're locked pending
+      // a translator's approval. Gated by the same flag as the lock, so turning
+      // the feature off restores the old chip-less Editor view.
+      lockUnapproved
+      ? {
+          label: t("noteCard.notApproved"),
+          color: "warning.main",
+          icon: <LockOutlinedIcon sx={{ fontSize: 13 }} />,
+        }
+      : null
     : translationState === "ai_draft"
       ? isAquiferDraft
         ? { label: t("translation.stateAquiferDraft"), color: "#70C9CC" }
@@ -1136,6 +1157,7 @@ function NoteCardInner({
         {stateChip && (
           <Chip
             label={stateChip.label}
+            icon={stateChip.icon}
             size="small"
             variant="outlined"
             sx={{
@@ -1145,6 +1167,7 @@ function NoteCardInner({
               letterSpacing: "0.04em",
               color: stateChip.color,
               borderColor: stateChip.color,
+              "& .MuiChip-icon": { color: stateChip.color, ml: 0.5 },
             }}
           />
         )}

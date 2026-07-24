@@ -821,6 +821,7 @@
   },
   "noteCard": {
     "clickToEdit": "click to edit",
+    "notApproved": "Not approved",
     "restoreToReorder": "restore to reorder",
     "addSupportRef": "+ support ref",
     "supportRefPlaceholder": "figs-, translate-, writing-, …",
