@@ -197,6 +197,146 @@ const userSpec = {
   assert(s.overrides.bad === undefined, "invalid mode override dropped");
 }
 
+// ─── tree override (user-rearranged topology) ──────────────────────────
+const treeOverride = () => ({
+  kind: "split",
+  orientation: "vertical",
+  children: [
+    {
+      kind: "region",
+      id: "scripture",
+      size: 0.3,
+      panels: [{ id: "sc-1", type: "scripture", config: { mode: "columns" } }],
+    },
+    {
+      kind: "region",
+      id: "region-1",
+      size: 0.7,
+      display: "stacked",
+      panels: [
+        { id: "n-1", type: "notes" },
+        { id: "w-1", type: "words" },
+      ],
+    },
+  ],
+});
+
+{
+  console.log("\n[tree override] round-trips through save/load");
+  installStorage();
+  mergeOverride("builtin:flexible", { sizes: { scripture: 0.3 }, tree: treeOverride() });
+  const ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov.tree !== undefined, "tree survives the round-trip");
+  assert(ov.tree.kind === "split" && ov.tree.orientation === "vertical", "tree shape preserved");
+  assert(
+    ov.tree.children.map((c) => c.id).join(",") === "scripture,region-1",
+    "tree region ids preserved",
+  );
+  assert(ov.tree.children[1].panels.length === 2, "tree panels preserved");
+  assert(ov.sizes.scripture === 0.3, "sizes still present alongside the tree");
+}
+{
+  console.log("\n[tree override] mergeOverride replaces the tree wholesale");
+  installStorage();
+  mergeOverride("builtin:flexible", { tree: treeOverride() });
+  const replacement = {
+    kind: "region",
+    id: "solo",
+    panels: [{ id: "n-1", type: "notes" }],
+  };
+  mergeOverride("builtin:flexible", { tree: replacement });
+  const ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov.tree.kind === "region" && ov.tree.id === "solo", "second tree replaced the first");
+  assert(ov.tree.children === undefined, "no residue merged in from the previous tree");
+
+  // A non-tree merge leaves the stored tree alone.
+  mergeOverride("builtin:flexible", { hidden: { "res-b": true } });
+  const ov2 = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov2.tree?.id === "solo", "tree untouched by an unrelated merge");
+  assert(ov2.hidden["res-b"] === true, "unrelated merge applied");
+}
+{
+  console.log("\n[tree override] a corrupt tree drops ONLY the tree");
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:flexible",
+      userLayouts: [],
+      overrides: {
+        "builtin:flexible": {
+          sizes: { scripture: 0.35 },
+          minimized: { "n-1": true },
+          mode: "columns",
+          // Invalid: a split needs >= 2 children and a region needs `panels`.
+          tree: { kind: "split", orientation: "sideways", children: [] },
+        },
+      },
+    }),
+  });
+  const ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov !== undefined, "the override itself is NOT discarded");
+  assert(ov.tree === undefined, "corrupt tree dropped");
+  assert(ov.sizes.scripture === 0.35, "sizes preserved");
+  assert(ov.minimized["n-1"] === true, "minimized preserved");
+  assert(ov.mode === "columns", "mode preserved");
+}
+{
+  console.log("\n[tree override] duplicate ids in the tree drop only the tree");
+  // Two regions sharing an id would make one movePanel edit apply twice
+  // (mapRegions dispatches by region id), so validateLayoutNode must reject it.
+  const dupRegion = treeOverride();
+  dupRegion.children[1].id = "scripture";
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:flexible",
+      userLayouts: [],
+      overrides: {
+        "builtin:flexible": { sizes: { scripture: 0.45 }, mode: "book", tree: dupRegion },
+      },
+    }),
+  });
+  const ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov !== undefined, "the override itself is NOT discarded");
+  assert(ov.tree === undefined, "duplicate-region-id tree dropped");
+  assert(ov.sizes.scripture === 0.45, "sizes preserved");
+  assert(ov.mode === "book", "mode preserved");
+
+  // Same for a panel id duplicated across the tree's two regions.
+  const dupPanel = treeOverride();
+  dupPanel.children[1].panels[0].id = "sc-1";
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:flexible",
+      userLayouts: [],
+      overrides: { "builtin:flexible": { sizes: { scripture: 0.45 }, tree: dupPanel } },
+    }),
+  });
+  const ov2 = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov2.tree === undefined, "duplicate-panel-id tree dropped");
+  assert(ov2.sizes.scripture === 0.45, "sizes preserved");
+}
+{
+  console.log("\n[tree override] a tree with an invalid panel type is also dropped");
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:flexible",
+      userLayouts: [],
+      overrides: {
+        "builtin:flexible": {
+          sizes: { scripture: 0.5 },
+          tree: { kind: "region", id: "r", panels: [{ id: "x", type: "spaceship" }] },
+        },
+      },
+    }),
+  });
+  const ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov.tree === undefined, "tree with a bogus panel type dropped");
+  assert(ov.sizes.scripture === 0.5, "rest of the override kept");
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

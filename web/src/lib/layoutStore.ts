@@ -5,7 +5,13 @@
 // this is SSR/test-safe (tests can stub globalThis.localStorage). The v1 key is
 // abandoned — dev-only, no migration.
 
-import { validateLayoutSpec, type LayoutSpec, type ScriptureMode } from "./layoutSpec.ts";
+import {
+  validateLayoutNode,
+  validateLayoutSpec,
+  type LayoutNode,
+  type LayoutSpec,
+  type ScriptureMode,
+} from "./layoutSpec.ts";
 
 const STORAGE_KEY = "be:layouts.v2";
 // Kept in sync with builtinLayouts.CLASSIC_LAYOUT_ID. Inlined (not imported)
@@ -24,6 +30,16 @@ export interface LayoutOverride {
   // so a mode toggle never mutates Classic's shared key (Phase 3, plan risk
   // "scripture-mode double ownership").
   mode?: ScriptureMode;
+  // The user's rearranged TOPOLOGY for this layout. When present it REPLACES the
+  // spec's `root` for rendering (the spec still supplies name / rail / builtin).
+  //
+  // Why a whole tree instead of a patch: the other fields above are keyed by
+  // region or panel id, which only works while the set of regions is fixed by
+  // the spec. Dragging a panel to a region's edge CREATES a region, and dragging
+  // the last panel out DESTROYS one — so a region-keyed patch no longer has
+  // stable subjects to describe. The full tree is the only representation that
+  // can express an arrangement the spec never contained.
+  tree?: LayoutNode;
 }
 
 const SCRIPTURE_MODES: readonly ScriptureMode[] = ["stacked", "columns", "book"];
@@ -94,6 +110,14 @@ function sanitizeOverride(x: unknown): LayoutOverride | null {
   if (x.mode !== undefined) {
     if (!SCRIPTURE_MODES.includes(x.mode as ScriptureMode)) return null;
     out.mode = x.mode as ScriptureMode;
+  }
+  // `tree` is a nested node, not a primitive-valued record, so sanitizeRecord
+  // cannot validate it — it goes through layoutSpec's node validator instead.
+  // A corrupt tree drops ONLY the tree: the user falls back to the built-in
+  // arrangement rather than also losing their sizes / hidden / minimized state.
+  if (x.tree !== undefined) {
+    const tree = validateLayoutNode(x.tree);
+    if (tree) out.tree = tree;
   }
   return out;
 }
@@ -191,6 +215,9 @@ export function mergeOverride(layoutId: string, partial: Partial<LayoutOverride>
     merged.activePanelByRegion = { ...existing.activePanelByRegion, ...partial.activePanelByRegion };
   }
   if (partial.mode) merged.mode = partial.mode;
+  // `tree` is a WHOLESALE REPLACE, never a merge: a topology is only meaningful
+  // as a whole, and there is no sane way to deep-merge two different shapes.
+  if (partial.tree) merged.tree = partial.tree;
   store.overrides[layoutId] = merged;
   saveLayoutStore(store);
   return store;

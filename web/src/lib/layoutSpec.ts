@@ -88,7 +88,9 @@ const PANEL_TYPES: readonly PanelType[] = [
 
 // Reject pathological nesting. Root is depth 1; a node deeper than this is
 // rejected (guards against hostile/looping JSON blowing the stack).
-const MAX_DEPTH = 8;
+// Exported so tree edits (layoutTree.ts) can refuse a drop that would produce a
+// tree this validator would later reject on reload.
+export const MAX_DEPTH = 8;
 
 function isPlainObject(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null && !Array.isArray(x);
@@ -209,6 +211,42 @@ function validateNode(x: unknown, depth: number): LayoutNode | null {
   return null;
 }
 
+// Region ids and panel ids must each be unique across the WHOLE tree. Tree edits
+// (layoutTree.ts) dispatch by region id and locate panels by panel id, so a
+// duplicated id would make a single edit apply in two places and leave the tree
+// corrupt from then on. The `minimized` / `activePanelByRegion` override records
+// assume the same global uniqueness. Checked once at the two entry points below
+// so the recursive validators stay stateless.
+function hasUniqueIds(root: LayoutNode): boolean {
+  const regionIds = new Set<string>();
+  const panelIds = new Set<string>();
+  const walk = (node: LayoutNode): boolean => {
+    if (node.kind === "region") {
+      if (regionIds.has(node.id)) return false;
+      regionIds.add(node.id);
+      for (const panel of node.panels) {
+        if (panelIds.has(panel.id)) return false;
+        panelIds.add(panel.id);
+      }
+      return true;
+    }
+    for (const child of node.children) {
+      if (!walk(child)) return false;
+    }
+    return true;
+  };
+  return walk(root);
+}
+
+// Validate a standalone layout tree (not a whole spec). Used by the store to
+// check a user-rearranged topology loaded from localStorage. Same strictness and
+// same MAX_DEPTH as a spec's `root`: the root node is depth 1.
+export function validateLayoutNode(raw: unknown): LayoutNode | null {
+  const node = validateNode(raw, 1);
+  if (!node || !hasUniqueIds(node)) return null;
+  return node;
+}
+
 export function validateLayoutSpec(x: unknown): LayoutSpec | null {
   if (!isPlainObject(x)) return null;
   if (x.v !== 2) return null;
@@ -218,7 +256,7 @@ export function validateLayoutSpec(x: unknown): LayoutSpec | null {
   if (x.requires !== undefined && x.requires !== "translation") return null;
   if (!isPlainObject(x.rail) || typeof x.rail.visible !== "boolean") return null;
   const root = validateNode(x.root, 1);
-  if (!root) return null;
+  if (!root || !hasUniqueIds(root)) return null;
 
   const spec: LayoutSpec = {
     v: 2,

@@ -4,7 +4,7 @@
 //
 // Not a test framework; failures exit non-zero. Mirrors src/lib/replace.test.mjs.
 
-import { validateLayoutSpec, normalizeSizes } from "./layoutSpec.ts";
+import { validateLayoutSpec, validateLayoutNode, normalizeSizes } from "./layoutSpec.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -177,6 +177,88 @@ function nest(n) {
   rejects((s) => (s.root.children[0].panels[0].id = ""), "panel empty id rejected");
   rejects((s) => (s.root.children[0].size = "big"), "non-numeric size rejected");
   rejects((s) => (s.root = nest(8)), "nesting deeper than cap rejected");
+}
+
+// ─── validateLayoutNode + global id uniqueness ─────────────────────────
+// Region and panel ids must be unique across the whole tree: tree edits dispatch
+// by region id and locate panels by panel id, so a duplicate would make one edit
+// apply twice. Both entry points must enforce it, at any depth.
+{
+  console.log("\n[validateLayoutNode] the valid nested tree passes both entry points");
+  assert(validateLayoutSpec(validSpec()) !== null, "regression: valid spec still accepted");
+  const node = validateLayoutNode(validSpec().root);
+  assert(node !== null, "regression: valid tree accepted as a standalone node");
+  assert(node && node.kind === "split" && node.children.length === 2, "node shape preserved");
+  assert(
+    node && node.children[1].children[1].panels.length === 3,
+    "nested region panels preserved",
+  );
+  assert(
+    validateLayoutNode({ kind: "region", id: "solo", panels: [] }) !== null,
+    "a bare empty region is a valid node",
+  );
+  assert(validateLayoutNode(null) === null, "null is not a valid node");
+  assert(validateLayoutNode({ kind: "bogus" }) === null, "unknown kind is not a valid node");
+  assert(validateLayoutNode(nest(8)) === null, "node validator enforces the same depth cap");
+}
+{
+  console.log("\n[unique ids] duplicate region id rejected by both entry points");
+  // res-b renamed to res-a: two regions share an id, nested two levels deep.
+  const dupRegion = () => {
+    const s = validSpec();
+    s.root.children[1].children[1].id = "res-a";
+    return s;
+  };
+  assert(validateLayoutSpec(dupRegion()) === null, "duplicate region id rejected by spec validator");
+  assert(
+    validateLayoutNode(dupRegion().root) === null,
+    "duplicate region id rejected by node validator",
+  );
+  // Also across different depths (root-level region vs a deeply nested one).
+  const acrossDepths = validSpec();
+  acrossDepths.root.children[1].children[0].id = "scripture";
+  assert(
+    validateLayoutSpec(acrossDepths) === null,
+    "duplicate region id across different depths rejected",
+  );
+}
+{
+  console.log("\n[unique ids] duplicate panel id rejected");
+  const dupAcrossRegions = () => {
+    const s = validSpec();
+    s.root.children[1].children[1].panels[0].id = "notes-1"; // also in res-a
+    return s;
+  };
+  assert(
+    validateLayoutSpec(dupAcrossRegions()) === null,
+    "same panel id in two different regions rejected by spec validator",
+  );
+  assert(
+    validateLayoutNode(dupAcrossRegions().root) === null,
+    "same panel id in two different regions rejected by node validator",
+  );
+
+  const dupWithinRegion = () => {
+    const s = validSpec();
+    s.root.children[1].children[1].panels[1].id = "words-1"; // duplicate inside res-b
+    return s;
+  };
+  assert(
+    validateLayoutSpec(dupWithinRegion()) === null,
+    "duplicated panel id inside ONE region rejected by spec validator",
+  );
+  assert(
+    validateLayoutNode(dupWithinRegion().root) === null,
+    "duplicated panel id inside ONE region rejected by node validator",
+  );
+
+  // A region id and a panel id may coincide — they are separate namespaces.
+  const crossNamespace = validSpec();
+  crossNamespace.root.children[0].panels[0].id = "scripture";
+  assert(
+    validateLayoutSpec(crossNamespace) !== null,
+    "a panel id equal to a region id is still valid (separate namespaces)",
+  );
 }
 
 // ─── normalizeSizes ────────────────────────────────────────────────────
