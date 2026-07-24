@@ -201,6 +201,33 @@ export function deleteUserLayout(id: string): LayoutStore {
   return store;
 }
 
+// Set (or CLEAR, with `tree: null`) a layout's rearranged topology, replacing
+// `sizes` WHOLESALE at the same time.
+//
+// Why this can't be mergeOverride: (a) mergeOverride only assigns `tree` when
+// it's truthy, so there is no way to delete one ("Reset arrangement" needs to);
+// (b) it MERGES `sizes`, but a drop creates and destroys regions, so the caller
+// has to be able to drop dead keys — a merge would resurrect every one of them.
+// Callers prune with layoutTree.pruneSizes and hand the result in here.
+//
+// Never call this for `builtin:classic`: Classic renders from its spec root and
+// must stay byte-identical (see layoutTree.effectiveRoot, which also refuses).
+export function setLayoutTree(
+  layoutId: string,
+  tree: LayoutNode | null,
+  sizes: Record<string, number>,
+): LayoutStore {
+  if (layoutId === CLASSIC_LAYOUT_ID) return loadLayoutStore();
+  const store = loadLayoutStore();
+  const existing = store.overrides[layoutId] ?? {};
+  const next: LayoutOverride = { ...existing, sizes };
+  if (tree) next.tree = tree;
+  else delete next.tree;
+  store.overrides[layoutId] = next;
+  saveLayoutStore(store);
+  return store;
+}
+
 // Deep-merges each present sub-record into the layout's existing override so a
 // caller can set just `sizes` (or just `hidden`, etc.) without clobbering the
 // others.

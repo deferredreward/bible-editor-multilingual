@@ -64,11 +64,16 @@ import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPre
 import { WorkspaceLayout } from "./WorkspaceLayout";
 import { StackedResourcePanel } from "./StackedResourcePanel";
 import { LayoutMenu } from "./LayoutMenu";
+import { PanelChrome } from "./PanelChrome";
+import { RegionDropZone } from "./RegionDropZone";
+import { LayoutDragProvider, type LayoutDragValue } from "./LayoutDragContext";
 import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
 import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
+import { collectRegions, effectiveRoot, movePanel, pruneSizes, type DropTarget } from "../lib/layoutTree";
 import {
   loadLayoutStore,
   mergeOverride,
+  setLayoutTree,
   upsertUserLayout,
   deleteUserLayout,
   setActiveLayoutId as persistActiveLayoutId,
@@ -494,6 +499,17 @@ export function Shell({
   // Save-current-as… / Manage-layouts… dialog visibility (mounted via LayoutMenu).
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  // The panel currently being dragged by its grip (tiled docking), or null.
+  // Lives here because the drag SOURCE (PanelChrome) and the drop TARGETS
+  // (RegionDropZone) are built by renderRegion but land in unrelated branches of
+  // WorkspaceLayout's tree — see LayoutDragContext.
+  const [draggedPanelId, setDraggedPanelId] = useState<string | null>(null);
+  // The layout override record (tree / sizes / minimized) is read fresh out of
+  // localStorage on every render, matching the existing `sizes` pattern — it is
+  // not React state. Bumping this counter is how a drop / minimize / reset
+  // re-renders. Kept deliberately coarse: a topology change is a rare,
+  // user-initiated event.
+  const [layoutRev, setLayoutRev] = useState(0);
   // Server-shipped built-in layouts (with a bundled fallback when the server
   // omits them or a spec fails validation). Was a direct getBuiltinLayouts call
   // in Phase 3; the switcher list + active-layout resolution below are unchanged.
@@ -515,6 +531,17 @@ export function Shell({
     );
   }, [allLayouts, activeLayoutId, projectConfig]);
   const isClassic = activeLayout.id === CLASSIC_LAYOUT_ID;
+  // The active layout's live override (tree / sizes / minimized), re-read from
+  // localStorage rather than held in React state — the existing `sizes` pattern.
+  // `layoutRev` is what forces that re-read after a drop / minimize / reset.
+  //
+  // MUST stay above the `if (!data)` early return further down: every hook below
+  // that return is conditional, so declaring this there made the loading render
+  // and the loaded render disagree on hook count and crashed the Shell.
+  const layoutOverride = useMemo(
+    () => loadLayoutStore().overrides[activeLayout.id],
+    [activeLayout.id, layoutRev],
+  );
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -3086,6 +3113,77 @@ export function Shell({
     <ResourceColumn {...resourceColumnProps} visibleTabs={visibleTabs} initialTab={visibleTabs?.[0]} />
   );
 
+  // ── Arrangeable layouts: tiled docking (drag a panel between regions) ──
+  //
+  // `arrangeable` is the ONE gate on every piece of drag chrome below, and it is
+  // exactly `!isClassic`. builtin:classic renders through WorkspaceLayout's
+  // hand-rolled flexbox branch and must stay byte-identical, so it gets no panel
+  // headers, no drop zones, and no drag context at all.
+  //
+  // This is deliberately a SEPARATE notion from renderRegion's
+  // `display !== "tabs" && panels.length > 1` gate below — that condition still
+  // reads exactly as it did, so the stacked-multi-panel branch remains
+  // unreachable from Classic's tabbed resources region.
+  const arrangeable = !isClassic;
+
+  // The RENDERED topology = the user's rearrangement when there is one, else the
+  // spec's root. effectiveRoot is the single source of truth and refuses to
+  // apply a tree override to Classic.
+  const effRoot = effectiveRoot(activeLayout, layoutOverride);
+  // WorkspaceLayout gets a spec whose `root` is ALREADY effective, so it needs no
+  // knowledge of overrides. Same object when there is no override, so Classic's
+  // identity check and memoization behaviour are unchanged.
+  const renderedLayout: LayoutSpec =
+    effRoot === activeLayout.root ? activeLayout : { ...activeLayout, root: effRoot };
+  // Persisted per-node sizes for the active (non-classic) layout. Classic uses
+  // the effectiveSplit divider path and ignores these.
+  const sizes = layoutOverride?.sizes ?? {};
+  const minimizedPanels = layoutOverride?.minimized ?? {};
+
+  const onSizesChange = (patch: Record<string, number>) => {
+    mergeOverride(activeLayout.id, { sizes: { ...sizes, ...patch } });
+  };
+
+  // A panel's live minimized state: the override wins, falling back to the
+  // spec's `PanelInstance.minimized` runtime default (which is what
+  // handleSaveLayout bakes).
+  const isPanelMinimized = (panel: PanelInstance): boolean =>
+    minimizedPanels[panel.id] ?? !!panel.minimized;
+  const setPanelMinimized = (panelId: string, value: boolean) => {
+    mergeOverride(activeLayout.id, { minimized: { [panelId]: value } });
+    setLayoutRev((n) => n + 1);
+  };
+
+  // Commit a drop: move the panel in the EFFECTIVE tree and persist the whole
+  // new tree. `sizes` is pruned at the same time because a drop creates and
+  // destroys regions — and nextRegionId recycles `region-<n>` ids, so a leftover
+  // key could later mis-size a brand-new region.
+  const commitDrop = (target: DropTarget) => {
+    const panelId = draggedPanelId;
+    setDraggedPanelId(null);
+    if (!panelId || !arrangeable) return;
+    const next = movePanel(effRoot, panelId, target);
+    if (next === effRoot) return; // no-op drop (engine rejected it) — persist nothing
+    setLayoutTree(activeLayout.id, next, pruneSizes(sizes, next, activeLayout.id));
+    setLayoutRev((n) => n + 1);
+  };
+
+  const layoutDrag: LayoutDragValue = {
+    draggedPanelId,
+    beginDrag: (id: string) => setDraggedPanelId(id),
+    endDrag: () => setDraggedPanelId(null),
+    commitDrop,
+  };
+
+  // "Reset arrangement" only makes sense for a non-Classic layout that actually
+  // has a rearrangement to throw away.
+  const hasTreeOverride = arrangeable && !!layoutOverride?.tree;
+  const handleResetArrangement = () => {
+    // Back to the spec's own topology; sizes keyed to the discarded tree go too.
+    setLayoutTree(activeLayout.id, null, pruneSizes(sizes, activeLayout.root, activeLayout.id));
+    setLayoutRev((n) => n + 1);
+  };
+
   const renderPanelContent = (panel: PanelInstance): ReactNode => {
     switch (panel.type) {
       case "scripture":
@@ -3104,7 +3202,7 @@ export function Shell({
     }
   };
 
-  const renderRegion = (region: PanelRegion): ReactNode => {
+  const renderRegionContent = (region: PanelRegion): ReactNode => {
     // Multi-panel STACKED region → stack each panel separately (the new
     // capability). Tabbed regions (display:"tabs", e.g. Classic's resources
     // column with its notes/words/questions tabs) are EXCLUDED here and fall
@@ -3113,23 +3211,39 @@ export function Shell({
     if (region.display !== "tabs" && region.panels.length > 1) {
       return (
         <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {region.panels.map((p) => (
-            <Box
-              key={p.id}
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                "&:last-of-type": { borderBottom: 0 },
-              }}
-            >
-              {renderPanelContent(p)}
-            </Box>
-          ))}
+          {region.panels.map((p) => {
+            const min = arrangeable && isPanelMinimized(p);
+            return (
+              <Box
+                key={p.id}
+                sx={{
+                  // A minimized panel shrinks to its header instead of holding a
+                  // full flex share.
+                  flex: min ? "0 0 auto" : 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "&:last-of-type": { borderBottom: 0 },
+                }}
+              >
+                {arrangeable ? (
+                  <PanelChrome
+                    panelId={p.id}
+                    panelType={p.type}
+                    minimized={min}
+                    onToggleMinimized={() => setPanelMinimized(p.id, !min)}
+                  >
+                    {renderPanelContent(p)}
+                  </PanelChrome>
+                ) : (
+                  renderPanelContent(p)
+                )}
+              </Box>
+            );
+          })}
         </Box>
       );
     }
@@ -3149,11 +3263,38 @@ export function Shell({
     );
   };
 
-  // Persisted per-node sizes for the active (non-classic) layout. Classic uses
-  // the effectiveSplit divider path and ignores these.
-  const sizes = loadLayoutStore().overrides[activeLayout.id]?.sizes ?? {};
-  const onSizesChange = (patch: Record<string, number>) => {
-    mergeOverride(activeLayout.id, { sizes: { ...sizes, ...patch } });
+  const renderRegion = (region: PanelRegion): ReactNode => {
+    const content = renderRegionContent(region);
+    // ── THE CLASSIC GUARD ───────────────────────────────────────────────
+    // Classic returns its region content RAW — no wrapper element, no drop
+    // handlers, no header chrome. Every line of new docking code sits on the
+    // other side of this early return, so it is structurally unreachable from
+    // builtin:classic even if some other guard were to regress.
+    if (!arrangeable) return content;
+
+    // A single-panel region still needs a grip, or docking would be one-way: a
+    // panel dragged out into its own region could never be dragged back.
+    // (The multi-panel branch above already added its own per-panel chrome.)
+    const lone = region.panels.length === 1 ? region.panels[0] : null;
+    const wrapped =
+      lone ? (
+        <PanelChrome
+          panelId={lone.id}
+          panelType={lone.type}
+          minimized={isPanelMinimized(lone)}
+          onToggleMinimized={() => setPanelMinimized(lone.id, !isPanelMinimized(lone))}
+        >
+          {content}
+        </PanelChrome>
+      ) : (
+        content
+      );
+
+    return (
+      <RegionDropZone key={region.id} regionId={region.id}>
+        {wrapped}
+      </RegionDropZone>
+    );
   };
 
   // Switch the active layout. A switch can hide a dirty alignment panel, so it
@@ -3196,10 +3337,24 @@ export function Shell({
   // Classic-derived save renders through the generic (non-classic) path, which
   // is visually equivalent. validateLayoutSpec sanitizes + guards the clone.
   const handleSaveLayout = (name: string) => {
-    const clonedRoot = JSON.parse(JSON.stringify(activeLayout.root)) as LayoutNode;
+    // Clone the EFFECTIVE tree, not the spec's — otherwise "Save current as…"
+    // would silently throw away the user's rearrangement, which is the one thing
+    // they most likely just did.
+    const clonedRoot = JSON.parse(JSON.stringify(effRoot)) as LayoutNode;
     applyEffectiveSizes(clonedRoot, sizes, activeLayout.id);
     const sp = findScripturePanel(clonedRoot);
     if (sp) sp.config = { ...(sp.config ?? {}), mode, versions: [...enabledVersions] };
+    // Bake the live minimized state too — same "the saved spec reproduces what
+    // you see" principle as sizes / mode / versions. PanelInstance.minimized is
+    // exactly the runtime default for this.
+    for (const region of collectRegions(clonedRoot)) {
+      for (const panel of region.panels) {
+        // The EFFECTIVE value: an absent override must not erase a spec-level
+        // `minimized: true` that the source layout already carried.
+        if (isPanelMinimized(panel)) panel.minimized = true;
+        else delete panel.minimized;
+      }
+    }
     const candidate: LayoutSpec = {
       v: 2,
       id: "user:" + crypto.randomUUID(),
@@ -3292,6 +3447,9 @@ export function Shell({
         onSelectLayout={selectLayout}
         onSaveLayoutAs={() => setSaveAsOpen(true)}
         onManageLayouts={() => setManageOpen(true)}
+        // Passed only when there is something to reset, which is how the menu
+        // item stays hidden for Classic and for an untouched layout.
+        onResetArrangement={hasTreeOverride ? handleResetArrangement : undefined}
       />
       <ExportUsfmButton
         ref={exportUsfmRef}
@@ -3321,8 +3479,9 @@ export function Shell({
           })}
         </Alert>
       )}
+      <LayoutDragProvider value={layoutDrag}>
       <WorkspaceLayout
-        spec={activeLayout}
+        spec={renderedLayout}
         renderRegion={renderRegion}
         sizes={sizes}
         onSizesChange={onSizesChange}
@@ -3367,6 +3526,7 @@ export function Shell({
           </>
         }
       />
+      </LayoutDragProvider>
       <ChapterBoard
         open={boardOpen}
         onClose={() => setBoardOpen(false)}

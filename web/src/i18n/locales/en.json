@@ -192,7 +192,23 @@
       "switchHint": "switch"
     }
   },
+  "panelTitle": {
+    "scripture": "Scripture",
+    "original": "Original language",
+    "notes": "translationNotes",
+    "words": "translationWords",
+    "questions": "translationQuestions",
+    "taArticle": "translationAcademy article",
+    "twArticle": "translationWords article",
+    "articleList": "Articles",
+    "alignment": "Alignment",
+    "search": "Search"
+  },
   "layout": {
+    "dragToMove": "Drag to move this panel",
+    "minimizePanel": "Minimize panel",
+    "expandPanel": "Expand panel",
+    "resetArrangement": "Reset arrangement",
     "myLayouts": "My layouts",
     "saveAs": "Save current as…",
     "manage": "Manage layouts…",

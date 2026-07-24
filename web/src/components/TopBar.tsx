@@ -50,6 +50,7 @@ import TuneIcon from "@mui/icons-material/Tune";
 import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import TranslateIcon from "@mui/icons-material/Translate";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import AppsIcon from "@mui/icons-material/Apps";
@@ -135,6 +136,7 @@ function LayoutSwitcher({
   onSelectLayout,
   onSaveLayoutAs,
   onManageLayouts,
+  onResetArrangement,
 }: {
   layouts: LayoutSpec[];
   userLayouts?: LayoutSpec[];
@@ -142,6 +144,10 @@ function LayoutSwitcher({
   onSelectLayout: (id: string) => void;
   onSaveLayoutAs?: () => void;
   onManageLayouts?: () => void;
+  // Discard the user's dragged-panel arrangement for the ACTIVE layout. Shell
+  // passes it only when the active layout is non-Classic AND actually has a tree
+  // override, so the item's presence is itself the availability test.
+  onResetArrangement?: () => void;
 }) {
   const { t } = useTranslation();
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -185,7 +191,20 @@ function LayoutSwitcher({
           </ListSubheader>
         )}
         {userLayouts.map(renderLayoutItem)}
-        {onSaveLayoutAs && <Divider />}
+        {(onSaveLayoutAs || onResetArrangement) && <Divider />}
+        {onResetArrangement && (
+          <MenuItem
+            onClick={() => {
+              onResetArrangement();
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon>
+              <RestartAltIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{t("layout.resetArrangement")}</ListItemText>
+          </MenuItem>
+        )}
         {onSaveLayoutAs && (
           <MenuItem
             onClick={() => {
@@ -270,6 +289,7 @@ interface Props {
   userLayouts?: LayoutSpec[];
   onSaveLayoutAs?: () => void;
   onManageLayouts?: () => void;
+  onResetArrangement?: () => void;
 }
 
 export function TopBar({
@@ -296,6 +316,7 @@ export function TopBar({
   userLayouts,
   onSaveLayoutAs,
   onManageLayouts,
+  onResetArrangement,
 }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
@@ -709,6 +730,7 @@ export function TopBar({
           onSelectLayout={onSelectLayout}
           onSaveLayoutAs={onSaveLayoutAs}
           onManageLayouts={onManageLayouts}
+          onResetArrangement={onResetArrangement}
         />
       )}
 

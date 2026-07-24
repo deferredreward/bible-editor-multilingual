@@ -51,6 +51,11 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, Math.trunc(n)));
 }
 
+// Kept in sync with builtinLayouts.CLASSIC_LAYOUT_ID. Inlined (not imported) for
+// the same reason layoutStore inlines it: importing builtinLayouts would pull
+// React (via useProjectConfig) into this leaf module and its strip-types tests.
+const CLASSIC_LAYOUT_ID = "builtin:classic";
+
 // ─── Queries ───────────────────────────────────────────────────────────
 
 // All regions, in tree order (depth-first, children left to right).
@@ -80,6 +85,28 @@ export function findPanelRegion(root: LayoutNode, panelId: string): PanelRegion 
     if (region.panels.some((p) => p.id === panelId)) return region;
   }
   return null;
+}
+
+// The split that holds `regionId` as a DIRECT child, or null (the region is the
+// root, or does not exist).
+function findParentSplit(node: LayoutNode, regionId: string): SplitNode | null {
+  if (isRegion(node)) return null;
+  for (const child of node.children) {
+    if (isRegion(child) && child.id === regionId) return node;
+  }
+  for (const child of node.children) {
+    const found = findParentSplit(child, regionId);
+    if (found) return found;
+  }
+  return null;
+}
+
+// A direct child region's fraction within its parent split. A missing `size`
+// means "equal share" — the same reading normalizeSizes uses.
+function childFraction(parent: SplitNode, regionId: string): number {
+  const equalShare = 1 / Math.max(1, parent.children.length);
+  const child = parent.children.find((c) => isRegion(c) && c.id === regionId);
+  return child !== undefined && child.size !== undefined ? child.size : equalShare;
 }
 
 // Deepest node depth, with the root counted as depth 1 (matching layoutSpec's
@@ -228,6 +255,33 @@ export function movePanel(root: LayoutNode, panelId: string, target: DropTarget)
     display: "stacked",
     panels: [panel],
   };
+
+  // SIZE ACCOUNTING — an untouched sibling must never change width.
+  //
+  // The new split inherits the target region's fraction, and its two halves share
+  // it, so a plain split leaves every sibling alone. But when the drop takes the
+  // LAST panel out of a sibling region, that region is deleted by normalizeTree
+  // and its fraction is freed. normalizeSizes then spreads the freed space
+  // PROPORTIONALLY over every survivor — including regions the user never
+  // touched. Measured regression: a 3-column row at 0.25 / 0.25 / 0.5, dragging
+  // the lone panel of column 1 onto column 2's edge, produced
+  // 0.167 / 0.167 / 0.667 — the user dropped on the left and the RIGHT column
+  // got wider.
+  //
+  // Fix: hand the vacated fraction to the new split up front, so the children
+  // already sum to 1 and normalizeSizes has nothing to redistribute. The new
+  // region effectively takes over the space of the column it emptied, which is
+  // also what the gesture looks like. Only applies when the emptied region is an
+  // immediate SIBLING of the target — across branches the vacated space belongs
+  // to a different split's accounting and plain renormalization is correct there.
+  const emptiesSource = !sameRegion && from.panels.length === 1;
+  const parent = emptiesSource ? findParentSplit(root, from.id) : null;
+  const siblings =
+    parent !== null && parent.children.some((c) => isRegion(c) && c.id === targetRegion.id);
+  const splitSize = siblings
+    ? childFraction(parent, targetRegion.id) + childFraction(parent, from.id)
+    : targetRegion.size;
+
   const next = mapRegions(root, (region) => {
     let kept: PanelRegion = region;
     if (region.id === from.id) {
@@ -240,8 +294,9 @@ export function movePanel(root: LayoutNode, panelId: string, target: DropTarget)
       orientation: placement.orientation,
       children: placement.side === "before" ? [newRegion, inner] : [inner, newRegion],
     };
-    // The new split takes the target region's place, so it inherits its share.
-    if (region.size !== undefined) split.size = region.size;
+    // The new split takes the target region's place, so it inherits its share
+    // (plus any fraction vacated by a sibling this drop emptied — see above).
+    if (splitSize !== undefined) split.size = splitSize;
     return split;
   });
 
@@ -249,6 +304,77 @@ export function movePanel(root: LayoutNode, panelId: string, target: DropTarget)
   // Splitting is the only edit that can deepen the tree; refuse rather than
   // produce a tree layoutSpec's validator would reject on reload.
   if (depthOf(out) > MAX_DEPTH) return root;
+  return out;
+}
+
+// ─── Effective topology ────────────────────────────────────────────────
+
+// THE single source of truth for "what tree is actually on screen".
+//
+// A layout's rendered topology is the user's persisted rearrangement
+// (`LayoutOverride.tree`) when there is one, otherwise the spec's own `root`.
+// Everything that reads the tree — the renderer, the drop commit, "Save current
+// as…" — must go through here so they can never disagree.
+//
+// Two hard guards:
+//  1. `builtin:classic` ALWAYS resolves to its spec root. Classic renders
+//     through WorkspaceLayout's hand-rolled flexbox branch and must stay
+//     byte-identical; a tree override must never be able to reach it, even if
+//     one somehow lands in localStorage.
+//  2. An override whose PANEL SET differs from the spec's is discarded. Built-in
+//     specs evolve (panels get added, renamed, removed); a stale override could
+//     otherwise drop the scripture panel entirely or render panels the spec no
+//     longer defines. Falling back to the spec is always safe.
+export function effectiveRoot(
+  spec: { id: string; root: LayoutNode },
+  override?: { tree?: LayoutNode } | null,
+): LayoutNode {
+  if (spec.id === CLASSIC_LAYOUT_ID) return spec.root;
+  const tree = override?.tree;
+  if (!tree) return spec.root;
+  const specIds = collectPanels(spec.root).map((p) => p.id).sort();
+  const treeIds = collectPanels(tree).map((p) => p.id).sort();
+  if (specIds.length !== treeIds.length) return spec.root;
+  for (let i = 0; i < specIds.length; i++) {
+    if (specIds[i] !== treeIds[i]) return spec.root;
+  }
+  return tree;
+}
+
+// Every persistence key a rendered tree can produce for `LayoutOverride.sizes`.
+// MUST mirror WorkspaceLayout's `childId` path scheme exactly: only a split's
+// CHILDREN carry a size, keyed by region id, or `split:<path>` for a nested
+// split (splits have no id in the schema). `rootPath` seeds from the layout id,
+// as WorkspaceLayout seeds `renderNode(spec.root, spec.id)`.
+//
+// Used to prune dead keys after a drop: a drop creates and destroys regions, so
+// stale keys would otherwise accumulate forever — and `nextRegionId` recycles
+// `region-<n>` ids, so a leftover key could later mis-size a brand-new region.
+export function collectSizeKeys(root: LayoutNode, rootPath: string): Set<string> {
+  const keys = new Set<string>();
+  const walk = (node: LayoutNode, path: string): void => {
+    if (isRegion(node)) return;
+    node.children.forEach((child, i) => {
+      const cpath = `${path}.${i}`;
+      keys.add(isRegion(child) ? child.id : `split:${cpath}`);
+      walk(child, cpath);
+    });
+  };
+  walk(root, rootPath);
+  return keys;
+}
+
+// Drop every `sizes` entry that the given tree can no longer produce a key for.
+export function pruneSizes(
+  sizes: Record<string, number>,
+  root: LayoutNode,
+  rootPath: string,
+): Record<string, number> {
+  const keys = collectSizeKeys(root, rootPath);
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(sizes)) {
+    if (keys.has(k)) out[k] = v;
+  }
   return out;
 }
 

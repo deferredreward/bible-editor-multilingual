@@ -12,6 +12,7 @@ import {
   upsertUserLayout,
   deleteUserLayout,
   mergeOverride,
+  setLayoutTree,
 } from "./layoutStore.ts";
 
 let failed = 0;
@@ -335,6 +336,35 @@ const treeOverride = () => ({
   const ov = loadLayoutStore().overrides["builtin:flexible"];
   assert(ov.tree === undefined, "tree with a bogus panel type dropped");
   assert(ov.sizes.scripture === 0.5, "rest of the override kept");
+}
+
+console.log("\nsetLayoutTree - wholesale tree + sizes replace, and the Classic refusal");
+{
+  installStorage();
+  const tree = { kind: "region", id: "region-1", panels: [{ id: "notes-1", type: "notes" }] };
+  mergeOverride("builtin:flexible", { sizes: { "res-a": 0.5, stale: 0.9 }, minimized: { "notes-1": true } });
+
+  setLayoutTree("builtin:flexible", tree, { "region-1": 0.7 });
+  const ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov.tree && ov.tree.id === "region-1", "tree persisted");
+  assert(
+    Object.keys(ov.sizes).length === 1 && ov.sizes["region-1"] === 0.7,
+    "sizes REPLACED wholesale (stale keys gone), not merged",
+  );
+  assert(ov.minimized["notes-1"] === true, "unrelated override fields survive");
+
+  setLayoutTree("builtin:flexible", null, { "res-a": 0.5 });
+  const cleared = loadLayoutStore().overrides["builtin:flexible"];
+  assert(cleared.tree === undefined, "tree: null CLEARS the override (Reset arrangement)");
+  assert(cleared.sizes["res-a"] === 0.5, "sizes replaced again on clear");
+  assert(cleared.minimized["notes-1"] === true, "minimized still survives the clear");
+
+  // Classic must never carry a tree override: it renders from its spec root.
+  setLayoutTree("builtin:classic", tree, { scripture: 0.5 });
+  assert(
+    loadLayoutStore().overrides["builtin:classic"] === undefined,
+    "setLayoutTree REFUSES builtin:classic outright",
+  );
 }
 
 if (failed > 0) {

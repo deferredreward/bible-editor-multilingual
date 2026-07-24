@@ -7,10 +7,13 @@
 import {
   collectPanels,
   collectRegions,
+  collectSizeKeys,
+  effectiveRoot,
   findPanelRegion,
   movePanel,
   nextRegionId,
   normalizeTree,
+  pruneSizes,
   removePanel,
 } from "./layoutTree.ts";
 
@@ -22,6 +25,10 @@ function assert(cond, msg) {
   } else {
     console.log(`  ok: ${msg}`);
   }
+}
+
+function eqArr(actual, expected, msg) {
+  assert(JSON.stringify(actual) === JSON.stringify(expected), `${msg} (got ${JSON.stringify(actual)})`);
 }
 
 const near = (a, b, tol = 1e-9) => Math.abs(a - b) <= tol;
@@ -496,6 +503,216 @@ const regionById = (root, id) => collectRegions(root).find((r) => r.id === id);
   outRegion.panels.push({ id: "intruder", type: "search" });
   assert(JSON.stringify(root) === snapshot, "mutating the OUTPUT does not reach the input");
   assert(clone(root) !== root, "sanity: clone helper works");
+}
+
+console.log("\neffectiveRoot - the single source of truth for the rendered tree");
+{
+  const spec = { id: "builtin:flexible", root: fixture() };
+  assert(effectiveRoot(spec, undefined) === spec.root, "no override -> the spec's own root");
+  assert(effectiveRoot(spec, {}) === spec.root, "override with no tree -> the spec's own root");
+
+  // A valid rearrangement (same panels, different topology) is honoured.
+  const rearranged = movePanel(spec.root, "notes-1", {
+    regionId: "res-b",
+    placement: { kind: "into", index: 0 },
+  });
+  assert(rearranged !== spec.root, "sanity: the rearrangement really differs");
+  assert(
+    effectiveRoot(spec, { tree: rearranged }) === rearranged,
+    "override tree with the same panel SET -> the override wins",
+  );
+
+  // THE CLASSIC INVARIANT: a tree override can never reach builtin:classic.
+  const classicSpec = { id: "builtin:classic", root: fixture() };
+  assert(
+    effectiveRoot(classicSpec, { tree: rearranged }) === classicSpec.root,
+    "builtin:classic ALWAYS resolves to its spec root, override or not",
+  );
+
+  // A stale override (spec panels changed) is discarded rather than rendered.
+  const missingPanel = removePanel(rearranged, "questions-1");
+  assert(
+    effectiveRoot(spec, { tree: missingPanel }) === spec.root,
+    "override missing a spec panel -> fall back to the spec root",
+  );
+  const extra = clone(rearranged);
+  regionById(extra, "res-b").panels.push({ id: "ghost-1", type: "search" });
+  assert(
+    effectiveRoot(spec, { tree: extra }) === spec.root,
+    "override with an extra panel -> fall back to the spec root",
+  );
+}
+
+console.log("\ncollectSizeKeys / pruneSizes mirror WorkspaceLayout's childId scheme");
+{
+  const keys = collectSizeKeys(fixture(), "builtin:flexible");
+  // Root vertical split's children: region `scripture` plus a nested split at
+  // path builtin:flexible.1 -> `split:builtin:flexible.1`; that split's children
+  // are the two regions.
+  const expected = ["scripture", "split:builtin:flexible.1", "res-a", "res-b"].sort();
+  eqArr([...keys].sort(), expected, "every split child yields exactly one size key");
+
+  const pruned = pruneSizes(
+    { scripture: 0.3, "res-a": 0.4, "region-9": 0.5, "split:stale.0": 0.6 },
+    fixture(),
+    "builtin:flexible",
+  );
+  eqArr(
+    Object.keys(pruned).sort(),
+    ["res-a", "scripture"],
+    "pruneSizes drops keys the tree can no longer produce (dead regions + dead split paths)",
+  );
+  assert(pruned.scripture === 0.3 && pruned["res-a"] === 0.4, "surviving values are untouched");
+
+  // The real motivation: a drop that EMPTIES a region deletes it, so its key must
+  // go with it. Drag both of res-a's panels into res-b and res-a disappears.
+  const step1 = movePanel(fixture(), "notes-1", {
+    regionId: "res-b",
+    placement: { kind: "into" },
+  });
+  const afterDrop = movePanel(step1, "ta-1", { regionId: "res-b", placement: { kind: "into" } });
+  assert(!collectRegions(afterDrop).some((r) => r.id === "res-a"), "sanity: res-a was emptied and collapsed away");
+  const survivors = pruneSizes(
+    { "res-a": 0.5, "res-b": 0.5, scripture: 0.4 },
+    afterDrop,
+    "builtin:flexible",
+  );
+  assert(
+    !("res-a" in survivors),
+    "a region emptied by the drop loses its sizes key (nextRegionId recycles ids)",
+  );
+}
+
+console.log("\n[sizes] a split must never change an UNTOUCHED sibling's fraction");
+{
+  // Ordered [id, size] pairs of a split's direct children.
+  const sharesOf = (node) =>
+    node.children.map((c) => [c.kind === "region" ? c.id : "split", c.size]);
+
+  // Two sibling regions at 0.5 / 0.5. Splitting the FIRST along the SAME
+  // orientation flattens into three siblings; the two halves share the 0.5 that
+  // the split region used to hold, and the sibling keeps its 0.5 exactly.
+  const pair = (aSize, bSize) => ({
+    kind: "split",
+    orientation: "horizontal",
+    children: [
+      {
+        kind: "region",
+        id: "a",
+        size: aSize,
+        panels: [{ id: "p1", type: "notes" }, { id: "p2", type: "words" }],
+      },
+      { kind: "region", id: "b", size: bSize, panels: [{ id: "p3", type: "questions" }] },
+    ],
+  });
+
+  const before = movePanel(pair(0.5, 0.5), "p2", {
+    regionId: "a",
+    placement: { kind: "split", orientation: "horizontal", side: "before" },
+  });
+  eqArr(
+    sharesOf(before),
+    [["region-1", 0.25], ["a", 0.25], ["b", 0.5]],
+    "side:before -> 0.25 / 0.25 / 0.5 in that order, sibling 'b' untouched",
+  );
+  assert(before.children[2].size === 0.5, "side:before: 'b' is EXACTLY 0.5, not merely close");
+
+  const after = movePanel(pair(0.5, 0.5), "p2", {
+    regionId: "a",
+    placement: { kind: "split", orientation: "horizontal", side: "after" },
+  });
+  eqArr(
+    sharesOf(after),
+    [["a", 0.25], ["region-1", 0.25], ["b", 0.5]],
+    "side:after -> the mirror: 0.25 / 0.25 / 0.5, new region second",
+  );
+  assert(after.children[2].size === 0.5, "side:after: 'b' is EXACTLY 0.5");
+
+  // Uneven sizes: the untouched sibling must keep its exact fraction, not a
+  // renormalized approximation of it.
+  const uneven = movePanel(pair(0.3, 0.7), "p2", {
+    regionId: "a",
+    placement: { kind: "split", orientation: "horizontal", side: "before" },
+  });
+  eqArr(
+    sharesOf(uneven),
+    [["region-1", 0.15], ["a", 0.15], ["b", 0.7]],
+    "0.3 / 0.7 -> 0.15 / 0.15 / 0.7",
+  );
+  assert(uneven.children[2].size === 0.7, "uneven: 'b' is EXACTLY 0.7");
+  assertSizesSumToOne(uneven, "uneven split");
+}
+
+console.log("\n[sizes] REGRESSION: a drop that EMPTIES a sibling region");
+{
+  // Observed in the browser (PR B): a 3-column row at 0.25 / 0.25 / 0.5. Dragging
+  // the LONE panel of column 1 onto column 2's inline-start edge deleted column 1
+  // and freed its 0.25 — which normalizeSizes then spread PROPORTIONALLY over
+  // every survivor, giving 0.167 / 0.167 / 0.667. The user dropped on the left
+  // column and the untouched RIGHT column got wider.
+  //
+  // Correct behaviour: the new region takes over the vacated 0.25, column 2 keeps
+  // its 0.25, and the untouched column 3 keeps EXACTLY 0.5.
+  const threeCols = () => ({
+    kind: "split",
+    orientation: "horizontal",
+    children: [
+      { kind: "region", id: "c1", size: 0.25, panels: [{ id: "lone-1", type: "questions" }] },
+      {
+        kind: "region",
+        id: "c2",
+        size: 0.25,
+        panels: [{ id: "notes-1", type: "notes" }, { id: "ta-1", type: "taArticle" }],
+      },
+      { kind: "region", id: "c3", size: 0.5, panels: [{ id: "words-1", type: "words" }] },
+    ],
+  });
+
+  const out = movePanel(threeCols(), "lone-1", {
+    regionId: "c2",
+    placement: { kind: "split", orientation: "horizontal", side: "before" },
+  });
+  const shares = out.children.map((c) => [c.kind === "region" ? c.id : "split", c.size]);
+  eqArr(
+    shares,
+    [["region-1", 0.25], ["c2", 0.25], ["c3", 0.5]],
+    "emptied sibling's fraction goes to the NEW region, not to everyone",
+  );
+  assert(
+    out.children[2].size === 0.5,
+    "the untouched third column is EXACTLY 0.5 (was 0.667 before the fix)",
+  );
+  assert(
+    !collectRegions(out).some((r) => r.id === "c1"),
+    "the emptied column is gone from the tree",
+  );
+  assert(collectPanels(out).length === 4, "no panel lost");
+  assertSizesSumToOne(out, "emptied-sibling drop");
+
+  // The same drop with side:"after" keeps the invariant.
+  const outAfter = movePanel(threeCols(), "lone-1", {
+    regionId: "c2",
+    placement: { kind: "split", orientation: "horizontal", side: "after" },
+  });
+  assert(
+    outAfter.children[2].size === 0.5,
+    "side:after on the emptied-sibling case also leaves column 3 at exactly 0.5",
+  );
+
+  // ACROSS branches there is no sibling accounting to preserve: the emptied
+  // region's parent collapses on its own, and plain renormalization is correct.
+  // Pinned so the compensation cannot leak into that case.
+  const crossBranch = movePanel(fixture(), "scripture-1", {
+    regionId: "res-a",
+    placement: { kind: "split", orientation: "horizontal", side: "before" },
+  });
+  assert(
+    !collectRegions(crossBranch).some((r) => r.id === "scripture"),
+    "cross-branch: the emptied scripture region is gone",
+  );
+  assertSizesSumToOne(crossBranch, "cross-branch drop");
+  const resB = regionById(crossBranch, "res-b");
+  assert(resB.size === 0.5, `cross-branch: res-b keeps 0.5 (got ${resB.size})`);
 }
 
 if (failed > 0) {
