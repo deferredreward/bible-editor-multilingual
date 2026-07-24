@@ -18,10 +18,12 @@ import {
   serializeTermsCsv,
   dedupeTerms,
   termKey,
+  termGroupKey,
   termInvariantError,
   parseIfMatch,
   escapeLikeParam,
   type TermImport,
+  type ParsedTerm,
 } from "./translationMemoryLib.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { workflowRunId } from "./exports.ts";
@@ -483,9 +485,47 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
     `SELECT concept_id, source_term, target_term, status FROM terminology WHERE deleted_at IS NULL`,
   ).all<{ concept_id: string; source_term: string; target_term: string | null; status: string }>();
   const existingKeys = new Set((existingRows.results ?? []).map((r) => termKey(r)));
+  // Same rows keyed by the *narrower* pre-0063 identity (concept + source +
+  // status) → the renderings already on file. Since 0063, an incoming row whose
+  // target_term differs from what is stored no longer updates that row: it is a
+  // new sibling rendering and gets inserted (which is correct per
+  // CONTEXT-REPO-CONTRACT.md §3.3). But the everyday workflow "export, fix a
+  // typo in target_term, re-import" *means* replace, and would otherwise leave
+  // both the typo and the fix live and equally preferred — the nightly context
+  // export would ship both to the bot, and the shrink guard can never notice
+  // because the row count only grows. So warn: the operator sees, per line,
+  // that this appends rather than replaces.
+  const existingByGroup = new Map<string, string[]>();
+  for (const r of existingRows.results ?? []) {
+    const gk = `${termGroupKey(r)}\u0000${r.status}`;
+    const list = existingByGroup.get(gk);
+    if (list) list.push(r.target_term ?? "");
+    else existingByGroup.set(gk, [r.target_term ?? ""]);
+  }
   let added = 0;
   let updated = 0;
-  for (const t of deduped) (existingKeys.has(termKey(t)) ? updated++ : added++);
+  const appendWarnings: { line: number; message: string }[] = [];
+  for (const t of deduped) {
+    if (existingKeys.has(termKey(t))) {
+      updated++;
+      continue;
+    }
+    added++;
+    const siblings = existingByGroup.get(`${termGroupKey(t)}\u0000${t.status}`);
+    if (siblings?.length) {
+      const have = siblings.map((s) => `"${s}"`).join(", ");
+      appendWarnings.push({
+        line: t.line,
+        message:
+          `adds a new rendering "${t.target_term ?? ""}" to a concept that already has ${have} ` +
+          `with the same status — if you meant to replace it, edit or delete the old rendering ` +
+          `(import never removes rows)`,
+      });
+    }
+  }
+  // One list for the client, ordered by line: the existing UI renders
+  // parseWarnings as a per-line list, so a mixed-up order reads as noise.
+  const parseWarnings = [...warnings, ...appendWarnings].sort((a, b) => a.line - b.line);
 
   if (dryRun)
     return c.json({
@@ -493,24 +533,26 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
       added,
       updated,
       parseErrors: errors,
-      parseWarnings: warnings,
+      parseWarnings,
       total: deduped.length,
     });
 
   const userId = currentUserId(c);
   const now = Math.floor(Date.now() / 1000);
-  // With target_term now part of the identity (0063), `SET target_term = ?1` is a
-  // no-op by construction — the matched row already holds that rendering. Left
-  // in place to keep the statement shape; the update path now only meaningfully
-  // changes replacement / comment / tw_link / source_status.
-  // Upsert each row: UPDATE by the same trim+lowercase identity termKey() uses
-  // (so applied writes agree with the dry-run count above, and case/whitespace-
-  // variant CSV rows update in place instead of creating a duplicate); INSERT
-  // the misses. Batched via DB.batch() in chunks so a large import stays well
-  // under the Workers ~1000-subrequest cap (CLAUDE.md documents this exact
-  // failure class from the nightly export/reimport path).
+  // Upsert each row: UPDATE by the same LOWER(TRIM(...)) identity termKey()
+  // mirrors (so applied writes agree with the dry-run counts above, and case/
+  // whitespace-variant CSV rows update in place instead of creating a
+  // duplicate); INSERT the misses. Batched via DB.batch() in chunks so a large
+  // import stays well under the Workers ~1000-subrequest cap (CLAUDE.md
+  // documents this exact failure class from the nightly export/reimport path).
+  //
+  // `SET target_term = ?1` is nearly a no-op since 0063 made target_term part of
+  // the identity — the matched row already holds this rendering modulo case and
+  // outer spaces, which the SET normalizes to exactly what the CSV said. The
+  // substantive changes on the update path are replacement / comment / tw_link /
+  // source_status.
   const CHUNK = 100;
-  const misses: TermImport[] = [];
+  const misses: ParsedTerm[] = [];
   for (let i = 0; i < deduped.length; i += CHUNK) {
     const chunk = deduped.slice(i, i + CHUNK);
     const results = await c.env.DB.batch(
@@ -574,7 +616,7 @@ translationMemory.post("/terms/import", requireEditor, async (c) => {
     added,
     updated,
     parseErrors: errors,
-    parseWarnings: warnings,
+    parseWarnings,
     total: deduped.length,
   });
 });

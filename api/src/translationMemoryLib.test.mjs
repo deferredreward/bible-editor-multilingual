@@ -12,6 +12,7 @@ import {
   REGISTERS,
   isTermStatus,
   parseCsvRows,
+  sqlFold,
   parseTermsCsv,
   serializeTermsCsv,
   dedupeTerms,
@@ -41,17 +42,17 @@ console.log("[parseCsvRows] RFC-4180 quoting");
 {
   const rows = parseCsvRows('a,b,c\r\n"quoted, comma","has ""quote""","line\nbreak"\n');
   assert(rows.length === 2, "two rows parsed");
-  assert(rows[0].join("|") === "a|b|c", "plain header row");
-  assert(rows[1][0] === "quoted, comma", "quoted comma preserved");
-  assert(rows[1][1] === 'has "quote"', "escaped double-quote unescaped");
-  assert(rows[1][2] === "line\nbreak", "embedded newline preserved");
+  assert(rows[0].cells.join("|") === "a|b|c", "plain header row");
+  assert(rows[1].cells[0] === "quoted, comma", "quoted comma preserved");
+  assert(rows[1].cells[1] === 'has "quote"', "escaped double-quote unescaped");
+  assert(rows[1].cells[2] === "line\nbreak", "embedded newline preserved");
 }
 
 console.log("[parseCsvRows] BOM + trailing blank line");
 {
   const rows = parseCsvRows("﻿concept_id,source_term\nkt/god,God\n\n");
   assert(rows.length === 2, "BOM stripped, trailing blank line dropped");
-  assert(rows[0][0] === "concept_id", "BOM not attached to first header cell");
+  assert(rows[0].cells[0] === "concept_id", "BOM not attached to first header cell");
 }
 
 console.log("[parseTermsCsv] happy path with all columns");
@@ -179,6 +180,62 @@ console.log("[termKey] null-safe target_term (the do_not_translate case)");
     tw_link: null,
   });
   assert(dedupeTerms([dnt(null), dnt(""), dnt("  ")]).length === 1, "empty-target DNT rows still collide with each other");
+}
+
+console.log("[sqlFold + termKey] normalization mirrors SQLite LOWER(TRIM(...)), not JS Unicode folding");
+{
+  assert(sqlFold("  God  ") === "god", "ASCII lowercased and outer spaces trimmed");
+  assert(sqlFold("Élohim") === "Élohim", "non-ASCII case is left alone (SQLite LOWER is ASCII-only)");
+  assert(sqlFold("\tGod\t") === "\tgod\t", "tabs are not trimmed (SQLite TRIM strips U+0020 only)");
+  assert(sqlFold("\u00a0God\u00a0") === "\u00a0god\u00a0", "NBSP is not trimmed either");
+
+  const t = (target_term) => ({ concept_id: "kt/god", source_term: "God", target_term, status: "preferred" });
+  // The SQL index treats these as two rows, so termKey must too — otherwise the
+  // dry-run would promise "updated" and the apply would insert.
+  assert(termKey(t("Élohim")) !== termKey(t("élohim")), "cased non-ASCII renderings stay distinct, matching the SQL index");
+  // ASCII case and outer spaces still fold, exactly as LOWER(TRIM()) does.
+  const g = (concept_id, source_term) => ({ concept_id, source_term, target_term: "x", status: "preferred" });
+  assert(termKey(g("kt/god", "God")) === termKey(g("kt/god", "GOD")), "ASCII case folds on source_term");
+  assert(termKey(g("kt/god", "God")) === termKey(g(" kt/god ", " god ")), "outer U+0020 trimmed on concept + source");
+  // A tab-padded stored rendering (reachable via PATCH, which does not trim) is
+  // genuinely a different row in SQL, so it must not fold to the untabbed one.
+  assert(termKey(t("\t\u0646\u0639\u0645\u0629")) !== termKey(t("\u0646\u0639\u0645\u0629")), "tab-padded rendering is not folded onto the untabbed one");
+  assert(termKey(t(" \u0646\u0639\u0645\u0629 ")) === termKey(t("\u0646\u0639\u0645\u0629")), "space-padded rendering still folds");
+}
+
+console.log("[parseCsvRows] rows report their physical line, not their index");
+{
+  // A wholly-blank line is dropped from the row list but still consumed a line.
+  const withBlank = parseTermsCsv("concept_id,source_term,target_term,status\n\nkt/x,x,,badstatus\n");
+  assert(withBlank.errors.length === 1, "the bad-status row is the only error");
+  assert(withBlank.errors[0].line === 3, "blank line counted: the row is physically on line 3");
+
+  // A quoted field containing a newline spans two physical lines.
+  const withEmbedded = parseTermsCsv(
+    "concept_id,source_term,target_term,status,comment\n" +
+      'kt/a,a,x,preferred,"two\nlines"\n' +
+      "kt/b,b,,badstatus\n",
+  );
+  assert(withEmbedded.terms.length === 1, "the good row parsed");
+  assert(withEmbedded.terms[0].line === 2, "the multi-line row reports its starting line");
+  assert(withEmbedded.terms[0].comment === "two\nlines", "the embedded newline stayed in the cell");
+  assert(withEmbedded.errors.length === 1 && withEmbedded.errors[0].line === 4, "the next row is line 4, not line 3");
+
+  // Header = line 1, first data row = line 2 (unchanged arithmetic).
+  const plain = parseTermsCsv("concept_id,source_term,target_term,status\nkt/x,x,y,preferred\n");
+  assert(plain.terms[0].line === 2, "first data row is line 2");
+}
+
+console.log("[dedupeTerms] a ParsedTerm keeps its line through dedup");
+{
+  const csv =
+    "concept_id,source_term,target_term,status,comment\n" +
+    "kt/grace,grace,\u0646\u0639\u0645\u0629,preferred,first\n" +
+    "kt/grace,grace,\u0646\u0639\u0645\u0629,preferred,second\n";
+  const { terms } = parseTermsCsv(csv);
+  const deduped = dedupeTerms(terms);
+  assert(deduped.length === 1, "the true duplicate collapses");
+  assert(deduped[0].comment === "second" && deduped[0].line === 3, "the surviving row keeps its own line");
 }
 
 console.log("[contract \u00a73.3] one concept holds several equally-valid renderings");
@@ -309,7 +366,7 @@ console.log("[serializeTermsCsv excelSafe] formula-leading cells neutralized, ro
 
   const safe = serializeTermsCsv(hostile, { excelSafe: true });
   for (const line of safe.split("\r\n").slice(1)) {
-    for (const cell of parseCsvRows(line + "\n")[0] ?? []) {
+    for (const cell of parseCsvRows(line + "\n")[0]?.cells ?? []) {
       assert(!/^[=+\-@\t\r]/.test(cell), `no cell starts with a formula char: ${JSON.stringify(cell)}`);
     }
   }

@@ -1611,13 +1611,21 @@ function StatusChip({ status }: { status: TermStatus }) {
 // key is the (concept_id, source_term) pair, not concept_id alone.
 type TermGroup = { key: string; conceptId: string; sourceTerm: string; terms: Term[] };
 
+// GET /terms caps its result set (server default `limit`). At the cap the page
+// may have cut a concept's renderings in half, so a per-group count computed
+// from it would under-report. We don't paginate here — we just stop claiming a
+// count once the result set is at the cap.
+const TERMS_PAGE_LIMIT = 500;
+
 // GET /terms sorts by (concept_id, source_term, status, id) so grouped runs
 // already arrive adjacent — but correctness must not depend on that, so group
 // via a Map keyed by the pair while preserving first-appearance order.
 function groupTerms(terms: Term[]): TermGroup[] {
   const byKey = new Map<string, TermGroup>();
   for (const term of terms) {
-    const key = `${term.concept_id} ${term.source_term}`;
+    // Separator is an explicit \u0000 escape, not a raw NUL byte in the source
+    // (invisible in editors, and at risk from tooling that strips control chars).
+    const key = `${term.concept_id}\u0000${term.source_term}`;
     let group = byKey.get(key);
     if (!group) {
       group = { key, conceptId: term.concept_id, sourceTerm: term.source_term, terms: [] };
@@ -1632,18 +1640,16 @@ function groupTerms(terms: Term[]): TermGroup[] {
 // `duplicate_term` when the full identity (concept_id, source_term,
 // target_term, status) already exists, `version_mismatch` for a lost If-Match
 // race. `ApiError.body` carries the parsed JSON body, so read the code.
-function isDuplicateTermError(e: unknown): boolean {
-  if (!(e instanceof ApiError) || e.status !== 409) return false;
-  return (e.body as { error?: string } | null | undefined)?.error === "duplicate_term";
-}
-
-// POST /terms has no If-Match, so its only 409 is a duplicate — treat a 409
-// whose body didn't parse as one too rather than falling back to the generic
-// "something went wrong".
-function isCreateDuplicate(e: unknown): boolean {
+//
+// `codelessCountsAsDuplicate` is for POST /terms: it has no If-Match, so its
+// only 409 is a duplicate — a 409 whose body didn't parse is still one, and
+// saying so beats the generic "something went wrong". PATCH must not assume
+// that, since its other 409 is `version_mismatch`.
+function isDuplicateTermError(e: unknown, codelessCountsAsDuplicate = false): boolean {
   if (!(e instanceof ApiError) || e.status !== 409) return false;
   const code = (e.body as { error?: string } | null | undefined)?.error;
-  return !code || code === "duplicate_term";
+  if (!code) return codelessCountsAsDuplicate;
+  return code === "duplicate_term";
 }
 
 function TerminologySection({ direction }: { direction: "ltr" | "rtl" }) {
@@ -1734,6 +1740,7 @@ function TerminologySection({ direction }: { direction: "ltr" | "rtl" }) {
               key={group.key}
               group={group}
               direction={direction}
+              countIsComplete={terms.length < TERMS_PAGE_LIMIT}
               onChanged={refetch}
               onError={(msg) => save.setMsg(msg)}
             />
@@ -1784,7 +1791,9 @@ function NewTermRow({
       onCreated();
     } catch (e) {
       // Same duplicate_term surfacing as AddRenderingRow — see that comment.
-      onError(isCreateDuplicate(e) ? t("preferences.duplicateRendering") : t("preferences.saveFailed"));
+      onError(
+        isDuplicateTermError(e, true) ? t("preferences.duplicateRendering") : t("preferences.saveFailed"),
+      );
     } finally {
       setBusy(false);
     }
@@ -1863,11 +1872,16 @@ function NewTermRow({
 function TermConceptGroup({
   group,
   direction,
+  countIsComplete,
   onChanged,
   onError,
 }: {
   group: TermGroup;
   direction: "ltr" | "rtl";
+  // False when the fetched page hit the server's row cap, so a group could be
+  // straddling it — see TERMS_PAGE_LIMIT. The count is then hidden rather than
+  // asserting a number that may be short.
+  countIsComplete: boolean;
   onChanged: () => void;
   onError: (msg: string) => void;
 }) {
@@ -1886,14 +1900,22 @@ function TermConceptGroup({
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
           {group.sourceTerm}
         </Typography>
-        {group.terms.length > 1 && (
+        {group.terms.length > 1 && countIsComplete && (
           <Typography variant="caption" color="text.secondary">
             {t("preferences.renderingCount", { count: group.terms.length })}
           </Typography>
         )}
         <Box sx={{ flex: 1 }} />
-        <Button size="small" startIcon={<AddIcon />} onClick={() => setAdding((v) => !v)}>
-          {t("preferences.addRendering")}
+        {/* Toggle, so its label has to say which way it toggles — an unchanged
+            "Add another rendering" label made a second click silently throw a
+            filled-in form away. */}
+        <Button
+          size="small"
+          color={adding ? "inherit" : "primary"}
+          startIcon={adding ? undefined : <AddIcon />}
+          onClick={() => setAdding((v) => !v)}
+        >
+          {adding ? t("preferences.cancel") : t("preferences.addRendering")}
         </Button>
       </Stack>
       <Stack spacing={1} sx={{ mt: 1 }}>
@@ -1971,7 +1993,7 @@ function AddRenderingRow({
       // POST /terms answers 409 `duplicate_term` when this exact identity
       // (concept + source + rendering + status) already exists. That is a
       // distinct, actionable outcome — not the generic failure.
-      if (isCreateDuplicate(e)) {
+      if (isDuplicateTermError(e, true)) {
         onError(t("preferences.duplicateRendering"));
       } else {
         onError(t("preferences.saveFailed"));
@@ -2061,7 +2083,17 @@ function TermRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Term>(term);
   const [busy, setBusy] = useState(false);
-  useEffect(() => setDraft(term), [term]);
+  // Resync the draft when the server copy changes — but never while this row is
+  // being edited. Renderings of a concept are siblings now, so adding one (or
+  // any other change in the group) refetches the whole list and hands every
+  // sibling a fresh `Term`; without the guard that silently wipes a
+  // half-finished edit next door. Paths that *should* replace the draft
+  // (cancel, successful save, version_mismatch) all leave edit mode first, so
+  // the resync still fires for them.
+  useEffect(() => {
+    if (editing) return;
+    setDraft(term);
+  }, [term, editing]);
 
   const saveEdit = async () => {
     setBusy(true);
@@ -2088,6 +2120,10 @@ function TermRow({
         // leaving a stale, silently un-saved edit in place.
       } else if (e instanceof ApiError && e.status === 409) {
         onError(t("preferences.conflict"));
+        // Leave edit mode so the resync effect is allowed to replace the draft
+        // with whatever the refetch brings back — otherwise the guard would
+        // keep the stale, unsaved edit on screen.
+        setEditing(false);
         onChanged();
       } else {
         onError(t("preferences.actionFailed"));
@@ -2115,8 +2151,14 @@ function TermRow({
         // status-coloured start rail rather than a second full border. The
         // forbidden tint stays here, on the individual rendering, never on the
         // whole concept group.
+        // `borderColor` (not `borderInlineStartColor`): MUI v6's sx config has
+        // no `borderInlineStartColor` entry, so a theme path like
+        // "success.main" would pass through unresolved and the browser would
+        // drop the declaration, leaving the rail at currentColor for every
+        // status. borderColor resolves the path, and only the inline-start edge
+        // has a non-zero width — so it stays a single RTL-safe rail.
         borderInlineStart: "3px solid",
-        borderInlineStartColor: statusColor(term.status),
+        borderColor: statusColor(term.status),
         borderRadius: 1,
         px: 1.25,
         py: 0.75,

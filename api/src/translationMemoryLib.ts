@@ -37,6 +37,33 @@ export type TermImport = {
   tw_link: string | null;
 };
 
+// Fold a text component of the term identity the way SQLite does — and only
+// the way SQLite does. `LOWER()` in SQLite lowercases ASCII A-Z and nothing
+// else; `TRIM()` strips U+0020 and nothing else. JS `.toLowerCase()` /
+// `.trim()` are full-Unicode and therefore *stricter*: they fold "Élohim" and
+// "élohim" together and trim tabs/NBSP, where SQL keeps them apart.
+//
+// A JS-vs-SQL mismatch is not cosmetic: termKey() is what the import dry-run
+// counts with, while `LOWER(TRIM(...))` is what the UPDATE predicate and the
+// unique index in migration 0063 match with. When they disagree the preview
+// says "updated: 1, added: 0", the UPDATE matches nothing, the INSERT runs,
+// and the index (agreeing with SQL, not JS) lets a near-duplicate rendering
+// through — the operator was shown a diff that did not happen. Matching SQL
+// exactly matters more than "nicer" Unicode folding, so this deliberately
+// mirrors 0063's index expression instead of improving on it.
+//
+// Consequence, intended: within one CSV, "Élohim" and "élohim" are two
+// different renderings and both get inserted — exactly what the DB will do.
+export function sqlFold(s: string): string {
+  let start = 0;
+  let end = s.length;
+  // TRIM(): U+0020 only, both ends.
+  while (start < end && s.charCodeAt(start) === 0x20) start++;
+  while (end > start && s.charCodeAt(end - 1) === 0x20) end--;
+  // LOWER(): ASCII A-Z only ([A-Z] without the /u flag is ASCII-only).
+  return s.slice(start, end).replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
 // Dedup/upsert identity: a concept's *rendering* is identified by
 // (concept_id, source_term, target_term, status). target_term is part of the key
 // because docs/CONTEXT-REPO-CONTRACT.md §3.3 states that "one concept MAY have
@@ -50,11 +77,10 @@ export type TermImport = {
 // collide with each other. The SQL side uses COALESCE(target_term, '') for the
 // same reason — SQLite treats NULLs as always-distinct in a UNIQUE index.
 //
-// Known pre-existing caveat: JS `.toLowerCase()` is full-Unicode while SQLite's
-// `LOWER()` is ASCII-only, so the two normalizations can diverge for cased
-// non-ASCII text (Greek, say). That was already true of source_term before
-// target_term joined the key, and the importer's per-row unique-violation retry
-// fallback already degrades safely when the two disagree.
+// Case/whitespace folding goes through sqlFold(), which mirrors SQLite's
+// LOWER(TRIM(...)) exactly rather than using JS's full-Unicode equivalents —
+// see the sqlFold() comment for why a mismatch would make the import dry-run
+// misreport. `status` is compared verbatim, matching `status = ?` in SQL.
 //
 // Deliberately NOT NFC-normalized here: SQL cannot normalize, so doing it in JS
 // would make the key and the index disagree — strictly worse than the
@@ -65,8 +91,16 @@ export function termKey(t: {
   target_term: string | null | undefined;
   status: string;
 }): string {
-  const target = (t.target_term ?? "").trim().toLowerCase();
-  return `${t.concept_id.trim().toLowerCase()}\u0000${t.source_term.trim().toLowerCase()}\u0000${target}\u0000${t.status}`;
+  return `${termGroupKey(t)}\u0000${sqlFold(t.target_term ?? "")}\u0000${t.status}`;
+}
+
+// The *narrower* (concept_id, source_term) grouping — the identity that held
+// before migration 0063 widened it with target_term, minus status. The importer
+// uses it to notice that an incoming row adds a rendering to a concept that
+// already has one under the same status (an append, not a replacement). Shares
+// sqlFold() with termKey by construction, so the two can never drift apart.
+export function termGroupKey(t: { concept_id: string; source_term: string }): string {
+  return `${sqlFold(t.concept_id)}\u0000${sqlFold(t.source_term)}`;
 }
 
 // Parse an `If-Match` header (bare or quoted integer). Shared by every
@@ -98,13 +132,25 @@ export const TERM_CSV_HEADER = [
   "tw_link",
 ] as const;
 
+// One parsed CSV record: its cells plus the 1-based *physical* line of the
+// file the record started on. The physical line is not the record index: blank
+// lines are dropped and a quoted field may contain newlines, so any error or
+// warning that quotes a line number to a human has to come from here rather
+// than from counting records (a translator opens the file in a spreadsheet and
+// jumps to that line).
+export type CsvRow = { line: number; cells: string[] };
+
 // Split CSV text into rows of string cells; handles quoted fields containing
 // commas, newlines, and "" escapes. Trailing blank lines dropped.
-export function parseCsvRows(text: string): string[][] {
-  const rows: string[][] = [];
+export function parseCsvRows(text: string): CsvRow[] {
+  const rows: CsvRow[] = [];
   let row: string[] = [];
   let cur = "";
   let inQuotes = false;
+  // Physical line counter: `line` is where the record currently being built
+  // started; `nextLine` advances past every newline, quoted ones included.
+  let nextLine = 1;
+  let line = 1;
   // Strip a UTF-8 BOM if present.
   const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   for (let i = 0; i < src.length; i++) {
@@ -118,6 +164,9 @@ export function parseCsvRows(text: string): string[][] {
           inQuotes = false;
         }
       } else {
+        // A newline inside a quoted field stays in the cell but still consumed
+        // a physical line, so later rows don't drift.
+        if (ch === "\n" || (ch === "\r" && src[i + 1] !== "\n")) nextLine++;
         cur += ch;
       }
     } else if (ch === '"') {
@@ -128,9 +177,11 @@ export function parseCsvRows(text: string): string[][] {
     } else if (ch === "\n" || ch === "\r") {
       if (ch === "\r" && src[i + 1] === "\n") i++;
       row.push(cur);
-      rows.push(row);
+      rows.push({ line, cells: row });
       row = [];
       cur = "";
+      nextLine++;
+      line = nextLine;
     } else {
       cur += ch;
     }
@@ -138,14 +189,22 @@ export function parseCsvRows(text: string): string[][] {
   // Flush the last field/row if the file didn't end with a newline.
   if (cur.length > 0 || row.length > 0) {
     row.push(cur);
-    rows.push(row);
+    rows.push({ line, cells: row });
   }
   // Drop wholly-empty rows (e.g. a trailing blank line parsed to ['']).
-  return rows.filter((r) => !(r.length === 1 && r[0].trim() === ""));
+  return rows.filter((r) => !(r.cells.length === 1 && r.cells[0].trim() === ""));
 }
 
+// A parsed CSV row carries the physical line it came from so the importer can
+// name it in a warning. Deliberately a superset of TermImport rather than a
+// field on TermImport itself: TermImport mirrors the D1 row (there is no `line`
+// column), and every existing consumer — serializeTermsCsv, contextExport,
+// exportWorkflow, the INSERT binder — accepts a ParsedTerm unchanged and
+// ignores the extra field.
+export type ParsedTerm = TermImport & { line: number };
+
 export type CsvParseResult = {
-  terms: TermImport[];
+  terms: ParsedTerm[];
   // Hard row failures — the row was dropped.
   errors: { line: number; message: string }[];
   // Soft findings — the row was kept, but the operator should know. Currently
@@ -165,7 +224,7 @@ export function parseTermsCsv(text: string): CsvParseResult {
   const seenAt = new Map<string, number>();
   if (rows.length === 0) return { terms: [], errors: [{ line: 0, message: "empty file" }], warnings };
 
-  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const header = rows[0].cells.map((h) => h.trim().toLowerCase());
   const col = (name: string) => header.indexOf(name);
   const iConcept = col("concept_id");
   const iSource = col("source_term");
@@ -182,15 +241,15 @@ export function parseTermsCsv(text: string): CsvParseResult {
     };
   }
 
-  const terms: TermImport[] = [];
+  const terms: ParsedTerm[] = [];
   // stripFormulaGuard undoes the excelSafe prefix so re-importing a
   // downloaded export doesn't accumulate quote marks.
   const at = (r: string[], i: number): string =>
     i >= 0 && i < r.length ? stripFormulaGuard(r[i].trim()) : "";
   const nullable = (s: string): string | null => (s === "" ? null : s);
   for (let r = 1; r < rows.length; r++) {
-    const line = r + 1;
-    const cells = rows[r];
+    // The row's physical line, not r + 1 — see CsvRow.
+    const { line, cells } = rows[r];
     const concept_id = at(cells, iConcept);
     const source_term = at(cells, iSource);
     if (!concept_id || !source_term) {
@@ -209,7 +268,8 @@ export function parseTermsCsv(text: string): CsvParseResult {
       errors.push({ line, message: invariantError });
       continue;
     }
-    const term: TermImport = {
+    const term: ParsedTerm = {
+      line,
       concept_id,
       source_term,
       target_term: nullable(at(cells, iTarget)),
@@ -292,8 +352,12 @@ export function serializeTermsCsv(
 // with two rows for the same (concept, source, target, status) doesn't
 // double-insert. Rows that differ only by target_term are distinct renderings of
 // the same concept (CONTEXT-REPO-CONTRACT.md §3.3) and are all kept.
-export function dedupeTerms(terms: readonly TermImport[]): TermImport[] {
-  const byKey = new Map<string, TermImport>();
+//
+// Generic in the row type so a ParsedTerm batch keeps its `line` (the importer
+// needs it to name the row in a warning) while a plain TermImport batch still
+// typechecks.
+export function dedupeTerms<T extends TermImport>(terms: readonly T[]): T[] {
+  const byKey = new Map<string, T>();
   for (const t of terms) byKey.set(termKey(t), t);
   return [...byKey.values()];
 }
