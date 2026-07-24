@@ -539,6 +539,7 @@ export function App() {
             bookHook={bookHook}
             onLogout={handleSignOut}
             meUserId={auth.kind === "ready" ? auth.me?.userId ?? null : null}
+            meUsername={auth.kind === "ready" ? auth.me?.username ?? null : null}
           />
         )}
       </Box>

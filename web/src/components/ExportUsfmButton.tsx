@@ -4,7 +4,7 @@
 // hand; book export fetches every chapter for the chosen version client-side
 // (no export API endpoint). See web/src/lib/exportUsfm.ts for the renderer.
 
-import { useState } from "react";
+import { forwardRef, useImperativeHandle, useState } from "react";
 import {
   Alert,
   CircularProgress,
@@ -30,6 +30,15 @@ interface Props {
   // Verses for the current chapter, keyed by version. Sourced from useChapter in
   // Shell so chapter export needs no fetch.
   chapterVersesFor: (version: string) => VerseDto[];
+  // When true, don't render the standalone IconButton trigger — some other
+  // control (the TopBar "More" menu's "Export USFM" row) opens the scope/
+  // version Menu via the imperative handle instead.
+  hideTrigger?: boolean;
+}
+
+export interface ExportUsfmButtonHandle {
+  /** Opens the scope/version Menu anchored to an externally-owned element. */
+  openMenu: (anchorEl: HTMLElement) => void;
 }
 
 type Scope = "chapter" | "book";
@@ -78,13 +87,20 @@ async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Prom
   return results;
 }
 
-export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVersesFor }: Props) {
+export const ExportUsfmButton = forwardRef<ExportUsfmButtonHandle, Props>(function ExportUsfmButton(
+  { book, chapter, enabledVersions, chapterVersesFor, hideTrigger },
+  ref,
+) {
   const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = Boolean(anchor);
+
+  useImperativeHandle(ref, () => ({
+    openMenu: (anchorEl: HTMLElement) => setAnchor(anchorEl),
+  }));
 
   // Exclude original-language source texts (Hebrew/Greek) from export.
   const exportableVersions = enabledVersions.filter((v) => !SOURCE_VERSIONS.has(v.toUpperCase()));
@@ -137,17 +153,19 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
 
   return (
     <>
-      <Tooltip title={t("export.downloadUsfm")}>
-        <span>
-          <IconButton
-            size="small"
-            onClick={(e) => setAnchor(e.currentTarget)}
-            disabled={busy || exportableVersions.length === 0}
-          >
-            {busy ? <CircularProgress size={18} /> : <DownloadIcon fontSize="small" />}
-          </IconButton>
-        </span>
-      </Tooltip>
+      {!hideTrigger && (
+        <Tooltip title={t("export.downloadUsfm")}>
+          <span>
+            <IconButton
+              size="small"
+              onClick={(e) => setAnchor(e.currentTarget)}
+              disabled={busy || exportableVersions.length === 0}
+            >
+              {busy ? <CircularProgress size={18} /> : <DownloadIcon fontSize="small" />}
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
       <Menu anchorEl={anchor} open={open} onClose={close}>
         {scopes.flatMap(({ scope, label }, si) => {
           const items = [
@@ -179,4 +197,4 @@ export function ExportUsfmButton({ book, chapter, enabledVersions, chapterVerses
       </Snackbar>
     </>
   );
-}
+});

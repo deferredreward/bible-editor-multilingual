@@ -39,6 +39,24 @@ function isForeign(job: PipelineJobRow): boolean {
   return me != null && job.user_id !== me;
 }
 
+// Whether this bar would render anything for the given jobs: any active,
+// queued, recently-done (<24h) or failed run. Shared with StatusIndicator so
+// its "No AI pipelines running" idle text can't disagree with whether the
+// embedded PipelineStatusBar actually shows something. `nowSec` is injected so
+// callers computing other time-derived values reuse one clock read.
+export function pipelineHasAnything(jobs: PipelineJobRow[], nowSec = Math.floor(Date.now() / 1000)): boolean {
+  return jobs.some(
+    (j) =>
+      j.state === "running" ||
+      j.state === "dispatching" ||
+      j.state === "queued" ||
+      j.state === "paused_for_outage" ||
+      j.state === "paused_for_usage_limit" ||
+      j.state === "failed" ||
+      (j.state === "done" && nowSec - j.updated_at < 24 * 3600),
+  );
+}
+
 const TYPE_LABEL: Record<PipelineJobRow["pipeline_type"], string> = {
   generate: "pipeline.generateUltUst",
   notes: "pipeline.translationNotes",
@@ -186,7 +204,7 @@ function StateIcon({ state }: { state: PipelineState }) {
   return <PauseCircleOutlineIcon fontSize="small" color="warning" />;
 }
 
-interface ToastMsg {
+export interface ToastMsg {
   id: number;
   text: string;
   kind: "success" | "error" | "info";
@@ -199,9 +217,18 @@ interface ToastMsg {
 interface Props {
   toast?: ToastMsg | null;
   onToastClear?: () => void;
+  // The merged TopBar "Status" indicator mounts an always-live instance with
+  // hideChip so the Snackbar toast keeps firing regardless of whether the
+  // Status popover is open; the popover's own "AI pipelines" row mounts a
+  // second, normal instance (no toast — the always-live one already owns
+  // that) for the interactive running/queued/failed job list. Known trade-off:
+  // the "already running — let me point you at it" auto-focus (see
+  // pipelineStore.onFocusRequest) needs a live chip to anchor to, so it only
+  // fires from the popover-embedded instance while that popover is open.
+  hideChip?: boolean;
 }
 
-export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
+export function PipelineStatusBar({ toast, onToastClear, hideChip }: Props = {}) {
   const { t } = useTranslation();
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -291,7 +318,7 @@ export function PipelineStatusBar({ toast, onToastClear }: Props = {}) {
 
   return (
     <>
-      {hasAnything && (
+      {hasAnything && !hideChip && (
         <Box ref={chipRef} sx={{ display: "inline-flex" }}>
           <Chip
             icon={<AutoAwesomeIcon />}
