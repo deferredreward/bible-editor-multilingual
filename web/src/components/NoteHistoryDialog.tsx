@@ -45,6 +45,11 @@ interface Props {
   // server marks that PATCH as a revert via the row's restored_from_version
   // column so this dialog can keep hiding it next time around.
   onUseVersion: (snapshot: NoteSnapshot, fromVersion: number) => void;
+  // When true the dialog is view-only: history is browsable but the restore
+  // ("Switch to vN") action is hidden. Used when the card itself is read-only
+  // (e.g. an unapproved AI/Aquifer draft locked in Editor mode) so history can't
+  // be used as a back door to persist a change the card otherwise forbids.
+  readOnly?: boolean;
 }
 
 const fmtTime = (epochSec: number) =>
@@ -67,6 +72,7 @@ export function NoteHistoryDialog({
   effectiveVersion,
   onClose,
   onUseVersion,
+  readOnly = false,
 }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -339,6 +345,7 @@ export function NoteHistoryDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
+        {!readOnly && (
         <Button
           variant="contained"
           disabled={!selected || isCurrent || loading}
@@ -354,6 +361,7 @@ export function NoteHistoryDialog({
               ? `Switch to v${selected.version}`
               : "Switch"}
         </Button>
+        )}
       </DialogActions>
     </Dialog>
   );
