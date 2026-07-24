@@ -275,6 +275,7 @@ export function TopBar({
 
   // ── "More" menu ────────────────────────────────────────────────────────
   const [moreAnchor, setMoreAnchor] = useState<null | HTMLElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const [langSubmenuAnchor, setLangSubmenuAnchor] = useState<null | HTMLElement>(null);
   const closeMore = () => setMoreAnchor(null);
   const readingScalePct = Math.round(scale * 100);
@@ -588,6 +589,7 @@ export function TopBar({
       {pipelineMenu}
 
       <Button
+        ref={moreButtonRef}
         variant="outlined"
         size="small"
         onClick={(e) => setMoreAnchor(e.currentTarget)}
@@ -632,9 +634,14 @@ export function TopBar({
         )}
         {projectConfig && (
           <MenuItem
-            onClick={(e) => {
+            onClick={() => {
               closeMore();
-              onOpenExportMenu?.(e.currentTarget);
+              // Anchor to the persistent "More" trigger button, not this
+              // MenuItem — the More Menu unmounts its content (including this
+              // node) after its ~195ms close transition, which would leave
+              // ExportUsfmButton's scope/version Menu anchored to a detached
+              // element if the user scrolled/resized while it was still open.
+              if (moreButtonRef.current) onOpenExportMenu?.(moreButtonRef.current);
             }}
           >
             <ListItemIcon>

@@ -105,6 +105,44 @@ the live *firing* of the callback couldn't be observed here. **Whoever picks
 this up next: do a real, focused-window resize check (drag the actual OS
 window narrower) before merging**, just to close this last gap.
 
+## Independent review pass (pre-PR, general-purpose agent over the diff)
+
+Fixed:
+1. **Export USFM was a silent no-op during chapter load/error** — the `if (!data)`
+   branch's `<TopBar>` didn't pass `onOpenExportMenu` or mount the sibling
+   trigger-less `<ExportUsfmButton>`, but the More menu's Export row shows
+   whenever `projectConfig` is truthy (a module-cached value, populated well
+   before a new chapter's `data`). Now wired in both branches.
+2. **Export submenu anchored to a disappearing node** — anchored the
+   `ExportUsfmButton` menu to the persistent "More" trigger button (new
+   `moreButtonRef`) instead of the MenuItem, which unmounts after the More
+   menu's close transition. Re-verified live: More ▸ Export USFM opens the
+   Chapter/Whole-book submenu correctly.
+3. **Dead `VersionIndicator.tsx`** — orphaned (StatusIndicator reimplements its
+   logic inline); deleted. Removed its now-unused `sync.buildSha` /
+   `sync.onLatestVersion` keys.
+4. **Orphaned i18n keys** — removed `topbar.mode.tooltip`,
+   `topbar.toggleColorMode`, `topbar.smaller/larger/resetTo100`,
+   `topbar.readingTextSizeTooltip`, `topbar.adjustReadingTextSize`, plus
+   `logos.hideButton` / `logos.settingsTooltip` (dropped with the widget's old
+   kebab menu). (en.json only — other 12 locales still carry them; fallback
+   covers it, and a separate locale-sweep is out of scope.)
+5. **Duplicated pipeline-idle predicate** — extracted `pipelineHasAnything(jobs)`
+   from `PipelineStatusBar` and imported it into `StatusIndicator` so the
+   "No AI pipelines running" idle text can't drift from the embedded bar's own
+   render gate. Kept a separate, deliberately-narrower `pipelineNeedsAttention`
+   (excludes recently-`done`) for the amber attention dot.
+
+Accepted as-is (noted, not fixed — lower risk than the fix):
+- `WorkspaceSwitcher variant="menuItem"` re-fetches `listWorkspaces()` each time
+  the Account menu opens (MUI Menu unmounts children on close). Cheap GET on an
+  admin action, mirrors the pre-existing `indicator` pattern — not worth a cache
+  layer or `keepMounted` (which would keep all menu content + effects mounted).
+- Nested MUI overlays (PipelineStatusBar's job-detail Popover / BookLintIndicator's
+  Menu open from inside StatusIndicator's Popover) — a known-fragile composition
+  worth a manual pass (open Status → pipeline row → Refresh/Dismiss, confirm the
+  outer popover doesn't close unexpectedly). Not exercised live this session.
+
 ## Not done (explicit follow-ups, out of scope for this pass)
 
 - The "AI" button (`PipelineMenu`'s own `<Button variant="contained">`, made

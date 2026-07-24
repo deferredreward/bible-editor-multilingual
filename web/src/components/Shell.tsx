@@ -2333,8 +2333,17 @@ export function Shell({
           lintFlagCount={bookLint.flagCount}
           lintEscalateCount={bookLint.escalateCount}
           onGoToLintIssue={goToLintIssue}
+          onOpenExportMenu={(anchorEl) => exportUsfmRef.current?.openMenu(anchorEl)}
           username={meUsername}
           onLogout={onLogout}
+        />
+        <ExportUsfmButton
+          ref={exportUsfmRef}
+          hideTrigger
+          book={book}
+          chapter={chapter}
+          enabledVersions={displayedVersions}
+          chapterVersesFor={() => []}
         />
         <Box sx={{ p: 4, display: "flex", alignItems: "center", gap: 2 }}>
           {status === "error" ? (

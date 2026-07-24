@@ -149,21 +149,14 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} notes · {{words}} words · {{questions}} questions",
     "readingTextSize": "Reading text size",
-    "readingTextSizeTooltip": "reading text size",
-    "adjustReadingTextSize": "adjust reading text size",
     "decreaseReadingTextSize": "decrease reading text size",
     "increaseReadingTextSize": "increase reading text size",
-    "smaller": "smaller",
-    "larger": "larger",
-    "resetTo100": "Reset to 100%",
     "switchToLight": "switch to light mode",
     "switchToDark": "switch to dark mode",
-    "toggleColorMode": "toggle color mode",
     "uiLanguage": "Interface language",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     },
     "status": {
       "title": "Status",
@@ -575,9 +568,7 @@
     "discardQuarantinedDrafts": "discard all quarantined drafts",
     "export": "export",
     "updateAvailableTooltip": "A newer version is deployed. Click to reload and get the latest fixes.",
-    "updateAvailable": "App update available — refresh",
-    "buildSha": "build {{commit}}",
-    "onLatestVersion": "You're on the latest version you've loaded."
+    "updateAvailable": "App update available — refresh"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -729,8 +720,6 @@
     "attrPeople_other": "{{count}} people"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "Open this verse in Logos",
     "autoFollow": "auto-follow",
     "autoFollowTooltip": "Auto-follow active verse in Logos (steals focus on each change)",

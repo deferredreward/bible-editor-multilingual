@@ -39,6 +39,24 @@ function isForeign(job: PipelineJobRow): boolean {
   return me != null && job.user_id !== me;
 }
 
+// Whether this bar would render anything for the given jobs: any active,
+// queued, recently-done (<24h) or failed run. Shared with StatusIndicator so
+// its "No AI pipelines running" idle text can't disagree with whether the
+// embedded PipelineStatusBar actually shows something. `nowSec` is injected so
+// callers computing other time-derived values reuse one clock read.
+export function pipelineHasAnything(jobs: PipelineJobRow[], nowSec = Math.floor(Date.now() / 1000)): boolean {
+  return jobs.some(
+    (j) =>
+      j.state === "running" ||
+      j.state === "dispatching" ||
+      j.state === "queued" ||
+      j.state === "paused_for_outage" ||
+      j.state === "paused_for_usage_limit" ||
+      j.state === "failed" ||
+      (j.state === "done" && nowSec - j.updated_at < 24 * 3600),
+  );
+}
+
 const TYPE_LABEL: Record<PipelineJobRow["pipeline_type"], string> = {
   generate: "pipeline.generateUltUst",
   notes: "pipeline.translationNotes",

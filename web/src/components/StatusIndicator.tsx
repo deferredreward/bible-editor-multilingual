@@ -17,7 +17,7 @@ import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { SyncStatusBar, useSyncSummary } from "./SyncStatusBar";
-import { PipelineStatusBar } from "./PipelineStatusBar";
+import { PipelineStatusBar, pipelineHasAnything } from "./PipelineStatusBar";
 import { BookLintIndicator } from "./BookLintIndicator";
 import { useAppVersion } from "../hooks/useAppVersion";
 import { pipelineStore } from "../sync/pipelineStore";
@@ -70,8 +70,18 @@ export function StatusIndicator({
   // Light read of the shared pipeline job list purely to pick the outer
   // chip's attention dot and the popover's idle-state fallback text —
   // PipelineStatusBar (embedded below) owns the actual interactive detail.
+  // `pipelineHasAnything` is PipelineStatusBar's own render gate, imported so
+  // this component's "No AI pipelines running" idle text can't disagree with
+  // whether the embedded bar actually shows something.
   const [jobs, setJobs] = useState<PipelineJobRow[]>([]);
   useEffect(() => pipelineStore.subscribe(setJobs), []);
+  // "Idle" (drives the plain "No AI pipelines running" line) means the
+  // embedded bar would render nothing at all — including a recently-done run.
+  const pipelineIdle = !pipelineHasAnything(jobs);
+  // The amber attention dot is narrower: only in-flight or failed runs warrant
+  // it. A merely recently-*done* job is surfaced (the popover shows it) but
+  // isn't "needs attention" — so exclude `done` here even though it counts
+  // toward `!pipelineIdle`.
   const pipelineNeedsAttention = jobs.some(
     (j) =>
       j.state === "running" ||
@@ -80,21 +90,6 @@ export function StatusIndicator({
       j.state === "paused_for_outage" ||
       j.state === "paused_for_usage_limit" ||
       j.state === "failed",
-  );
-  // Mirrors PipelineStatusBar's own "hasAnything" gate (active/queued/
-  // doneRecent-within-24h/failed — cancelled jobs don't count) so this
-  // component's idle fallback text never disagrees with whether the embedded
-  // PipelineStatusBar below actually renders anything.
-  const nowSec = Math.floor(Date.now() / 1000);
-  const pipelineIdle = !jobs.some(
-    (j) =>
-      j.state === "running" ||
-      j.state === "dispatching" ||
-      j.state === "queued" ||
-      j.state === "paused_for_outage" ||
-      j.state === "paused_for_usage_limit" ||
-      j.state === "failed" ||
-      (j.state === "done" && nowSec - j.updated_at < 24 * 3600),
   );
 
   const needsAttention = flagCount > 0 || pipelineNeedsAttention || updateAvailable;
