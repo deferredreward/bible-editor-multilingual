@@ -1290,11 +1290,11 @@ function NoteCardInner({
             <IconButton
               size="small"
               onClick={flushPending}
-              disabled={!hasRowDiff || savePendingVersion !== null}
+              disabled={!hasRowDiff || savePendingVersion !== null || readOnly}
               sx={{
                 p: 0.25,
                 color:
-                  hasRowDiff && savePendingVersion === null
+                  hasRowDiff && savePendingVersion === null && !readOnly
                     ? "primary.main"
                     : "action.disabled",
               }}
@@ -1812,6 +1812,7 @@ function NoteCardInner({
             effectiveVersion={row.restored_from_version ?? row.version}
             onClose={() => setHistoryOpen(false)}
             onUseVersion={handleUseVersion}
+            readOnly={readOnly}
           />
         </Suspense>
       )}
