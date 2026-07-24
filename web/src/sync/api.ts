@@ -1132,6 +1132,11 @@ export interface TermImportResult {
   updated: number;
   total: number;
   parseErrors: { line: number; message: string }[];
+  // Non-fatal per-line notices — currently genuine duplicate rows (same
+  // concept_id + source_term + target_term + status) that would silently
+  // overwrite each other. Optional so the client typechecks against a Worker
+  // that hasn't shipped the field yet.
+  parseWarnings?: { line: number; message: string }[];
 }
 export interface TranslationExample {
   id: string;

@@ -53,6 +53,12 @@ CREATE INDEX terminology_source ON terminology(source_term) WHERE deleted_at IS 
 -- termKey() in translationMemoryLib.ts) treat (concept_id, source_term, status)
 -- as one identity after trim+lowercase — this enforces it at the schema level
 -- so concurrent imports can't slip in a case-variant duplicate row.
+--
+-- SUPERSEDED by migration 0063, which drops and recreates this index with
+-- LOWER(TRIM(COALESCE(target_term, ''))) as a fourth component. The three-part
+-- key below made the table one-term-one-string, contradicting
+-- docs/CONTEXT-REPO-CONTRACT.md §3.3. The SQL here is left as-is because it has
+-- already run — read 0063 for the current shape.
 CREATE UNIQUE INDEX terminology_identity ON terminology(
   LOWER(TRIM(concept_id)), LOWER(TRIM(source_term)), status
 ) WHERE deleted_at IS NULL;
