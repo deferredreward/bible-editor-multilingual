@@ -265,6 +265,12 @@ export function Shell({
       // that arrives is for the open chapter — offer a refresh. Covers
       // collaborators too (their tab gets no pipeline-completion event).
       promptRefreshRef.current(pipelineType);
+      // The server writes the job's terminal state to D1 *before* broadcasting
+      // this event, so reconcile the pipelineStore now instead of waiting for
+      // the 2-min poll. Without this, the "AI running" chapter-lock banner
+      // stays stuck and the completion toast doesn't fire until the next poll
+      // or a manual reload. reload() is idempotent and self-dedupes the toast.
+      void pipelineStore.reload();
     },
     onLaneFreeze: (event) => laneFreezeRef.current(event),
     onLaneSettled: (event) => laneSettledRef.current(event),
