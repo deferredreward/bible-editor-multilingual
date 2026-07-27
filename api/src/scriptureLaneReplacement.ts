@@ -16,6 +16,7 @@ import {
   configHash,
   copyBookForward,
   getLaneState,
+  laneScriptureResource,
   parseLaneConfig,
   planReplacementBooks,
   recoverOrphanedReservation,
@@ -765,7 +766,39 @@ export async function backOutReplacement(
   }
   if (job.status === "cancelled") return; // idempotent
 
+  // The abandoned generation's staged rows are inert (active_generation never
+  // advanced) but were never garbage-collected — drop them. The whole
+  // destination generation belongs to this job, so scoping by
+  // (bible_version, source_generation) is safe; book_resource_syncs has no
+  // created_by_job_id column for the same reason. Belt-and-braces: refuse if
+  // the job's generation somehow IS the active one, rather than delete live
+  // content.
+  // Read active_generation directly rather than via getLaneState, which
+  // swallows every error into null — a transient read failure there would
+  // silently skip cleanup and reintroduce the leak while still cancelling.
+  const laneGen = await env.DB.prepare(
+    `SELECT active_generation FROM scripture_lane_state WHERE lane = ?1`,
+  )
+    .bind(job.lane)
+    .first<{ active_generation: number }>();
+  const bv = bibleVersionForLane(job.lane as LaneKey);
+  const cleanup =
+    laneGen && laneGen.active_generation !== job.generation
+      ? [
+          env.DB.prepare(
+            `DELETE FROM verses WHERE bible_version = ?1 AND source_generation = ?2`,
+          ).bind(bv, job.generation),
+          env.DB.prepare(
+            `DELETE FROM book_usfm_meta WHERE bible_version = ?1 AND source_generation = ?2`,
+          ).bind(bv, job.generation),
+          env.DB.prepare(
+            `DELETE FROM book_resource_syncs WHERE resource = ?1 AND source_generation = ?2`,
+          ).bind(laneScriptureResource(job.lane as LaneKey), job.generation),
+        ]
+      : [];
+
   await env.DB.batch([
+    ...cleanup,
     env.DB.prepare(
       `UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
         WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')`,
