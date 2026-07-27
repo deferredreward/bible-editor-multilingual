@@ -542,7 +542,7 @@ export const STAGING_CLAIM_STALE_SECONDS = 600;
 const CARRY_FORWARD_CHUNK = 500;
 
 /** book_resource_syncs `resource` key for a lane's scripture text. */
-function laneScriptureResource(lane: LaneKey): "ult" | "ust" {
+export function laneScriptureResource(lane: LaneKey): "ult" | "ust" {
   return lane === "lit" ? "ult" : "ust";
 }
 
