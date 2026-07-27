@@ -245,6 +245,33 @@ test("back-out never deletes rows in the ACTIVE generation", async () => {
   assert.deepEqual(counts(db, 2), { verses: 3, meta: 1, syncs: 1 }, "active gen untouched");
 });
 
+test("back-out deletes nothing once the lane has been detached from the job", async () => {
+  // Races activateReplacement: it flips active_generation to this job's
+  // generation and clears replacement_job_id. A back-out holding a stale read
+  // of the job must not purge the generation the lane now serves — the guard
+  // lives inside the DELETE predicates, so a flip that lands mid-flight wins.
+  const db = freshDb({ jobStatus: "ready" });
+  seedBook(db, 2, JOB);
+  db.prepare(
+    `UPDATE scripture_lane_state
+        SET active_generation = 2, replacement_job_id = NULL, exclusive_owner = NULL
+      WHERE lane = 'lit'`,
+  ).run();
+
+  await backOutReplacement(makeEnv(db), JOB);
+
+  assert.deepEqual(
+    counts(db, 2),
+    { verses: 3, meta: 1, syncs: 1 },
+    "activated generation survives a racing back-out",
+  );
+  assert.equal(
+    db.prepare(`SELECT active_generation FROM scripture_lane_state WHERE lane='lit'`).get()
+      .active_generation,
+    2,
+  );
+});
+
 test("a completed job cannot be backed out (staged rows stay)", async () => {
   const db = freshDb({ jobStatus: "completed" });
   seedBook(db, 2, JOB);
