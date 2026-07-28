@@ -45,6 +45,11 @@ function formatTarget(t: OpTarget): string {
 
 function formatDraftMeta(m: DraftMeta): string {
   if (m.kind === "verse") return `${m.bibleVersion} ${m.book} ${m.chapter}:${m.verse}`;
+  if (m.kind === "article") {
+    // tA parts split into title / sub-title / body; name the part so two drafts
+    // on the same article are tellable apart.
+    return `${m.resource.toUpperCase()} ${m.articleId}${m.part === "body" ? "" : ` · ${m.part}`}`;
+  }
   return `${m.rowKind.toUpperCase()} ${m.book} ${m.chapter}:${m.verse}`;
 }
 
@@ -259,7 +264,14 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
   } as const;
 
   const navigateToDraft = (m: DraftMeta) => {
-    onNavigate?.(m.book, m.chapter, m.verse);
+    // Article drafts have no scripture reference to navigate to — route to the
+    // article route instead so "jump to unsaved" still lands the user on the
+    // editor holding the draft.
+    if (m.kind === "article") {
+      location.hash = `#/articles/${m.resource}/${encodeURIComponent(m.articleId)}`;
+    } else {
+      onNavigate?.(m.book, m.chapter, m.verse);
+    }
     setDraftMenuEl(null);
   };
 

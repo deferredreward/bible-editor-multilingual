@@ -149,7 +149,19 @@ This surface is brittle and has been the source of repeated prod alignment loss.
 
 ### Note save semantics
 
-Notes save on deactivation/unmount, not on blur. This is intentional. Don't suggest changing it.
+Notes save **only on an explicit Save click** — not on blur, and no longer on
+deactivation/unmount (that older behaviour is gone; this section used to describe
+it and was stale). Nothing leaves the browser until the user saves.
+
+What keeps that safe is **persistence, not confirmation**: every keystroke is
+stashed in the IndexedDB drafts store (`web/src/sync/drafts.ts`), restored on
+mount, and surfaced as an "N unsaved" reminder that points back to Save. So an
+editor that holds unsaved text must (a) write drafts to that store, (b) rehydrate
+from it, and (c) clear the draft once the server confirms. `useUnsavedGuard`
+covers reload/tab-close. Don't "fix" a data-loss bug in an editor by adding
+save-on-unmount or a confirm dialog — wire it into the drafts store instead.
+tW/tA article parts were the last editor missing this and were wired up in the
+same way.
 
 ### Concurrency tests (`tests/concurrency/`)
 

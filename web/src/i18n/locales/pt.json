@@ -592,6 +592,8 @@
     "glOnly": "A tradução de artigos só está disponível para projetos de língua de porta (GL).",
     "approved": "{{n}}/{{total}} aprovados",
     "save": "Salvar",
+    "unsavedDraft": "Alterações não salvas",
+    "staleDraft": "Este artigo mudou no servidor enquanto você tinha texto não salvo. Seu texto foi restaurado; revise-o antes de salvar.",
     "reloadConflict": "Este artigo mudou no servidor — recarregue.",
     "noArticles": "Nenhum artigo.",
     "selectArticle": "Selecione um artigo para traduzir.",

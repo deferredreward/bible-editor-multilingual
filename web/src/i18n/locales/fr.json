@@ -592,6 +592,8 @@
     "glOnly": "La traduction d’articles n’est disponible que pour les projets en langue-passerelle (GL).",
     "approved": "{{n}}/{{total}} approuvés",
     "save": "Enregistrer",
+    "unsavedDraft": "Modifications non enregistrées",
+    "staleDraft": "Cet article a changé sur le serveur alors que vous aviez du texte non enregistré. Votre texte a été restauré ; vérifiez-le avant d'enregistrer.",
     "reloadConflict": "Cet article a changé sur le serveur — rechargez.",
     "noArticles": "Aucun article.",
     "selectArticle": "Sélectionnez un article à traduire.",
