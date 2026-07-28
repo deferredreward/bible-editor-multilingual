@@ -129,8 +129,10 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
   }, [draftList]);
 
   // Warn before a reload / tab close while template typing is unsaved. The hook
-  // reads the drafts store itself, so persisted template drafts already arm it;
-  // passing the local signal too covers the write-commit window.
+  // arms itself from the drafts store — both an async subscription and a
+  // synchronous read that covers the write-commit window — so persisted
+  // template drafts already trigger it and this argument is belt-and-braces
+  // (it derives from the same subscription, so it can't be stricter).
   useUnsavedGuard(dirtyTemplateIds.size > 0);
 
   if (!isTranslation) {
@@ -743,9 +745,11 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
       />
 
       <Snackbar
-        // No autoHide: this one guards a save that would overwrite newer server
-        // text without a 409 to stop it, so it must not disappear while the user
-        // is looking elsewhere. They dismiss it deliberately.
+        // No autoHide (unlike the conflict snackbar below): this one guards a
+        // save that would overwrite newer server text without a 409 to stop it,
+        // so it shouldn't time out while the user is reading the diff. It still
+        // closes on click-away — MUI's Snackbar default — matching the
+        // identical warning in ArticleWorkspace.
         open={staleDraft}
         onClose={() => setStaleDraft(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
