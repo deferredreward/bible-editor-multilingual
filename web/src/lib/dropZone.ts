@@ -11,6 +11,7 @@
 // (see dropZone.test.mjs).
 
 import { OUTER_BAND_SIZE, type OuterDropTarget, type RegionDropTarget } from "./layoutTree.ts";
+import type { Axis } from "./layoutSpec.ts";
 
 export interface Rect {
   left: number;
@@ -176,13 +177,66 @@ export function computeDropTarget(input: DropZoneInput): RegionDropTarget {
   };
 }
 
+// ─── Logical edges: the ONE place a drop is turned into something paintable ────
+
+// An edge named in CSS LOGICAL terms, and that is deliberate: the app renders RTL
+// through stylis-plugin-rtl, which rewrites PHYSICAL insets (`left`/`right`) in
+// the emitted CSS. Pre-mirroring a logical side into a physical one and then
+// letting stylis mirror it again flips the paint to the wrong side — mirrored
+// twice. So nothing in this module ever emits a physical inset: callers paint
+// `insetInlineStart` / `insetInlineEnd` (see bandInsets) and the browser resolves
+// the direction. The block edges are never mirrored by anything.
+export type OuterBandEdge = "blockStart" | "blockEnd" | "inlineStart" | "inlineEnd";
+
+// axis + logical side → logical edge. Shared by BOTH preview paths (a region's
+// edge-split preview and the workspace perimeter band) so they cannot drift apart:
+// one of them being physical while the other was logical is exactly the bug this
+// consolidation fixes.
+export function logicalBandEdge(orientation: Axis, side: "before" | "after"): OuterBandEdge {
+  if (orientation === "vertical") return side === "before" ? "blockStart" : "blockEnd";
+  return side === "before" ? "inlineStart" : "inlineEnd";
+}
+
+// The CSS insets that paint a band on `edge`, `extent` thick along that band's own
+// axis (a px length for a fixed frame, a percentage for a proportional preview).
+// `edge: null` fills the whole box.
+//
+// Pure data — a plain object of CSS properties, no DOM — so it stays unit-testable
+// and both components can share it instead of each hand-rolling the mapping.
+export function bandInsets(edge: OuterBandEdge | null, extent: string): Record<string, string | number> {
+  switch (edge) {
+    case "blockStart":
+      return { insetInlineStart: 0, insetInlineEnd: 0, top: 0, height: extent };
+    case "blockEnd":
+      return { insetInlineStart: 0, insetInlineEnd: 0, bottom: 0, height: extent };
+    case "inlineStart":
+      return { top: 0, bottom: 0, insetInlineStart: 0, width: extent };
+    case "inlineEnd":
+      return { top: 0, bottom: 0, insetInlineEnd: 0, width: extent };
+    default:
+      return { inset: 0 };
+  }
+}
+
 // ─── Preview geometry ──────────────────────────────────────────────────
 
-// Where to draw the drop preview, as fractions (0..1) of the region's own box —
-// so the caller can render it as CSS percentages with no further math.
+// Where to draw the drop preview.
+//
+// An `area` is a band on ONE LOGICAL EDGE of the region, `extent` of the way
+// across that edge's own axis (a fraction 0..1, so the caller renders it as a CSS
+// percentage with no further math). `edge: null` means the whole region.
+//
+// LOGICAL, never physical — and this is the load-bearing part. An earlier version
+// returned a physical `left` (mirroring the logical side itself for RTL) and the
+// caller painted `left` through MUI `sx`. Under an Arabic UI the RTL Emotion cache
+// runs stylis-plugin-rtl (see web/src/main.tsx), which rewrites physical insets in
+// the emitted CSS — so the value was mirrored a SECOND time and the preview
+// painted on the opposite side from where the drop actually committed. The drop
+// was right and the feedback lied. Emitting a logical edge and letting the caller
+// paint `insetInlineStart` / `insetInlineEnd` leaves stylis nothing to mirror,
+// which is exactly how the perimeter bands (computeOuterDropBand) already work.
 export type DropPreview =
-  // The half (or whole) of the region the panel will occupy.
-  | { kind: "area"; left: number; top: number; width: number; height: number }
+  | { kind: "area"; edge: OuterBandEdge | null; extent: number }
   // A thin insertion line between panels, at `top` down the region.
   | { kind: "line"; top: number };
 
@@ -192,22 +246,21 @@ function clamp01(n: number): number {
 }
 
 export function computeDropPreview(input: DropZoneInput, target: RegionDropTarget): DropPreview {
-  const { rect, direction } = input;
+  const { rect } = input;
   const placement = target.placement;
 
+  // NOTE the absence of `direction` here: mirroring a logical side into a
+  // physical one is precisely the bug described on DropPreview. The axis→edge
+  // mapping is shared with the perimeter bands via logicalBandEdge so the two
+  // preview paths cannot drift apart.
   if (placement.kind === "split") {
-    if (placement.orientation === "horizontal") {
-      // Mirror the logical side back to a physical half for painting.
-      const physicalStart = direction === "rtl" ? placement.side === "after" : placement.side === "before";
-      return { kind: "area", left: physicalStart ? 0 : 0.5, top: 0, width: 0.5, height: 1 };
-    }
-    return { kind: "area", left: 0, top: placement.side === "before" ? 0 : 0.5, width: 1, height: 0.5 };
+    return { kind: "area", edge: logicalBandEdge(placement.orientation, placement.side), extent: 0.5 };
   }
 
   const rects = survivors(input);
   if (rects.length === 0 || !(rect.height > 0)) {
     // Nothing to insert between — highlight the whole region instead.
-    return { kind: "area", left: 0, top: 0, width: 1, height: 1 };
+    return { kind: "area", edge: null, extent: 1 };
   }
   const index = placement.index === undefined ? rects.length : Math.min(Math.max(placement.index, 0), rects.length);
   const y = index === 0 ? rects[0].top : rects[index - 1].top + rects[index - 1].height;
@@ -297,21 +350,8 @@ export function isPointerInAnyOuterBand(input: Omit<OuterDropInput, "direction">
 
 // Which edge of the workspace the resulting band occupies, and how much of it —
 // the fraction comes straight from layoutTree's OUTER_BAND_SIZE so the preview
-// can never disagree with the committed tree.
-//
-// The edge is named in CSS LOGICAL terms, and that is deliberate: the app renders
-// RTL through stylis-plugin-rtl, which rewrites physical insets (`left`/`right`)
-// in the emitted CSS. Pre-mirroring a logical side into a physical one — as
-// computeDropPreview must, because it paints halves of a region — and then
-// letting stylis mirror it again would flip the band back to the wrong side. So
-// the caller paints `insetInlineStart` / `insetInlineEnd` and the browser
-// resolves the direction. The block edges are never mirrored by anything.
-export type OuterBandEdge = "blockStart" | "blockEnd" | "inlineStart" | "inlineEnd";
-
+// can never disagree with the committed tree. The edge is LOGICAL; see
+// logicalBandEdge, which computeDropPreview shares.
 export function computeOuterDropBand(target: OuterDropTarget): { edge: OuterBandEdge; size: number } {
-  const size = OUTER_BAND_SIZE[target.orientation];
-  if (target.orientation === "vertical") {
-    return { edge: target.side === "before" ? "blockStart" : "blockEnd", size };
-  }
-  return { edge: target.side === "before" ? "inlineStart" : "inlineEnd", size };
+  return { edge: logicalBandEdge(target.orientation, target.side), size: OUTER_BAND_SIZE[target.orientation] };
 }

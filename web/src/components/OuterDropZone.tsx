@@ -20,14 +20,18 @@
 //
 // The pointer arithmetic (including RTL mirroring) is NOT here: it lives in
 // lib/dropZone.ts (computeOuterDropTarget) so it can be unit-tested with no DOM.
-// Everything painted here is positioned with CSS LOGICAL insets, so it is correct
-// in both directions without mirroring anything itself — see computeOuterDropBand.
+// Everything painted here is positioned with CSS LOGICAL insets — via dropZone's
+// shared `bandInsets`, which RegionDropZone paints its preview with too — so it is
+// correct in both directions without mirroring anything itself. One helper for both
+// preview paths is deliberate: they drifted apart once (the region preview went
+// physical and was double-mirrored under RTL) and that must not recur.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import { useTranslation } from "react-i18next";
 import {
   OUTER_BAND_PX,
+  bandInsets,
   computeOuterDropBand,
   computeOuterDropTarget,
   isPointerInAnyOuterBand,
@@ -44,22 +48,6 @@ interface Resolved {
   edge: OuterBandEdge;
   // Fraction of the workspace the resulting band will occupy.
   size: number;
-}
-
-// Absolute placement for a band or its preview: `extent` is the CSS length along
-// the band's own axis (a px thickness for the hit band, a percentage for the
-// preview of the real thing).
-function place(edge: OuterBandEdge, extent: string): Record<string, string | number> {
-  switch (edge) {
-    case "blockStart":
-      return { insetInlineStart: 0, insetInlineEnd: 0, top: 0, height: extent };
-    case "blockEnd":
-      return { insetInlineStart: 0, insetInlineEnd: 0, bottom: 0, height: extent };
-    case "inlineStart":
-      return { top: 0, bottom: 0, insetInlineStart: 0, width: extent };
-    default:
-      return { top: 0, bottom: 0, insetInlineEnd: 0, width: extent };
-  }
 }
 
 export function OuterDropZone() {
@@ -192,7 +180,7 @@ export function OuterDropZone() {
               // load-bearing: an ARMED band must RECEIVE dragover/drop, and an
               // unarmed one must NOT — see the arming comment above.
               pointerEvents: armed ? "auto" : "none",
-              ...place(edge, `${OUTER_BAND_PX}px`),
+              ...bandInsets(edge, `${OUTER_BAND_PX}px`),
               boxSizing: "border-box",
               border: "2px dashed",
               borderColor: hover?.edge === edge ? "primary.main" : "primary.light",
@@ -210,7 +198,7 @@ export function OuterDropZone() {
         <Box
           sx={{
             position: "absolute",
-            ...place(hover.edge, `${hover.size * 100}%`),
+            ...bandInsets(hover.edge, `${hover.size * 100}%`),
             pointerEvents: "none",
             bgcolor: "primary.main",
             opacity: 0.18,

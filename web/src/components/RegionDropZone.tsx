@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Box } from "@mui/material";
 import {
+  bandInsets,
   computeDropPreview,
   computeDropTarget,
   type DropPreview,
@@ -198,10 +199,11 @@ export function RegionDropZone({ regionId, children }: RegionDropZoneProps) {
             <Box
               sx={{
                 position: "absolute",
-                left: `${hover.preview.left * 100}%`,
-                top: `${hover.preview.top * 100}%`,
-                width: `${hover.preview.width * 100}%`,
-                height: `${hover.preview.height * 100}%`,
+                // LOGICAL insets, from the same helper the perimeter bands use.
+                // Painting a physical `left` here would be mirrored a second time
+                // by stylis-plugin-rtl under an Arabic UI, putting the preview on
+                // the opposite side from the drop — see DropPreview in dropZone.ts.
+                ...bandInsets(hover.preview.edge, `${hover.preview.extent * 100}%`),
                 bgcolor: "primary.main",
                 opacity: 0.18,
                 border: "2px solid",

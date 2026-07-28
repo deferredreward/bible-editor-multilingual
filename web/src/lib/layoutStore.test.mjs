@@ -367,6 +367,60 @@ console.log("\nsetLayoutTree - wholesale tree + sizes replace, and the Classic r
   );
 }
 
+console.log("\na wholesale sizes replace must be built from a FRESH read, not a stale one");
+{
+  // The Shell bug this pins down: `sizes` is memoized per render and
+  // `onSizesChange` deliberately does NOT bump the render key (bumping on every
+  // divider tick would re-render the Shell throughout the drag). So a resize
+  // persisted after the last render is invisible to the render closure — and
+  // setLayoutTree REPLACES the sizes record wholesale. Committing a drop from the
+  // stale closure therefore erased the resize the user had just made.
+  installStorage();
+  const tree = { kind: "region", id: "region-1", panels: [{ id: "notes-1", type: "notes" }] };
+  mergeOverride("builtin:flexible", { sizes: { "region-1": 0.4 } });
+
+  // What a render captured...
+  const staleSizes = loadLayoutStore().overrides["builtin:flexible"].sizes;
+  // ...then the user drags the divider to 0.7. This is the onSizesChange path:
+  // the PATCH ALONE, merged over the live store (seeding the merge with the stale
+  // record is itself a stale write — a later resize would carry the old value back).
+  mergeOverride("builtin:flexible", { sizes: { "region-1": 0.7 } });
+  assert(
+    loadLayoutStore().overrides["builtin:flexible"].sizes["region-1"] === 0.7,
+    "the resize is in the store at 0.7",
+  );
+  assert(staleSizes["region-1"] === 0.4, "the captured render closure still reads 0.4 (this is the hazard)");
+
+  // The BUG: commit the drop with the closure's sizes → the 0.7 is erased.
+  setLayoutTree("builtin:flexible", tree, staleSizes);
+  assert(
+    loadLayoutStore().overrides["builtin:flexible"].sizes["region-1"] === 0.4,
+    "a wholesale replace built from the STALE record reverts the resize — the defect, reproduced",
+  );
+
+  // The FIX: re-read at commit time (Shell's currentSizes()).
+  mergeOverride("builtin:flexible", { sizes: { "region-1": 0.7 } });
+  const fresh = loadLayoutStore().overrides["builtin:flexible"].sizes;
+  setLayoutTree("builtin:flexible", tree, fresh);
+  assert(
+    loadLayoutStore().overrides["builtin:flexible"].sizes["region-1"] === 0.7,
+    "a wholesale replace built from a FRESH read preserves a size written after the last render",
+  );
+}
+
+console.log("\nmergeOverride with a patch alone cannot revert an earlier resize");
+{
+  // Why onSizesChange passes the patch and nothing else: mergeOverride already
+  // merges over the live store, so two resizes of DIFFERENT nodes both survive
+  // even though no re-render happened between them.
+  installStorage();
+  mergeOverride("builtin:flexible", { sizes: { a: 0.3, b: 0.7 } });
+  mergeOverride("builtin:flexible", { sizes: { a: 0.6 } }); // first divider
+  mergeOverride("builtin:flexible", { sizes: { b: 0.4 } }); // second divider, no re-render between
+  const s = loadLayoutStore().overrides["builtin:flexible"].sizes;
+  assert(s.a === 0.6 && s.b === 0.4, "both resizes survive (a=0.6, b=0.4)");
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

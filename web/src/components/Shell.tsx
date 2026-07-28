@@ -3140,8 +3140,24 @@ export function Shell({
   const sizes = layoutOverride?.sizes ?? {};
   const minimizedPanels = layoutOverride?.minimized ?? {};
 
+  // The sizes the STORE holds RIGHT NOW — not the ones this render closed over.
+  //
+  // `onSizesChange` deliberately does NOT bump `layoutRev`: that would re-render
+  // the whole Shell on every divider tick while the user is still dragging it. The
+  // cost of that choice is that the memoized `layoutOverride` (and so `sizes`) goes
+  // stale the instant a resize is persisted. Any writer that REPLACES the sizes
+  // record wholesale — setLayoutTree does — must therefore re-read, or it silently
+  // erases a resize the user made since the last render. Same for anything that
+  // BAKES sizes into a saved spec.
+  const currentSizes = (): Record<string, number> =>
+    loadLayoutStore().overrides[activeLayout.id]?.sizes ?? {};
+
   const onSizesChange = (patch: Record<string, number>) => {
-    mergeOverride(activeLayout.id, { sizes: { ...sizes, ...patch } });
+    // Hand mergeOverride the PATCH ALONE and let it merge over the live store.
+    // Seeding the merge with this render's `sizes` was itself a stale-write: a
+    // second resize would carry the pre-first-resize value back on top of the
+    // fresher one, reverting the divider the user had just moved.
+    mergeOverride(activeLayout.id, { sizes: patch });
   };
 
   // A panel's live minimized state: the override wins, falling back to the
@@ -3164,7 +3180,7 @@ export function Shell({
     if (!panelId || !arrangeable) return;
     const next = movePanel(effRoot, panelId, target);
     if (next === effRoot) return; // no-op drop (engine rejected it) — persist nothing
-    setLayoutTree(activeLayout.id, next, pruneSizes(sizes, next, activeLayout.id));
+    setLayoutTree(activeLayout.id, next, pruneSizes(currentSizes(), next, activeLayout.id));
     setLayoutRev((n) => n + 1);
   };
 
@@ -3180,7 +3196,7 @@ export function Shell({
   const hasTreeOverride = arrangeable && !!layoutOverride?.tree;
   const handleResetArrangement = () => {
     // Back to the spec's own topology; sizes keyed to the discarded tree go too.
-    setLayoutTree(activeLayout.id, null, pruneSizes(sizes, activeLayout.root, activeLayout.id));
+    setLayoutTree(activeLayout.id, null, pruneSizes(currentSizes(), activeLayout.root, activeLayout.id));
     setLayoutRev((n) => n + 1);
   };
 
@@ -3341,7 +3357,9 @@ export function Shell({
     // would silently throw away the user's rearrangement, which is the one thing
     // they most likely just did.
     const clonedRoot = JSON.parse(JSON.stringify(effRoot)) as LayoutNode;
-    applyEffectiveSizes(clonedRoot, sizes, activeLayout.id);
+    // Fresh, not the render closure: "Save current as…" right after dragging a
+    // divider must bake the size the user can SEE, not the one from before it.
+    applyEffectiveSizes(clonedRoot, currentSizes(), activeLayout.id);
     const sp = findScripturePanel(clonedRoot);
     if (sp) sp.config = { ...(sp.config ?? {}), mode, versions: [...enabledVersions] };
     // Bake the live minimized state too — same "the saved spec reproduces what

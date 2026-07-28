@@ -7,12 +7,14 @@
 import {
   EDGE_RATIO,
   OUTER_BAND_PX,
+  bandInsets,
   computeDropPreview,
   computeDropTarget,
   computeIntoIndex,
   computeOuterDropBand,
   computeOuterDropTarget,
   isPointerInAnyOuterBand,
+  logicalBandEdge,
 } from "./dropZone.ts";
 
 let failed = 0;
@@ -240,22 +242,41 @@ console.log("\ndegenerate geometry");
   );
 }
 
-console.log("\npreview geometry mirrors the split side back to a physical half");
+console.log("\npreview geometry stays LOGICAL — it must NOT mirror the side itself");
 {
+  // The preview used to return a PHYSICAL `left`, mirroring the logical side for
+  // RTL. The caller then painted that through MUI `sx`, where stylis-plugin-rtl
+  // rewrote it a SECOND time — so under an Arabic UI the preview appeared on the
+  // opposite side from the drop that actually committed. The contract is now a
+  // logical edge, identical in both directions; the browser resolves it.
   eq(
     computeDropPreview(base(), split("horizontal", "before")),
-    { kind: "area", left: 0, top: 0, width: 0.5, height: 1 },
-    "LTR side:before previews the LEFT half",
+    { kind: "area", edge: "inlineStart", extent: 0.5 },
+    "side:before on the inline axis previews the inline-START half",
   );
   eq(
     computeDropPreview(base({ direction: "rtl" }), split("horizontal", "before")),
-    { kind: "area", left: 0.5, top: 0, width: 0.5, height: 1 },
-    "RTL side:before previews the RIGHT half",
+    { kind: "area", edge: "inlineStart", extent: 0.5 },
+    "the SAME logical edge under RTL — direction must not change the preview",
+  );
+  eq(
+    computeDropPreview(base(), split("horizontal", "after")),
+    { kind: "area", edge: "inlineEnd", extent: 0.5 },
+    "side:after on the inline axis previews the inline-END half",
+  );
+  eq(
+    computeDropPreview(base(), split("vertical", "before")),
+    { kind: "area", edge: "blockStart", extent: 0.5 },
+    "side:before on the block axis previews the block-START (top) half",
   );
   eq(
     computeDropPreview(base(), split("vertical", "after")),
-    { kind: "area", left: 0, top: 0.5, width: 1, height: 0.5 },
-    "side:after on the block axis previews the BOTTOM half",
+    { kind: "area", edge: "blockEnd", extent: 0.5 },
+    "side:after on the block axis previews the block-END (bottom) half",
+  );
+  assert(
+    !("left" in computeDropPreview(base(), split("horizontal", "before"))),
+    "an area preview carries NO physical inset — nothing for stylis to double-mirror",
   );
   eq(
     computeDropPreview(base(), into(0)),
@@ -269,9 +290,70 @@ console.log("\npreview geometry mirrors the split side back to a physical half")
   );
   eq(
     computeDropPreview(base({ panelRects: [], panelIds: [] }), into(0)),
-    { kind: "area", left: 0, top: 0, width: 1, height: 1 },
-    "into an empty region highlights the whole region",
+    { kind: "area", edge: null, extent: 1 },
+    "into an empty region highlights the whole region (edge null)",
   );
+}
+
+console.log("\nthe preview always shows the edge the drop will actually commit to");
+{
+  // THE regression guard for the double-mirror bug, stated end-to-end: hit-test a
+  // real pointer, then check the preview's logical edge is the one the resulting
+  // split will occupy. Under RTL the visual LEFT edge yields side:"after" — and so
+  // must preview inline-END, which the browser paints back on the visual left,
+  // where the user's cursor actually is.
+  for (const [x, y, direction, expectedSide, expectedEdge, label] of [
+    [10, 200, "ltr", "before", "inlineStart", "LTR visual-left edge"],
+    [990, 200, "ltr", "after", "inlineEnd", "LTR visual-right edge"],
+    [10, 200, "rtl", "after", "inlineEnd", "RTL visual-left edge (mirrored side AND edge)"],
+    [990, 200, "rtl", "before", "inlineStart", "RTL visual-right edge"],
+    [500, 10, "ltr", "before", "blockStart", "top edge, LTR"],
+    [500, 10, "rtl", "before", "blockStart", "top edge, RTL (block axis never mirrors)"],
+  ]) {
+    const input = base({ pointer: { x, y }, direction });
+    const target = computeDropTarget(input);
+    assert(
+      target.placement.kind === "split" && target.placement.side === expectedSide,
+      `${label}: drop commits side:${expectedSide} (got ${target.placement.side})`,
+    );
+    const preview = computeDropPreview(input, target);
+    assert(
+      preview.kind === "area" && preview.edge === expectedEdge,
+      `${label}: preview paints ${expectedEdge} (got ${preview.edge})`,
+    );
+    // And the shared mapping agrees — the perimeter band for the same axis+side
+    // lands on the same logical edge, which is what stops the two paths drifting.
+    assert(
+      logicalBandEdge(target.placement.orientation, target.placement.side) === expectedEdge,
+      `${label}: logicalBandEdge agrees with the region preview`,
+    );
+  }
+}
+
+console.log("\nbandInsets emits only logical insets");
+{
+  // If any physical inset leaks out of here, stylis-plugin-rtl will mirror it under
+  // an Arabic UI and the paint will disagree with the drop. Assert the shape.
+  const PHYSICAL = ["left", "right", "marginLeft", "marginRight", "paddingLeft", "paddingRight"];
+  for (const edge of ["blockStart", "blockEnd", "inlineStart", "inlineEnd", null]) {
+    const insets = bandInsets(edge, "50%");
+    for (const prop of PHYSICAL) {
+      assert(!(prop in insets), `bandInsets(${edge}) emits no physical \`${prop}\``);
+    }
+  }
+  eq(bandInsets("inlineStart", "50%"), { top: 0, bottom: 0, insetInlineStart: 0, width: "50%" }, "inline-start band");
+  eq(bandInsets("inlineEnd", "50%"), { top: 0, bottom: 0, insetInlineEnd: 0, width: "50%" }, "inline-end band");
+  eq(
+    bandInsets("blockStart", "22px"),
+    { insetInlineStart: 0, insetInlineEnd: 0, top: 0, height: "22px" },
+    "block-start band (the perimeter's px thickness)",
+  );
+  eq(
+    bandInsets("blockEnd", "40%"),
+    { insetInlineStart: 0, insetInlineEnd: 0, bottom: 0, height: "40%" },
+    "block-end band",
+  );
+  eq(bandInsets(null, "100%"), { inset: 0 }, "edge null fills the whole box");
 }
 
 console.log("\npurity");
