@@ -60,9 +60,10 @@ export function PanelChrome({
           flexShrink: 0,
           display: "flex",
           alignItems: "center",
-          gap: 0.5,
-          px: 0.75,
-          py: 0.25,
+          gap: 0.25,
+          px: 0.5,
+          py: 0,
+          minHeight: 18,
           bgcolor: "grey.50",
           borderBottom: minimized ? 0 : "1px solid",
           borderColor: "divider",
@@ -94,16 +95,20 @@ export function PanelChrome({
               "&:active": { cursor: "grabbing" },
             }}
           >
-            <DragIndicatorIcon sx={{ fontSize: 16 }} />
+            <DragIndicatorIcon sx={{ fontSize: 13 }} />
           </Box>
         </Tooltip>
+        {/* Quiet, not a heading — the panel body carries its own title. Kept
+            (tiny) so a minimized panel is still identifiable. */}
         <Typography
           variant="caption"
           sx={{
-            fontWeight: 600,
+            fontSize: 9,
+            lineHeight: 1.4,
+            fontWeight: 500,
             textTransform: "uppercase",
-            letterSpacing: 0.5,
-            color: "text.secondary",
+            letterSpacing: 0.4,
+            color: "text.disabled",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -115,12 +120,12 @@ export function PanelChrome({
           size="small"
           onClick={onToggleMinimized}
           aria-label={minimized ? t("layout.expandPanel") : t("layout.minimizePanel")}
-          sx={{ marginInlineStart: "auto", p: 0.25 }}
+          sx={{ marginInlineStart: "auto", p: 0 }}
         >
           {minimized ? (
-            <ChevronRightIcon sx={{ fontSize: 16 }} />
+            <ChevronRightIcon sx={{ fontSize: 14 }} />
           ) : (
-            <ExpandMoreIcon sx={{ fontSize: 16 }} />
+            <ExpandMoreIcon sx={{ fontSize: 14 }} />
           )}
         </IconButton>
       </Box>
