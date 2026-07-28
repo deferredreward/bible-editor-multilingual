@@ -18,7 +18,7 @@ import {
   type DropZoneInput,
   type Rect,
 } from "../lib/dropZone";
-import type { DropTarget } from "../lib/layoutTree";
+import type { RegionDropTarget } from "../lib/layoutTree";
 import { useLayoutDrag } from "./LayoutDragContext";
 
 // Re-measuring every panel's box on every dragover tick is the obvious
@@ -35,7 +35,7 @@ function toRect(r: DOMRect): Rect {
 
 // A cheap identity for a resolved target, so a dragover tick that lands in the
 // same zone as the previous one causes no React re-render.
-function targetKey(target: DropTarget | null): string {
+function targetKey(target: RegionDropTarget | null): string {
   if (!target) return "";
   const p = target.placement;
   return p.kind === "into"
@@ -57,7 +57,7 @@ export function RegionDropZone({ regionId, children }: RegionDropZoneProps) {
   const draggedPanelId = drag?.draggedPanelId ?? null;
   const ref = useRef<HTMLDivElement | null>(null);
   const geomRef = useRef<{ at: number; geometry: Geometry } | null>(null);
-  const [hover, setHover] = useState<{ target: DropTarget; preview: DropPreview } | null>(null);
+  const [hover, setHover] = useState<{ target: RegionDropTarget; preview: DropPreview } | null>(null);
   const hoverKeyRef = useRef("");
 
   const clear = useCallback(() => {
@@ -103,7 +103,7 @@ export function RegionDropZone({ regionId, children }: RegionDropZoneProps) {
 
   // Resolve the pointer to a DropTarget, measuring (or reusing) geometry.
   const resolve = useCallback(
-    (clientX: number, clientY: number, panelId: string): { target: DropTarget; preview: DropPreview } | null => {
+    (clientX: number, clientY: number, panelId: string): { target: RegionDropTarget; preview: DropPreview } | null => {
       const t = now();
       let cached = geomRef.current;
       if (!cached || cached.geometry.draggedPanelId !== panelId || t - cached.at > GEOMETRY_MAX_AGE_MS) {

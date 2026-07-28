@@ -4,6 +4,7 @@ import { styled } from "@mui/material/styles";
 import { Group, Panel, Separator, type Layout, type LayoutChangedMeta } from "react-resizable-panels";
 import type { Axis, LayoutNode, LayoutSpec, PanelRegion } from "../lib/layoutSpec";
 import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
+import { OuterDropZone } from "./OuterDropZone";
 
 interface WorkspaceLayoutProps {
   // The resolved active layout. `builtin:classic` renders through the
@@ -225,11 +226,28 @@ export function WorkspaceLayout({
           {railNode}
         </Box>
       )}
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/* `position: relative` anchors the perimeter drop frame to the WORKSPACE
+          area (all regions, rail excluded). Classic returns above and never
+          reaches this. */}
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
         {/* Root path seeds group/split keys with the layout id so a switch
             between non-classic layouts remounts the tree (re-reading defaultSize
             from the new spec/overrides). */}
         {renderNode(spec.root, spec.id)}
+        {/* Outer-edge docking: wraps the whole tree so a full-width band stays
+            recoverable after its region has been emptied. Renders nothing unless
+            a panel drag is in flight. */}
+        <OuterDropZone />
       </Box>
     </Box>
   );

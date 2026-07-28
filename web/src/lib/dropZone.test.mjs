@@ -6,9 +6,12 @@
 
 import {
   EDGE_RATIO,
+  OUTER_BAND_PX,
   computeDropPreview,
   computeDropTarget,
   computeIntoIndex,
+  computeOuterDropBand,
+  computeOuterDropTarget,
 } from "./dropZone.ts";
 
 let failed = 0;
@@ -278,6 +281,197 @@ console.log("\npurity");
   computeIntoIndex(input);
   computeDropPreview(input, into(1));
   assert(JSON.stringify(input) === snapshot, "the input object is never mutated");
+}
+
+// ─── Outer (perimeter) drop zones ──────────────────────────────────────
+//
+// The whole WORKSPACE box, 1000x400 at the origin. The bands are OUTER_BAND_PX
+// (22px) thick: x < 22 / x > 978, y < 22 / y > 378.
+const WORKSPACE = { left: 0, top: 0, width: 1000, height: 400 };
+const outer = (over = {}) => ({
+  rect: WORKSPACE,
+  pointer: { x: 500, y: 200 },
+  direction: "ltr",
+  ...over,
+});
+const band = (orientation, side) => ({ kind: "outer", orientation, side });
+
+console.log("\nOUTER_BAND_PX sanity");
+{
+  assert(
+    OUTER_BAND_PX > 0 && OUTER_BAND_PX * 2 < WORKSPACE.height,
+    `OUTER_BAND_PX (${OUTER_BAND_PX}) is a thin frame, not half the workspace`,
+  );
+}
+
+console.log("\nall four outer edges, LTR");
+{
+  eq(computeOuterDropTarget(outer({ pointer: { x: 500, y: 2 } })), band("vertical", "before"), "top edge → vertical/before (a full-width band above)");
+  eq(computeOuterDropTarget(outer({ pointer: { x: 500, y: 398 } })), band("vertical", "after"), "bottom edge → vertical/after");
+  eq(computeOuterDropTarget(outer({ pointer: { x: 2, y: 200 } })), band("horizontal", "before"), "LTR left edge → horizontal/before");
+  eq(computeOuterDropTarget(outer({ pointer: { x: 998, y: 200 } })), band("horizontal", "after"), "LTR right edge → horizontal/after");
+  eq(computeOuterDropTarget(outer()), null, "the interior is NOT an outer drop");
+}
+
+console.log("\nouter inline edges MIRROR under RTL; the block edges do not");
+{
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 2, y: 200 }, direction: "rtl" })),
+    band("horizontal", "after"),
+    "RTL visual LEFT band → side AFTER (mirrored)",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 998, y: 200 }, direction: "rtl" })),
+    band("horizontal", "before"),
+    "RTL visual RIGHT band → side BEFORE (mirrored)",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 500, y: 2 }, direction: "rtl" })),
+    band("vertical", "before"),
+    "RTL top edge → vertical/before (block axis is NOT mirrored)",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 500, y: 398 }, direction: "rtl" })),
+    band("vertical", "after"),
+    "RTL bottom edge → vertical/after (block axis is NOT mirrored)",
+  );
+  // Genuine mirror across the inline band, not a coincidence of the sample points.
+  for (const x of [0, 10, 21, 979, 990, 1000]) {
+    const l = computeOuterDropTarget(outer({ pointer: { x, y: 200 } }));
+    const r = computeOuterDropTarget(outer({ pointer: { x, y: 200 }, direction: "rtl" }));
+    assert(
+      l && r && l.orientation === "horizontal" && r.orientation === "horizontal" && l.side !== r.side,
+      `x=${x}: LTR side (${l?.side}) is the mirror of RTL side (${r?.side})`,
+    );
+  }
+}
+
+console.log("\nouter corner precedence: deeper band wins, ties go to the BLOCK axis");
+{
+  // x=2 is 20px into the inline band; y=10 is 12px into the block band.
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 2, y: 10 } })),
+    band("horizontal", "before"),
+    "top-left, deeper on inline → a full-height column",
+  );
+  // x=10 is 12px in; y=2 is 20px in.
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 10, y: 2 } })),
+    band("vertical", "before"),
+    "top-left, deeper on block → a full-width band",
+  );
+  // EXACT tie: both 17px in. The block axis wins — deliberately the OPPOSITE of
+  // computeDropTarget's region tie-break, because a full-width band is the
+  // likelier intent at the perimeter and is the shape region drops can't make.
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 5, y: 5 } })),
+    band("vertical", "before"),
+    "exact tie (5,5) → BLOCK axis wins (full-width band)",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 0, y: 0 } })),
+    band("vertical", "before"),
+    "the very corner (0,0) is also a tie → block axis",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 995, y: 395 } })),
+    band("vertical", "after"),
+    "bottom-right tie → vertical/after",
+  );
+}
+
+console.log("\nouter band boundaries and degenerate input");
+{
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: OUTER_BAND_PX, y: 200 } })),
+    null,
+    "exactly ON the band threshold (x=22) belongs to the INSIDE, not the perimeter",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: OUTER_BAND_PX - 1, y: 200 } })),
+    band("horizontal", "before"),
+    "one pixel further out (x=21) IS an outer drop",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 500, y: OUTER_BAND_PX } })),
+    null,
+    "exactly on the top threshold (y=22) → not an outer drop",
+  );
+  eq(computeOuterDropTarget(outer({ pointer: { x: -5, y: 200 } })), null, "pointer left of the workspace → null");
+  eq(computeOuterDropTarget(outer({ pointer: { x: 500, y: 500 } })), null, "pointer below the workspace → null");
+  eq(
+    computeOuterDropTarget(outer({ rect: { left: 0, top: 0, width: 0, height: 0 } })),
+    null,
+    "zero-sized workspace → null, never a bogus wrap",
+  );
+  eq(
+    computeOuterDropTarget(outer({ pointer: { x: 100, y: 200 }, bandPx: 200 })),
+    band("horizontal", "before"),
+    "bandPx is overridable (200px band catches x=100)",
+  );
+  // Offset rects: the bands follow the rect, not the viewport origin.
+  eq(
+    computeOuterDropTarget(outer({ rect: { left: 300, top: 100, width: 500, height: 300 }, pointer: { x: 305, y: 250 } })),
+    band("horizontal", "before"),
+    "an offset workspace's left band is measured from its own left edge",
+  );
+  eq(
+    computeOuterDropTarget(outer({ rect: { left: 300, top: 100, width: 500, height: 300 }, pointer: { x: 305, y: 250 - 200 } })),
+    null,
+    "…and a pointer above that rect is outside it entirely",
+  );
+}
+
+console.log("\nouter band geometry matches the band the engine will create");
+{
+  // LOGICAL, not physical: the UI paints insetInlineStart/insetInlineEnd and lets
+  // the browser (plus stylis-plugin-rtl, which rewrites physical insets) resolve
+  // direction. Pre-mirroring here would flip the band to the WRONG side under an
+  // RTL UI — mirrored twice.
+  eq(
+    computeOuterDropBand(band("vertical", "before")),
+    { edge: "blockStart", size: 0.4 },
+    "vertical/before → block-start (top) band at 0.4 (= layoutTree's OUTER_BAND_SIZE)",
+  );
+  eq(
+    computeOuterDropBand(band("vertical", "after")),
+    { edge: "blockEnd", size: 0.4 },
+    "vertical/after → block-end (bottom) band at 0.4",
+  );
+  eq(
+    computeOuterDropBand(band("horizontal", "before")),
+    { edge: "inlineStart", size: 0.3 },
+    "horizontal/before → inline-start column at 0.3",
+  );
+  eq(
+    computeOuterDropBand(band("horizontal", "after")),
+    { edge: "inlineEnd", size: 0.3 },
+    "horizontal/after → inline-end column at 0.3",
+  );
+  // Hit-test → paint round-trips: the band shown is always the one the pointer is
+  // in. Under RTL the same visual left edge yields the mirrored logical side and
+  // therefore the mirrored logical band — which the browser paints back on the
+  // visual left, where the user actually is.
+  for (const [x, y, ltrEdge, rtlEdge] of [
+    [500, 2, "blockStart", "blockStart"],
+    [500, 398, "blockEnd", "blockEnd"],
+    [2, 200, "inlineStart", "inlineEnd"],
+    [998, 200, "inlineEnd", "inlineStart"],
+  ]) {
+    for (const [direction, expected] of [["ltr", ltrEdge], ["rtl", rtlEdge]]) {
+      const target = computeOuterDropTarget(outer({ pointer: { x, y }, direction }));
+      const got = computeOuterDropBand(target).edge;
+      assert(got === expected, `(${x},${y}) dir=${direction} → logical band ${expected} (got ${got})`);
+    }
+  }
+}
+
+console.log("\nouter purity");
+{
+  const input = outer({ pointer: { x: 2, y: 2 } });
+  const snapshot = JSON.stringify(input);
+  computeOuterDropTarget(input);
+  assert(JSON.stringify(input) === snapshot, "computeOuterDropTarget never mutates its input");
 }
 
 if (failed > 0) {

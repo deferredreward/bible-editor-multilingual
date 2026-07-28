@@ -10,7 +10,7 @@
 // React. That is what makes the zone geometry unit-testable
 // (see dropZone.test.mjs).
 
-import type { DropTarget } from "./layoutTree.ts";
+import { OUTER_BAND_SIZE, type OuterDropTarget, type RegionDropTarget } from "./layoutTree.ts";
 
 export interface Rect {
   left: number;
@@ -122,7 +122,7 @@ export function computeIntoIndex(input: DropZoneInput): number {
 // Five zones: four ~22% edge bands (split) plus the center (join the list).
 // Corners belong to whichever axis the pointer has penetrated further; an exact
 // tie goes to the inline axis, so the result is always deterministic.
-export function computeDropTarget(input: DropZoneInput): DropTarget {
+export function computeDropTarget(input: DropZoneInput): RegionDropTarget {
   const { rect, pointer, direction, currentRegionId } = input;
   const edge = input.edgeRatio ?? EDGE_RATIO;
 
@@ -191,7 +191,7 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-export function computeDropPreview(input: DropZoneInput, target: DropTarget): DropPreview {
+export function computeDropPreview(input: DropZoneInput, target: RegionDropTarget): DropPreview {
   const { rect, direction } = input;
   const placement = target.placement;
 
@@ -212,4 +212,93 @@ export function computeDropPreview(input: DropZoneInput, target: DropTarget): Dr
   const index = placement.index === undefined ? rects.length : Math.min(Math.max(placement.index, 0), rects.length);
   const y = index === 0 ? rects[0].top : rects[index - 1].top + rects[index - 1].height;
   return { kind: "line", top: clamp01((y - rect.top) / rect.height) };
+}
+
+// ─── Outer (perimeter) drop zones ──────────────────────────────────────
+
+// How far in from the WORKSPACE's outer edge counts as an outer drop. A fixed
+// pixel band, not a fraction: it has to stay a thin frame no matter how big the
+// window is, or it would swallow the region zones inside it.
+export const OUTER_BAND_PX = 22;
+
+export interface OuterDropInput {
+  // The bounding box of the WHOLE arrangeable workspace area (all regions), in
+  // the same coordinate space as `pointer`.
+  rect: Rect;
+  pointer: Point;
+  // Effective direction of the workspace element (getComputedStyle().direction).
+  direction: Direction;
+  bandPx?: number;
+}
+
+// Map a pointer near the workspace perimeter to an outer DropTarget, or null when
+// it is not in any outer band (including a pointer outside the rect entirely).
+//
+// Corner precedence: the edge whose band is penetrated DEEPER wins. On an exact
+// tie the BLOCK (vertical) axis wins — the opposite of the region hit test's
+// tie-break, deliberately: a full-width band is the likelier intent at the
+// workspace perimeter, and it is the shape that region drops cannot produce.
+export function computeOuterDropTarget(input: OuterDropInput): OuterDropTarget | null {
+  const { rect, pointer, direction } = input;
+  const band = input.bandPx ?? OUTER_BAND_PX;
+  if (!(rect.width > 0) || !(rect.height > 0) || !(band > 0)) return null;
+
+  const dx = pointer.x - rect.left;
+  const dy = pointer.y - rect.top;
+  if (dx < 0 || dy < 0 || dx > rect.width || dy > rect.height) return null;
+
+  // Penetration in PIXELS (both axes use the same band, so they are directly
+  // comparable). `< band` is strict, matching hitEdges: a pointer exactly on the
+  // band threshold belongs to the inside, not to the perimeter.
+  let inline: "start" | "end" | null = null;
+  let inlinePenetration = -1;
+  if (dx < band) {
+    inline = "start";
+    inlinePenetration = band - dx;
+  } else if (rect.width - dx < band) {
+    inline = "end";
+    inlinePenetration = band - (rect.width - dx);
+  }
+  let block: "start" | "end" | null = null;
+  let blockPenetration = -1;
+  if (dy < band) {
+    block = "start";
+    blockPenetration = band - dy;
+  } else if (rect.height - dy < band) {
+    block = "end";
+    blockPenetration = band - (rect.height - dy);
+  }
+
+  if (block !== null && blockPenetration >= inlinePenetration) {
+    // The block axis runs top→bottom in LTR and RTL alike — no mirroring.
+    return { kind: "outer", orientation: "vertical", side: block === "start" ? "before" : "after" };
+  }
+  if (inline !== null) {
+    // RTL MIRRORING, same rule as computeDropTarget: `side` is logical, so the
+    // visual LEFT band of an RTL workspace is the inline END → side "after".
+    const logicalStart = direction === "rtl" ? inline === "end" : inline === "start";
+    return { kind: "outer", orientation: "horizontal", side: logicalStart ? "before" : "after" };
+  }
+  return null;
+}
+
+// Which edge of the workspace the resulting band occupies, and how much of it —
+// the fraction comes straight from layoutTree's OUTER_BAND_SIZE so the preview
+// can never disagree with the committed tree.
+//
+// The edge is named in CSS LOGICAL terms, and that is deliberate: the app renders
+// RTL through stylis-plugin-rtl, which rewrites physical insets (`left`/`right`)
+// in the emitted CSS. Pre-mirroring a logical side into a physical one — as
+// computeDropPreview must, because it paints halves of a region — and then
+// letting stylis mirror it again would flip the band back to the wrong side. So
+// the caller paints `insetInlineStart` / `insetInlineEnd` and the browser
+// resolves the direction. The block edges are never mirrored by anything.
+export type OuterBandEdge = "blockStart" | "blockEnd" | "inlineStart" | "inlineEnd";
+
+export function computeOuterDropBand(target: OuterDropTarget): { edge: OuterBandEdge; size: number } {
+  const size = OUTER_BAND_SIZE[target.orientation];
+  if (target.orientation === "vertical") {
+    return { edge: target.side === "before" ? "blockStart" : "blockEnd", size };
+  }
+  return { edge: target.side === "before" ? "inlineStart" : "inlineEnd", size };
 }

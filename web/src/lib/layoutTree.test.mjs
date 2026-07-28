@@ -16,6 +16,7 @@ import {
   pruneSizes,
   removePanel,
 } from "./layoutTree.ts";
+import { MAX_DEPTH } from "./layoutSpec.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -713,6 +714,164 @@ console.log("\n[sizes] REGRESSION: a drop that EMPTIES a sibling region");
   assertSizesSumToOne(crossBranch, "cross-branch drop");
   const resB = regionById(crossBranch, "res-b");
   assert(resB.size === 0.5, `cross-branch: res-b keeps 0.5 (got ${resB.size})`);
+}
+
+// ─── outer (perimeter) drops ───────────────────────────────────────────
+console.log("\n[outer] THE REGRESSION: recovering the full-width band after emptying it");
+{
+  // The bug the perimeter drop exists to fix, end to end. Reported as: "the only
+  // thing I can't see how to do is to access the full width top section once I've
+  // moved scripture out of it."
+  //
+  // Step 1 — the bug state. Moving scripture-1 into res-a empties the `scripture`
+  // region, so normalizeTree deletes it, the root vertical split is left with one
+  // child, and that collapses: the root becomes a plain HORIZONTAL split of
+  // res-a | res-b. No full-width region exists any more, and since every
+  // region-scoped drop can only split a region that still exists, no gesture
+  // could rebuild one (a column's top edge splits that column, not the width).
+  const bug = movePanel(fixture(), "scripture-1", { regionId: "res-a", placement: { kind: "into" } });
+  assert(
+    bug.kind === "split" && bug.orientation === "horizontal",
+    "bug state: the root collapsed to a horizontal split",
+  );
+  eqArr(collectRegions(bug).map((r) => r.id), ["res-a", "res-b"], "bug state: only the two columns remain");
+  assert(ids(regionById(bug, "res-a")).join(",") === "notes-1,ta-1,scripture-1", "bug state: scripture-1 is in res-a");
+
+  // Step 2 — the fix. An outer vertical/before drop wraps the WHOLE tree.
+  const fixed = movePanel(bug, "scripture-1", { kind: "outer", orientation: "vertical", side: "before" });
+  assert(fixed.kind === "split" && fixed.orientation === "vertical", "recovered: root is a vertical split");
+  assert(fixed.children.length === 2, "recovered: root has two children");
+  const band = fixed.children[0];
+  assert(band.kind === "region", "recovered: the FIRST child is a region (the band)");
+  assert(ids(band).join(",") === "scripture-1", "recovered: the band holds only scripture-1");
+  assert(band.size === 0.4, `recovered: the band is EXACTLY 0.4 (got ${band.size})`);
+  const below = fixed.children[1];
+  assert(
+    below.kind === "split" && below.orientation === "horizontal",
+    "recovered: the horizontal res-a|res-b split sits below the band",
+  );
+  assert(near(below.size, 0.6), `recovered: the content keeps the remainder 0.6 (got ${below.size})`);
+  eqArr(
+    collectRegions(below).map((r) => r.id),
+    ["res-a", "res-b"],
+    "recovered: the two columns are untouched below",
+  );
+  assert(collectPanels(fixed).length === 6, "recovered: no panel lost");
+  assert(ids(regionById(fixed, "res-a")).join(",") === "notes-1,ta-1", "recovered: res-a gave scripture-1 back");
+  assertSizesSumToOne(fixed, "outer vertical/before recovery");
+}
+
+console.log("\n[outer] all four axis × side combinations");
+{
+  // side:"after" on the block axis → a BOTTOM band, panel last.
+  const bottom = movePanel(fixture(), "notes-1", { kind: "outer", orientation: "vertical", side: "after" });
+  const last = bottom.children[bottom.children.length - 1];
+  assert(last.kind === "region" && ids(last).join(",") === "notes-1", "vertical/after: the band is the LAST child");
+  assert(last.size === 0.4, `vertical/after: band is 0.4 (got ${last.size})`);
+
+  // The inline axis is a narrower side COLUMN (0.3), not a 0.4 band.
+  for (const side of ["before", "after"]) {
+    const out = movePanel(fixture(), "notes-1", { kind: "outer", orientation: "horizontal", side });
+    assert(out.kind === "split" && out.orientation === "horizontal", `horizontal/${side}: root is a horizontal split`);
+    const fresh = side === "before" ? out.children[0] : out.children[out.children.length - 1];
+    assert(fresh.kind === "region" && ids(fresh).join(",") === "notes-1", `horizontal/${side}: panel is on the right side`);
+    assert(fresh.size === 0.3, `horizontal/${side}: a side column is 0.3 (got ${fresh.size})`);
+    const kept = side === "before" ? out.children[1] : out.children[0];
+    assert(near(kept.size, 0.7), `horizontal/${side}: the existing tree keeps 0.7 (got ${kept.size})`);
+    assert(kept.kind === "split" && kept.orientation === "vertical", `horizontal/${side}: the whole old tree is the other child`);
+    assert(collectPanels(out).length === 6, `horizontal/${side}: no panel lost`);
+    assertSizesSumToOne(out, `outer horizontal/${side}`);
+  }
+}
+
+console.log("\n[outer] a root that is ALREADY the same orientation gets a SIBLING, not a nested split");
+{
+  // fixture()'s root is a vertical split, so an outer VERTICAL drop must prepend
+  // the new band as a third sibling — not wrap a redundant same-orientation level.
+  const out = movePanel(fixture(), "notes-1", { kind: "outer", orientation: "vertical", side: "before" });
+  assert(out.kind === "split" && out.orientation === "vertical", "root stays one vertical split");
+  assert(out.children.length === 3, `flattened into 3 siblings (got ${out.children.length})`);
+  assert(out.children[0].kind === "region" && ids(out.children[0]).join(",") === "notes-1", "band is first");
+  assert(out.children[0].size === 0.4, `band keeps 0.4 (got ${out.children[0].size})`);
+  assert(out.children[1].id === "scripture", "scripture follows the band");
+  assert(out.children[2].kind === "split", "the resource split follows scripture");
+  // Proportions survive the flattening: the old 0.4 / 0.6 pair is scaled by 0.6.
+  assert(near(out.children[1].size, 0.24), `scripture scaled to 0.24 (got ${out.children[1].size})`);
+  assert(near(out.children[2].size, 0.36), `resource split scaled to 0.36 (got ${out.children[2].size})`);
+  assertSizesSumToOne(out, "outer same-orientation flattening");
+  // Nothing nested a same-orientation split anywhere.
+  const nestedSame = (n) =>
+    n.kind === "split" &&
+    (n.children.some((c) => c.kind === "split" && c.orientation === n.orientation) ||
+      n.children.some((c) => nestedSame(c)));
+  assert(!nestedSame(out), "no same-orientation split is nested anywhere in the result");
+}
+
+console.log("\n[outer] no-op and depth guards");
+{
+  const solo = { kind: "region", id: "only", panels: [{ id: "n-1", type: "notes" }] };
+  assert(
+    movePanel(solo, "n-1", { kind: "outer", orientation: "vertical", side: "before" }) === solo,
+    "the only panel of the only region → the tree is returned UNCHANGED (identity)",
+  );
+  assert(
+    movePanel(solo, "nope", { kind: "outer", orientation: "vertical", side: "before" }) === solo,
+    "unknown panel → unchanged",
+  );
+
+  // Two panels in ONE region is a real outer drop: the region splits into a band
+  // plus the remainder.
+  const two = {
+    kind: "region",
+    id: "only",
+    panels: [{ id: "n-1", type: "notes" }, { id: "w-1", type: "words" }],
+  };
+  const split2 = movePanel(two, "n-1", { kind: "outer", orientation: "vertical", side: "after" });
+  assert(split2.kind === "split" && split2.orientation === "vertical", "one region, two panels → a vertical split");
+  eqArr(split2.children.map((c) => c.id), ["only", "region-1"], "existing region first, new band last (side:after)");
+  assert(ids(split2.children[1]).join(",") === "n-1", "the band holds the dragged panel");
+  assert(ids(split2.children[0]).join(",") === "w-1", "the source region keeps the other panel");
+  assertSizesSumToOne(split2, "one-region outer split");
+
+  // MAX_DEPTH: wrapping adds a level, so a tree already at the limit must refuse
+  // rather than emit something validateLayoutNode would reject on reload.
+  assert(MAX_DEPTH === 8, `MAX_DEPTH is 8 (got ${MAX_DEPTH}) — the depths below assume it`);
+  // Alternating orientations so nothing flattens; the leaf region holds TWO panels
+  // so removing one cannot empty it and collapse the depth back.
+  const deep = (levels) => {
+    let node = {
+      kind: "region",
+      id: "leaf",
+      panels: [{ id: "leaf-1", type: "notes" }, { id: "leaf-2", type: "words" }],
+    };
+    for (let i = levels; i >= 1; i--) {
+      node = {
+        kind: "split",
+        orientation: i % 2 === 1 ? "horizontal" : "vertical",
+        children: [
+          { kind: "region", id: `pad-${i}`, panels: [{ id: `pad-${i}-1`, type: "questions" }] },
+          node,
+        ],
+      };
+    }
+    return node;
+  };
+  const atLimit = deep(MAX_DEPTH - 1); // splits at depths 1..7, regions at depth 8
+  const refused = movePanel(atLimit, "leaf-1", { kind: "outer", orientation: "vertical", side: "before" });
+  assert(refused === atLimit, "a tree already at MAX_DEPTH refuses the outer wrap (unchanged)");
+  // One level shallower, the same drop is accepted — so the guard is the depth.
+  const roomy = deep(MAX_DEPTH - 2);
+  const accepted = movePanel(roomy, "leaf-1", { kind: "outer", orientation: "vertical", side: "before" });
+  assert(accepted !== roomy, "one level shallower, the same outer drop IS accepted");
+  assert(accepted.children[0].kind === "region" && ids(accepted.children[0]).join(",") === "leaf-1", "…with the band first");
+}
+
+console.log("\n[outer] purity");
+{
+  const root = fixture();
+  const snapshot = JSON.stringify(root);
+  movePanel(root, "scripture-1", { kind: "outer", orientation: "horizontal", side: "after" });
+  assert(JSON.stringify(root) === snapshot, "movePanel never mutates the input tree on an outer drop");
 }
 
 if (failed > 0) {

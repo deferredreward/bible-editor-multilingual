@@ -1,8 +1,10 @@
 // Pure tree edits for the flexible-layout model (layoutSpec v2).
 //
 // This is the correctness foundation for real tiled docking: a dragged panel can
-// be dropped on a region's CENTER (join its panel list) or on a region's EDGE
-// (split that region, panel lands in a fresh sibling region). Empty regions and
+// be dropped on a region's CENTER (join its panel list), on a region's EDGE
+// (split that region, panel lands in a fresh sibling region), or on the OUTER
+// EDGE of the whole workspace (wrap the entire tree — the gesture that makes a
+// full-width band recoverable after it has been emptied). Empty regions and
 // single-child splits collapse away, so the topology the user ends up with is
 // genuinely their own — that is why the store persists a whole tree rather than
 // a patch over a fixed spec (see layoutStore.LayoutOverride.tree).
@@ -37,10 +39,39 @@ export type DropPlacement =
   // Wrap the target region in a split; the panel goes into a NEW sibling region.
   | { kind: "split"; orientation: Axis; side: "before" | "after" };
 
-export interface DropTarget {
+// A drop onto one REGION (its center or one of its edges). `kind` is optional so
+// every existing call site — and every persisted/constructed target — keeps
+// working without a discriminant.
+export interface RegionDropTarget {
+  kind?: "region";
   regionId: string;
   placement: DropPlacement;
 }
+
+// A drop on the OUTER EDGE of the whole workspace: the entire tree is wrapped in
+// a new split and the dragged panel becomes a full-width band (or full-height
+// column) alongside everything else.
+//
+// This is the recovery gesture. Without it, a full-width band that the user
+// drags a panel out of is unrecoverable: the emptied region is dropped, the root
+// split collapses to its one surviving child, and since every region-scoped drop
+// can only split a region that still exists, no gesture can recreate a band that
+// spans the whole workspace again.
+export interface OuterDropTarget {
+  kind: "outer";
+  orientation: Axis;
+  side: "before" | "after";
+}
+
+export type DropTarget = RegionDropTarget | OuterDropTarget;
+
+// The fraction the new outer band claims. A top/bottom band matches the
+// `flexible` built-in's scripture band (0.4); a side column is narrower (0.3).
+// dropZone.ts reads these so the drop PREVIEW and the committed tree agree.
+export const OUTER_BAND_SIZE: Record<Axis, number> = {
+  vertical: 0.4,
+  horizontal: 0.3,
+};
 
 function isRegion(node: LayoutNode): node is PanelRegion {
   return node.kind === "region";
@@ -203,6 +234,57 @@ function mapRegions(node: LayoutNode, fn: (region: PanelRegion) => LayoutNode): 
   return changed ? { ...node, children } : node;
 }
 
+// Wrap the WHOLE tree in a new split, with `panel` alone in a fresh region on the
+// given side. See OuterDropTarget for why this gesture exists.
+function movePanelOuter(
+  root: LayoutNode,
+  panelId: string,
+  panel: PanelInstance,
+  from: PanelRegion,
+  target: OuterDropTarget,
+): LayoutNode {
+  // No-op guard: the only panel of the only region is already "the whole
+  // workspace" — wrapping it would just add an empty split around one region.
+  if (from.panels.length === 1 && collectRegions(root).length === 1) return root;
+
+  // Take the panel out first, then canonicalize: an emptied region disappears and
+  // its parent split may collapse, so `rest` is the tree as it will really look
+  // underneath (or beside) the new band.
+  const rest = normalizeTree(
+    mapRegions(root, (region) =>
+      region.id === from.id
+        ? { ...region, panels: region.panels.filter((p) => p.id !== panelId) }
+        : region,
+    ),
+  );
+
+  const band = OUTER_BAND_SIZE[target.orientation];
+  const newRegion: PanelRegion = {
+    kind: "region",
+    // Ids are only ever removed by the strip above, so a fresh id for the ORIGINAL
+    // tree is still fresh for `rest`.
+    id: nextRegionId(root),
+    size: band,
+    display: "stacked",
+    panels: [panel],
+  };
+  const kept: LayoutNode = { ...rest, size: 1 - band };
+  const wrapped: SplitNode = {
+    kind: "split",
+    orientation: target.orientation,
+    children: target.side === "before" ? [newRegion, kept] : [kept, newRegion],
+  };
+
+  // When `rest` is already a split of the same orientation, normalizeTree's
+  // same-orientation flattening turns the new region into a SIBLING of its
+  // children rather than nesting a redundant level (proportions preserved).
+  const out = normalizeTree(wrapped);
+  // Wrapping adds a level; refuse rather than emit a tree layoutSpec's validator
+  // would reject on reload.
+  if (depthOf(out) > MAX_DEPTH) return root;
+  return out;
+}
+
 // Move `panelId` to `target`. Returns the input tree unchanged when the panel or
 // the target region does not exist, when the move is a no-op, or when it would
 // push the tree past MAX_DEPTH. Never throws.
@@ -211,6 +293,7 @@ export function movePanel(root: LayoutNode, panelId: string, target: DropTarget)
   if (!from) return root;
   const panel = from.panels.find((p) => p.id === panelId);
   if (!panel) return root;
+  if (target.kind === "outer") return movePanelOuter(root, panelId, panel, from, target);
   const targetRegion = collectRegions(root).find((r) => r.id === target.regionId);
   if (!targetRegion) return root;
 

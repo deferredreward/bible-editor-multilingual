@@ -209,6 +209,8 @@
     "minimizePanel": "Minimize panel",
     "expandPanel": "Expand panel",
     "resetArrangement": "Reset arrangement",
+    "dockFullWidth": "Full-width band",
+    "dockFullHeight": "Full-height column",
     "myLayouts": "My layouts",
     "saveAs": "Save current as…",
     "manage": "Manage layouts…",
