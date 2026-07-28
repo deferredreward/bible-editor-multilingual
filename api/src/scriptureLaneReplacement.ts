@@ -16,6 +16,7 @@ import {
   configHash,
   copyBookForward,
   getLaneState,
+  laneScriptureResource,
   parseLaneConfig,
   planReplacementBooks,
   recoverOrphanedReservation,
@@ -765,7 +766,49 @@ export async function backOutReplacement(
   }
   if (job.status === "cancelled") return; // idempotent
 
+  // The abandoned generation's staged rows are inert (active_generation never
+  // advanced) but were never garbage-collected — drop them. The whole
+  // destination generation belongs to this job (generations are allocated by a
+  // strictly-monotonic per-lane counter and only ever written by their owning
+  // job), so scoping by (bible_version, source_generation) is safe;
+  // book_resource_syncs has no created_by_job_id column for the same reason.
+  //
+  // The live-generation guard MUST be part of each DELETE, not a read before
+  // the batch: a concurrent activateReplacement could flip active_generation to
+  // this generation in between, and we would then delete the rows the lane had
+  // just started serving. Both predicates run inside the batch's transaction —
+  // the lane must still name this job (activation clears replacement_job_id)
+  // and must not already be pointing at the generation we're purging. They also
+  // hold under a stale read of `job`, and they precede the UPDATE below that
+  // clears replacement_job_id itself.
+  const bv = bibleVersionForLane(job.lane as LaneKey);
+  const laneStillAbandoning = `
+    EXISTS (
+      SELECT 1 FROM scripture_lane_state s
+       WHERE s.lane = ?3
+         AND s.replacement_job_id = ?4
+         AND s.active_generation <> ?2
+    )`;
+  const cleanup = [
+    env.DB.prepare(
+      `DELETE FROM verses
+        WHERE bible_version = ?1 AND source_generation = ?2
+          AND ${laneStillAbandoning}`,
+    ).bind(bv, job.generation, job.lane, jobId),
+    env.DB.prepare(
+      `DELETE FROM book_usfm_meta
+        WHERE bible_version = ?1 AND source_generation = ?2
+          AND ${laneStillAbandoning}`,
+    ).bind(bv, job.generation, job.lane, jobId),
+    env.DB.prepare(
+      `DELETE FROM book_resource_syncs
+        WHERE resource = ?1 AND source_generation = ?2
+          AND ${laneStillAbandoning}`,
+    ).bind(laneScriptureResource(job.lane as LaneKey), job.generation, job.lane, jobId),
+  ];
+
   await env.DB.batch([
+    ...cleanup,
     env.DB.prepare(
       `UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
         WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')`,

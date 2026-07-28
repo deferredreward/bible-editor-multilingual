@@ -27,11 +27,15 @@ Rule of thumb: if you'd open more than two files or run more than two bash comma
 
 ## Session state — read first, update last
 
-[`STATE.md`](STATE.md) is the persistent loop state: what just shipped, what's mid-flight, what's blocked on a human, and durable lessons that aren't in the code. **The agent forgets between sessions; this file does not.**
+State is split across two places, and the split is load-bearing. **The agent forgets between sessions; these files do not.**
 
-- **At the start of non-trivial work:** read `STATE.md` so you resume rather than restart. It complements the standing spec (this file + `docs/plan.md`): state says where the work is, the spec says where it's going.
-- **Before you finish:** update it. Move shipped work into **Completed**, record anything blocked under **Escalated**, and write durable cross-session facts under **Lessons learned** (there, not in chat). Bump **Last run**.
-- **Parallel worktrees:** the dated sections are append-only and newest-first, so merge conflicts resolve by keeping both sides. The canonical copy lives on `main` — rebase before relying on it. Don't delete other branches' entries.
+[`STATE.md`](STATE.md) holds only what the project **is**: what's blocked on a human (**Escalated**), the durable lessons that aren't in the code (**Lessons learned**), and standing goals. `.claude/state/<worktree-name>.md` holds in-flight status for one worktree — one small file, deleted when its PR merges.
+
+- **At the start of non-trivial work:** read `STATE.md`, plus `.claude/state/<this-worktree>.md` if it exists. It complements the standing spec (this file + `docs/plan.md`): state says where the work is, the spec says where it's going.
+- **`STATE.md` must not contain a session log.** No "Last run", no "Completed", no "In progress" — those sections were removed on 2026-07-20 because every parallel worktree wrote them at the same anchor line, so the file conflicted on essentially every merge (the log had reached ~1,780 of 1,866 lines). Read `STATE.md`'s own header before editing it; it states the rule authoritatively.
+- **Before you finish:** what just happened goes in **the commit message and the PR description** — written once per branch, structurally incapable of conflicting. Anything still mid-flight goes in `.claude/state/<worktree-name>.md`. Only two things go in `STATE.md`: a new human blocker under **Escalated**, or a durable cross-session fact under **Lessons learned** (there, not in chat).
+- **Never commit a `STATE.md`-only change to main.** A note *about* a PR belongs in that PR's thread; a code-free commit to a shared file makes every open branch stale.
+- **Parallel worktrees:** separate `.claude/state/` files never collide. A conflict that does survive in `STATE.md` is now meaningful — two sessions learned contradictory things, and that's worth stopping for. The canonical copy lives on `main`; rebase before relying on it, and don't delete other branches' entries.
 
 ## Before planning, and again before executing
 

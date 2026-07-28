@@ -53,6 +53,18 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **Stopping a `wrangler dev` background task can orphan `workerd.exe` still bound to the port.**
+  A restart then leaves *two* listeners on the same port and requests are served
+  nondeterministically by the stale one — which presents as newly added routes returning 404
+  (`{"error":"not_found"}`) while older routes work, and survives clearing `.wrangler/tmp`.
+  Diagnose with `netstat -ano | grep ":<port> " | grep LISTENING` and look for **more than one
+  PID**; fix with `taskkill //PID <pid> //F` and restart on a fresh port. Same failure shape as
+  the cross-worktree port-collision trap, but self-inflicted by stop/restart.
+- **This API is cookie-auth only** — the HTTP `Authorization: Bearer` fallback was removed (see
+  the comment above the WS route in `api/src/index.ts`). Manual curl testing needs a cookie jar
+  (`curl -c`/`-b`) seeded via `POST /api/auth/dev`, plus an `x-csrf-token` header (read from the
+  `be_csrf` cookie) for any mutating request. A Bearer token silently yields *unauthenticated*
+  requests, not a 401 you can spot.
 - **Workspace roster is DB-backed as of PR-1 of #81, with a strict fail-soft chain.** `workspaces.ts`
   reads the roster from the `workspaces` registry table on the SHARED DB (migration 0058), loaded once
   per isolate by the async `primeWorkspaces(env)` that the entry points (`index.ts` fetch/scheduled,
