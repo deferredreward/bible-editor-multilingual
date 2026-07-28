@@ -12,6 +12,7 @@ import {
   computeIntoIndex,
   computeOuterDropBand,
   computeOuterDropTarget,
+  isPointerInAnyOuterBand,
 } from "./dropZone.ts";
 
 let failed = 0;
@@ -464,6 +465,46 @@ console.log("\nouter band geometry matches the band the engine will create");
       assert(got === expected, `(${x},${y}) dir=${direction} → logical band ${expected} (got ${got})`);
     }
   }
+}
+
+console.log("\nband arming: is the pointer inside ANY perimeter band?");
+{
+  // Drives OuterDropZone's `armed` state. Edge-adjacent drag grips start the drag
+  // INSIDE a band, so the bands stay pointer-events:none until this returns false
+  // at least once.
+  const inBand = (over = {}) => isPointerInAnyOuterBand({ rect: WORKSPACE, ...over });
+  for (const [x, y, label] of [
+    [500, 2, "top band"],
+    [500, 398, "bottom band"],
+    [2, 200, "left band"],
+    [998, 200, "right band"],
+    [2, 2, "top-left corner (both bands)"],
+    [998, 398, "bottom-right corner"],
+  ]) {
+    assert(inBand({ pointer: { x, y } }) === true, `(${x},${y}) is inside a band — ${label}`);
+  }
+  assert(inBand({ pointer: { x: 500, y: 200 } }) === false, "the middle of the workspace is outside every band");
+  assert(
+    inBand({ pointer: { x: OUTER_BAND_PX, y: OUTER_BAND_PX } }) === false,
+    "exactly on both thresholds (22,22) is inside the workspace, outside every band",
+  );
+  assert(
+    inBand({ pointer: { x: -5, y: 200 } }) === false,
+    "a pointer dragged clear off the workspace counts as outside every band (it arms)",
+  );
+  // Direction-agnostic by construction: the four bands cover the same pixels in
+  // LTR and RTL, only the LOGICAL side they map to mirrors. Arming must not care.
+  for (const [x, y] of [[2, 200], [998, 200], [500, 2], [500, 200]]) {
+    const plain = isPointerInAnyOuterBand({ rect: WORKSPACE, pointer: { x, y } });
+    for (const direction of ["ltr", "rtl"]) {
+      const viaTarget = computeOuterDropTarget(outer({ pointer: { x, y }, direction })) !== null;
+      assert(viaTarget === plain, `(${x},${y}) band membership agrees with dir=${direction} hit-test (${plain})`);
+    }
+  }
+  const snapshot = JSON.stringify({ rect: WORKSPACE, pointer: { x: 2, y: 2 } });
+  const input = { rect: WORKSPACE, pointer: { x: 2, y: 2 } };
+  isPointerInAnyOuterBand(input);
+  assert(JSON.stringify(input) === snapshot, "isPointerInAnyOuterBand never mutates its input");
 }
 
 console.log("\nouter purity");

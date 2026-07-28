@@ -30,6 +30,7 @@ import {
   OUTER_BAND_PX,
   computeOuterDropBand,
   computeOuterDropTarget,
+  isPointerInAnyOuterBand,
   type Direction,
   type OuterBandEdge,
 } from "../lib/dropZone";
@@ -68,6 +69,15 @@ export function OuterDropZone() {
   const ref = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<Resolved | null>(null);
   const hoverKeyRef = useRef("");
+  // ARMING. A band is drawn as soon as a drag starts (that visibility IS the
+  // discoverability affordance) but it must not be a live drop target yet: the
+  // drag grip of any panel whose header abuts a workspace edge lives INSIDE a
+  // band, so the band would materialise under the cursor on mousedown, hijack the
+  // gesture, and read to the user as "the handle doesn't work". Unarmed bands are
+  // pointer-events:none, so events fall through to the RegionDropZone underneath
+  // and ordinary region drops keep working; the first time the pointer is seen
+  // outside all four bands we arm them and the perimeter behaves as before.
+  const [armed, setArmed] = useState(false);
 
   const clear = useCallback(() => {
     if (hoverKeyRef.current !== "") {
@@ -80,7 +90,30 @@ export function OuterDropZone() {
   // dragleave is not guaranteed to fire in those cases.
   useEffect(() => {
     if (!draggedPanelId) clear();
+    // Every new drag starts disarmed, including a second drag of the same panel.
+    setArmed(false);
   }, [draggedPanelId, clear]);
+
+  // Watch for the pointer leaving the perimeter. The unarmed bands are
+  // pointer-events:none, so they never see these events themselves — listen on
+  // the document in the CAPTURE phase so a region's own dragover handler (which
+  // preventDefaults and may stop propagation) cannot hide the move from us. A
+  // pointer outside the workspace box entirely also counts as "outside all bands".
+  useEffect(() => {
+    if (!draggedPanelId || armed) return;
+    const onDragOver = (e: DragEvent) => {
+      const el = ref.current;
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      const outside = !isPointerInAnyOuterBand({
+        rect: { left: box.left, top: box.top, width: box.width, height: box.height },
+        pointer: { x: e.clientX, y: e.clientY },
+      });
+      if (outside) setArmed(true);
+    };
+    document.addEventListener("dragover", onDragOver, true);
+    return () => document.removeEventListener("dragover", onDragOver, true);
+  }, [draggedPanelId, armed]);
 
   // Measure on demand rather than caching: the perimeter is only hit-tested while
   // the pointer is inside a 22px band, so this runs far less often than a region's
@@ -105,7 +138,7 @@ export function OuterDropZone() {
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     // Only PANEL drags concern us; the repo has other HTML5 drags (note
     // reordering) which must pass through untouched.
-    if (!draggedPanelId) return;
+    if (!draggedPanelId || !armed) return;
     e.preventDefault(); // without this the browser never fires `drop`
     try {
       e.dataTransfer.dropEffect = "move";
@@ -129,7 +162,7 @@ export function OuterDropZone() {
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!draggedPanelId || !drag) return;
+    if (!draggedPanelId || !drag || !armed) return;
     e.preventDefault();
     e.stopPropagation();
     // Recompute rather than trusting the last hover: a drop can arrive with no
@@ -156,13 +189,16 @@ export function OuterDropZone() {
             onDrop={handleDrop}
             sx={{
               position: "absolute",
-              pointerEvents: "auto", // load-bearing: a band must RECEIVE dragover/drop
+              // load-bearing: an ARMED band must RECEIVE dragover/drop, and an
+              // unarmed one must NOT — see the arming comment above.
+              pointerEvents: armed ? "auto" : "none",
               ...place(edge, `${OUTER_BAND_PX}px`),
               boxSizing: "border-box",
               border: "2px dashed",
               borderColor: hover?.edge === edge ? "primary.main" : "primary.light",
               bgcolor: "primary.main",
-              opacity: hover?.edge === edge ? 0.4 : 0.14,
+              // Three legible states: unarmed (faint), armed idle, hovered.
+              opacity: hover?.edge === edge ? 0.4 : armed ? 0.14 : 0.07,
               borderRadius: 1,
               transition: "opacity 0.12s",
             }}

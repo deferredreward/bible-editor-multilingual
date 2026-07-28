@@ -282,6 +282,19 @@ export function computeOuterDropTarget(input: OuterDropInput): OuterDropTarget |
   return null;
 }
 
+// Is the pointer inside ANY of the four perimeter bands?
+//
+// Direction-agnostic on purpose: which logical side a band maps to depends on the
+// writing direction, but WHETHER the pointer is in a band does not — the four
+// bands cover the same pixels either way. The caller (OuterDropZone) uses this to
+// decide when to ARM the bands: they must not become live drop targets until the
+// pointer has left the perimeter at least once during the drag, because a panel
+// whose drag grip sits against a workspace edge starts its drag with the cursor
+// already inside a band, which would otherwise lock the drag to that edge.
+export function isPointerInAnyOuterBand(input: Omit<OuterDropInput, "direction">): boolean {
+  return computeOuterDropTarget({ ...input, direction: "ltr" }) !== null;
+}
+
 // Which edge of the workspace the resulting band occupies, and how much of it —
 // the fraction comes straight from layoutTree's OUTER_BAND_SIZE so the preview
 // can never disagree with the committed tree.
