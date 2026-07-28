@@ -582,46 +582,16 @@ async function fetchAquiferRangeNotes(
 //
 // The whole-book DELETE has already run (caller), so these are pure inserts into
 // an empty book. A cross-source ID collision (two source repos using the same tn
-// id for the SAME book in DIFFERENT chapters) surfaces as a loud INSERT failure —
-// rare, and far safer than silently overwriting a row from another chapter.
-// (Follow-up: re-mint colliding range-file ids preserving alignment.)
-// Pre-wipe collision scan (issue #103). Returns the first row id that would be
-// inserted from TWO different source files in the merge (base non-covered
-// chapters + each range's chapters), or null if none. Mirrors insertMergedNotes'
-// exact partitioning so it predicts the real insert set. No ranges → no merge →
-// null (a single file's internal duplicates are the pre-existing bare-INSERT
-// concern, unchanged here).
-function mergedNoteIdCollision(
-  baseRaw: string | null,
-  ranges: ResolvedSourceRange[],
-  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
-): string | null {
-  if (ranges.length === 0) return null;
-  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
-  const seen = new Set<string>();
-  const scan = (raw: string | null, include: (ch: number) => boolean): string | null => {
-    if (!raw) return null;
-    for (const r of parseTsv(raw).rows) {
-      const id = r["ID"];
-      if (!id) continue;
-      const [ch] = refParts(r["Reference"] ?? "");
-      if (!include(ch)) continue;
-      if (seen.has(id)) return id;
-      seen.add(id);
-    }
-    return null;
-  };
-  const baseDup = scan(baseRaw, (ch) => !covered(ch));
-  if (baseDup) return baseDup;
-  for (const { range, raw } of rangeFiles) {
-    const dup = scan(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
-    if (dup) return dup;
-  }
-  return null;
-}
-
+// id for the SAME book in DIFFERENT chapters) is remapped rather than aborted
+// (issue #126 follow-up to #103): `usedIds` is shared across the base file and
+// every range file in insertion order, so the base file always keeps its ids and
+// a later range file's colliding id is re-minted via the same `pickId`/`mintId`
+// primitive `insertAquiferRangeNotes` already uses for inherited en_tn ids. A
+// single file's own internal duplicate ids are unaffected — they still hit the
+// pre-existing (book, id) PK bare-INSERT failure, since `usedIds` is only
+// threaded through on the multi-source merge path below.
 async function insertMergedNotes(
-  insert: (raw: string | null, filter?: (ch: number) => boolean) => Promise<number>,
+  insert: (raw: string | null, filter?: (ch: number) => boolean, usedIds?: Set<string>) => Promise<number>,
   baseRaw: string | null,
   ranges: ResolvedSourceRange[],
   rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
@@ -643,10 +613,11 @@ async function insertMergedNotes(
   // a chapter a cross-source range owns. Order: base → dcs range files → aquifer
   // ranges last (their id minting reads the ids base+dcs already landed).
   const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
-  let total = await insert(baseRaw, (ch) => !covered(ch));
+  const usedIds = new Set<string>();
+  let total = await insert(baseRaw, (ch) => !covered(ch), usedIds);
   for (const { range, raw } of rangeFiles) {
     await renew();
-    total += await insert(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+    total += await insert(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end, usedIds);
   }
   for (const { run } of aquiferInserts) {
     await renew();
@@ -864,25 +835,10 @@ async function importBookFromDcs(
   // rejects aquifer for tq), so there is no tq equivalent.
   const tnAquiferRanges = await fetchAquiferRangeNotes(env, cfg, book, tnPlan.ranges);
 
-  // Detect cross-source ID collisions BEFORE the destructive wipe (issue #103).
-  // The merge inserts base rows + range rows with a bare INSERT; if two source
-  // files reuse the same row id (for DIFFERENT chapters) the second insert throws
-  // on the (book, id) PK — but by then the book has been wiped and half-inserted,
-  // and the stale book_imports marker would send the next non-force import down
-  // the already-imported fast path, leaving the book stuck partial. Failing here
-  // (before any wipe) keeps the collision a clean no-op the admin can resolve.
-  for (const [resource, baseRaw, ranges, files] of [
-    ["tn", tnRaw, tnPlan.ranges, tnRangeFiles],
-    ["tq", tqRaw, tqPlan.ranges, tqRangeFiles],
-  ] as const) {
-    const dup = mergedNoteIdCollision(baseRaw, ranges, files);
-    if (dup) {
-      throw new Error(
-        `merge source ${resource} id collision: '${dup}' appears in more than one source for ${book}; ` +
-          `resolve the overlapping sources before importing (no changes were made)`,
-      );
-    }
-  }
+  // Cross-source ID collisions (issue #103's original concern — two source
+  // files reusing the same row id for DIFFERENT chapters of the merged book) no
+  // longer need a pre-wipe abort: `insertMergedNotes` remaps the colliding id at
+  // insert time (issue #126), so the merge always lands cleanly.
 
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
   // the destructive wipe to a transactional lane-state predicate: DELETE only
@@ -1021,7 +977,7 @@ async function importBookFromDcs(
 
     await renewBoth();
     counts.tn = await insertMergedNotes(
-      (raw, filter) => insertTnRows(env, book, raw, userId, litGen, simGen, filter),
+      (raw, filter, usedIds) => insertTnRows(env, book, raw, userId, litGen, simGen, filter, usedIds),
       tnRaw, tnPlan.ranges, tnRangeFiles, renewBoth,
       tnAquiferRanges.map(({ notes, aqLang }) => ({
         run: () => insertAquiferRangeNotes(env, book, notes, userId, litGen, simGen, aqLang),
@@ -1029,7 +985,7 @@ async function importBookFromDcs(
     );
     await renewBoth();
     counts.tq = await insertMergedNotes(
-      (raw, filter) => insertTqRows(env, book, raw, userId, litGen, simGen, filter),
+      (raw, filter, usedIds) => insertTqRows(env, book, raw, userId, litGen, simGen, filter, usedIds),
       tqRaw, tqPlan.ranges, tqRangeFiles, renewBoth,
     );
     await renewBoth();
@@ -1188,6 +1144,7 @@ async function insertTnRows(
   litGen: number,
   simGen: number,
   chapterFilter?: (chapter: number) => boolean,
+  usedIds?: Set<string>,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -1219,14 +1176,25 @@ async function insertTnRows(
   };
 
   for (const r of rows) {
-    const id = r["ID"];
-    if (!id) continue;
+    const rawId = r["ID"];
+    if (!rawId) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
     // Per-chapter-range merge (issue #103 Tier 2): skip rows whose chapter this
     // pass doesn't own, so the base file and each range file each contribute only
-    // their assigned chapters into one merged book.
+    // their assigned chapters into one merged book. Checked BEFORE any id
+    // remap below so a skipped row never consumes a usedIds slot it won't fill.
     if (chapterFilter && !chapterFilter(ch)) continue;
+    // Cross-source merge (issue #126): when a shared usedIds set is threaded
+    // through (the ranges.length > 0 path in insertMergedNotes), re-mint any id
+    // that a prior file in this same merge already claimed — base file first, so
+    // base always wins and a later range file's collision is what gets remapped.
+    // Without usedIds (Tier 1 / no cross-source ranges) ids pass through as-is,
+    // unchanged from before.
+    const id = usedIds ? pickId(rawId, usedIds) : rawId;
+    if (id !== rawId) {
+      console.warn("import: cross-source tn id collision remapped", { book, from: rawId, to: id });
+    }
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {
@@ -1346,6 +1314,7 @@ async function insertTqRows(
   litGen: number,
   simGen: number,
   chapterFilter?: (chapter: number) => boolean,
+  usedIds?: Set<string>,
 ): Promise<number> {
   if (!raw) return 0;
   const { rows } = parseTsv(raw);
@@ -1377,12 +1346,18 @@ async function insertTqRows(
   };
 
   for (const r of rows) {
-    const id = r["ID"];
-    if (!id) continue;
+    const rawId = r["ID"];
+    if (!rawId) continue;
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
-    // Per-chapter-range merge (issue #103 Tier 2) — see insertTnRows.
+    // Per-chapter-range merge (issue #103 Tier 2) — see insertTnRows. Checked
+    // BEFORE any id remap so a skipped row never consumes a usedIds slot.
     if (chapterFilter && !chapterFilter(ch)) continue;
+    // Cross-source id remap (issue #126) — see insertTnRows.
+    const id = usedIds ? pickId(rawId, usedIds) : rawId;
+    if (id !== rawId) {
+      console.warn("import: cross-source tq id collision remapped", { book, from: rawId, to: id });
+    }
     const occRaw = r["Occurrence"];
     const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
     const payload = {
