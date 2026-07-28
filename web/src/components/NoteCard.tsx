@@ -1544,7 +1544,8 @@ function NoteCardInner({
             ? // No bottom padding here: the source box stretches to this
               // column's full height, so any padding below the draft field
               // would push the source box past it and misalign their bottoms.
-              { flex: 1, minWidth: 0 }
+              // Column layout so the field can flex to fill the leftover space.
+              { flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }
             : { px: 1.5, pt: 0.75, pb: 0.75 }
         }
       >
@@ -1652,6 +1653,27 @@ function NoteCardInner({
             size="small"
             spellCheck
             onFocus={onFocus}
+            // Side by side, grow to fill the column so the draft box matches
+            // the source box instead of ending short whenever the translation
+            // is more compact than the English (Arabic usually is).
+            //
+            // flex-grow, NOT a fixed height: `height: 100%` on the textarea
+            // also CAPPED it, so a draft longer than the source got trapped in
+            // a small scrolling box instead of growing the card. Here the field
+            // fills leftover space when short, and `min-height: auto` lets it
+            // push the column taller when long — at which point the source box
+            // stretches to match it instead. Stacked is untouched: the field
+            // keeps its natural autosize there.
+            sx={
+              pairSideBySide
+                ? {
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    "& .MuiInputBase-root": { flex: 1, alignItems: "flex-start" },
+                  }
+                : undefined
+            }
             InputProps={{
               readOnly,
               ...(hasRowDiff && note !== rowNoteDisplay ? { "data-dirty": "true" } : {}),
