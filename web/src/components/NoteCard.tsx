@@ -43,6 +43,7 @@ import { alpha } from "@mui/material/styles";
 import { useTranslation } from "react-i18next";
 import type { TnRow } from "../sync/api";
 import type { SourceNote } from "../hooks/useSourceNotes";
+import { useNotePairAxisContext } from "./notePairAxis";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { CatalogPicker } from "./CatalogPicker";
@@ -361,6 +362,10 @@ function NoteCardInner({
   isTranslating = false,
 }: Props) {
   const { t } = useTranslation();
+  // The notes pane publishes the EFFECTIVE axis (it collapses side-by-side to
+  // stacked in a narrow pane). Outside a notes pane this is "vertical", i.e.
+  // the layout this card has always had.
+  const notePairAxis = useNotePairAxisContext();
   // Two explicit bits drive lock-time behavior now:
   //   - preserve=1: translator marked this row "survive AI runs"
   //   - hint=1:    this row is a stub queued for AI expansion in place
@@ -430,6 +435,13 @@ function NoteCardInner({
   // as a normal editable card, not forced into the untranslated treatment.
   const isUntranslated =
     translationMode && translationState == null && !(row.note && row.note.trim());
+  // The read-only English source block, and whether it sits beside the draft
+  // rather than above it. Side by side only makes sense when there IS a source
+  // to put there — a card without one keeps the draft full-width.
+  const showSourceNote = Boolean(
+    translationMode && (isDraftState || isUntranslated) && sourceNote,
+  );
+  const pairSideBySide = showSourceNote && notePairAxis === "horizontal";
   // Validated cards collapse (green, one-line preview). Local expand is
   // view-only — editing a re-expanded card auto-demotes it to 'edited'
   // server-side (rows.ts content PATCH). Re-collapses when it re-validates.
@@ -1441,14 +1453,25 @@ function NoteCardInner({
         />
       </Box>
 
-      {/* ── English source (translation mode) — pinned read-only above the
-          editable draft. Always LTR (English) even inside an RTL card. ── */}
-      {translationMode && (isDraftState || isUntranslated) && sourceNote && (
+      {/* ── English source (translation mode) + the editable draft ──
+          The source is pinned read-only against the draft the translator is
+          writing. `pairSideBySide` puts the two next to each other (the
+          tcCreate reading); otherwise the source stays stacked above the draft,
+          which is the layout this card has always had and remains the default.
+          Only these two blocks move — quote, support reference, flag chips and
+          the approve/re-run row are identical on both axes. ── */}
+      <Box
+        sx={
+          pairSideBySide
+            ? { display: "flex", alignItems: "flex-start", gap: 1.5, px: 1.5, pt: 1 }
+            : undefined
+        }
+      >
+      {showSourceNote && (
         <Box
           dir="ltr"
           sx={{
-            mx: 1.5,
-            mt: 1,
+            ...(pairSideBySide ? { flex: 1, minWidth: 0 } : { mx: 1.5, mt: 1 }),
             borderInlineStart: "3px solid",
             borderColor: "divider",
             bgcolor: (theme) => alpha(theme.palette.text.primary, 0.03),
@@ -1483,13 +1506,19 @@ function NoteCardInner({
               textAlign: "start",
             }}
           >
-            {sourceNote.note}
+            {sourceNote?.note}
           </Box>
         </Box>
       )}
 
       {/* ── Note (hero) ── */}
-      <Box sx={{ px: 1.5, pt: 0.75, pb: 0.75 }}>
+      <Box
+        sx={
+          pairSideBySide
+            ? { flex: 1, minWidth: 0, pb: 0.75 }
+            : { px: 1.5, pt: 0.75, pb: 0.75 }
+        }
+      >
         <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
           <Typography
             variant="caption"
@@ -1613,6 +1642,7 @@ function NoteCardInner({
             }}
           />
         )}
+      </Box>
       </Box>
 
       {/* ── Translation-mode action row (Approve / Translate / Re-run) ── */}

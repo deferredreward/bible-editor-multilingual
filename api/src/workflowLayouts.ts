@@ -78,10 +78,22 @@ import type { ProjectConfig } from "./projectConfig.ts";
 
 export const CLASSIC_LAYOUT_ID = "builtin:classic";
 
-// Server equivalent of the client's isTranslationProject (which gates on
-// translationSource != null). A translation project translates FROM a source
-// language; the English root project has translationSource === null.
+// Server equivalent of the client's isTranslationProject
+// (web/src/hooks/useProjectConfig.ts). Must mirror it exactly: the server's
+// layout list is what the client actually uses when present, so any divergence
+// here silently overrides the client's own answer.
+//
+// `config.mode` (the admin's Editor/Translator toggle) is the source of truth.
+// It used to be derived from translationSource, and this function still gated
+// on translationSource alone — which meant flipping the toggle to Translator on
+// a project without a configured source language never revealed the
+// Translate-Notes layout, and flipping to Editor on one that had a source
+// language failed to hide it. translationSource remains the fallback only for
+// legacy configs materialized before `mode` existed.
 function isTranslationConfig(config: ProjectConfig): boolean {
+  if (config.mode === "authoring" || config.mode === "translation") {
+    return config.mode === "translation";
+  }
   return config.translationSource != null;
 }
 

@@ -10,7 +10,7 @@
 // Wiring one into the Preferences pane later is a one-liner: import the hook and
 // bind a checkbox to it (mirrors useLogosSyncVisible in LogosSyncToggle.tsx).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // When ON (default), unapproved AI/Aquifer draft notes — those still sitting in
 // translation_state === "ai_draft", i.e. raw machine/Aquifer output nobody has
@@ -48,4 +48,66 @@ export function useLockUnapprovedDrafts(): [boolean, (next: boolean) => void] {
     setLockUnapprovedDrafts(next);
   };
   return [enabled, setEnabled];
+}
+
+// ── Note pair axis ──────────────────────────────────────────────────────────
+//
+// Which way a translation-mode note lays out its English source against the
+// editable target draft, INSIDE the existing note card. Everything else about
+// the card — quote, support reference, template/suggest, flag chips, the
+// approve/re-run row — is identical either way; only these two blocks move.
+//
+//   "vertical"   — source stacked above the draft. This is exactly the card
+//                  that shipped before this preference existed, so it is the
+//                  DEFAULT and nothing changes appearance until a translator
+//                  opts in.
+//   "horizontal" — source and draft side by side, the tcCreate reading.
+//
+// This is deliberately a GLOBAL, per-browser preference rather than a property
+// of a layout. `PanelConfig.pairAxis` exists in the layout schema for the same
+// idea but is per-panel, and a per-panel value can only ever be per-layout — it
+// would let Classic and Flexible silently disagree about how a translator's
+// notes look. The requirement is the opposite: the choice follows the notes
+// pane into every layout and survives reload. So this pref is the single
+// runtime source of truth, `pairAxis` is left in the schema as accepted-but-
+// advisory (stored layouts stay valid, and a future per-panel override remains
+// possible), and nothing reads `pairAxis` at runtime.
+export type NotePairAxis = "vertical" | "horizontal";
+
+const NOTE_PAIR_AXIS_KEY = "be:notePairAxis";
+const NOTE_PAIR_AXES: readonly NotePairAxis[] = ["vertical", "horizontal"];
+
+export function getNotePairAxis(): NotePairAxis {
+  try {
+    const raw = localStorage.getItem(NOTE_PAIR_AXIS_KEY);
+    return NOTE_PAIR_AXES.includes(raw as NotePairAxis) ? (raw as NotePairAxis) : "vertical";
+  } catch {
+    return "vertical";
+  }
+}
+
+// Unlike the toggle above, this pref HAS an in-app writer (the notes-pane
+// control) and several panes can be mounted at once in a Flexible layout, so
+// writes must fan out to every mounted reader. A module-level subscriber set is
+// enough — `storage` events only fire cross-tab, not for same-document writes.
+const pairAxisListeners = new Set<(axis: NotePairAxis) => void>();
+
+export function setNotePairAxis(next: NotePairAxis): void {
+  try {
+    localStorage.setItem(NOTE_PAIR_AXIS_KEY, next);
+  } catch {
+    /* quota or private mode — soft fail, still notify so the UI stays live */
+  }
+  for (const listener of pairAxisListeners) listener(next);
+}
+
+export function useNotePairAxis(): [NotePairAxis, (next: NotePairAxis) => void] {
+  const [axis, setAxisState] = useState<NotePairAxis>(getNotePairAxis);
+  useEffect(() => {
+    pairAxisListeners.add(setAxisState);
+    return () => {
+      pairAxisListeners.delete(setAxisState);
+    };
+  }, []);
+  return [axis, setNotePairAxis];
 }

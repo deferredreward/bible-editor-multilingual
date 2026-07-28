@@ -93,6 +93,39 @@ test("translate-* layouts are gated by translationSource", () => {
   assert.ok(!translationIds.includes("builtin:translate-words"));
 });
 
+// The admin's Editor/Translator toggle (config.mode) outranks translationSource.
+// These two cases are exactly where the server used to disagree with the client:
+// the server shipped the layout list off translationSource alone, and that list
+// wins over the client's own answer, so flipping the toggle appeared to do
+// nothing. translationSource is now only the legacy fallback.
+test("config.mode overrides translationSource when the two disagree", () => {
+  // Translator mode, but no source language configured → layout is OFFERED.
+  const modeTranslation = { ...authoring, mode: "translation" };
+  assert.ok(
+    builtinLayoutsFor(modeTranslation).map((l) => l.id).includes("builtin:translate-notes"),
+    "mode=translation offers translate-notes even without translationSource",
+  );
+
+  // Editor mode, but a source language IS configured → layout is WITHHELD.
+  const modeAuthoring = { ...translation, mode: "authoring" };
+  assert.ok(
+    !builtinLayoutsFor(modeAuthoring).map((l) => l.id).includes("builtin:translate-notes"),
+    "mode=authoring withholds translate-notes despite translationSource",
+  );
+});
+
+// Legacy configs materialized before `mode` existed must keep working.
+test("translationSource still gates when mode is absent", () => {
+  assert.equal(authoring.mode, undefined);
+  assert.equal(translation.mode, undefined);
+  assert.ok(
+    !builtinLayoutsFor(authoring).map((l) => l.id).includes("builtin:translate-notes"),
+  );
+  assert.ok(
+    builtinLayoutsFor(translation).map((l) => l.id).includes("builtin:translate-notes"),
+  );
+});
+
 test("every translate-* layout carries requires: translation", () => {
   for (const spec of builtinLayoutsFor(translation)) {
     if (spec.id.startsWith("builtin:translate-")) {

@@ -13,13 +13,27 @@
 // layout (section head, stats strip, verse grouping, empty states), lifted
 // verbatim from ResourceColumn's `activeResourceTab === "notes"` block.
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Box, Stack, Typography, Chip, Button, Tooltip, LinearProgress } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Chip,
+  Button,
+  Tooltip,
+  LinearProgress,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import CheckIcon from "@mui/icons-material/Check";
+import VerticalSplitIcon from "@mui/icons-material/VerticalSplit";
+import HorizontalSplitIcon from "@mui/icons-material/HorizontalSplit";
 import type { TnRow } from "../sync/api";
 import { SectionHead, VerseGroupHead, type ResourceCheckoff } from "./resourcePanelShared";
+import { useNotePairAxis, type NotePairAxis } from "../lib/editorPrefs";
+import { NotePairAxisContext, PAIR_NARROW_PX } from "./notePairAxis";
 
 export interface NotesPanelBodyProps {
   activeVerse: number;
@@ -60,8 +74,32 @@ export function NotesPanelBody({
   renderNoteCard,
 }: NotesPanelBodyProps) {
   const { t } = useTranslation();
+
+  // The source→draft pair axis is a GLOBAL preference (see editorPrefs), so
+  // this pane both hosts the control and publishes the result to its cards.
+  const [pairAxis, setPairAxis] = useNotePairAxis();
+
+  // …but side-by-side is unusable in a narrow column, so measure THIS pane and
+  // collapse to stacked below the breakpoint. Presentation only: `pairAxis` is
+  // never rewritten, so widening restores the translator's actual choice.
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = paneRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      setNarrow(width < PAIR_NARROW_PX);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const effectivePairAxis: NotePairAxis =
+    pairAxis === "horizontal" && narrow ? "vertical" : pairAxis;
+
   return (
-    <>
+    <Box ref={paneRef}>
       <SectionHead
         title={t("shell.notes")}
         count={totalTn}
@@ -114,6 +152,36 @@ export function NotesPanelBody({
             </Typography>
           </Tooltip>
           <Box sx={{ flex: 1 }} />
+          {/* Where the English source sits relative to the draft, inside each
+              note card. Global + persisted, so the choice made here follows the
+              notes pane into every layout. */}
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={pairAxis}
+            onChange={(_e, next: NotePairAxis | null) => {
+              if (next) setPairAxis(next);
+            }}
+            aria-label={t("translation.sourceAxisLabel")}
+            sx={{ "& .MuiToggleButton-root": { px: 0.75, py: 0.25, border: "1px solid" } }}
+          >
+            <ToggleButton value="vertical" aria-label={t("translation.sourceAxisStacked")}>
+              <Tooltip title={t("translation.sourceAxisStacked")}>
+                <HorizontalSplitIcon sx={{ fontSize: 15 }} />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value="horizontal" aria-label={t("translation.sourceAxisSideBySide")}>
+              <Tooltip
+                title={
+                  narrow
+                    ? t("translation.sourceAxisSideBySideNarrow")
+                    : t("translation.sourceAxisSideBySide")
+                }
+              >
+                <VerticalSplitIcon sx={{ fontSize: 15, opacity: narrow ? 0.5 : 1 }} />
+              </Tooltip>
+            </ToggleButton>
+          </ToggleButtonGroup>
           {onNoteApprove && (
             <Button
               size="small"
@@ -131,26 +199,28 @@ export function NotesPanelBody({
           )}
         </Stack>
       )}
-      {tnGroups ? (
-        tnGroups.length === 0 ? (
+      <NotePairAxisContext.Provider value={effectivePairAxis}>
+        {tnGroups ? (
+          tnGroups.length === 0 ? (
+            <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
+              {t("shell.noNotesInChapter")}
+            </Typography>
+          ) : (
+            tnGroups.map(([verse, rows]) => (
+              <Fragment key={`tn-${verse}`}>
+                <VerseGroupHead verse={verse} active={verse === activeVerse} section="notes" />
+                {rows.map((r) => renderNoteCard(r, rows))}
+              </Fragment>
+            ))
+          )
+        ) : tnForVerse.length === 0 ? (
           <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-            {t("shell.noNotesInChapter")}
+            {t("shell.noNotesForVerse")}
           </Typography>
         ) : (
-          tnGroups.map(([verse, rows]) => (
-            <Fragment key={`tn-${verse}`}>
-              <VerseGroupHead verse={verse} active={verse === activeVerse} section="notes" />
-              {rows.map((r) => renderNoteCard(r, rows))}
-            </Fragment>
-          ))
-        )
-      ) : tnForVerse.length === 0 ? (
-        <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-          {t("shell.noNotesForVerse")}
-        </Typography>
-      ) : (
-        tnForVerse.map((r) => renderNoteCard(r, tnForVerse))
-      )}
-    </>
+          tnForVerse.map((r) => renderNoteCard(r, tnForVerse))
+        )}
+      </NotePairAxisContext.Provider>
+    </Box>
   );
 }
