@@ -5,16 +5,21 @@
 // Not a test framework; failures exit non-zero. Mirrors src/lib/layoutSpec.test.mjs.
 
 import {
+  canHideRegion,
   collectPanels,
   collectRegions,
   collectSizeKeys,
   effectiveRoot,
   findPanelRegion,
+  hiddenRegions,
+  isNodeVisible,
+  isRegionHidden,
   movePanel,
   nextRegionId,
   normalizeTree,
   pruneSizes,
   removePanel,
+  resolveHidden,
 } from "./layoutTree.ts";
 import { MAX_DEPTH } from "./layoutSpec.ts";
 
@@ -872,6 +877,219 @@ console.log("\n[outer] purity");
   const snapshot = JSON.stringify(root);
   movePanel(root, "scripture-1", { kind: "outer", orientation: "horizontal", side: "after" });
   assert(JSON.stringify(root) === snapshot, "movePanel never mutates the input tree on an outer drop");
+}
+
+// ─── Region hide / restore ─────────────────────────────────────────────
+//
+// THE claim under test: closing a region can never permanently lose a panel.
+// Hiding is a render-time filter over a `hidden` map; the TREE is never edited,
+// so normalizeTree (which deletes only EMPTY regions) has nothing to delete.
+
+console.log("\n[hide] resolution and defaults");
+{
+  const root = fixture();
+  assert(!isRegionHidden(collectRegions(root)[0], {}), "an absent entry means visible");
+  assert(isRegionHidden({ id: "x", kind: "region", panels: [] }, { x: true }), "an override hides");
+  // Spec-level default, mirroring how PanelInstance.minimized works.
+  assert(
+    isRegionHidden({ id: "x", kind: "region", hidden: true, panels: [] }, {}),
+    "a spec-level `hidden: true` is respected when there is no override",
+  );
+  assert(
+    !isRegionHidden({ id: "x", kind: "region", hidden: true, panels: [] }, { x: false }),
+    "an explicit override BEATS the spec default (a reopened region stays open)",
+  );
+  eqArr(Object.keys(resolveHidden(root, { "res-a": true })), ["res-a"], "resolveHidden reports the closed region");
+  eqArr(
+    Object.keys(resolveHidden(root, { "no-such-region": true })),
+    [],
+    "resolveHidden drops keys for regions not in the tree",
+  );
+  eqArr(Object.keys(resolveHidden(root, null)), [], "a null hidden map resolves to nothing closed");
+}
+
+console.log("\n[hide] the workspace can never go fully blank");
+{
+  const root = fixture();
+  const all = { scripture: true, "res-a": true, "res-b": true };
+  eqArr(
+    Object.keys(resolveHidden(root, all)),
+    [],
+    "hiding EVERY region resolves to nothing hidden (the blank-workspace backstop)",
+  );
+  assert(isNodeVisible(root, resolveHidden(root, all)), "…so the root stays visible");
+  // Two of three is fine — one survivor is enough.
+  eqArr(
+    Object.keys(resolveHidden(root, { "res-a": true, "res-b": true })).sort(),
+    ["res-a", "res-b"],
+    "hiding all but one region IS allowed",
+  );
+  // A single-region tree can never hide its only region.
+  const solo = { kind: "region", id: "only", panels: [{ id: "p1", type: "notes" }] };
+  eqArr(Object.keys(resolveHidden(solo, { only: true })), [], "a lone region cannot be closed");
+  assert(!canHideRegion(solo, {}, "only"), "canHideRegion refuses the last visible region");
+  assert(canHideRegion(root, {}, "res-a"), "canHideRegion allows one of three");
+  assert(
+    !canHideRegion(root, { scripture: true, "res-a": true }, "res-b"),
+    "canHideRegion refuses the last SURVIVOR when two are already closed",
+  );
+  assert(!canHideRegion(root, { "res-a": true }, "res-a"), "an already-closed region is not closeable again");
+  assert(!canHideRegion(root, {}, "ghost"), "a region that does not exist is not closeable");
+}
+
+console.log("\n[hide] a split with every child closed disappears with it");
+{
+  const root = fixture();
+  const hidden = resolveHidden(root, { "res-a": true, "res-b": true });
+  const resSplit = root.children[1];
+  assert(
+    !isNodeVisible(resSplit, hidden),
+    "the resources SPLIT is invisible once both its regions are closed (no empty gutter)",
+  );
+  assert(isNodeVisible(root, hidden), "…while the root is still visible via scripture");
+}
+
+console.log("\n[hide] panels are never orphaned");
+{
+  const root = fixture();
+  const hidden = { "res-b": true };
+  // The tree is untouched by hiding — nothing calls an edit function at all.
+  const before = collectPanels(root).map((p) => p.id).sort();
+  const normalized = normalizeTree(root);
+  const after = collectPanels(normalized).map((p) => p.id).sort();
+  eqArr(after, before, "normalizeTree keeps every panel of a closed region (it is not empty)");
+  const closed = hiddenRegions(normalized, hidden);
+  assert(closed.length === 1 && closed[0].id === "res-b", "the closed region is still IN the tree");
+  eqArr(
+    closed[0].panels.map((p) => p.id),
+    ["words-1", "tw-1", "questions-1"],
+    "…with all three of its panels still inside it, ready to come back",
+  );
+  // Restoring is only "stop filtering" — no tree work, so no panel can be lost.
+  eqArr(
+    hiddenRegions(normalized, resolveHidden(normalized, { ...hidden, "res-b": false })).map((r) => r.id),
+    [],
+    "reopening the region restores it (and its panels) with no tree edit",
+  );
+}
+
+console.log("\n[hide] docking interactions");
+{
+  // Dropping a panel INTO the visible sibling of a closed region must not touch
+  // the closed region — and must not resurrect it.
+  const root = fixture();
+  const hidden = { "res-b": true };
+  const moved = movePanel(root, "notes-1", { kind: "region", regionId: "scripture", placement: { kind: "into" } });
+  const stillClosed = hiddenRegions(moved, resolveHidden(moved, hidden));
+  assert(stillClosed.length === 1 && stillClosed[0].id === "res-b", "a drop elsewhere leaves the closed region closed");
+  eqArr(
+    stillClosed[0].panels.map((p) => p.id),
+    ["words-1", "tw-1", "questions-1"],
+    "…and does not disturb its panels",
+  );
+  eqArr(
+    collectPanels(moved).map((p) => p.id).sort(),
+    collectPanels(fixture()).map((p) => p.id).sort(),
+    "no panel is lost by a drop made while a region is closed",
+  );
+  assertSizesSumToOne(moved, "drop beside a closed region");
+}
+
+console.log("\n[hide] a closed region survives a drop that collapses its sibling");
+{
+  // res-a has 2 panels; move BOTH out, which empties res-a and normalizeTree
+  // deletes it — collapsing the resources split into res-b alone. res-b is
+  // CLOSED, so the naive worry is that it (and its 3 panels) vanishes. It must
+  // not: normalizeTree does not know about hiddenness, and res-b is not empty.
+  let root = fixture();
+  root = movePanel(root, "notes-1", { kind: "region", regionId: "scripture", placement: { kind: "into" } });
+  root = movePanel(root, "ta-1", { kind: "region", regionId: "scripture", placement: { kind: "into" } });
+  const regions = collectRegions(root).map((r) => r.id);
+  assert(!regions.includes("res-a"), "the emptied region really was deleted");
+  assert(regions.includes("res-b"), "the CLOSED region survived the collapse");
+  const hidden = resolveHidden(root, { "res-b": true });
+  eqArr(Object.keys(hidden), ["res-b"], "its hidden entry survives re-resolution against the new tree");
+  eqArr(
+    collectPanels(root).map((p) => p.id).sort(),
+    collectPanels(fixture()).map((p) => p.id).sort(),
+    "every panel still exists somewhere in the tree",
+  );
+  // And it is still restorable, with its own panels.
+  const closed = hiddenRegions(root, hidden);
+  eqArr(closed.map((r) => r.id), ["res-b"], "still listed as restorable");
+  eqArr(closed[0].panels.map((p) => p.id), ["words-1", "tw-1", "questions-1"], "…with its panels intact");
+}
+
+console.log("\n[hide] resolveHidden is also the pruner every write goes through");
+{
+  const root = fixture();
+  eqArr(
+    Object.keys(resolveHidden(root, { "res-a": true, gone: true })),
+    ["res-a"],
+    "a key for a region the tree no longer has is dropped (id RECYCLING would otherwise hide a new region)",
+  );
+  eqArr(
+    Object.keys(resolveHidden(root, { "res-a": false })),
+    [],
+    "explicit `false` entries are dropped — absence already means visible",
+  );
+  // The recycling hazard, concretely: an outer drop mints region-1; a stale
+  // `region-1: true` left over from an earlier arrangement would make the
+  // brand-new band invisible.
+  const banded = movePanel(root, "notes-1", { kind: "outer", orientation: "vertical", side: "before" });
+  assert(collectRegions(banded).some((r) => r.id === "region-1"), "the outer drop minted region-1");
+  eqArr(
+    Object.keys(resolveHidden(root, { "region-1": true })),
+    [],
+    "resolving against the PRE-drop tree drops the recycled id, so the new band is born visible",
+  );
+}
+
+console.log("\n[hide] an UNSATISFIABLE stored set must HEAL, not persist (browser-found bug)");
+{
+  // The bug, found by clicking in the real app and invisible to every assertion
+  // above: `hidden` was only interpreted at RENDER time, so an all-regions-closed
+  // value (hand-edited localStorage, or an older build) rendered as "nothing
+  // closed" while remaining the value every write built on. Closing a region then
+  // produced a set that was STILL unsatisfiable, resolved to {} again, and
+  // changed nothing — a Close button that did nothing, forever.
+  //
+  // The fix is to resolve the BASE too, then persist the resolved value. These
+  // assertions pin the arithmetic Shell.setRegionHidden performs.
+  const root = fixture();
+  const corrupt = { scripture: true, "res-a": true, "res-b": true };
+  eqArr(Object.keys(resolveHidden(root, corrupt)), [], "the corrupt set resolves to nothing closed on screen");
+
+  // THE BUG: build the next set on the RAW stored value → still unsatisfiable →
+  // still resolves to {} → the click accomplished nothing.
+  const naive = resolveHidden(root, { ...corrupt, "res-b": true });
+  eqArr(Object.keys(naive), [], "building on the RAW value leaves the click a silent no-op (the bug)");
+
+  // THE FIX: build on the RESOLVED base instead.
+  const base = resolveHidden(root, corrupt);
+  const healed = resolveHidden(root, { ...base, "res-b": true });
+  eqArr(Object.keys(healed), ["res-b"], "building on the RESOLVED base closes exactly the clicked region");
+  // …and the next click behaves normally from there, because the stored value is
+  // now satisfiable.
+  eqArr(
+    Object.keys(resolveHidden(root, { ...healed, "res-a": true })).sort(),
+    ["res-a", "res-b"],
+    "the following click closes a second region, as it should",
+  );
+}
+
+console.log("\n[hide] purity");
+{
+  const root = fixture();
+  const snapshot = JSON.stringify(root);
+  const hidden = { "res-a": true, ghost: true };
+  const hiddenSnapshot = JSON.stringify(hidden);
+  resolveHidden(root, hidden);
+  hiddenRegions(root, hidden);
+  canHideRegion(root, hidden, "res-b");
+  isNodeVisible(root, hidden);
+  assert(JSON.stringify(root) === snapshot, "no hide helper mutates the tree");
+  assert(JSON.stringify(hidden) === hiddenSnapshot, "no hide helper mutates the hidden map");
 }
 
 if (failed > 0) {

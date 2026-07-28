@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
-import { Box } from "@mui/material";
+import { Box, IconButton, Tooltip } from "@mui/material";
 import { styled } from "@mui/material/styles";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { Group, Panel, Separator, type Layout, type LayoutChangedMeta } from "react-resizable-panels";
 import type { Axis, LayoutNode, LayoutSpec, PanelRegion } from "../lib/layoutSpec";
+import { isNodeVisible, type HiddenMap } from "../lib/layoutTree";
 import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
 import { OuterDropZone } from "./OuterDropZone";
+
+// The in-flow strip that lists CLOSED regions so they can be reopened.
+const CLOSED_STRIP_PX = 26;
 
 interface WorkspaceLayoutProps {
   // The resolved active layout. `builtin:classic` renders through the
@@ -23,6 +28,14 @@ interface WorkspaceLayoutProps {
   // Debounced size persistence — receives a patch of {nodeId: fraction} for one
   // resized Group. Only Classic uses the divider ratio path.
   onSizesChange: (patch: Record<string, number>) => void;
+  // Regions the user has CLOSED, in tree order, already resolved by
+  // layoutTree.resolveHidden (so this is never "every region"). Two jobs: the
+  // renderer skips them, and the strip below offers them back. Empty for
+  // Classic, which never reaches either.
+  closedRegions: { id: string; label: string }[];
+  onRestoreRegion: (regionId: string) => void;
+  // Label for the reopen strip's controls (Shell owns i18n).
+  restoreLabel: (label: string) => string;
   // Classic-only divider (the hand-rolled 8px flex divider from Phase 2).
   effectiveSplit: number;
   onSplitRatioChange: (ratio: number) => void;
@@ -67,6 +80,9 @@ export function WorkspaceLayout({
   railWidth,
   sizes,
   onSizesChange,
+  closedRegions,
+  onRestoreRegion,
+  restoreLabel,
   effectiveSplit,
   onSplitRatioChange,
 }: WorkspaceLayoutProps) {
@@ -174,8 +190,16 @@ export function WorkspaceLayout({
   // ── Generic (non-classic): walk the recursive split tree. Each SplitNode is a
   // Group with one Panel per child (Separators between); each PanelRegion leaf
   // renders its Shell-built content. The rail stays OUTSIDE the resizable tree.
+  // The closed set, as a map for the pure visibility helper. Derived from the
+  // already-resolved `closedRegions` so there is exactly one source of truth for
+  // "what is closed" (Shell's layoutTree.resolveHidden call).
+  const hiddenMap: HiddenMap = {};
+  for (const r of closedRegions) hiddenMap[r.id] = true;
+  const isRegionClosed = (id: string): boolean => hiddenMap[id] === true;
+
   const renderNode = (node: LayoutNode, path: string): ReactNode => {
     if (node.kind === "region") {
+      if (isRegionClosed(node.id)) return null;
       return (
         <Box
           sx={{
@@ -194,6 +218,29 @@ export function WorkspaceLayout({
     }
     const n = node.children.length;
     const orientation = node.orientation;
+
+    // CLOSED regions are filtered out HERE, at render time — the tree still holds
+    // them (with their panels), which is what makes restoring them free and makes
+    // it impossible for the docking engine to lose a hidden region's panels.
+    //
+    // The path/key is computed from the ORIGINAL child index and only THEN
+    // filtered. That ordering is load-bearing: layoutTree.collectSizeKeys mirrors
+    // this `${path}.${i}` scheme, so re-indexing the surviving children would
+    // silently repoint every nested `split:<path>` size key — closing a region
+    // would then resize unrelated splits, and pruneSizes would delete live keys.
+    const visible = node.children
+      .map((child, i) => ({ child, cpath: `${path}.${i}` }))
+      .filter(({ child }) => isNodeVisible(child, hiddenMap));
+
+    // Nothing left under this split — the parent already filtered it out via
+    // isNodeVisible; this is the defensive tail (and the root case).
+    if (visible.length === 0) return null;
+    // Exactly one child still open: render it DIRECTLY, with no Group. Two
+    // reasons. It absorbs the closed sibling's space naturally, and a
+    // single-Panel Group would report a 100% layout that could overwrite the
+    // persisted size of the region the user is about to reopen.
+    if (visible.length === 1) return renderNode(visible[0].child, visible[0].cpath);
+
     return (
       <Group
         key={`group:${path}`}
@@ -202,16 +249,24 @@ export function WorkspaceLayout({
         onLayoutChanged={handleLayoutChanged}
         style={{ height: "100%", width: "100%" }}
       >
-        {node.children.flatMap((child, i) => {
-          const cpath = `${path}.${i}`;
+        {visible.flatMap(({ child, cpath }, vi) => {
           const id = childId(child, cpath);
+          // Fractions of the OPEN children no longer sum to 1 once a sibling is
+          // closed; react-resizable-panels renormalizes them, so the survivors
+          // absorb the closed region's share proportionally. Closing writes
+          // nothing back (handleLayoutChanged ignores non-user layouts), so
+          // reopening restores the original proportions. Caveat: dragging a
+          // separator WHILE a sibling is closed persists renormalized fractions
+          // for the survivors only, so the group can then sum to more than 1 and
+          // reopening is approximate — which is why Shell's applyEffectiveSizes
+          // renormalizes before baking those sizes into a saved layout.
           const frac = sizes[id] ?? child.size ?? 1 / n;
           const panel = (
             <Panel key={id} id={id} defaultSize={`${(frac * 100).toFixed(4)}%`} minSize="10%">
               {renderNode(child, cpath)}
             </Panel>
           );
-          return i === 0
+          return vi === 0
             ? [panel]
             : [<LayoutSeparator key={`sep:${id}`} axis={orientation} />, panel];
         })}
@@ -224,6 +279,49 @@ export function WorkspaceLayout({
       {spec.rail.visible && !railCollapsed && (
         <Box sx={{ width: railWidth, flexShrink: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           {railNode}
+        </Box>
+      )}
+      {/* Closed-region reopen strip. Deliberately a FLEX SIBLING of the
+          workspace, not an overlay: an absolutely-positioned strip would sit on
+          top of the region content and could swallow the drag grips or the
+          perimeter drop bands (the bug the perimeter bands already shipped
+          once). In flow it merely narrows the workspace by a few pixels, and it
+          only exists while something is closed. */}
+      {closedRegions.length > 0 && (
+        <Box
+          data-be-closed-strip=""
+          sx={{
+            width: CLOSED_STRIP_PX,
+            flexShrink: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 0.25,
+            pt: 0.5,
+            // LOGICAL border: under an RTL UI stylis-plugin-rtl mirrors physical
+            // sides, so `borderRight` here would land on the wrong edge.
+            borderInlineEnd: "1px solid",
+            borderColor: "divider",
+            bgcolor: "grey.50",
+            overflow: "hidden",
+          }}
+        >
+          {closedRegions.map((r) => (
+            // No `placement` override: the strip sits at the workspace's
+            // INLINE-start, which is the screen's right under an RTL UI, and
+            // `placement` is a JS prop that stylis-plugin-rtl cannot mirror — a
+            // hard-coded "right" would open the tooltip off-viewport there.
+            <Tooltip key={r.id} title={restoreLabel(r.label)}>
+              <IconButton
+                size="small"
+                onClick={() => onRestoreRegion(r.id)}
+                aria-label={restoreLabel(r.label)}
+                sx={{ p: 0.25 }}
+              >
+                <VisibilityOutlinedIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+          ))}
         </Box>
       )}
       {/* `position: relative` anchors the perimeter drop frame to the WORKSPACE

@@ -162,6 +162,94 @@ export function nextRegionId(root: LayoutNode): string {
   return `region-${max + 1}`;
 }
 
+// ─── Region visibility (hide / restore) ────────────────────────────────
+//
+// A region can be turned OFF and back ON. This is a different thing from panel
+// minimize (which collapses one panel to its header): closing a region closes a
+// whole column/section, WITH its panels still inside it.
+//
+// THE LOAD-BEARING DESIGN DECISION: hiding is a RENDER-TIME FILTER, never a tree
+// edit. The tree keeps the hidden region and every panel in it; only the
+// renderer skips it. Two consequences, both of them the whole point:
+//
+//  1. Panels can never be orphaned. `normalizeTree` deletes a region only when
+//     it has NO panels, and a hidden region always still holds its panels — so
+//     nothing in the engine can destroy one. Restoring is just "stop filtering".
+//  2. The engine below/above this block needs no knowledge of hiddenness, so
+//     `movePanel` / `normalizeTree` / `pruneSizes` stay exactly as tested.
+//
+// A hidden region is also unreachable by drag in both directions: it renders no
+// grips (nothing to drag out) and no drop zone (nothing to drag in). Its panels
+// are frozen until it comes back.
+
+// region id -> hidden. Sourced from LayoutOverride.hidden (runtime state), which
+// is why this is a plain map and not part of the tree.
+export type HiddenMap = Record<string, boolean>;
+
+// A region's EFFECTIVE hidden state: the runtime override wins, falling back to
+// the spec's own `PanelRegion.hidden` default. Mirrors how Shell resolves a
+// panel's `minimized`.
+export function isRegionHidden(region: PanelRegion, hidden?: HiddenMap | null): boolean {
+  const override = hidden?.[region.id];
+  return override !== undefined ? override : !!region.hidden;
+}
+
+// Is anything under `node` still on screen? A split is visible while at least
+// one descendant region is — so closing every region inside a split makes the
+// whole split (and its separators) disappear, rather than leaving empty gutters.
+export function isNodeVisible(node: LayoutNode, hidden?: HiddenMap | null): boolean {
+  if (isRegion(node)) return !isRegionHidden(node, hidden);
+  return node.children.some((child) => isNodeVisible(child, hidden));
+}
+
+// The hidden map as it should ACTUALLY be applied.
+//
+// Safety valve: a map that would hide every region resolves to EMPTY (nothing
+// hidden). A workspace with no visible region is a blank screen with no chrome
+// to click, and the only ways to reach one are a corrupt localStorage value or
+// closing the last panel out of the last visible region — neither of which
+// should be able to brick the editor. The per-region close control refuses the
+// last visible region up front (see canHideRegion); this is the backstop for
+// every other path.
+export function resolveHidden(root: LayoutNode, hidden?: HiddenMap | null): HiddenMap {
+  if (!hidden) return {};
+  const out: HiddenMap = {};
+  for (const region of collectRegions(root)) {
+    if (isRegionHidden(region, hidden)) out[region.id] = true;
+  }
+  if (Object.keys(out).length === 0) return {};
+  return isNodeVisible(root, out) ? out : {};
+}
+
+// Regions currently closed, in tree order. Drives the restore affordances (the
+// closed-sections strip and the Layouts-menu list), so it only ever reports
+// regions that really exist in the rendered tree.
+export function hiddenRegions(root: LayoutNode, hidden?: HiddenMap | null): PanelRegion[] {
+  const resolved = resolveHidden(root, hidden);
+  return collectRegions(root).filter((r) => resolved[r.id] === true);
+}
+
+// May `regionId` be closed right now? No, if it is the last region still on
+// screen — closing it would leave an empty workspace (see resolveHidden).
+export function canHideRegion(
+  root: LayoutNode,
+  hidden: HiddenMap | null | undefined,
+  regionId: string,
+): boolean {
+  const region = collectRegions(root).find((r) => r.id === regionId);
+  if (!region) return false;
+  const resolved = resolveHidden(root, hidden);
+  if (resolved[regionId] === true) return false; // already closed
+  return isNodeVisible(root, { ...resolved, [regionId]: true });
+}
+
+// NOTE ON PRUNING: `resolveHidden` is also the pruner — it emits only `true`
+// entries for regions that really exist in `root`. There is deliberately no
+// separate pruneHidden() mirroring pruneSizes, because EVERY write must go
+// through resolution anyway (see the comment in Shell.setRegionHidden): a merely
+// pruned map can still be unsatisfiable, and persisting an unsatisfiable map is
+// what makes the Close control silently stop working.
+
 // ─── Normalization ─────────────────────────────────────────────────────
 
 // One bottom-up canonicalization pass. Returns null when the subtree has

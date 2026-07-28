@@ -51,6 +51,7 @@ import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import TranslateIcon from "@mui/icons-material/Translate";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import AppsIcon from "@mui/icons-material/Apps";
@@ -137,6 +138,9 @@ function LayoutSwitcher({
   onSaveLayoutAs,
   onManageLayouts,
   onResetArrangement,
+  closedRegions = [],
+  onRestoreRegion,
+  onRestoreAllRegions,
 }: {
   layouts: LayoutSpec[];
   userLayouts?: LayoutSpec[];
@@ -148,6 +152,15 @@ function LayoutSwitcher({
   // passes it only when the active layout is non-Classic AND actually has a tree
   // override, so the item's presence is itself the availability test.
   onResetArrangement?: () => void;
+  // The SECOND restore path for closed regions (the first is the in-flow reopen
+  // strip in WorkspaceLayout). Both exist on purpose: the strip is adjacent to
+  // the workspace and so the more discoverable, but it can only show an icon +
+  // tooltip per region, and it is easy to miss when only one narrow section is
+  // closed. This menu names each closed section in full and is where a user
+  // already goes to undo arrangement changes ("Reset arrangement" lives here).
+  closedRegions?: { id: string; label: string }[];
+  onRestoreRegion?: (regionId: string) => void;
+  onRestoreAllRegions?: () => void;
 }) {
   const { t } = useTranslation();
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -191,6 +204,42 @@ function LayoutSwitcher({
           </ListSubheader>
         )}
         {userLayouts.map(renderLayoutItem)}
+        {closedRegions.length > 0 && onRestoreRegion && [
+          <Divider key="closed-divider" />,
+          <ListSubheader key="closed-header" sx={{ lineHeight: 2, bgcolor: "transparent" }}>
+            {t("layout.closedRegions")}
+          </ListSubheader>,
+          ...closedRegions.map((r) => (
+            <MenuItem
+              key={r.id}
+              onClick={() => {
+                onRestoreRegion(r.id);
+                setOpen(false);
+              }}
+            >
+              <ListItemIcon>
+                <VisibilityOutlinedIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>{t("layout.restoreRegion", { name: r.label })}</ListItemText>
+            </MenuItem>
+          )),
+          ...(closedRegions.length > 1 && onRestoreAllRegions
+            ? [
+                <MenuItem
+                  key="restore-all"
+                  onClick={() => {
+                    onRestoreAllRegions();
+                    setOpen(false);
+                  }}
+                >
+                  <ListItemIcon>
+                    <VisibilityOutlinedIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>{t("layout.restoreAllRegions")}</ListItemText>
+                </MenuItem>,
+              ]
+            : []),
+        ]}
         {(onSaveLayoutAs || onResetArrangement) && <Divider />}
         {onResetArrangement && (
           <MenuItem
@@ -299,6 +348,11 @@ interface Props {
   onSaveLayoutAs?: () => void;
   onManageLayouts?: () => void;
   onResetArrangement?: () => void;
+  // Regions the user has closed in the ACTIVE (non-Classic) layout, in tree
+  // order, with a human label. Empty/omitted hides the whole menu section.
+  closedRegions?: { id: string; label: string }[];
+  onRestoreRegion?: (regionId: string) => void;
+  onRestoreAllRegions?: () => void;
 }
 
 export function TopBar({
@@ -327,6 +381,9 @@ export function TopBar({
   onSaveLayoutAs,
   onManageLayouts,
   onResetArrangement,
+  closedRegions,
+  onRestoreRegion,
+  onRestoreAllRegions,
 }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
@@ -752,6 +809,9 @@ export function TopBar({
           onSaveLayoutAs={onSaveLayoutAs}
           onManageLayouts={onManageLayouts}
           onResetArrangement={onResetArrangement}
+          closedRegions={closedRegions}
+          onRestoreRegion={onRestoreRegion}
+          onRestoreAllRegions={onRestoreAllRegions}
         />
       )}
 

@@ -13,6 +13,7 @@ import { Box, IconButton, Tooltip, Typography } from "@mui/material";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import CloseIcon from "@mui/icons-material/Close";
 import { useTranslation } from "react-i18next";
 import type { PanelType } from "../lib/layoutSpec";
 import { useLayoutDrag } from "./LayoutDragContext";
@@ -22,6 +23,16 @@ interface PanelChromeProps {
   panelType: PanelType;
   minimized: boolean;
   onToggleMinimized: () => void;
+  // Close the whole REGION this panel sits in (a different thing from
+  // `onToggleMinimized`, which collapses just this panel to its header). Shell
+  // passes it on a region's FIRST panel only, and only when the region is
+  // closeable — so the button's presence is itself the availability test.
+  //
+  // It lives in the panel header rather than in a region header of its own so it
+  // stays IN FLOW: a floating region control would sit on top of the workspace
+  // and could cover the drag grips or the perimeter drop bands, which is exactly
+  // the class of bug the perimeter bands already shipped once.
+  onCloseRegion?: () => void;
   children: ReactNode;
 }
 
@@ -30,6 +41,7 @@ export function PanelChrome({
   panelType,
   minimized,
   onToggleMinimized,
+  onCloseRegion,
   children,
 }: PanelChromeProps) {
   const { t } = useTranslation();
@@ -128,6 +140,18 @@ export function PanelChrome({
             <ExpandMoreIcon sx={{ fontSize: 14 }} />
           )}
         </IconButton>
+        {onCloseRegion && (
+          <Tooltip title={t("layout.closeRegion")}>
+            <IconButton
+              size="small"
+              onClick={onCloseRegion}
+              aria-label={t("layout.closeRegion")}
+              sx={{ p: 0 }}
+            >
+              <CloseIcon sx={{ fontSize: 13 }} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
       {/* HIDDEN, not unmounted — scroll position and unsaved edits survive. */}
       <Box

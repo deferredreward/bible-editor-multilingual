@@ -228,6 +228,33 @@ export function setLayoutTree(
   return store;
 }
 
+// Set a layout's CLOSED-REGION set, replacing `hidden` WHOLESALE.
+//
+// Why this can't be mergeOverride (same shape of reason as setLayoutTree):
+// mergeOverride only ever ADDS keys, so it can neither drop a key for a region a
+// drop has destroyed nor clear the whole set for "Reset arrangement". And since
+// `nextRegionId` recycles `region-<n>` ids, a stale key left behind by a merge
+// could make a brand-new region spawn invisible. Callers pass the output of
+// layoutTree.resolveHidden, which is both the pruner and the
+// never-hide-everything backstop (there is deliberately no pruneHidden — see the
+// note beside resolveHidden for why every write must resolve, not merely prune).
+//
+// Never call this for `builtin:classic`: Classic renders through
+// WorkspaceLayout's hand-rolled flexbox branch, which has no region chrome and
+// never consults `hidden` — so a value stored for it could only ever be a lie.
+// Refusing here mirrors setLayoutTree / effectiveRoot.
+export function setLayoutHidden(
+  layoutId: string,
+  hidden: Record<string, boolean>,
+): LayoutStore {
+  if (layoutId === CLASSIC_LAYOUT_ID) return loadLayoutStore();
+  const store = loadLayoutStore();
+  const existing = store.overrides[layoutId] ?? {};
+  store.overrides[layoutId] = { ...existing, hidden };
+  saveLayoutStore(store);
+  return store;
+}
+
 // Deep-merges each present sub-record into the layout's existing override so a
 // caller can set just `sizes` (or just `hidden`, etc.) without clobbering the
 // others.
