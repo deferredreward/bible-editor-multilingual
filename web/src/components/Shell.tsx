@@ -90,7 +90,7 @@ import {
   deleteUserLayout,
   setActiveLayoutId as persistActiveLayoutId,
 } from "../lib/layoutStore";
-import { validateLayoutSpec } from "../lib/layoutSpec";
+import { normalizeSizes, validateLayoutSpec } from "../lib/layoutSpec";
 import type { LayoutNode, LayoutSpec, PanelInstance, PanelRegion } from "../lib/layoutSpec";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
 import {
@@ -224,6 +224,13 @@ function applyEffectiveSizes(
     if (eff !== undefined) child.size = eff;
     applyEffectiveSizes(child, sizes, cpath);
   });
+  // Renormalize after baking. Resizing a divider while a SIBLING REGION IS CLOSED
+  // persists renormalized fractions for the survivors only (the closed region
+  // keeps its old share and is not in the Group), so the baked set can sum to
+  // more than 1. Nothing downstream fixes that — layoutSpec's validator
+  // preserves `size` verbatim — so a saved layout would render wrong proportions
+  // forever. Normalizing here includes the closed region and restores the sum.
+  node.children = normalizeSizes(node.children);
 }
 
 // The resource tabs a layout region exposes, in panel order.
@@ -3196,10 +3203,10 @@ export function Shell({
   // A closed region needs a human name, and regions have none in the schema — so
   // name it by the panels it holds, using the same `panelTitle.*` namespace the
   // panel headers use.
-  const regionLabel = (region: PanelRegion): string => {
-    const titles = region.panels.map((p) => t(`panelTitle.${p.type}`));
-    return titles.length > 0 ? titles.join(", ") : t("layout.emptySection");
-  };
+  // (A zero-panel region needs no fallback: normalizeTree drops empty regions, so
+  // one can never reach the restore list.)
+  const regionLabel = (region: PanelRegion): string =>
+    region.panels.map((p) => t(`panelTitle.${p.type}`)).join(", ");
 
   // Closed regions of the ACTIVE layout, in tree order. Empty for Classic.
   const closedRegions = arrangeable
@@ -3231,9 +3238,20 @@ export function Shell({
     // resolveHidden is also the pruner here: it emits `true` only for regions
     // that exist in the tree, so it drops the `false` this produces on restore
     // AND any id the tree no longer has.
-    const base = resolveHidden(effRoot, currentHidden());
-    setLayoutHidden(activeLayout.id, resolveHidden(effRoot, { ...base, [regionId]: value }));
-    setLayoutRev((n) => n + 1);
+    const apply = () => {
+      const base = resolveHidden(effRoot, currentHidden());
+      setLayoutHidden(activeLayout.id, resolveHidden(effRoot, { ...base, [regionId]: value }));
+      setLayoutRev((n) => n + 1);
+    };
+    // CLOSING UNMOUNTS the region's panels (renderNode returns null for it), so it
+    // is the same hazard as switching layouts: an alignment panel with unsaved
+    // drags holds them in component state only — they never reach the outbox — and
+    // would vanish silently. Route the close through the dirty gate, exactly as
+    // selectLayout and the panel-mode switch already do.
+    //
+    // REOPENING needs no gate: it mounts, it cannot discard anything.
+    if (value) runWithDirtyGate(apply);
+    else apply();
   };
 
   // Refuse to close the LAST region still on screen: an empty workspace has no
@@ -3500,6 +3518,14 @@ export function Shell({
     // you see" principle as sizes / mode / versions. PanelInstance.minimized is
     // exactly the runtime default for this.
     for (const region of collectRegions(clonedRoot)) {
+      // Closed regions are deliberately NOT baked — a saved layout is a shareable
+      // definition, and opening one with a section already closed (findable only
+      // via the reopen strip) is worse than opening it whole; nothing is lost
+      // either way, since the tree carries the panels regardless. So strip any
+      // spec-level `hidden` the source layout happened to carry rather than
+      // cloning it through: otherwise a region the user had REOPENED would come
+      // back closed in the new layout, whose id the `false` override cannot follow.
+      delete region.hidden;
       for (const panel of region.panels) {
         // The EFFECTIVE value: an absent override must not erase a spec-level
         // `minimized: true` that the source layout already carried.

@@ -253,8 +253,13 @@ export function WorkspaceLayout({
           const id = childId(child, cpath);
           // Fractions of the OPEN children no longer sum to 1 once a sibling is
           // closed; react-resizable-panels renormalizes them, so the survivors
-          // absorb the closed region's share proportionally. Nothing is written
-          // back, so reopening restores the original proportions exactly.
+          // absorb the closed region's share proportionally. Closing writes
+          // nothing back (handleLayoutChanged ignores non-user layouts), so
+          // reopening restores the original proportions. Caveat: dragging a
+          // separator WHILE a sibling is closed persists renormalized fractions
+          // for the survivors only, so the group can then sum to more than 1 and
+          // reopening is approximate — which is why Shell's applyEffectiveSizes
+          // renormalizes before baking those sizes into a saved layout.
           const frac = sizes[id] ?? child.size ?? 1 / n;
           const panel = (
             <Panel key={id} id={id} defaultSize={`${(frac * 100).toFixed(4)}%`} minSize="10%">
@@ -302,7 +307,11 @@ export function WorkspaceLayout({
           }}
         >
           {closedRegions.map((r) => (
-            <Tooltip key={r.id} title={restoreLabel(r.label)} placement="right">
+            // No `placement` override: the strip sits at the workspace's
+            // INLINE-start, which is the screen's right under an RTL UI, and
+            // `placement` is a JS prop that stylis-plugin-rtl cannot mirror — a
+            // hard-coded "right" would open the tooltip off-viewport there.
+            <Tooltip key={r.id} title={restoreLabel(r.label)}>
               <IconButton
                 size="small"
                 onClick={() => onRestoreRegion(r.id)}
