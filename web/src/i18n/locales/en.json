@@ -153,7 +153,9 @@
     "increaseReadingTextSize": "increase reading text size",
     "switchToLight": "switch to light mode",
     "switchToDark": "switch to dark mode",
+    "toggleColorMode": "toggle color mode",
     "uiLanguage": "Interface language",
+    "layouts": "Layouts",
     "mode": {
       "editor": "Editor",
       "translator": "Translator"
@@ -189,6 +191,38 @@
       "organization": "Organization",
       "switchHint": "switch"
     }
+  },
+  "panelTitle": {
+    "scripture": "Scripture",
+    "original": "Original language",
+    "notes": "translationNotes",
+    "words": "translationWords",
+    "questions": "translationQuestions",
+    "taArticle": "translationAcademy article",
+    "twArticle": "translationWords article",
+    "articleList": "Articles",
+    "alignment": "Alignment",
+    "search": "Search"
+  },
+  "layout": {
+    "dragToMove": "Drag to move this panel",
+    "minimizePanel": "Minimize panel",
+    "expandPanel": "Expand panel",
+    "resetArrangement": "Reset arrangement",
+    "dockFullWidth": "Full-width band",
+    "dockFullHeight": "Full-height column",
+    "myLayouts": "My layouts",
+    "saveAs": "Save current as…",
+    "manage": "Manage layouts…",
+    "saveDialogTitle": "Save layout",
+    "nameLabel": "Layout name",
+    "manageDialogTitle": "Manage layouts",
+    "noUserLayouts": "You haven't saved any layouts yet.",
+    "active": "Active",
+    "duplicate": "Duplicate",
+    "copySuffix": "copy",
+    "deleteConfirmTitle": "Delete layout?",
+    "deleteConfirmBody": "\"{{name}}\" will be removed. This can't be undone."
   },
   "translation": {
     "translationMode": "Translation mode",
@@ -660,6 +694,9 @@
     "noWordsInChapter": "no words in this chapter",
     "noQuestionsInChapter": "no questions in this chapter",
     "clickLinkToAlign": "Click the link icon on a ULT or UST verse to start aligning.",
+    "viewMode": "scripture view mode",
+    "viewModeTooltip": "scripture view mode — switch between rows, columns and whole book",
+    "bookLoadStatus": "{{chapters}} ch · loaded {{loaded}}",
     "tooltipRows": "verse-by-verse stacked card (default)",
     "tooltipColumns": "parallel-column doc view of the current chapter",
     "tooltipBook": "whole-book scroll across all enabled versions (lazy loads as you scroll)",

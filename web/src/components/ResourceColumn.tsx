@@ -1,41 +1,30 @@
 import { Fragment, type Ref, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Box, Stack, Typography, Chip, Button, IconButton, Tooltip, LinearProgress } from "@mui/material";
-import AddIcon from "@mui/icons-material/Add";
-import PushPinIcon from "@mui/icons-material/PushPin";
-import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
+import { Box, Stack, Typography } from "@mui/material";
 import { api, isReadOnly, type TnRow, type TqRow, type TwlRow, type VerseDto, type TwlSuggestion } from "../sync/api";
 import { NoteCard, type DropPosition } from "./NoteCard";
-import { WordsTable, type WordDropPosition } from "./WordsTable";
-import { TwlSuggestions } from "./TwlSuggestions";
-import { QuestionsTable } from "./QuestionsTable";
-import { QuestionCard } from "./QuestionCard";
+import { type WordDropPosition } from "./WordsTable";
+import { WordsPanelBody } from "./WordsPanel";
+import { QuestionsPanelBody } from "./QuestionsPanel";
 import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import { resolveSourceRef } from "../lib/sourceRef";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
-import CheckIcon from "@mui/icons-material/Check";
-import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
-import { LANE_FILL, type LaneShade } from "../lib/laneChecks";
+import { NotesPanelBody } from "./NotesPanel";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
 import { useSourceQuestions } from "../hooks/useSourceQuestions";
+import {
+  DropIndicator,
+  sortBySortOrder,
+  groupByVerse,
+  type PinKey,
+  type ResourceCheckoff,
+} from "./resourcePanelShared";
 
 export type PanelMode = "resources" | "alignment" | "search";
 
-// In-context checkoff for the resource panels (Notes/Words/Questions), scoped to
-// the active verse. Shell computes these from the lane-check state.
-export type ResourceLane = "tn" | "tw" | "tq";
-export interface ResourceCheckoff {
-  canCheck: boolean;
-  shade: (lane: ResourceLane) => LaneShade;
-  applicable: (lane: ResourceLane) => boolean;
-  attribution: (lane: ResourceLane) => string;
-  onToggle: (lane: ResourceLane) => void;
-  // Bulk "all this chapter" — Shell decides direction (check-all unless every
-  // applicable verse is already mine, then clear-all).
-  onBulkToggle: (lane: ResourceLane) => void;
-}
+export type { ResourceLane, ResourceCheckoff } from "./resourcePanelShared";
 
 // External search tool embedded in the Search tab. Allow-listed in the API's
 // CSP frame-src (api/src/index.ts) — adding a different host requires updating
@@ -74,6 +63,8 @@ export interface AlignmentTabProps {
   // Restore a previously-saved verse version from the panel's history button.
   onRestoreVersion?: (content: unknown, plainText: string | null) => void;
 }
+
+export type ResourceColumnProps = Props;
 
 interface Props {
   // Active location — needed by the per-verse TWL suggestions fetch.
@@ -216,11 +207,17 @@ interface Props {
   alignmentBadge?: string;
   // Per-resource checkoff for the active verse (in-context "done" + bulk).
   checkoff?: ResourceCheckoff;
+  // Flexible-layout support (Phase 3). When set, only these resource tabs
+  // render (notes/words/questions) and the active tab is clamped into the set;
+  // `initialTab` seeds the first shown tab. Omitting BOTH is byte-identical to
+  // the classic all-tabs column. Alignment/Search tabs are orthogonal
+  // (panelMode) and unaffected.
+  visibleTabs?: ResourceTab[];
+  initialTab?: ResourceTab;
 }
 
-type PinKey = "notes" | "words" | "questions";
 type Pinned = Record<PinKey, boolean>;
-type ResourceTab = "notes" | "words" | "questions";
+export type ResourceTab = "notes" | "words" | "questions";
 
 const PINNED_KEY = "be:pinned";
 
@@ -252,32 +249,6 @@ function savePinned(p: Pinned) {
   } catch {
     /* ignore */
   }
-}
-
-function sortBySortOrder<
-  T extends { sort_order: number | null; id: string; trashed_at?: number | null },
->(rows: T[]): T[] {
-  // Trashed notes always sort to the bottom of the verse, preserving their
-  // relative order. Purely presentational — sort_order is untouched, so a
-  // Restore drops the note straight back to its original position. Rows
-  // without a trashed_at field (twl) are treated as not trashed.
-  return [...rows].sort(
-    (a, b) =>
-      (a.trashed_at != null ? 1 : 0) - (b.trashed_at != null ? 1 : 0) ||
-      (a.sort_order ?? Number.MAX_SAFE_INTEGER) -
-        (b.sort_order ?? Number.MAX_SAFE_INTEGER) ||
-      a.id.localeCompare(b.id),
-  );
-}
-
-function groupByVerse<T extends { verse: number }>(rows: T[]): Array<[number, T[]]> {
-  const map = new Map<number, T[]>();
-  for (const r of rows) {
-    const bucket = map.get(r.verse) ?? [];
-    bucket.push(r);
-    map.set(r.verse, bucket);
-  }
-  return [...map.entries()].sort(([a], [b]) => a - b);
 }
 
 export function ResourceColumn({
@@ -347,6 +318,8 @@ export function ResourceColumn({
   alignmentProps,
   alignmentBadge,
   checkoff,
+  visibleTabs,
+  initialTab,
 }: Props) {
   const { t } = useTranslation();
   // Translation mode: only gateway-language projects (translationSource != null)
@@ -432,7 +405,16 @@ export function ResourceColumn({
   // Notes / Words / Questions into separate views keeps the Notes column free
   // of TWL/TQ clutter; the tabs now switch the view instead of scroll-jumping
   // within one stacked body.
-  const [resourceTab, setResourceTab] = useState<ResourceTab>("notes");
+  const [resourceTab, setResourceTab] = useState<ResourceTab>(() => {
+    const vt = visibleTabs && visibleTabs.length > 0 ? visibleTabs : (["notes", "words", "questions"] as ResourceTab[]);
+    return initialTab && vt.includes(initialTab) ? initialTab : vt[0];
+  });
+  // The resource tabs this layout exposes (classic = all three). Clamp the
+  // active tab into the set so a stale/last selection outside this layout
+  // (e.g. after a layout switch) falls back to the first visible tab.
+  const tabs: ResourceTab[] =
+    visibleTabs && visibleTabs.length > 0 ? visibleTabs : ["notes", "words", "questions"];
+  const activeResourceTab: ResourceTab = tabs.includes(resourceTab) ? resourceTab : tabs[0];
   const showResource = (tab: ResourceTab) => {
     if (panelMode !== "resources") onSetPanelMode?.("resources");
     setResourceTab(tab);
@@ -753,30 +735,36 @@ export function ResourceColumn({
           {t("shell.resources")} · {activeVerse === 0 ? "i" : activeVerse}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <PanelTab
-          label={t("shell.notes")}
-          count={totalTn}
-          countSuffix={pinned.notes ? " · ch" : ""}
-          active={panelMode === "resources" && resourceTab === "notes"}
-          accent={false}
-          onClick={() => showResource("notes")}
-        />
-        <PanelTab
-          label={t("shell.words")}
-          count={totalTwl}
-          countSuffix={pinned.words ? " · ch" : ""}
-          active={panelMode === "resources" && resourceTab === "words"}
-          accent={false}
-          onClick={() => showResource("words")}
-        />
-        <PanelTab
-          label={t("shell.questions")}
-          count={totalTq}
-          countSuffix={pinned.questions ? " · ch" : ""}
-          active={panelMode === "resources" && resourceTab === "questions"}
-          accent={false}
-          onClick={() => showResource("questions")}
-        />
+        {tabs.includes("notes") && (
+          <PanelTab
+            label={t("shell.notes")}
+            count={totalTn}
+            countSuffix={pinned.notes ? " · ch" : ""}
+            active={panelMode === "resources" && activeResourceTab === "notes"}
+            accent={false}
+            onClick={() => showResource("notes")}
+          />
+        )}
+        {tabs.includes("words") && (
+          <PanelTab
+            label={t("shell.words")}
+            count={totalTwl}
+            countSuffix={pinned.words ? " · ch" : ""}
+            active={panelMode === "resources" && activeResourceTab === "words"}
+            accent={false}
+            onClick={() => showResource("words")}
+          />
+        )}
+        {tabs.includes("questions") && (
+          <PanelTab
+            label={t("shell.questions")}
+            count={totalTq}
+            countSuffix={pinned.questions ? " · ch" : ""}
+            active={panelMode === "resources" && activeResourceTab === "questions"}
+            accent={false}
+            onClick={() => showResource("questions")}
+          />
+        )}
         <PanelTab
           label={t("shell.alignment")}
           countLabel={alignmentBadge}
@@ -837,295 +825,78 @@ export function ResourceColumn({
         // at its flex-wrap boundary can flip-flop a line as the gutter toggles.
         sx={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable", px: 2, py: 1 }}
       >
-        {resourceTab === "notes" && (
-          <>
-            <SectionHead
-              title={t("shell.notes")}
-              count={totalTn}
-              pinned={pinned.notes}
-              onTogglePin={() => togglePinned("notes")}
-              onAdd={onNoteCreate}
-              sticky
-              hideAdd={locked}
-              lane="tn"
-              checkoff={checkoff}
-            />
-            {translationMode && (
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{
-                  px: 0.5,
-                  py: 0.75,
-                  mb: 0.5,
-                  flexWrap: "wrap",
-                  rowGap: 0.75,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Chip
-                  size="small"
-                  color="secondary"
-                  variant="outlined"
-                  icon={<AutoAwesomeIcon sx={{ fontSize: "13px !important" }} />}
-                  label={t("translation.translationMode")}
-                  sx={{ height: 22, fontSize: 11, fontWeight: 600 }}
-                />
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 120, flex: 1 }}>
-                  <LinearProgress
-                    variant="determinate"
-                    color="success"
-                    value={tnStats.total ? (tnStats.validated / tnStats.total) * 100 : 0}
-                    sx={{ flex: 1, height: 6, borderRadius: 99, minWidth: 60 }}
-                  />
-                  <Typography variant="caption" sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-                    {tnStats.validated} / {tnStats.total}
-                  </Typography>
-                </Box>
-                <Tooltip title={t("translation.languageMemoryTip")}>
-                  <Typography variant="caption" sx={{ color: "text.disabled", whiteSpace: "nowrap" }}>
-                    🧠 {t("translation.languageMemory")}: {tnStats.validated} {t("translation.examples")} ·{" "}
-                    {termsCount} {t("translation.terms")}
-                  </Typography>
-                </Tooltip>
-                <Box sx={{ flex: 1 }} />
-                {onNoteApprove && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="success"
-                    startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
-                    disabled={tnStats.draftIds.length === 0}
-                    onClick={() => {
-                      for (const id of tnStats.draftIds) onNoteApprove(id, true);
-                    }}
-                    sx={{ minWidth: 0, fontSize: 11 }}
-                  >
-                    {t("common.approveAll")} ({tnStats.draftIds.length})
-                  </Button>
-                )}
-              </Stack>
-            )}
-            {tnGroups ? (
-              tnGroups.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("shell.noNotesInChapter")}
-                </Typography>
-              ) : (
-                tnGroups.map(([verse, rows]) => (
-                  <Fragment key={`tn-${verse}`}>
-                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="notes" />
-                    {rows.map((r) => renderNoteCard(r, rows))}
-                  </Fragment>
-                ))
-              )
-            ) : tnForVerse.length === 0 ? (
-              <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                {t("shell.noNotesForVerse")}
-              </Typography>
-            ) : (
-              tnForVerse.map((r) => renderNoteCard(r, tnForVerse))
-            )}
-          </>
+        {activeResourceTab === "notes" && (
+          <NotesPanelBody
+            activeVerse={activeVerse}
+            tnForVerse={tnForVerse}
+            tnGroups={tnGroups}
+            totalTn={totalTn}
+            pinned={pinned.notes}
+            onTogglePin={() => togglePinned("notes")}
+            onNoteCreate={onNoteCreate}
+            locked={locked}
+            checkoff={checkoff}
+            translationMode={translationMode}
+            tnStats={tnStats}
+            termsCount={termsCount}
+            onNoteApprove={onNoteApprove}
+            renderNoteCard={renderNoteCard}
+          />
         )}
 
-        {resourceTab === "words" && (
-          // Flex column filling the scroll viewport so the suggestions block
-          // (mt:auto) is pushed to the bottom even when the Words list is short.
-          <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
-            <SectionHead
-              title={t("shell.words")}
-              count={totalTwl}
-              pinned={pinned.words}
-              onTogglePin={() => togglePinned("words")}
-              onAdd={onWordCreate}
-              sticky
-              hideAdd={locked}
-              lane="tw"
-              checkoff={checkoff}
-            />
-            {twlGroups ? (
-              twlGroups.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("shell.noWordsInChapter")}
-                </Typography>
-              ) : (
-                twlGroups.map(([verse, rows]) => (
-                  <Fragment key={`twl-${verse}`}>
-                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="words" />
-                    <WordsTable
-                      rows={rows}
-                      activeId={activeWordId}
-                      onSave={onWordSave}
-                      onDelete={onWordDelete}
-                      onFocus={onWordFocus}
-                      onReorder={onWordReorder}
-                      onHoverPreview={onWordHoverPreview}
-                      locked={locked}
-                      onTranslateQuote={onWordTranslateQuote}
-                      onWordGloss={onWordGloss}
-                      suggestionAlternatives={twlRowAlternatives}
-                      activeQuoteBuildId={quoteBuildActiveWordId}
-                      quoteBuildSelectionCount={quoteBuildSelectionCount}
-                      onStartQuoteBuild={onStartWordQuoteBuild}
-                    />
-                  </Fragment>
-                ))
-              )
-            ) : (
-              <WordsTable
-                rows={twlForVerse}
-                activeId={activeWordId}
-                onSave={onWordSave}
-                onDelete={onWordDelete}
-                onFocus={onWordFocus}
-                onReorder={onWordReorder}
-                onHoverPreview={onWordHoverPreview}
-                locked={locked}
-                onTranslateQuote={onWordTranslateQuote}
-                onWordGloss={onWordGloss}
-                suggestionAlternatives={twlRowAlternatives}
-                activeQuoteBuildId={quoteBuildActiveWordId}
-                quoteBuildSelectionCount={quoteBuildSelectionCount}
-                onStartQuoteBuild={onStartWordQuoteBuild}
-              />
-            )}
-            {/* Per-verse suggestions — only in the active-verse (unpinned) view.
-                refreshKey is the verse's current link set so adding/removing a
-                link re-scans and drops/recovers it. */}
-            {!twlGroups && onAddTwlSuggestion && (
-              // Pin the suggestions to the bottom of the scroll viewport: mt:auto
-              // pushes it to the bottom of the flex column (so it stays there even
-              // when the Words list is short), and sticky bottom:-8 keeps it pinned
-              // while scrolling a long list. mx/px:2 + pb:1 extend the paper
-              // background; bottom:-8 sits it flush against the scroll body's py:1.
-              <Box
-                sx={{
-                  mt: "auto",
-                  position: "sticky",
-                  bottom: -8,
-                  zIndex: 1,
-                  bgcolor: "background.paper",
-                  mx: -2,
-                  px: 2,
-                  pb: 1,
-                  boxShadow: "0 -6px 8px -6px rgba(0,0,0,0.12)",
-                }}
-              >
-                <TwlSuggestions
-                  book={book}
-                  chapter={chapter}
-                  verse={activeVerse}
-                  refreshKey={twlForVerse.map((r) => `${r.tw_link ?? ""}|${r.orig_words ?? ""}|${r.occurrence ?? 1}`).join("~")}
-                  onAdd={onAddTwlSuggestion}
-                  isExcluded={isTwlSuggestionExcluded}
-                  onSuggestions={onTwlSuggestions}
-                  blockedArticleIds={twlBlockedArticleIds}
-                  filtersReady={twlFiltersReady}
-                  locked={locked}
-                  paused={!!checkoff && checkoff.applicable("tw") && checkoff.shade("tw") !== "open"}
-                />
-              </Box>
-            )}
-          </Box>
+        {activeResourceTab === "words" && (
+          <WordsPanelBody
+            book={book}
+            chapter={chapter}
+            activeVerse={activeVerse}
+            twlForVerse={twlForVerse}
+            twlGroups={twlGroups}
+            totalTwl={totalTwl}
+            pinned={pinned.words}
+            onTogglePin={() => togglePinned("words")}
+            onWordCreate={onWordCreate}
+            locked={locked}
+            checkoff={checkoff}
+            activeWordId={activeWordId}
+            onWordSave={onWordSave}
+            onWordDelete={onWordDelete}
+            onWordFocus={onWordFocus}
+            onWordReorder={onWordReorder}
+            onWordHoverPreview={onWordHoverPreview}
+            onWordTranslateQuote={onWordTranslateQuote}
+            onWordGloss={onWordGloss}
+            twlRowAlternatives={twlRowAlternatives}
+            quoteBuildActiveWordId={quoteBuildActiveWordId}
+            quoteBuildSelectionCount={quoteBuildSelectionCount}
+            onStartWordQuoteBuild={onStartWordQuoteBuild}
+            onAddTwlSuggestion={onAddTwlSuggestion}
+            isTwlSuggestionExcluded={isTwlSuggestionExcluded}
+            onTwlSuggestions={onTwlSuggestions}
+            twlBlockedArticleIds={twlBlockedArticleIds}
+            twlFiltersReady={twlFiltersReady}
+          />
         )}
 
-        {resourceTab === "questions" && (
-          <>
-            <SectionHead
-              title={t("shell.questions")}
-              count={totalTq}
-              pinned={pinned.questions}
-              onTogglePin={() => togglePinned("questions")}
-              onAdd={onQuestionCreate}
-              sticky
-              hideAdd={locked}
-              lane="tq"
-              checkoff={checkoff}
-            />
-            {translationMode && (
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{
-                  px: 0.5,
-                  py: 0.75,
-                  mb: 0.5,
-                  flexWrap: "wrap",
-                  rowGap: 0.75,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Chip
-                  size="small"
-                  color="secondary"
-                  variant="outlined"
-                  icon={<AutoAwesomeIcon sx={{ fontSize: "13px !important" }} />}
-                  label={t("translation.translationMode")}
-                  sx={{ height: 22, fontSize: 11, fontWeight: 600 }}
-                />
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 120, flex: 1 }}>
-                  <LinearProgress
-                    variant="determinate"
-                    color="success"
-                    value={tqStats.total ? (tqStats.validated / tqStats.total) * 100 : 0}
-                    sx={{ flex: 1, height: 6, borderRadius: 99, minWidth: 60 }}
-                  />
-                  <Typography variant="caption" sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-                    {tqStats.validated} / {tqStats.total}
-                  </Typography>
-                </Box>
-                <Box sx={{ flex: 1 }} />
-                {onQuestionApprove && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="success"
-                    startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
-                    disabled={tqStats.draftIds.length === 0}
-                    onClick={() => {
-                      for (const id of tqStats.draftIds) onQuestionApprove(id, true);
-                    }}
-                    sx={{ minWidth: 0, fontSize: 11 }}
-                  >
-                    {t("common.approveAll")} ({tqStats.draftIds.length})
-                  </Button>
-                )}
-              </Stack>
-            )}
-            {tqGroups ? (
-              tqGroups.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("shell.noQuestionsInChapter")}
-                </Typography>
-              ) : (
-                tqGroups.map(([verse, rows]) => (
-                  <Fragment key={`tq-${verse}`}>
-                    <VerseGroupHead verse={verse} active={verse === activeVerse} section="questions" />
-                    {translationMode ? (
-                      rows.map((r) => renderQuestionCard(r))
-                    ) : (
-                      <QuestionsTable rows={rows} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
-                    )}
-                  </Fragment>
-                ))
-              )
-            ) : translationMode ? (
-              tqForVerse.length === 0 ? (
-                <Typography variant="body2" color="text.disabled" sx={{ py: 1, pl: 1 }}>
-                  {t("questions.noQuestionsForVerse")}
-                </Typography>
-              ) : (
-                tqForVerse.map((r) => renderQuestionCard(r))
-              )
-            ) : (
-              <QuestionsTable rows={tqForVerse} onSave={onQuestionSave} onDelete={onQuestionDelete} locked={locked} />
-            )}
-          </>
+        {activeResourceTab === "questions" && (
+          <QuestionsPanelBody
+            activeVerse={activeVerse}
+            tqForVerse={tqForVerse}
+            tqGroups={tqGroups}
+            totalTq={totalTq}
+            pinned={pinned.questions}
+            onTogglePin={() => togglePinned("questions")}
+            onQuestionCreate={onQuestionCreate}
+            locked={locked}
+            checkoff={checkoff}
+            translationMode={translationMode}
+            tqStats={tqStats}
+            sourceQuestions={sourceQuestions}
+            onQuestionSave={onQuestionSave}
+            onQuestionDelete={onQuestionDelete}
+            onQuestionApprove={onQuestionApprove}
+            onQuestionTranslate={onQuestionTranslate}
+            translatingQuestionIds={translatingQuestionIds}
+          />
         )}
       </Box>
       ) : null}
@@ -1154,23 +925,6 @@ export function ResourceColumn({
       )}
     </Box>
   );
-
-  function renderQuestionCard(r: TqRow) {
-    return (
-      <QuestionCard
-        key={r.id}
-        row={r}
-        sourceQuestion={sourceQuestions.get(r.id) ?? null}
-        onSave={(p) => onQuestionSave(r.id, p)}
-        onDelete={() => onQuestionDelete(r.id)}
-        onApprove={onQuestionApprove ? () => onQuestionApprove(r.id, true) : undefined}
-        onUnapprove={onQuestionApprove ? () => onQuestionApprove(r.id, false) : undefined}
-        onTranslate={onQuestionTranslate ? () => onQuestionTranslate(r.id) : undefined}
-        isTranslating={translatingQuestionIds?.has(r.id) ?? false}
-        locked={locked}
-      />
-    );
-  }
 
   function renderNoteCard(r: TnRow, peers: TnRow[]) {
     const showBefore =
@@ -1292,181 +1046,6 @@ export function ResourceColumn({
       </Fragment>
     );
   }
-}
-
-function DropIndicator() {
-  return (
-    <Box
-      sx={{
-        height: 3,
-        my: 0.5,
-        bgcolor: "primary.main",
-        borderRadius: 1,
-        boxShadow: "0 0 4px rgba(49,173,227,0.5)",
-      }}
-    />
-  );
-}
-
-function VerseGroupHead({
-  verse,
-  active,
-  section,
-}: {
-  verse: number;
-  active: boolean;
-  section: PinKey;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="center"
-      data-verse-group={verse}
-      data-vg-section={section}
-      sx={{
-        // Clear the sticky SectionHead when scrollIntoView lands here with
-        // block: "start", so the verse number stays visible rather than
-        // tucking behind the pinned header.
-        scrollMarginTop: "40px",
-        mt: 1,
-        mb: 0.25,
-        py: 0.25,
-        px: 0.5,
-        borderBottom: "1px dashed",
-        borderColor: active ? "primary.main" : "divider",
-      }}
-    >
-      <Typography
-        variant="caption"
-        sx={{
-          fontFamily: "monospace",
-          fontWeight: 700,
-          color: active ? "primary.main" : "text.secondary",
-          letterSpacing: 0.5,
-        }}
-      >
-        {verse === 0 ? t("shell.intro") : `v${verse}`}
-      </Typography>
-    </Stack>
-  );
-}
-
-function SectionHead({
-  title,
-  count,
-  pinned,
-  onTogglePin,
-  onAdd,
-  sticky,
-  hideAdd,
-  lane,
-  checkoff,
-}: {
-  title: string;
-  count: number;
-  pinned: boolean;
-  onTogglePin: () => void;
-  onAdd: () => void;
-  sticky?: boolean;
-  hideAdd?: boolean;
-  lane?: ResourceLane;
-  checkoff?: ResourceCheckoff;
-}) {
-  const { t } = useTranslation();
-  const laneApplicable = checkoff && lane ? checkoff.applicable(lane) : false;
-  const shade = checkoff && lane && laneApplicable ? checkoff.shade(lane) : "open";
-  const fill = shade !== "open" ? LANE_FILL[shade as Exclude<LaneShade, "open">] : null;
-  return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="center"
-      sx={{
-        pb: 0.25,
-        mb: 0.25,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        ...(sticky
-          ? {
-              position: "sticky",
-              top: 0,
-              bgcolor: "background.paper",
-              zIndex: 2,
-              pt: 0.25,
-            }
-          : {}),
-      }}
-    >
-      <Typography variant="subtitle2">{title}</Typography>
-      <Chip
-        label={count}
-        size="small"
-        variant="outlined"
-        sx={{ height: 18, fontFamily: "monospace", fontSize: 10 }}
-      />
-      <Tooltip
-        title={pinned ? t("shell.unpinSection", { title: title.toLowerCase() }) : t("shell.pinSection", { title: title.toLowerCase() })}
-      >
-        <IconButton size="small" onClick={onTogglePin} sx={{ p: 0.25, color: pinned ? "primary.main" : "text.disabled" }}>
-          {pinned ? <PushPinIcon fontSize="inherit" sx={{ fontSize: 16 }} /> : <PushPinOutlinedIcon fontSize="inherit" sx={{ fontSize: 16 }} />}
-        </IconButton>
-      </Tooltip>
-      {checkoff && lane && laneApplicable && checkoff.canCheck && !pinned && (
-        <Tooltip
-          title={t("shell.checkoffVerse", { title, attribution: checkoff.attribution(lane), action: shade === "me" || shade === "both" ? t("shell.uncheck") : t("shell.check") })}
-        >
-          <Box
-            role="checkbox"
-            aria-checked={shade !== "open"}
-            onClick={() => checkoff.onToggle(lane)}
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.5,
-              cursor: "pointer",
-              px: 0.75,
-              height: 20,
-              borderRadius: 1,
-              fontSize: 11,
-              userSelect: "none",
-              bgcolor: fill ? fill.bg : "transparent",
-              color: fill ? fill.fg : "text.secondary",
-              border: fill ? "none" : "1px solid",
-              borderColor: fill ? "transparent" : "divider",
-            }}
-          >
-            <CheckIcon sx={{ fontSize: 13 }} /> {t("shell.done")}
-          </Box>
-        </Tooltip>
-      )}
-      {checkoff && lane && laneApplicable && checkoff.canCheck && (
-        <Tooltip title={t("shell.checkAllChapter", { title: title.toLowerCase() })}>
-          <Typography
-            variant="caption"
-            onClick={() => checkoff.onBulkToggle(lane)}
-            sx={{ color: "primary.main", cursor: "pointer", whiteSpace: "nowrap", ml: 0.25 }}
-          >
-            {t("shell.all")}
-          </Typography>
-        </Tooltip>
-      )}
-      <Box sx={{ flex: 1 }} />
-      {hideAdd ? null : (
-        <Button
-          size="small"
-          startIcon={<AddIcon fontSize="small" />}
-          color="success"
-          variant="outlined"
-          sx={{ minWidth: 0, fontSize: 11 }}
-          onClick={onAdd}
-        >
-          {t("shell.new")}
-        </Button>
-      )}
-    </Stack>
-  );
 }
 
 function PanelTab({

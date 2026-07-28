@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Box,
@@ -25,7 +25,7 @@ import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox } from "../sync/outbox";
 import { api, CHECK_LANES } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion, LaneReplacementEvent } from "../sync/api";
-import { refreshProjectConfig, useProjectConfig } from "../hooks/useProjectConfig";
+import { refreshProjectConfig, useProjectConfig, useWorkflowLayouts } from "../hooks/useProjectConfig";
 import {
   indexLaneChecks,
   laneKey,
@@ -60,7 +60,26 @@ import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { nfc } from "../lib/hebrew";
 import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
-import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceLane } from "./ResourceColumn";
+import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceColumnProps, type ResourceLane, type ResourceTab } from "./ResourceColumn";
+import { WorkspaceLayout } from "./WorkspaceLayout";
+import { StackedResourcePanel } from "./StackedResourcePanel";
+import { LayoutMenu } from "./LayoutMenu";
+import { PanelChrome } from "./PanelChrome";
+import { RegionDropZone } from "./RegionDropZone";
+import { LayoutDragProvider, type LayoutDragValue } from "./LayoutDragContext";
+import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
+import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
+import { collectRegions, effectiveRoot, movePanel, pruneSizes, type DropTarget } from "../lib/layoutTree";
+import {
+  loadLayoutStore,
+  mergeOverride,
+  setLayoutTree,
+  upsertUserLayout,
+  deleteUserLayout,
+  setActiveLayoutId as persistActiveLayoutId,
+} from "../lib/layoutStore";
+import { validateLayoutSpec } from "../lib/layoutSpec";
+import type { LayoutNode, LayoutSpec, PanelInstance, PanelRegion } from "../lib/layoutSpec";
 import type { AlignmentPanelHandle } from "./AlignmentPanel";
 import {
   SideBySideAligner,
@@ -160,6 +179,43 @@ function saveToStorage<T>(key: string, value: T) {
 // scrolls to the note. Module-level so it survives the remount; cleared on
 // consume so a later same-location mount doesn't re-grab a stale note.
 let pendingNoteJump: { book: string; chapter: number; noteId: string } | null = null;
+
+// First scripture panel in a layout tree, depth-first — its `config` drives the
+// mode/versions sync when a layout is selected.
+function findScripturePanel(node: LayoutNode): PanelInstance | null {
+  if (node.kind === "region") return node.panels.find((p) => p.type === "scripture") ?? null;
+  for (const child of node.children) {
+    const found = findScripturePanel(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Bake the active layout's live size overrides into a cloned tree's node `size`
+// fields (Phase 5 "Save current as…"). Mirrors WorkspaceLayout's childId path
+// scheme so the persisted sizes line up: split children use their region id, or
+// a `split:<path>` synthetic id. `path` seeds from the source layout id (as
+// WorkspaceLayout seeds `renderNode(spec.root, spec.id)`). Mutates `node`, which
+// must be a deep clone — never a built-in spec's tree. Because sizes land in the
+// tree itself (not a fresh override), the saved layout reproduces the current
+// proportions without depending on the source layout's override id.
+function applyEffectiveSizes(
+  node: LayoutNode,
+  sizes: Record<string, number>,
+  path: string,
+): void {
+  if (node.kind !== "split") return;
+  node.children.forEach((child, i) => {
+    const cpath = `${path}.${i}`;
+    const id = child.kind === "region" ? child.id : `split:${cpath}`;
+    const eff = sizes[id];
+    if (eff !== undefined) child.size = eff;
+    applyEffectiveSizes(child, sizes, cpath);
+  });
+}
+
+// The resource tabs a layout region exposes, in panel order.
+const RESOURCE_PANEL_TYPES: readonly ResourceTab[] = ["notes", "words", "questions"];
 
 interface Props {
   book: string;
@@ -422,12 +478,70 @@ export function Shell({
   const requestScrollToActive = useCallback(() => setScrollNonce((n) => n + 1), []);
 
   const [splitRatio, setSplitRatio] = useState<number | null>(null);
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-  const isDraggingRef = useRef(false);
   // TopBar's "More ▸ Export USFM" menu item opens this component's scope/
   // version Menu via its imperative handle — see the trigger-less
   // <ExportUsfmButton hideTrigger /> mounted below.
   const exportUsfmRef = useRef<ExportUsfmButtonHandle>(null);
+
+  // Active workspace layout (Phase 3). Seeded from the persisted store; resolved
+  // to a spec against the config-gated built-ins + the panel registry, falling
+  // back to Classic on any miss so a stale/unavailable id can never break the
+  // shell. Built-ins only this phase (user layouts land in Phase 5).
+  const [activeLayoutId, setActiveLayoutIdState] = useState<string>(
+    () => loadLayoutStore().activeLayoutId,
+  );
+  // User-saved layouts (Phase 5), held in state so a save / rename / delete
+  // re-renders the switcher and active-layout resolution. The store is the
+  // source of truth; every mutation writes it and mirrors the result here.
+  const [userLayouts, setUserLayouts] = useState<LayoutSpec[]>(
+    () => loadLayoutStore().userLayouts,
+  );
+  // Save-current-as… / Manage-layouts… dialog visibility (mounted via LayoutMenu).
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  // The panel currently being dragged by its grip (tiled docking), or null.
+  // Lives here because the drag SOURCE (PanelChrome) and the drop TARGETS
+  // (RegionDropZone) are built by renderRegion but land in unrelated branches of
+  // WorkspaceLayout's tree — see LayoutDragContext.
+  const [draggedPanelId, setDraggedPanelId] = useState<string | null>(null);
+  // The layout override record (tree / sizes / minimized) is read fresh out of
+  // localStorage on every render, matching the existing `sizes` pattern — it is
+  // not React state. Bumping this counter is how a drop / minimize / reset
+  // re-renders. Kept deliberately coarse: a topology change is a rare,
+  // user-initiated event.
+  const [layoutRev, setLayoutRev] = useState(0);
+  // Server-shipped built-in layouts (with a bundled fallback when the server
+  // omits them or a spec fails validation). Was a direct getBuiltinLayouts call
+  // in Phase 3; the switcher list + active-layout resolution below are unchanged.
+  const builtinLayouts = useWorkflowLayouts();
+  // The full switcher list: built-ins first, then user layouts. `.find` below
+  // therefore prefers a built-in on an id collision (ids never actually collide —
+  // "builtin:*" vs "user:*").
+  const allLayouts = useMemo<LayoutSpec[]>(
+    () => [...builtinLayouts, ...userLayouts],
+    [builtinLayouts, userLayouts],
+  );
+  const activeLayout = useMemo<LayoutSpec>(() => {
+    const found = allLayouts.find((l) => l.id === activeLayoutId);
+    const validated = found ? validateLayoutAgainstRegistry(found, projectConfig) : null;
+    return (
+      validated ??
+      allLayouts.find((l) => l.id === CLASSIC_LAYOUT_ID) ??
+      allLayouts[0]
+    );
+  }, [allLayouts, activeLayoutId, projectConfig]);
+  const isClassic = activeLayout.id === CLASSIC_LAYOUT_ID;
+  // The active layout's live override (tree / sizes / minimized), re-read from
+  // localStorage rather than held in React state — the existing `sizes` pattern.
+  // `layoutRev` is what forces that re-read after a drop / minimize / reset.
+  //
+  // MUST stay above the `if (!data)` early return further down: every hook below
+  // that return is conditional, so declaring this there made the loading render
+  // and the loaded render disagree on hook count and crashed the Shell.
+  const layoutOverride = useMemo(
+    () => loadLayoutStore().overrides[activeLayout.id],
+    [activeLayout.id, layoutRev],
+  );
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -1102,29 +1216,6 @@ export function Shell({
     [bookHook, mode, bookHook?.summary],
   );
   useEffect(() => { setSplitRatio(null); }, [colsVisible, mode]);
-  useEffect(() => () => { document.body.style.cursor = ""; document.body.style.userSelect = ""; }, []);
-  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDraggingRef.current = true;
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-    const onMouseMove = (ev: MouseEvent) => {
-      if (!isDraggingRef.current || !splitContainerRef.current) return;
-      const rect = splitContainerRef.current.getBoundingClientRect();
-      const available = rect.width - railWidth;
-      const offset = ev.clientX - rect.left - railWidth;
-      setSplitRatio(Math.min(0.8, Math.max(0.2, offset / available)));
-    };
-    const onMouseUp = () => {
-      isDraggingRef.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-  }, [railWidth]);
 
   // Pre-load lexicon entries for every UHB Strong's in the loaded chapter
   // AND every loaded chapter in book mode, so the per-word tooltips in the
@@ -2333,6 +2424,18 @@ export function Shell({
             setActiveWordId(null);
             onNavigate?.(b, c, v);
           }}
+          // Layout switcher is available even with no chapter data — it's a
+          // workspace-level control, and an empty/new project should still show
+          // it. No scripture/alignment to sync here, so the handler just sets +
+          // persists the active id; the data branch's selectLayout takes over
+          // once a chapter loads.
+          layouts={builtinLayouts}
+          userLayouts={userLayouts}
+          activeLayoutId={activeLayout.id}
+          onSelectLayout={(id) => {
+            setActiveLayoutIdState(id);
+            persistActiveLayoutId(id);
+          }}
           pipelineToast={pipelineToast}
           onPipelineToastClear={() => setPipelineToast(null)}
           lintFlagIssues={bookLint.flagIssues}
@@ -2589,115 +2692,7 @@ export function Shell({
     if (chapterNum === chapter) applyLocalVerse(newDto);
   };
 
-  return (
-    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <TopBar
-        book={book}
-        chapter={chapter}
-        verse={activeVerse}
-        onNavigate={(b, c, v) => {
-          runWithDirtyGate(() => {
-            setActiveVerse(v ?? 1);
-            setActiveNoteId(null);
-            setActiveWordId(null);
-            onNavigate?.(b, c, v);
-          });
-        }}
-        onRequestReload={reloadForUpdate}
-        pipelineMenu={
-          <PipelineMenu
-            book={book}
-            chapter={chapter}
-            onMessage={(msg) => pushPipelineToast(msg, "info")}
-            onImported={() => void refetch()}
-          />
-        }
-        pipelineToast={pipelineToast}
-        onPipelineToastClear={() => setPipelineToast(null)}
-        lintFlagIssues={bookLint.flagIssues}
-        lintFlagCount={bookLint.flagCount}
-        lintEscalateCount={bookLint.escalateCount}
-        onGoToLintIssue={goToLintIssue}
-        onOpenExportMenu={(anchorEl) => exportUsfmRef.current?.openMenu(anchorEl)}
-        username={meUsername}
-        onLogout={onLogout}
-        railCollapsed={railCollapsed}
-        onToggleRail={toggleRail}
-      />
-      <ExportUsfmButton
-        ref={exportUsfmRef}
-        hideTrigger
-        book={book}
-        chapter={chapter}
-        enabledVersions={displayedVersions}
-        chapterVersesFor={(version) => (data ? Object.values(data.verses[version] ?? {}) : [])}
-      />
-      {chapterLock && (
-        <Alert
-          severity="info"
-          icon={false}
-          sx={{
-            borderRadius: 0,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            py: 0.5,
-            "& .MuiAlert-message": { width: "100%" },
-          }}
-        >
-          {t("shell.chapterLockBanner", {
-            pipelineType: chapterLock.pipelineType,
-            book,
-            chapter,
-            started: formatRelative(chapterLock.startedAt),
-          })}
-        </Alert>
-      )}
-      <Box ref={splitContainerRef} sx={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {!railCollapsed && (
-          <Box sx={{ width: railWidth, flexShrink: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
-              <Button
-                size="small"
-                startIcon={<GridViewIcon sx={{ fontSize: 16 }} />}
-                onClick={() => setBoardOpen(true)}
-                sx={{
-                  flexShrink: 0,
-                  m: 0.5,
-                  minWidth: 0,
-                  fontSize: 12,
-                  justifyContent: "flex-start",
-                  bgcolor: "grey.50",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 0.5,
-                  color: "text.secondary",
-                }}
-              >
-                {t("shell.board")}
-              </Button>
-            </Tooltip>
-            <TimelineRail
-              book={book}
-              chapter={chapter}
-              tiles={tileSet}
-              activeVerse={activeVerse}
-              showChapter={mode === "book"}
-              enabledLanes={enabledLanes}
-              onSelect={requestSelectVerse}
-              onToggleLane={toggleLane}
-              onHideLane={toggleLaneVisible}
-            />
-          </Box>
-        )}
-        <Box
-          sx={{
-            width: `${effectiveSplit * 100}%`,
-            flexShrink: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
+  const scriptureNode = (
         <ScriptureColumn
           book={book}
           chapter={chapter}
@@ -2774,11 +2769,18 @@ export function Shell({
           onSelectVerse={(v) => requestSelectVerse(v)}
           onModeChange={(m) => {
             setMode(m);
-            saveToStorage(SCRIPTURE_MODE_KEY, m);
+            // Classic owns be:scriptureMode; every other layout persists its
+            // mode into that layout's override so a toggle never mutates
+            // Classic's shared key (plan risk: scripture-mode double ownership).
+            if (isClassic) saveToStorage(SCRIPTURE_MODE_KEY, m);
+            else mergeOverride(activeLayout.id, { mode: m });
           }}
           onEnabledVersionsChange={(versions) => {
             setEnabledVersions(versions);
-            saveToStorage(ENABLED_VERSIONS_KEY, versions);
+            // Only Classic persists be:enabledVersions. Non-classic layouts pin
+            // versions from their spec (intersected with availableVersions each
+            // render) and are not persisted back this phase.
+            if (isClassic) saveToStorage(ENABLED_VERSIONS_KEY, versions);
           }}
           onEditVerse={(verseNum, bibleVersion, plain, base) => {
             stashVerseDraft(chapter, verseNum, bibleVersion, plain, base);
@@ -2806,337 +2808,743 @@ export function Shell({
           twl={data.twl}
           locked={Boolean(chapterLock)}
         />
+  );
+
+  const resourceColumnProps: Omit<ResourceColumnProps, "visibleTabs" | "initialTab"> = {
+    book,
+    chapter,
+    activeVerse,
+    checkoff: resourceCheckoff,
+    displayVerseRange,
+    tn: data.tn,
+    tq: data.tq,
+    twl: data.twl,
+    ultVerseObjectsFor,
+    onWordHoverPreview: handleWordHoverPreview,
+    activeNoteId,
+    activeWordId,
+    findNoteQuery,
+    activeNoteMatch,
+    scrollNonce,
+    onNoteChange: (id, patch) => {
+      applyLocalRowPatch("tn", id, patch);
+    },
+    onNoteSave: (id, patch, opts) => {
+      const row = data.tn.find((r) => r.id === id);
+      if (row) enqueueRow("tn", row, patch, opts);
+    },
+    onNoteFocus: (row) => {
+      setActiveNoteId(row.id);
+      setActiveWordId(null);
+      if (row.verse !== activeVerse) setActiveVerse(row.verse);
+    },
+    onNoteStartAi: (row, live) => {
+      // Build from the live (unsaved) note fields so SUGGEST works
+      // before an explicit save — the cached data.tn row can lag the
+      // box (quote propagates on a debounce; a freshly-built note may
+      // not be flushed at all), which is what produced the bogus "AI
+      // prerequisites missing." id/version/book/verse stay from the
+      // cached row so the outbox If-Match and toast targeting hold.
+      const aiRow: TnRow = {
+        ...row,
+        quote: live.quote,
+        note: live.note,
+        support_reference: live.support_reference,
+      };
+      const built = buildTnQuickRequest(aiRow, data);
+      if (!built.ok) {
+        // NoteCard gates on quote + support_reference. The remaining
+        // reasons (missing ULT/UST or unalignable English) need a
+        // user-actionable message.
+        const message =
+          built.error.reason === "missing_ult_verse"
+            ? "ULT verse text unavailable for this verse."
+            : built.error.reason === "missing_ust_verse"
+              ? "UST verse text unavailable for this verse."
+              : built.error.reason === "hebrew_not_found"
+                ? "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT."
+                : "AI prerequisites missing.";
+        aiDrafts.pushError(aiRow, message);
+        return;
+      }
+      aiDrafts.start(aiRow, built.request, {
+        getIsVisible: (id) => visibleRowIdsRef.current.has(id),
+        onSuccess: (r, res) => {
+          // Carry the support_reference the request was built from
+          // along with this save. It may still be unsaved on the
+          // server (e.g. picked on a brand-new note right before
+          // hitting Suggest) — without this, this PATCH's own version
+          // bump can make NoteCard's resync effect stamp the pending
+          // pick back to the server's stale/null value before the
+          // user gets a chance to save it themselves.
+          const patch = { quote: res.quote, note: res.note, support_reference: r.support_reference };
+          // Re-running the suggestion on an already-drafted note can
+          // return a quote+note identical to what's stored; skip the
+          // save so we don't bump the row version with a no-op (mirror
+          // of the commitQuoteBuild guard). res.quote may be
+          // source-derived Hebrew in a different combining-mark order
+          // than the stored value, so NFC-normalize the quote compare;
+          // the note is plain TSV text stored verbatim, so compare raw.
+          const changed =
+            nfc(res.quote) !== nfc(r.quote ?? "") || res.note !== (r.note ?? "");
+          if (!changed) return;
+          applyLocalRowPatch("tn", r.id, patch);
+          void outbox.enqueueRow("tn", r.id, r.version, patch, { book: r.book });
+        },
+      });
+    },
+    isNoteAiPending: aiDrafts.isPending,
+    noteAiRecentlyCompletedAt: aiDrafts.recentlyCompletedAt,
+    onNoteVisibilityChange: handleNoteVisibilityChange,
+    onNoteTranslateQuote: (row, english) => {
+      const vo = (
+        verseIndexByVersion["ULT"]?.[row.verse]?.content as
+          | { verseObjects?: unknown[] }
+          | null
+          | undefined
+      )?.verseObjects;
+      if (!Array.isArray(vo)) return null;
+      return findSourceForTargetText(vo, english) || null;
+    },
+    onWordTranslateQuote: (row, english) => {
+      const vo = (
+        verseIndexByVersion["ULT"]?.[row.verse]?.content as
+          | { verseObjects?: unknown[] }
+          | null
+          | undefined
+      )?.verseObjects;
+      if (!Array.isArray(vo)) return null;
+      return findSourceForTargetText(vo, english) || null;
+    },
+    onWordGloss: (row) => {
+      // English (ULT) words aligned to this row's saved orig_words.
+      // OL-anchored via the UHB/UGNT verse, mirroring the highlighter.
+      if (!row.orig_words) return "";
+      const ult = (
+        verseIndexByVersion["ULT"]?.[row.verse]?.content as
+          | { verseObjects?: unknown[] }
+          | null
+          | undefined
+      )?.verseObjects;
+      if (!Array.isArray(ult)) return "";
+      const src = (
+        (verseIndexByVersion["UHB"]?.[row.verse] ?? verseIndexByVersion["UGNT"]?.[row.verse])
+          ?.content as { verseObjects?: unknown[] } | null | undefined
+      )?.verseObjects;
+      return extractTargetSelectionText(
+        ult,
+        row.orig_words,
+        row.occurrence ?? 1,
+        Array.isArray(src) ? src : undefined,
+      );
+    },
+    onWordFocus: (row) => {
+      setActiveWordId(row.id);
+      setActiveNoteId(null);
+      if (row.verse !== activeVerse) setActiveVerse(row.verse);
+    },
+    onNoteCreate: async () => {
+      const list = sortedForVerse(data.tn, activeVerse);
+      const sort_order = pickSortOrder(list, null, "after");
+      const created = (await api.createRow<TnRow>("tn", {
+        book,
+        chapter,
+        verse: activeVerse,
+        ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+        note: "",
+        sort_order,
+      }));
+      applyLocalRowInsert("tn", created);
+      setActiveNoteId(created.id);
+      setActiveWordId(null);
+    },
+    onNoteInsertAfter: async (refId) => {
+      const ref = data.tn.find((r) => r.id === refId);
+      if (!ref) return;
+      const list = sortedForVerse(data.tn, ref.verse);
+      const sort_order = pickSortOrder(list, refId, "after");
+      // No inherited support_reference — fresh notes get an empty
+      // chip so the user can typeahead in immediately.
+      const created = (await api.createRow<TnRow>("tn", {
+        book,
+        chapter,
+        verse: ref.verse,
+        ref_raw: ref.ref_raw,
+        note: "",
+        sort_order,
+      }));
+      applyLocalRowInsert("tn", created, { afterId: refId });
+      setActiveNoteId(created.id);
+      setActiveWordId(null);
+    },
+    onNoteReorder: (draggedId, refId, position) => {
+      // Read the live (ref) row list, not the render-scoped `data`
+      // closure: a rapid burst of arrow clicks fires several handlers
+      // before React re-renders, and a stale closure would renumber from
+      // an outdated order and enqueue ops carrying a stale version.
+      const tn = dataRef.current?.tn ?? [];
+      const dragged = tn.find((r) => r.id === draggedId);
+      if (!dragged) return;
+      const sorted = sortedForVerse(tn, dragged.verse);
+      const changes = reorderSequential(sorted, draggedId, refId, position);
+      for (const { row, sort_order } of changes) {
+        enqueueRow("tn", row, { sort_order });
+      }
+    },
+    verseOptions: verseNumbers,
+    onNoteChangeVerse: (id, verse, verseEnd) => {
+      // Retarget a note to another verse in this chapter, or extend it to
+      // span a range (verseEnd > verse => ref_raw "chapter:start-end").
+      // Read the live row (dataRef, not the render closure) so a rapid
+      // move carries the current version. Recompute ref_raw + a fresh
+      // sort_order (end of the leading verse) so the note lands in order
+      // there; enqueueRow applies it optimistically and PATCHes. `verse`
+      // is sent explicitly, which rows.ts treats as authoritative — so a
+      // range ref_raw keeps this leading verse for grouping.
+      const tn = dataRef.current?.tn ?? [];
+      const row = tn.find((r) => r.id === id);
+      if (!row) return;
+      const isRange = verseEnd != null && verseEnd > verse;
+      const ref_raw =
+        verse === 0
+          ? `${chapter}:intro`
+          : isRange
+            ? `${chapter}:${verse}-${verseEnd}`
+            : `${chapter}:${verse}`;
+      if (row.verse === verse && row.ref_raw === ref_raw) return;
+      const sort_order = pickSortOrder(sortedForVerse(tn, verse), null, "after");
+      enqueueRow("tn", row, { verse, ref_raw, sort_order });
+      // Follow the note to its new verse: the resource column only renders
+      // notes in displayVerseRange, so without this the moved card vanishes
+      // from view. Navigating there confirms the move landed.
+      setActiveVerse(verse);
+      setActiveNoteId(id);
+    },
+    onReorderPreview: handleReorderPreview,
+    onWordCreate: async () => {
+      const list = sortedForVerse(data.twl, activeVerse);
+      const sort_order = pickSortOrder(list, null, "after");
+      const created = (await api.createRow<TwlRow>("twl", {
+        book,
+        chapter,
+        verse: activeVerse,
+        ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+        orig_words: "",
+        tw_link: "",
+        sort_order,
+      }));
+      applyLocalRowInsert("twl", created);
+      setActiveWordId(created.id);
+      setActiveNoteId(null);
+    },
+    onWordReorder: (draggedId, refId, position) => {
+      // See onNoteReorder: live ref list, not the stale render closure.
+      const twl = dataRef.current?.twl ?? [];
+      const dragged = twl.find((r) => r.id === draggedId);
+      if (!dragged) return;
+      const sorted = sortedForVerse(twl, dragged.verse);
+      const changes = reorderSequential(sorted, draggedId, refId, position);
+      for (const { row, sort_order } of changes) {
+        enqueueRow("twl", row, { sort_order });
+      }
+    },
+    onQuestionCreate: async () => {
+      const created = (await api.createRow<TqRow>("tq", {
+        book,
+        chapter,
+        verse: activeVerse,
+        ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
+        question: "",
+        response: "",
+      }));
+      applyLocalRowInsert("tq", created);
+    },
+    onNoteDelete: handleTrashNote,
+    onNoteRestore: handleRestoreNote,
+    onWordSave: (id, patch) => {
+      const row = data.twl.find((r) => r.id === id);
+      if (row) enqueueRow("twl", row, patch);
+    },
+    onWordDelete: (id) => {
+      const row = data.twl.find((r) => r.id === id);
+      if (!row) return;
+      applyLocalRowDelete("twl", id);
+      if (activeWordId === id) setActiveWordId(null);
+      void outbox.enqueueDeleteRow("twl", id, row.version, row.book);
+    },
+    onQuestionSave: (id, patch) => {
+      const row = data.tq.find((r) => r.id === id);
+      if (row) enqueueRow("tq", row, patch);
+    },
+    onQuestionDelete: (id) => {
+      const row = data.tq.find((r) => r.id === id);
+      if (!row) return;
+      applyLocalRowDelete("tq", id);
+      void outbox.enqueueDeleteRow("tq", id, row.version, row.book);
+    },
+    locked: Boolean(chapterLock),
+    onSetNotePreserve: handleSetNotePreserve,
+    onSetNoteHint: handleSetNoteHint,
+    onNoteApprove: handleApproveNote,
+    onNoteTranslate: handleTranslateNote,
+    translatingNoteIds: translatingRowIds,
+    onQuestionApprove: handleApproveQuestion,
+    onQuestionTranslate: handleTranslateQuestion,
+    translatingQuestionIds,
+    quoteBuildActiveNoteId: quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null,
+    quoteBuildActiveWordId: quoteBuildTarget?.kind === "twl" ? quoteBuildTarget.id : null,
+    quoteBuildSelectionCount: quoteBuildSelectedKeys.size,
+    quoteBuildAppliedTo,
+    onStartQuoteBuild: (noteId) => startQuoteBuild({ kind: "tn", id: noteId }),
+    onStartWordQuoteBuild: (wordId) => startQuoteBuild({ kind: "twl", id: wordId }),
+    onAddTwlSuggestion: handleAddTwlSuggestion,
+    isTwlSuggestionExcluded,
+    onTwlSuggestions: setVerseTwlSuggestions,
+    twlRowAlternatives,
+    twlBlockedArticleIds,
+    twlFiltersReady: twlFilters.settled,
+    panelMode,
+    onSetPanelMode: handleSetPanelMode,
+    alignmentProps: alignmentTabProps,
+    alignmentBadge,
+  };
+
+  const renderResources = (visibleTabs?: ResourceTab[]) => (
+    <ResourceColumn {...resourceColumnProps} visibleTabs={visibleTabs} initialTab={visibleTabs?.[0]} />
+  );
+
+  // ── Arrangeable layouts: tiled docking (drag a panel between regions) ──
+  //
+  // `arrangeable` is the ONE gate on every piece of drag chrome below, and it is
+  // exactly `!isClassic`. builtin:classic renders through WorkspaceLayout's
+  // hand-rolled flexbox branch and must stay byte-identical, so it gets no panel
+  // headers, no drop zones, and no drag context at all.
+  //
+  // This is deliberately a SEPARATE notion from renderRegion's
+  // `display !== "tabs" && panels.length > 1` gate below — that condition still
+  // reads exactly as it did, so the stacked-multi-panel branch remains
+  // unreachable from Classic's tabbed resources region.
+  const arrangeable = !isClassic;
+
+  // The RENDERED topology = the user's rearrangement when there is one, else the
+  // spec's root. effectiveRoot is the single source of truth and refuses to
+  // apply a tree override to Classic.
+  const effRoot = effectiveRoot(activeLayout, layoutOverride);
+  // WorkspaceLayout gets a spec whose `root` is ALREADY effective, so it needs no
+  // knowledge of overrides. Same object when there is no override, so Classic's
+  // identity check and memoization behaviour are unchanged.
+  const renderedLayout: LayoutSpec =
+    effRoot === activeLayout.root ? activeLayout : { ...activeLayout, root: effRoot };
+  // Persisted per-node sizes for the active (non-classic) layout. Classic uses
+  // the effectiveSplit divider path and ignores these.
+  const sizes = layoutOverride?.sizes ?? {};
+  const minimizedPanels = layoutOverride?.minimized ?? {};
+
+  // The sizes the STORE holds RIGHT NOW — not the ones this render closed over.
+  //
+  // `onSizesChange` deliberately does NOT bump `layoutRev`: that would re-render
+  // the whole Shell on every divider tick while the user is still dragging it. The
+  // cost of that choice is that the memoized `layoutOverride` (and so `sizes`) goes
+  // stale the instant a resize is persisted. Any writer that REPLACES the sizes
+  // record wholesale — setLayoutTree does — must therefore re-read, or it silently
+  // erases a resize the user made since the last render. Same for anything that
+  // BAKES sizes into a saved spec.
+  const currentSizes = (): Record<string, number> =>
+    loadLayoutStore().overrides[activeLayout.id]?.sizes ?? {};
+
+  const onSizesChange = (patch: Record<string, number>) => {
+    // Hand mergeOverride the PATCH ALONE and let it merge over the live store.
+    // Seeding the merge with this render's `sizes` was itself a stale-write: a
+    // second resize would carry the pre-first-resize value back on top of the
+    // fresher one, reverting the divider the user had just moved.
+    mergeOverride(activeLayout.id, { sizes: patch });
+  };
+
+  // A panel's live minimized state: the override wins, falling back to the
+  // spec's `PanelInstance.minimized` runtime default (which is what
+  // handleSaveLayout bakes).
+  const isPanelMinimized = (panel: PanelInstance): boolean =>
+    minimizedPanels[panel.id] ?? !!panel.minimized;
+  const setPanelMinimized = (panelId: string, value: boolean) => {
+    mergeOverride(activeLayout.id, { minimized: { [panelId]: value } });
+    setLayoutRev((n) => n + 1);
+  };
+
+  // Commit a drop: move the panel in the EFFECTIVE tree and persist the whole
+  // new tree. `sizes` is pruned at the same time because a drop creates and
+  // destroys regions — and nextRegionId recycles `region-<n>` ids, so a leftover
+  // key could later mis-size a brand-new region.
+  const commitDrop = (target: DropTarget) => {
+    const panelId = draggedPanelId;
+    setDraggedPanelId(null);
+    if (!panelId || !arrangeable) return;
+    const next = movePanel(effRoot, panelId, target);
+    if (next === effRoot) return; // no-op drop (engine rejected it) — persist nothing
+    setLayoutTree(activeLayout.id, next, pruneSizes(currentSizes(), next, activeLayout.id));
+    setLayoutRev((n) => n + 1);
+  };
+
+  const layoutDrag: LayoutDragValue = {
+    draggedPanelId,
+    beginDrag: (id: string) => setDraggedPanelId(id),
+    endDrag: () => setDraggedPanelId(null),
+    commitDrop,
+  };
+
+  // "Reset arrangement" only makes sense for a non-Classic layout that actually
+  // has a rearrangement to throw away.
+  const hasTreeOverride = arrangeable && !!layoutOverride?.tree;
+  const handleResetArrangement = () => {
+    // Back to the spec's own topology; sizes keyed to the discarded tree go too.
+    setLayoutTree(activeLayout.id, null, pruneSizes(currentSizes(), activeLayout.root, activeLayout.id));
+    setLayoutRev((n) => n + 1);
+  };
+
+  const renderPanelContent = (panel: PanelInstance): ReactNode => {
+    switch (panel.type) {
+      case "scripture":
+        return scriptureNode;
+      case "notes":
+      case "words":
+      case "questions":
+        return <StackedResourcePanel {...resourceColumnProps} panelType={panel.type} />;
+      default:
+        // TODO follow-on PRs: original-language / article / alignment / search panels.
+        return (
+          <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
+            <Typography variant="body2">{panel.type} — panel coming in a later pass</Typography>
+          </Box>
+        );
+    }
+  };
+
+  const renderRegionContent = (region: PanelRegion): ReactNode => {
+    // Multi-panel STACKED region → stack each panel separately (the new
+    // capability). Tabbed regions (display:"tabs", e.g. Classic's resources
+    // column with its notes/words/questions tabs) are EXCLUDED here and fall
+    // through to the unchanged tabbed ResourceColumn path below — that guard is
+    // what keeps builtin:classic byte-identical.
+    if (region.display !== "tabs" && region.panels.length > 1) {
+      return (
+        <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {region.panels.map((p) => {
+            const min = arrangeable && isPanelMinimized(p);
+            return (
+              <Box
+                key={p.id}
+                sx={{
+                  // A minimized panel shrinks to its header instead of holding a
+                  // full flex share.
+                  flex: min ? "0 0 auto" : 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "&:last-of-type": { borderBottom: 0 },
+                }}
+              >
+                {arrangeable ? (
+                  <PanelChrome
+                    panelId={p.id}
+                    panelType={p.type}
+                    minimized={min}
+                    onToggleMinimized={() => setPanelMinimized(p.id, !min)}
+                  >
+                    {renderPanelContent(p)}
+                  </PanelChrome>
+                ) : (
+                  renderPanelContent(p)
+                )}
+              </Box>
+            );
+          })}
         </Box>
-        <Box
-          onMouseDown={handleDividerMouseDown}
+      );
+    }
+    // Single-panel (or empty) region → CURRENT behavior, unchanged (keeps Classic
+    // + translate-notes/words byte-identical).
+    const types = region.panels.map((pp) => pp.type);
+    if (types.includes("scripture")) return scriptureNode;
+    const resourceTabs = region.panels
+      .map((pp) => pp.type)
+      .filter((tt): tt is ResourceTab => (RESOURCE_PANEL_TYPES as readonly string[]).includes(tt));
+    if (resourceTabs.length > 0) return renderResources(isClassic ? undefined : resourceTabs);
+    const label = region.panels[0]?.type ?? "panel";
+    return (
+      <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
+        <Typography variant="body2">{label} — panel coming in a later pass</Typography>
+      </Box>
+    );
+  };
+
+  const renderRegion = (region: PanelRegion): ReactNode => {
+    const content = renderRegionContent(region);
+    // ── THE CLASSIC GUARD ───────────────────────────────────────────────
+    // Classic returns its region content RAW — no wrapper element, no drop
+    // handlers, no header chrome. Every line of new docking code sits on the
+    // other side of this early return, so it is structurally unreachable from
+    // builtin:classic even if some other guard were to regress.
+    if (!arrangeable) return content;
+
+    // A single-panel region still needs a grip, or docking would be one-way: a
+    // panel dragged out into its own region could never be dragged back.
+    // (The multi-panel branch above already added its own per-panel chrome.)
+    const lone = region.panels.length === 1 ? region.panels[0] : null;
+    const wrapped =
+      lone ? (
+        <PanelChrome
+          panelId={lone.id}
+          panelType={lone.type}
+          minimized={isPanelMinimized(lone)}
+          onToggleMinimized={() => setPanelMinimized(lone.id, !isPanelMinimized(lone))}
+        >
+          {content}
+        </PanelChrome>
+      ) : (
+        content
+      );
+
+    return (
+      <RegionDropZone key={region.id} regionId={region.id}>
+        {wrapped}
+      </RegionDropZone>
+    );
+  };
+
+  // Switch the active layout. A switch can hide a dirty alignment panel, so it
+  // routes through the dirty gate; then it syncs scripture mode/versions from
+  // the target spec and persists the choice. Classic restores its legacy keys;
+  // other layouts read their scripture panel (and any saved mode override).
+  // Resolves against built-ins + user layouts read fresh from the store so a
+  // just-saved layout is selectable before its state update has flushed.
+  const selectLayout = (id: string) => {
+    runWithDirtyGate(() => {
+      const candidates = [...builtinLayouts, ...loadLayoutStore().userLayouts];
+      const next = candidates.find((l) => l.id === id);
+      const resolved = next ? validateLayoutAgainstRegistry(next, projectConfig) : null;
+      const target =
+        resolved ?? candidates.find((l) => l.id === CLASSIC_LAYOUT_ID) ?? candidates[0];
+      if (target.id === CLASSIC_LAYOUT_ID) {
+        setMode(loadFromStorage<ScriptureMode>(SCRIPTURE_MODE_KEY, "stacked"));
+        setEnabledVersions(loadFromStorage<string[]>(ENABLED_VERSIONS_KEY, ["ULT", "UST"]));
+      } else {
+        const sp = findScripturePanel(target.root);
+        const overrideMode = loadLayoutStore().overrides[target.id]?.mode;
+        const nextMode = overrideMode ?? sp?.config?.mode;
+        if (nextMode) setMode(nextMode);
+        const versions = sp?.config?.versions;
+        if (versions && versions !== "inherit") {
+          setEnabledVersions(versions.filter((v) => availableVersions.includes(v)));
+        }
+      }
+      setActiveLayoutIdState(target.id);
+      persistActiveLayoutId(target.id);
+    });
+  };
+
+  // Save the CURRENT arrangement as a new user layout. Approach: bake the live
+  // look into the saved spec (not copy-overrides) — deep-clone the active tree,
+  // bake the live size overrides into node `size` fields (applyEffectiveSizes),
+  // and bake the live scripture `mode` + `enabledVersions` into the scripture
+  // panel's config. The spec is self-contained: re-selecting it reproduces
+  // today's proportions, mode, and version pins with no override needed. A
+  // Classic-derived save renders through the generic (non-classic) path, which
+  // is visually equivalent. validateLayoutSpec sanitizes + guards the clone.
+  const handleSaveLayout = (name: string) => {
+    // Clone the EFFECTIVE tree, not the spec's — otherwise "Save current as…"
+    // would silently throw away the user's rearrangement, which is the one thing
+    // they most likely just did.
+    const clonedRoot = JSON.parse(JSON.stringify(effRoot)) as LayoutNode;
+    // Fresh, not the render closure: "Save current as…" right after dragging a
+    // divider must bake the size the user can SEE, not the one from before it.
+    applyEffectiveSizes(clonedRoot, currentSizes(), activeLayout.id);
+    const sp = findScripturePanel(clonedRoot);
+    if (sp) sp.config = { ...(sp.config ?? {}), mode, versions: [...enabledVersions] };
+    // Bake the live minimized state too — same "the saved spec reproduces what
+    // you see" principle as sizes / mode / versions. PanelInstance.minimized is
+    // exactly the runtime default for this.
+    for (const region of collectRegions(clonedRoot)) {
+      for (const panel of region.panels) {
+        // The EFFECTIVE value: an absent override must not erase a spec-level
+        // `minimized: true` that the source layout already carried.
+        if (isPanelMinimized(panel)) panel.minimized = true;
+        else delete panel.minimized;
+      }
+    }
+    const candidate: LayoutSpec = {
+      v: 2,
+      id: "user:" + crypto.randomUUID(),
+      name,
+      builtin: false,
+      rail: { visible: activeLayout.rail.visible },
+      root: clonedRoot,
+    };
+    const validated = validateLayoutSpec(candidate);
+    setSaveAsOpen(false);
+    if (!validated) return; // malformed clone — abort rather than persist junk
+    const store = upsertUserLayout(validated);
+    setUserLayouts([...store.userLayouts]);
+    // The saved look matches the current one, so mode/versions need no re-sync;
+    // still route the switch through the dirty gate (it can remount panels).
+    runWithDirtyGate(() => {
+      setActiveLayoutIdState(validated.id);
+      persistActiveLayoutId(validated.id);
+    });
+  };
+
+  const handleRenameLayout = (id: string, newName: string) => {
+    const existing = loadLayoutStore().userLayouts.find((l) => l.id === id);
+    if (!existing) return;
+    const store = upsertUserLayout({ ...existing, name: newName });
+    setUserLayouts([...store.userLayouts]);
+  };
+
+  const handleDeleteLayout = (id: string) => {
+    const wasActive = activeLayout.id === id;
+    const store = deleteUserLayout(id); // also resets persisted active → Classic if it was active
+    setUserLayouts([...store.userLayouts]);
+    // Restore Classic's scripture mode/versions + Shell state when the deleted
+    // layout was the active one.
+    if (wasActive) selectLayout(CLASSIC_LAYOUT_ID);
+  };
+
+  const handleDuplicateLayout = (id: string) => {
+    const existing = loadLayoutStore().userLayouts.find((l) => l.id === id);
+    if (!existing) return;
+    const copy: LayoutSpec = {
+      ...existing,
+      id: "user:" + crypto.randomUUID(),
+      name: `${existing.name} ${t("layout.copySuffix")}`,
+      root: JSON.parse(JSON.stringify(existing.root)) as LayoutNode,
+    };
+    const validated = validateLayoutSpec(copy);
+    if (!validated) return;
+    const store = upsertUserLayout(validated);
+    setUserLayouts([...store.userLayouts]);
+  };
+
+  return (
+    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <TopBar
+        book={book}
+        chapter={chapter}
+        verse={activeVerse}
+        onNavigate={(b, c, v) => {
+          runWithDirtyGate(() => {
+            setActiveVerse(v ?? 1);
+            setActiveNoteId(null);
+            setActiveWordId(null);
+            onNavigate?.(b, c, v);
+          });
+        }}
+        onRequestReload={reloadForUpdate}
+        pipelineMenu={
+          <PipelineMenu
+            book={book}
+            chapter={chapter}
+            onMessage={(msg) => pushPipelineToast(msg, "info")}
+            onImported={() => void refetch()}
+          />
+        }
+        pipelineToast={pipelineToast}
+        onPipelineToastClear={() => setPipelineToast(null)}
+        lintFlagIssues={bookLint.flagIssues}
+        lintFlagCount={bookLint.flagCount}
+        lintEscalateCount={bookLint.escalateCount}
+        onGoToLintIssue={goToLintIssue}
+        onOpenExportMenu={(anchorEl) => exportUsfmRef.current?.openMenu(anchorEl)}
+        username={meUsername}
+        onLogout={onLogout}
+        railCollapsed={railCollapsed}
+        onToggleRail={toggleRail}
+        layouts={builtinLayouts}
+        userLayouts={userLayouts}
+        activeLayoutId={activeLayout.id}
+        onSelectLayout={selectLayout}
+        onSaveLayoutAs={() => setSaveAsOpen(true)}
+        onManageLayouts={() => setManageOpen(true)}
+        // Passed only when there is something to reset, which is how the menu
+        // item stays hidden for Classic and for an untouched layout.
+        onResetArrangement={hasTreeOverride ? handleResetArrangement : undefined}
+      />
+      <ExportUsfmButton
+        ref={exportUsfmRef}
+        hideTrigger
+        book={book}
+        chapter={chapter}
+        enabledVersions={displayedVersions}
+        chapterVersesFor={(version) => (data ? Object.values(data.verses[version] ?? {}) : [])}
+      />
+      {chapterLock && (
+        <Alert
+          severity="info"
+          icon={false}
           sx={{
-            width: "8px",
-            flexShrink: 0,
-            cursor: "ew-resize",
-            position: "relative",
-            "&::after": {
-              content: '""',
-              position: "absolute",
-              left: "50%",
-              top: 0,
-              bottom: 0,
-              width: "1px",
-              bgcolor: "divider",
-              transform: "translateX(-50%)",
-              transition: "background-color 0.15s",
-            },
-            "&:hover::after": { bgcolor: "primary.main" },
-          }}
-        />
-        <Box
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
+            borderRadius: 0,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            py: 0.5,
+            "& .MuiAlert-message": { width: "100%" },
           }}
         >
-        <ResourceColumn
-          book={book}
-          chapter={chapter}
-          activeVerse={activeVerse}
-          checkoff={resourceCheckoff}
-          displayVerseRange={displayVerseRange}
-          tn={data.tn}
-          tq={data.tq}
-          twl={data.twl}
-          ultVerseObjectsFor={ultVerseObjectsFor}
-          onWordHoverPreview={handleWordHoverPreview}
-          activeNoteId={activeNoteId}
-          activeWordId={activeWordId}
-          findNoteQuery={findNoteQuery}
-          activeNoteMatch={activeNoteMatch}
-          scrollNonce={scrollNonce}
-          onNoteChange={(id, patch) => {
-            applyLocalRowPatch("tn", id, patch);
-          }}
-          onNoteSave={(id, patch, opts) => {
-            const row = data.tn.find((r) => r.id === id);
-            if (row) enqueueRow("tn", row, patch, opts);
-          }}
-          onNoteFocus={(row) => {
-            setActiveNoteId(row.id);
-            setActiveWordId(null);
-            if (row.verse !== activeVerse) setActiveVerse(row.verse);
-          }}
-          onNoteStartAi={(row, live) => {
-            // Build from the live (unsaved) note fields so SUGGEST works
-            // before an explicit save — the cached data.tn row can lag the
-            // box (quote propagates on a debounce; a freshly-built note may
-            // not be flushed at all), which is what produced the bogus "AI
-            // prerequisites missing." id/version/book/verse stay from the
-            // cached row so the outbox If-Match and toast targeting hold.
-            const aiRow: TnRow = {
-              ...row,
-              quote: live.quote,
-              note: live.note,
-              support_reference: live.support_reference,
-            };
-            const built = buildTnQuickRequest(aiRow, data);
-            if (!built.ok) {
-              // NoteCard gates on quote + support_reference. The remaining
-              // reasons (missing ULT/UST or unalignable English) need a
-              // user-actionable message.
-              const message =
-                built.error.reason === "missing_ult_verse"
-                  ? "ULT verse text unavailable for this verse."
-                  : built.error.reason === "missing_ust_verse"
-                    ? "UST verse text unavailable for this verse."
-                    : built.error.reason === "hebrew_not_found"
-                      ? "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT."
-                      : "AI prerequisites missing.";
-              aiDrafts.pushError(aiRow, message);
-              return;
-            }
-            aiDrafts.start(aiRow, built.request, {
-              getIsVisible: (id) => visibleRowIdsRef.current.has(id),
-              onSuccess: (r, res) => {
-                // Carry the support_reference the request was built from
-                // along with this save. It may still be unsaved on the
-                // server (e.g. picked on a brand-new note right before
-                // hitting Suggest) — without this, this PATCH's own version
-                // bump can make NoteCard's resync effect stamp the pending
-                // pick back to the server's stale/null value before the
-                // user gets a chance to save it themselves.
-                const patch = { quote: res.quote, note: res.note, support_reference: r.support_reference };
-                // Re-running the suggestion on an already-drafted note can
-                // return a quote+note identical to what's stored; skip the
-                // save so we don't bump the row version with a no-op (mirror
-                // of the commitQuoteBuild guard). res.quote may be
-                // source-derived Hebrew in a different combining-mark order
-                // than the stored value, so NFC-normalize the quote compare;
-                // the note is plain TSV text stored verbatim, so compare raw.
-                const changed =
-                  nfc(res.quote) !== nfc(r.quote ?? "") || res.note !== (r.note ?? "");
-                if (!changed) return;
-                applyLocalRowPatch("tn", r.id, patch);
-                void outbox.enqueueRow("tn", r.id, r.version, patch, { book: r.book });
-              },
-            });
-          }}
-          isNoteAiPending={aiDrafts.isPending}
-          noteAiRecentlyCompletedAt={aiDrafts.recentlyCompletedAt}
-          onNoteVisibilityChange={handleNoteVisibilityChange}
-          onNoteTranslateQuote={(row, english) => {
-            const vo = (
-              verseIndexByVersion["ULT"]?.[row.verse]?.content as
-                | { verseObjects?: unknown[] }
-                | null
-                | undefined
-            )?.verseObjects;
-            if (!Array.isArray(vo)) return null;
-            return findSourceForTargetText(vo, english) || null;
-          }}
-          onWordTranslateQuote={(row, english) => {
-            const vo = (
-              verseIndexByVersion["ULT"]?.[row.verse]?.content as
-                | { verseObjects?: unknown[] }
-                | null
-                | undefined
-            )?.verseObjects;
-            if (!Array.isArray(vo)) return null;
-            return findSourceForTargetText(vo, english) || null;
-          }}
-          onWordGloss={(row) => {
-            // English (ULT) words aligned to this row's saved orig_words.
-            // OL-anchored via the UHB/UGNT verse, mirroring the highlighter.
-            if (!row.orig_words) return "";
-            const ult = (
-              verseIndexByVersion["ULT"]?.[row.verse]?.content as
-                | { verseObjects?: unknown[] }
-                | null
-                | undefined
-            )?.verseObjects;
-            if (!Array.isArray(ult)) return "";
-            const src = (
-              (verseIndexByVersion["UHB"]?.[row.verse] ?? verseIndexByVersion["UGNT"]?.[row.verse])
-                ?.content as { verseObjects?: unknown[] } | null | undefined
-            )?.verseObjects;
-            return extractTargetSelectionText(
-              ult,
-              row.orig_words,
-              row.occurrence ?? 1,
-              Array.isArray(src) ? src : undefined,
-            );
-          }}
-          onWordFocus={(row) => {
-            setActiveWordId(row.id);
-            setActiveNoteId(null);
-            if (row.verse !== activeVerse) setActiveVerse(row.verse);
-          }}
-          onNoteCreate={async () => {
-            const list = sortedForVerse(data.tn, activeVerse);
-            const sort_order = pickSortOrder(list, null, "after");
-            const created = (await api.createRow<TnRow>("tn", {
-              book,
-              chapter,
-              verse: activeVerse,
-              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
-              note: "",
-              sort_order,
-            }));
-            applyLocalRowInsert("tn", created);
-            setActiveNoteId(created.id);
-            setActiveWordId(null);
-          }}
-          onNoteInsertAfter={async (refId) => {
-            const ref = data.tn.find((r) => r.id === refId);
-            if (!ref) return;
-            const list = sortedForVerse(data.tn, ref.verse);
-            const sort_order = pickSortOrder(list, refId, "after");
-            // No inherited support_reference — fresh notes get an empty
-            // chip so the user can typeahead in immediately.
-            const created = (await api.createRow<TnRow>("tn", {
-              book,
-              chapter,
-              verse: ref.verse,
-              ref_raw: ref.ref_raw,
-              note: "",
-              sort_order,
-            }));
-            applyLocalRowInsert("tn", created, { afterId: refId });
-            setActiveNoteId(created.id);
-            setActiveWordId(null);
-          }}
-          onNoteReorder={(draggedId, refId, position) => {
-            // Read the live (ref) row list, not the render-scoped `data`
-            // closure: a rapid burst of arrow clicks fires several handlers
-            // before React re-renders, and a stale closure would renumber from
-            // an outdated order and enqueue ops carrying a stale version.
-            const tn = dataRef.current?.tn ?? [];
-            const dragged = tn.find((r) => r.id === draggedId);
-            if (!dragged) return;
-            const sorted = sortedForVerse(tn, dragged.verse);
-            const changes = reorderSequential(sorted, draggedId, refId, position);
-            for (const { row, sort_order } of changes) {
-              enqueueRow("tn", row, { sort_order });
-            }
-          }}
-          verseOptions={verseNumbers}
-          onNoteChangeVerse={(id, verse, verseEnd) => {
-            // Retarget a note to another verse in this chapter, or extend it to
-            // span a range (verseEnd > verse => ref_raw "chapter:start-end").
-            // Read the live row (dataRef, not the render closure) so a rapid
-            // move carries the current version. Recompute ref_raw + a fresh
-            // sort_order (end of the leading verse) so the note lands in order
-            // there; enqueueRow applies it optimistically and PATCHes. `verse`
-            // is sent explicitly, which rows.ts treats as authoritative — so a
-            // range ref_raw keeps this leading verse for grouping.
-            const tn = dataRef.current?.tn ?? [];
-            const row = tn.find((r) => r.id === id);
-            if (!row) return;
-            const isRange = verseEnd != null && verseEnd > verse;
-            const ref_raw =
-              verse === 0
-                ? `${chapter}:intro`
-                : isRange
-                  ? `${chapter}:${verse}-${verseEnd}`
-                  : `${chapter}:${verse}`;
-            if (row.verse === verse && row.ref_raw === ref_raw) return;
-            const sort_order = pickSortOrder(sortedForVerse(tn, verse), null, "after");
-            enqueueRow("tn", row, { verse, ref_raw, sort_order });
-            // Follow the note to its new verse: the resource column only renders
-            // notes in displayVerseRange, so without this the moved card vanishes
-            // from view. Navigating there confirms the move landed.
-            setActiveVerse(verse);
-            setActiveNoteId(id);
-          }}
-          onReorderPreview={handleReorderPreview}
-          onWordCreate={async () => {
-            const list = sortedForVerse(data.twl, activeVerse);
-            const sort_order = pickSortOrder(list, null, "after");
-            const created = (await api.createRow<TwlRow>("twl", {
-              book,
-              chapter,
-              verse: activeVerse,
-              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
-              orig_words: "",
-              tw_link: "",
-              sort_order,
-            }));
-            applyLocalRowInsert("twl", created);
-            setActiveWordId(created.id);
-            setActiveNoteId(null);
-          }}
-          onWordReorder={(draggedId, refId, position) => {
-            // See onNoteReorder: live ref list, not the stale render closure.
-            const twl = dataRef.current?.twl ?? [];
-            const dragged = twl.find((r) => r.id === draggedId);
-            if (!dragged) return;
-            const sorted = sortedForVerse(twl, dragged.verse);
-            const changes = reorderSequential(sorted, draggedId, refId, position);
-            for (const { row, sort_order } of changes) {
-              enqueueRow("twl", row, { sort_order });
-            }
-          }}
-          onQuestionCreate={async () => {
-            const created = (await api.createRow<TqRow>("tq", {
-              book,
-              chapter,
-              verse: activeVerse,
-              ref_raw: activeVerse === 0 ? `${chapter}:intro` : `${chapter}:${activeVerse}`,
-              question: "",
-              response: "",
-            }));
-            applyLocalRowInsert("tq", created);
-          }}
-          onNoteDelete={handleTrashNote}
-          onNoteRestore={handleRestoreNote}
-          onWordSave={(id, patch) => {
-            const row = data.twl.find((r) => r.id === id);
-            if (row) enqueueRow("twl", row, patch);
-          }}
-          onWordDelete={(id) => {
-            const row = data.twl.find((r) => r.id === id);
-            if (!row) return;
-            applyLocalRowDelete("twl", id);
-            if (activeWordId === id) setActiveWordId(null);
-            void outbox.enqueueDeleteRow("twl", id, row.version, row.book);
-          }}
-          onQuestionSave={(id, patch) => {
-            const row = data.tq.find((r) => r.id === id);
-            if (row) enqueueRow("tq", row, patch);
-          }}
-          onQuestionDelete={(id) => {
-            const row = data.tq.find((r) => r.id === id);
-            if (!row) return;
-            applyLocalRowDelete("tq", id);
-            void outbox.enqueueDeleteRow("tq", id, row.version, row.book);
-          }}
-          locked={Boolean(chapterLock)}
-          onSetNotePreserve={handleSetNotePreserve}
-          onSetNoteHint={handleSetNoteHint}
-          onNoteApprove={handleApproveNote}
-          onNoteTranslate={handleTranslateNote}
-          translatingNoteIds={translatingRowIds}
-          onQuestionApprove={handleApproveQuestion}
-          onQuestionTranslate={handleTranslateQuestion}
-          translatingQuestionIds={translatingQuestionIds}
-          quoteBuildActiveNoteId={quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null}
-          quoteBuildActiveWordId={quoteBuildTarget?.kind === "twl" ? quoteBuildTarget.id : null}
-          quoteBuildSelectionCount={quoteBuildSelectedKeys.size}
-          quoteBuildAppliedTo={quoteBuildAppliedTo}
-          onStartQuoteBuild={(noteId) => startQuoteBuild({ kind: "tn", id: noteId })}
-          onStartWordQuoteBuild={(wordId) => startQuoteBuild({ kind: "twl", id: wordId })}
-          onAddTwlSuggestion={handleAddTwlSuggestion}
-          isTwlSuggestionExcluded={isTwlSuggestionExcluded}
-          onTwlSuggestions={setVerseTwlSuggestions}
-          twlRowAlternatives={twlRowAlternatives}
-          twlBlockedArticleIds={twlBlockedArticleIds}
-          twlFiltersReady={twlFilters.settled}
-          panelMode={panelMode}
-          onSetPanelMode={handleSetPanelMode}
-          alignmentProps={alignmentTabProps}
-          alignmentBadge={alignmentBadge}
-        />
-        </Box>
-      </Box>
+          {t("shell.chapterLockBanner", {
+            pipelineType: chapterLock.pipelineType,
+            book,
+            chapter,
+            started: formatRelative(chapterLock.startedAt),
+          })}
+        </Alert>
+      )}
+      <LayoutDragProvider value={layoutDrag}>
+      <WorkspaceLayout
+        spec={renderedLayout}
+        renderRegion={renderRegion}
+        sizes={sizes}
+        onSizesChange={onSizesChange}
+        railCollapsed={railCollapsed}
+        railWidth={railWidth}
+        effectiveSplit={effectiveSplit}
+        onSplitRatioChange={setSplitRatio}
+        railNode={
+          <>
+            <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
+              <Button
+                size="small"
+                startIcon={<GridViewIcon sx={{ fontSize: 16 }} />}
+                onClick={() => setBoardOpen(true)}
+                sx={{
+                  flexShrink: 0,
+                  m: 0.5,
+                  minWidth: 0,
+                  fontSize: 12,
+                  justifyContent: "flex-start",
+                  bgcolor: "grey.50",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 0.5,
+                  color: "text.secondary",
+                }}
+              >
+                {t("shell.board")}
+              </Button>
+            </Tooltip>
+            <TimelineRail
+              book={book}
+              chapter={chapter}
+              tiles={tileSet}
+              activeVerse={activeVerse}
+              showChapter={mode === "book"}
+              enabledLanes={enabledLanes}
+              onSelect={requestSelectVerse}
+              onToggleLane={toggleLane}
+              onHideLane={toggleLaneVisible}
+            />
+          </>
+        }
+      />
+      </LayoutDragProvider>
       <ChapterBoard
         open={boardOpen}
         onClose={() => setBoardOpen(false)}
@@ -3311,6 +3719,18 @@ export function Shell({
             }
           });
         }}
+      />
+      <LayoutMenu
+        saveAsOpen={saveAsOpen}
+        onCloseSaveAs={() => setSaveAsOpen(false)}
+        onSave={handleSaveLayout}
+        manageOpen={manageOpen}
+        onCloseManage={() => setManageOpen(false)}
+        userLayouts={userLayouts}
+        activeLayoutId={activeLayout.id}
+        onRename={handleRenameLayout}
+        onDelete={handleDeleteLayout}
+        onDuplicate={handleDuplicateLayout}
       />
       {quoteBuildContext && (
         <QuoteBuilderPopper

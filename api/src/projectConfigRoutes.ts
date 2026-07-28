@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { requireAuth, requireAdmin } from "./auth.ts";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
+import { builtinLayoutsFor } from "./workflowLayouts.ts";
 import { isIdent } from "./repoUrl.ts";
 import { overlayLaneLabels } from "./scriptureLane.ts";
 import { scriptureLaneRoutes } from "./scriptureLaneRoutes.ts";
@@ -61,7 +62,10 @@ projectConfig.get("/", async (c) => {
           },
         ]
       : selectable;
-  return c.json({ config: cfg, presets });
+  // Server-shipped built-in layout defaults (flexible-layouts). The client
+  // validates these against its panel registry and falls back to its bundled
+  // built-ins if the field is absent or a spec is invalid.
+  return c.json({ config: cfg, presets, layouts: builtinLayoutsFor(cfg) });
 });
 
 // Loose shape check for translationSource only when the key is present

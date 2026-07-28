@@ -47,6 +47,10 @@ import CheckIcon from "@mui/icons-material/Check";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import NoteAltOutlinedIcon from "@mui/icons-material/NoteAltOutlined";
 import TuneIcon from "@mui/icons-material/Tune";
+import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
+import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
+import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import TranslateIcon from "@mui/icons-material/Translate";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import AppsIcon from "@mui/icons-material/Apps";
@@ -57,6 +61,7 @@ import { useProjectConfig, isTranslationProject, setProjectMode } from "../hooks
 import { UI_LANGUAGES } from "../i18n";
 import { UiLangContext } from "../i18n/UiLangContext";
 import { api, isAdmin, type BookListEntry, type BookSummary, type BookLintIssue } from "../sync/api";
+import type { LayoutSpec } from "../lib/layoutSpec";
 import { BOOKS, bookName, bookAbbr, resolveBook } from "../lib/bookNames";
 import { parseReference } from "../lib/referenceParser";
 import {
@@ -118,6 +123,119 @@ export function UiLanguageControl() {
   );
 }
 
+// Workspace-layout switcher: a menu of the built-in layouts (Classic + presets),
+// then a "My layouts" section for user-saved layouts (Phase 5), then the
+// "Save current as…" / "Manage layouts…" actions. The active layout is checked.
+// Built-in layout names render in English for now (i18n Phase 3+); user layout
+// names stay in whatever language the user typed. Selecting routes through
+// Shell's dirty gate + mode/versions sync (see selectLayout).
+function LayoutSwitcher({
+  layouts,
+  userLayouts = [],
+  activeLayoutId,
+  onSelectLayout,
+  onSaveLayoutAs,
+  onManageLayouts,
+  onResetArrangement,
+}: {
+  layouts: LayoutSpec[];
+  userLayouts?: LayoutSpec[];
+  activeLayoutId: string;
+  onSelectLayout: (id: string) => void;
+  onSaveLayoutAs?: () => void;
+  onManageLayouts?: () => void;
+  // Discard the user's dragged-panel arrangement for the ACTIVE layout. Shell
+  // passes it only when the active layout is non-Classic AND actually has a tree
+  // override, so the item's presence is itself the availability test.
+  onResetArrangement?: () => void;
+}) {
+  const { t } = useTranslation();
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  if (layouts.length === 0) return null;
+
+  const renderLayoutItem = (l: LayoutSpec) => (
+    <MenuItem
+      key={l.id}
+      selected={l.id === activeLayoutId}
+      onClick={() => {
+        onSelectLayout(l.id);
+        setOpen(false);
+      }}
+    >
+      <ListItemIcon sx={{ visibility: l.id === activeLayoutId ? "visible" : "hidden" }}>
+        <CheckIcon fontSize="small" />
+      </ListItemIcon>
+      {/* i18n Phase 3+ : built-in layout names are English until localized. */}
+      <ListItemText>{l.name}</ListItemText>
+    </MenuItem>
+  );
+
+  return (
+    <>
+      <Tooltip title={t("topbar.layouts")}>
+        <IconButton
+          ref={anchorRef}
+          size="small"
+          onClick={() => setOpen(true)}
+          aria-label={t("topbar.layouts")}
+        >
+          <ViewQuiltIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Menu open={open} anchorEl={anchorRef.current} onClose={() => setOpen(false)}>
+        {layouts.map(renderLayoutItem)}
+        {userLayouts.length > 0 && (
+          <ListSubheader sx={{ lineHeight: 2, bgcolor: "transparent" }}>
+            {t("layout.myLayouts")}
+          </ListSubheader>
+        )}
+        {userLayouts.map(renderLayoutItem)}
+        {(onSaveLayoutAs || onResetArrangement) && <Divider />}
+        {onResetArrangement && (
+          <MenuItem
+            onClick={() => {
+              onResetArrangement();
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon>
+              <RestartAltIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{t("layout.resetArrangement")}</ListItemText>
+          </MenuItem>
+        )}
+        {onSaveLayoutAs && (
+          <MenuItem
+            onClick={() => {
+              onSaveLayoutAs();
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon>
+              <SaveOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{t("layout.saveAs")}</ListItemText>
+          </MenuItem>
+        )}
+        {onManageLayouts && (
+          <MenuItem
+            onClick={() => {
+              onManageLayouts();
+              setOpen(false);
+            }}
+          >
+            <ListItemIcon>
+              <SettingsOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{t("layout.manage")}</ListItemText>
+          </MenuItem>
+        )}
+      </Menu>
+    </>
+  );
+}
+
 // The bar collapses (never wraps) below this width. Matches the design's
 // `@container (max-width: 820px)` breakpoint, measured against the bar's own
 // width via ResizeObserver rather than the viewport — the rail can eat space
@@ -163,6 +281,15 @@ interface Props {
   railCollapsed?: boolean;
   onToggleRail?: () => void;
   onRequestReload?: () => void;
+  // Workspace-layout switcher (Phase 3). Omitted on the no-data branch.
+  layouts?: LayoutSpec[];
+  activeLayoutId?: string;
+  onSelectLayout?: (id: string) => void;
+  // User-saved layouts + their actions (Phase 5). Also omitted on the no-data branch.
+  userLayouts?: LayoutSpec[];
+  onSaveLayoutAs?: () => void;
+  onManageLayouts?: () => void;
+  onResetArrangement?: () => void;
 }
 
 export function TopBar({
@@ -183,6 +310,13 @@ export function TopBar({
   railCollapsed,
   onToggleRail,
   onRequestReload,
+  layouts,
+  activeLayoutId,
+  onSelectLayout,
+  userLayouts,
+  onSaveLayoutAs,
+  onManageLayouts,
+  onResetArrangement,
 }: Props) {
   const { t } = useTranslation();
   const [books, setBooks] = useState<BookListEntry[]>([]);
@@ -587,6 +721,18 @@ export function TopBar({
       />
 
       {pipelineMenu}
+
+      {layouts && activeLayoutId && onSelectLayout && (
+        <LayoutSwitcher
+          layouts={layouts}
+          userLayouts={userLayouts}
+          activeLayoutId={activeLayoutId}
+          onSelectLayout={onSelectLayout}
+          onSaveLayoutAs={onSaveLayoutAs}
+          onManageLayouts={onManageLayouts}
+          onResetArrangement={onResetArrangement}
+        />
+      )}
 
       <Button
         ref={moreButtonRef}

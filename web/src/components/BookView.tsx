@@ -10,7 +10,7 @@
 // comparison readable when the scroll spans an entire book.
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Stack, Typography, IconButton, Tooltip, CircularProgress } from "@mui/material";
+import { Box, Typography, IconButton, Tooltip, CircularProgress } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
 import CheckIcon from "@mui/icons-material/Check";
@@ -216,34 +216,16 @@ export function BookView({
 
   return (
     <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <Stack
-        direction="row"
-        spacing={1}
-        alignItems="center"
-        sx={{
-          px: 1.5,
-          py: 0.5,
-          bgcolor: "primary.50",
-          borderBottom: "1px dashed",
-          borderColor: "divider",
-          flexShrink: 0,
-        }}
-      >
-        <Typography variant="caption" sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700 }}>
-          {book} · book
-        </Typography>
-        <Box sx={{ flex: 1 }} />
-        <Typography variant="caption" color="text.disabled">
-          {chapterList.length} ch · loaded {countLoaded(chapters)}
-        </Typography>
-      </Stack>
+      {/* The old `{book} · book` / `n ch · loaded m` status band lived here.
+          It now rides along in the scripture toolbar (ScriptureColumn), so book
+          mode spends one fewer row before the first verse. */}
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns,
           gap: 1,
           px: 1.5,
-          py: 0.5,
+          py: 0.25,
           borderBottom: "1px solid",
           borderColor: "divider",
           bgcolor: "primary.50",
@@ -321,12 +303,6 @@ export function BookView({
       </Box>
     </Box>
   );
-}
-
-function countLoaded(chapters: Map<number, ChapterState>): number {
-  let n = 0;
-  for (const s of chapters.values()) if (s.kind === "ready") n++;
-  return n;
 }
 
 // Memoized (with VerseRow / VerseCell below) so the per-keystroke BookView

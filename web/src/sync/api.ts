@@ -2,6 +2,7 @@
 // dev proxy points /api/* at the local Worker; production serves the SPA
 // from the same origin as the Worker).
 
+import type { LayoutSpec } from "../lib/layoutSpec";
 import { getWorkspaceSlug, setWorkspaceSlug } from "./workspace";
 
 export type RowKind = "tn" | "tq" | "twl";
@@ -1550,6 +1551,11 @@ export interface ProjectConfig {
 }
 export interface ProjectConfigResponse {
   config: ProjectConfig;
+  // Server-shipped built-in layout defaults (flexible-layouts). Optional so an
+  // older server (or the localStorage cache, which stores only `config`) makes
+  // the client fall back to its bundled built-ins. Validated against the panel
+  // registry before use — a drifted/invalid spec is dropped, never fatal.
+  layouts?: LayoutSpec[];
 }
 
 // PR B: draft-only manifest inference response — applies nothing.

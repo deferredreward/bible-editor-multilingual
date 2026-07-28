@@ -1,0 +1,1907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BEM — Flexible Layouts Mockup (Phase 0)</title>
+<style>
+  :root {
+    --inspire: #31ADE3;
+    --ocean: #014263;
+    --tech: #231F20;
+    --cultivate: #70C9CC;
+    --kindle: #E59D33;
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --border: #e0e4e9;
+    --muted: #6b7280;
+    --radius: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Roboto, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--tech);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  button { font-family: inherit; }
+
+  /* ---------- Top bar ---------- */
+  .topbar {
+    background: var(--ocean);
+    color: #fff;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px;
+    position: relative;
+    z-index: 30;
+  }
+  .topbar .app-title {
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+  }
+  .topbar .booknav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255,255,255,0.10);
+    border-radius: var(--radius);
+    padding: 4px 10px;
+    font-size: 14px;
+  }
+  .topbar .booknav .chev {
+    background: none; border: none; color: rgba(255,255,255,0.75);
+    cursor: pointer; font-size: 15px; padding: 0 4px; border-radius: 4px;
+  }
+  .topbar .booknav .chev:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  .topbar .spacer { flex: 1; }
+  .rtl-toggle {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: rgba(255,255,255,0.85);
+    cursor: pointer; user-select: none;
+  }
+  .rtl-toggle input { accent-color: var(--inspire); cursor: pointer; }
+  .icon-btn {
+    background: none; border: none; color: #fff; cursor: pointer;
+    width: 38px; height: 38px; border-radius: var(--radius);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.15); }
+  .icon-btn.active { background: rgba(49,173,227,0.35); }
+  .icon-btn svg { display: block; }
+
+  /* ---------- Layout menu ---------- */
+  .layout-menu {
+    position: absolute;
+    top: 56px;
+    right: 12px;
+    width: 320px;
+    background: var(--card);
+    color: var(--tech);
+    border-radius: var(--radius);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.16), 0 2px 6px rgba(0,0,0,0.10);
+    padding: 6px 0;
+    display: none;
+    z-index: 40;
+  }
+  .layout-menu.open { display: block; }
+  .layout-menu .section-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--muted);
+    padding: 8px 16px 4px;
+  }
+  .layout-menu hr { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
+  .menu-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    width: 100%; text-align: left; background: none; border: none;
+    padding: 8px 16px; cursor: pointer; font-size: 13.5px; color: var(--tech);
+  }
+  .menu-item:hover { background: #eef6fb; }
+  .menu-item .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #cfd6dd; margin-top: 5px; flex: none;
+  }
+  .menu-item.selected .dot { background: var(--inspire); }
+  .menu-item .mi-body { display: flex; flex-direction: column; gap: 1px; }
+  .menu-item .mi-name { font-weight: 500; }
+  .menu-item.selected .mi-name { color: var(--ocean); }
+  .menu-item .mi-desc { font-size: 12px; color: var(--muted); }
+  .menu-item.plain { padding-left: 34px; color: #33556b; }
+
+  /* ---------- Workspace ---------- */
+  .workspace {
+    display: flex;
+    height: calc(100vh - 52px);
+    min-height: 560px;
+    overflow: hidden;
+  }
+  .arrangement { display: none; flex: 1; min-width: 0; }
+  .arrangement.active { display: flex; }
+
+  /* Rail */
+  .rail {
+    width: 56px;
+    flex: none;
+    background: #fff;
+    border-inline-end: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 0;
+    gap: 6px;
+    overflow-y: auto;
+  }
+  .rail .rail-title {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.6px; margin-bottom: 4px;
+  }
+  .verse-tile {
+    width: 38px; height: 30px; border-radius: 6px;
+    background: #f0f3f6; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #4b5563; position: relative;
+    cursor: pointer; flex: none;
+  }
+  .verse-tile:hover { border-color: var(--inspire); }
+  .verse-tile.current { border-color: var(--inspire); background: #e6f5fc; font-weight: 600; color: var(--ocean); }
+  .verse-tile .status {
+    position: absolute; top: 3px; right: 3px;
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+  /* Status dot semantics: grey = untranslated, amber = AI draft (unapproved), green = approved */
+  .st-done { background: #2e9e6b; }
+  .st-draft { background: var(--kindle); box-shadow: inset 0 0 0 1.5px rgba(0,0,0,0.28); }
+  .st-none { background: #cfd6dd; }
+  .verse-tile .status, .status-dot { border: 1px solid rgba(0,0,0,0.10); }
+
+  /* Regions + resize handles */
+  .region {
+    min-width: 140px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px;
+    gap: 10px;
+  }
+  .region-scroll { overflow-y: auto; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+  .resize-handle {
+    flex: none;
+    width: 7px;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+  }
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; left: 3px;
+    width: 1px;
+    background: var(--border);
+  }
+  .resize-handle:hover, .resize-handle.dragging { background: rgba(49,173,227,0.28); }
+  .resize-handle:hover::after, .resize-handle.dragging::after { background: var(--inspire); }
+
+  .region-title {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.7px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .region-title .chip {
+    font-size: 10.5px; font-weight: 500; text-transform: none; letter-spacing: 0;
+    background: #eef6fb; color: var(--ocean); border-radius: 10px; padding: 1px 8px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .verse-card .vc-head {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
+  }
+  .vc-version {
+    font-size: 11.5px; font-weight: 700; color: var(--ocean);
+    letter-spacing: 0.4px;
+  }
+  .vc-ref { font-size: 11.5px; color: var(--muted); }
+  .vc-label { font-size: 11px; color: var(--muted); margin-inline-start: auto; }
+  .vc-text {
+    font-size: 15px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    min-height: 24px;
+  }
+  .vc-text.editable {
+    border-color: var(--border);
+    background: #fdfdfe;
+    cursor: text;
+  }
+  .vc-text.editable:hover { border-color: var(--inspire); }
+  .vc-text[dir="rtl"] {
+    font-family: "Traditional Arabic", "Noto Naskh Arabic", "Segoe UI", serif;
+    font-size: 18px;
+    line-height: 1.9;
+    text-align: right;
+  }
+
+  /* Resource tabs */
+  .tabs {
+    display: flex; gap: 0; border-bottom: 2px solid var(--border);
+  }
+  .tab {
+    background: none; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 500; color: var(--muted);
+    padding: 8px 14px; margin-bottom: -2px;
+    border-bottom: 2px solid transparent;
+  }
+  .tab:hover { color: var(--ocean); }
+  .tab.active { color: var(--inspire); border-bottom-color: var(--inspire); }
+
+  .note-card { display: flex; flex-direction: column; gap: 6px; }
+  .note-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .note-ref {
+    font-size: 12px; font-weight: 700; color: var(--ocean);
+    background: #eef6fb; border-radius: 6px; padding: 2px 8px;
+  }
+  .note-quote {
+    font-family: "SBL Hebrew", "Ezra SIL", Georgia, "Times New Roman", serif;
+    font-size: 18px;
+    direction: rtl;
+    color: var(--tech);
+  }
+  .note-occ { font-size: 11.5px; color: var(--muted); }
+  .note-body { font-size: 13.5px; color: #374151; }
+  .note-body code {
+    background: #f0f3f6; border-radius: 4px; padding: 0 4px;
+    font-size: 12px;
+  }
+  .src-tgt-label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7px; border-radius: 4px; padding: 2px 7px;
+    display: inline-block;
+  }
+  .lbl-source { background: #eceff3; color: #4b5563; }
+  .lbl-target { background: #e6f5fc; color: var(--ocean); }
+  .note-card.readonly { background: #fafbfc; }
+  .note-body.editable {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #fdfdfe; padding: 8px 10px; cursor: text;
+  }
+  .note-body.editable:hover { border-color: var(--inspire); }
+  .note-body[dir="rtl"] {
+    font-family: "Traditional Arabic", "Noto Naskh Arabic", "Segoe UI", serif;
+    font-size: 16px; line-height: 1.9; text-align: right;
+  }
+
+  /* ---------- Vertical arrangement (Translate Notes) ---------- */
+  .arrangement.vertical { flex-direction: column; }
+  .arrangement.vertical > .region { min-height: 120px; }
+
+  .resize-handle.horizontal {
+    width: auto; height: 7px; cursor: row-resize;
+  }
+  .resize-handle.horizontal::after {
+    top: 3px; bottom: auto; left: 0; right: 0;
+    width: auto; height: 1px;
+  }
+
+  /* Scripture source/target side by side (top pane) */
+  .scripture-pair { display: flex; gap: 10px; }
+  .scripture-pair .card { flex: 1; min-width: 0; }
+
+  /* Region-title trailing controls */
+  .region-title .spacer-flex { flex: 1; }
+  .axis-toggle {
+    background: #eef6fb; border: 1px solid var(--border);
+    border-radius: 6px; color: var(--ocean); cursor: pointer;
+    font-size: 11.5px; font-weight: 600; padding: 3px 10px;
+    text-transform: none; letter-spacing: 0; white-space: nowrap;
+  }
+  .axis-toggle:hover { border-color: var(--inspire); }
+
+  /* Distinct, self-contained note cards with source/target pair */
+  .note-pair { display: flex; flex-direction: column; gap: 8px; }
+  .note-pair-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .note-sides { display: flex; flex-direction: row; gap: 12px; }
+  .axis-container.stacked .note-sides,
+  .axis-container.stacked .article-sides { flex-direction: column; }
+  .note-side, .article-side {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
+  }
+  .note-side.source .note-body {
+    background: #fafbfc; border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px;
+  }
+
+  /* ---------- Translate Words layout ---------- */
+  .article-rail {
+    width: 200px; flex: none; background: #fff;
+    border-inline-end: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .rail-toggle { display: flex; gap: 4px; padding: 10px 10px 6px; }
+  .rt-opt {
+    flex: 1; background: #f0f3f6; border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 0; font-size: 12px;
+    cursor: pointer; color: var(--muted);
+  }
+  .rt-opt.active { background: #e6f5fc; border-color: var(--inspire); color: var(--ocean); font-weight: 600; }
+  .rail-search { padding: 0 10px 8px; }
+  .rail-search input {
+    width: 100%; font-size: 12.5px; padding: 6px 8px;
+    border: 1px solid var(--border); border-radius: 6px; font-family: inherit;
+  }
+  .rail-search input:focus { outline: 2px solid var(--inspire); border-color: transparent; }
+  .article-list {
+    overflow-y: auto; flex: 1; padding: 0 6px 10px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .article-item {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    text-align: start; background: none; border: none; border-radius: 6px;
+    padding: 7px 8px; font-size: 13px; cursor: pointer; color: var(--tech);
+  }
+  .article-item:hover { background: #eef6fb; }
+  .article-item.current { background: #e6f5fc; color: var(--ocean); font-weight: 600; }
+  .article-item .gloss {
+    font-family: "SBL Hebrew", "Ezra SIL", Georgia, serif; direction: rtl;
+    font-size: 14px;
+  }
+  .article-item .status-dot {
+    width: 8px; height: 8px; border-radius: 50%; margin-inline-start: auto; flex: none;
+  }
+
+  /* Status-dot legend */
+  .dot-legend {
+    flex: none; border-top: 1px solid var(--border);
+    padding: 8px 10px; display: flex; flex-direction: column; gap: 5px;
+    font-size: 11px; color: var(--muted);
+  }
+  .dot-legend span { display: flex; align-items: center; gap: 6px; }
+  .dot-legend .status-dot {
+    width: 8px; height: 8px; border-radius: 50%; margin-inline-start: 0; flex: none;
+  }
+  .menu-legend { border-top: none; padding: 2px 16px 10px; font-size: 12px; }
+
+  .article-sides { display: flex; flex-direction: row; gap: 12px; flex: 1; min-height: 0; overflow-y: auto; }
+  .article-body { font-size: 13.5px; color: #374151; }
+  .article-body h2 { font-size: 17px; color: var(--ocean); margin: 0 0 8px; }
+  .article-body h3 { font-size: 13px; color: var(--tech); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .article-body p { margin: 0 0 8px; }
+  .article-body ul { margin: 4px 0 8px; padding-inline-start: 20px; }
+  .article-body li { margin-bottom: 4px; }
+  .article-body .xref { font-size: 12.5px; color: var(--muted); font-style: italic; }
+  .article-side.source .article-body {
+    background: #fafbfc; border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+  }
+  .article-body.editable {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #fdfdfe; padding: 10px 12px; cursor: text;
+  }
+  .article-body.editable:hover { border-color: var(--inspire); }
+  .article-body[dir="rtl"] {
+    font-family: "Traditional Arabic", "Noto Naskh Arabic", "Segoe UI", serif;
+    text-align: right; line-height: 1.9;
+  }
+  .article-body[dir="rtl"] ul { padding-inline-start: 20px; }
+
+  /* Collapsible occurrences strip */
+  .occ-strip {
+    flex: none; border-top: 1px solid var(--border);
+    margin: 8px -12px -12px; background: #fafbfc;
+  }
+  .occ-head {
+    width: 100%; text-align: start; background: none; border: none;
+    cursor: pointer; padding: 8px 14px; font-size: 12px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .occ-head .caret { transition: transform 0.15s; display: inline-block; }
+  .occ-strip.open .occ-head .caret { transform: rotate(90deg); }
+  .occ-body { padding: 0 14px 12px; display: none; flex-direction: column; gap: 8px; }
+  .occ-strip.open .occ-body { display: flex; }
+  .occ-item { font-size: 12.5px; color: #374151; }
+  .occ-item .note-ref { margin-inline-end: 8px; }
+
+  /* ---------- Book Package Review: stacked minimizable panels ---------- */
+  .res-stack { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow-y: auto; }
+  .panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .panel-head {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 9px 12px; background: #f7f9fb; border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 600; color: var(--ocean);
+    text-transform: uppercase; letter-spacing: 0.6px; user-select: none;
+  }
+  .panel-head:hover { background: #eef6fb; }
+  .panel-head .p-caption {
+    font-size: 10.5px; font-weight: 500; text-transform: none; letter-spacing: 0;
+    color: var(--muted);
+  }
+  .panel-head .p-chevron {
+    margin-inline-start: auto; transition: transform 0.15s;
+    color: var(--muted); font-size: 14px; line-height: 1;
+  }
+  .panel.collapsed .p-chevron { transform: rotate(-90deg); }
+  .panel.collapsed .panel-head { border-bottom: none; }
+  .panel-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .panel.collapsed .panel-body { display: none; }
+
+  /* Associated (linked) article panels grouped under their list */
+  .panel.associated {
+    border-inline-start: 3px solid var(--cultivate);
+    margin-inline-start: 14px; margin-top: -4px;
+  }
+  .assoc-tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    background: #e6f7f7; color: #2a7f82; border-radius: 10px; padding: 1px 8px;
+  }
+
+  /* TWL key-term rows inside the Words panel */
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .twl-row {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; padding: 5px 6px; border-radius: 6px;
+  }
+  .twl-row.current { background: #e6f5fc; color: var(--ocean); font-weight: 600; }
+  .twl-row .gloss { font-family: "SBL Hebrew", "Ezra SIL", Georgia, serif; direction: rtl; font-size: 14px; }
+  .twl-row .status-dot { margin-inline-start: auto; }
+
+  /* translationQuestions rows */
+  .tq-row { border-bottom: 1px dashed var(--border); padding-bottom: 8px; }
+  .tq-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .tq-q { font-size: 13px; }
+  .tq-a { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+  /* Book mode */
+  .book-cols { display: flex; gap: 12px; flex: 1; min-height: 0; }
+  .book-col {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+    overflow-y: auto;
+  }
+  .book-col .card { padding: 10px 12px; }
+  .book-verse { font-size: 13.5px; margin: 0 0 8px; }
+  .book-verse .vnum {
+    font-size: 10.5px; font-weight: 700; color: var(--inspire);
+    vertical-align: super; margin-inline-end: 3px;
+  }
+  .chapter-head {
+    font-size: 12px; font-weight: 700; color: var(--ocean);
+    margin: 4px 0 2px;
+  }
+  .compact .card { padding: 8px 10px; }
+  .compact .note-body { font-size: 12.5px; }
+  .compact .note-quote { font-size: 15px; }
+
+  /* ---------- Flexible layout: movable panels ---------- */
+  .fp-grip { cursor: grab; color: var(--muted); font-size: 15px; line-height: 1; padding-inline-end: 2px; }
+  .fp-grip:active { cursor: grabbing; }
+  .fp-controls { margin-inline-start: auto; display: flex; align-items: center; gap: 8px; }
+  .fp-controls .p-chevron { margin-inline-start: 0; }
+  .fp-move {
+    background: #eef6fb; border: 1px solid var(--border); border-radius: 6px;
+    cursor: pointer; color: var(--ocean); font-size: 12px; line-height: 1.4;
+    padding: 1px 7px;
+  }
+  .fp-move:hover { border-color: var(--inspire); }
+  .fpanel { transition: opacity 0.12s; }
+  .fpanel.dragging { opacity: 0.45; }
+  .fcol.drop-active { outline: 2px dashed var(--inspire); outline-offset: -5px; border-radius: 8px; }
+  .drop-indicator { height: 2px; background: var(--inspire); border-radius: 2px; margin: -5px 2px; }
+  /* Nested container splits (top section + columns below) */
+  .fsplit-v { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+  .fsplit-h { display: flex; flex: 1; min-height: 0; min-width: 0; }
+  .fsplit-h > .fregion { min-width: 140px; }
+
+  /* Original-language (Hebrew/Greek) pane */
+  .ol-text {
+    font-family: "SBL Hebrew", "Ezra SIL", Georgia, "Times New Roman", serif;
+    direction: rtl; text-align: right; font-size: 21px; line-height: 2.0;
+    padding: 6px 4px; color: var(--tech);
+  }
+  .ol-text .w { cursor: pointer; border-radius: 4px; padding: 0 2px; }
+  .ol-text .w.lex { border-bottom: 2px dotted var(--cultivate); }
+  .ol-text .w.lex:hover { background: #e6f7f7; }
+  .ol-gloss { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+
+  /* Scripture mode toggle (stacked / columns / book) */
+  .mode-toggle {
+    display: inline-flex; border: 1px solid var(--border);
+    border-radius: 6px; overflow: hidden;
+  }
+  .mode-btn {
+    background: #fff; border: none; border-inline-end: 1px solid var(--border);
+    cursor: pointer; font-size: 11px; font-weight: 600; color: var(--muted);
+    padding: 3px 9px; text-transform: none; letter-spacing: 0;
+  }
+  .mode-btn:last-child { border-inline-end: none; }
+  .mode-btn.active { background: #e6f5fc; color: var(--ocean); }
+  .mode-btn:hover:not(.active) { background: #eef6fb; }
+
+  /* Workflow banner */
+  .wf-banner {
+    font-size: 12px; color: var(--muted);
+    background: #eef2f6; border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 6px 12px;
+    margin: 10px 12px 0;
+  }
+  .wf-banner b { color: var(--ocean); }
+
+  /* ---------- Dialog ---------- */
+  .dialog-backdrop {
+    position: fixed; inset: 0; background: rgba(2,32,48,0.35);
+    display: none; align-items: center; justify-content: center; z-index: 50;
+  }
+  .dialog-backdrop.open { display: flex; }
+  .dialog {
+    background: #fff; border-radius: 10px; width: 380px; max-width: 92vw;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+    padding: 20px;
+  }
+  .dialog h3 { margin: 0 0 14px; font-size: 16px; color: var(--ocean); }
+  .dialog label.field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .dialog input[type="text"] {
+    display: block; width: 100%; margin-top: 4px;
+    font-size: 14px; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit;
+  }
+  .dialog input[type="text"]:focus { outline: 2px solid var(--inspire); border-color: transparent; }
+  .dialog .check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-bottom: 10px; }
+  .dialog .check input { accent-color: var(--inspire); }
+  .dialog .hint { font-size: 12px; color: var(--muted); margin-bottom: 18px; }
+  .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .btn {
+    border: none; border-radius: 6px; cursor: pointer;
+    font-size: 13.5px; font-weight: 500; padding: 8px 16px;
+  }
+  .btn.primary { background: var(--inspire); color: #fff; }
+  .btn.primary:hover { background: #2496c9; }
+  .btn.text { background: none; color: var(--ocean); }
+  .btn.text:hover { background: #eef6fb; }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(10px);
+    background: var(--tech); color: #fff; font-size: 13.5px;
+    border-radius: 6px; padding: 10px 18px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 60;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ---------- Schema appendix ---------- */
+  .appendix {
+    max-width: 900px; margin: 24px auto 60px; padding: 0 16px;
+  }
+  .appendix details {
+    background: #fff; border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+  }
+  .appendix summary {
+    cursor: pointer; font-weight: 600; color: var(--ocean);
+    padding: 12px 16px; font-size: 14px;
+  }
+  .appendix .schema-body { padding: 0 16px 16px; }
+  .appendix h4 { margin: 14px 0 6px; font-size: 13px; color: var(--tech); }
+  .appendix pre {
+    background: #f6f8fa; border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; overflow-x: auto;
+    font-size: 12px; line-height: 1.5; margin: 0;
+    font-family: Consolas, "SF Mono", Menlo, monospace;
+  }
+  .appendix p.note { font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ============ Top bar ============ -->
+<header class="topbar">
+  <span class="app-title">Bible Editor</span>
+  <nav class="booknav" aria-label="Book navigation">
+    <button class="chev" title="Previous chapter">‹</button>
+    <span>Zechariah 4</span>
+    <button class="chev" title="Next chapter">›</button>
+  </nav>
+  <span class="spacer"></span>
+  <label class="rtl-toggle" title="Preview the workspace mirrored for RTL gateway languages">
+    <input type="checkbox" id="rtlToggle"> RTL preview
+  </label>
+  <button class="icon-btn" id="layoutBtn" title="Layouts" aria-haspopup="menu" aria-expanded="false">
+    <!-- dashboard / columns icon -->
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <rect x="3" y="4" width="7" height="16" rx="1.5"/>
+      <rect x="13" y="4" width="8" height="7" rx="1.5"/>
+      <rect x="13" y="14" width="8" height="6" rx="1.5"/>
+    </svg>
+  </button>
+
+  <!-- Layout menu -->
+  <div class="layout-menu" id="layoutMenu" role="menu">
+    <div class="section-label">Workflows</div>
+    <button class="menu-item" data-layout="classic" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Classic</span>
+        <span class="mi-desc">Rail, scripture stack, and all resource tabs — the everyday view.</span>
+      </span>
+    </button>
+    <button class="menu-item" data-layout="translate-notes" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Translate Notes</span>
+        <span class="mi-desc">Source and target verse with notes only — focused note translation.</span>
+      </span>
+    </button>
+    <button class="menu-item" data-layout="translate-words" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Translate Words</span>
+        <span class="mi-desc">Translate key-term and Academy articles, source and target side by side.</span>
+      </span>
+    </button>
+    <button class="menu-item" data-layout="bp-review" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Book Package Review</span>
+        <span class="mi-desc">Whole-book text with every resource — check package coherence.</span>
+      </span>
+    </button>
+    <button class="menu-item" data-layout="flexible" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Flexible · Columns</span>
+        <span class="mi-desc">Two side-by-side columns — move, reorder, minimize panels.</span>
+      </span>
+    </button>
+    <button class="menu-item" data-layout="flexible-nested" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Flexible · Nested</span>
+        <span class="mi-desc">Scripture across the top, original language + resources in columns below.</span>
+      </span>
+    </button>
+    <hr>
+    <div class="section-label">My layouts</div>
+    <button class="menu-item" data-layout="user-team-review" role="menuitemradio">
+      <span class="dot"></span>
+      <span class="mi-body">
+        <span class="mi-name">Team review — ZEC</span>
+        <span class="mi-desc">Saved 12 Jul · based on Classic</span>
+      </span>
+    </button>
+    <button class="menu-item plain" id="saveAsItem">Save current as…</button>
+    <button class="menu-item plain" id="manageItem">Manage layouts…</button>
+    <hr>
+    <div class="section-label">Status</div>
+    <div class="dot-legend menu-legend" aria-label="Status legend">
+      <span><span class="status-dot st-none"></span> Untranslated — no target content yet</span>
+      <span><span class="status-dot st-draft"></span> AI draft — not yet human-approved</span>
+      <span><span class="status-dot st-done"></span> Approved — validated</span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ Workflow banner ============ -->
+<div class="wf-banner" id="wfBanner"></div>
+
+<!-- ============ Workspace ============ -->
+<main class="workspace" id="workspace">
+
+  <!-- ===== Arrangement: Classic ===== -->
+  <section class="arrangement" id="arr-classic">
+    <aside class="rail" aria-label="Verse timeline">
+      <span class="rail-title">4</span>
+      <div class="verse-tile">1<span class="status st-done"></span></div>
+      <div class="verse-tile current">2<span class="status st-draft"></span></div>
+      <div class="verse-tile">3<span class="status st-draft"></span></div>
+      <div class="verse-tile">4<span class="status st-none"></span></div>
+      <div class="verse-tile">5<span class="status st-none"></span></div>
+      <div class="verse-tile">6<span class="status st-done"></span></div>
+      <div class="verse-tile">7<span class="status st-none"></span></div>
+      <div class="verse-tile">8<span class="status st-none"></span></div>
+      <div class="verse-tile">9<span class="status st-none"></span></div>
+      <div class="verse-tile">10<span class="status st-none"></span></div>
+    </aside>
+
+    <div class="region" style="flex: 0.5 1 0;">
+      <div class="region-title">Scripture
+        <span class="mode-toggle" role="group" aria-label="Scripture mode">
+          <button class="mode-btn active" type="button" data-mode="stacked">Stacked</button>
+          <button class="mode-btn" type="button" data-mode="columns">Columns</button>
+          <button class="mode-btn" type="button" data-mode="book">Book</button>
+        </span>
+        <span class="chip">Zechariah 4:2</span>
+      </div>
+      <div class="region-scroll">
+        <div class="card verse-card">
+          <div class="vc-head"><span class="vc-version">ULT</span><span class="vc-ref">Zechariah 4:2</span><span class="vc-label">source</span></div>
+          <div class="vc-text editable" dir="ltr" contenteditable="false">And he said to me, &ldquo;What do you see?&rdquo; And I said, &ldquo;I see, and behold, a lampstand all of gold, with its bowl on top of it and its seven lamps on it, with seven spouts for each of the lamps on top of it.&rdquo;</div>
+        </div>
+        <div class="card verse-card">
+          <div class="vc-head"><span class="vc-version">UST</span><span class="vc-ref">Zechariah 4:2</span><span class="vc-label">source</span></div>
+          <div class="vc-text editable" dir="ltr" contenteditable="false">The angel asked me, &ldquo;What do you see?&rdquo; I replied, &ldquo;I see a lampstand made entirely of gold. There is a bowl at its top, and there are seven small lamps around the bowl.&rdquo;</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="resize-handle" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+    <div class="region" style="flex: 0.5 1 0;">
+      <div class="region-title">Resources</div>
+      <div class="tabs">
+        <button class="tab active">Notes</button>
+        <button class="tab">Words</button>
+        <button class="tab">Questions</button>
+      </div>
+      <div class="region-scroll">
+        <div class="card note-card">
+          <div class="note-meta">
+            <span class="note-ref">4:2</span>
+            <span class="note-quote">מְנוֹרַת זָהָב</span>
+            <span class="note-occ">Occurrence 1</span>
+          </div>
+          <div class="note-body" dir="ltr">The <b>lampstand of gold</b> recalls the lampstand in the tabernacle (Exodus 25:31&ndash;40). Here it symbolizes the temple and, by extension, God&rsquo;s presence among his people. If your readers would not be familiar with lampstands, you could use a general expression such as &ldquo;a stand that holds lamps.&rdquo;</div>
+        </div>
+        <div class="card note-card">
+          <div class="note-meta">
+            <span class="note-ref">4:2</span>
+            <span class="note-quote">גֻּלָּהּ</span>
+            <span class="note-occ">Occurrence 1</span>
+          </div>
+          <div class="note-body" dir="ltr">The <b>bowl</b> on top of the lampstand held the oil supply for the lamps. The picture is of a self-replenishing source, which verse 6 interprets: &ldquo;Not by might, nor by power, but by my Spirit.&rdquo;</div>
+        </div>
+        <div class="card note-card">
+          <div class="note-meta">
+            <span class="note-ref">4:2</span>
+            <span class="note-quote">שִׁבְעָה נֵרֹתֶיהָ</span>
+            <span class="note-occ">Occurrence 1</span>
+          </div>
+          <div class="note-body" dir="ltr">The number <b>seven</b> often represents completeness. See <code>figs-explicit</code>. Alternate translation: &ldquo;its full set of seven lamps&rdquo;</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Arrangement: Translate Notes (vertical: scripture over notes) ===== -->
+  <section class="arrangement vertical" id="arr-translate-notes">
+    <div class="region" style="flex: 0.42 1 0;">
+      <div class="region-title">Scripture <span class="chip">Zechariah 4:2 · source + target</span></div>
+      <div class="region-scroll">
+        <div class="scripture-pair">
+          <div class="card verse-card">
+            <div class="vc-head"><span class="vc-version">ULT</span><span class="vc-ref">Zechariah 4:2</span><span class="vc-label">English source</span></div>
+            <div class="vc-text" dir="ltr">And he said to me, &ldquo;What do you see?&rdquo; And I said, &ldquo;I see, and behold, a lampstand all of gold, with its bowl on top of it and its seven lamps on it, with seven spouts for each of the lamps on top of it.&rdquo;</div>
+          </div>
+          <div class="card verse-card">
+            <div class="vc-head"><span class="vc-version">GLT</span><span class="vc-ref">زكريا ٤:٢</span><span class="vc-label">Arabic target</span></div>
+            <div class="vc-text editable" dir="rtl" contenteditable="false">وَقَالَ لِي: «مَاذَا تَرَى؟» فَقُلْتُ: «قَدْ نَظَرْتُ وَإِذَا بِمَنَارَةٍ كُلُّهَا ذَهَبٌ، وَكُوزُهَا عَلَى رَأْسِهَا، وَسُرُجُهَا السَّبْعَةُ عَلَيْهَا.»</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="resize-handle horizontal" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+
+    <div class="region" style="flex: 0.58 1 0;">
+      <div class="region-title">
+        translationNotes <span class="chip">4:2</span>
+        <span class="spacer-flex"></span>
+        <button class="axis-toggle" type="button" title="Switch source/target between side-by-side and stacked">&#8646; Side by side</button>
+      </div>
+      <div class="region-scroll note-pairs axis-container" id="notePairs">
+        <div class="card note-pair">
+          <div class="note-pair-head">
+            <span class="note-ref">4:2</span>
+            <span class="note-quote">מְנוֹרַת זָהָב</span>
+            <span class="note-occ">Occurrence 1</span>
+          </div>
+          <div class="note-sides">
+            <div class="note-side source">
+              <span class="src-tgt-label lbl-source">Source (English)</span>
+              <div class="note-body" dir="ltr">The <b>lampstand of gold</b> recalls the lampstand in the tabernacle (Exodus 25:31&ndash;40). Here it symbolizes the temple and, by extension, God&rsquo;s presence among his people. If your readers would not be familiar with lampstands, you could use a general expression such as &ldquo;a stand that holds lamps.&rdquo;</div>
+            </div>
+            <div class="note-side target">
+              <span class="src-tgt-label lbl-target">Target (Arabic)</span>
+              <div class="note-body editable" dir="rtl" contenteditable="false">إنَّ <b>منارة الذهب</b> تُذكِّر بالمنارة التي كانت في خيمة الاجتماع (خروج ٢٥: ٣١–٤٠). وهي هنا ترمز إلى الهيكل، وبالتالي إلى حضور الله وسط شعبه. إذا لم يكن قرّاؤكم على معرفة بالمنائر، يمكنكم استخدام تعبير عام مثل «حامل مصابيح».</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card note-pair">
+          <div class="note-pair-head">
+            <span class="note-ref">4:2</span>
+            <span class="note-quote">גֻּלָּהּ</span>
+            <span class="note-occ">Occurrence 1</span>
+          </div>
+          <div class="note-sides">
+            <div class="note-side source">
+              <span class="src-tgt-label lbl-source">Source (English)</span>
+              <div class="note-body" dir="ltr">The <b>bowl</b> on top of the lampstand held the oil supply for the lamps. The picture is of a self-replenishing source, which verse 6 interprets: &ldquo;Not by might, nor by power, but by my Spirit.&rdquo;</div>
+            </div>
+            <div class="note-side target">
+              <span class="src-tgt-label lbl-target">Target (Arabic)</span>
+              <div class="note-body editable" dir="rtl" contenteditable="false">كان <b>الكوز</b> فوق المنارة يحوي مخزون الزيت للسُّرُج. والصورة هي صورة مصدرٍ لا ينضب، وهو ما تفسّره الآية ٦: «لا بالقدرة ولا بالقوّة، بل بروحي».</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card note-pair">
+          <div class="note-pair-head">
+            <span class="note-ref">4:2</span>
+            <span class="note-quote">שִׁבְעָה נֵרֹתֶיהָ</span>
+            <span class="note-occ">Occurrence 1</span>
+          </div>
+          <div class="note-sides">
+            <div class="note-side source">
+              <span class="src-tgt-label lbl-source">Source (English)</span>
+              <div class="note-body" dir="ltr">The number <b>seven</b> often represents completeness. Alternate translation: &ldquo;its full set of seven lamps.&rdquo;</div>
+            </div>
+            <div class="note-side target">
+              <span class="src-tgt-label lbl-target">Target (Arabic)</span>
+              <div class="note-body editable" dir="rtl" contenteditable="false">غالبًا ما يرمز العدد <b>سبعة</b> إلى الكمال والتمام. ترجمة بديلة: «مجموعتها الكاملة من السُّرُج السبعة».</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Arrangement: Book Package Review ===== -->
+  <section class="arrangement compact" id="arr-bp-review">
+    <aside class="rail" aria-label="Verse timeline">
+      <span class="rail-title">4</span>
+      <div class="verse-tile">1<span class="status st-done"></span></div>
+      <div class="verse-tile current">2<span class="status st-draft"></span></div>
+      <div class="verse-tile">3<span class="status st-draft"></span></div>
+      <div class="verse-tile">4<span class="status st-none"></span></div>
+      <div class="verse-tile">5<span class="status st-none"></span></div>
+      <div class="verse-tile">6<span class="status st-done"></span></div>
+      <div class="verse-tile">7<span class="status st-none"></span></div>
+      <div class="verse-tile">8<span class="status st-none"></span></div>
+      <div class="verse-tile">9<span class="status st-none"></span></div>
+      <div class="verse-tile">10<span class="status st-none"></span></div>
+    </aside>
+
+    <div class="region" style="flex: 0.5 1 0;">
+      <div class="region-title">Scripture <span class="chip">book mode · whole of Zechariah</span></div>
+      <div class="book-cols">
+        <div class="book-col" dir="ltr">
+          <div class="card">
+            <div class="vc-head"><span class="vc-version">ULT</span></div>
+            <div class="chapter-head">Zechariah 4</div>
+            <p class="book-verse"><span class="vnum">1</span>And the angel who was speaking with me returned and roused me, like a man who is roused from his sleep.</p>
+            <p class="book-verse"><span class="vnum">2</span>And he said to me, &ldquo;What do you see?&rdquo; And I said, &ldquo;I see, and behold, a lampstand all of gold, with its bowl on top of it and its seven lamps on it, with seven spouts for each of the lamps on top of it.&rdquo;</p>
+            <p class="book-verse"><span class="vnum">3</span>And two olive trees are beside it, one on the right of the bowl and one on its left.</p>
+            <p class="book-verse"><span class="vnum">4</span>And I answered and said to the angel who was speaking with me, saying, &ldquo;What are these, my lord?&rdquo;</p>
+            <p class="book-verse"><span class="vnum">5</span>And the angel who was speaking with me answered and said to me, &ldquo;Do you not know what these are?&rdquo; And I said, &ldquo;No, my lord.&rdquo;</p>
+            <p class="book-verse"><span class="vnum">6</span>And he answered and said to me, saying, &ldquo;This is the word of Yahweh to Zerubbabel, saying, &lsquo;Not by might, and not by power, but by my Spirit,&rsquo; says Yahweh of hosts.&rdquo;</p>
+          </div>
+        </div>
+        <div class="book-col" dir="ltr">
+          <div class="card">
+            <div class="vc-head"><span class="vc-version">UST</span></div>
+            <div class="chapter-head">Zechariah 4</div>
+            <p class="book-verse"><span class="vnum">1</span>Then the angel who had been talking with me came back and woke me up, as if I had been asleep.</p>
+            <p class="book-verse"><span class="vnum">2</span>The angel asked me, &ldquo;What do you see?&rdquo; I replied, &ldquo;I see a lampstand made entirely of gold. There is a bowl at its top, and there are seven small lamps around the bowl.&rdquo;</p>
+            <p class="book-verse"><span class="vnum">3</span>I also see two olive trees, one on each side of the bowl.</p>
+            <p class="book-verse"><span class="vnum">4</span>I asked the angel, &ldquo;Sir, what do these things mean?&rdquo;</p>
+            <p class="book-verse"><span class="vnum">5</span>He replied, &ldquo;Do you really not know what they mean?&rdquo; I said, &ldquo;No, sir, I do not.&rdquo;</p>
+            <p class="book-verse"><span class="vnum">6</span>Then he said, &ldquo;This is Yahweh&rsquo;s message to Zerubbabel: You will succeed, not by your own strength or power, but by my Spirit, says Yahweh, commander of the angel armies.&rdquo;</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="resize-handle" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+    <div class="region" style="flex: 0.5 1 0;">
+      <div class="region-title">Resources <span class="chip">stacked · all panels visible</span></div>
+      <div class="region-scroll res-stack">
+
+        <!-- 1. translationNotes -->
+        <div class="panel" data-panel="notes">
+          <div class="panel-head"><span>translationNotes</span><span class="p-chevron">&#9662;</span></div>
+          <div class="panel-body">
+            <div class="note-card">
+              <div class="note-meta">
+                <span class="note-ref">4:1</span>
+                <span class="note-quote">כְּאִישׁ אֲשֶׁר־יֵעוֹר מִשְּׁנָתוֹ</span>
+                <span class="note-occ">Occurrence 1</span>
+              </div>
+              <div class="note-body" dir="ltr">This simile describes Zechariah being made alert for the next vision, not literal sleep.</div>
+            </div>
+            <div class="note-card">
+              <div class="note-meta">
+                <span class="note-ref">4:2</span>
+                <span class="note-quote">מְנוֹרַת זָהָב</span>
+                <span class="note-occ">Occurrence 1</span>
+              </div>
+              <div class="note-body" dir="ltr">The <b>lampstand of gold</b> recalls the tabernacle lampstand (Exodus 25:31&ndash;40) and symbolizes the temple and God&rsquo;s presence among his people.</div>
+            </div>
+            <div class="note-card">
+              <div class="note-meta">
+                <span class="note-ref">4:3</span>
+                <span class="note-quote">וּשְׁנַיִם זֵיתִים</span>
+                <span class="note-occ">Occurrence 1</span>
+              </div>
+              <div class="note-body" dir="ltr">The <b>two olive trees</b> supply the oil; verse 14 identifies them as &ldquo;the two sons of fresh oil,&rdquo; usually understood as Zerubbabel and Joshua.</div>
+            </div>
+            <div class="note-card">
+              <div class="note-meta">
+                <span class="note-ref">4:6</span>
+                <span class="note-quote">לֹא בְחַיִל וְלֹא בְכֹחַ</span>
+                <span class="note-occ">Occurrence 1</span>
+              </div>
+              <div class="note-body" dir="ltr">The interpretive key of the vision: the temple will be completed by God&rsquo;s Spirit, not human strength. Keep the parallelism of <b>might</b> and <b>power</b> if possible.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. translationAcademy article (associated with active note) -->
+        <div class="panel associated" data-panel="ta">
+          <div class="panel-head">
+            <span>translationAcademy</span>
+            <span class="assoc-tag">associated</span>
+            <span class="p-caption">linked from active note · figs-metaphor</span>
+            <span class="p-chevron">&#9662;</span>
+          </div>
+          <div class="panel-body">
+            <div class="article-body" dir="ltr">
+              <h2>Metaphor</h2>
+              <p>A <b>metaphor</b> is a figure of speech in which someone speaks of one thing as if it were a different thing, because he wants people to think about how the two things are alike. Here the golden lampstand stands for the restored temple and God&rsquo;s presence with his people.</p>
+              <ul>
+                <li>If the metaphor would be understood by your readers, consider keeping it. If not, state the meaning plainly — e.g. &ldquo;the temple, where God is present.&rdquo;</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. translationWords list (TWL key terms for the passage) -->
+        <div class="panel" data-panel="words">
+          <div class="panel-head"><span>translationWords</span><span class="p-chevron">&#9662;</span></div>
+          <div class="panel-body">
+            <div class="twl-row" dir="ltr">gold — <span class="gloss">זָהָב</span><span class="status-dot st-done"></span></div>
+            <div class="twl-row current" dir="ltr">lampstand — <span class="gloss">מְנוֹרָה</span><span class="status-dot st-draft"></span></div>
+            <div class="twl-row" dir="ltr">olive tree — <span class="gloss">זַיִת</span><span class="status-dot st-draft"></span></div>
+            <div class="twl-row" dir="ltr">spirit — <span class="gloss">רוּחַ</span><span class="status-dot st-none"></span></div>
+          </div>
+        </div>
+
+        <!-- 4. translationWords article (associated with selected term) -->
+        <div class="panel associated" data-panel="tw-article">
+          <div class="panel-head">
+            <span>translationWords article</span>
+            <span class="assoc-tag">associated</span>
+            <span class="p-caption">selected term · lampstand</span>
+            <span class="p-chevron">&#9662;</span>
+          </div>
+          <div class="panel-body">
+            <div class="article-body" dir="ltr">
+              <h2>Lampstand</h2>
+              <h3>Definition</h3>
+              <p>A <b>lampstand</b> is a stand made to hold one or more oil lamps so their light can spread through a room. In the tabernacle and temple, the golden lampstand held seven lamps and stood in the Holy Place.</p>
+              <h3>Translation Suggestions</h3>
+              <ul>
+                <li>This term could be translated as &ldquo;stand for a lamp&rdquo; or &ldquo;structure that holds a lamp.&rdquo;</li>
+                <li>For the temple lampstand, consider &ldquo;lampstand of seven lamps.&rdquo;</li>
+              </ul>
+              <p class="xref">(see: gold, olive tree)</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. translationQuestions (collapsed by default) -->
+        <div class="panel collapsed" data-panel="questions">
+          <div class="panel-head"><span>translationQuestions</span><span class="p-chevron">&#9662;</span></div>
+          <div class="panel-body">
+            <div class="tq-row">
+              <div class="tq-q" dir="ltr"><b>Q.</b> What did Zechariah see in the vision?</div>
+              <div class="tq-a" dir="ltr"><b>A.</b> A lampstand of gold with a bowl on top and seven lamps, with two olive trees beside it. (4:2&ndash;3)</div>
+            </div>
+            <div class="tq-row">
+              <div class="tq-q" dir="ltr"><b>Q.</b> How will the temple be completed?</div>
+              <div class="tq-a" dir="ltr"><b>A.</b> Not by might or power, but by Yahweh&rsquo;s Spirit. (4:6)</div>
+            </div>
+            <div class="tq-row">
+              <div class="tq-q" dir="ltr"><b>Q.</b> What do the two olive trees represent?</div>
+              <div class="tq-a" dir="ltr"><b>A.</b> The two anointed ones who serve the Lord of the whole earth. (4:14)</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Arrangement: Translate Words ===== -->
+  <section class="arrangement" id="arr-translate-words">
+    <aside class="article-rail" aria-label="Article list">
+      <div class="rail-toggle">
+        <button class="rt-opt active" type="button" data-words-tab="words">Words</button>
+        <button class="rt-opt" type="button" data-words-tab="academy">Academy</button>
+      </div>
+      <div class="rail-search"><input type="text" placeholder="Search terms…" spellcheck="false"></div>
+      <div class="article-list">
+        <button class="article-item" type="button">gold — <span class="gloss">זָהָב</span><span class="status-dot st-done"></span></button>
+        <button class="article-item current" type="button">lampstand — <span class="gloss">מְנוֹרָה</span><span class="status-dot st-draft"></span></button>
+        <button class="article-item" type="button">olive tree — <span class="gloss">זַיִת</span><span class="status-dot st-draft"></span></button>
+        <button class="article-item" type="button">lord — <span class="gloss">אֲדֹנָי</span><span class="status-dot st-none"></span></button>
+        <button class="article-item" type="button">covenant — <span class="gloss">בְּרִית</span><span class="status-dot st-done"></span></button>
+        <button class="article-item" type="button">spirit — <span class="gloss">רוּחַ</span><span class="status-dot st-none"></span></button>
+      </div>
+      <div class="dot-legend" aria-label="Status legend">
+        <span><span class="status-dot st-none"></span> Untranslated</span>
+        <span><span class="status-dot st-draft"></span> AI draft, unapproved</span>
+        <span><span class="status-dot st-done"></span> Approved</span>
+      </div>
+    </aside>
+
+    <div class="region axis-container" id="wordsArticle" style="flex: 1 1 0;">
+      <div class="region-title">
+        translationWords <span class="chip">lampstand</span>
+        <span class="spacer-flex"></span>
+        <button class="axis-toggle" type="button" title="Switch source/target between side-by-side and stacked">&#8646; Side by side</button>
+      </div>
+      <div class="article-sides">
+        <div class="article-side source">
+          <span class="src-tgt-label lbl-source">Source (English)</span>
+          <div class="article-body" dir="ltr">
+            <h2>Lampstand</h2>
+            <h3>Definition</h3>
+            <p>A <b>lampstand</b> is a stand made to hold one or more oil lamps so their light can spread through a room. In the tabernacle and temple, the golden lampstand held seven lamps and stood in the Holy Place.</p>
+            <h3>Translation Suggestions</h3>
+            <ul>
+              <li>This term could be translated as &ldquo;stand for a lamp&rdquo; or &ldquo;structure that holds a lamp.&rdquo;</li>
+              <li>For the temple lampstand, consider &ldquo;lampstand of seven lamps&rdquo; or &ldquo;golden stand with seven lamps.&rdquo;</li>
+              <li>If lamps are unfamiliar, use a general expression for a device that gives light.</li>
+            </ul>
+            <p class="xref">(see: gold, olive tree)</p>
+          </div>
+        </div>
+        <div class="article-side target">
+          <span class="src-tgt-label lbl-target">Target (Arabic)</span>
+          <div class="article-body editable" dir="rtl" contenteditable="false">
+            <h2>المَنارة</h2>
+            <h3>التعريف</h3>
+            <p><b>المَنارة</b> هي حاملٌ يُصنع لحمل سراجٍ واحدٍ أو أكثر لكي ينتشر نورها في الغرفة. وفي خيمة الاجتماع والهيكل، كانت المَنارة الذهبية تحمل سبعة سُرُج وتقف في القُدس.</p>
+            <h3>اقتراحات الترجمة</h3>
+            <ul>
+              <li>يمكن ترجمة هذا المصطلح بـ «حامل سراج» أو «هيكل يحمل سراجًا».</li>
+              <li>لمنارة الهيكل، فكِّر في «منارة ذات سبعة سُرُج» أو «حامل ذهبي بسبعة سُرُج».</li>
+              <li>إن كانت السُّرُج غير مألوفة، استخدم تعبيرًا عامًّا لأداةٍ تُعطي نورًا.</li>
+            </ul>
+            <p class="xref">(انظر: ذهب، شجرة زيتون)</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="occ-strip" id="occStrip">
+        <button class="occ-head" type="button" id="occToggle">
+          <span class="caret">&#9656;</span> Occurrences <span class="chip">2</span>
+        </button>
+        <div class="occ-body" dir="ltr">
+          <div class="occ-item"><span class="note-ref">Zechariah 4:2</span> &ldquo;I see, and behold, a <b>lampstand</b> all of gold, with its bowl on top of it…&rdquo;</div>
+          <div class="occ-item"><span class="note-ref">Zechariah 4:11</span> &ldquo;…the two olive trees on the right of the <b>lampstand</b> and on its left.&rdquo;</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Arrangement: Flexible (movable panels across columns) ===== -->
+  <section class="arrangement" id="arr-flexible">
+    <aside class="rail" aria-label="Verse timeline">
+      <span class="rail-title">4</span>
+      <div class="verse-tile">1<span class="status st-done"></span></div>
+      <div class="verse-tile current">2<span class="status st-draft"></span></div>
+      <div class="verse-tile">3<span class="status st-draft"></span></div>
+      <div class="verse-tile">4<span class="status st-none"></span></div>
+      <div class="verse-tile">5<span class="status st-none"></span></div>
+      <div class="verse-tile">6<span class="status st-done"></span></div>
+      <div class="verse-tile">7<span class="status st-none"></span></div>
+      <div class="verse-tile">8<span class="status st-none"></span></div>
+      <div class="verse-tile">9<span class="status st-none"></span></div>
+      <div class="verse-tile">10<span class="status st-none"></span></div>
+    </aside>
+
+    <div class="region fregion" style="flex: 0.5 1 0;">
+      <div class="region-title">Column A <span class="chip">drag ⠿ or ⇄ to move panels</span></div>
+      <div class="region-scroll fcol" data-col="A">
+
+        <div class="panel fpanel" data-panel="scripture" id="fp-scripture">
+          <div class="panel-head fp-head">
+            <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+            <span>Scripture</span>
+            <span class="p-caption">ULT · UST · 4:2</span>
+            <span class="fp-controls">
+              <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+              <span class="p-chevron">&#9662;</span>
+            </span>
+          </div>
+          <div class="panel-body">
+            <div class="card verse-card">
+              <div class="vc-head"><span class="vc-version">ULT</span><span class="vc-ref">Zechariah 4:2</span></div>
+              <div class="vc-text" dir="ltr">And he said to me, &ldquo;What do you see?&rdquo; And I said, &ldquo;I see, and behold, a lampstand all of gold, with its bowl on top of it and its seven lamps on it.&rdquo;</div>
+            </div>
+            <div class="card verse-card">
+              <div class="vc-head"><span class="vc-version">UST</span><span class="vc-ref">Zechariah 4:2</span></div>
+              <div class="vc-text" dir="ltr">The angel asked me, &ldquo;What do you see?&rdquo; I replied, &ldquo;I see a lampstand made entirely of gold, with a bowl at its top and seven small lamps.&rdquo;</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel fpanel" data-panel="original" id="fp-original">
+          <div class="panel-head fp-head">
+            <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+            <span>Original Language</span>
+            <span class="p-caption">UHB · Hebrew · 4:2</span>
+            <span class="fp-controls">
+              <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+              <span class="p-chevron">&#9662;</span>
+            </span>
+          </div>
+          <div class="panel-body">
+            <div class="card">
+              <div class="ol-text" dir="rtl">וַיֹּאמֶר אֵלַי מָה אַתָּה רֹאֶה וָאֹמַר רָאִיתִי וְהִנֵּה <span class="w lex" title="mᵊnôrat — lampstand (Strong H4501)">מְנוֹרַת</span> <span class="w lex" title="zāhāḇ — gold (Strong H2091)">זָהָב</span> כֻּלָּהּ וְ<span class="w lex" title="gullāh — bowl (Strong H1543)">גֻלָּהּ</span> עַל־רֹאשָׁהּ וְשִׁבְעָה נֵרֹתֶיהָ עָלֶיהָ</div>
+              <div class="ol-gloss" dir="ltr">Hover a highlighted word for its gloss &amp; Strong&rsquo;s number; click to open the lexicon.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="resize-handle" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+    <div class="region fregion" style="flex: 0.5 1 0;">
+      <div class="region-title">Column B <span class="chip">resources — everything visible, no long scroll</span></div>
+      <div class="region-scroll fcol" data-col="B">
+
+        <div class="panel fpanel" data-panel="notes" id="fp-notes">
+          <div class="panel-head fp-head">
+            <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+            <span>translationNotes</span>
+            <span class="fp-controls">
+              <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+              <span class="p-chevron">&#9662;</span>
+            </span>
+          </div>
+          <div class="panel-body">
+            <div class="note-card">
+              <div class="note-meta"><span class="note-ref">4:2</span><span class="note-quote">מְנוֹרַת זָהָב</span></div>
+              <div class="note-body" dir="ltr">The <b>lampstand of gold</b> recalls the tabernacle lampstand (Exodus 25:31&ndash;40) and symbolizes the temple and God&rsquo;s presence.</div>
+            </div>
+            <div class="note-card">
+              <div class="note-meta"><span class="note-ref">4:2</span><span class="note-quote">גֻּלָּהּ</span></div>
+              <div class="note-body" dir="ltr">The <b>bowl</b> held the oil supply — a self-replenishing source, which verse 6 interprets: &ldquo;Not by might, nor by power, but by my Spirit.&rdquo;</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel fpanel" data-panel="words" id="fp-words">
+          <div class="panel-head fp-head">
+            <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+            <span>translationWords</span>
+            <span class="fp-controls">
+              <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+              <span class="p-chevron">&#9662;</span>
+            </span>
+          </div>
+          <div class="panel-body">
+            <div class="twl-row" dir="ltr">gold — <span class="gloss">זָהָב</span><span class="status-dot st-done"></span></div>
+            <div class="twl-row current" dir="ltr">lampstand — <span class="gloss">מְנוֹרָה</span><span class="status-dot st-draft"></span></div>
+            <div class="twl-row" dir="ltr">olive tree — <span class="gloss">זַיִת</span><span class="status-dot st-draft"></span></div>
+            <div class="twl-row" dir="ltr">spirit — <span class="gloss">רוּחַ</span><span class="status-dot st-none"></span></div>
+          </div>
+        </div>
+
+        <div class="panel fpanel" data-panel="questions" id="fp-questions">
+          <div class="panel-head fp-head">
+            <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+            <span>translationQuestions</span>
+            <span class="fp-controls">
+              <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+              <span class="p-chevron">&#9662;</span>
+            </span>
+          </div>
+          <div class="panel-body">
+            <div class="tq-row">
+              <div class="tq-q" dir="ltr"><b>Q.</b> What did Zechariah see in the vision?</div>
+              <div class="tq-a" dir="ltr"><b>A.</b> A gold lampstand with a bowl and seven lamps, and two olive trees beside it. (4:2&ndash;3)</div>
+            </div>
+            <div class="tq-row">
+              <div class="tq-q" dir="ltr"><b>Q.</b> How will the temple be completed?</div>
+              <div class="tq-a" dir="ltr"><b>A.</b> Not by might or power, but by Yahweh&rsquo;s Spirit. (4:6)</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Arrangement: Flexible — Nested (top section + columns below) ===== -->
+  <section class="arrangement" id="arr-flexible-nested">
+    <aside class="rail" aria-label="Verse timeline">
+      <span class="rail-title">4</span>
+      <div class="verse-tile">1<span class="status st-done"></span></div>
+      <div class="verse-tile current">2<span class="status st-draft"></span></div>
+      <div class="verse-tile">3<span class="status st-draft"></span></div>
+      <div class="verse-tile">4<span class="status st-none"></span></div>
+      <div class="verse-tile">5<span class="status st-none"></span></div>
+      <div class="verse-tile">6<span class="status st-done"></span></div>
+      <div class="verse-tile">7<span class="status st-none"></span></div>
+      <div class="verse-tile">8<span class="status st-none"></span></div>
+      <div class="verse-tile">9<span class="status st-none"></span></div>
+      <div class="verse-tile">10<span class="status st-none"></span></div>
+    </aside>
+
+    <div class="fsplit-v">
+      <!-- Top section: scripture spanning full width -->
+      <div class="region fregion" style="flex: 0.4 1 0;">
+        <div class="region-title">Scripture <span class="chip">top section · columns · 4:2</span></div>
+        <div class="region-scroll">
+          <div class="scripture-pair">
+            <div class="card verse-card">
+              <div class="vc-head"><span class="vc-version">ULT</span><span class="vc-ref">Zechariah 4:2</span></div>
+              <div class="vc-text" dir="ltr">And he said to me, &ldquo;What do you see?&rdquo; And I said, &ldquo;I see, and behold, a lampstand all of gold, with its bowl on top of it and its seven lamps on it.&rdquo;</div>
+            </div>
+            <div class="card verse-card">
+              <div class="vc-head"><span class="vc-version">UST</span><span class="vc-ref">Zechariah 4:2</span></div>
+              <div class="vc-text" dir="ltr">The angel asked me, &ldquo;What do you see?&rdquo; I replied, &ldquo;I see a lampstand made entirely of gold, with a bowl at its top and seven small lamps.&rdquo;</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="resize-handle horizontal" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+
+      <!-- Bottom: two columns -->
+      <div class="fsplit-h" style="flex: 0.6 1 0;">
+        <div class="region fregion" style="flex: 0.4 1 0;">
+          <div class="region-title">Column A <span class="chip">original language</span></div>
+          <div class="region-scroll fcol" data-col="A">
+            <div class="panel fpanel" data-panel="original" id="fp-n-original">
+              <div class="panel-head fp-head">
+                <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+                <span>Original Language</span>
+                <span class="p-caption">UHB · Hebrew · 4:2</span>
+                <span class="fp-controls">
+                  <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+                  <span class="p-chevron">&#9662;</span>
+                </span>
+              </div>
+              <div class="panel-body">
+                <div class="card">
+                  <div class="ol-text" dir="rtl">וַיֹּאמֶר אֵלַי מָה אַתָּה רֹאֶה וָאֹמַר רָאִיתִי וְהִנֵּה <span class="w lex" title="mᵊnôrat — lampstand (Strong H4501)">מְנוֹרַת</span> <span class="w lex" title="zāhāḇ — gold (Strong H2091)">זָהָב</span> כֻּלָּהּ וְ<span class="w lex" title="gullāh — bowl (Strong H1543)">גֻלָּהּ</span> עַל־רֹאשָׁהּ וְשִׁבְעָה נֵרֹתֶיהָ עָלֶיהָ</div>
+                  <div class="ol-gloss" dir="ltr">Hover a highlighted word for its gloss &amp; Strong&rsquo;s number; click to open the lexicon.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="resize-handle" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+        <div class="region fregion" style="flex: 0.6 1 0;">
+          <div class="region-title">Column B <span class="chip">resources</span></div>
+          <div class="region-scroll fcol" data-col="B">
+            <div class="panel fpanel" data-panel="notes" id="fp-n-notes">
+              <div class="panel-head fp-head">
+                <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+                <span>translationNotes</span>
+                <span class="fp-controls">
+                  <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+                  <span class="p-chevron">&#9662;</span>
+                </span>
+              </div>
+              <div class="panel-body">
+                <div class="note-card">
+                  <div class="note-meta"><span class="note-ref">4:2</span><span class="note-quote">מְנוֹרַת זָהָב</span></div>
+                  <div class="note-body" dir="ltr">The <b>lampstand of gold</b> recalls the tabernacle lampstand (Exodus 25:31&ndash;40) and symbolizes the temple and God&rsquo;s presence.</div>
+                </div>
+                <div class="note-card">
+                  <div class="note-meta"><span class="note-ref">4:2</span><span class="note-quote">גֻּלָּהּ</span></div>
+                  <div class="note-body" dir="ltr">The <b>bowl</b> held the oil supply — a self-replenishing source, which verse 6 interprets: &ldquo;Not by might, nor by power, but by my Spirit.&rdquo;</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel fpanel" data-panel="words" id="fp-n-words">
+              <div class="panel-head fp-head">
+                <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+                <span>translationWords</span>
+                <span class="fp-controls">
+                  <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+                  <span class="p-chevron">&#9662;</span>
+                </span>
+              </div>
+              <div class="panel-body">
+                <div class="twl-row" dir="ltr">gold — <span class="gloss">זָהָב</span><span class="status-dot st-done"></span></div>
+                <div class="twl-row current" dir="ltr">lampstand — <span class="gloss">מְנוֹרָה</span><span class="status-dot st-draft"></span></div>
+                <div class="twl-row" dir="ltr">olive tree — <span class="gloss">זַיִת</span><span class="status-dot st-draft"></span></div>
+                <div class="twl-row" dir="ltr">spirit — <span class="gloss">רוּחַ</span><span class="status-dot st-none"></span></div>
+              </div>
+            </div>
+
+            <div class="panel fpanel" data-panel="questions" id="fp-n-questions">
+              <div class="panel-head fp-head">
+                <span class="fp-grip" draggable="true" title="Drag to move">&#9783;</span>
+                <span>translationQuestions</span>
+                <span class="fp-controls">
+                  <button class="fp-move" type="button" title="Move to other column">&#8646;</button>
+                  <span class="p-chevron">&#9662;</span>
+                </span>
+              </div>
+              <div class="panel-body">
+                <div class="tq-row">
+                  <div class="tq-q" dir="ltr"><b>Q.</b> What did Zechariah see in the vision?</div>
+                  <div class="tq-a" dir="ltr"><b>A.</b> A gold lampstand with a bowl and seven lamps, and two olive trees beside it. (4:2&ndash;3)</div>
+                </div>
+                <div class="tq-row">
+                  <div class="tq-q" dir="ltr"><b>Q.</b> How will the temple be completed?</div>
+                  <div class="tq-a" dir="ltr"><b>A.</b> Not by might or power, but by Yahweh&rsquo;s Spirit. (4:6)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ Save-layout dialog ============ -->
+<div class="dialog-backdrop" id="saveDialog">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">
+    <h3 id="saveDialogTitle">Save layout</h3>
+    <label class="field">Layout name
+      <input type="text" id="layoutName" value="My layout" spellcheck="false">
+    </label>
+    <label class="check"><input type="checkbox" checked> Include panel sizes</label>
+    <p class="hint">Saved to this browser. Team-shared layouts coming later.</p>
+    <div class="actions">
+      <button class="btn text" id="cancelSave">Cancel</button>
+      <button class="btn primary" id="confirmSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Toast ============ -->
+<div class="toast" id="toast"></div>
+
+<!-- ============ Schema appendix ============ -->
+<div class="appendix">
+  <details>
+    <summary>Layout schema (LayoutSpecV1)</summary>
+    <div class="schema-body">
+      <p class="note">Each preset (and each user-saved layout) serializes to a <code>LayoutSpecV1</code>. Region <code>size</code> values are flex fractions that sum to 1; the rail is outside the flex regions. <code>versions: "inherit"</code> means &ldquo;use the project&rsquo;s configured version set.&rdquo;</p>
+      <h4>TypeScript shape</h4>
+      <pre>interface LayoutSpecV1 {
+  v: 1;
+  id: string;
+  name: string;
+  builtin: boolean;
+  requires?: "translation";
+  orientation?: "horizontal" | "vertical";   // default "horizontal"
+  rail: { visible: boolean };
+  regions: { id: string; size: number; host: HostV1 }[];
+}
+
+type HostV1 =
+  | { kind: "scripture"; mode: "stacked" | "columns" | "book";
+      versions: string[] | "inherit" }
+  | { kind: "resources"; tabs: ("notes" | "words" | "questions")[];
+      initialTab: string; allowAlignment: boolean; allowSearch: boolean;
+      notePairAxis?: "horizontal" | "vertical";    // default "horizontal"
+      display?: "tabs" | "stacked";                // default "tabs"
+      showAssociatedArticles?: boolean }           // default false
+  // PROVISIONAL — pending review:
+  | { kind: "article"; resourceType: "tw" | "ta";
+      pairAxis: "horizontal" | "vertical"; showOccurrences: boolean };</pre>
+
+      <h4>Classic</h4>
+      <pre id="json-classic"></pre>
+
+      <h4>Translate Notes</h4>
+      <p class="note">Vertical orientation stacks scripture over notes; the resources host carries <code>notePairAxis</code> for the per-note source/target axis.</p>
+      <pre id="json-translate-notes"></pre>
+
+      <h4>Translate Words</h4>
+      <p class="note">The <code>article</code> host kind is <b>provisional pending review</b>. The rail expresses the article nav list; a single region holds the source/target article editor.</p>
+      <pre id="json-translate-words"></pre>
+
+      <h4>Book Package Review</h4>
+      <p class="note">The resources host uses <code>display: "stacked"</code> (all panels visible in a scroll stack, no tabs) and <code>showAssociatedArticles: true</code> (tA/tW articles linked from the active note/term appear adjoined under their list). Per-panel minimize/expand is <b>runtime state</b> stored in layout overrides, not part of the layout definition.</p>
+      <pre id="json-bp-review"></pre>
+
+      <h4>Evolved model — movable panels</h4>
+      <p class="note">To let users <b>move panels between columns</b> and add panes like an original-language view, a region evolves from hosting a single <code>host</code> to holding an ordered, movable list of <b>panel instances</b>. Regions stay the slots; panels become the movable units — still column/slot-based, <b>not</b> free-floating windows. Every preset above will be re-expressed in this model (a scripture host becomes a <code>scripture</code> panel; a resources host becomes its individual <code>notes</code>/<code>words</code>/<code>questions</code> panels).</p>
+      <pre>interface RegionV2 { id: string; size: number; display?: "stacked" | "tabs"; panels: PanelInstance[] }
+interface PanelInstance {
+  id: string;                    // instance id, e.g. "scripture-1"
+  type: "scripture" | "original" | "notes" | "words" | "questions"
+      | "taArticle" | "twArticle" | "alignment" | "search";
+  minimized?: boolean;
+  size?: number;                 // optional within-region fraction
+  config?: Record&lt;string, unknown&gt;;  // scripture:{mode,versions} · resources:{pairAxis} · original:{resource:"uhb"|"ugnt"}
+}</pre>
+
+      <h4>Flexible</h4>
+      <p class="note">Two columns, each a movable panel stack. Panel moves/reorders and per-panel minimize are <b>runtime state</b> stored in layout overrides.</p>
+      <pre id="json-flexible"></pre>
+
+      <h4>Two layers — containers &amp; pane arrangement</h4>
+      <p class="note">A layout has two separable parts. <b>(1) Container</b> — a tree of horizontal/vertical splits that defines the frame: columns, a top section, or nested combinations. <b>(2) Pane arrangement</b> — which panels sit in each region, their order, and each panel's own <code>config</code> (scripture mode + versions, note source/target axis, tabs vs stacked, minimize). A preset bundles a container frame + pane placement + pane configs; a user can change <i>either</i> layer and save. Translate Notes' &ldquo;top section&rdquo; is simply a vertical split — reusable inside any layout, including Flexible.</p>
+      <pre>type Node = SplitNode | PanelRegion;
+interface SplitNode   { kind: "split"; orientation: "horizontal" | "vertical"; size?: number; children: Node[] }
+interface PanelRegion { kind: "region"; size?: number; display?: "stacked" | "tabs"; panels: PanelInstance[] }
+interface LayoutSpec  { v: 2; id: string; name: string; builtin: boolean; requires?: "translation";
+                        rail: { visible: boolean }; root: Node }</pre>
+
+      <h4>Flexible — nested (top section + columns)</h4>
+      <p class="note">The Translate Notes top section imported into the flexible frame: scripture spans the top, with the original-language pane and resources in columns below. This is a vertical split whose second child is a horizontal split.</p>
+      <pre id="json-flexible-nested"></pre>
+    </div>
+  </details>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- Preset specs (also rendered into the appendix) ---------- */
+  var PRESETS = {
+    "classic": {
+      v: 1, id: "classic", name: "Classic", builtin: true,
+      orientation: "horizontal",
+      rail: { visible: true },
+      regions: [
+        { id: "scripture", size: 0.5,
+          host: { kind: "scripture", mode: "stacked", versions: "inherit" } },
+        { id: "resources", size: 0.5,
+          host: { kind: "resources", tabs: ["notes", "words", "questions"],
+                  initialTab: "notes", allowAlignment: true, allowSearch: true } }
+      ]
+    },
+    "translate-notes": {
+      v: 1, id: "translate-notes", name: "Translate Notes", builtin: true,
+      requires: "translation",
+      orientation: "vertical",
+      rail: { visible: false },
+      regions: [
+        { id: "scripture", size: 0.42,
+          host: { kind: "scripture", mode: "stacked", versions: ["ULT", "GLT"] } },
+        { id: "resources", size: 0.58,
+          host: { kind: "resources", tabs: ["notes"],
+                  initialTab: "notes", allowAlignment: false, allowSearch: false,
+                  notePairAxis: "horizontal" } }
+      ]
+    },
+    "translate-words": {
+      v: 1, id: "translate-words", name: "Translate Words", builtin: true,
+      requires: "translation",
+      orientation: "horizontal",
+      rail: { visible: true },   // the article nav list
+      regions: [
+        // PROVISIONAL article host — pending review
+        { id: "article", size: 1.0,
+          host: { kind: "article", resourceType: "tw",
+                  pairAxis: "horizontal", showOccurrences: false } }
+      ]
+    },
+    "bp-review": {
+      v: 1, id: "bp-review", name: "Book Package Review", builtin: true,
+      orientation: "horizontal",
+      rail: { visible: true },
+      regions: [
+        { id: "scripture", size: 0.5,
+          host: { kind: "scripture", mode: "book", versions: "inherit" } },
+        { id: "resources", size: 0.5,
+          host: { kind: "resources", display: "stacked",
+                  tabs: ["notes", "words", "questions"], initialTab: "notes",
+                  showAssociatedArticles: true,
+                  allowAlignment: true, allowSearch: true } }
+      ]
+    },
+    "flexible": {
+      v: 1, id: "flexible", name: "Flexible", builtin: true,
+      orientation: "horizontal",
+      rail: { visible: true },
+      regions: [
+        { id: "colA", size: 0.5, display: "stacked", panels: [
+          { id: "scripture-1", type: "scripture", config: { mode: "stacked", versions: "inherit" } },
+          { id: "original-1", type: "original", config: { resource: "uhb" } }
+        ] },
+        { id: "colB", size: 0.5, display: "stacked", panels: [
+          { id: "notes-1", type: "notes" },
+          { id: "words-1", type: "words" },
+          { id: "questions-1", type: "questions" }
+        ] }
+      ]
+    }
+  };
+
+  Object.keys(PRESETS).forEach(function (id) {
+    var pre = document.getElementById("json-" + id);
+    if (pre) pre.textContent = JSON.stringify(PRESETS[id], null, 2);
+  });
+
+  /* Recursive container model — nested "top section + columns" example */
+  var FLEXIBLE_NESTED = {
+    v: 2, id: "flexible-nested", name: "Flexible — nested", builtin: false,
+    rail: { visible: true },
+    root: { kind: "split", orientation: "vertical", children: [
+      { kind: "region", size: 0.4, display: "stacked", panels: [
+        { id: "scripture-1", type: "scripture", config: { mode: "columns", versions: "inherit" } }
+      ] },
+      { kind: "split", orientation: "horizontal", size: 0.6, children: [
+        { kind: "region", size: 0.4, display: "stacked", panels: [
+          { id: "original-1", type: "original", config: { resource: "uhb" } }
+        ] },
+        { kind: "region", size: 0.6, display: "stacked", panels: [
+          { id: "notes-1", type: "notes" },
+          { id: "words-1", type: "words" },
+          { id: "questions-1", type: "questions" }
+        ] }
+      ] }
+    ] }
+  };
+  (function () {
+    var fn = document.getElementById("json-flexible-nested");
+    if (fn) fn.textContent = JSON.stringify(FLEXIBLE_NESTED, null, 2);
+  })();
+
+  /* ---------- Layout switching ---------- */
+  var BANNERS = {
+    "classic": "<b>Classic</b> — the complete current editor, unchanged: rail with verse status, scripture in stacked / columns / book modes, and full note / word / question cards (quote, occurrence, support reference → tA, tags, GL quote, alignment, search). The busy power-user view — nothing removed. (This mockup draws a thin sketch of it; the real Classic renders today's actual components.)",
+    "translate-notes": "<b>Translate Notes</b> — scripture (source + target) over an independently-scrolling notes pane. Each note is a self-contained card with source and target side by side; toggle the axis to stack them.",
+    "translate-words": "<b>Translate Words</b> — a searchable tW / tA article list on the left, with the selected article's source and target side by side. Occurrences give scripture context on demand.",
+    "bp-review": "<b>Book Package Review</b> — the whole book in parallel columns with every resource in a compact density, for checking the full book package for coherence.",
+    "flexible": "<b>Flexible · Columns</b> — panels you can move between two columns (drag the ⠿ grip or use ⇄), reorder, and minimize. Here: scripture and an original-language pane on the left, resources on the right — so nothing needs long scrolling.",
+    "flexible-nested": "<b>Flexible · Nested</b> — the same movable panels in a nested container: scripture spans a top section, with the original-language pane and resources in two columns below. Drag between the bottom columns, reorder, or minimize. Resize the top section, and the columns, independently.",
+    "user-team-review": "<b>Team review — ZEC</b> (my layout) — a saved variant of Classic with this team's preferred panel sizes."
+  };
+
+  var currentLayout = "classic";
+  var menuItems = Array.prototype.slice.call(document.querySelectorAll(".menu-item[data-layout]"));
+  var arrangements = {
+    "classic": document.getElementById("arr-classic"),
+    "translate-notes": document.getElementById("arr-translate-notes"),
+    "translate-words": document.getElementById("arr-translate-words"),
+    "bp-review": document.getElementById("arr-bp-review"),
+    "flexible": document.getElementById("arr-flexible"),
+    "flexible-nested": document.getElementById("arr-flexible-nested"),
+    "user-team-review": document.getElementById("arr-classic") // saved layout mocks as a Classic variant
+  };
+
+  function applyLayout(id, opts) {
+    currentLayout = id;
+    Object.keys(arrangements).forEach(function (k) {
+      arrangements[k].classList.remove("active");
+    });
+    arrangements[id].classList.add("active");
+    menuItems.forEach(function (mi) {
+      mi.classList.toggle("selected", mi.getAttribute("data-layout") === id);
+    });
+    document.getElementById("wfBanner").innerHTML = BANNERS[id];
+    if (id === "user-team-review") {
+      // demonstrate that a user layout restores saved panel sizes
+      var regions = arrangements[id].querySelectorAll(":scope > .region");
+      regions[0].style.flexGrow = 0.62;
+      regions[1].style.flexGrow = 0.38;
+    } else if (arrangements[id] === document.getElementById("arr-classic")) {
+      var r = arrangements[id].querySelectorAll(":scope > .region");
+      r[0].style.flexGrow = 0.5;
+      r[1].style.flexGrow = 0.5;
+    }
+    if (opts && opts.toast) showToast(opts.toast);
+  }
+
+  /* ---------- Layout menu open/close ---------- */
+  var layoutBtn = document.getElementById("layoutBtn");
+  var layoutMenu = document.getElementById("layoutMenu");
+
+  function closeMenu() {
+    layoutMenu.classList.remove("open");
+    layoutBtn.classList.remove("active");
+    layoutBtn.setAttribute("aria-expanded", "false");
+  }
+  layoutBtn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var open = layoutMenu.classList.toggle("open");
+    layoutBtn.classList.toggle("active", open);
+    layoutBtn.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", function (e) {
+    if (!layoutMenu.contains(e.target)) closeMenu();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { closeMenu(); closeDialog(); }
+  });
+
+  menuItems.forEach(function (mi) {
+    mi.addEventListener("click", function () {
+      var id = mi.getAttribute("data-layout");
+      applyLayout(id, id === "user-team-review"
+        ? { toast: "Loaded “Team review — ZEC”" } : null);
+      closeMenu();
+    });
+  });
+
+  document.getElementById("manageItem").addEventListener("click", function () {
+    closeMenu();
+    showToast("Manage layouts — rename, reorder, delete (not in this mockup)");
+  });
+
+  /* ---------- Save-layout dialog ---------- */
+  var saveDialog = document.getElementById("saveDialog");
+  var layoutNameInput = document.getElementById("layoutName");
+
+  function closeDialog() { saveDialog.classList.remove("open"); }
+
+  document.getElementById("saveAsItem").addEventListener("click", function () {
+    closeMenu();
+    layoutNameInput.value = "My layout";
+    saveDialog.classList.add("open");
+    layoutNameInput.focus();
+    layoutNameInput.select();
+  });
+  document.getElementById("cancelSave").addEventListener("click", closeDialog);
+  saveDialog.addEventListener("click", function (e) {
+    if (e.target === saveDialog) closeDialog();
+  });
+  document.getElementById("confirmSave").addEventListener("click", function () {
+    closeDialog();
+    showToast("Layout saved");
+  });
+  layoutNameInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { closeDialog(); showToast("Layout saved"); }
+  });
+
+  /* ---------- Toast ---------- */
+  var toast = document.getElementById("toast");
+  var toastTimer = null;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 2600);
+  }
+
+  /* ---------- RTL preview toggle ---------- */
+  document.getElementById("rtlToggle").addEventListener("change", function (e) {
+    document.getElementById("workspace").setAttribute("dir", e.target.checked ? "rtl" : "ltr");
+    document.getElementById("wfBanner").setAttribute("dir", e.target.checked ? "rtl" : "ltr");
+  });
+
+  /* ---------- Resize handles (mock-quality drag; col- or row-resize) ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll(".resize-handle"), function (handle) {
+    var vertical = handle.classList.contains("horizontal"); // horizontal handle = row-resize
+    handle.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      var prev = handle.previousElementSibling;
+      var next = handle.nextElementSibling;
+      if (!prev || !next) return;
+      var start = vertical ? e.clientY : e.clientX;
+      var prevSize = vertical ? prev.getBoundingClientRect().height : prev.getBoundingClientRect().width;
+      var nextSize = vertical ? next.getBoundingClientRect().height : next.getBoundingClientRect().width;
+      var total = prevSize + nextSize;
+      var min = vertical ? 100 : 160;
+      var rtl = document.getElementById("workspace").getAttribute("dir") === "rtl";
+      handle.classList.add("dragging");
+      document.body.style.cursor = vertical ? "row-resize" : "col-resize";
+      document.body.style.userSelect = "none";
+
+      function onMove(ev) {
+        var d = (vertical ? ev.clientY : ev.clientX) - start;
+        if (!vertical && rtl) d = -d;
+        var newPrev = Math.min(Math.max(prevSize + d, min), total - min);
+        var frac = newPrev / total;
+        prev.style.flexGrow = frac;
+        next.style.flexGrow = 1 - frac;
+      }
+      function onUp() {
+        handle.classList.remove("dragging");
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+
+  /* ---------- Source/target axis toggle (shared by notes + words) ---------- */
+  var axisStacked = false;
+  var axisContainers = Array.prototype.slice.call(document.querySelectorAll(".axis-container"));
+  var axisToggles = Array.prototype.slice.call(document.querySelectorAll(".axis-toggle"));
+  function setAxis(stacked) {
+    axisStacked = stacked;
+    axisContainers.forEach(function (c) { c.classList.toggle("stacked", stacked); });
+    axisToggles.forEach(function (b) {
+      b.innerHTML = stacked ? "↕ Stacked" : "⇆ Side by side";
+    });
+  }
+  axisToggles.forEach(function (b) {
+    b.addEventListener("click", function () { setAxis(!axisStacked); });
+  });
+
+  /* ---------- Scripture mode toggle (Classic: stacked / columns / book) ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll(".mode-toggle"), function (grp) {
+    Array.prototype.forEach.call(grp.querySelectorAll(".mode-btn"), function (b) {
+      b.addEventListener("click", function () {
+        Array.prototype.forEach.call(grp.querySelectorAll(".mode-btn"), function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+        showToast("Scripture: " + b.textContent + " mode — all three modes stay available in Classic");
+      });
+    });
+  });
+
+  /* ---------- BP Review: minimizable stacked panels ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll(".panel-head"), function (head) {
+    head.addEventListener("click", function () {
+      head.parentElement.classList.toggle("collapsed");
+    });
+  });
+
+  /* ---------- Occurrences strip (collapsed by default) ---------- */
+  var occStrip = document.getElementById("occStrip");
+  var occToggle = document.getElementById("occToggle");
+  if (occToggle) {
+    occToggle.addEventListener("click", function () { occStrip.classList.toggle("open"); });
+  }
+
+  /* ---------- Words/Academy rail toggle ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll(".rt-opt"), function (opt) {
+    opt.addEventListener("click", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".rt-opt"), function (o) {
+        o.classList.remove("active");
+      });
+      opt.classList.add("active");
+      if (opt.getAttribute("data-words-tab") === "academy") {
+        showToast("Academy (tA) article list — not mocked; Words shows the pattern");
+      }
+    });
+  });
+
+  /* ---------- Article list selection (visual) ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll(".article-item"), function (item) {
+    item.addEventListener("click", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".article-item"), function (a) {
+        a.classList.remove("current");
+      });
+      item.classList.add("current");
+      var term = item.textContent.split("—")[0].trim();
+      if (term !== "lampstand") {
+        showToast("“" + term + "” article — not mocked; “lampstand” shows the pattern");
+      }
+    });
+  });
+
+  /* ---------- Resource tabs (visual only) ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll(".tabs"), function (tabs) {
+    Array.prototype.forEach.call(tabs.querySelectorAll(".tab"), function (tab) {
+      tab.addEventListener("click", function () {
+        Array.prototype.forEach.call(tabs.querySelectorAll(".tab"), function (t) {
+          t.classList.remove("active");
+        });
+        tab.classList.add("active");
+        if (tab.textContent !== "Notes") {
+          showToast(tab.textContent + " tab — content not mocked; Notes shows the pattern");
+        }
+      });
+    });
+  });
+
+  /* ---------- Flexible layouts: move + drag-drop panels between columns ---------- */
+  function wireFlexible(root) {
+    var cols = Array.prototype.slice.call(root.querySelectorAll(".fcol"));
+    if (!cols.length) return;
+
+    var dragged = null;
+    var indicator = null;
+
+    function panelName(panel) {
+      var t = panel.querySelector(".panel-head > span:nth-child(2)");
+      return t ? t.textContent : (panel.getAttribute("data-panel") || "panel");
+    }
+    function colLabel(col) {
+      return "Column " + (col.getAttribute("data-col") || "?");
+    }
+    function removeIndicator() {
+      if (indicator && indicator.parentNode) indicator.parentNode.removeChild(indicator);
+      indicator = null;
+    }
+    function afterElement(col, y) {
+      var items = Array.prototype.slice.call(col.querySelectorAll(".fpanel:not(.dragging)"));
+      var closest = null, closestOffset = -Infinity;
+      items.forEach(function (child) {
+        var box = child.getBoundingClientRect();
+        var offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = child; }
+      });
+      return closest;
+    }
+
+    // Move-to-other-column button (no-drag fallback; cycles to the next column)
+    Array.prototype.forEach.call(root.querySelectorAll(".fp-move"), function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var panel = btn.closest(".fpanel");
+        var here = cols.indexOf(panel.parentElement);
+        var other = cols[(here + 1) % cols.length];
+        other.appendChild(panel);
+        showToast("Moved " + panelName(panel) + " to " + colLabel(other));
+      });
+    });
+
+    // Grip: start drag, and swallow plain clicks so they don't toggle collapse
+    Array.prototype.forEach.call(root.querySelectorAll(".fp-grip"), function (grip) {
+      grip.addEventListener("click", function (e) { e.stopPropagation(); });
+      grip.addEventListener("dragstart", function (e) {
+        dragged = grip.closest(".fpanel");
+        dragged.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", dragged.id); } catch (err) {}
+      });
+      grip.addEventListener("dragend", function () {
+        if (dragged) dragged.classList.remove("dragging");
+        dragged = null;
+        cols.forEach(function (c) { c.classList.remove("drop-active"); });
+        removeIndicator();
+      });
+    });
+
+    // Columns are drop targets
+    cols.forEach(function (col) {
+      col.addEventListener("dragover", function (e) {
+        if (!dragged) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        col.classList.add("drop-active");
+        if (!indicator) { indicator = document.createElement("div"); indicator.className = "drop-indicator"; }
+        var after = afterElement(col, e.clientY);
+        if (after) col.insertBefore(indicator, after); else col.appendChild(indicator);
+      });
+      col.addEventListener("dragleave", function (e) {
+        if (e.target === col) col.classList.remove("drop-active");
+      });
+      col.addEventListener("drop", function (e) {
+        if (!dragged) return;
+        e.preventDefault();
+        var after = afterElement(col, e.clientY);
+        if (after) col.insertBefore(dragged, after); else col.appendChild(dragged);
+        col.classList.remove("drop-active");
+        removeIndicator();
+        showToast("Moved " + panelName(dragged) + " to " + colLabel(col));
+      });
+    });
+  }
+  ["arr-flexible", "arr-flexible-nested"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) wireFlexible(el);
+  });
+
+  /* ---------- Boot ---------- */
+  applyLayout("classic");
+})();
+</script>
+</body>
+</html>

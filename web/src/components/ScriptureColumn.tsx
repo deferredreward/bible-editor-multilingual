@@ -1,11 +1,12 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button, Chip } from "@mui/material";
+import { Box, Stack, Typography, Paper, IconButton, Tooltip, ToggleButton, ToggleButtonGroup, Button, Chip, Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
 import HistoryIcon from "@mui/icons-material/History";
 import { AlignLinkButton } from "./AlignLinkButton";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import ViewStreamIcon from "@mui/icons-material/ViewStream";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import SearchIcon from "@mui/icons-material/Search";
 import UndoIcon from "@mui/icons-material/Undo";
 import SaveIcon from "@mui/icons-material/Save";
@@ -253,6 +254,9 @@ function ScriptureColumnInner({
   const activeRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
+  // Anchor for the compact view-mode menu (replaces the three always-visible
+  // rows/columns/book buttons — same `mode` / `onModeChange` contract).
+  const [modeMenuAnchor, setModeMenuAnchor] = useState<HTMLElement | null>(null);
   const openFind = useCallback(() => {
     setFindOpen(true);
   }, []);
@@ -411,49 +415,66 @@ function ScriptureColumnInner({
         alignItems="center"
         sx={{
           px: 2,
-          py: 0.75,
+          py: 0.25,
           borderBottom: "1px solid",
           borderColor: "divider",
           bgcolor: "grey.50",
           flexWrap: "wrap",
         }}
       >
-        <Typography variant="subtitle2" sx={{ mr: 1 }}>
-          {t("shell.scripture")}
-        </Typography>
-        <Tooltip title={t("shell.tooltipRows")}>
+        <Tooltip title={t("shell.viewModeTooltip")}>
           <Button
             size="small"
-            variant={mode === "stacked" ? "contained" : "outlined"}
-            startIcon={<ViewStreamIcon fontSize="small" />}
-            onClick={() => onModeChange("stacked")}
+            variant="outlined"
+            startIcon={
+              mode === "stacked" ? (
+                <ViewStreamIcon fontSize="small" />
+              ) : mode === "columns" ? (
+                <ViewColumnIcon fontSize="small" />
+              ) : (
+                <MenuBookIcon fontSize="small" />
+              )
+            }
+            endIcon={<ArrowDropDownIcon fontSize="small" />}
+            aria-label={t("shell.viewMode")}
+            aria-haspopup="menu"
+            onClick={(e) => setModeMenuAnchor(e.currentTarget)}
             sx={{ textTransform: "none" }}
           >
-            {t("shell.rows")}
+            {mode === "stacked"
+              ? t("shell.rows")
+              : mode === "columns"
+                ? t("shell.colCount", { count: enabledVersions.length })
+                : t("shell.book")}
           </Button>
         </Tooltip>
-        <Tooltip title={t("shell.tooltipColumns")}>
-          <Button
-            size="small"
-            variant={mode === "columns" ? "contained" : "outlined"}
-            startIcon={<ViewColumnIcon fontSize="small" />}
-            onClick={() => onModeChange("columns")}
-            sx={{ textTransform: "none" }}
-          >
-            {mode === "columns" ? t("shell.colCount", { count: enabledVersions.length }) : t("shell.columns")}
-          </Button>
-        </Tooltip>
-        <Tooltip title={t("shell.tooltipBook")}>
-          <Button
-            size="small"
-            variant={mode === "book" ? "contained" : "outlined"}
-            startIcon={<MenuBookIcon fontSize="small" />}
-            onClick={() => onModeChange("book")}
-            sx={{ textTransform: "none" }}
-          >
-            {t("shell.book")}
-          </Button>
-        </Tooltip>
+        <Menu
+          anchorEl={modeMenuAnchor}
+          open={Boolean(modeMenuAnchor)}
+          onClose={() => setModeMenuAnchor(null)}
+          MenuListProps={{ dense: true, "aria-label": t("shell.viewMode") }}
+        >
+          {(
+            [
+              ["stacked", t("shell.rows"), t("shell.tooltipRows"), <ViewStreamIcon fontSize="small" />],
+              ["columns", t("shell.columns"), t("shell.tooltipColumns"), <ViewColumnIcon fontSize="small" />],
+              ["book", t("shell.book"), t("shell.tooltipBook"), <MenuBookIcon fontSize="small" />],
+            ] as [ScriptureMode, string, string, ReactNode][]
+          ).map(([value, label, hint, icon]) => (
+            <MenuItem
+              key={value}
+              selected={mode === value}
+              sx={{ maxWidth: 340, whiteSpace: "normal", alignItems: "flex-start" }}
+              onClick={() => {
+                setModeMenuAnchor(null);
+                if (value !== mode) onModeChange(value);
+              }}
+            >
+              <ListItemIcon>{icon}</ListItemIcon>
+              <ListItemText primary={label} secondary={hint} />
+            </MenuItem>
+          ))}
+        </Menu>
         <Tooltip
           title={
             mode === "book"
@@ -506,6 +527,16 @@ function ScriptureColumnInner({
         <Typography variant="caption" color="text.secondary">
           {book} {chapter}:{activeVerse === 0 ? t("shell.intro") : activeVerse}
         </Typography>
+        {/* Book mode's lazy-load status. Used to occupy its own band inside
+            BookView; folded in here so it costs no extra row. */}
+        {mode === "book" && bookChapterList && bookChapters && (
+          <Typography variant="caption" color="text.disabled" sx={{ whiteSpace: "nowrap" }}>
+            {t("shell.bookLoadStatus", {
+              chapters: bookChapterList.length,
+              loaded: countReadyChapters(bookChapters),
+            })}
+          </Typography>
+        )}
       </Stack>
       <Box ref={bodyRef} sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {findOpen && (
@@ -669,6 +700,15 @@ function areScriptureColumnPropsEqual(a: Props, b: Props): boolean {
 }
 
 export const ScriptureColumn = memo(ScriptureColumnInner, areScriptureColumnPropsEqual);
+
+// Book mode's "loaded n" counter. useBook replaces the chapters Map on every
+// load transition, so `bookChapters` gets a new ref and the memo comparator
+// above lets this recompute.
+function countReadyChapters(chapters: Map<number, ChapterState>): number {
+  let n = 0;
+  for (const s of chapters.values()) if (s.kind === "ready") n++;
+  return n;
+}
 
 // Find the row immediately preceding `verseNum` in this version's verse
 // map. Multi-verse rows live at their verse_start in the index, so we
