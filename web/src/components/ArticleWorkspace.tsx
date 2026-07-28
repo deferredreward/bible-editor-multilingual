@@ -478,6 +478,9 @@ function ArticleEditor({
     }
     let cancelled = false;
     setLoadingParts(true);
+    // Clear any prior warning so it can't outlive the article/refetch that
+    // raised it (this effect re-runs on reloadKey without a remount).
+    setStaleDraft(false);
     Promise.all(paths.map((p) => api.getArticle(resource, p)))
       .then(async (list) => {
         if (cancelled) return;
@@ -502,6 +505,14 @@ function ArticleEditor({
         for (const { unit, rec } of stored) {
           const text = (rec?.payload as { target_md?: string } | undefined)?.target_md;
           if (typeof text !== "string") continue;
+          // The draft has become a no-op — the server now holds this exact text
+          // (saved from another tab, or by someone else). Restoring it would
+          // leave nothing dirty, so Save stays disabled and the user has no way
+          // to clear the "N unsaved" chip it keeps arming. Drop it instead.
+          if (text === (unit.target_md ?? "")) {
+            void draftStore.clear(articleKey(resource, unit.path));
+            continue;
+          }
           if (rec && rec.expectedVersion !== unit.version) stale = true;
           seeded[unit.path] = text;
         }
@@ -540,9 +551,17 @@ function ArticleEditor({
     (u: ArticleUnit) => {
       setParts((prev) => (prev ? prev.map((p) => (p.path === u.path ? u : p)) : prev));
       setDrafts((prev) => ({ ...prev, [u.path]: u.target_md ?? "" }));
-      // The server copy is now authoritative for this part — drop the local
-      // draft so the unsaved marker and the reload guard stop counting it.
-      void draftStore.clear(articleKey(resource, u.path));
+      // Drop the persisted draft only once the server actually holds this text.
+      // After a save that's true and the draft is redundant. But this also runs
+      // for validate/unvalidate responses, which carry the PRE-EXISTING
+      // target_md — clearing there would delete the user's unsaved typing along
+      // with the last copy of it. Comparing first makes the clear safe from
+      // every call site rather than relying on the caller to know.
+      const key = articleKey(resource, u.path);
+      void draftStore.get(key).then((rec) => {
+        const stored = (rec?.payload as { target_md?: string } | undefined)?.target_md;
+        if (stored === undefined || stored === (u.target_md ?? "")) void draftStore.clear(key);
+      });
     },
     [resource],
   );
@@ -706,7 +725,16 @@ function ArticleEditor({
           </Button>
         )}
         {isValidated && (
-          <Button size="small" variant="text" color="warning" onClick={() => handleValidate(false)}>
+          <Button
+            size="small"
+            variant="text"
+            color="warning"
+            // Gated like Approve above: the validate response carries the
+            // pre-existing target_md, so running it with unsaved typing in the
+            // box would replace what the user just wrote with the older text.
+            disabled={anyDirty}
+            onClick={() => handleValidate(false)}
+          >
             {t("translation.unapprove")}
           </Button>
         )}
@@ -881,8 +909,10 @@ function ArticleEditor({
       )}
 
       <Snackbar
+        // No autoHide: this one guards a save that would overwrite newer server
+        // text without a 409 to stop it, so it must not disappear while the user
+        // is looking elsewhere. They dismiss it deliberately.
         open={staleDraft}
-        autoHideDuration={10000}
         onClose={() => setStaleDraft(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
