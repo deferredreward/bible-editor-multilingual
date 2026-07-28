@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "सुरक्षित नगरिएका परिवर्तनहरू",
+    "staleDraft": "तपाईंसँग सुरक्षित नगरिएको पाठ हुँदा यो टेम्प्लेट सर्भरमा परिवर्तन भयो। तपाईंको पाठ पुनर्स्थापित गरियो; सुरक्षित गर्नुअघि जाँच्नुहोस्।",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

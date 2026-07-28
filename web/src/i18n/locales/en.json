@@ -55,6 +55,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "Unsaved changes",
+    "staleDraft": "This template changed on the server while you had unsaved text. Your text was restored — review it before saving.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

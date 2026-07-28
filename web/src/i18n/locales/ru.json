@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "Несохранённые изменения",
+    "staleDraft": "Этот шаблон изменился на сервере, пока у вас был несохранённый текст. Ваш текст восстановлен — проверьте его перед сохранением.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

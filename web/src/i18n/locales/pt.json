@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "Alterações não salvas",
+    "staleDraft": "Este modelo mudou no servidor enquanto você tinha texto não salvo. Seu texto foi restaurado; revise-o antes de salvar.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

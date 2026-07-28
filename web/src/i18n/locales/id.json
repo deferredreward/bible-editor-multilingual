@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "Perubahan belum disimpan",
+    "staleDraft": "Templat ini berubah di server saat Anda memiliki teks yang belum disimpan. Teks Anda dipulihkan; periksa sebelum menyimpan.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

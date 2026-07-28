@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "غیر محفوظ تبدیلیاں",
+    "staleDraft": "یہ سانچہ سرور پر تبدیل ہو گیا جب آپ کے پاس غیر محفوظ متن تھا۔ آپ کا متن بحال کر دیا گیا؛ محفوظ کرنے سے پہلے اسے جانچ لیں۔",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

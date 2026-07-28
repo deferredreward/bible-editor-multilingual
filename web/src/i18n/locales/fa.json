@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "تغییرات ذخیره‌نشده",
+    "staleDraft": "این قالب در سرور تغییر کرد در حالی که متن ذخیره‌نشده داشتید. متن شما بازیابی شد؛ قبل از ذخیره آن را بررسی کنید.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

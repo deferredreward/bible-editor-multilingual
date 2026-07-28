@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "การเปลี่ยนแปลงที่ยังไม่บันทึก",
+    "staleDraft": "เทมเพลตนี้เปลี่ยนแปลงบนเซิร์ฟเวอร์ขณะที่คุณมีข้อความที่ยังไม่บันทึก ข้อความของคุณถูกกู้คืนแล้ว โปรดตรวจสอบก่อนบันทึก",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",
