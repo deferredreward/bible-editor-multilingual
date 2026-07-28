@@ -39,10 +39,11 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import CheckIcon from "@mui/icons-material/Check";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import { alpha } from "@mui/material/styles";
+import { alpha, type Theme } from "@mui/material/styles";
 import { useTranslation } from "react-i18next";
 import type { TnRow } from "../sync/api";
 import type { SourceNote } from "../hooks/useSourceNotes";
+import { useNotePairAxisContext } from "./notePairAxis";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { CatalogPicker } from "./CatalogPicker";
@@ -317,6 +318,42 @@ function NoteBodyReadView({
   );
 }
 
+// Shared between the stacked and side-by-side renderings of the English source
+// block, so the two can't drift apart visually.
+const SOURCE_LABEL_SX = {
+  fontFamily: "monospace",
+  color: "text.disabled",
+  textTransform: "uppercase",
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: "0.09em",
+} as const;
+
+const SOURCE_BOX_SX = {
+  borderInlineStart: "3px solid",
+  borderColor: "divider",
+  bgcolor: (theme: Theme) => alpha(theme.palette.text.primary, 0.03),
+  borderRadius: 1,
+  px: 1.5,
+  py: 1,
+} as const;
+
+const SOURCE_TEXT_SX = {
+  fontSize: `calc(14px * var(--be-reading-scale, 1))`,
+  lineHeight: 1.55,
+  color: "text.secondary",
+  fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+  whiteSpace: "pre-wrap",
+  overflowWrap: "break-word",
+  textAlign: "start",
+} as const;
+
+// Height of the label row above each half when side by side. The draft's row
+// carries the TEMPLATE / SUGGEST buttons and is naturally this tall; pinning
+// both rows to it keeps the two content boxes starting on the same line even
+// when those buttons are hidden (read-only cards).
+const PAIR_LABEL_ROW_H = 26;
+
 function NoteCardInner({
   row,
   active,
@@ -361,6 +398,10 @@ function NoteCardInner({
   isTranslating = false,
 }: Props) {
   const { t } = useTranslation();
+  // The notes pane publishes the EFFECTIVE axis (it collapses side-by-side to
+  // stacked in a narrow pane). Outside a notes pane this is "vertical", i.e.
+  // the layout this card has always had.
+  const notePairAxis = useNotePairAxisContext();
   // Two explicit bits drive lock-time behavior now:
   //   - preserve=1: translator marked this row "survive AI runs"
   //   - hint=1:    this row is a stub queued for AI expansion in place
@@ -430,6 +471,13 @@ function NoteCardInner({
   // as a normal editable card, not forced into the untranslated treatment.
   const isUntranslated =
     translationMode && translationState == null && !(row.note && row.note.trim());
+  // The read-only English source block, and whether it sits beside the draft
+  // rather than above it. Side by side only makes sense when there IS a source
+  // to put there — a card without one keeps the draft full-width.
+  const showSourceNote = Boolean(
+    translationMode && (isDraftState || isUntranslated) && sourceNote,
+  );
+  const pairSideBySide = showSourceNote && notePairAxis === "horizontal";
   // Validated cards collapse (green, one-line preview). Local expand is
   // view-only — editing a re-expanded card auto-demotes it to 'edited'
   // server-side (rows.ts content PATCH). Re-collapses when it re-validates.
@@ -1441,56 +1489,71 @@ function NoteCardInner({
         />
       </Box>
 
-      {/* ── English source (translation mode) — pinned read-only above the
-          editable draft. Always LTR (English) even inside an RTL card. ── */}
-      {translationMode && (isDraftState || isUntranslated) && sourceNote && (
-        <Box
-          dir="ltr"
-          sx={{
-            mx: 1.5,
-            mt: 1,
-            borderInlineStart: "3px solid",
-            borderColor: "divider",
-            bgcolor: (theme) => alpha(theme.palette.text.primary, 0.03),
-            borderRadius: 1,
-            px: 1.5,
-            py: 1,
-          }}
-        >
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              mb: 0.5,
-              fontFamily: "monospace",
-              color: "text.disabled",
-              textTransform: "uppercase",
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: "0.09em",
-            }}
-          >
-            {t("translation.sourceLabel")}
-          </Typography>
-          <Box
-            sx={{
-              fontSize: `calc(14px * var(--be-reading-scale, 1))`,
-              lineHeight: 1.55,
-              color: "text.secondary",
-              fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
-              whiteSpace: "pre-wrap",
-              overflowWrap: "break-word",
-              textAlign: "start",
-            }}
-          >
-            {sourceNote.note}
+      {/* ── English source (translation mode) + the editable draft ──
+          The source is pinned read-only against the draft the translator is
+          writing. `pairSideBySide` puts the two next to each other (the
+          tcCreate reading); otherwise the source stays stacked above the draft,
+          which is the layout this card has always had and remains the default.
+          Only these two blocks move — quote, support reference, flag chips and
+          the approve/re-run row are identical on both axes. ── */}
+      <Box
+        sx={
+          pairSideBySide
+            ? { display: "flex", alignItems: "stretch", gap: 1.5, px: 1.5, pt: 1 }
+            : undefined
+        }
+      >
+      {showSourceNote &&
+        (pairSideBySide ? (
+          // Side by side, the source half mirrors the draft half's anatomy so
+          // the two read as a matched pair: a label row of the SAME height
+          // (PAIR_LABEL_ROW_H — the draft's row is sized by its TEMPLATE /
+          // SUGGEST buttons, which the source has no equivalent of), then the
+          // content box. Keeping the label OUTSIDE the tinted box is what makes
+          // the two boxes start on the same line; with the label inside, the
+          // source box began a row higher than the draft field. The box then
+          // flexes to fill, so both halves also END on the same line.
+          <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              sx={{ mb: 0.5, minHeight: PAIR_LABEL_ROW_H }}
+            >
+              <Typography variant="caption" sx={SOURCE_LABEL_SX}>
+                {t("translation.sourceLabel")}
+              </Typography>
+            </Stack>
+            <Box dir="ltr" sx={{ ...SOURCE_BOX_SX, flex: 1 }}>
+              <Box sx={SOURCE_TEXT_SX}>{sourceNote?.note}</Box>
+            </Box>
           </Box>
-        </Box>
-      )}
+        ) : (
+          // Stacked — byte-for-byte the block this card has always rendered.
+          <Box dir="ltr" sx={{ ...SOURCE_BOX_SX, mx: 1.5, mt: 1 }}>
+            <Typography variant="caption" sx={{ ...SOURCE_LABEL_SX, display: "block", mb: 0.5 }}>
+              {t("translation.sourceLabel")}
+            </Typography>
+            <Box sx={SOURCE_TEXT_SX}>{sourceNote?.note}</Box>
+          </Box>
+        ))}
 
       {/* ── Note (hero) ── */}
-      <Box sx={{ px: 1.5, pt: 0.75, pb: 0.75 }}>
-        <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
+      <Box
+        sx={
+          pairSideBySide
+            ? // No bottom padding here: the source box stretches to this
+              // column's full height, so any padding below the draft field
+              // would push the source box past it and misalign their bottoms.
+              // Column layout so the field can flex to fill the leftover space.
+              { flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }
+            : { px: 1.5, pt: 0.75, pb: 0.75 }
+        }
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          sx={{ mb: 0.5, ...(pairSideBySide ? { minHeight: PAIR_LABEL_ROW_H } : {}) }}
+        >
           <Typography
             variant="caption"
             sx={{
@@ -1590,6 +1653,27 @@ function NoteCardInner({
             size="small"
             spellCheck
             onFocus={onFocus}
+            // Side by side, grow to fill the column so the draft box matches
+            // the source box instead of ending short whenever the translation
+            // is more compact than the English (Arabic usually is).
+            //
+            // flex-grow, NOT a fixed height: `height: 100%` on the textarea
+            // also CAPPED it, so a draft longer than the source got trapped in
+            // a small scrolling box instead of growing the card. Here the field
+            // fills leftover space when short, and `min-height: auto` lets it
+            // push the column taller when long — at which point the source box
+            // stretches to match it instead. Stacked is untouched: the field
+            // keeps its natural autosize there.
+            sx={
+              pairSideBySide
+                ? {
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    "& .MuiInputBase-root": { flex: 1, alignItems: "flex-start" },
+                  }
+                : undefined
+            }
             InputProps={{
               readOnly,
               ...(hasRowDiff && note !== rowNoteDisplay ? { "data-dirty": "true" } : {}),
@@ -1613,6 +1697,7 @@ function NoteCardInner({
             }}
           />
         )}
+      </Box>
       </Box>
 
       {/* ── Translation-mode action row (Approve / Translate / Re-run) ── */}
