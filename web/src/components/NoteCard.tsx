@@ -39,7 +39,7 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import CheckIcon from "@mui/icons-material/Check";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import { alpha } from "@mui/material/styles";
+import { alpha, type Theme } from "@mui/material/styles";
 import { useTranslation } from "react-i18next";
 import type { TnRow } from "../sync/api";
 import type { SourceNote } from "../hooks/useSourceNotes";
@@ -317,6 +317,42 @@ function NoteBodyReadView({
     </Box>
   );
 }
+
+// Shared between the stacked and side-by-side renderings of the English source
+// block, so the two can't drift apart visually.
+const SOURCE_LABEL_SX = {
+  fontFamily: "monospace",
+  color: "text.disabled",
+  textTransform: "uppercase",
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: "0.09em",
+} as const;
+
+const SOURCE_BOX_SX = {
+  borderInlineStart: "3px solid",
+  borderColor: "divider",
+  bgcolor: (theme: Theme) => alpha(theme.palette.text.primary, 0.03),
+  borderRadius: 1,
+  px: 1.5,
+  py: 1,
+} as const;
+
+const SOURCE_TEXT_SX = {
+  fontSize: `calc(14px * var(--be-reading-scale, 1))`,
+  lineHeight: 1.55,
+  color: "text.secondary",
+  fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
+  whiteSpace: "pre-wrap",
+  overflowWrap: "break-word",
+  textAlign: "start",
+} as const;
+
+// Height of the label row above each half when side by side. The draft's row
+// carries the TEMPLATE / SUGGEST buttons and is naturally this tall; pinning
+// both rows to it keeps the two content boxes starting on the same line even
+// when those buttons are hidden (read-only cards).
+const PAIR_LABEL_ROW_H = 26;
 
 function NoteCardInner({
   row,
@@ -1463,63 +1499,60 @@ function NoteCardInner({
       <Box
         sx={
           pairSideBySide
-            ? { display: "flex", alignItems: "flex-start", gap: 1.5, px: 1.5, pt: 1 }
+            ? { display: "flex", alignItems: "stretch", gap: 1.5, px: 1.5, pt: 1 }
             : undefined
         }
       >
-      {showSourceNote && (
-        <Box
-          dir="ltr"
-          sx={{
-            ...(pairSideBySide ? { flex: 1, minWidth: 0 } : { mx: 1.5, mt: 1 }),
-            borderInlineStart: "3px solid",
-            borderColor: "divider",
-            bgcolor: (theme) => alpha(theme.palette.text.primary, 0.03),
-            borderRadius: 1,
-            px: 1.5,
-            py: 1,
-          }}
-        >
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              mb: 0.5,
-              fontFamily: "monospace",
-              color: "text.disabled",
-              textTransform: "uppercase",
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: "0.09em",
-            }}
-          >
-            {t("translation.sourceLabel")}
-          </Typography>
-          <Box
-            sx={{
-              fontSize: `calc(14px * var(--be-reading-scale, 1))`,
-              lineHeight: 1.55,
-              color: "text.secondary",
-              fontFamily: '"Source Serif Pro","Cambria","Times New Roman",serif',
-              whiteSpace: "pre-wrap",
-              overflowWrap: "break-word",
-              textAlign: "start",
-            }}
-          >
-            {sourceNote?.note}
+      {showSourceNote &&
+        (pairSideBySide ? (
+          // Side by side, the source half mirrors the draft half's anatomy so
+          // the two read as a matched pair: a label row of the SAME height
+          // (PAIR_LABEL_ROW_H — the draft's row is sized by its TEMPLATE /
+          // SUGGEST buttons, which the source has no equivalent of), then the
+          // content box. Keeping the label OUTSIDE the tinted box is what makes
+          // the two boxes start on the same line; with the label inside, the
+          // source box began a row higher than the draft field. The box then
+          // flexes to fill, so both halves also END on the same line.
+          <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              sx={{ mb: 0.5, minHeight: PAIR_LABEL_ROW_H }}
+            >
+              <Typography variant="caption" sx={SOURCE_LABEL_SX}>
+                {t("translation.sourceLabel")}
+              </Typography>
+            </Stack>
+            <Box dir="ltr" sx={{ ...SOURCE_BOX_SX, flex: 1 }}>
+              <Box sx={SOURCE_TEXT_SX}>{sourceNote?.note}</Box>
+            </Box>
           </Box>
-        </Box>
-      )}
+        ) : (
+          // Stacked — byte-for-byte the block this card has always rendered.
+          <Box dir="ltr" sx={{ ...SOURCE_BOX_SX, mx: 1.5, mt: 1 }}>
+            <Typography variant="caption" sx={{ ...SOURCE_LABEL_SX, display: "block", mb: 0.5 }}>
+              {t("translation.sourceLabel")}
+            </Typography>
+            <Box sx={SOURCE_TEXT_SX}>{sourceNote?.note}</Box>
+          </Box>
+        ))}
 
       {/* ── Note (hero) ── */}
       <Box
         sx={
           pairSideBySide
-            ? { flex: 1, minWidth: 0, pb: 0.75 }
+            ? // No bottom padding here: the source box stretches to this
+              // column's full height, so any padding below the draft field
+              // would push the source box past it and misalign their bottoms.
+              { flex: 1, minWidth: 0 }
             : { px: 1.5, pt: 0.75, pb: 0.75 }
         }
       >
-        <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          sx={{ mb: 0.5, ...(pairSideBySide ? { minHeight: PAIR_LABEL_ROW_H } : {}) }}
+        >
           <Typography
             variant="caption"
             sx={{
