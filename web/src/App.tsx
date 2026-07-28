@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
+import { TopBar } from "./components/TopBar";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
@@ -500,17 +501,38 @@ export function App() {
             }}
           />
         ) : loc.view === "article" ? (
-          <ArticleWorkspace
-            resource={loc.resource}
-            articleId={loc.articleId}
-            onBack={backToScripture}
-            onNavigate={(r, a) => {
-              // Empty articleId (e.g. switching resource with nothing selected)
-              // must not emit a trailing slash — `#/articles/ta/` fails the
-              // article regex and misparses as a chapter.
-              location.hash = a ? `#/articles/${r}/${encodeURIComponent(a)}` : `#/articles/${r}`;
-            }}
-          />
+          // The article workspace keeps the app's top bar so navigating here
+          // doesn't drop the user out of the shell chrome (status, More,
+          // account, theme/font/language). Book navigation is switched off —
+          // an article has no book/chapter. The bar is fed the last scripture
+          // position so "back" targets and status scope stay coherent; the
+          // chapter-scoped controls Shell owns (AI pipeline menu, layout
+          // switcher, export, verse-list toggle, lint counts) are simply not
+          // passed, so each hides itself.
+          <Stack sx={{ height: "100%", minHeight: 0 }}>
+            <TopBar
+              showNavigation={false}
+              book={lastScriptureRef.current.book}
+              chapter={lastScriptureRef.current.chapter}
+              verse={lastScriptureRef.current.verse}
+              onNavigate={navigate}
+              username={auth.kind === "ready" ? auth.me?.username ?? null : null}
+              onLogout={handleSignOut}
+            />
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              <ArticleWorkspace
+                resource={loc.resource}
+                articleId={loc.articleId}
+                onBack={backToScripture}
+                onNavigate={(r, a) => {
+                  // Empty articleId (e.g. switching resource with nothing selected)
+                  // must not emit a trailing slash — `#/articles/ta/` fails the
+                  // article regex and misparses as a chapter.
+                  location.hash = a ? `#/articles/${r}/${encodeURIComponent(a)}` : `#/articles/${r}`;
+                }}
+              />
+            </Box>
+          </Stack>
         ) : loc.view === "templates" ? (
           <TemplateWorkspace
             templateId={loc.templateId}

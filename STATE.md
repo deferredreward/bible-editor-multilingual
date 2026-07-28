@@ -60,6 +60,13 @@ Highlights that bite repeatedly:
   Diagnose with `netstat -ano | grep ":<port> " | grep LISTENING` and look for **more than one
   PID**; fix with `taskkill //PID <pid> //F` and restart on a fresh port. Same failure shape as
   the cross-worktree port-collision trap, but self-inflicted by stop/restart.
+- **`scripts/import-articles.mjs` output cannot be applied to a local D1 as generated.** Its
+  `BATCH = 50` produces INSERT statements that exceed wrangler's local per-statement limit, so
+  `wrangler d1 execute ... --local --file=../scripts/out/import-articles.sql` dies with
+  `statement too long: SQLITE_TOOBIG` — and the failure is easy to miss because the applier still
+  prints a normal-looking tail, leaving `article_units` silently at 0. Workaround for local dev:
+  run the importer with `BATCH` lowered (3 works) and apply that file. The `--remote` path is
+  unaffected, which is why this survived unnoticed.
 - **This API is cookie-auth only** — the HTTP `Authorization: Bearer` fallback was removed (see
   the comment above the WS route in `api/src/index.ts`). Manual curl testing needs a cookie jar
   (`curl -c`/`-b`) seeded via `POST /api/auth/dev`, plus an `x-csrf-token` header (read from the

@@ -262,6 +262,15 @@ interface Props {
   book: string;
   chapter: number;
   verse?: number;
+  // Scoped override, same shape as ResourceColumn's visibleTabs/initialTab:
+  // omitted means "unchanged" (the full navigation cluster shows). Pass false
+  // on non-scripture routes — today the tW/tA article workspace — to keep the
+  // bar's chrome (status · AI · layouts · More · account) while dropping the
+  // book picker, chapter/verse stepper, reference field and prev/next, none of
+  // which mean anything for an article. `book`/`chapter` stay required and are
+  // fed the last scripture position, so the controls that legitimately outlive
+  // the route (status, export scope) still have a scope to name.
+  showNavigation?: boolean;
   onNavigate: (book: string, chapter: number, verse?: number) => void;
   // AI pipeline trigger — Shell renders <PipelineMenu/> and passes it through
   // unchanged; TopBar just makes it the filled primary action.
@@ -296,6 +305,7 @@ export function TopBar({
   book,
   chapter,
   verse,
+  showNavigation = true,
   onNavigate,
   pipelineMenu,
   pipelineToast,
@@ -354,8 +364,11 @@ export function TopBar({
 
   useEffect(() => {
     setSummary(null);
+    // Only the (hidden) navigation cluster reads `summary` — skip the fetch on
+    // routes that don't show it rather than firing a request per mount.
+    if (!showNavigation) return;
     api.getBookSummary(book).then(setSummary).catch(() => setSummary(null));
-  }, [book]);
+  }, [book, showNavigation]);
 
   // Un-imported books are no longer silently bootstrapped from here. Selecting
   // one routes to the deliberate IMPORT surface (#/import/:book), where the user
@@ -513,198 +526,206 @@ export function TopBar({
         minWidth: 0,
       }}
     >
-      {onToggleRail && (
-        <Tooltip title={railCollapsed ? t("topbar.showVerseList") : t("topbar.hideVerseList")}>
-          <IconButton size="small" onClick={onToggleRail} sx={{ ml: -0.5, flexShrink: 0 }}>
-            {railCollapsed ? <MenuIcon fontSize="small" /> : <MenuOpenIcon fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-      )}
-      <FormControl size="small" sx={{ flexShrink: 0 }}>
-        <Autocomplete<string, false, true, false>
-          size="small"
-          value={book}
-          options={bookOptions.includes(book) ? bookOptions : [book, ...bookOptions]}
-          disableClearable
-          onChange={(_, v) => {
-            if (!v || v === book) return;
-            if (importedSet.has(v)) {
-              onNavigate(v, 1);
-            } else {
-              goToImport(v);
-            }
-          }}
-          selectOnFocus
-          openOnFocus
-          filterOptions={(options, state) => {
-            const q = state.inputValue.trim().toLowerCase();
-            // When the input is empty OR still matches the current value
-            // (user just opened the dropdown without typing), show every
-            // book so they can pick a new one. Filtering only kicks in
-            // once they actually type something else.
-            if (!q || q === book.toLowerCase()) return options;
-            const resolved = resolveBook(q);
-            return options.filter((opt) => {
-              if (opt.toLowerCase().startsWith(q)) return true;
-              if (resolved && opt === resolved) return true;
-              if (bookName(opt).toLowerCase().includes(q)) return true;
-              if (bookAbbr(opt).toLowerCase().includes(q)) return true;
-              // Also match the bundled English name so typing/pasting an
-              // English book name still finds it under a non-English UI
-              // language, not just the currently-active translation.
-              const english = BOOKS.find((b) => b.code === opt)?.name;
-              return !!english && english.toLowerCase().includes(q);
-            });
-          }}
-          getOptionLabel={(opt) => opt}
-          renderOption={(props, opt) => {
-            const isImported = importedSet.has(opt);
-            return (
-              <li
-                {...props}
-                key={opt}
-                style={{ fontFamily: "monospace", opacity: isImported ? 1 : 0.6 }}
-              >
-                <span style={{ minWidth: 40, display: "inline-block" }}>{opt}</span>
-                <Box
-                  component="span"
-                  sx={{ color: "text.secondary", fontSize: 12, ml: 1, flex: 1 }}
-                >
-                  {bookName(opt)}
-                  {bookAbbr(opt) !== bookName(opt) && ` (${bookAbbr(opt)})`}
-                </Box>
-                {!isImported && (
-                  <Tooltip title={t("topbar.notImportedHint")}>
-                    <CloudDownloadIcon
-                      fontSize="inherit"
-                      sx={{ ml: 1, color: "text.disabled", fontSize: 14 }}
-                    />
-                  </Tooltip>
-                )}
-              </li>
-            );
-          }}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              inputProps={{
-                ...params.inputProps,
-                style: { fontFamily: "monospace", textTransform: "uppercase" },
-              }}
-            />
-          )}
-          sx={{ width: 112 }}
-        />
-      </FormControl>
-      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
-        <Tooltip title={t("topbar.previousChapter")}>
-          <span>
-            <IconButton
-              size="small"
-              disabled={!canPrev}
-              onClick={() => canPrev && onNavigate(book, chapterList[idx - 1])}
-            >
-              <NavigateBeforeIcon fontSize="small" />
+      {/* ── Left cluster: navigation (book · chapter/verse · reference) ──
+          Hidden wholesale when `showNavigation` is false: the article route
+          (#/articles/tw|ta) keeps the bar's chrome but has no book or chapter
+          to navigate, so every control here would be meaningless there. */}
+      {showNavigation && (
+        <>
+        {onToggleRail && (
+          <Tooltip title={railCollapsed ? t("topbar.showVerseList") : t("topbar.hideVerseList")}>
+            <IconButton size="small" onClick={onToggleRail} sx={{ ml: -0.5, flexShrink: 0 }}>
+              {railCollapsed ? <MenuIcon fontSize="small" /> : <MenuOpenIcon fontSize="small" />}
             </IconButton>
-          </span>
-        </Tooltip>
-        <Typography
-          variant="caption"
-          sx={{ fontFamily: "monospace", color: "text.secondary", userSelect: "none" }}
-        >
-          {t("topbar.chapterAbbrev")}
-        </Typography>
-        <FormControl size="small">
+          </Tooltip>
+        )}
+        <FormControl size="small" sx={{ flexShrink: 0 }}>
           <Autocomplete<string, false, true, false>
             size="small"
-            value={String(chapter)}
-            options={chapterOptions}
+            value={book}
+            options={bookOptions.includes(book) ? bookOptions : [book, ...bookOptions]}
             disableClearable
             onChange={(_, v) => {
-              if (v) onNavigate(book, parseInt(v, 10));
+              if (!v || v === book) return;
+              if (importedSet.has(v)) {
+                onNavigate(v, 1);
+              } else {
+                goToImport(v);
+              }
             }}
-            getOptionLabel={(opt) => (opt === "0" ? t("topbar.intro") : opt)}
+            selectOnFocus
+            openOnFocus
             filterOptions={(options, state) => {
-              const q = state.inputValue.trim();
-              if (!q) return options;
-              return options.filter((opt) =>
-                opt === "0" ? "intro".startsWith(q.toLowerCase()) : opt.startsWith(q),
+              const q = state.inputValue.trim().toLowerCase();
+              // When the input is empty OR still matches the current value
+              // (user just opened the dropdown without typing), show every
+              // book so they can pick a new one. Filtering only kicks in
+              // once they actually type something else.
+              if (!q || q === book.toLowerCase()) return options;
+              const resolved = resolveBook(q);
+              return options.filter((opt) => {
+                if (opt.toLowerCase().startsWith(q)) return true;
+                if (resolved && opt === resolved) return true;
+                if (bookName(opt).toLowerCase().includes(q)) return true;
+                if (bookAbbr(opt).toLowerCase().includes(q)) return true;
+                // Also match the bundled English name so typing/pasting an
+                // English book name still finds it under a non-English UI
+                // language, not just the currently-active translation.
+                const english = BOOKS.find((b) => b.code === opt)?.name;
+                return !!english && english.toLowerCase().includes(q);
+              });
+            }}
+            getOptionLabel={(opt) => opt}
+            renderOption={(props, opt) => {
+              const isImported = importedSet.has(opt);
+              return (
+                <li
+                  {...props}
+                  key={opt}
+                  style={{ fontFamily: "monospace", opacity: isImported ? 1 : 0.6 }}
+                >
+                  <span style={{ minWidth: 40, display: "inline-block" }}>{opt}</span>
+                  <Box
+                    component="span"
+                    sx={{ color: "text.secondary", fontSize: 12, ml: 1, flex: 1 }}
+                  >
+                    {bookName(opt)}
+                    {bookAbbr(opt) !== bookName(opt) && ` (${bookAbbr(opt)})`}
+                  </Box>
+                  {!isImported && (
+                    <Tooltip title={t("topbar.notImportedHint")}>
+                      <CloudDownloadIcon
+                        fontSize="inherit"
+                        sx={{ ml: 1, color: "text.disabled", fontSize: 14 }}
+                      />
+                    </Tooltip>
+                  )}
+                </li>
               );
             }}
-            renderOption={(props, opt) => (
-              <li {...props} key={opt} style={{ fontFamily: "monospace" }}>
-                {opt === "0" ? t("topbar.intro") : opt}
-              </li>
-            )}
             renderInput={(params) => (
               <TextField
                 {...params}
                 inputProps={{
                   ...params.inputProps,
-                  style: { fontFamily: "monospace", textAlign: "center" },
+                  style: { fontFamily: "monospace", textTransform: "uppercase" },
                 }}
               />
             )}
-            sx={{ width: 76 }}
+            sx={{ width: 112 }}
           />
         </FormControl>
-        <Tooltip title={t("topbar.nextChapter")}>
-          <span>
-            <IconButton
+        <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
+          <Tooltip title={t("topbar.previousChapter")}>
+            <span>
+              <IconButton
+                size="small"
+                disabled={!canPrev}
+                onClick={() => canPrev && onNavigate(book, chapterList[idx - 1])}
+              >
+                <NavigateBeforeIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Typography
+            variant="caption"
+            sx={{ fontFamily: "monospace", color: "text.secondary", userSelect: "none" }}
+          >
+            {t("topbar.chapterAbbrev")}
+          </Typography>
+          <FormControl size="small">
+            <Autocomplete<string, false, true, false>
               size="small"
-              disabled={!canNext}
-              onClick={() => canNext && onNavigate(book, chapterList[idx + 1])}
-            >
-              <NavigateNextIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-      </Stack>
-      {!isNarrow && (
-        <Tooltip title={refError ?? t("topbar.goToRefHint")} open={refError ? true : undefined}>
-          <TextField
-            size="small"
-            placeholder={t("topbar.goToRefPlaceholder")}
-            value={refInput}
-            onChange={(e) => {
-              setRefInput(e.target.value);
-              if (refError) setRefError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                submitRef();
-              } else if (e.key === "Escape") {
-                setRefInput("");
-                setRefError(null);
-              }
-            }}
-            error={Boolean(refError)}
-            inputProps={{ style: { fontFamily: "monospace", fontSize: 13 } }}
-            InputProps={{
-              endAdornment: (
-                <InputAdornment position="end">
-                  <Tooltip title={t("common.go")}>
-                    <span>
-                      <IconButton
-                        size="small"
-                        onClick={submitRef}
-                        disabled={!refInput.trim()}
-                        edge="end"
-                      >
-                        <ArrowForwardIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                </InputAdornment>
-              ),
-            }}
-            sx={{ width: 170, flexShrink: 0 }}
-          />
-        </Tooltip>
-      )}
-      {logosVisible && !isNarrow && (
-        <LogosSyncToggle book={book} chapter={chapter} verse={verse ?? 1} />
+              value={String(chapter)}
+              options={chapterOptions}
+              disableClearable
+              onChange={(_, v) => {
+                if (v) onNavigate(book, parseInt(v, 10));
+              }}
+              getOptionLabel={(opt) => (opt === "0" ? t("topbar.intro") : opt)}
+              filterOptions={(options, state) => {
+                const q = state.inputValue.trim();
+                if (!q) return options;
+                return options.filter((opt) =>
+                  opt === "0" ? "intro".startsWith(q.toLowerCase()) : opt.startsWith(q),
+                );
+              }}
+              renderOption={(props, opt) => (
+                <li {...props} key={opt} style={{ fontFamily: "monospace" }}>
+                  {opt === "0" ? t("topbar.intro") : opt}
+                </li>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  inputProps={{
+                    ...params.inputProps,
+                    style: { fontFamily: "monospace", textAlign: "center" },
+                  }}
+                />
+              )}
+              sx={{ width: 76 }}
+            />
+          </FormControl>
+          <Tooltip title={t("topbar.nextChapter")}>
+            <span>
+              <IconButton
+                size="small"
+                disabled={!canNext}
+                onClick={() => canNext && onNavigate(book, chapterList[idx + 1])}
+              >
+                <NavigateNextIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Stack>
+        {!isNarrow && (
+          <Tooltip title={refError ?? t("topbar.goToRefHint")} open={refError ? true : undefined}>
+            <TextField
+              size="small"
+              placeholder={t("topbar.goToRefPlaceholder")}
+              value={refInput}
+              onChange={(e) => {
+                setRefInput(e.target.value);
+                if (refError) setRefError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitRef();
+                } else if (e.key === "Escape") {
+                  setRefInput("");
+                  setRefError(null);
+                }
+              }}
+              error={Boolean(refError)}
+              inputProps={{ style: { fontFamily: "monospace", fontSize: 13 } }}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Tooltip title={t("common.go")}>
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={submitRef}
+                          disabled={!refInput.trim()}
+                          edge="end"
+                        >
+                          <ArrowForwardIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ width: 170, flexShrink: 0 }}
+            />
+          </Tooltip>
+        )}
+        {logosVisible && !isNarrow && (
+          <LogosSyncToggle book={book} chapter={chapter} verse={verse ?? 1} />
+        )}
+        </>
       )}
 
       <Box sx={{ flex: 1, minWidth: 8 }} />
@@ -778,7 +799,11 @@ export function TopBar({
             <ListItemText primary={t("topbar.more.importTitle")} secondary={t("topbar.more.importSecondary")} />
           </MenuItem>
         )}
-        {projectConfig && (
+        {/* Export is chapter/book-scoped and lives on Shell's imperative
+            handle. Without that handle the row was still rendered and simply
+            did nothing when clicked, so it's gated on the callback now —
+            which also removes it from the article route. */}
+        {projectConfig && onOpenExportMenu && (
           <MenuItem
             onClick={() => {
               closeMore();
@@ -909,13 +934,19 @@ export function TopBar({
           ))}
         </Menu>
 
-        <MenuItem onClick={() => setLogosVisible(!logosVisible)}>
-          <ListItemIcon>
-            <OpenInNewIcon fontSize="small" sx={{ color: "text.secondary" }} />
-          </ListItemIcon>
-          <ListItemText primary={t("topbar.more.showLogosSync")} />
-          <Switch size="small" checked={logosVisible} sx={{ pointerEvents: "none" }} />
-        </MenuItem>
+        {/* This toggle's only effect is showing/hiding the Logos control in
+            the navigation cluster, which is book+verse-scoped. With navigation
+            hidden the row would flip a switch with no visible consequence, so
+            it hides with the cluster it governs. */}
+        {showNavigation && (
+          <MenuItem onClick={() => setLogosVisible(!logosVisible)}>
+            <ListItemIcon>
+              <OpenInNewIcon fontSize="small" sx={{ color: "text.secondary" }} />
+            </ListItemIcon>
+            <ListItemText primary={t("topbar.more.showLogosSync")} />
+            <Switch size="small" checked={logosVisible} sx={{ pointerEvents: "none" }} />
+          </MenuItem>
+        )}
       </Menu>
 
       <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
