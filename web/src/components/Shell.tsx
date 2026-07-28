@@ -12,8 +12,10 @@ import {
   DialogTitle,
   Button,
   Tooltip,
+  IconButton,
 } from "@mui/material";
 import GridViewIcon from "@mui/icons-material/GridView";
+import CloseIcon from "@mui/icons-material/Close";
 import { useChapter } from "../hooks/useChapter";
 import { useChapterRoom } from "../hooks/useChapterRoom";
 import type { UseBookReturn } from "../hooks/useBook";
@@ -69,10 +71,20 @@ import { RegionDropZone } from "./RegionDropZone";
 import { LayoutDragProvider, type LayoutDragValue } from "./LayoutDragContext";
 import { CLASSIC_LAYOUT_ID } from "../lib/builtinLayouts";
 import { validateLayoutAgainstRegistry } from "../lib/panelRegistry";
-import { collectRegions, effectiveRoot, movePanel, pruneSizes, type DropTarget } from "../lib/layoutTree";
+import {
+  canHideRegion,
+  collectRegions,
+  effectiveRoot,
+  hiddenRegions,
+  movePanel,
+  pruneSizes,
+  resolveHidden,
+  type DropTarget,
+} from "../lib/layoutTree";
 import {
   loadLayoutStore,
   mergeOverride,
+  setLayoutHidden,
   setLayoutTree,
   upsertUserLayout,
   deleteUserLayout,
@@ -3170,6 +3182,73 @@ export function Shell({
     setLayoutRev((n) => n + 1);
   };
 
+  // ── Region hide / restore (runtime state, NOT part of the layout spec) ──
+  //
+  // Closing a region closes a whole section WITH its panels still inside it —
+  // distinct from minimizing one panel to its header. It is a render-time filter
+  // over `LayoutOverride.hidden`: the tree is never edited, so no panel can be
+  // orphaned and `normalizeTree` can never delete a closed region (it only drops
+  // regions that have NO panels, and a closed one still has all of its).
+  //
+  // Deliberately NOT reachable from Classic: every call site below sits behind
+  // `arrangeable`, and setLayoutHidden refuses builtin:classic as a second guard.
+
+  // A closed region needs a human name, and regions have none in the schema — so
+  // name it by the panels it holds, using the same `panelTitle.*` namespace the
+  // panel headers use.
+  const regionLabel = (region: PanelRegion): string => {
+    const titles = region.panels.map((p) => t(`panelTitle.${p.type}`));
+    return titles.length > 0 ? titles.join(", ") : t("layout.emptySection");
+  };
+
+  // Closed regions of the ACTIVE layout, in tree order. Empty for Classic.
+  const closedRegions = arrangeable
+    ? hiddenRegions(effRoot, layoutOverride?.hidden).map((r) => ({
+        id: r.id,
+        label: regionLabel(r),
+      }))
+    : [];
+
+  // Fresh out of the store for the same reason currentSizes is: setLayoutHidden
+  // replaces the record wholesale, so seeding it from this render's closure could
+  // erase a change made since.
+  const currentHidden = (): Record<string, boolean> =>
+    loadLayoutStore().overrides[activeLayout.id]?.hidden ?? {};
+
+  const setRegionHidden = (regionId: string, value: boolean) => {
+    if (!arrangeable) return;
+    // RESOLVE ON BOTH SIDES OF THE WRITE, and persist the resolved value.
+    //
+    // Found in the browser, invisible to the unit tests: `hidden` is only
+    // interpreted at render time, so an UNSATISFIABLE stored set — every region
+    // closed, which a hand-edited localStorage or an older build can produce —
+    // renders as "nothing closed" while still being the value every write builds
+    // on. Closing a region then computed a set that was still unsatisfiable,
+    // resolved to {} again, and changed nothing: a Close button that does
+    // nothing, forever. Resolving the base first heals the stored value on the
+    // next click instead of carrying it forward.
+    //
+    // resolveHidden is also the pruner here: it emits `true` only for regions
+    // that exist in the tree, so it drops the `false` this produces on restore
+    // AND any id the tree no longer has.
+    const base = resolveHidden(effRoot, currentHidden());
+    setLayoutHidden(activeLayout.id, resolveHidden(effRoot, { ...base, [regionId]: value }));
+    setLayoutRev((n) => n + 1);
+  };
+
+  // Refuse to close the LAST region still on screen: an empty workspace has no
+  // chrome left to click. (layoutTree.resolveHidden is the backstop for any other
+  // path into that state; this is the up-front guard that keeps the control from
+  // even appearing.)
+  const canCloseRegion = (regionId: string): boolean =>
+    arrangeable && canHideRegion(effRoot, layoutOverride?.hidden, regionId);
+
+  const handleRestoreAllRegions = () => {
+    if (!arrangeable) return;
+    setLayoutHidden(activeLayout.id, {});
+    setLayoutRev((n) => n + 1);
+  };
+
   // Commit a drop: move the panel in the EFFECTIVE tree and persist the whole
   // new tree. `sizes` is pruned at the same time because a drop creates and
   // destroys regions — and nextRegionId recycles `region-<n>` ids, so a leftover
@@ -3181,6 +3260,11 @@ export function Shell({
     const next = movePanel(effRoot, panelId, target);
     if (next === effRoot) return; // no-op drop (engine rejected it) — persist nothing
     setLayoutTree(activeLayout.id, next, pruneSizes(currentSizes(), next, activeLayout.id));
+    // Re-resolve against the NEW tree, for the same reason `sizes` is pruned: a
+    // drop destroys regions and `nextRegionId` RECYCLES `region-<n>` ids, so a
+    // stale `hidden` key could otherwise make a brand-new region spawn invisible.
+    // (resolveHidden rather than a plain prune — see setRegionHidden.)
+    setLayoutHidden(activeLayout.id, resolveHidden(next, currentHidden()));
     setLayoutRev((n) => n + 1);
   };
 
@@ -3193,10 +3277,14 @@ export function Shell({
 
   // "Reset arrangement" only makes sense for a non-Classic layout that actually
   // has a rearrangement to throw away.
-  const hasTreeOverride = arrangeable && !!layoutOverride?.tree;
+  // …or one with regions closed: reopening them is part of "put it back".
+  const hasTreeOverride = arrangeable && (!!layoutOverride?.tree || closedRegions.length > 0);
   const handleResetArrangement = () => {
     // Back to the spec's own topology; sizes keyed to the discarded tree go too.
     setLayoutTree(activeLayout.id, null, pruneSizes(currentSizes(), activeLayout.root, activeLayout.id));
+    // Closed regions are part of the arrangement the user is discarding — leaving
+    // a section closed after a reset would look like the reset had failed.
+    setLayoutHidden(activeLayout.id, {});
     setLayoutRev((n) => n + 1);
   };
 
@@ -3227,8 +3315,15 @@ export function Shell({
     if (region.display !== "tabs" && region.panels.length > 1) {
       return (
         <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {region.panels.map((p) => {
+          {region.panels.map((p, pi) => {
             const min = arrangeable && isPanelMinimized(p);
+            // The region's close control rides on its FIRST panel's header, so it
+            // needs no extra header row of its own and stays in flow (see
+            // PanelChrome.onCloseRegion).
+            const closeRegion =
+              pi === 0 && canCloseRegion(region.id)
+                ? () => setRegionHidden(region.id, true)
+                : undefined;
             return (
               <Box
                 key={p.id}
@@ -3251,6 +3346,7 @@ export function Shell({
                     panelType={p.type}
                     minimized={min}
                     onToggleMinimized={() => setPanelMinimized(p.id, !min)}
+                    onCloseRegion={closeRegion}
                   >
                     {renderPanelContent(p)}
                   </PanelChrome>
@@ -3292,6 +3388,14 @@ export function Shell({
     // panel dragged out into its own region could never be dragged back.
     // (The multi-panel branch above already added its own per-panel chrome.)
     const lone = region.panels.length === 1 ? region.panels[0] : null;
+    const closeRegion = canCloseRegion(region.id)
+      ? () => setRegionHidden(region.id, true)
+      : undefined;
+    // A region with NO per-panel chrome — a `display: "tabs"` region holding more
+    // than one panel, which is exactly what "Save current as…" produces from
+    // Classic — would otherwise have nowhere to put the close control. Give it a
+    // minimal header carrying only that button (still in flow, never an overlay).
+    const bareRegionHeader = !lone && region.panels.length > 1 && region.display === "tabs";
     const wrapped =
       lone ? (
         <PanelChrome
@@ -3299,9 +3403,39 @@ export function Shell({
           panelType={lone.type}
           minimized={isPanelMinimized(lone)}
           onToggleMinimized={() => setPanelMinimized(lone.id, !isPanelMinimized(lone))}
+          onCloseRegion={closeRegion}
         >
           {content}
         </PanelChrome>
+      ) : bareRegionHeader && closeRegion ? (
+        <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <Box
+            sx={{
+              flexShrink: 0,
+              display: "flex",
+              justifyContent: "flex-end",
+              minHeight: 18,
+              px: 0.5,
+              bgcolor: "grey.50",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Tooltip title={t("layout.closeRegion")}>
+              <IconButton
+                size="small"
+                onClick={closeRegion}
+                aria-label={t("layout.closeRegion")}
+                sx={{ p: 0 }}
+              >
+                <CloseIcon sx={{ fontSize: 13 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {content}
+          </Box>
+        </Box>
       ) : (
         content
       );
@@ -3468,6 +3602,9 @@ export function Shell({
         // Passed only when there is something to reset, which is how the menu
         // item stays hidden for Classic and for an untouched layout.
         onResetArrangement={hasTreeOverride ? handleResetArrangement : undefined}
+        closedRegions={closedRegions}
+        onRestoreRegion={(id) => setRegionHidden(id, false)}
+        onRestoreAllRegions={handleRestoreAllRegions}
       />
       <ExportUsfmButton
         ref={exportUsfmRef}
@@ -3503,6 +3640,9 @@ export function Shell({
         renderRegion={renderRegion}
         sizes={sizes}
         onSizesChange={onSizesChange}
+        closedRegions={closedRegions}
+        onRestoreRegion={(id) => setRegionHidden(id, false)}
+        restoreLabel={(label) => t("layout.restoreRegion", { name: label })}
         railCollapsed={railCollapsed}
         railWidth={railWidth}
         effectiveSplit={effectiveSplit}

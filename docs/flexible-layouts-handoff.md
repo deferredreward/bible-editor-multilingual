@@ -34,9 +34,52 @@ Then, on top of the foundation:
 
 **Hard invariant throughout:** `builtin:classic` must stay byte-identical to today's Shell.
 
+## Region hide / restore — built, and why it is built this way
+
+Round 6 asked for "regions can be turned off and back on", distinct from panel
+minimize. It is now in, Flexible-only. In plain terms: **each section has a small
+✕ that closes the whole section, with everything inside it. A thin strip appears
+at the edge of the workspace with one button per closed section, and the Layouts
+menu lists them by name — either one brings the section back exactly as it was.**
+
+Four decisions worth knowing before touching this:
+
+- **Hiding is a render-time FILTER, never a tree edit.** `LayoutOverride.hidden`
+  (region id → true) is consulted only by `WorkspaceLayout.renderNode`; the
+  persisted tree keeps the closed region and all its panels. This is what makes
+  "panels are never orphaned" structural rather than careful: `normalizeTree`
+  deletes a region only when it has **no** panels, and a closed one still has all
+  of its, so no engine operation can destroy it. Verified live: emptying a closed
+  region's sibling collapses the split *around* the closed region and its three
+  panels come back intact.
+- **Filter AFTER computing the child path, never before.** `collectSizeKeys`
+  mirrors `renderNode`'s `${path}.${i}` scheme, so re-indexing the surviving
+  children would repoint every nested `split:<path>` size key — closing a region
+  would resize unrelated splits and `pruneSizes` would delete live keys.
+- **Every write resolves both sides.** `resolveHidden` returns `{}` for an
+  unsatisfiable set (all regions closed) so the workspace can never go blank —
+  but that made the stored value and the rendered value diverge, and a write built
+  on the raw stored value stayed unsatisfiable, so the ✕ became a permanent no-op.
+  Writes now resolve the base first and persist the resolved value, which heals
+  the bad state on the next click. **This bug was found by clicking, not by the
+  113 unit tests** — it is now pinned in `layoutTree.test.mjs`.
+- **An emptied region is still deleted outright — hide/restore did NOT change
+  that.** Round 6 floated "emptied regions may auto-close with a reopen
+  affordance". Rejected: a restore entry is keyed by a region id that must still
+  exist in the tree, and an auto-closed emptied region has no panels to bring
+  back, so reopening it would hand the user an empty box. The recovery gesture for
+  an emptied band already exists — the perimeter/outer drop (see `OuterDropTarget`).
+  Hide/restore serves the case that actually needed it: closing a section you
+  intend to get back **with its contents**.
+
+Both restore paths ship on purpose: the in-flow edge strip is the discoverable
+one (and is a flex sibling, not an overlay — an overlaid strip could swallow the
+drag grips, which is exactly how the perimeter bands shipped a bug), and the
+Layouts menu names each closed section in full for when the strip is missed.
+
 ## Dev / verify gotchas (important — cost hours last session)
 
-- **node_modules is REAL in this worktree** (un-junctioned to install `react-resizable-panels@4.12.2`). Do NOT run `scripts/worktree-init.ps1` or re-junction, or the dep vanishes.
+- ~~**node_modules is REAL in this worktree.** Do NOT run `scripts/worktree-init.ps1`.~~ **Stale (2026-07-28):** `worktree-init.ps1` no longer junctions anything — it runs a real cache-fast `npm install`, so it is now the correct first step in a fresh worktree and `react-resizable-panels` installs normally. Same for the `--persist-to "C:/…"` workaround below: the repo lives at `C:\GH\BEM\repo` precisely so the default in-worktree `.wrangler/state` fits `MAX_PATH`. Verified this session: migrate + seed + `wrangler dev` all worked with no `--persist-to`, and the seeded OBA chapter WAS visible to `wrangler dev`.
 - **wrangler local-D1 persistence mismatch on this machine:** `wrangler d1 execute --local` and `wrangler dev` resolve the local SQLite file differently (worsened by the `Documents`/XDG path, which also throws `SQLITE_CANTOPEN` on `d1 migrations apply`). Seeding a book via `import-book.mjs` + `d1 execute` did NOT become visible to `wrangler dev`. To verify live, use a **properly-onboarded project** (real config + lanes), e.g. the user's normal dev environment — don't burn time re-seeding a throwaway D1. A raw `import-book.mjs` also does NOT create `project_config` / `scripture_lane_state`; the chapter read (`api/src/chapters.ts`) filters verses by each lane's `active_generation`, so no lanes → empty chapter → app sits in the no-data view.
 - Background servers from last session may still be up: wrangler `:8787`, vite `:5174` (its D1 is empty — the seed didn't align). Ports `5173`/`5176` are the user's own servers — do not disturb.
 

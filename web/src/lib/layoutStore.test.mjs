@@ -12,6 +12,7 @@ import {
   upsertUserLayout,
   deleteUserLayout,
   mergeOverride,
+  setLayoutHidden,
   setLayoutTree,
 } from "./layoutStore.ts";
 
@@ -419,6 +420,69 @@ console.log("\nmergeOverride with a patch alone cannot revert an earlier resize"
   mergeOverride("builtin:flexible", { sizes: { b: 0.4 } }); // second divider, no re-render between
   const s = loadLayoutStore().overrides["builtin:flexible"].sizes;
   assert(s.a === 0.6 && s.b === 0.4, "both resizes survive (a=0.6, b=0.4)");
+}
+
+console.log("\nsetLayoutHidden - wholesale closed-region replace, and the Classic refusal");
+{
+  installStorage();
+  mergeOverride("builtin:flexible", { sizes: { "res-a": 0.5 }, minimized: { "notes-1": true } });
+
+  setLayoutHidden("builtin:flexible", { "res-b": true });
+  let ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(ov.hidden["res-b"] === true, "closed region persisted");
+  assert(ov.sizes["res-a"] === 0.5 && ov.minimized["notes-1"] === true, "unrelated override fields survive");
+
+  // The whole reason this is not mergeOverride: a merge can only ADD keys, so it
+  // could never drop the key for a region a drop had destroyed, nor clear the set.
+  setLayoutHidden("builtin:flexible", { "res-a": true });
+  ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(
+    Object.keys(ov.hidden).length === 1 && ov.hidden["res-a"] === true,
+    "hidden REPLACED wholesale (the stale res-b key is gone), not merged",
+  );
+  mergeOverride("builtin:flexible", { hidden: { "res-b": true } });
+  assert(
+    Object.keys(loadLayoutStore().overrides["builtin:flexible"].hidden).length === 2,
+    "…whereas mergeOverride only ever adds (which is why it cannot prune)",
+  );
+
+  setLayoutHidden("builtin:flexible", {});
+  ov = loadLayoutStore().overrides["builtin:flexible"];
+  assert(Object.keys(ov.hidden).length === 0, "an empty map reopens everything (Reset arrangement)");
+  assert(ov.sizes["res-a"] === 0.5, "…without touching sizes");
+
+  // Classic has no region chrome and never consults `hidden`, so a value stored
+  // for it could only ever be a lie. Mirrors the setLayoutTree refusal.
+  installStorage();
+  setLayoutHidden("builtin:classic", { scripture: true });
+  assert(
+    loadLayoutStore().overrides["builtin:classic"] === undefined,
+    "setLayoutHidden REFUSES builtin:classic outright",
+  );
+}
+
+console.log("\nhidden survives a save/load round trip and rejects junk");
+{
+  installStorage();
+  setLayoutHidden("builtin:flexible", { "res-b": true });
+  assert(
+    loadLayoutStore().overrides["builtin:flexible"].hidden["res-b"] === true,
+    "a closed region round-trips through localStorage",
+  );
+  // A non-boolean value drops the WHOLE override (sanitizeRecord's contract) —
+  // pinned so a future edit can't silently start trusting junk.
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:flexible",
+      userLayouts: [],
+      overrides: { "builtin:flexible": { hidden: { "res-a": "yes" } } },
+    }),
+  });
+  assert(
+    loadLayoutStore().overrides["builtin:flexible"] === undefined,
+    "a non-boolean hidden value drops that override rather than loading garbage",
+  );
 }
 
 if (failed > 0) {
