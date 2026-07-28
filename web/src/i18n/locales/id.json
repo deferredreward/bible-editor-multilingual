@@ -564,6 +564,8 @@
     "glOnly": "Terjemahan artikel hanya tersedia untuk proyek bahasa gerbang (GL).",
     "approved": "{{n}}/{{total}} disetujui",
     "save": "Simpan",
+    "unsavedDraft": "Perubahan belum disimpan",
+    "staleDraft": "Artikel ini berubah di server saat Anda memiliki teks yang belum disimpan. Teks Anda dipulihkan; periksa sebelum menyimpan.",
     "reloadConflict": "Artikel ini berubah di server — muat ulang.",
     "noArticles": "Tidak ada artikel.",
     "selectArticle": "Pilih artikel untuk diterjemahkan.",

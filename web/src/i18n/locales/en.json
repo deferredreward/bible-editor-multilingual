@@ -21,6 +21,8 @@
     "glOnly": "Article translation is only available for gateway-language projects.",
     "approved": "{{n}}/{{total}} approved",
     "save": "Save",
+    "unsavedDraft": "Unsaved changes",
+    "staleDraft": "This article changed on the server while you had unsaved text. Your text was restored — review it before saving.",
     "reloadConflict": "This article changed on the server — reload.",
     "noArticles": "No articles.",
     "selectArticle": "Select an article to translate.",

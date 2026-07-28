@@ -578,6 +578,8 @@
     "glOnly": "Tafsiri ya makala inapatikana kwa miradi ya lugha-lango (GL) pekee.",
     "approved": "{{n}}/{{total}} zimeidhinishwa",
     "save": "Hifadhi",
+    "unsavedDraft": "Mabadiliko yasiyohifadhiwa",
+    "staleDraft": "Makala hii ilibadilika kwenye seva wakati ulikuwa na maandishi yasiyohifadhiwa. Maandishi yako yamerejeshwa; yapitie kabla ya kuhifadhi.",
     "reloadConflict": "Makala hii ilibadilika kwenye seva — pakia upya.",
     "noArticles": "Hakuna makala.",
     "selectArticle": "Chagua makala ya kutafsiri.",

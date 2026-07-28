@@ -23,6 +23,10 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import EditIcon from "@mui/icons-material/Edit";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../sync/api";
+// Aliased: ArticleEditor has its own local `drafts` state (path → text), and an
+// unaliased import would be shadowed by it inside that component.
+import { drafts as draftStore, articleKey, type DraftRecord } from "../sync/drafts";
+import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { pipelineStore, getSessionKey } from "../sync/pipelineStore";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useArticles } from "../hooks/useArticles";
@@ -192,6 +196,27 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
     }
   }, [busy, refetch, t]);
 
+  // Which articles hold unsaved typing. Drives the rail marker below so a
+  // draft you left behind on another article is findable instead of invisible.
+  // NOTE: must stay above the `!isTranslation` early return — a hook below it
+  // would be conditional.
+  const [draftList, setDraftList] = useState<DraftRecord[]>([]);
+  useEffect(() => draftStore.subscribe(setDraftList), []);
+  const dirtyArticleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of draftList) {
+      if (d.quarantined) continue;
+      if (d.meta.kind !== "article" || d.meta.resource !== resource) continue;
+      ids.add(d.meta.articleId);
+    }
+    return ids;
+  }, [draftList, resource]);
+
+  // Warn before a reload / tab close while article typing is unsaved. The hook
+  // reads the drafts store itself, so persisted article drafts already arm it;
+  // passing the local signal too covers the write-commit window.
+  useUnsavedGuard(dirtyArticleIds.size > 0);
+
   if (!isTranslation) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }} spacing={1}>
@@ -313,6 +338,7 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
           ) : (
             filtered.map((a) => {
               const selected = a.id === articleId;
+              const unsaved = dirtyArticleIds.has(a.id);
               return (
                 <Box
                   key={a.id}
@@ -345,6 +371,22 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
                   >
                     {a.id}
                   </Typography>
+                  {unsaved && (
+                    // Same warning colour (Kindle) the verse/row editors use for
+                    // "unsaved typing lives here".
+                    <Tooltip title={t("articles.unsavedDraft")}>
+                      <Box
+                        aria-label={t("articles.unsavedDraft")}
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          bgcolor: "#E59D33",
+                          flexShrink: 0,
+                        }}
+                      />
+                    </Tooltip>
+                  )}
                   <StateChip state={a.state} />
                 </Box>
               );
@@ -418,11 +460,17 @@ function ArticleEditor({
   const [translating, setTranslating] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [staleDraft, setStaleDraft] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const bumpReload = useCallback(() => setReloadKey((k) => k + 1), []);
 
-  // Fetch every part's full unit for the selected article.
+  // Fetch every part's full unit for the selected article, then restore any
+  // unsaved typing persisted for those parts. Article drafts used to live only
+  // in this component's state, so every exit (Back, tab switch, picking another
+  // article, a TopBar menu item, reload) silently discarded them. Hydrating
+  // here — in the same effect that seeds `drafts`, so the two can't race — is
+  // what makes leaving and coming back non-destructive.
   useEffect(() => {
     if (!articleId || paths.length === 0) {
       setParts(null);
@@ -431,13 +479,37 @@ function ArticleEditor({
     let cancelled = false;
     setLoadingParts(true);
     Promise.all(paths.map((p) => api.getArticle(resource, p)))
-      .then((list) => {
+      .then(async (list) => {
         if (cancelled) return;
         const ordered = orderParts(list);
+        const seeded = Object.fromEntries(ordered.map((u) => [u.path, u.target_md ?? ""]));
+        // Restore the draft even when the server version moved on while we were
+        // away (e.g. a translate re-run landed) — stranding it would leave the
+        // user with text they can't see and an "unsaved" marker they can't
+        // clear. But flag it: Save sends the *freshly fetched* version as
+        // If-Match, so it would succeed and quietly overwrite the newer server
+        // text. Warning turns that into a choice the user can see and make.
+        let stale = false;
+        const stored = await Promise.all(
+          ordered.map((u) =>
+            draftStore
+              .get(articleKey(resource, u.path))
+              .then((rec) => ({ unit: u, rec }))
+              .catch(() => ({ unit: u, rec: undefined })),
+          ),
+        );
+        if (cancelled) return;
+        for (const { unit, rec } of stored) {
+          const text = (rec?.payload as { target_md?: string } | undefined)?.target_md;
+          if (typeof text !== "string") continue;
+          if (rec && rec.expectedVersion !== unit.version) stale = true;
+          seeded[unit.path] = text;
+        }
         setParts(ordered);
-        setDrafts(Object.fromEntries(ordered.map((u) => [u.path, u.target_md ?? ""])));
+        setDrafts(seeded);
         setPreviews({});
         setLoadingParts(false);
+        if (stale) setStaleDraft(true);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -464,10 +536,39 @@ function ArticleEditor({
     [bumpReload, onServerChange],
   );
 
-  const applyServerUnit = useCallback((u: ArticleUnit) => {
-    setParts((prev) => (prev ? prev.map((p) => (p.path === u.path ? u : p)) : prev));
-    setDrafts((prev) => ({ ...prev, [u.path]: u.target_md ?? "" }));
-  }, []);
+  const applyServerUnit = useCallback(
+    (u: ArticleUnit) => {
+      setParts((prev) => (prev ? prev.map((p) => (p.path === u.path ? u : p)) : prev));
+      setDrafts((prev) => ({ ...prev, [u.path]: u.target_md ?? "" }));
+      // The server copy is now authoritative for this part — drop the local
+      // draft so the unsaved marker and the reload guard stop counting it.
+      void draftStore.clear(articleKey(resource, u.path));
+    },
+    [resource],
+  );
+
+  // Persist one part's in-progress text. Called on every keystroke, mirroring
+  // the note/verse editors: nothing is sent to the server (that stays behind
+  // the Save button), but the typing survives unmount, route changes and
+  // reloads. Typing back to the server value clears the draft rather than
+  // storing a no-op one, so the unsaved marker stays honest.
+  const persistDraft = useCallback(
+    (part: ArticleUnit, text: string) => {
+      const key = articleKey(resource, part.path);
+      if (text === (part.target_md ?? "")) {
+        void draftStore.clear(key);
+        return;
+      }
+      void draftStore.set(key, { target_md: text }, part.version, {
+        kind: "article",
+        resource,
+        articleId: part.article_id,
+        path: part.path,
+        part: part.part,
+      });
+    },
+    [resource],
+  );
 
   const isDirtyPart = useCallback(
     (part: ArticleUnit) => (drafts[part.path] ?? "") !== (part.target_md ?? ""),
@@ -747,9 +848,10 @@ function ArticleEditor({
                     ) : (
                       <TextField
                         value={draft}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({ ...prev, [part.path]: e.target.value }))
-                        }
+                        onChange={(e) => {
+                          setDrafts((prev) => ({ ...prev, [part.path]: e.target.value }));
+                          persistDraft(part, e.target.value);
+                        }}
                         fullWidth
                         multiline
                         minRows={part.part === "body" ? 8 : 1}
@@ -778,6 +880,16 @@ function ArticleEditor({
         </Stack>
       )}
 
+      <Snackbar
+        open={staleDraft}
+        autoHideDuration={10000}
+        onClose={() => setStaleDraft(false)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="warning" onClose={() => setStaleDraft(false)}>
+          {t("articles.staleDraft")}
+        </Alert>
+      </Snackbar>
       <Snackbar
         open={conflict}
         autoHideDuration={6000}

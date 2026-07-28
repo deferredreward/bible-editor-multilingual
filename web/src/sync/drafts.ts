@@ -1,8 +1,8 @@
 // Local draft store for unsaved edits. Every editable field (ULT/UST verse,
-// TN/TQ/TWL row, note quote/body/support-ref) stashes its in-progress text
-// here on every keystroke. The outbox is NOT touched until the user clicks
-// Save — drafts are deliberately separate from the write-ahead queue so the
-// only thing that produces a PATCH is an explicit user action.
+// TN/TQ/TWL row, note quote/body/support-ref, tW/tA article part) stashes its
+// in-progress text here on every keystroke. The outbox is NOT touched until the
+// user clicks Save — drafts are deliberately separate from the write-ahead
+// queue so the only thing that produces a PATCH is an explicit user action.
 //
 // Persistence is IndexedDB so a tab close or crash doesn't lose typing.
 // This is not autosave; nothing leaves the browser until the user saves.
@@ -53,6 +53,16 @@ export type DraftMeta =
       book: string;
       chapter: number;
       verse: number;
+    }
+  // tW / tA article part (body, title, sub-title). Articles are book-agnostic,
+  // so this variant carries no book/chapter/verse — consumers that navigate by
+  // reference must special-case it (SyncStatusBar routes to the article hash).
+  | {
+      kind: "article";
+      resource: "tw" | "ta";
+      articleId: string;
+      path: string;
+      part: "body" | "title" | "sub-title";
     };
 
 type Subscriber = (drafts: DraftRecord[]) => void;
@@ -114,6 +124,12 @@ export function verseKey(
 // ("row:{kind}:{id}") are migrated lazily in get() below.
 export function rowKey(rowKind: RowKind, book: string, id: string): string {
   return `row:${rowKind}:${book}:${id}`;
+}
+
+// Article part drafts. `path` is already unique within a resource, but the
+// resource is kept in the key so a tw and ta path can never collide.
+export function articleKey(resource: "tw" | "ta", path: string): string {
+  return `article:${resource}:${path}`;
 }
 
 export const drafts = {
