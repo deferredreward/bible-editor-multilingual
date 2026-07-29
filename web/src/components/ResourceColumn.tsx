@@ -21,15 +21,11 @@ import {
   type PinKey,
   type ResourceCheckoff,
 } from "./resourcePanelShared";
+import { SEARCH_IFRAME_URL } from "./SearchPanel";
 
 export type PanelMode = "resources" | "alignment" | "search";
 
 export type { ResourceLane, ResourceCheckoff } from "./resourcePanelShared";
-
-// External search tool embedded in the Search tab. Allow-listed in the API's
-// CSP frame-src (api/src/index.ts) — adding a different host requires updating
-// both.
-const SEARCH_IFRAME_URL = "https://swunrow.pythonanywhere.com/";
 
 // Candidate slot for the reorder "stoplight" — the moved note plus the note
 // ids that would become its predecessor / successor at the current drag target

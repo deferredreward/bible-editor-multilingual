@@ -12,7 +12,7 @@ import type { TwlRow, VerseDto } from "../sync/api";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import { HebrewLine } from "./HebrewLine";
 import { highlightsFor, type ReorderHighlight } from "../lib/highlight";
-import { buildVerseIndex } from "../lib/verseRange";
+import { buildVerseIndex, formatVerseLabel, isFirstOfRange } from "../lib/verseRange";
 import { useProjectConfig } from "../hooks/useProjectConfig";
 import { versionIsRtl } from "../lib/versionLabels";
 
@@ -83,7 +83,13 @@ function OriginalLanguagePanelInner({
       {verseNumbers.map((v) => {
         const vObj = index[v];
         if (!vObj) return null;
-        const isActive = v === activeVerse;
+        // buildVerseIndex maps EVERY verse of a span to the same row, so a
+        // bridged row (\v 6-9) appears at keys 6,7,8,9. Emit it once, at the
+        // start of its span — same guard as DocColumn.tsx and ScriptureColumn.
+        if (!isFirstOfRange(vObj, v)) return null;
+        // Active when the navigated verse falls anywhere INSIDE this row's
+        // span; for singletons this reduces to v === activeVerse.
+        const isActive = activeVerse >= vObj.verse && activeVerse <= (vObj.verse_end ?? vObj.verse);
 
         let hl, prevHl, nextHl;
         if (isActive) {
@@ -121,7 +127,7 @@ function OriginalLanguagePanelInner({
             }}
           >
             <Typography variant="caption" color="text.secondary" sx={{ minWidth: "1.5em" }}>
-              {v === 0 ? "" : v}
+              {v === 0 ? "" : formatVerseLabel(vObj)}
             </Typography>
             <Box
               dir={rtl ? "rtl" : "ltr"}
