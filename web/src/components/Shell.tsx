@@ -66,7 +66,6 @@ import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPre
 import { WorkspaceLayout } from "./WorkspaceLayout";
 import { StackedResourcePanel } from "./StackedResourcePanel";
 import { AssociatedArticlePanel } from "./AssociatedArticlePanel";
-import { SearchPanel } from "./SearchPanel";
 import { OriginalLanguagePanel } from "./OriginalLanguagePanel";
 import { LayoutMenu } from "./LayoutMenu";
 import { PanelChrome } from "./PanelChrome";
@@ -3342,10 +3341,8 @@ export function Shell({
             onSelectVerse={requestSelectVerse}
           />
         );
-      case "search":
-        return <SearchPanel />;
       default:
-        // TODO follow-on PRs: articleList / alignment panels.
+        // TODO follow-on PRs: articleList / alignment / search panels.
         return (
           <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
             <Typography variant="body2">{panel.type} — panel coming in a later pass</Typography>
