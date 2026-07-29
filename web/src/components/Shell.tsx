@@ -65,6 +65,7 @@ import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceColumnProps, type ResourceLane, type ResourceTab } from "./ResourceColumn";
 import { WorkspaceLayout } from "./WorkspaceLayout";
 import { StackedResourcePanel } from "./StackedResourcePanel";
+import { AssociatedArticlePanel } from "./AssociatedArticlePanel";
 import { LayoutMenu } from "./LayoutMenu";
 import { PanelChrome } from "./PanelChrome";
 import { RegionDropZone } from "./RegionDropZone";
@@ -3314,8 +3315,16 @@ export function Shell({
       case "words":
       case "questions":
         return <StackedResourcePanel {...resourceColumnProps} panelType={panel.type} />;
+      case "taArticle": {
+        const row = activeNoteId ? data.tn.find((r) => r.id === activeNoteId) : null;
+        return <AssociatedArticlePanel resource="ta" selected={!!row} articleRef={row?.support_reference ?? null} />;
+      }
+      case "twArticle": {
+        const row = activeWordId ? data.twl.find((r) => r.id === activeWordId) : null;
+        return <AssociatedArticlePanel resource="tw" selected={!!row} articleRef={row?.tw_link ?? null} />;
+      }
       default:
-        // TODO follow-on PRs: original-language / article / alignment / search panels.
+        // TODO follow-on PRs: original-language / articleList / alignment / search panels.
         return (
           <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
             <Typography variant="body2">{panel.type} — panel coming in a later pass</Typography>
@@ -3385,12 +3394,11 @@ export function Shell({
       .map((pp) => pp.type)
       .filter((tt): tt is ResourceTab => (RESOURCE_PANEL_TYPES as readonly string[]).includes(tt));
     if (resourceTabs.length > 0) return renderResources(isClassic ? undefined : resourceTabs);
-    const label = region.panels[0]?.type ?? "panel";
-    return (
-      <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
-        <Typography variant="body2">{label} — panel coming in a later pass</Typography>
-      </Box>
-    );
+    // A lone non-resource panel (e.g. an article panel dragged into its own
+    // region) renders through the same per-panel dispatch as a stacked one.
+    const only = region.panels[0];
+    if (only) return renderPanelContent(only);
+    return null;
   };
 
   const renderRegion = (region: PanelRegion): ReactNode => {
