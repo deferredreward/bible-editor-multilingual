@@ -13,16 +13,8 @@ CREATE TABLE user_roles (
   added_by INTEGER REFERENCES users(id)
 );
 
--- Seed: 1 admin + 10 editors. Add new editors via SQL — no redeploy needed.
+-- Seed: 1 admin only. Every per-org database runs this same migration set, so
+-- anything seeded here lands in EVERY new org DB. Add editors via SQL per
+-- database — no redeploy needed.
 INSERT OR IGNORE INTO user_roles (dcs_username, role) VALUES
-  ('deferredreward',    'admin'),
-  ('christopherrsmith', 'editor'),
-  ('Grant_Ailie',       'editor'),
-  ('justplainjane47',   'editor'),
-  ('pjoakes',           'editor'),
-  ('richmahn',          'editor'),
-  ('bcameron93',        'editor'),
-  ('Carolyn1970',       'editor'),
-  ('stephenwunrow',     'editor'),
-('bethoakes',         'editor'),
-  ('jessicaparks',      'editor');
+  ('deferredreward', 'admin');
