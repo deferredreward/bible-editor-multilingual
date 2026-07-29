@@ -1,34 +1,53 @@
-# cranky-burnell-03e290 — unsaved tW/tA article drafts
+# cranky-burnell-03e290 — Flexible layout: real panel bodies
 
-**PR:** https://github.com/deferredreward/bible-editor-multilingual/pull/132 (open)
+Replacing the six placeholder panel bodies in the Flexible layout
+("<type> — panel coming in a later pass") with real content. Split into several
+small PRs.
 
-Fixes silent loss of unsaved tW/tA article drafts (found by Codex review of #131,
-deferred there). Approach chosen by Benjamin: keep server saves explicit, protect
-the text by **persisting to the IndexedDB drafts store** — the convention the
-verse/row/note editors already use — not by confirm dialogs.
+(This file previously tracked PR #132, which merged 2026-07-28 — its record now
+lives in that PR's thread, per the delete-on-merge convention.)
 
-## Review status: complete
-Claude pass found 2 real defects (un-approve wiping the draft; an undismissable
-"unsaved" chip) -- both fixed in 064acd1 and re-verified in a browser. Codex pass
-returned APPROVE with no blocking findings. Details in the PR thread.
+## Status
 
-## Follow-ups
-- Not exercised: a multi-part tA article (title/sub-title/body). Same code path as
-  the tW body part that was verified, but unclicked.
-- Deferred deliberately: there is still no per-draft discard for ordinary (non-failed,
-  non-quarantined) drafts, so a draft stranded on an article that vanishes from the
-  workspace would nag with no way to clear it. Pre-existing class (row drafts have it
-  too); worth its own change if it ever bites.
-- No automated test added — the drafts store has no test harness. If one is ever
-  built, the regression to pin is: type → unmount → remount → text survives.
+- **PR 1 — associated tA/tW article panels: DONE, ready for review.**
+  Read-only articles fetched from Door43, keyed to the active note / selected
+  word. New: `web/src/lib/taArticle.ts` (+ test),
+  `web/src/components/AssociatedArticlePanel.tsx`; both placeholder sites in
+  `Shell.tsx` wired up.
+- **PR 2 — `original` panel: not started.** Extract the Hebrew/Greek strip
+  (`HebrewLine`) out of `ScriptureColumn` into a placeable panel driven by
+  `PanelConfig.resource` ("uhb" | "ugnt"). Data already sits on
+  `data.verses["UHB"|"UGNT"]` + `lexiconMap` + `data.twl` — no new fetching.
+  Every Hebrew↔Hebrew compare must go through `nfc()` from `lib/hebrew.ts`.
+- **PR 3 — `search` panel: not started.** Small; it is the
+  `SEARCH_IFRAME_URL` iframe from `ResourceColumn`. Keep the same host — it is
+  allow-listed in the API's CSP `frame-src`.
 
-## Local verification setup (if it needs redoing)
-Dev DB in this worktree's `.wrangler/state` has two seeded tW articles
-(`kt/grace`, `kt/faith`); seed SQL was written to the session scratchpad, not the
-repo. Both `bible_editor_dev` AND `bible_editor_mltest_dev` were migrated+seeded --
-which DB you land in depends on the workspace the session resolves to (`bsoj` vs
-`mltest`), and a fresh browser profile resolved to `mltest` whose DB had no
-migrations, giving "no such table" 500s and an "only available for gateway-language
-projects" screen. Migrate both. Servers were run as `wrangler dev --port 8791` + `vite --port 5291` with
-`VITE_API_PROXY=http://127.0.0.1:8791`. Note that background servers started by a
-**subagent** die when that agent finishes — start them from the main session.
+## Deliberately not built (decisions, not oversights)
+
+- **`alignment`** — out of scope. Alignment is currently a *mode* of the single
+  `ResourceColumn`, keyed on Shell-level `alignerTarget` / `panelMode`, and its
+  dirty state is what `runWithDirtyGate` protects via one shared
+  `alignmentDirtyRef`. A placeable alignment panel requires that ref to become
+  per-panel — a real redesign of the most brittle surface in the repo. Should be
+  its own issue.
+- **`articleList`** — no built-in layout uses it (the `translate-words` preset
+  that did was retired in PR #123) and the real tW/tA UI is a route. Flagged as
+  possibly redundant; confirm it is still wanted before building it.
+
+## Notes for whoever picks this up
+
+- `panelRegistry.ts` descriptors declare `i18nTitleKey: "layout.panel.<type>"`,
+  but those keys do not exist in `en.json` — Shell titles panels with
+  `panelTitle.<type>` instead, so `i18nTitleKey` is dead today. Left alone.
+- Local verification needed **no** `--persist-to`: the short repo path
+  (`C:\GH\BEM\repo`) keeps a worktree inside Windows MAX_PATH, so wrangler's
+  default in-worktree `.wrangler/state` works. The older "use C:/bem-verify"
+  advice is obsolete.
+- The tA/tW panels fetch from Door43 directly, so `POST /api/articles/populate`
+  is **not** required to see content — a plain book import (ZEC) is enough.
+- Browser gotcha: assigning `location.href` a URL that differs only in its hash
+  does not reload the page, so a layout switch written to `localStorage` looks
+  like it had no effect. Use `location.reload()`.
+- Background servers started by a **subagent** die when that agent finishes —
+  start them from the main session.

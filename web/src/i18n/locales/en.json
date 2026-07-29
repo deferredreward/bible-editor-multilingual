@@ -208,6 +208,16 @@
     "alignment": "Alignment",
     "search": "Search"
   },
+  "panelBody": {
+    "selectNote": "Select a translationNote to see its translationAcademy article.",
+    "selectWord": "Select a word to see its translationWords article.",
+    "noNoteArticle": "This note has no translationAcademy reference.",
+    "noWordArticle": "This word has no translationWords article.",
+    "noSourceTa": "No translationAcademy source is configured for this project.",
+    "noSourceTw": "No translationWords source is configured for this project.",
+    "loadFailed": "Couldn't load this article.",
+    "openOnDoor43": "Open on Door43"
+  },
   "layout": {
     "dragToMove": "Drag to move this panel",
     "minimizePanel": "Minimize panel",
