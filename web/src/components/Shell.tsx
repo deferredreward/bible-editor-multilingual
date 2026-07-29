@@ -66,6 +66,7 @@ import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPre
 import { WorkspaceLayout } from "./WorkspaceLayout";
 import { StackedResourcePanel } from "./StackedResourcePanel";
 import { AssociatedArticlePanel } from "./AssociatedArticlePanel";
+import { OriginalLanguagePanel } from "./OriginalLanguagePanel";
 import { LayoutMenu } from "./LayoutMenu";
 import { PanelChrome } from "./PanelChrome";
 import { RegionDropZone } from "./RegionDropZone";
@@ -3323,8 +3324,25 @@ export function Shell({
         const row = activeWordId ? data.twl.find((r) => r.id === activeWordId) : null;
         return <AssociatedArticlePanel resource="tw" selected={!!row} articleRef={row?.tw_link ?? null} />;
       }
+      case "original":
+        return (
+          <OriginalLanguagePanel
+            book={book}
+            chapter={chapter}
+            versesByVersion={data.verses}
+            verseNumbers={verseNumbers}
+            activeVerse={activeVerse}
+            activeNoteQuote={activeQuote}
+            activeNoteOccurrence={activeOccurrence}
+            reorderHighlight={reorderHighlight}
+            lexiconMap={lexiconMap}
+            twl={data.twl}
+            resource={panel.config?.resource}
+            onSelectVerse={requestSelectVerse}
+          />
+        );
       default:
-        // TODO follow-on PRs: original-language / articleList / alignment / search panels.
+        // TODO follow-on PRs: articleList / alignment / search panels.
         return (
           <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
             <Typography variant="body2">{panel.type} — panel coming in a later pass</Typography>
