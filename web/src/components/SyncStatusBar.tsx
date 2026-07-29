@@ -50,6 +50,10 @@ function formatDraftMeta(m: DraftMeta): string {
     // on the same article are tellable apart.
     return `${m.resource.toUpperCase()} ${m.articleId}${m.part === "body" ? "" : ` · ${m.part}`}`;
   }
+  // Note templates have no reference either; the support_ref is what a
+  // translator recognises them by, so lead with it and keep the id for
+  // disambiguation (several templates can share a support_ref).
+  if (m.kind === "template") return `${m.supportRef} · ${m.templateId}`;
   return `${m.rowKind.toUpperCase()} ${m.book} ${m.chapter}:${m.verse}`;
 }
 
@@ -269,6 +273,11 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
     // editor holding the draft.
     if (m.kind === "article") {
       location.hash = `#/articles/${m.resource}/${encodeURIComponent(m.articleId)}`;
+    } else if (m.kind === "template") {
+      // Same reasoning as articles: no scripture reference to navigate to, so
+      // route to the template's own hash instead of calling onNavigate with
+      // book/chapter/verse this variant does not carry.
+      location.hash = `#/templates/${encodeURIComponent(m.templateId)}`;
     } else {
       onNavigate?.(m.book, m.chapter, m.verse);
     }

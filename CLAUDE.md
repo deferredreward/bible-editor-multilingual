@@ -160,8 +160,10 @@ editor that holds unsaved text must (a) write drafts to that store, (b) rehydrat
 from it, and (c) clear the draft once the server confirms. `useUnsavedGuard`
 covers reload/tab-close. Don't "fix" a data-loss bug in an editor by adding
 save-on-unmount or a confirm dialog — wire it into the drafts store instead.
-tW/tA article parts were the last editor missing this and were wired up in the
-same way.
+tW/tA article parts and note templates (`TemplateWorkspace`) were the last two
+editors missing this and were wired up in the same way. Both are book-agnostic,
+so their `DraftMeta` variants carry no book/chapter/verse — any consumer that
+switches on `meta.kind` must special-case them rather than reading `m.book`.
 
 ### Concurrency tests (`tests/concurrency/`)
 

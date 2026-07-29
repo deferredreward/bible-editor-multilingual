@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "অসংরক্ষিত পরিবর্তন",
+    "staleDraft": "আপনার অসংরক্ষিত লেখা থাকা অবস্থায় এই টেমপ্লেটটি সার্ভারে পরিবর্তিত হয়েছে। আপনার লেখা পুনরুদ্ধার করা হয়েছে; সংরক্ষণের আগে যাচাই করুন।",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

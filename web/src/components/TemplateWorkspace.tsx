@@ -22,6 +22,10 @@ import EditIcon from "@mui/icons-material/Edit";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type TemplateUnit, type TemplateUnitMeta } from "../sync/api";
+// Aliased for symmetry with ArticleWorkspace, where an unaliased `drafts`
+// import would be shadowed by the editor's own local draft state.
+import { drafts as draftStore, templateKey, type DraftRecord } from "../sync/drafts";
+import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useTemplates } from "../hooks/useTemplates";
 import { useTemplateAiDraft } from "../hooks/useTemplateAiDraft";
@@ -107,6 +111,29 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
   }, [units, query]);
 
   const hasMatches = groups.some((g) => g.rows.length > 0);
+
+  // Which templates hold unsaved typing. Drives the rail marker below so a
+  // draft you left behind on another template is findable instead of invisible.
+  // NOTE: must stay above the `!isTranslation` early return — a hook below it
+  // would be conditional.
+  const [draftList, setDraftList] = useState<DraftRecord[]>([]);
+  useEffect(() => draftStore.subscribe(setDraftList), []);
+  const dirtyTemplateIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of draftList) {
+      if (d.quarantined) continue;
+      if (d.meta.kind !== "template") continue;
+      ids.add(d.meta.templateId);
+    }
+    return ids;
+  }, [draftList]);
+
+  // Warn before a reload / tab close while template typing is unsaved. The hook
+  // arms itself from the drafts store — both an async subscription and a
+  // synchronous read that covers the write-commit window — so persisted
+  // template drafts already trigger it and this argument is belt-and-braces
+  // (it derives from the same subscription, so it can't be stricter).
+  useUnsavedGuard(dirtyTemplateIds.size > 0);
 
   if (!isTranslation) {
     return (
@@ -248,6 +275,23 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
                           />
                         </Tooltip>
                       )}
+                      {dirtyTemplateIds.has(u.template_id) && (
+                        // Same warning colour (Kindle) the verse/row/article
+                        // editors use for "unsaved typing lives here".
+                        <Tooltip title={t("templates.unsavedDraft")}>
+                          <Box
+                            component="span"
+                            aria-label={t("templates.unsavedDraft")}
+                            sx={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: "50%",
+                              bgcolor: "#E59D33",
+                              flexShrink: 0,
+                            }}
+                          />
+                        </Tooltip>
+                      )}
                       <StateChip state={u.translation_state} />
                     </Box>
                   );
@@ -296,17 +340,46 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [staleDraft, setStaleDraft] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Fetch the unit, then restore any unsaved typing persisted for it. Template
+  // drafts used to live only in this component's state, so every exit (Back,
+  // picking another template, a TopBar menu item, reload) silently discarded
+  // them. Hydrating here — in the same effect that seeds `draft`, so the two
+  // can't race — is what makes leaving and coming back non-destructive.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setStaleDraft(false);
     api
       .getTemplate(templateId)
-      .then((u) => {
+      .then(async (u) => {
         if (cancelled) return;
+        const server = u.target_md ?? "";
+        const rec = await draftStore.get(templateKey(templateId)).catch(() => undefined);
+        if (cancelled) return;
+        const stored = (rec?.payload as { target_md?: string } | undefined)?.target_md;
+        let seeded = server;
+        if (typeof stored === "string") {
+          if (stored === server) {
+            // The draft has become a no-op — the server now holds this exact
+            // text (saved from another tab, or by someone else). Restoring it
+            // would leave nothing dirty, so Save stays disabled and the user
+            // has no way to clear the "N unsaved" chip it keeps arming.
+            void draftStore.clear(templateKey(templateId));
+          } else {
+            // Restore even when the server version moved on while we were away
+            // — stranding the draft would leave the user with text they can't
+            // see and an "unsaved" marker they can't clear. But flag it: Save
+            // sends the freshly fetched version as If-Match, so it would
+            // succeed and quietly overwrite the newer server text.
+            seeded = stored;
+            if (rec && rec.expectedVersion !== u.version) setStaleDraft(true);
+          }
+        }
         setUnit(u);
-        setDraft(u.target_md ?? "");
+        setDraft(seeded);
         setPreview(false);
         setExpanded(false);
         setLoading(false);
@@ -324,7 +397,39 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
   const applyServerUnit = useCallback((u: TemplateUnit) => {
     setUnit(u);
     setDraft(u.target_md ?? "");
+    // Drop the persisted draft only once the server actually holds this text.
+    // After a save that's true and the draft is redundant. But this also runs
+    // for validate/unvalidate and 409-rebase responses, which carry the
+    // PRE-EXISTING target_md — clearing there would delete the user's unsaved
+    // typing along with the last copy of it. Comparing first makes the clear
+    // safe from every call site rather than relying on the caller to know.
+    const key = templateKey(u.template_id);
+    void draftStore.get(key).then((rec) => {
+      const stored = (rec?.payload as { target_md?: string } | undefined)?.target_md;
+      if (stored === undefined || stored === (u.target_md ?? "")) void draftStore.clear(key);
+    });
   }, []);
+
+  // Persist the in-progress text. Called on every keystroke, mirroring the
+  // note/verse/article editors: nothing is sent to the server (that stays
+  // behind the Save button), but the typing survives unmount, route changes
+  // and reloads. Typing back to the server value clears the draft rather than
+  // storing a no-op one, so the unsaved marker stays honest.
+  const persistDraft = useCallback(
+    (u: TemplateUnit, text: string) => {
+      const key = templateKey(u.template_id);
+      if (text === (u.target_md ?? "")) {
+        void draftStore.clear(key);
+        return;
+      }
+      void draftStore.set(key, { target_md: text }, u.version, {
+        kind: "template",
+        templateId: u.template_id,
+        supportRef: u.support_ref,
+      });
+    },
+    [],
+  );
 
   const dirty = unit != null && draft !== (unit.target_md ?? "");
   const state = unit?.translation_state ?? null;
@@ -487,7 +592,16 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
           </Button>
         )}
         {isValidated && (
-          <Button size="small" variant="text" color="warning" onClick={() => handleValidate(false)}>
+          <Button
+            size="small"
+            variant="text"
+            color="warning"
+            // Gated like Approve above: the validate response carries the
+            // pre-existing target_md, so running it with unsaved typing in the
+            // box would replace what the user just wrote with the older text.
+            disabled={dirty}
+            onClick={() => handleValidate(false)}
+          >
             {t("translation.unapprove")}
           </Button>
         )}
@@ -587,7 +701,10 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
               ) : (
                 <TextField
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                    persistDraft(unit, e.target.value);
+                  }}
                   fullWidth
                   multiline
                   minRows={8}
@@ -619,9 +736,28 @@ function TemplateEditor({ templateId, direction, onServerChange }: EditorProps) 
         currentVersion={unit.version}
         direction={direction}
         onClose={() => setHistoryOpen(false)}
-        onUseVersion={(md) => setDraft(md)}
+        // Pulling an old version into the box is unsaved typing like any other
+        // — persist it too, or restoring a version and leaving would lose it.
+        onUseVersion={(md) => {
+          setDraft(md);
+          persistDraft(unit, md);
+        }}
       />
 
+      <Snackbar
+        // No autoHide (unlike the conflict snackbar below): this one guards a
+        // save that would overwrite newer server text without a 409 to stop it,
+        // so it shouldn't time out while the user is reading the diff. It still
+        // closes on click-away — MUI's Snackbar default — matching the
+        // identical warning in ArticleWorkspace.
+        open={staleDraft}
+        onClose={() => setStaleDraft(false)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="warning" onClose={() => setStaleDraft(false)}>
+          {t("templates.staleDraft")}
+        </Alert>
+      </Snackbar>
       <Snackbar
         open={conflict}
         autoHideDuration={10000}

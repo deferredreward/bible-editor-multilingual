@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "Cambios sin guardar",
+    "staleDraft": "Esta plantilla cambió en el servidor mientras tenías texto sin guardar. Tu texto se restauró; revísalo antes de guardar.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

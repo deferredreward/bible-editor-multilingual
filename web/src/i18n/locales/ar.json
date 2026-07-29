@@ -55,6 +55,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "تغييرات غير محفوظة",
+    "staleDraft": "تغيّر هذا القالب على الخادم بينما كان لديك نص غير محفوظ. تم استعادة نصك؛ راجعه قبل الحفظ.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "बिना सहेजे बदलाव",
+    "staleDraft": "यह टेम्पलेट सर्वर पर बदल गया जब आपके पास बिना सहेजा पाठ था। आपका पाठ पुनर्स्थापित कर दिया गया; सहेजने से पहले उसकी जाँच करें।",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

@@ -28,6 +28,8 @@
     "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search templates",
     "untyped": "Other",
+    "unsavedDraft": "Mabadiliko yasiyohifadhiwa",
+    "staleDraft": "Kiolezo hiki kilibadilika kwenye seva wakati ulikuwa na maandishi yasiyohifadhiwa. Maandishi yako yamerejeshwa; yapitie kabla ya kuhifadhi.",
     "staleSource": "The English source changed — review the translation.",
     "history": "History",
     "historyTitle": "Template history",

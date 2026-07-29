@@ -1,5 +1,6 @@
 // Local draft store for unsaved edits. Every editable field (ULT/UST verse,
-// TN/TQ/TWL row, note quote/body/support-ref, tW/tA article part) stashes its
+// TN/TQ/TWL row, note quote/body/support-ref, tW/tA article part, note
+// template) stashes its
 // in-progress text here on every keystroke. The outbox is NOT touched until the
 // user clicks Save — drafts are deliberately separate from the write-ahead
 // queue so the only thing that produces a PATCH is an explicit user action.
@@ -63,6 +64,14 @@ export type DraftMeta =
       articleId: string;
       path: string;
       part: "body" | "title" | "sub-title";
+    }
+  // Note template (template_units). Templates are book-agnostic like articles,
+  // so this variant carries no book/chapter/verse — consumers that navigate by
+  // reference must special-case it (SyncStatusBar routes to the template hash).
+  | {
+      kind: "template";
+      templateId: string;
+      supportRef: string;
     };
 
 type Subscriber = (drafts: DraftRecord[]) => void;
@@ -130,6 +139,12 @@ export function rowKey(rowKind: RowKind, book: string, id: string): string {
 // resource is kept in the key so a tw and ta path can never collide.
 export function articleKey(resource: "tw" | "ta", path: string): string {
   return `article:${resource}:${path}`;
+}
+
+// Note template drafts. template_id is the table's primary key, so it is
+// already globally unique; the prefix only keeps it out of the other keyspaces.
+export function templateKey(templateId: string): string {
+  return `template:${templateId}`;
 }
 
 export const drafts = {
