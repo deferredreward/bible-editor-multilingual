@@ -93,7 +93,7 @@ import {
 } from "./contextExport.ts";
 import { contextShrinkRefused, shrinkDetailCode, hasSemanticContent } from "./contextExportLib.ts";
 import { fetchEnSourceMaps } from "./contextSourceFetch.ts";
-import { commitContextPackToMaster, ensureContextRepoExists, getBranchTipSha } from "./contextExportDcs.ts";
+import { commitContextPackToMaster, getBranchTipSha, repoExists } from "./contextExportDcs.ts";
 import {
   insertContextExportQueued,
   finalizeContextExport,
@@ -568,7 +568,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const maxAttempts = 3;
     let lastReason: string | null = null;
     // Repo existence is invariant across CAS retries — probe/create at most once.
-    let repoEnsured = false;
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const rendered = renderContextPack({
         cfg,
@@ -670,32 +670,58 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         };
       }
 
-      try {
-        const dcsCfg = {
-          baseUrl: this.env.DCS_BASE_URL,
-          token: this.env.DCS_SERVICE_TOKEN!,
-          owner,
-          repo: contextRepoName(),
+      const dcsCfgCtx = {
+        baseUrl: this.env.DCS_BASE_URL,
+        token: this.env.DCS_SERVICE_TOKEN!,
+        owner,
+        repo: contextRepoName(),
+      };
+
+      if (!(await repoExists(dcsCfgCtx))) {
+        const reason = "context_repo_not_provisioned";
+        await finalizeContextExport(this.env, resultId, {
+          status: "failed",
+          stats,
+          failureReason: reason,
+          r2Key,
+        });
+        await this.recordSnapshot("CONTEXT", "ctx", null, null, stats.contentFiles, reason);
+        return {
+          status: "failed",
+          commitSha: null,
+          contentFiles: stats.contentFiles,
+          terms: stats.terms,
+          examplesTn: stats.examplesTn,
+          examplesTq: stats.examplesTq,
+          failureReason: reason,
         };
-        // Tip-first: on the steady-state path (repo + master exist) this is the
-        // only pre-commit read. Only a null tip triggers the repo probe/create —
-        // first-ever export for this org creates the context repo silently so
-        // the translator never has to provision anything on DCS themselves.
-        let tip = await getBranchTipSha(dcsCfg, "master");
-        if (tip == null && !repoEnsured) {
-          const ensured = await ensureContextRepoExists(dcsCfg);
-          repoEnsured = true;
-          tip = await getBranchTipSha(dcsCfg, "master");
-          if (tip == null && !ensured.created) {
-            // Repo exists but has no master branch (created out-of-band without
-            // auto_init) — the commit path can't self-heal that; name it.
-            throw new Error(
-              `context_repo_uninitialized: ${owner}/${contextRepoName()} exists but has no master branch`,
-            );
-          }
+      }
+
+      try {
+        const tip = await getBranchTipSha(dcsCfgCtx, "master");
+
+        if (tip === null) {
+          const reason = "context_repo_uninitialized";
+          await finalizeContextExport(this.env, resultId, {
+            status: "failed",
+            stats,
+            failureReason: reason,
+            r2Key,
+          });
+          await this.recordSnapshot("CONTEXT", "ctx", null, null, stats.contentFiles, reason);
+          return {
+            status: "failed",
+            commitSha: null,
+            contentFiles: stats.contentFiles,
+            terms: stats.terms,
+            examplesTn: stats.examplesTn,
+            examplesTq: stats.examplesTq,
+            failureReason: reason,
+          };
         }
+
         const commit = await commitContextPackToMaster(
-          dcsCfg,
+          dcsCfgCtx,
           files,
           `bible-editor context-pack export (${stats.contentFiles} files, ${stats.terms} terms) → master (${instanceId})`,
           tip,
