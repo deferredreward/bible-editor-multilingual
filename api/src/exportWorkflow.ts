@@ -677,30 +677,31 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         };
       }
 
-      if (!repoChecked) {
-        repoChecked = true;
-        if (!(await repoExists(dcsCfgCtx))) {
-          const reason = "context_repo_not_provisioned";
-          await finalizeContextExport(this.env, resultId, {
-            status: "failed",
-            stats,
-            failureReason: reason,
-            r2Key,
-          });
-          await this.recordSnapshot("CONTEXT", "ctx", null, null, stats.contentFiles, reason);
-          return {
-            status: "failed",
-            commitSha: null,
-            contentFiles: stats.contentFiles,
-            terms: stats.terms,
-            examplesTn: stats.examplesTn,
-            examplesTq: stats.examplesTq,
-            failureReason: reason,
-          };
-        }
-      }
-
       try {
+        if (!repoChecked) {
+          repoChecked = true;
+          if (!(await repoExists(dcsCfgCtx))) {
+            const reason = "context_repo_not_provisioned";
+            await finalizeContextExport(this.env, resultId, {
+              status: "failed",
+              stats,
+              failureReason: reason,
+              r2Key,
+            });
+            await this.recordSnapshot("CONTEXT", "ctx", null, null, stats.contentFiles, reason);
+            await this.invalidateStaleContextExport();
+            return {
+              status: "failed",
+              commitSha: null,
+              contentFiles: stats.contentFiles,
+              terms: stats.terms,
+              examplesTn: stats.examplesTn,
+              examplesTq: stats.examplesTq,
+              failureReason: reason,
+            };
+          }
+        }
+
         const tip = await getBranchTipSha(dcsCfgCtx, "master");
 
         if (tip === null) {
@@ -784,6 +785,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       failureReason: lastReason ?? "cas_retries_exhausted",
     });
     return empty("failed", lastReason ?? "cas_retries_exhausted");
+  }
+
+  private async invalidateStaleContextExport(): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE context_export_results
+          SET status = 'failed',
+              failure_reason = 'context_repo_deleted'
+        WHERE id = (
+          SELECT id FROM context_export_results
+           WHERE status = 'success' AND commit_sha IS NOT NULL
+           ORDER BY completed_at DESC, id DESC LIMIT 1
+        )`,
+    ).run();
   }
 
   private async recordContextShrinkAlert(owner: string, detail: string): Promise<void> {
