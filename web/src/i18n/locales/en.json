@@ -216,7 +216,8 @@
     "noSourceTa": "No translationAcademy source is configured for this project.",
     "noSourceTw": "No translationWords source is configured for this project.",
     "loadFailed": "Couldn't load this article.",
-    "openOnDoor43": "Open on Door43"
+    "openOnDoor43": "Open on Door43",
+    "noOriginal": "This chapter has no original-language text."
   },
   "layout": {
     "dragToMove": "Drag to move this panel",
