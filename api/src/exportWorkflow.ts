@@ -564,11 +564,18 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       );
     }
 
+    const dcsCfgCtx = {
+      baseUrl: this.env.DCS_BASE_URL,
+      token: this.env.DCS_SERVICE_TOKEN!,
+      owner,
+      repo: contextRepoName(),
+    };
+
     // CAS retry loop: re-render from D1 on parent conflict (max 3).
+    // Repo existence is invariant across retries — probe at most once.
+    let repoChecked = false;
     const maxAttempts = 3;
     let lastReason: string | null = null;
-    // Repo existence is invariant across CAS retries — probe/create at most once.
-
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const rendered = renderContextPack({
         cfg,
@@ -670,31 +677,27 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         };
       }
 
-      const dcsCfgCtx = {
-        baseUrl: this.env.DCS_BASE_URL,
-        token: this.env.DCS_SERVICE_TOKEN!,
-        owner,
-        repo: contextRepoName(),
-      };
-
-      if (!(await repoExists(dcsCfgCtx))) {
-        const reason = "context_repo_not_provisioned";
-        await finalizeContextExport(this.env, resultId, {
-          status: "failed",
-          stats,
-          failureReason: reason,
-          r2Key,
-        });
-        await this.recordSnapshot("CONTEXT", "ctx", null, null, stats.contentFiles, reason);
-        return {
-          status: "failed",
-          commitSha: null,
-          contentFiles: stats.contentFiles,
-          terms: stats.terms,
-          examplesTn: stats.examplesTn,
-          examplesTq: stats.examplesTq,
-          failureReason: reason,
-        };
+      if (!repoChecked) {
+        repoChecked = true;
+        if (!(await repoExists(dcsCfgCtx))) {
+          const reason = "context_repo_not_provisioned";
+          await finalizeContextExport(this.env, resultId, {
+            status: "failed",
+            stats,
+            failureReason: reason,
+            r2Key,
+          });
+          await this.recordSnapshot("CONTEXT", "ctx", null, null, stats.contentFiles, reason);
+          return {
+            status: "failed",
+            commitSha: null,
+            contentFiles: stats.contentFiles,
+            terms: stats.terms,
+            examplesTn: stats.examplesTn,
+            examplesTq: stats.examplesTq,
+            failureReason: reason,
+          };
+        }
       }
 
       try {
