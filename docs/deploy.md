@@ -74,6 +74,31 @@ Migration filenames are authoritative. The repo has historical duplicate
 numeric prefixes (`0025_*` and `0026_*`), so do not refer to a migration by
 number alone in runbooks or PR notes; use the full filename.
 
+### 1a. Restore the editor allowlist (rebuild only — required)
+
+Migration `0016_user_roles.sql` seeds **only** the admin, because the migration
+set runs against every database including each new per-org one, which must not
+inherit prod's editors. Prod still uses `user_roles` as its actual access gate
+(no Door43 org-roles yet, and `SUPER_ADMINS = ""` in `[env.production.vars]`, so
+there is no bypass). **A migrations-only rebuild therefore locks the 10
+production editors out entirely** — `callbackDcsAuth` checks `user_roles` before
+upserting into `users`, so they cannot even mint a JWT. Restore them explicitly:
+
+```sh
+npx wrangler d1 execute bible_editor --remote --env production \
+  --file=../scripts/seed-prod-editor-allowlist.sql
+```
+
+Verify the row count before moving on:
+
+```sh
+npx wrangler d1 execute bible_editor --remote --env production \
+  --command "SELECT role, count(*) FROM user_roles GROUP BY role;"
+```
+
+Skip this step only when provisioning a fresh non-production org database — those
+are supposed to start with the admin alone.
+
 ### 2. Create the R2 bucket
 
 ```sh

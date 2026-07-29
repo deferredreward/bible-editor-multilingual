@@ -53,6 +53,17 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **`user_roles` is prod's live access gate, and migrations can't skip prod.** `callbackDcsAuth`
+  checks `user_roles` *before* upserting into `users`, so deleting a row revokes that account's
+  ability to mint a JWT and write. Production does **not** yet have the Door43 org-roles
+  adjustment that supersedes this allowlist, so the 10 editors seeded by `0016` must stay in
+  `bible_editor` until org-roles lands there. Anything that changes `user_roles` membership
+  therefore belongs in a hand-applied script (`scripts/prune-seeded-editors.sql`), never a
+  migration — the migration set runs against every D1 in the project, including prod, so there
+  is no honest "dev-only migration". Corollary: **never seed accounts in a migration**; `0016`'s
+  seed block landed in every new per-org database (`bible_editor_mltest_dev` etc.), giving each
+  fresh org 11 allowlisted accounts it never asked for. It now seeds only the admin.
+
 - **Stopping a `wrangler dev` background task can orphan `workerd.exe` still bound to the port.**
   A restart then leaves *two* listeners on the same port and requests are served
   nondeterministically by the stale one — which presents as newly added routes returning 404
