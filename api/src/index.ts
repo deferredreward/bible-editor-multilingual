@@ -174,7 +174,9 @@ app.use("/api/*", blockViewerWrites);
 // Defense-in-depth response headers. CSP locks the SPA to its own bundle
 // (no third-party scripts/styles aside from inline styles emotion/MUI need).
 // frame-src allow-lists the swunrow search tool embedded in the Resources
-// column's Search tab — without it, frame-src falls back to default-src 'self'
+// column's Search tab AND in the Flexible layout's Search panel (both render
+// SEARCH_IFRAME_URL from web/src/components/SearchPanel.tsx) — without it,
+// frame-src falls back to default-src 'self'
 // and the iframe is blocked in prod (but not local Vite, which skips these
 // headers). connect-src allow-lists git.door43.org for the same reason: the TW
 // article viewer fetches raw markdown directly from Door43 (see twArticle.ts).
