@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "टेम्पलेट लोड नहीं हो सके। पुनः प्रयास करने के लिए रीफ़्रेश करें।",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "AI से सभी का ड्राफ़्ट बनाएं ({{n}})",
+    "draftAllProgress": "ड्राफ़्ट किया जा रहा है {{n}}/{{total}}…",
+    "draftAllCancel": "रद्द करें",
+    "draftAllDone": "{{n}} टेम्पलेट का ड्राफ़्ट बनाया गया।",
+    "draftAllDonePartial": "{{n}} टेम्पलेट का ड्राफ़्ट बनाया गया; {{failed}} विफल हुए।",
+    "draftAllCancelled": "रोका गया। {{n}} टेम्पलेट का ड्राफ़्ट बनाया गया।",
+    "draftAllFailed": "बार-बार विफलताओं के बाद रोका गया ({{code}})। {{n}} टेम्पलेट का ड्राफ़्ट बनाया गया।",
+    "draftAllDisabled": "AI कॉन्फ़िगर नहीं है — किसी व्यवस्थापक को BT_API_TOKEN सेट करना होगा।"
   },
   "topbar": {
     "showVerseList": "पद सूची दिखाएँ",

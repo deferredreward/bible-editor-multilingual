@@ -49,6 +49,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "Couldn't load templates. Refresh to try again.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -73,6 +74,14 @@
     "useVersion": "Use v{{v}}",
     "alreadyCurrent": "Already current",
     "draftWithAi": "Draft with AI",
+    "draftAll": "Draft all with AI ({{n}})",
+    "draftAllProgress": "Drafting {{n}}/{{total}}…",
+    "draftAllCancel": "Cancel",
+    "draftAllDone": "Drafted {{n}} template(s).",
+    "draftAllDonePartial": "Drafted {{n}} template(s); {{failed}} failed.",
+    "draftAllCancelled": "Stopped. Drafted {{n}} template(s).",
+    "draftAllFailed": "Stopped after repeated failures ({{code}}). Drafted {{n}} template(s).",
+    "draftAllDisabled": "AI not configured — an admin must set BT_API_TOKEN.",
     "draftDisabledValidated": "Un-approve first to draft over an approved translation."
   },
   "import": {

@@ -2,10 +2,115 @@
 // templateSync.ts (migration 0053). planTemplateSync and parseTemplateRows
 // take no D1/crypto dependency, so they're tested directly here without a
 // fake database.
+//
+// ensureTemplatesPopulated (the first-run backstop) does need D1, so those
+// two tests use the same node:sqlite D1 adapter + real-migration pattern as
+// articlePopulate.test.mjs, applied to migration 0054_template_units.sql.
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseTemplateRows, planTemplateSync, BUILTIN_TEMPLATES } from "./templateSync.ts";
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  parseTemplateRows,
+  planTemplateSync,
+  BUILTIN_TEMPLATES,
+  ensureTemplatesPopulated,
+} from "./templateSync.ts";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const migDir = join(here, "..", "migrations");
+const readMig = (name) => readFileSync(join(migDir, name), "utf-8");
+
+// D1 adapter over node:sqlite — same shape as articlePopulate.test.mjs's.
+function makeEnv(db) {
+  function bound(sql, params) {
+    return {
+      first() {
+        return db.prepare(sql).get(...params) ?? null;
+      },
+      all() {
+        return { results: db.prepare(sql).all(...params) };
+      },
+      run() {
+        const r = db.prepare(sql).run(...params);
+        return { meta: { changes: Number(r.changes) } };
+      },
+    };
+  }
+  const DB = {
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return bound(sql, params);
+        },
+        first() {
+          return db.prepare(sql).get() ?? null;
+        },
+        all() {
+          return { results: db.prepare(sql).all() };
+        },
+        run() {
+          const r = db.prepare(sql).run();
+          return { meta: { changes: Number(r.changes) } };
+        },
+      };
+    },
+    async batch(stmts) {
+      const results = [];
+      db.exec("BEGIN");
+      try {
+        for (const s of stmts) results.push(s.run());
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+      return results;
+    },
+  };
+  return { DB };
+}
+
+function freshDb() {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY);`);
+  db.exec(readMig("0054_template_units.sql"));
+  return db;
+}
+
+// Minimal CSV: header row with the required "id" column D, plus one data row —
+// enough for parseTemplateRows to accept it without aborting.
+const FAKE_CSV = ['ref,type,body,id', 'figs-metaphor,Note,"A note",figs-metaphor-01'].join("\n");
+
+test("ensureTemplatesPopulated syncs when template_sync_state has no row", async () => {
+  const db = freshDb();
+  const env = makeEnv(db);
+  const ran = await ensureTemplatesPopulated(env, { deps: { fetchCsv: async () => FAKE_CSV } });
+  assert.equal(ran, true);
+  const state = db.prepare(`SELECT last_synced_at FROM template_sync_state WHERE id = 1`).get();
+  assert.ok(state && state.last_synced_at != null);
+  const unit = db.prepare(`SELECT * FROM template_units WHERE template_id = 'figs-metaphor-01'`).get();
+  assert.ok(unit, "sheet row was written by the backstop sync");
+});
+
+test("ensureTemplatesPopulated is a no-op once last_synced_at is set", async () => {
+  const db = freshDb();
+  db.prepare(
+    `INSERT INTO template_sync_state (id, last_synced_at, last_result_json) VALUES (1, unixepoch(), '{}')`,
+  ).run();
+  const env = makeEnv(db);
+  let fetchCalled = false;
+  const ran = await ensureTemplatesPopulated(env, {
+    deps: { fetchCsv: async () => (fetchCalled = true) && FAKE_CSV },
+  });
+  assert.equal(ran, false);
+  assert.equal(fetchCalled, false, "syncTemplates must not run once already synced");
+  const unit = db.prepare(`SELECT * FROM template_units WHERE template_id = 'figs-metaphor-01'`).get();
+  assert.equal(unit, undefined, "no-op means no sheet row was written");
+});
 
 function dbRow(overrides = {}) {
   return {

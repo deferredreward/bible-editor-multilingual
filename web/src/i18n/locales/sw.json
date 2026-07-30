@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "Haikuweza kupakia violezo. Onyesha upya ili kujaribu tena.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "Andaa zote kwa AI ({{n}})",
+    "draftAllProgress": "Inaandaa {{n}}/{{total}}…",
+    "draftAllCancel": "Ghairi",
+    "draftAllDone": "Violezo {{n}} vimeandaliwa.",
+    "draftAllDonePartial": "Violezo {{n}} vimeandaliwa; {{failed}} vimeshindwa.",
+    "draftAllCancelled": "Imesimamishwa. Violezo {{n}} vimeandaliwa.",
+    "draftAllFailed": "Imesimamishwa baada ya kushindwa mara kwa mara ({{code}}). Violezo {{n}} vimeandaliwa.",
+    "draftAllDisabled": "AI haijasanidiwa — msimamizi lazima aweke BT_API_TOKEN."
   },
   "topbar": {
     "showVerseList": "onyesha orodha ya mistari",

@@ -428,6 +428,26 @@ export async function syncTemplates(
   return result;
 }
 
+// First-run backstop: if template_units has never been synced (no row, or
+// last_synced_at IS NULL), run syncTemplates once. This is separate from the
+// 6h cron refresh in index.ts's POLL_CRON branch — that keeps running exactly
+// as it does today. This only exists so a dev worker (no crons registered —
+// see wrangler.toml) or a brand-new org isn't stuck showing zero templates
+// until someone happens to trigger a cron tick. syncTemplates always calls
+// writeSyncState, including on the sheet-parse-abort path, so a failed sync
+// still stamps last_synced_at and this gate cannot retry in a loop.
+export async function ensureTemplatesPopulated(
+  env: Env,
+  opts?: SyncTemplatesOptions,
+): Promise<boolean> {
+  const state = await env.DB.prepare(
+    `SELECT last_synced_at FROM template_sync_state WHERE id = 1`,
+  ).first<{ last_synced_at: number | null }>();
+  if (state?.last_synced_at != null) return false;
+  await syncTemplates(env, opts);
+  return true;
+}
+
 function writeSyncState(env: Env, now: number, result: SyncTemplatesResult): Promise<unknown> {
   return env.DB
     .prepare(

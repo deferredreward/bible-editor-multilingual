@@ -29,6 +29,7 @@ import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useTemplates } from "../hooks/useTemplates";
 import { useTemplateAiDraft } from "../hooks/useTemplateAiDraft";
+import { useTemplateBulkDraft } from "../hooks/useTemplateBulkDraft";
 import { MarkdownView } from "./MarkdownView";
 import { TemplateHistoryDialog } from "./TemplateHistoryDialog";
 
@@ -80,7 +81,7 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
 
-  const { units, loading, refetch } = useTemplates(isTranslation);
+  const { units, loading, error, refetch } = useTemplates(isTranslation);
 
   const [search, setSearch] = useState("");
   const query = search.trim();
@@ -135,6 +136,43 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
   // (it derives from the same subscription, so it can't be stricter).
   useUnsavedGuard(dirtyTemplateIds.size > 0);
 
+  // "Draft all with AI" — pre-translate every template that has no translation
+  // yet. Deliberately narrow: an approved translation is never touched (the
+  // server 409s anyway), a unit that already has a target is left for the
+  // per-template button, and a unit holding unsaved typing is skipped so the
+  // run can't clobber it — the same guard the single-unit button applies via
+  // its `dirty` disable.
+  const { running: bulkRunning, progress: bulkProgress, result: bulkResult, clearResult: clearBulkResult, cancel: cancelBulk, draftAll } = useTemplateBulkDraft();
+  const draftableUnits = useMemo(
+    () =>
+      units.filter(
+        (u) =>
+          u.has_target === 0 &&
+          u.translation_state !== "validated" &&
+          !dirtyTemplateIds.has(u.template_id),
+      ),
+    [units, dirtyTemplateIds],
+  );
+  const handleDraftAll = useCallback(async () => {
+    if (bulkRunning || draftableUnits.length === 0) return;
+    await draftAll(draftableUnits);
+    // Versions moved server-side for every drafted unit, so the rail list must
+    // be refetched before another run can send correct If-Match values.
+    refetch();
+  }, [bulkRunning, draftableUnits, draftAll, refetch]);
+
+  const bulkMessage = useMemo(() => {
+    if (!bulkResult) return null;
+    const { drafted, failed, reason, lastErrorCode } = bulkResult;
+    if (reason === "disabled") return t("templates.draftAllDisabled");
+    if (reason === "aborted_failures")
+      return t("templates.draftAllFailed", { n: drafted, code: lastErrorCode ?? "unknown" });
+    if (reason === "cancelled") return t("templates.draftAllCancelled", { n: drafted });
+    return failed > 0
+      ? t("templates.draftAllDonePartial", { n: drafted, failed })
+      : t("templates.draftAllDone", { n: drafted });
+  }, [bulkResult, t]);
+
   if (!isTranslation) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }} spacing={1}>
@@ -174,6 +212,39 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
           <Typography variant="caption" color="text.secondary">
             {t("templates.approved", { n: validatedCount, total })}
           </Typography>
+          {bulkRunning ? (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <CircularProgress size={14} />
+              <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                {t("templates.draftAllProgress", {
+                  n: bulkProgress?.done ?? 0,
+                  total: bulkProgress?.total ?? 0,
+                })}
+              </Typography>
+              <Button size="small" onClick={cancelBulk} sx={{ fontSize: 11, minWidth: 0 }}>
+                {t("templates.draftAllCancel")}
+              </Button>
+            </Stack>
+          ) : draftableUnits.length > 0 ? (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AutoAwesomeIcon fontSize="small" />}
+              onClick={handleDraftAll}
+              sx={{ alignSelf: "flex-start", fontSize: 11 }}
+            >
+              {t("templates.draftAll", { n: draftableUnits.length })}
+            </Button>
+          ) : null}
+          {bulkMessage ? (
+            <Alert
+              severity={bulkResult?.reason === "completed" ? "success" : "warning"}
+              onClose={clearBulkResult}
+              sx={{ py: 0, fontSize: 11, "& .MuiAlert-message": { py: 0.5 } }}
+            >
+              {bulkMessage}
+            </Alert>
+          ) : null}
           <TextField
             size="small"
             fullWidth
@@ -188,6 +259,12 @@ export function TemplateWorkspace({ templateId, onNavigate, onBack }: Props) {
           {loading && units.length === 0 ? (
             <Stack alignItems="center" sx={{ p: 3 }}>
               <CircularProgress size={20} />
+            </Stack>
+          ) : error ? (
+            <Stack spacing={1.5} sx={{ p: 2 }} alignItems="flex-start">
+              <Typography variant="body2" color="error">
+                {t("templates.loadError")}
+              </Typography>
             </Stack>
           ) : !hasMatches ? (
             <Stack spacing={1.5} sx={{ p: 2 }} alignItems="flex-start">

@@ -1,37 +1,53 @@
-# stoic-bardeen-7eb2ea — unsaved note-template drafts
+# stoic-bardeen-7eb2ea — note templates: auto-populate + bulk AI draft
 
-Applies the PR #132 drafts-store treatment to `TemplateWorkspace.tsx`, which had
-the same silent data-loss bug and no dirty tracking at all.
+## What this branch does
+1. Note templates now appear for **every** org automatically. They only ever
+   existed after `syncTemplates()` ran, whose sole automatic caller is the
+   prod-only `*/5` cron — so any org on a dev worker, or a newly-added
+   workspace inside the 6h staleness window, showed "No templates." forever.
+   `GET /api/templates` now self-heals on first visit.
+2. New "Draft all with AI (N)" button on the templates rail, with progress,
+   cancel, and fail-fast.
+3. `templates.loadError` — a 403/500 on the list route used to render as the
+   "No templates." empty state, indistinguishable from an empty table.
 
-## Verified in a browser (dev worker :8792 + vite :5292, this worktree)
-Bug reproduced BEFORE the fix (typing lost via Back arrow and via switching
-template), then after the fix: Back arrow, template switch, full page reload,
-and the SyncStatusBar "1 unsaved" jump all preserve the text; Save clears the
-draft, disarms the rail marker, and empties the store.
+## BLOCKED on another service — read before demoing
+`POST https://uw-bt-bot.fly.dev/api/template-quick` **does not exist** (404 as
+of 2026-07-30; sibling `/api/tn-quick` 401s, i.e. it exists). So neither the
+per-template "Draft with AI" button (shipped in PR #89) nor the new bulk button
+can actually produce a translation yet. PR #89's own handoff admitted the
+contract was assumed. Full spec for the bot team:
+[`docs/template-quick-contract.md`](../../docs/template-quick-contract.md).
 
-## Notes for a reviewer
-- The templates view renders **no TopBar** (see `App.tsx` ~line 536 — unlike the
-  articles view). So the "TopBar More menu" exit named in the original report is
-  not reachable from this screen; the Back arrow is the exit. Persistence is
-  store-based, so any unmount is covered regardless.
-- `Unapprove` is now gated on `dirty`, matching the article fix: the validate
-  response carries the pre-existing `target_md`, so running it with unsaved
-  typing would overwrite it via `applyServerUnit`.
-- `TemplateHistoryDialog`'s `onUseVersion` also persists now — pulling an old
-  version into the box is unsaved typing like any other.
+Second gate: `BT_API_TOKEN` is absent from `api/.dev.vars` on this box, so
+locally the route short-circuits to `503 template_draft_disabled` before it
+ever reaches the bot.
 
-## Local verification setup (if it needs redoing)
-Both local dev DBs were migrated (`bible_editor_dev` AND
-`bible_editor_mltest_dev` — which one you land in depends on the resolved
-workspace) and seeded with two template_units (`tmpl-alpha`, `tmpl-beta`); the
-seed SQL lives in the session scratchpad, not the repo.
+## Verified (browser, this worktree: wrangler :8793 + vite :5293)
+- Wiped `template_units` + `template_sync_state` in `bible_editor_dev`, hard-
+  reloaded → 194 rows written (192 sheet + 2 builtin), UI shows "0/194
+  approved" and the grouped rail. No admin action.
+- Second `GET /api/templates` served in 9ms — the watermark gate prevents a
+  re-sync per request.
+- Clicked "Draft all with AI (194)" with no `BT_API_TOKEN`: exactly **3**
+  POSTs (the initial concurrency-3 wave) then stop, surfacing "AI not
+  configured — an admin must set BT_API_TOKEN." Not 194 doomed requests.
+- `npm run typecheck` clean; api 185/185; web 129/129.
 
-Gotcha worth remembering: probing the drafts IndexedDB from the console with a
-bare `indexedDB.open('bible-editor-drafts')` **creates the DB at v1 with no
-object store**, which then blocks the app's own `openDB(name, 1)` upgrade and
-makes drafts silently non-functional. A later `deleteDatabase` against the app's
-live connection wedges every subsequent open. Both cost real debugging time
-here. Probe with the store already created, or just verify behaviourally.
+## NOT verified
+- The successful AI round trip — impossible until the bot endpoint exists.
+- Remote/deployed state. `wrangler whoami` authenticates but lists **zero
+  accounts** on this box, and `d1 migrations list bible_editor_dev --remote`
+  fails `code: 7403`. So it is unconfirmed whether the deployed dev/prod DBs
+  have `0054_template_units.sql` applied — note there are two migrations
+  numbered 0054, and STATE.md records a prior incident where a collided
+  number left prod unmigrated and 500ing. Check before demoing on a deployed
+  worker.
+- The 13 non-English translations of the 8 new `draftAll*` keys are machine
+  translations, not native-speaker reviewed.
 
-The dev session cookie lapses quickly; re-mint mid-session with
-`fetch('/api/auth/dev',{method:'POST',...})` when a PATCH starts 401ing.
+## Note for a reviewer
+None of the 13 non-English locales had `templates.draftWithAi` at all — PR #89's
+single-unit button has been English-only everywhere since it shipped. Left
+as-is (out of scope), but it means the locale files are less complete than the
+`loadError` precedent suggests.

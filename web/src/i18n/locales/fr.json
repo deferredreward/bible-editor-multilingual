@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "Impossible de charger les modèles. Actualisez pour réessayer.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "Rédiger tout avec l'IA ({{n}})",
+    "draftAllProgress": "Rédaction {{n}}/{{total}}…",
+    "draftAllCancel": "Annuler",
+    "draftAllDone": "{{n}} modèle(s) rédigé(s).",
+    "draftAllDonePartial": "{{n}} modèle(s) rédigé(s) ; {{failed}} en échec.",
+    "draftAllCancelled": "Arrêté. {{n}} modèle(s) rédigé(s).",
+    "draftAllFailed": "Arrêté après des échecs répétés ({{code}}). {{n}} modèle(s) rédigé(s).",
+    "draftAllDisabled": "L'IA n'est pas configurée — un administrateur doit définir BT_API_TOKEN."
   },
   "topbar": {
     "showVerseList": "afficher la liste des versets",

@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "Template gagal dimuat. Muat ulang untuk mencoba lagi.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "Buat draf semua dengan AI ({{n}})",
+    "draftAllProgress": "Membuat draf {{n}}/{{total}}…",
+    "draftAllCancel": "Batal",
+    "draftAllDone": "{{n}} templat dibuat draf.",
+    "draftAllDonePartial": "{{n}} templat dibuat draf; {{failed}} gagal.",
+    "draftAllCancelled": "Dihentikan. {{n}} templat dibuat draf.",
+    "draftAllFailed": "Dihentikan setelah kegagalan berulang ({{code}}). {{n}} templat dibuat draf.",
+    "draftAllDisabled": "AI belum dikonfigurasi — admin harus mengatur BT_API_TOKEN."
   },
   "topbar": {
     "showVerseList": "tampilkan daftar ayat",

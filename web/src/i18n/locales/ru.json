@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "Не удалось загрузить шаблоны. Обновите страницу, чтобы повторить попытку.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "Составить все с помощью ИИ ({{n}})",
+    "draftAllProgress": "Составление {{n}}/{{total}}…",
+    "draftAllCancel": "Отмена",
+    "draftAllDone": "Составлено {{n}} шаблон(ов).",
+    "draftAllDonePartial": "Составлено {{n}} шаблон(ов); {{failed}} не удалось.",
+    "draftAllCancelled": "Остановлено. Составлено {{n}} шаблон(ов).",
+    "draftAllFailed": "Остановлено после повторных ошибок ({{code}}). Составлено {{n}} шаблон(ов).",
+    "draftAllDisabled": "ИИ не настроен — администратор должен задать BT_API_TOKEN."
   },
   "topbar": {
     "showVerseList": "показать список стихов",

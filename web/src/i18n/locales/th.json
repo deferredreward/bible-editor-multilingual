@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "ไม่สามารถโหลดเทมเพลตได้ รีเฟรชเพื่อลองอีกครั้ง",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "ร่างทั้งหมดด้วย AI ({{n}})",
+    "draftAllProgress": "กำลังร่าง {{n}}/{{total}}…",
+    "draftAllCancel": "ยกเลิก",
+    "draftAllDone": "ร่างแล้ว {{n}} เทมเพลต",
+    "draftAllDonePartial": "ร่างแล้ว {{n}} เทมเพลต; ล้มเหลว {{failed}} รายการ",
+    "draftAllCancelled": "หยุดแล้ว ร่างแล้ว {{n}} เทมเพลต",
+    "draftAllFailed": "หยุดหลังจากล้มเหลวซ้ำ ({{code}}) ร่างแล้ว {{n}} เทมเพลต",
+    "draftAllDisabled": "ยังไม่ได้กำหนดค่า AI — ผู้ดูแลระบบต้องตั้งค่า BT_API_TOKEN"
   },
   "topbar": {
     "showVerseList": "แสดงรายการข้อพระคัมภีร์",
