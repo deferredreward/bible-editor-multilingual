@@ -49,6 +49,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "تعذر تحميل القوالب. حدّث الصفحة للمحاولة مرة أخرى.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -71,7 +72,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "صياغة الكل بالذكاء الاصطناعي ({{n}})",
+    "draftAllProgress": "جارٍ الصياغة {{n}}/{{total}}…",
+    "draftAllCancel": "إلغاء",
+    "draftAllDone": "تمت صياغة {{n}} قالب (قوالب).",
+    "draftAllDonePartial": "تمت صياغة {{n}} قالب (قوالب)؛ فشل {{failed}}.",
+    "draftAllCancelled": "تم التوقف. تمت صياغة {{n}} قالب (قوالب).",
+    "draftAllFailed": "تم التوقف بعد فشل متكرر ({{code}}). تمت صياغة {{n}} قالب (قوالب).",
+    "draftAllDisabled": "الذكاء الاصطناعي غير مُهيأ — يجب على المسؤول تعيين BT_API_TOKEN."
   },
   "topbar": {
     "showVerseList": "إظهار قائمة الآيات",

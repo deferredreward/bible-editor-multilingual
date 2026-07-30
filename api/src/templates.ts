@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import type { TemplateUnit } from "./types";
 import { currentUserId, requireEditor, requireAdmin } from "./auth";
-import { syncTemplates } from "./templateSync";
+import { syncTemplates, ensureTemplatesPopulated } from "./templateSync";
 import { getProjectConfig } from "./projectConfig";
 import { nextPreDraftJson } from "./preDraftSnapshot";
 
@@ -33,6 +33,15 @@ function parseIfMatch(header: string | undefined): number | null {
 // GET /api/templates — list unit metadata for the rail (source_md/target_md
 // excluded for weight). Ordered by support_ref then sheet_order.
 templates.get("/", requireEditor, async (c) => {
+  // First-run backstop (see ensureTemplatesPopulated) — dev workers register
+  // no crons, so without this a fresh template_units table would sit empty
+  // forever. A sync failure (Google Sheet down, etc.) must not turn this list
+  // route into a 500 — log and fall through to the SELECT below as today.
+  try {
+    await ensureTemplatesPopulated(c.env);
+  } catch (e) {
+    console.error("ensureTemplatesPopulated failed", e instanceof Error ? e.message : String(e));
+  }
   const includeDeleted = c.req.query("includeDeleted") === "1";
   const rows = await c.env.DB.prepare(
     `SELECT template_id, support_ref, type, sheet_order, origin,

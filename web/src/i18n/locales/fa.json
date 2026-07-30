@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "قالب‌ها بار نشدند. برای تلاش دوباره صفحه را تازه کنید.",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "پیش‌نویس همه با هوش مصنوعی ({{n}})",
+    "draftAllProgress": "در حال پیش‌نویس {{n}}/{{total}}…",
+    "draftAllCancel": "لغو",
+    "draftAllDone": "{{n}} قالب پیش‌نویس شد.",
+    "draftAllDonePartial": "{{n}} قالب پیش‌نویس شد؛ {{failed}} ناموفق بود.",
+    "draftAllCancelled": "متوقف شد. {{n}} قالب پیش‌نویس شد.",
+    "draftAllFailed": "پس از شکست‌های مکرر متوقف شد ({{code}}). {{n}} قالب پیش‌نویس شد.",
+    "draftAllDisabled": "هوش مصنوعی پیکربندی نشده است — یک مدیر باید BT_API_TOKEN را تنظیم کند."
   },
   "topbar": {
     "showVerseList": "نمایش فهرست آیات",

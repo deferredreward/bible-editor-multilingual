@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "টেমপ্লেট লোড করা যায়নি। আবার চেষ্টা করতে রিফ্রেশ করুন।",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "AI দিয়ে সব খসড়া তৈরি করুন ({{n}})",
+    "draftAllProgress": "খসড়া তৈরি হচ্ছে {{n}}/{{total}}…",
+    "draftAllCancel": "বাতিল করুন",
+    "draftAllDone": "{{n}} টেমপ্লেট খসড়া তৈরি হয়েছে।",
+    "draftAllDonePartial": "{{n}} টেমপ্লেট খসড়া তৈরি হয়েছে; {{failed}} ব্যর্থ হয়েছে।",
+    "draftAllCancelled": "বন্ধ করা হয়েছে। {{n}} টেমপ্লেট খসড়া তৈরি হয়েছে।",
+    "draftAllFailed": "পুনরাবৃত্ত ব্যর্থতার পর বন্ধ করা হয়েছে ({{code}})। {{n}} টেমপ্লেট খসড়া তৈরি হয়েছে।",
+    "draftAllDisabled": "AI কনফিগার করা নেই — একজন প্রশাসককে BT_API_TOKEN সেট করতে হবে।"
   },
   "topbar": {
     "showVerseList": "পদের তালিকা দেখান",

@@ -22,6 +22,7 @@
     "reloadConflict": "This template changed on the server — reload.",
     "saveConflict": "Someone else saved this template. Your text is kept — saving again will overwrite their version.",
     "noTemplates": "No templates.",
+    "loadError": "ٹیمپلیٹس لوڈ نہیں ہو سکے۔ دوبارہ کوشش کرنے کے لیے صفحہ ریفریش کریں۔",
     "selectTemplate": "Select a template to translate.",
     "preview": "Preview",
     "edit": "Edit",
@@ -44,7 +45,15 @@
     "emptyTranslation": "(no translation at this version)",
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
-    "alreadyCurrent": "Already current"
+    "alreadyCurrent": "Already current",
+    "draftAll": "AI کے ساتھ سب کا ڈرافٹ بنائیں ({{n}})",
+    "draftAllProgress": "ڈرافٹ کیا جا رہا ہے {{n}}/{{total}}…",
+    "draftAllCancel": "منسوخ کریں",
+    "draftAllDone": "{{n}} ٹیمپلیٹ کا ڈرافٹ بنایا گیا۔",
+    "draftAllDonePartial": "{{n}} ٹیمپلیٹ کا ڈرافٹ بنایا گیا؛ {{failed}} ناکام ہوئے۔",
+    "draftAllCancelled": "روک دیا گیا۔ {{n}} ٹیمپلیٹ کا ڈرافٹ بنایا گیا۔",
+    "draftAllFailed": "بار بار ناکامی کے بعد روک دیا گیا ({{code}})۔ {{n}} ٹیمپلیٹ کا ڈرافٹ بنایا گیا۔",
+    "draftAllDisabled": "AI کنفیگر نہیں ہے — ایک ایڈمن کو BT_API_TOKEN سیٹ کرنا ہوگا۔"
   },
   "topbar": {
     "showVerseList": "آیات کی فہرست دکھائیں",
