@@ -6,7 +6,7 @@
 //
 // Not a test framework; a failed assert exits non-zero.
 
-import { applyContextRef, applyTnQuickContext } from "./assistedContextRef.ts";
+import { applyContextRef, applyTnQuickContext, stripClientContextFields } from "./assistedContextRef.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -155,6 +155,28 @@ console.log("[applyContextRef] owner containing ~ produces a bot-illegal context
   const weirdOwner = { ...latest, owner: "Bad~Owner" };
   const result = applyContextRef({ foo: "bar" }, weirdOwner);
   assert(!("contextRef" in result), "contextRef key absent when the built ref fails bot validation");
+}
+
+// The tn-quick proxy forwards a STRIPPED body even when the context lookups
+// throw, so the strip has to stand on its own rather than living only inside
+// the derive path — degrading to the caller's raw body would hand a
+// client-controlled contextRef to the bot under our shared token.
+console.log("[stripClientContextFields] drops exactly the three server-derived fields");
+{
+  const out = stripClientContextFields({
+    ref: { book: "OBA", chapter: 1, verse: 2 },
+    issueType: "figs-metaphor",
+    hebrewGuess: "x",
+    contextRef: `EvilOrg/translation-context@${"a".repeat(40)}`,
+    targetLang: "xx",
+    direction: "rtl",
+  });
+  assert(!("contextRef" in out), "client contextRef dropped");
+  assert(!("targetLang" in out), "client targetLang dropped");
+  assert(!("direction" in out), "client direction dropped");
+  assert(out.issueType === "figs-metaphor", "unrelated field preserved (issueType)");
+  assert(out.ref && out.ref.book === "OBA", "unrelated field preserved (ref)");
+  assert(out.hebrewGuess === "x", "unrelated field preserved (hebrewGuess)");
 }
 
 // Note: the non-object-parsed-body guard (null/array/string/number JSON

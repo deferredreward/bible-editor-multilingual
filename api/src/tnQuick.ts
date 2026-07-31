@@ -18,7 +18,7 @@ import type { Env } from "./index";
 import { requireEditor } from "./auth";
 import { getProjectConfig } from "./projectConfig";
 import { getLatestSuccessfulContextExport } from "./contextExportResults";
-import { applyTnQuickContext } from "./assistedContextRef";
+import { applyTnQuickContext, stripClientContextFields } from "./assistedContextRef";
 
 export const tnQuick = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -50,6 +50,13 @@ tnQuick.post("/", requireEditor, async (c) => {
   }
 
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    // Strip the caller's context fields FIRST, and forward the stripped body
+    // even if the lookups below fail. These three are always server-derived:
+    // the proxy calls the bot with our shared BT_API_TOKEN, so honoring a
+    // caller-supplied contextRef would be a cross-tenant read of another
+    // workspace's pack and a prompt-steering vector. Degrading must not
+    // reopen that hole by falling back to the raw body.
+    body = JSON.stringify(stripClientContextFields(parsed as Record<string, unknown>));
     try {
       const cfg = await getProjectConfig(c.env);
       const latest = await getLatestSuccessfulContextExport(c.env);
@@ -59,9 +66,9 @@ tnQuick.post("/", requireEditor, async (c) => {
       body = JSON.stringify(applyTnQuickContext(parsed as Record<string, unknown>, latest, cfg));
     } catch (err) {
       // Config/export lookup threw (e.g. an unmigrated workspace DB missing
-      // context_export_results / templates_count) — degrade to the raw body
-      // rather than silently disabling steering forever with no signal.
-      console.warn("tn-quick: context injection failed, forwarding raw body unsteered:", err);
+      // context_export_results / templates_count) — draft unsteered from the
+      // STRIPPED body rather than silently disabling steering with no signal.
+      console.warn("tn-quick: context injection failed, forwarding unsteered:", err);
     }
   }
   // else: parsed is null/array/primitive/undefined — forward the raw body

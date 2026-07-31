@@ -185,7 +185,15 @@ templates.post("/unit/draft", requireEditor, async (c) => {
   // preferences (brief, terminology, instructions) — same mechanism as
   // tn-quick and the translate pipeline. No successful export → omit the key
   // entirely and the bot drafts unsteered, exactly like today.
-  const latest = await getLatestSuccessfulContextExport(c.env);
+  // A throw here (e.g. an unmigrated workspace DB missing
+  // context_export_results / templates_count) must not 500 the whole draft —
+  // degrade to unsteered drafting, matching the tn-quick proxy.
+  let latest = null;
+  try {
+    latest = await getLatestSuccessfulContextExport(c.env);
+  } catch (err) {
+    console.warn("template-draft: context export lookup failed, drafting unsteered:", err);
+  }
   const templateBody: Record<string, unknown> = {
     templateId: unit.template_id,
     supportRef: unit.support_ref,

@@ -71,6 +71,18 @@ export function applyContextRef(
 }
 
 /**
+ * Drop the three context fields from a caller-supplied body. The tn-quick
+ * route must forward a stripped body even when the derivation below fails,
+ * so this is exported separately from applyTnQuickContext: degrading to the
+ * caller's raw body would hand a client-controlled contextRef to the bot
+ * under our shared token (see applyTnQuickContext for why that matters).
+ */
+export function stripClientContextFields(body: Record<string, unknown>): Record<string, unknown> {
+  const { contextRef: _ref, targetLang: _lang, direction: _dir, ...rest } = body;
+  return { ...rest };
+}
+
+/**
  * Pure helper for the /api/tn-quick proxy: fold contextRef + targetLang +
  * direction into the caller's request body, ALWAYS deriving them server-side.
  *
@@ -91,8 +103,7 @@ export function applyTnQuickContext(
   latest: SuccessfulContextExport | null,
   cfg: { languageCode: string; direction: "ltr" | "rtl" },
 ): Record<string, unknown> {
-  const { contextRef: _clientContextRef, targetLang: _clientTargetLang, direction: _clientDirection, ...rest } = body;
-  const result: Record<string, unknown> = { ...rest };
+  const result: Record<string, unknown> = stripClientContextFields(body);
   const ref = derivedContextRef(latest);
   if (ref) result.contextRef = ref;
   const targetLang = derivedTargetLang(cfg.languageCode);
