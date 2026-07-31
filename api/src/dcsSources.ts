@@ -70,7 +70,7 @@ export interface DcsRepoOverrides {
 // book id isn't in BOOK_NUMBERS (unknown book). Owner + repo names come
 // from the project config (roles lit/sim → internal ULT/UST labels).
 // Optional `overrides` lets callers supply lane-specific (lit/sim) or
-// translation-source (tn/tq) source refs.
+// translation-source (tn/tq/twl, plus lit/sim in translate mode) source refs.
 export function dcsUrls(
   env: Env,
   cfg: ProjectConfig,
