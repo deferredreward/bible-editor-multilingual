@@ -130,6 +130,7 @@ figs-idiom	<AR template text>	active	needs review
 
 - Tab-separated, header row, UTF-8. One row per SupportReference slug per language.
 - **Bot consumption** (PIPELINE-SPEC §2.2 item 1): use the row matching each note's `SupportReference` as the structural scaffold; **fall back to the English template and set the template-fallback flag** (translate-report sidecar) for slugs with no row or `status != active`.
+- **Writer-side (editor export):** `support_reference`, `target_template`, and `comment` fields must not contain a literal tab, CR, or LF — the writer flattens any run of those to a single space before emitting (readers do no unescaping, so a raw tab/newline would corrupt the row layout). `comment` carries the editor's variant `type` (e.g. `note`), not free-text rationale. Only `translation_state = 'validated'` template units export, and `status` is always `active` — non-validated translations simply have no row (bot falls back to English per the rule above). One row per `support_reference`: when multiple validated variants share a slug, the first (by sheet order) wins and the rest are omitted.
 
 ## 4. Who writes what, when
 

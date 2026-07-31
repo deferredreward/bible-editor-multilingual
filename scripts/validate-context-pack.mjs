@@ -107,6 +107,15 @@ async function main() {
       process.exit(1);
     }
   }
+  if (present.includes("templates/templates.tsv")) {
+    const tsv = fs.readFileSync(path.join(packDir, "templates/templates.tsv"), "utf8");
+    const header = tsv.split(/\r?\n/)[0];
+    const expected = "support_reference\ttarget_template\tstatus\tcomment";
+    if (header !== expected) {
+      console.error(`FAIL: templates.tsv header mismatch\n  got: ${header}\n  want: ${expected}`);
+      process.exit(1);
+    }
+  }
   if (present.includes("brief.md")) {
     const brief = fs.readFileSync(path.join(packDir, "brief.md"), "utf8");
     if (!/\*\*Register:\*\*\s*\w+/i.test(brief)) {
