@@ -110,6 +110,7 @@ export const TA_SUPPORT_REFERENCE_IDS: string[] = [
   "figs-reduplication",
   "translate-alternativereadings",
   "writing-foreground",
+  "translate-plural",
 ];
 
 const TA_LINK_PREFIX = "rc://*/ta/man/translate/";
