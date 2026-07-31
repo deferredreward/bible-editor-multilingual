@@ -973,8 +973,10 @@ export function importedSourceRepos(sources?: { tn: string | null; tq: string | 
 
 // Translation-note AI draft endpoint (proxied through this Worker; the
 // shared bot lives at uw-bt-bot.fly.dev). Schema is the bot's; keep in
-// sync with its zod definition. The Worker only adds the BT_API_TOKEN
-// bearer and forwards the body verbatim, so types live on this side.
+// sync with its zod definition. The Worker adds the BT_API_TOKEN bearer
+// AND injects contextRef/targetLang/direction server-side (derived from
+// the project config, never from client input — see api/src/tnQuick.ts),
+// so types live on this side but the wire body isn't a pure pass-through.
 export interface TnQuickRequest {
   ref: {
     book: string;

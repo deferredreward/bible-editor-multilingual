@@ -73,13 +73,95 @@ console.log("[applyTnQuickContext] successful export -> body carries the expecte
   assert(wire.contextRef === "BSOJ/translation-context@abc1234", "survives JSON round-trip unchanged");
 }
 
-console.log("[applyTnQuickContext] caller-supplied targetLang/direction/contextRef all win over derived");
+console.log("[applyTnQuickContext] client-supplied targetLang/direction/contextRef are STRIPPED and replaced by derived values");
 {
+  // Cross-tenant read / prompt-steering guard: tn-quick uses the shared
+  // BT_API_TOKEN, so a client-controlled contextRef must never survive.
   const body = { targetLang: "es", direction: "ltr", contextRef: "Pinned/translation-context@deadbeef" };
   const result = applyTnQuickContext(body, latest, cfg);
-  assert(result.targetLang === "es", "caller targetLang preserved");
-  assert(result.direction === "ltr", "caller direction preserved");
-  assert(result.contextRef === "Pinned/translation-context@deadbeef", "caller contextRef preserved");
+  assert(result.targetLang === "ar", "client targetLang overridden by derived project config value");
+  assert(result.direction === "rtl", "client direction overridden by derived project config value");
+  assert(result.contextRef === "BSOJ/translation-context@abc1234", "client contextRef overridden by derived value");
 }
+
+console.log("[applyTnQuickContext] key-set contract: result is a subset of the bot's tn-quick allow-list");
+{
+  const TN_QUICK_ALLOWED_KEYS = new Set([
+    "ref",
+    "issueType",
+    "ult",
+    "ust",
+    "hebrewGuess",
+    "model",
+    "contextRef",
+    "targetLang",
+    "direction",
+  ]);
+  const body = { ref: { book: "TIT", chapter: 1, verse: 1 }, issueType: "wording", model: "x" };
+  const result = applyTnQuickContext(body, latest, cfg);
+  for (const key of Object.keys(result)) {
+    assert(TN_QUICK_ALLOWED_KEYS.has(key), `key "${key}" is in the bot's tn-quick allow-list`);
+  }
+}
+
+console.log("[applyContextRef] key-set contract: result is a subset of the bot's template-quick allow-list");
+{
+  const TEMPLATE_QUICK_ALLOWED_KEYS = new Set([
+    "templateId",
+    "supportRef",
+    "type",
+    "sourceMd",
+    "targetMd",
+    "targetLang",
+    "targetOrg",
+    "direction",
+    "model",
+    "contextRef",
+  ]);
+  const body = {
+    templateId: "t1",
+    supportRef: "figs-metaphor",
+    type: "note",
+    sourceMd: "src",
+    targetMd: "tgt",
+    targetLang: "ar",
+    targetOrg: "BSOJ",
+    direction: "rtl",
+  };
+  const result = applyContextRef(body, latest);
+  for (const key of Object.keys(result)) {
+    assert(TEMPLATE_QUICK_ALLOWED_KEYS.has(key), `key "${key}" is in the bot's template-quick allow-list`);
+  }
+}
+
+console.log('[applyTnQuickContext] cfg.languageCode === "" (custom-gl) -> no targetLang key');
+{
+  const body = { ref: { book: "TIT", chapter: 1, verse: 1 } };
+  const result = applyTnQuickContext(body, latest, { languageCode: "", direction: "ltr" });
+  assert(!("targetLang" in result), "targetLang key absent for empty languageCode");
+}
+
+console.log("[applyTnQuickContext] invalid languageCode shapes -> no targetLang key");
+{
+  for (const bad of ["pt_BR", "EN", "el-x-koine", "en "]) {
+    const body = { ref: { book: "TIT", chapter: 1, verse: 1 } };
+    const result = applyTnQuickContext(body, latest, { languageCode: bad, direction: "ltr" });
+    assert(!("targetLang" in result), `targetLang key absent for invalid languageCode ${JSON.stringify(bad)}`);
+  }
+}
+
+console.log("[applyContextRef] owner containing ~ produces a bot-illegal contextRef -> key omitted");
+{
+  const weirdOwner = { ...latest, owner: "Bad~Owner" };
+  const result = applyContextRef({ foo: "bar" }, weirdOwner);
+  assert(!("contextRef" in result), "contextRef key absent when the built ref fails bot validation");
+}
+
+// Note: the non-object-parsed-body guard (null/array/string/number JSON
+// bodies must not be spread into the request) lives in the route
+// (api/src/tnQuick.ts), not in this helper — applyTnQuickContext/
+// applyContextRef both assume they're already handed a Record<string,
+// unknown>. Not exercised here since it needs the Hono route, not this pure
+// module.
 
 console.log("\nassistedContextRef: all assertions passed");

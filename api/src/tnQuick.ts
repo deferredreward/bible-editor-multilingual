@@ -4,10 +4,14 @@
 // bot using the shared service token (BT_API_TOKEN secret) so the
 // token never reaches the browser.
 //
-// This route stays dumb on purpose: auth gate, env check, swap the
-// Authorization header, forward, return the bot's response verbatim.
-// All business logic — request validation, Hebrew normalization, note
-// drafting — lives in the bot.
+// This route is NOT a verbatim forward: auth gate, env check, swap the
+// Authorization header, parse the body, inject contextRef/targetLang/
+// direction (derived server-side — see assistedContextRef.ts's
+// applyTnQuickContext, which also strips any client-supplied values for
+// those same keys), re-serialize, forward, return the bot's response
+// verbatim. The bot's schema is zod .strict(), so no unknown key may be
+// added — only the keys the bot itself declares. Request validation, Hebrew
+// normalization, and note drafting still live entirely in the bot.
 
 import { Hono } from "hono";
 import type { Env } from "./index";
@@ -37,13 +41,35 @@ tnQuick.post("/", requireEditor, async (c) => {
   // (pipelines.ts's "translate" branch). No successful export → forward the
   // body unchanged, exactly as before; the bot then drafts unsteered.
   let body = rawBody;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(rawBody) as Record<string, unknown>;
-    const cfg = await getProjectConfig(c.env);
-    const latest = await getLatestSuccessfulContextExport(c.env);
-    body = JSON.stringify(applyTnQuickContext(parsed, latest, cfg));
+    parsed = JSON.parse(rawBody);
   } catch {
+    parsed = undefined;
     // Malformed JSON — forward unchanged and let the bot's own validation reject it.
+  }
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    try {
+      const cfg = await getProjectConfig(c.env);
+      const latest = await getLatestSuccessfulContextExport(c.env);
+      if (!latest) {
+        console.warn("tn-quick: no successful context export yet; drafting unsteered (contextRef omitted)");
+      }
+      body = JSON.stringify(applyTnQuickContext(parsed as Record<string, unknown>, latest, cfg));
+    } catch (err) {
+      // Config/export lookup threw (e.g. an unmigrated workspace DB missing
+      // context_export_results / templates_count) — degrade to the raw body
+      // rather than silently disabling steering forever with no signal.
+      console.warn("tn-quick: context injection failed, forwarding raw body unsteered:", err);
+    }
+  }
+  // else: parsed is null/array/primitive/undefined — forward the raw body
+  // unchanged rather than spreading a non-object into a request shape.
+
+  const bodyBytes = new TextEncoder().encode(body).length;
+  if (bodyBytes > MAX_BODY_BYTES) {
+    return c.json({ error: "body_too_large", maxBytes: MAX_BODY_BYTES }, 413);
   }
 
   const url = c.env.TN_QUICK_URL || DEFAULT_URL;

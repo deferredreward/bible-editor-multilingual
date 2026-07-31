@@ -12,7 +12,7 @@ import { syncTemplates, ensureTemplatesPopulated } from "./templateSync";
 import { getProjectConfig } from "./projectConfig";
 import { nextPreDraftJson } from "./preDraftSnapshot";
 import { getLatestSuccessfulContextExport } from "./contextExportResults";
-import { applyContextRef } from "./assistedContextRef";
+import { applyContextRef, derivedTargetLang } from "./assistedContextRef";
 
 export const templates = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -186,21 +186,21 @@ templates.post("/unit/draft", requireEditor, async (c) => {
   // tn-quick and the translate pipeline. No successful export → omit the key
   // entirely and the bot drafts unsteered, exactly like today.
   const latest = await getLatestSuccessfulContextExport(c.env);
-  const requestBody = JSON.stringify(
-    applyContextRef(
-      {
-        templateId: unit.template_id,
-        supportRef: unit.support_ref,
-        type: unit.type,
-        sourceMd: unit.source_md,
-        targetMd: unit.target_md,
-        targetLang: cfg.languageCode,
-        targetOrg: cfg.exportOrg,
-        direction: cfg.direction,
-      },
-      latest,
-    ),
-  );
+  const templateBody: Record<string, unknown> = {
+    templateId: unit.template_id,
+    supportRef: unit.support_ref,
+    type: unit.type,
+    sourceMd: unit.source_md,
+    targetMd: unit.target_md,
+    targetOrg: cfg.exportOrg,
+    direction: cfg.direction,
+  };
+  // cfg.languageCode is unvalidated at the persist boundary (see
+  // assistedContextRef.ts), so re-validate against the bot's targetLang
+  // shape here too — omit + warn rather than send a value guaranteed to 400.
+  const targetLang = derivedTargetLang(cfg.languageCode);
+  if (targetLang) templateBody.targetLang = targetLang;
+  const requestBody = JSON.stringify(applyContextRef(templateBody, latest));
   // .length is UTF-16 code units, not bytes — undercounts for non-ASCII
   // target languages (Arabic, etc.), so measure the actual UTF-8 byte size.
   if (new TextEncoder().encode(requestBody).length > TEMPLATE_DRAFT_MAX_BODY_BYTES) {
