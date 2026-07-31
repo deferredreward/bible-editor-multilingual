@@ -45,6 +45,14 @@ export type ValidatedTqRow = {
   updated_at: number;
 };
 
+export type TemplateForRender = {
+  support_ref: string;
+  type: string | null;
+  target_md: string | null;
+  sheet_order: number | null;
+  template_id: string;
+};
+
 /**
  * Composite key for EN source maps. tN/tQ row IDs are only unique per book
  * (migration 0015 composite PK), so keying by bare `id` would let identical
@@ -204,6 +212,41 @@ export function renderValidatedJsonl(lines: readonly JsonlExample[]): string {
 }
 
 /**
+ * Flatten a TSV field: NFC-normalize, collapse any tab/CR/LF runs to a single
+ * space (a raw tab or newline would corrupt the row layout), then trim.
+ */
+export function tsvField(s: string | null | undefined): string {
+  return nfc(s).replace(/[\t\r\n]+/g, " ").trim();
+}
+
+/**
+ * Build templates/templates.tsv — one row per support_ref (contract §3.5).
+ * Input arrives pre-sorted (support_ref, sheet_order, template_id); the FIRST
+ * unit per support_ref wins and later variants for the same slug are skipped.
+ * Units with empty/whitespace-only target_md are skipped (not yet translated).
+ */
+export function renderTemplatesTsv(units: readonly TemplateForRender[]): string | null {
+  const seen = new Set<string>();
+  const rows: string[] = [];
+  for (const u of units) {
+    // Key the dedupe on the FLATTENED slug — that's what the row emits, and
+    // the bot's parser is last-duplicate-wins, so two raw slugs differing only
+    // by whitespace must not produce two rows. Claim the slug only once a
+    // non-empty target is in hand: SQLite TRIM() strips spaces only, so a
+    // tab/newline-only target_md survives the SQL filter, flattens to empty
+    // here, and must not block a later valid variant of the same slug.
+    const slug = tsvField(u.support_ref);
+    if (!slug || seen.has(slug)) continue;
+    const target = tsvField(u.target_md);
+    if (!target) continue;
+    seen.add(slug);
+    rows.push(`${slug}\t${target}\tactive\t${tsvField(u.type ?? "")}`);
+  }
+  if (rows.length === 0) return null;
+  return ["support_reference\ttarget_template\tstatus\tcomment", ...rows].join("\n") + "\n";
+}
+
+/**
  * Assemble the full pack from pre-fetched prefs/terms/rows + EN source maps.
  * Omits optional empty files (instructions, examples). Always writes manifest.
  */
@@ -214,6 +257,7 @@ export function renderContextPack(input: {
   tnRows: readonly ValidatedTnRow[];
   tqRows: readonly ValidatedTqRow[];
   sources: EnSourceMaps;
+  templates: readonly TemplateForRender[];
   // Resources with no upstream source (blank in Setup) — their rows are skipped
   // rather than tripping missing_en_source. See fetchEnSourceMaps / buildValidatedExamples.
   skipped?: readonly string[];
@@ -257,10 +301,17 @@ export function renderContextPack(input: {
     files.push({ path: "examples/validated.jsonl", content: renderValidatedJsonl(examples.lines) });
   }
 
+  const templatesTsv = renderTemplatesTsv(input.templates);
+  const templatesRowCount = templatesTsv ? templatesTsv.trim().split("\n").length - 1 : 0;
+  if (templatesTsv) {
+    files.push({ path: "templates/templates.tsv", content: templatesTsv });
+  }
+
   const stats: ContextPackStats = {
     terms: input.terms.length,
     examplesTn: examples.lines.filter((l) => l.resource === "tn").length,
     examplesTq: examples.lines.filter((l) => l.resource === "tq").length,
+    templates: templatesRowCount,
     contentFiles: contentFileCount(files),
     totalBytes: totalBytes(files),
   };

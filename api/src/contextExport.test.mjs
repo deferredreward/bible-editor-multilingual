@@ -8,6 +8,8 @@ import {
   renderInstructionsMd,
   buildValidatedExamples,
   renderValidatedJsonl,
+  renderTemplatesTsv,
+  tsvField,
   hasMinimumContent,
   hasSemanticContent,
   buildContextRef,
@@ -161,6 +163,7 @@ console.log("contextExport — full pack + omission rules");
     tnRows: [],
     tqRows: [],
     sources: { tn: new Map(), tq: new Map() },
+    templates: [],
     exportedAt: new Date("2026-07-14T12:00:00Z"),
   });
   assert(emptyInstructions.ok === true, "pack renders with brief alone");
@@ -187,6 +190,7 @@ console.log("contextExport — full pack + omission rules");
       terms: 0,
       examplesTn: 0,
       examplesTq: 0,
+      templates: 0,
     }),
     "scaffold-only prefs fail semantic gate",
   );
@@ -203,6 +207,7 @@ console.log("contextExport — full pack + omission rules");
       terms: 0,
       examplesTn: 0,
       examplesTq: 0,
+      templates: 0,
     }),
     "audience+purpose count as semantic",
   );
@@ -221,6 +226,7 @@ console.log("contextExport — full pack + omission rules");
       terms: 1,
       examplesTn: 0,
       examplesTq: 0,
+      templates: 0,
     }),
     "one term satisfies semantic gate",
   );
@@ -240,6 +246,7 @@ console.log("contextExport — full pack + omission rules");
       terms: 0,
       examplesTn: 0,
       examplesTq: 0,
+      templates: 0,
     }),
     "common_issues_md alone satisfies semantic gate",
   );
@@ -256,6 +263,7 @@ console.log("contextExport — full pack + omission rules");
       terms: 0,
       examplesTn: 0,
       examplesTq: 0,
+      templates: 0,
     }),
     "whitespace-only common_issues_md fails semantic gate",
   );
@@ -284,6 +292,7 @@ console.log("contextExport — full pack + omission rules");
     tnRows: [],
     tqRows: [],
     sources: { tn: new Map(), tq: new Map() },
+    templates: [],
   });
   assert(withTerms.ok && withTerms.stats.terms === 1, "terms count");
   assert(
@@ -334,6 +343,7 @@ console.log("contextExport — partial source: sourceless resource is SKIPPED, e
       tn: new Map(), // empty — tn was skipped (no upstream source)
       tq: new Map([[sourceRowKey("TIT", "q1"), { question: "Who?", response: "God." }]]),
     },
+    templates: [],
     skipped: ["tn"],
   });
   assert(r.ok, "export SUCCEEDS despite a sourceless tN with validated rows (no missing_en_source)");
@@ -356,6 +366,7 @@ console.log("contextExport — partial source: sourceless resource is SKIPPED, e
     ],
     tqRows: [],
     sources: { tn: new Map(), tq: new Map() },
+    templates: [],
   });
   assert(!wouldFail.ok && wouldFail.reason.includes("missing_en_source:tn"), "empty tn map without skipped still hard-fails (control)");
 }
@@ -407,6 +418,7 @@ console.log("contextExport — renderInstructionsMd");
     tnRows: [],
     tqRows: [],
     sources: { tn: new Map(), tq: new Map() },
+    templates: [],
     exportedAt: new Date("2026-07-14T12:00:00Z"),
   });
   assert(
@@ -417,26 +429,138 @@ console.log("contextExport — renderInstructionsMd");
   );
 }
 
+console.log("contextExport — renderTemplatesTsv");
+{
+  assert(renderTemplatesTsv([]) === null, "empty input -> null");
+
+  // Two variants share support_ref: first (by sort order) wins, second skipped.
+  const twoVariants = renderTemplatesTsv([
+    { template_id: "figs-metaphor-01", support_ref: "figs-metaphor", sheet_order: 1, type: "note", target_md: "أول" },
+    { template_id: "figs-metaphor-02", support_ref: "figs-metaphor", sheet_order: 2, type: "note", target_md: "ثاني" },
+  ]);
+  const twoVariantLines = twoVariants.split("\n").filter(Boolean);
+  assert(twoVariantLines[0] === "support_reference\ttarget_template\tstatus\tcomment", "exact header");
+  assert(twoVariantLines.length === 2, "one row per slug (dedup)");
+  assert(twoVariantLines[1] === "figs-metaphor\tأول\tactive\tnote", "first unit wins");
+
+  // Empty/whitespace-only target_md is skipped entirely.
+  const emptyTarget = renderTemplatesTsv([
+    { template_id: "figs-idiom-01", support_ref: "figs-idiom", sheet_order: 1, type: null, target_md: "   " },
+  ]);
+  assert(emptyTarget === null, "whitespace-only target_md -> null (no rows)");
+
+  // Sanitization: embedded tab/CR/LF collapse to single spaces, one physical line.
+  const dirty = renderTemplatesTsv([
+    {
+      template_id: "figs-simile-01",
+      support_ref: "figs-simile",
+      sheet_order: 1,
+      type: "note",
+      target_md: "line one\r\nline\ttwo\n\nline three",
+    },
+  ]);
+  const dirtyLines = dirty.split("\n").filter(Boolean);
+  assert(dirtyLines.length === 2, "dirty target renders as exactly one physical data line");
+  assert(
+    dirtyLines[1] === "figs-simile\tline one line two line three\tactive\tnote",
+    "tabs/CRLF/blank-line runs collapse to single spaces",
+  );
+  assert(tsvField("a\tb\r\nc") === "a b c", "tsvField collapses tab/cr/lf runs");
+  assert(tsvField("  x  ") === "x", "tsvField trims");
+
+  // A tab/newline-only target passes SQLite TRIM (spaces only) but flattens to
+  // empty here — it must NOT claim the slug, so the later valid variant wins.
+  const emptyFirstVariant = renderTemplatesTsv([
+    { template_id: "figs-hyper-01", support_ref: "figs-hyperbole", sheet_order: 1, type: "note", target_md: "\t\n" },
+    { template_id: "figs-hyper-02", support_ref: "figs-hyperbole", sheet_order: 2, type: "note", target_md: "REAL" },
+  ]);
+  const emptyFirstLines = emptyFirstVariant.split("\n").filter(Boolean);
+  assert(emptyFirstLines.length === 2, "empty-flattening first variant does not consume the slug");
+  assert(emptyFirstLines[1] === "figs-hyperbole\tREAL\tactive\tnote", "later valid variant exports");
+
+  // Dedupe keys on the FLATTENED slug: raw slugs differing only by whitespace
+  // must collapse to one row (the bot's Map is last-duplicate-wins; two rows
+  // for one slug would silently invert first-wins).
+  const wsSlugs = renderTemplatesTsv([
+    { template_id: "figs-irony-01", support_ref: "figs-irony", sheet_order: 1, type: "note", target_md: "first" },
+    { template_id: "figs-irony-02", support_ref: "figs-irony ", sheet_order: 2, type: "note", target_md: "second" },
+  ]);
+  const wsSlugLines = wsSlugs.split("\n").filter(Boolean);
+  assert(wsSlugLines.length === 2, "whitespace-variant slugs collapse to one row");
+  assert(wsSlugLines[1] === "figs-irony\tfirst\tactive\tnote", "first flattened-slug variant wins");
+
+  // Round-trip shape: N data lines each with exactly 3 tabs (4 columns).
+  const multi = renderTemplatesTsv([
+    { template_id: "a1", support_ref: "figs-a", sheet_order: 1, type: "note", target_md: "A" },
+    { template_id: "b1", support_ref: "figs-b", sheet_order: 1, type: null, target_md: "B" },
+  ]);
+  const multiLines = multi.split("\n").filter(Boolean);
+  assert(multiLines.length === 3, "header + 2 data lines");
+  for (const line of multiLines.slice(1)) {
+    assert((line.match(/\t/g) || []).length === 3, `data line has exactly 3 tabs: ${line}`);
+  }
+  assert(multi.endsWith("\n"), "trailing newline");
+
+  // renderContextPack integration: 1 validated template and nothing else.
+  const withTemplates = renderContextPack({
+    cfg,
+    prefs: { audience: null, purpose: null, register: "default", script_notes: null, instructions_md: null, common_issues_md: null },
+    terms: [],
+    tnRows: [],
+    tqRows: [],
+    sources: { tn: new Map(), tq: new Map() },
+    templates: [
+      { template_id: "figs-metaphor-01", support_ref: "figs-metaphor", sheet_order: 1, type: "note", target_md: "استعارة" },
+    ],
+  });
+  assert(withTemplates.ok, "renders with just a template");
+  assert(
+    withTemplates.ok && withTemplates.files.some((f) => f.path === "templates/templates.tsv"),
+    "emits templates/templates.tsv",
+  );
+  assert(withTemplates.ok && withTemplates.stats.templates === 1, "stats.templates === 1");
+  assert(
+    hasSemanticContent({
+      prefs: { audience: null, purpose: null, register: "default", script_notes: null, instructions_md: null, common_issues_md: null },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+      templates: 1,
+    }),
+    "hasSemanticContent true with templates:1",
+  );
+  assert(
+    !hasSemanticContent({
+      prefs: { audience: null, purpose: null, register: "default", script_notes: null, instructions_md: null, common_issues_md: null },
+      terms: 0,
+      examplesTn: 0,
+      examplesTq: 0,
+      templates: 0,
+    }),
+    "hasSemanticContent false with all zero (including templates)",
+  );
+}
+
 console.log("contextExportLib — shrink + content count");
 {
   assert(contentFileCount([{ path: "manifest.yaml", content: "x" }]) === 0, "manifest alone = 0 content");
   assert(
     !contextShrinkRefused(
-      { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 1000 },
       null,
     ),
     "first export: no shrink",
   );
   const refused = contextShrinkRefused(
-    { terms: 2, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
-    { terms: 100, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+    { terms: 2, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 1000 },
+    { terms: 100, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 1000 },
   );
   assert(refused && refused.metric === "terms", "terms shrink refused");
   assert(shrinkDetailCode(refused).startsWith("shrink_guard:terms_"), "shrink code shape");
 
   const bytes = contextShrinkRefused(
-    { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 100 },
-    { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+    { terms: 10, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 100 },
+    { terms: 10, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 1000 },
   );
   assert(bytes && bytes.metric === "totalBytes", "bytes shrink refused");
 
@@ -444,10 +568,32 @@ console.log("contextExportLib — shrink + content count");
   // deleted from the repo instead of the export being refused forever.
   assert(
     !contextShrinkRefused(
-      { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 2, totalBytes: 950 },
-      { terms: 10, examplesTn: 5, examplesTq: 0, contentFiles: 3, totalBytes: 1000 },
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 2, totalBytes: 950 },
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 1000 },
     ),
     "content-file drop alone is not refused",
+  );
+
+  // Templates shrink guard: mirrors examples (lost > 3 AND lost/previous > 5%).
+  const templatesRefused = contextShrinkRefused(
+    { terms: 10, examplesTn: 5, examplesTq: 0, templates: 0, contentFiles: 3, totalBytes: 1000 },
+    { terms: 10, examplesTn: 5, examplesTq: 0, templates: 40, contentFiles: 3, totalBytes: 1000 },
+  );
+  assert(templatesRefused && templatesRefused.metric === "templates", "templates 40->0 refused");
+  assert(shrinkDetailCode(templatesRefused).startsWith("shrink_guard:templates_"), "templates shrink code shape");
+  assert(
+    !contextShrinkRefused(
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 3, contentFiles: 3, totalBytes: 1000 },
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 4, contentFiles: 3, totalBytes: 1000 },
+    ),
+    "templates 4->3 not refused (lost <= 3)",
+  );
+  assert(
+    !contextShrinkRefused(
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 0, contentFiles: 3, totalBytes: 1000 },
+      { terms: 10, examplesTn: 5, examplesTq: 0, templates: 0, contentFiles: 3, totalBytes: 1000 },
+    ),
+    "previous templates 0 never refused",
   );
 
   assert(
@@ -456,7 +602,13 @@ console.log("contextExportLib — shrink + content count");
         { path: "manifest.yaml", content: "x" },
         { path: "brief.md", content: "x" },
       ]),
-    ) === JSON.stringify(["instructions.md", "terminology/terms.csv", "examples/validated.jsonl"]),
+    ) ===
+      JSON.stringify([
+        "instructions.md",
+        "terminology/terms.csv",
+        "examples/validated.jsonl",
+        "templates/templates.tsv",
+      ]),
     "stalePackPaths lists omitted pack files only",
   );
   assert(
@@ -466,6 +618,7 @@ console.log("contextExportLib — shrink + content count");
       { path: "instructions.md", content: "x" },
       { path: "terminology/terms.csv", content: "x" },
       { path: "examples/validated.jsonl", content: "x" },
+      { path: "templates/templates.tsv", content: "x" },
     ]).length === 0,
     "full pack has no stale paths",
   );
@@ -491,6 +644,7 @@ console.log("assistedContextRef + owner + tsv truncation");
     terms: 1,
     examplesTn: 0,
     examplesTq: 0,
+    templates: 0,
     contentFiles: 1,
     totalBytes: 10,
   };

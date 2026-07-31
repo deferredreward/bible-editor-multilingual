@@ -19,6 +19,7 @@ export type ContextExportRow = {
   terms_count: number | null;
   examples_tn: number | null;
   examples_tq: number | null;
+  templates_count: number | null;
   content_files: number | null;
   total_bytes: number | null;
   failure_reason: string | null;
@@ -32,7 +33,7 @@ export async function getLatestSuccessfulContextExport(
 ): Promise<SuccessfulContextExport | null> {
   const row = await env.DB.prepare(
     `SELECT commit_sha, completed_at, owner, terms_count, examples_tn, examples_tq,
-            content_files, total_bytes
+            templates_count, content_files, total_bytes
        FROM context_export_results
       WHERE status = 'success' AND commit_sha IS NOT NULL AND completed_at IS NOT NULL
       ORDER BY completed_at DESC, id DESC
@@ -44,6 +45,7 @@ export async function getLatestSuccessfulContextExport(
     terms_count: number | null;
     examples_tn: number | null;
     examples_tq: number | null;
+    templates_count: number | null;
     content_files: number | null;
     total_bytes: number | null;
   }>();
@@ -55,6 +57,7 @@ export async function getLatestSuccessfulContextExport(
     terms: row.terms_count ?? 0,
     examplesTn: row.examples_tn ?? 0,
     examplesTq: row.examples_tq ?? 0,
+    templates: row.templates_count ?? 0,
     contentFiles: row.content_files ?? 0,
     totalBytes: row.total_bytes ?? 0,
   };
@@ -67,6 +70,7 @@ export async function getLatestContextExportStats(env: Env): Promise<ContextPack
     terms: latest.terms,
     examplesTn: latest.examplesTn,
     examplesTq: latest.examplesTq,
+    templates: latest.templates,
     contentFiles: latest.contentFiles,
     totalBytes: latest.totalBytes,
   };
@@ -112,8 +116,9 @@ export async function finalizeContextExport(
             content_files = ?8,
             total_bytes = ?9,
             failure_reason = ?10,
-            r2_key = COALESCE(?11, r2_key)
-      WHERE id = ?12`,
+            r2_key = COALESCE(?11, r2_key),
+            templates_count = ?12
+      WHERE id = ?13`,
   )
     .bind(
       patch.status,
@@ -127,6 +132,7 @@ export async function finalizeContextExport(
       patch.stats?.totalBytes ?? null,
       patch.failureReason ?? null,
       patch.r2Key ?? null,
+      patch.stats?.templates ?? null,
       id,
     )
     .run();

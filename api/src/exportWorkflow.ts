@@ -90,6 +90,7 @@ import {
   type TranslationPrefsForRender,
   type ValidatedTnRow,
   type ValidatedTqRow,
+  type TemplateForRender,
 } from "./contextExport.ts";
 import { contextShrinkRefused, shrinkDetailCode, hasSemanticContent } from "./contextExportLib.ts";
 import { fetchEnSourceMaps } from "./contextSourceFetch.ts";
@@ -543,6 +544,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const tnRows = tnRs.results ?? [];
     const tqRows = tqRs.results ?? [];
 
+    const templateRs = await this.env.DB.prepare(
+      `SELECT template_id, support_ref, sheet_order, type, target_md
+         FROM template_units
+        WHERE translation_state = 'validated'
+          AND deleted_at IS NULL
+          AND origin = 'sheet'
+          AND target_md IS NOT NULL AND TRIM(target_md) <> ''
+        ORDER BY support_ref, sheet_order, template_id`,
+    ).all<TemplateForRender>();
+    const templates = templateRs.results ?? [];
+
     const sourceFetch = await fetchEnSourceMaps(this.env, cfg, tnRows, tqRows);
     // A resource whose translationSource repo was left blank in Setup has NO
     // upstream source: fetchEnSourceMaps SKIPS it (empty map) and still fetches
@@ -584,6 +596,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         tnRows,
         tqRows,
         sources: sourceFetch.sources,
+        templates,
         skipped: sourceFetch.skipped,
       });
       if (!rendered.ok) {
@@ -602,6 +615,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         terms: stats.terms,
         examplesTn: stats.examplesTn,
         examplesTq: stats.examplesTq,
+        templates: stats.templates,
       });
       // Scaffold-only (brief.md alone — + Register: default) with NO prior
       // successful export is a genuine first-time-empty pack: nothing to

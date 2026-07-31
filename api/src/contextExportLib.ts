@@ -13,6 +13,7 @@ export type ContextPackStats = {
   terms: number;
   examplesTn: number;
   examplesTq: number;
+  templates: number;
   contentFiles: number;
   totalBytes: number;
 };
@@ -23,6 +24,7 @@ export type SuccessfulContextExport = {
   terms: number;
   examplesTn: number;
   examplesTq: number;
+  templates: number;
   contentFiles: number;
   totalBytes: number;
   owner: string;
@@ -77,17 +79,19 @@ export function hasSemanticContent(input: {
   terms: number;
   examplesTn: number;
   examplesTq: number;
+  templates: number;
 }): boolean {
   if (briefHasSemanticValue(input.prefs)) return true;
   if (input.prefs.instructions_md?.trim()) return true;
   if (input.prefs.common_issues_md?.trim()) return true;
   if (input.terms > 0) return true;
   if (input.examplesTn + input.examplesTq > 0) return true;
+  if (input.templates > 0) return true;
   return false;
 }
 
 export type ShrinkDetail = {
-  metric: "terms" | "examples" | "totalBytes";
+  metric: "terms" | "examples" | "templates" | "totalBytes";
   previous: number;
   next: number;
 };
@@ -95,7 +99,8 @@ export type ShrinkDetail = {
 /**
  * Semantic shrink guard vs the prior successful pack.
  * Refuse a substantial reduction unless shrinkOverride is set.
- * Thresholds from the plan: terms >5% AND >5; examples >5% AND >3; bytes >10%.
+ * Thresholds from the plan: terms >5% AND >5; examples >5% AND >3; templates
+ * >5% AND >3 (mirrors examples); bytes >10%.
  * There is deliberately NO contentFiles metric: the renderer omits a pack file
  * iff its D1 source is empty, so a file-count drop is always an intentional
  * clear (e.g. instructions_md emptied) that must be allowed to land — the
@@ -121,6 +126,12 @@ export function contextShrinkRefused(
       return { metric: "examples", previous: prevEx, next: nextEx };
     }
   }
+  if (previous.templates > 0) {
+    const lost = previous.templates - next.templates;
+    if (lost > 3 && lost / previous.templates > 0.05) {
+      return { metric: "templates", previous: previous.templates, next: next.templates };
+    }
+  }
   if (previous.totalBytes > 0) {
     const lost = previous.totalBytes - next.totalBytes;
     if (lost / previous.totalBytes > 0.1) {
@@ -141,6 +152,7 @@ export const PACK_MANAGED_PATHS = [
   "instructions.md",
   "terminology/terms.csv",
   "examples/validated.jsonl",
+  "templates/templates.tsv",
 ] as const;
 
 /**
