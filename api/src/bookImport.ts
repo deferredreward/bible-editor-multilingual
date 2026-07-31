@@ -33,6 +33,7 @@ import {
   shouldFallBackOnStatus,
   sourceProvenance,
   translationSourceRepoRef,
+  scriptureImportOverrides,
   type DcsRepoOverrides,
 } from "./dcsSources";
 import { isIdent, parseDoor43SourceRef, type RepoRef } from "./repoUrl";
@@ -702,12 +703,20 @@ async function importBookFromDcs(
     tq: tqPlan.base,
   };
 
-  // Use lane source refs from active config for scripture USFM URLs
+  // Use lane source refs from active config for scripture USFM URLs, unless
+  // translating from source: then ULT/UST/TWL should also come from the
+  // project's configured English translationSource (same reasoning as
+  // tn/tq below) rather than the org's own — possibly scaffold-only —
+  // repos, falling back to the lane/org default when the source has no
+  // ref for that role.
   const litCfg = activeLaneConfig(litState);
   const simCfg = activeLaneConfig(simState);
+  const translateFromSource = !!opts.translateFromSource;
+  const scriptureOverrides = scriptureImportOverrides(cfg, translateFromSource, litCfg.source, simCfg.source);
   const overrides: DcsRepoOverrides = {
-    lit: litCfg.source,
-    sim: simCfg.source,
+    lit: scriptureOverrides.lit,
+    sim: scriptureOverrides.sim,
+    ...(scriptureOverrides.twl ? { twl: scriptureOverrides.twl } : {}),
     ...(noteSource.tn ? { tn: noteSource.tn } : {}),
     ...(noteSource.tq ? { tq: noteSource.tq } : {}),
   };
@@ -1066,14 +1075,24 @@ async function importBookFromDcs(
     // nightly reimports that resource.
     for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
       if (!counts.fetched[resource]) continue;
-      // Skip source-pulled tn/tq: they're already held out of the nightly
-      // reimport (heldOutNoteResources), so a watermark here is write-only —
-      // nothing ever reads it. Recording one under the org's identity would
-      // also be a lie (resourceSourceRef no longer takes an override to say
-      // otherwise). An absent watermark correctly fails open to a refetch if
-      // provenance is later cleared.
+      // Skip source-pulled resources. tn/tq ARE held out of the nightly
+      // reimport (heldOutNoteResources reads tn_source/tq_source provenance),
+      // so their watermark would be write-only. ult/ust/twl have NO such
+      // hold-out — the skip here only avoids stamping a watermark under the
+      // org's identity (resourceSourceRef resolves ult/ust from lane state and
+      // twl from the org repo, neither of which reflects the source pull; a
+      // matching-by-luck stamp would be a lie). Consequence, accepted for now:
+      // the nightly gate fails open on an absent watermark, so if the org/lane
+      // file EXISTS and differs, the nightly refetches it and overwrites
+      // still-pristine rows. Fresh scaffold orgs are safe (404 → no-op, and
+      // the first nightly export round-trips byte-identically); the exposed
+      // case is force+translateFromSource over a populated scripture repo.
+      // Real fix is scripture provenance mirroring tn/tq — issue #142.
       if (resource === "tn" && noteSource.tn) continue;
       if (resource === "tq" && noteSource.tq) continue;
+      if (resource === "ult" && scriptureOverrides.fromSource.lit) continue;
+      if (resource === "ust" && scriptureOverrides.fromSource.sim) continue;
+      if (resource === "twl" && scriptureOverrides.fromSource.twl) continue;
       const file = dcsResourceFile(cfg, book, resource);
       if (!file) continue;
       const src = await resourceSourceRef(env, resource, cfg);
