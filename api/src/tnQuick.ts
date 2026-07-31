@@ -4,14 +4,21 @@
 // bot using the shared service token (BT_API_TOKEN secret) so the
 // token never reaches the browser.
 //
-// This route stays dumb on purpose: auth gate, env check, swap the
-// Authorization header, forward, return the bot's response verbatim.
-// All business logic — request validation, Hebrew normalization, note
-// drafting — lives in the bot.
+// This route is NOT a verbatim forward: auth gate, env check, swap the
+// Authorization header, parse the body, inject contextRef/targetLang/
+// direction (derived server-side — see assistedContextRef.ts's
+// applyTnQuickContext, which also strips any client-supplied values for
+// those same keys), re-serialize, forward, return the bot's response
+// verbatim. The bot's schema is zod .strict(), so no unknown key may be
+// added — only the keys the bot itself declares. Request validation, Hebrew
+// normalization, and note drafting still live entirely in the bot.
 
 import { Hono } from "hono";
 import type { Env } from "./index";
 import { requireEditor } from "./auth";
+import { getProjectConfig } from "./projectConfig";
+import { getLatestSuccessfulContextExport } from "./contextExportResults";
+import { applyTnQuickContext, stripClientContextFields } from "./assistedContextRef";
 
 export const tnQuick = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -23,8 +30,52 @@ tnQuick.post("/", requireEditor, async (c) => {
     return c.json({ error: "tn_quick_disabled" }, 503);
   }
 
-  const body = await c.req.text();
-  if (body.length > MAX_BODY_BYTES) {
+  const rawBody = await c.req.text();
+  if (rawBody.length > MAX_BODY_BYTES) {
+    return c.json({ error: "body_too_large", maxBytes: MAX_BODY_BYTES }, 413);
+  }
+
+  // Fold the org's curated preferences (brief, terminology, instructions) into
+  // the drafting request via the pinned contextRef, plus targetLang/direction
+  // for the pack's language header — mirrors the translate pipeline
+  // (pipelines.ts's "translate" branch). No successful export → forward the
+  // body unchanged, exactly as before; the bot then drafts unsteered.
+  let body = rawBody;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    parsed = undefined;
+    // Malformed JSON — forward unchanged and let the bot's own validation reject it.
+  }
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    // Strip the caller's context fields FIRST, and forward the stripped body
+    // even if the lookups below fail. These three are always server-derived:
+    // the proxy calls the bot with our shared BT_API_TOKEN, so honoring a
+    // caller-supplied contextRef would be a cross-tenant read of another
+    // workspace's pack and a prompt-steering vector. Degrading must not
+    // reopen that hole by falling back to the raw body.
+    body = JSON.stringify(stripClientContextFields(parsed as Record<string, unknown>));
+    try {
+      const cfg = await getProjectConfig(c.env);
+      const latest = await getLatestSuccessfulContextExport(c.env);
+      if (!latest) {
+        console.warn("tn-quick: no successful context export yet; drafting unsteered (contextRef omitted)");
+      }
+      body = JSON.stringify(applyTnQuickContext(parsed as Record<string, unknown>, latest, cfg));
+    } catch (err) {
+      // Config/export lookup threw (e.g. an unmigrated workspace DB missing
+      // context_export_results / templates_count) — draft unsteered from the
+      // STRIPPED body rather than silently disabling steering with no signal.
+      console.warn("tn-quick: context injection failed, forwarding unsteered:", err);
+    }
+  }
+  // else: parsed is null/array/primitive/undefined — forward the raw body
+  // unchanged rather than spreading a non-object into a request shape.
+
+  const bodyBytes = new TextEncoder().encode(body).length;
+  if (bodyBytes > MAX_BODY_BYTES) {
     return c.json({ error: "body_too_large", maxBytes: MAX_BODY_BYTES }, 413);
   }
 

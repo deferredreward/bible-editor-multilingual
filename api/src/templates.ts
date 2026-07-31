@@ -11,6 +11,8 @@ import { currentUserId, requireEditor, requireAdmin } from "./auth";
 import { syncTemplates, ensureTemplatesPopulated } from "./templateSync";
 import { getProjectConfig } from "./projectConfig";
 import { nextPreDraftJson } from "./preDraftSnapshot";
+import { getLatestSuccessfulContextExport } from "./contextExportResults";
+import { applyContextRef, derivedTargetLang } from "./assistedContextRef";
 
 export const templates = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -179,16 +181,34 @@ templates.post("/unit/draft", requireEditor, async (c) => {
   }
 
   const cfg = await getProjectConfig(c.env);
-  const requestBody = JSON.stringify({
+  // Fold in the pinned contextRef so the bot applies the org's curated
+  // preferences (brief, terminology, instructions) — same mechanism as
+  // tn-quick and the translate pipeline. No successful export → omit the key
+  // entirely and the bot drafts unsteered, exactly like today.
+  // A throw here (e.g. an unmigrated workspace DB missing
+  // context_export_results / templates_count) must not 500 the whole draft —
+  // degrade to unsteered drafting, matching the tn-quick proxy.
+  let latest = null;
+  try {
+    latest = await getLatestSuccessfulContextExport(c.env);
+  } catch (err) {
+    console.warn("template-draft: context export lookup failed, drafting unsteered:", err);
+  }
+  const templateBody: Record<string, unknown> = {
     templateId: unit.template_id,
     supportRef: unit.support_ref,
     type: unit.type,
     sourceMd: unit.source_md,
     targetMd: unit.target_md,
-    targetLang: cfg.languageCode,
     targetOrg: cfg.exportOrg,
     direction: cfg.direction,
-  });
+  };
+  // cfg.languageCode is unvalidated at the persist boundary (see
+  // assistedContextRef.ts), so re-validate against the bot's targetLang
+  // shape here too — omit + warn rather than send a value guaranteed to 400.
+  const targetLang = derivedTargetLang(cfg.languageCode);
+  if (targetLang) templateBody.targetLang = targetLang;
+  const requestBody = JSON.stringify(applyContextRef(templateBody, latest));
   // .length is UTF-16 code units, not bytes — undercounts for non-ASCII
   // target languages (Arabic, etc.), so measure the actual UTF-8 byte size.
   if (new TextEncoder().encode(requestBody).length > TEMPLATE_DRAFT_MAX_BODY_BYTES) {
