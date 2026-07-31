@@ -20,3 +20,26 @@ export function applyContextRef(
     contextRef: buildContextRef(latest.owner, latest.sha),
   };
 }
+
+/**
+ * Pure helper for the /api/tn-quick proxy: fold contextRef + targetLang +
+ * direction into the caller's request body. contextRef only appears when a
+ * successful context export exists (omitted entirely otherwise — the bot's
+ * schema is zod .strict(), so a present-but-undefined key would still 400).
+ * Caller-supplied values always win over the derived ones.
+ */
+export function applyTnQuickContext(
+  body: Record<string, unknown>,
+  latest: SuccessfulContextExport | null,
+  cfg: { languageCode: string; direction: "ltr" | "rtl" },
+): Record<string, unknown> {
+  const withContextRef = applyContextRef(body, latest);
+  const result = { ...withContextRef };
+  if (!("targetLang" in result) && cfg.languageCode) {
+    result.targetLang = cfg.languageCode;
+  }
+  if (!("direction" in result) && cfg.direction) {
+    result.direction = cfg.direction;
+  }
+  return result;
+}

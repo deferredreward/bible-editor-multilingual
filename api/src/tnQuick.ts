@@ -12,6 +12,9 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
 import { requireEditor } from "./auth";
+import { getProjectConfig } from "./projectConfig";
+import { getLatestSuccessfulContextExport } from "./contextExportResults";
+import { applyTnQuickContext } from "./assistedContextRef";
 
 export const tnQuick = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -23,9 +26,24 @@ tnQuick.post("/", requireEditor, async (c) => {
     return c.json({ error: "tn_quick_disabled" }, 503);
   }
 
-  const body = await c.req.text();
-  if (body.length > MAX_BODY_BYTES) {
+  const rawBody = await c.req.text();
+  if (rawBody.length > MAX_BODY_BYTES) {
     return c.json({ error: "body_too_large", maxBytes: MAX_BODY_BYTES }, 413);
+  }
+
+  // Fold the org's curated preferences (brief, terminology, instructions) into
+  // the drafting request via the pinned contextRef, plus targetLang/direction
+  // for the pack's language header — mirrors the translate pipeline
+  // (pipelines.ts's "translate" branch). No successful export → forward the
+  // body unchanged, exactly as before; the bot then drafts unsteered.
+  let body = rawBody;
+  try {
+    const parsed = JSON.parse(rawBody) as Record<string, unknown>;
+    const cfg = await getProjectConfig(c.env);
+    const latest = await getLatestSuccessfulContextExport(c.env);
+    body = JSON.stringify(applyTnQuickContext(parsed, latest, cfg));
+  } catch {
+    // Malformed JSON — forward unchanged and let the bot's own validation reject it.
   }
 
   const url = c.env.TN_QUICK_URL || DEFAULT_URL;
