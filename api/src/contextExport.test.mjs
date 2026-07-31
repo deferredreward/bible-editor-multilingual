@@ -468,6 +468,27 @@ console.log("contextExport — renderTemplatesTsv");
   assert(tsvField("a\tb\r\nc") === "a b c", "tsvField collapses tab/cr/lf runs");
   assert(tsvField("  x  ") === "x", "tsvField trims");
 
+  // A tab/newline-only target passes SQLite TRIM (spaces only) but flattens to
+  // empty here — it must NOT claim the slug, so the later valid variant wins.
+  const emptyFirstVariant = renderTemplatesTsv([
+    { template_id: "figs-hyper-01", support_ref: "figs-hyperbole", sheet_order: 1, type: "note", target_md: "\t\n" },
+    { template_id: "figs-hyper-02", support_ref: "figs-hyperbole", sheet_order: 2, type: "note", target_md: "REAL" },
+  ]);
+  const emptyFirstLines = emptyFirstVariant.split("\n").filter(Boolean);
+  assert(emptyFirstLines.length === 2, "empty-flattening first variant does not consume the slug");
+  assert(emptyFirstLines[1] === "figs-hyperbole\tREAL\tactive\tnote", "later valid variant exports");
+
+  // Dedupe keys on the FLATTENED slug: raw slugs differing only by whitespace
+  // must collapse to one row (the bot's Map is last-duplicate-wins; two rows
+  // for one slug would silently invert first-wins).
+  const wsSlugs = renderTemplatesTsv([
+    { template_id: "figs-irony-01", support_ref: "figs-irony", sheet_order: 1, type: "note", target_md: "first" },
+    { template_id: "figs-irony-02", support_ref: "figs-irony ", sheet_order: 2, type: "note", target_md: "second" },
+  ]);
+  const wsSlugLines = wsSlugs.split("\n").filter(Boolean);
+  assert(wsSlugLines.length === 2, "whitespace-variant slugs collapse to one row");
+  assert(wsSlugLines[1] === "figs-irony\tfirst\tactive\tnote", "first flattened-slug variant wins");
+
   // Round-trip shape: N data lines each with exactly 3 tabs (4 columns).
   const multi = renderTemplatesTsv([
     { template_id: "a1", support_ref: "figs-a", sheet_order: 1, type: "note", target_md: "A" },

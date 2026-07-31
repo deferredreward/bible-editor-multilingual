@@ -229,11 +229,18 @@ export function renderTemplatesTsv(units: readonly TemplateForRender[]): string 
   const seen = new Set<string>();
   const rows: string[] = [];
   for (const u of units) {
-    if (seen.has(u.support_ref)) continue;
-    seen.add(u.support_ref);
+    // Key the dedupe on the FLATTENED slug — that's what the row emits, and
+    // the bot's parser is last-duplicate-wins, so two raw slugs differing only
+    // by whitespace must not produce two rows. Claim the slug only once a
+    // non-empty target is in hand: SQLite TRIM() strips spaces only, so a
+    // tab/newline-only target_md survives the SQL filter, flattens to empty
+    // here, and must not block a later valid variant of the same slug.
+    const slug = tsvField(u.support_ref);
+    if (!slug || seen.has(slug)) continue;
     const target = tsvField(u.target_md);
     if (!target) continue;
-    rows.push(`${tsvField(u.support_ref)}\t${target}\tactive\t${tsvField(u.type ?? "")}`);
+    seen.add(slug);
+    rows.push(`${slug}\t${target}\tactive\t${tsvField(u.type ?? "")}`);
   }
   if (rows.length === 0) return null;
   return ["support_reference\ttarget_template\tstatus\tcomment", ...rows].join("\n") + "\n";
