@@ -15,12 +15,16 @@ export function useTranslationPrefs(enabled: boolean): {
   loading: boolean;
   error: Error | null;
   refetch: () => void;
+  apply: (p: TranslationPrefs) => void;
 } {
   const [prefs, setPrefs] = useState<TranslationPrefs | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
+  // Adopt a prefs object we already have in hand (a PUT response, or the
+  // `current` row from a 409 conflict body) without a round-trip refetch.
+  const apply = useCallback((p: TranslationPrefs) => setPrefs(p), []);
 
   useEffect(() => {
     if (!enabled) {
@@ -49,7 +53,7 @@ export function useTranslationPrefs(enabled: boolean): {
     };
   }, [enabled, reloadKey]);
 
-  return { prefs, loading, error, refetch };
+  return { prefs, loading, error, refetch, apply };
 }
 
 /** Latest context-pack export status — gates the assisted-mode toggle. */
