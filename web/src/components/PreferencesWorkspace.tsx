@@ -1506,7 +1506,7 @@ function MarkdownPrefSection({
   prefsState: PrefsState;
 }) {
   const { t } = useTranslation();
-  const { prefs, apply, refetch } = prefsState;
+  const { prefs, error, apply, refetch } = prefsState;
   // null = not yet seeded from `prefs` (loading gate below); seeded once so a
   // sibling section's save (which also updates `prefs` via apply()) can't
   // reset text the user is mid-typing here.
@@ -1515,7 +1515,11 @@ function MarkdownPrefSection({
   const save = useSaveState();
 
   useEffect(() => {
-    setValue((v) => v ?? (prefs?.[field] ?? ""));
+    // Seed ONLY once prefs actually loaded. Without the `prefs` gate this
+    // would coalesce the initial null prefs into "" on mount — the editor
+    // would render empty instead of the saved content, and a Save from that
+    // state would silently null the field on the server.
+    if (prefs) setValue((v) => v ?? (prefs[field] ?? ""));
   }, [prefs, field]);
 
   const overLimit = (value ?? "").length > maxChars;
@@ -1549,7 +1553,12 @@ function MarkdownPrefSection({
     }
   };
 
-  if (value === null) return <CircularProgress size={22} />;
+  if (value === null) {
+    // Prefs GET failed: surface it instead of spinning forever (the seed
+    // effect above never fires without a loaded prefs row).
+    if (error) return <Alert severity="error">{t("preferences.actionFailed")}</Alert>;
+    return <CircularProgress size={22} />;
+  }
 
   return (
     <Stack spacing={2}>
