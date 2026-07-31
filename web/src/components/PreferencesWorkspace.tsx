@@ -68,6 +68,7 @@ import {
   useExamples,
   useContextExportStatus,
 } from "../hooks/useTranslationMemory";
+import { currentPrefsFromConflict } from "../sync/prefsConflict";
 import { bookName } from "../lib/bookNames";
 import { MarkdownView } from "./MarkdownView";
 import { defaultReplaceSelection } from "../lib/setupWizard";
@@ -181,6 +182,12 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
   const memoryAvailable = isTranslation && !isReadOnly();
+  // Lifted here (not per-section): Brief / Instructions / Common issues all
+  // save against the SAME TranslationPrefs row/version. One shared hook means
+  // every save reads the same `prefs.version` for If-Match, so a sibling
+  // section's save can't leave another section holding a stale version that
+  // self-409s on its very next save.
+  const prefsState = useTranslationPrefs(memoryAvailable);
 
   // Deep-link / rail-driven anchor scroll: when the routed section is a memory
   // section and the long page is available, scroll it into view. Runs on mount
@@ -345,13 +352,13 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
             // visible anchor label — no duplicate heading needed.
             <Stack spacing={4} divider={<Divider />}>
               <Box id="pref-sec-brief" sx={{ scrollMarginTop: "16px" }}>
-                <BriefSection />
+                <BriefSection prefsState={prefsState} />
               </Box>
               <Box id="pref-sec-instructions" sx={{ scrollMarginTop: "16px" }}>
-                <InstructionsSection />
+                <InstructionsSection prefsState={prefsState} />
               </Box>
               <Box id="pref-sec-commonIssues" sx={{ scrollMarginTop: "16px" }}>
-                <CommonIssuesSection />
+                <CommonIssuesSection prefsState={prefsState} />
               </Box>
               <Box id="pref-sec-terminology" sx={{ scrollMarginTop: "16px" }}>
                 <TerminologySection direction={cfg?.direction ?? "ltr"} />
@@ -1360,22 +1367,32 @@ function LocalizationSection() {
   );
 }
 
+// Shared shape returned by the single useTranslationPrefs() lifted to
+// PreferencesWorkspace and passed down to every section that saves against
+// the one TranslationPrefs row (brief / instructions / common issues).
+type PrefsState = ReturnType<typeof useTranslationPrefs>;
+
 // ── Brief ──────────────────────────────────────────────────────────────────
-function BriefSection() {
+function BriefSection({ prefsState }: { prefsState: PrefsState }) {
   const { t } = useTranslation();
-  const { prefs, loading, refetch } = useTranslationPrefs(true);
+  const { prefs, loading, apply, refetch } = prefsState;
   const [draft, setDraft] = useState<TranslationPrefs | null>(null);
   const save = useSaveState();
 
+  // Seed once: a sibling section's save PUTs only its own fields (the server
+  // partial-merges), so it can't change anything Brief owns. If this effect
+  // re-seeded on every `prefs` change, a sibling's save (which also updates
+  // `prefs` via apply()) would silently overwrite whatever the user is still
+  // typing here.
   useEffect(() => {
-    if (prefs) setDraft(prefs);
+    setDraft((d) => d ?? prefs);
   }, [prefs]);
 
   const onSave = async () => {
     if (!draft || !prefs) return;
     save.setSaving(true);
     try {
-      await api.putTranslationPrefs(prefs.version, {
+      const res = await api.putTranslationPrefs(prefs.version, {
         audience: draft.audience,
         purpose: draft.purpose,
         register: draft.register,
@@ -1384,15 +1401,21 @@ function BriefSection() {
         // brief section doesn't own instructions/assisted — omit so the server
         // merges the existing values.
       });
+      apply(res.prefs);
       save.setMsg(t("preferences.saved"));
-      refetch();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        // Someone else's write won — reload their version so the next save
-        // has the right If-Match. Any other failure keeps the user's draft
-        // as-is (refetch() would otherwise clobber unsaved typing).
-        save.setMsg(t("preferences.conflict"));
-        refetch();
+        // Someone else saved first (another section, or another admin).
+        // Adopt the server's fresh row directly from the 409 body so the
+        // next save has the right If-Match; fall back to a refetch only if
+        // the body didn't carry one. Our draft is left untouched — seed-once
+        // means this can't clobber unsaved typing, and a re-save only ever
+        // sends Brief's own fields, so it overwrites at most the concurrent
+        // change to THOSE fields.
+        const current = currentPrefsFromConflict(e.body);
+        if (current) apply(current);
+        else refetch();
+        save.setMsg(t("preferences.conflictKeptEdits"));
       } else if (e instanceof ApiError && e.status === 403) {
         save.setMsg(t("preferences.saveForbidden"));
       } else {
@@ -1473,36 +1496,51 @@ function MarkdownPrefSection({
   introKey,
   placeholderKey,
   maxChars,
+  prefsState,
 }: {
   field: "instructions_md" | "common_issues_md";
   titleKey: string;
   introKey: string;
   placeholderKey: string;
   maxChars: number;
+  prefsState: PrefsState;
 }) {
   const { t } = useTranslation();
-  const { prefs, loading, refetch } = useTranslationPrefs(true);
-  const [value, setValue] = useState("");
+  const { prefs, error, apply, refetch } = prefsState;
+  // null = not yet seeded from `prefs` (loading gate below); seeded once so a
+  // sibling section's save (which also updates `prefs` via apply()) can't
+  // reset text the user is mid-typing here.
+  const [value, setValue] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
   const save = useSaveState();
 
   useEffect(() => {
-    if (prefs) setValue(prefs[field] ?? "");
+    // Seed ONLY once prefs actually loaded. Without the `prefs` gate this
+    // would coalesce the initial null prefs into "" on mount — the editor
+    // would render empty instead of the saved content, and a Save from that
+    // state would silently null the field on the server.
+    if (prefs) setValue((v) => v ?? (prefs[field] ?? ""));
   }, [prefs, field]);
 
-  const overLimit = value.length > maxChars;
+  const overLimit = (value ?? "").length > maxChars;
 
   const onSave = async () => {
-    if (!prefs) return;
+    if (!prefs || value === null) return;
     save.setSaving(true);
     try {
-      await api.putTranslationPrefs(prefs.version, { [field]: value || null });
+      const res = await api.putTranslationPrefs(prefs.version, { [field]: value || null });
+      apply(res.prefs);
       save.setMsg(t("preferences.saved"));
-      refetch();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        save.setMsg(t("preferences.conflict"));
-        refetch();
+        // See BriefSection's onSave: adopt the server's fresh row from the
+        // conflict body rather than refetching, so this section's unsaved
+        // text (kept as-is; seed-once means it was never at risk) survives
+        // and the next save re-sends it against the right version.
+        const current = currentPrefsFromConflict(e.body);
+        if (current) apply(current);
+        else refetch();
+        save.setMsg(t("preferences.conflictKeptEdits"));
       } else if (e instanceof ApiError && e.status === 403) {
         save.setMsg(t("preferences.saveForbidden"));
       } else if (e instanceof ApiError && e.status === 400) {
@@ -1515,7 +1553,12 @@ function MarkdownPrefSection({
     }
   };
 
-  if (loading && !prefs) return <CircularProgress size={22} />;
+  if (value === null) {
+    // Prefs GET failed: surface it instead of spinning forever (the seed
+    // effect above never fires without a loaded prefs row).
+    if (error) return <Alert severity="error">{t("preferences.actionFailed")}</Alert>;
+    return <CircularProgress size={22} />;
+  }
 
   return (
     <Stack spacing={2}>
@@ -1566,7 +1609,7 @@ function MarkdownPrefSection({
   );
 }
 
-function InstructionsSection() {
+function InstructionsSection({ prefsState }: { prefsState: PrefsState }) {
   return (
     <MarkdownPrefSection
       field="instructions_md"
@@ -1574,11 +1617,12 @@ function InstructionsSection() {
       introKey="preferences.instructionsIntro"
       placeholderKey="preferences.instructionsPlaceholder"
       maxChars={20000}
+      prefsState={prefsState}
     />
   );
 }
 
-function CommonIssuesSection() {
+function CommonIssuesSection({ prefsState }: { prefsState: PrefsState }) {
   return (
     <MarkdownPrefSection
       field="common_issues_md"
@@ -1586,6 +1630,7 @@ function CommonIssuesSection() {
       introKey="preferences.commonIssuesIntro"
       placeholderKey="preferences.commonIssuesPlaceholder"
       maxChars={50000}
+      prefsState={prefsState}
     />
   );
 }

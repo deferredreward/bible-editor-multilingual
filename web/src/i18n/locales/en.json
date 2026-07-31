@@ -382,6 +382,7 @@
     "saveForbidden": "Only an admin can save these settings.",
     "actionFailed": "Something went wrong — try again.",
     "conflict": "Someone else changed this — reloaded the latest.",
+    "conflictKeptEdits": "Someone else saved changes — your unsaved edits were kept. Review and save again.",
     "empty": "empty",
     "preview": "Preview",
     "search": "Search",
