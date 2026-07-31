@@ -9,6 +9,7 @@ import {
   dcsUrls,
   sourceProvenance,
   translationSourceRepoRef,
+  scriptureImportOverrides,
   heldOutNoteResources,
   shouldFallBackOnStatus,
   resolveSourceRef,
@@ -142,6 +143,17 @@ function runPure() {
   assert(over.twl === plain.twl, "tn/tq overrides leave twl on the org repo");
   assert(over.ult === plain.ult && over.ust === plain.ust, "tn/tq overrides leave lit/sim untouched");
 
+  // twl override → honored the same way tn/tq are (translate-mode import).
+  const overTwl = dcsUrls(ENV, CFG, "ZEC", {
+    twl: { owner: "unfoldingWord", repo: "en_twl", ref: "v86" },
+  });
+  assert(
+    overTwl.twl === "https://git.door43.org/unfoldingWord/en_twl/raw/branch/v86/twl_ZEC.tsv",
+    "twl override → owner/repo/ref honoured",
+  );
+  assert(overTwl.tn === plain.tn && overTwl.tq === plain.tq, "twl override leaves tn/tq untouched");
+  assert(overTwl.ult === plain.ult && overTwl.ust === plain.ust, "twl override leaves lit/sim untouched");
+
   // Provenance marker + source repo refs.
   assert(sourceProvenance("unfoldingWord", "en_tn") === "source:unfoldingWord/en_tn", "sourceProvenance shape");
   const tnRef = translationSourceRepoRef(CFG, "tn");
@@ -167,6 +179,82 @@ function runPure() {
   assert(
     translationSourceRepoRef(partialCfg, "tq") === null,
     "partial source: absent tq role → null (no undefined repo)",
+  );
+
+  // translationSourceRepoRef now also resolves lit/sim/twl (translate-mode
+  // scripture import), delegating to the same role-generic resolveSourceRef.
+  assert(
+    translationSourceRepoRef(CFG, "lit").repo === "en_ult",
+    "translationSourceRepoRef(lit) → en_ult",
+  );
+  assert(
+    translationSourceRepoRef(CFG, "sim").repo === "en_ust",
+    "translationSourceRepoRef(sim) → en_ust",
+  );
+  assert(
+    translationSourceRepoRef(CFG, "twl").repo === "en_twl",
+    "translationSourceRepoRef(twl) → en_twl",
+  );
+  // A role blank in the translationSource (not configured in Setup) → null,
+  // same "no upstream source for this resource" contract as tn/tq.
+  const partialScriptureCfg = {
+    ...CFG,
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { tn: "en_tn" } },
+  };
+  assert(
+    translationSourceRepoRef(partialScriptureCfg, "lit") === null,
+    "translationSourceRepoRef(lit): absent role → null",
+  );
+  assert(
+    translationSourceRepoRef(partialScriptureCfg, "twl") === null,
+    "translationSourceRepoRef(twl): absent role → null",
+  );
+
+  // ── scriptureImportOverrides — importBookFromDcs's lit/sim/twl decision ──
+  const laneLit = { owner: "BSOJ", repo: "ar_avd", ref: "master" };
+  const laneSim = { owner: "BSOJ", repo: "ar_nav", ref: "master" };
+
+  // Load mode (translateFromSource=false) → always the lane/org refs, twl
+  // absent from the result (dcsUrls then falls through to the org repo).
+  const loadMode = scriptureImportOverrides(CFG, false, laneLit, laneSim);
+  assert(
+    loadMode.lit === laneLit && loadMode.sim === laneSim,
+    "scriptureImportOverrides: load mode → lane refs, unchanged",
+  );
+  assert(loadMode.twl === undefined, "scriptureImportOverrides: load mode → no twl override");
+  assert(
+    !loadMode.fromSource.lit && !loadMode.fromSource.sim && !loadMode.fromSource.twl,
+    "scriptureImportOverrides: load mode → fromSource all false",
+  );
+
+  // Translate mode with a full translationSource → lit/sim/twl all resolve to
+  // the English source, and fromSource flags it for the watermark skip.
+  const translateMode = scriptureImportOverrides(CFG, true, laneLit, laneSim);
+  assert(
+    translateMode.lit.repo === "en_ult" && translateMode.sim.repo === "en_ust",
+    "scriptureImportOverrides: translate mode → lit/sim from translationSource",
+  );
+  assert(translateMode.twl?.repo === "en_twl", "scriptureImportOverrides: translate mode → twl from translationSource");
+  assert(
+    translateMode.fromSource.lit && translateMode.fromSource.sim && translateMode.fromSource.twl,
+    "scriptureImportOverrides: translate mode → fromSource all true",
+  );
+
+  // Translate mode with translationSource missing a role → falls back to the
+  // lane/org ref for that role, and fromSource reports it as NOT sourced (so
+  // the watermark is still seeded for it).
+  const partialTranslateOverrides = scriptureImportOverrides(partialScriptureCfg, true, laneLit, laneSim);
+  assert(
+    partialTranslateOverrides.lit === laneLit,
+    "scriptureImportOverrides: translate mode, blank lit role → falls back to lane ref",
+  );
+  assert(
+    partialTranslateOverrides.twl === undefined,
+    "scriptureImportOverrides: translate mode, blank twl role → no override (falls through to org)",
+  );
+  assert(
+    !partialTranslateOverrides.fromSource.lit && !partialTranslateOverrides.fromSource.twl,
+    "scriptureImportOverrides: blank roles report fromSource=false",
   );
 
   // ── resolveSourceRef + normalizeSourceRef (the shared per-resource accessor) ──

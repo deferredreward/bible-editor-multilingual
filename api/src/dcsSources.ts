@@ -52,15 +52,17 @@ export interface DcsUrlSet {
 // same UHB/UGNT under the unfoldingWord org, regardless of its own org.
 export const ORIG_OWNER = "unfoldingWord";
 
-// Optional per-resource RepoRef overrides. lit/sim come from lane state (the
-// lane source ref instead of hardcoding master); tn/tq come from the project's
-// English translationSource when a book is imported/translated from source
-// instead of the org's own (possibly stale) note repos.
+// Optional per-resource RepoRef overrides. lit/sim normally come from lane
+// state (the lane source ref instead of hardcoding master); tn/tq/twl come
+// from the project's English translationSource when a book is
+// imported/translated from source instead of the org's own (possibly
+// scaffold-only, missing-file) repos.
 export interface DcsRepoOverrides {
   lit?: RepoRef;
   sim?: RepoRef;
   tn?: RepoRef;
   tq?: RepoRef;
+  twl?: RepoRef;
 }
 
 // Build the set of DCS raw-content URLs for a given book. `book` is the
@@ -92,6 +94,7 @@ export function dcsUrls(
   const sim = at("sim", cfg.repos.sim);
   const tn = at("tn", cfg.repos.tn);
   const tq = at("tq", cfg.repos.tq);
+  const twl = at("twl", cfg.repos.twl);
 
   // SECURITY: encode ONLY the owner/repo path segments — a per-resource override
   // org/repo can reach here from an unvalidated non-custom-preset merge, and a
@@ -107,9 +110,11 @@ export function dcsUrls(
     origVersion: isNt ? "UGNT" : "UHB",
     tn: `${base}/${seg(tn.owner)}/${seg(tn.repo)}/raw/branch/${tn.ref}/tn_${book}.tsv`,
     tq: `${base}/${seg(tq.owner)}/${seg(tq.repo)}/raw/branch/${tq.ref}/tq_${book}.tsv`,
-    // twl is language-neutral (orig-word links), so it always comes from the
-    // project's own org — never from the English translation source.
-    twl: `${base}/${seg(org)}/${seg(cfg.repos.twl)}/raw/branch/master/twl_${book}.tsv`,
+    // twl is language-neutral (orig-word links) and normally comes from the
+    // project's own org, but a translate-mode import may pull it from the
+    // English translation source (via `overrides.twl`) when the org's own
+    // repo doesn't have it yet (fresh scaffold-only org).
+    twl: `${base}/${seg(twl.owner)}/${seg(twl.repo)}/raw/branch/${twl.ref}/twl_${book}.tsv`,
   };
 }
 
@@ -198,11 +203,45 @@ export function resolveSourceRef(
 // so the per-resource org override is honored on the import/reimport path too.
 export function translationSourceRepoRef(
   cfg: ProjectConfig,
-  resource: "tn" | "tq",
+  resource: "lit" | "sim" | "tn" | "tq" | "twl",
 ): RepoRef | null {
   const ref = resolveSourceRef(cfg.translationSource, resource);
   if (!ref) return null;
   return { owner: ref.org, repo: ref.repo, ref: "master" };
+}
+
+// Pure helper for importBookFromDcs's lit/sim/twl override decision. On a
+// plain (load-my-own-work) import, ULT/UST come from the active lane source
+// and TWL stays on the org repo (both passed in as fall-through defaults). On
+// a translate-mode import, each of lit/sim/twl instead prefers the project's
+// configured English translationSource — same reasoning as tn/tq (a fresh
+// scaffold-only org 404s on files it hasn't populated yet) — falling back to
+// the lane/org default whenever that role is blank in translationSource.
+export interface ScriptureImportOverrides {
+  lit: RepoRef;
+  sim: RepoRef;
+  twl?: RepoRef;
+  // Which roles actually resolved to the translationSource (vs. falling
+  // through to the lane/org default) — the watermark-seeding step needs this
+  // to know which resources are held out of the nightly self-heal reimport.
+  fromSource: { lit: boolean; sim: boolean; twl: boolean };
+}
+
+export function scriptureImportOverrides(
+  cfg: ProjectConfig,
+  translateFromSource: boolean,
+  laneLit: RepoRef,
+  laneSim: RepoRef,
+): ScriptureImportOverrides {
+  const srcLit = translateFromSource ? translationSourceRepoRef(cfg, "lit") : null;
+  const srcSim = translateFromSource ? translationSourceRepoRef(cfg, "sim") : null;
+  const srcTwl = translateFromSource ? translationSourceRepoRef(cfg, "twl") : null;
+  return {
+    lit: srcLit ?? laneLit,
+    sim: srcSim ?? laneSim,
+    ...(srcTwl ? { twl: srcTwl } : {}),
+    fromSource: { lit: !!srcLit, sim: !!srcSim, twl: !!srcTwl },
+  };
 }
 
 // Does a failed org-repo note fetch mean "this file genuinely does not exist"
