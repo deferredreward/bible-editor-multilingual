@@ -257,16 +257,32 @@ export function shouldFallBackOnStatus(status: number): boolean {
   return status === 404;
 }
 
-// Which note resources this book must NOT sync with the configured org repo.
+// Which resources this book must NOT sync with the configured org/lane repo.
 // Any non-null provenance marker (aquifer:… or source:…) means "held out" —
-// the single shared predicate for the reimport and export skips.
+// the single shared predicate for the reimport and export skips. Widened for
+// issue #142 to cover ult/ust/twl alongside tn/tq: scripture/twl have no
+// Aquifer path and no per-chapter-range mechanism (that's tn/tq-only, see
+// heldOutChapters in bookSource.ts), so a non-null column here always means
+// the WHOLE book is held out for that resource.
 export function heldOutNoteResources(
-  prov: { tn_source?: string | null; tq_source?: string | null } | null | undefined,
-): Set<"tn" | "tq"> {
-  const out = new Set<"tn" | "tq">();
+  prov:
+    | {
+        tn_source?: string | null;
+        tq_source?: string | null;
+        ult_source?: string | null;
+        ust_source?: string | null;
+        twl_source?: string | null;
+      }
+    | null
+    | undefined,
+): Set<ReimportResource> {
+  const out = new Set<ReimportResource>();
   if (!prov) return out;
   if (prov.tn_source) out.add("tn");
   if (prov.tq_source) out.add("tq");
+  if (prov.ult_source) out.add("ult");
+  if (prov.ust_source) out.add("ust");
+  if (prov.twl_source) out.add("twl");
   return out;
 }
 
