@@ -51,10 +51,13 @@
   .source-row .src-word:hover { background: var(--hl); border-color: var(--inspire); }
   .source-row .src-word.unaligned { border-bottom: 2px dashed var(--warn); }
 
-  .align-canvas { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-block-end: 16px; }
+  .align-canvas { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-block-end: 16px; align-items: stretch; }
   .align-card {
     background: var(--card); border: 1.5px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow);
     padding: 10px; position: relative; cursor: grab;
+    /* uniform row skyline: every card fills its grid row; slots got a matching
+       min-height + centered label (mixed heights made tablet rows ragged) */
+    min-height: 78px; display: flex; flex-direction: column;
   }
   .align-card:hover { border-color: var(--inspire); }
   /* canvas is dir=rtl for Hebrew card ORDER; card content is per-language */
@@ -67,7 +70,7 @@
   }
   .align-card.ghost { border-style: dashed; opacity: 0.85; }
   .align-card.ghost .ac-target::after { content: " ●"; color: var(--inspire); font-size: 10px; }
-  .align-card.unaligned-slot { display: flex; align-items: center; justify-content: center; color: var(--ink-2); font-size: 12.5px; border-style: dashed; min-height: 56px; }
+  .align-card.unaligned-slot { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--ink-2); font-size: 12.5px; border-style: dashed; min-height: 78px; }
 
   .canvas-note { font-size: 12px; color: var(--ink-2); margin: -6px 0 14px; }
 
