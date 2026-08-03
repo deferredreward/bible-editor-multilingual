@@ -26,13 +26,15 @@
   .hub-head h1 { font-size: 24px; letter-spacing: -0.02em; margin: 0; }
   .hub-head .sub { color: var(--ink-2); font-size: 14px; margin: 4px 0 0; }
 
+  /* Slim rail + big preview: the list is names-only (purpose in a tooltip) so
+     the scaled iframe gets nearly the full width and stays readable. */
   .hub-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-    gap: 20px;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 16px;
     align-items: start;
   }
-  @media (max-width: 900px) {
+  @media (max-width: 820px) {
     .hub-layout { grid-template-columns: minmax(0, 1fr); }
   }
 
@@ -45,35 +47,32 @@
     color: var(--ink-2);
     margin: 0 0 8px 2px;
   }
-  .screen-list { display: flex; flex-direction: column; gap: 8px; }
+  .screen-list { display: flex; flex-direction: column; gap: 4px; }
   .screen-row {
     display: block;
     text-decoration: none;
     color: inherit;
     background: var(--card);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 11px 14px;
+    border-radius: 8px;
+    padding: 6px 10px;
     cursor: pointer;
   }
   .screen-row:hover { border-color: var(--inspire); }
   .screen-row[aria-current="true"] { background: var(--hl); border-color: var(--inspire); }
   .screen-row .s-name {
     font-weight: 700;
-    font-size: 14.5px;
+    font-size: 12.5px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   .screen-row .s-bundles {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--ink-2);
-    margin-inline-start: 8px;
+    margin-inline-start: 6px;
   }
-  .screen-row .s-purpose {
-    font-size: 13px;
-    color: var(--ink-2);
-    margin: 3px 0 0;
-  }
+  /* purpose lives in the tooltip (title attr, set from this node by JS) */
+  .screen-row .s-purpose { display: none; }
 
   .preview-panel {
     position: sticky;
@@ -126,15 +125,16 @@
     justify-content: center;
     min-height: 400px;
   }
+  /* The frame keeps the TRUE device dimensions so the page's own breakpoints fire
+     honestly; .frame-scaler shrinks it visually to fit the panel via transform. */
+  .frame-scaler { flex: none; overflow: hidden; }
   .device-frame {
-    flex: none;
-    width: 1280px;
-    height: 720px;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow);
-    transition: width 0.15s ease;
+    transform-origin: top left;
+    transition: transform 0.15s ease;
     overflow: hidden;
   }
   @media (prefers-reduced-motion: reduce) { .device-frame { transition: none; } }
@@ -178,7 +178,7 @@
     <div class="hub-head">
       <p class="eyebrow">Adaptive UI flows</p>
       <h1>13 screens · 3 roles · 3 form factors</h1>
-      <p class="sub">Click a screen to load it in the device preview. Nothing here calls the network — every
+      <p class="sub">Click a screen to open it. Nothing here calls the network — every
         actionable control shows a toast naming the handle it would call (see <code>docs/flows/02-architecture.md</code>).</p>
     </div>
 
@@ -201,7 +201,7 @@
             </a>
             <a class="screen-row" data-screen="t4-align.html">
               <span class="s-name">t4-align.html</span><span class="s-bundles">H</span>
-              <p class="s-purpose">Alignment canvas + side-by-side variant; mobile gets a graceful "larger screen" state.</p>
+              <p class="s-purpose">Alignment: drag canvas on desktop, tap-to-pair + AI-suggestion cards on touch (Drag/Tap toggle).</p>
             </a>
             <a class="screen-row" data-screen="t5-articles.html">
               <span class="s-name">t5-articles.html</span><span class="s-bundles">J</span>
@@ -262,6 +262,7 @@
             <button type="button" data-width="375">Mobile 375</button>
             <button type="button" data-width="768">Tablet 768</button>
             <button type="button" data-width="1280" aria-pressed="true">Desktop 1280</button>
+            <button type="button" id="openTabBtn" title="Open the current screen in its own browser tab">New tab ↗</button>
           </div>
         </div>
         <div class="preview-stage" id="previewStage">
@@ -278,22 +279,46 @@
       var rows = document.querySelectorAll(".screen-row");
       var stage = document.getElementById("previewStage");
       var titleEl = document.getElementById("previewTitle");
-      var widthBtns = document.querySelectorAll(".width-btns button");
+      var widthBtns = document.querySelectorAll(".width-btns button[data-width]");
+      var openTabBtn = document.getElementById("openTabBtn");
+      var DEVICE_HEIGHTS = { 375: 812, 768: 1024, 1280: 800 };
       var currentWidth = 1280;
       var currentScreen = null;
+      var scaler = null;
+      var frame = null;
+
+      function applyScale() {
+        if (!frame) return;
+        var h = DEVICE_HEIGHTS[currentWidth] || 800;
+        // stage has 20px padding each side; never upscale past 1:1
+        var avail = stage.clientWidth - 40;
+        var f = Math.min(1, avail / currentWidth);
+        frame.style.width = currentWidth + "px";
+        frame.style.height = h + "px";
+        frame.style.transform = "scale(" + f + ")";
+        scaler.style.width = Math.round(currentWidth * f) + "px";
+        scaler.style.height = Math.round(h * f) + "px";
+        titleEl.textContent = currentScreen + " · " + currentWidth + "px" +
+          (f < 1 ? " at " + Math.round(f * 100) + "%" : "");
+      }
 
       function renderFrame() {
         if (!currentScreen) return;
         stage.innerHTML = "";
-        var frame = document.createElement("div");
+        scaler = document.createElement("div");
+        scaler.className = "frame-scaler";
+        frame = document.createElement("div");
         frame.className = "device-frame";
-        frame.style.width = currentWidth + "px";
         var iframe = document.createElement("iframe");
         iframe.src = currentScreen;
         iframe.title = currentScreen;
         frame.appendChild(iframe);
-        stage.appendChild(frame);
+        scaler.appendChild(frame);
+        stage.appendChild(scaler);
+        applyScale();
       }
+
+      window.addEventListener("resize", applyScale);
 
       rows.forEach(function (row) {
         row.addEventListener("click", function (ev) {
@@ -312,9 +337,22 @@
           widthBtns.forEach(function (b) { b.setAttribute("aria-pressed", "false"); });
           btn.setAttribute("aria-pressed", "true");
           currentWidth = parseInt(btn.getAttribute("data-width"), 10);
-          renderFrame();
+          applyScale(); // rescale in place — no iframe reload needed
         });
       });
+
+      openTabBtn.addEventListener("click", function () {
+        if (currentScreen) window.open(currentScreen, "_blank", "noopener");
+      });
+
+      // slim rail: purpose text lives in the tooltip
+      rows.forEach(function (row) {
+        var p = row.querySelector(".s-purpose");
+        if (p) row.setAttribute("title", p.textContent);
+      });
+
+      // load the first screen on arrival so the preview is never empty
+      if (rows.length) rows[0].click();
     })();
   </script>
 </body>
