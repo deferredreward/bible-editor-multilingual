@@ -1,5 +1,144 @@
 # 03 — Coverage audit: drafted UI-flow mockups vs. the inventories
 
+## Re-audit after fix pass — 2026-08-03, against commit `6827931`
+
+The fix pass (`6827931`, "close coverage gaps, fix approve-advance, add tap-to-align and
+word-links screens") landed on top of the findings below. All three audits were re-run
+fresh against the now-13-screen set (12 originals + new `t6-words.html`). Method:
+identical to the original three audits — `grep -ohE 'data-handle="..."'` across all 13
+files re-extracted and re-checked against 00b's flat table; every bundle A–K action from
+00-code-inventory.md re-walked against the updated screens, focused on the prior MISS
+list; endpoint reverse pass re-run fresh. I also re-read `04-mobile-alignment.md` and the
+rebuilt `t4-align.html` against it, and re-read `t6-words.html`, `a2-import.html`,
+`t2-review.html`, `t3-scripture.html`, and the diffs for `t5-articles.html`/`t1-home.html`
+in full (not just the commit message) before recording anything as fixed.
+
+### Revised counts
+
+- **Audit 1:** 78 distinct real `data-handle` values now (up from 61), plus 22 `local:*`
+  and 1 `TODO:no-backend` value. **0 INVENTED** — every one of the 17 newly-added real
+  handles checked against 00b's flat table and matches a real route. The `ULT`/`UST`
+  hardcoded-literal NEAR-MISS is **fixed in t3-scripture.html** (now uses the
+  `:bibleVersion` placeholder in both Save buttons) but **NOT fixed in the rebuilt
+  t4-align.html** — its drag-view Save, tap-view Save, and both side-by-side "Save line"
+  buttons still hardcode `ULT`/`UST` (4 occurrences). Headers survived the rebuild
+  correctly (`If-Match, X-Source-Generation` present on every verse-save button in both
+  the drag and tap views). One **new** minor header defect: `t2-review.html`'s new
+  History-dialog "Restore" button (`POST /api/rows/tn/:id/restore`) carries
+  `data-headers="If-Match"`, but 00b explicitly lists `/restore` among the tn bit-toggle
+  endpoints that are "non-version-bumping (no If-Match)" — this one should have no
+  `data-headers` attribute at all. Low severity (over-applied header, not a missing
+  one), but it is a real, new deviation from the inventory introduced by this fix pass.
+- **Audit 2:** of the ~20 MISS-severity gaps and the two headline items from the original
+  audit, **the TWL-editing gap and the book-lint indicator are now closed**, the
+  **scripture-lane-replacement flow is substantially built** (6 of 9 endpoints wired,
+  with a real lifecycle stepper and per-book retry/waive), and five more single-action
+  MISSes are fixed (tn Restore, note Undo, row create, tq hard-delete, article
+  add-by-id, version-mismatch nudge, system-alerts banner — see the per-bundle mapping
+  below). Two small gaps remain even within the "fixed" areas: `t6-words.html`'s
+  Suggestions panel is still local-fixture-only — it never wires `GET
+  /api/twl-suggestions/:book/:chapter/:verse` or `GET /api/twl-filters/:book`, so the
+  panel that lists suggestions has no data-fetch handle even though Accept/Reject do;
+  and the lane-replacement panel has no explicit "start a new replacement"
+  (`POST .../replacements`) trigger or its own job-status poll
+  (`GET .../replacements/:jobId`) — it opens already mid-job. Both are real, but much
+  smaller than what they replace.
+- **Audit 3:** endpoint coverage rose from ~55 to roughly 68 of the ~96 UI-facing rows.
+  Per the orchestrator's ruling (see below), `/api/l10n/*` and `POST
+  /api/templates/sync` are now recorded as **DELIBERATE**, not MISS. Remaining
+  non-deliberate MISSes: `GET /api/pending-imports`, `GET /api/orgs/search`, `GET
+  /api/lexicon(/:strong)`, `GET /api/twl-suggestions/...`, `GET /api/twl-filters/:book`,
+  and the two lane-replacement sub-routes noted above (`POST .../replacements` start,
+  `GET .../replacements/:jobId` poll) — all low-to-moderate severity, none a full bundle
+  gap the way TWL editing and lane-replacement were before this pass.
+
+### Orchestrator ruling on the two remaining ambiguous items
+
+Per direct instruction from the architecture owner (relayed 2026-08-03), both of the
+following are now recorded as **DELIBERATE**, attributed to that ruling rather than to
+any in-artifact evidence I could independently verify:
+- **`/api/l10n/overrides` (+ the Localization editor / LocalizationInspector surfaces):**
+  out of scope for these flows by design — it's a separate admin i18n-chrome editor, not
+  a translation-content workflow, and was never meant to get one of the 13 screens.
+- **`POST /api/templates/sync`:** backend plumbing (manual English-sheet resync), not a
+  lead-facing action — no screen is expected to expose it.
+
+These are the two items from the original six-item "deliberate omission" list that I
+could *not* independently verify from any comment, README, or commit message in this
+repo (see the original Method note below, unchanged). The ruling above is the missing
+justification for those two specifically; it does not retroactively justify the other
+two (book-lint, lane-replacement polling), which are simply now fixed in code instead.
+
+### Status of every item from the original six-item "deliberate omission" list
+
+| Item | Original call | Status now |
+|---|---|---|
+| Book-lint indicator | MISS (no in-artifact justification found) | **FIXED** — `a2-import.html` now has a lint badge + popover wired to `GET /api/books/:book/lint` |
+| Lane-replacement full job polling | MISS (no in-artifact justification found) | **FIXED** (substantially) — see Audit 2 above; 6 of 9 endpoints now wired in `a2-import.html`, with 2 minor sub-gaps remaining |
+| QA-rules CRUD as TODO | DELIBERATE (verified — explicit in-file note) | **DELIBERATE** (unchanged) |
+| `/api/l10n/*` | MISS (no in-artifact justification found) | **DELIBERATE** — per orchestrator ruling above |
+| templates/sync + note-templates source proxy | MISS (templates/sync) / NEAR-MISS (note-templates proxy, covered on t2 instead of l3) | **DELIBERATE** (templates/sync, per orchestrator ruling) / **unchanged NEAR-MISS** (note-templates proxy — still not wired inside `l3-templates.html`'s own source panel, still covered on `t2-review.html` instead) |
+| NoteCard sparkles on t2 | OK — verified true | **OK** (unchanged, still true) |
+
+### Bundle-by-bundle status of prior MISS/NEAR-MISS findings
+
+| Prior finding | Bundle | Status |
+|---|---|---|
+| GET `/api/orgs/search` | A | STILL-MISS (low severity, unchanged) |
+| LaneCard "Change source" full flow (validate/affected-books/retry/waive/activate/back-out) | A.7 | **FIXED** (substantially) — `a2-import.html`; start-job and status-poll sub-actions still missing (see above) |
+| GET `/api/books/:book/lint` | B/K | **FIXED** — `a2-import.html` |
+| Per-book source-override Remove | B.4 | **FIXED** — `a2-import.html` (`PUT /api/books/:book/sources` with `clear=true`) |
+| `/api/l10n/*` (Localization editor) | A/Unmapped | **DELIBERATE** — orchestrator ruling |
+| `POST /api/templates/sync` | C/I | **DELIBERATE** — orchestrator ruling |
+| `GET /api/note-templates` not wired inside l3-templates.html's own editor | C/I | STILL a NEAR-MISS, unchanged (covered on t2 instead) |
+| GET `/api/twl-suggestions/...`, GET `/api/twl-filters/:book` | D | STILL-MISS — `t6-words.html`'s Suggestions panel is local-fixture data, no fetch handle wired |
+| F.1 Restore | F | **FIXED** — `t2-review.html` (note the new If-Match header defect, above) |
+| F.1 Undo icon (notes) | F | **FIXED** — `t2-review.html` |
+| F.1 insert-after "+", drag-grip reorder, reference-chip retarget, AI-provenance chip | F | STILL-MISS (low severity, untouched by this pass) |
+| F.3 hard-delete (tq) | F | **FIXED** — `t2-review.html` (`DELETE /api/rows/tq/:id`) |
+| F.3 QuestionsTable (non-translation-mode grid) | F | STILL-MISS, unchanged |
+| F.4 WordsTable / TW-article picker / disambiguation / Locate / kill-switch note | F | **FIXED** — new `t6-words.html` |
+| F.4 QuoteBuilderPopper real interaction (was stub-only on t2) | F | **FIXED** on `t6-words.html` (full click/shift-click + target-chip toggle + live preview); `t2-review.html`'s own invocation is still a toast-only stub — noted, not re-scored as a new defect since the pattern is now proven elsewhere |
+| F.4 TwlSuggestions Add/Reject | F | **FIXED** — `t6-words.html` (`POST /api/rows/twl` on Accept, `local:reject-suggestion` on Reject, copy matches inventory's "client-only, never persisted") |
+| POST `/api/rows/:kind` (create) | E/F | **FIXED** — `t2-review.html` (tn/tq), `t6-words.html` (twl) |
+| DELETE `/api/rows/:kind/:id` | E/F | **FIXED** — `t2-review.html` (tq), `t6-words.html` (twl) |
+| GET `/api/catalogs` | E/F | **FIXED** — `t6-words.html` (tW-article datalist) |
+| GET `/api/lexicon(/:strong)` | E/F/K | STILL-MISS (low severity, unchanged) |
+| G.4 Find/Replace | G | **FIXED** — `t3-scripture.html` (regex/case/Strong's, Bible+TN scope with at-least-one-required validation, prev/next nav, Replace + Replace-all with blast-radius confirm and skip-count summary) |
+| G.5 Export USFM / Copy Chapter | G | **FIXED** — `t3-scripture.html` (`local:export-usfm`, `local:copy-chapter`, correctly non-mutating) |
+| `:bibleVersion` NEAR-MISS (hardcoded ULT/UST) | Audit 1 | **FIXED in t3-scripture.html**, **STILL PRESENT in t4-align.html** (4 occurrences — see above) |
+| J "Add by id" | J | **FIXED** — `t5-articles.html` (`POST /api/articles/:resource/add`, dynamic tw/ta) |
+| K.5 version-mismatch nudge | K | **FIXED** — `t2-review.html` (new nudge chip + demo button) |
+| K "system alerts" banner (`GET /api/alerts/me`, `POST /api/alerts/:id/dismiss`) | K | **FIXED** — `t1-home.html` (dismiss wired directly; the GET is demonstrated via the demo trigger's toast text rather than a `data-handle` attribute, the same soft-citation pattern used elsewhere in the set — treated as adequately covered) |
+| K.6 SyncStatusBar full saved/saving/offline state machine | K | STILL a NEAR-MISS, unchanged |
+| K.9 UnsavedToasts off-screen aggregate | K | STILL-MISS, low severity, unchanged (tied to the still-standing single-verse redesign) |
+| TopBar More▸View (text-size stepper, language submenu) | K | STILL-MISS, low severity, unchanged |
+| K.4 lexicon hover popover | K | STILL-MISS, low severity, unchanged (GET /api/catalogs now covered per above, but that's the support-ref/tW-link autocomplete, a different action from the lexicon popover) |
+| G.2/G.3 Columns/Book mode as distinct renderings | G | Unchanged — still **DELIBERATE** per 02-architecture.md Decision D1 |
+
+### Revised verdict
+
+**Audit 1:** clean, as before — 78 real handles, 0 invented, 1 NEAR-MISS fixed
+(t3-scripture) and 1 unchanged (t4-align), plus one small new header-accuracy defect
+(tn restore's spurious If-Match). **Audit 2:** both headline gaps from the first pass —
+TWL editing (WordsTable, QuoteBuilderPopper, TwlSuggestions) and the scripture-lane
+replacement job flow — are now substantially closed by `t6-words.html` and the
+`a2-import.html` lifecycle panel respectively. Book-lint, source-override Remove, tn
+Restore, note Undo, tq hard-delete, article add-by-id, the version-mismatch nudge, and
+the system-alerts banner are all fixed. What's left is real but small: a handful of
+low-severity single actions untouched by this pass (QuestionsTable, lexicon hover,
+insert-after/reorder/retarget on NoteCard, TopBar text/language controls, the two
+lane-replacement sub-actions, the two TWL-suggestion fetch endpoints), one still-present
+ULT/UST placeholder deviation in the rebuilt t4-align.html, and one small new header
+defect on the tn restore button. `/api/l10n/*` and templates/sync are now correctly
+recorded as deliberate scope exclusions per the orchestrator's ruling, closing out the
+two items the original audit couldn't independently verify. No new fabrication risk:
+every one of the 17 newly-added real handles matches a confirmed route in 00b.
+
+---
+
+# Original audit — 2026-08-03, against commit `7da6a48` (12 screens)
+
 Purpose: prove "nothing left out" for the 12 screens in `docs/flows/ui/`, or list exactly
 what is. Three audits per the brief: (1) handle validity — scriptable, every
 `data-handle` extracted and checked against `00b-api-inventory.md`; (2) action coverage —

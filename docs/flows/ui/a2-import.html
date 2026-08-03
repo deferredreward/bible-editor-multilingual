@@ -77,8 +77,10 @@
   .lint-wrap { position: relative; display: inline-flex; }
   .lint-badge { appearance: none; border: none; cursor: pointer; font: inherit; }
   .lint-popover {
-    position: absolute; inset-block-start: calc(100% + 6px); inset-inline-start: 0;
-    z-index: 10; min-width: 230px; max-width: 300px;
+    /* Anchor to the end edge: the badge sits near the inline-end of its row, so the
+       popover must grow toward the viewport, not past it (overflowed at 375px). */
+    position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0;
+    z-index: 10; min-width: 230px; max-width: min(300px, 88vw);
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
     box-shadow: var(--shadow); padding: 10px 12px;
   }
