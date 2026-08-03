@@ -40,6 +40,12 @@
 
   .banners { padding: 10px 14px 0; display: flex; flex-direction: column; gap: 8px; }
 
+  /* ---------- queue-type segmented control ---------- */
+  .seg-row { max-width: 1320px; margin: 0 auto; padding: 12px 14px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .seg { display: flex; background: var(--skip-soft); border-radius: 10px; padding: 3px; gap: 3px; }
+  .seg button { border: none; background: transparent; border-radius: 8px; padding: 7px 16px; font-weight: 700; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(1,66,99,0.15); }
+
   /* ---------- three-region review layout ---------- */
   .review-wrap {
     max-width: 1320px;
@@ -113,6 +119,22 @@
   .verse-btn-mobile { display: none; }
   @media (max-width: 899.98px) {
     .verse-btn-mobile { display: inline-flex; }
+  }
+
+  /* mobile card-to-card nav (swipe + arrows + position) */
+  .card-nav-mobile { display: none; }
+  @media (max-width: 559.98px) {
+    .card-nav-mobile {
+      display: flex; align-items: center; justify-content: center; gap: 14px; margin: 0 0 10px;
+    }
+    .card-nav-mobile .cn-arrow {
+      appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink);
+      border-radius: 999px; width: 36px; height: 36px; font-size: 18px; font-weight: 700; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    }
+    .card-nav-mobile .cn-arrow:hover { border-color: var(--inspire); }
+    .card-nav-mobile .cn-arrow[disabled] { opacity: 0.4; cursor: default; }
+    .card-nav-mobile .cn-pos { font-size: 12.5px; font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; }
   }
 
   .work-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
@@ -242,6 +264,22 @@
   .btn-ghost { background: transparent; color: var(--ink-2); }
   .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  /* mobile density pass — tighter chrome, looser text */
+  @media (max-width: 559.98px) {
+    .work-card { padding: 12px; }
+    .work-card .wc-eyebrow { gap: 5px; margin: 0 0 8px; }
+    .work-card .wc-eyebrow .chip { font-size: 10.5px; padding: 3px 8px; }
+    .quote-actions button { padding: 1px 5px; font-size: 10px; }
+    .greek-strip { padding-block-end: 6px; gap: 8px; }
+    .greek-text { font-size: 15.5px; }
+    .support-ref { margin: 0 0 4px; font-size: 11px; }
+    .quote-chip { margin: 0 0 6px; font-size: 14px; padding: 1px 6px; }
+    .source-en { font-size: 16px; line-height: 1.65; padding: 8px 10px; margin: 0 0 8px; }
+    .draft-toolbar { margin: 0 0 6px; }
+    textarea.edit-area { font-size: 16px; line-height: 1.65; min-height: 140px; padding: 8px 10px; }
+    .footer-chips { margin-block-start: 8px; }
+  }
 </style>
 </head>
 <body data-mode="translation">
@@ -284,6 +322,13 @@
     </div>
   </div>
 
+  <div class="seg-row">
+    <div class="seg" role="group" aria-label="Queue type">
+      <button type="button" id="segNotes" aria-pressed="true">Notes</button>
+      <button type="button" id="segQuestions" aria-pressed="false">Questions</button>
+    </div>
+  </div>
+
   <main id="main" class="review-wrap">
     <aside class="rail-col">
       <div class="queue-panel">
@@ -318,6 +363,12 @@
         <button type="button" class="cluster-btn" id="demoNudgeBtn">Demo: version nudge</button>
       </div>
 
+      <div class="card-nav-mobile" id="cardNavMobile">
+        <button type="button" class="cn-arrow" id="prevCardBtn" aria-label="Previous card">‹</button>
+        <span class="cn-pos" id="cardNavPos">1 of 1</span>
+        <button type="button" class="cn-arrow" id="nextCardBtn" aria-label="Next card">›</button>
+      </div>
+
       <div class="queue-panel authoring-only" id="questionsGrid" hidden style="margin-block-end:12px;">
         <div class="qp-top">
           <h2>Questions — dense grid (English authoring)</h2>
@@ -343,7 +394,7 @@
             <button type="button" id="moveUpBtn" title="Move up" aria-label="Move up" data-bundle="F" data-headers="If-Match">↑</button>
             <button type="button" id="moveDownBtn" title="Move down" aria-label="Move down" data-bundle="F" data-headers="If-Match">↓</button>
             <button type="button" id="insertAfterBtn" title="Insert note after this one" aria-label="Insert note after this one" data-bundle="F">+</button>
-            <button type="button" id="retargetBtn" title="Retarget verse reference" data-bundle="F" data-headers="If-Match">Retarget</button>
+            <button type="button" id="retargetBtn" title="Retarget verse reference" aria-label="Retarget verse reference" data-bundle="F" data-headers="If-Match">⟳</button>
           </span>
         </div>
 
@@ -482,21 +533,59 @@
     var cur = 0;
     var unsavedIds = {};
     var nextRowSeq = 1;
+    var activeQueue = "tn"; // "tn" = Notes, "tq" = Questions — the two queues never mix on screen
 
-    function unapprovedCount() { return ITEMS.filter(function (it) { return it.state !== "validated"; }).length; }
-    function nextUnapproved(fromIdx) {
-      for (var i = fromIdx + 1; i < ITEMS.length; i++) { if (ITEMS[i].state !== "validated") return i; }
-      for (var i = 0; i <= fromIdx; i++) { if (ITEMS[i].state !== "validated") return i; }
+    function queueIndices(kind) {
+      var arr = [];
+      ITEMS.forEach(function (it, i) { if (it.kind === kind) arr.push(i); });
+      return arr;
+    }
+    // If a mutation (delete, add, etc.) left `cur` pointing at the other queue's
+    // kind, snap back to the active queue's first item instead of rendering a
+    // Notes card while the Questions segment is pressed (or vice versa).
+    function ensureCurInQueue() {
+      if (ITEMS.length === 0) return;
+      if (!ITEMS[cur] || ITEMS[cur].kind !== activeQueue) {
+        var idxs = queueIndices(activeQueue);
+        cur = idxs.length ? idxs[0] : 0;
+      }
+    }
+
+    function unapprovedCount(kind) { return ITEMS.filter(function (it) { return it.kind === kind && it.state !== "validated"; }).length; }
+    function nextUnapproved(fromIdx, kind) {
+      for (var i = fromIdx + 1; i < ITEMS.length; i++) { if (ITEMS[i].kind === kind && ITEMS[i].state !== "validated") return i; }
+      for (var i = 0; i <= fromIdx; i++) { if (ITEMS[i].kind === kind && ITEMS[i].state !== "validated") return i; }
       return -1;
     }
 
     function el(id) { return document.getElementById(id); }
     function toast(t, o) { window.flowShell.toast(t, o); }
 
+    // card-to-card nav (mobile arrows + swipe) — moves within the active
+    // queue's card order, independent of approve/skip-approved logic above.
+    function updateCardNav() {
+      var idxs = queueIndices(activeQueue);
+      var pos = idxs.indexOf(cur) + 1;
+      if (pos <= 0) pos = 1;
+      el("cardNavPos").textContent = pos + " of " + idxs.length;
+      el("prevCardBtn").disabled = idxs.length <= 1;
+      el("nextCardBtn").disabled = idxs.length <= 1;
+    }
+    function goCard(delta) {
+      var idxs = queueIndices(activeQueue);
+      if (idxs.length === 0) return;
+      var pos = idxs.indexOf(cur);
+      if (pos === -1) pos = 0;
+      pos = (pos + delta + idxs.length) % idxs.length;
+      cur = idxs[pos];
+      render();
+    }
+
     function renderQueueList() {
       var ul = el("queueList");
       ul.innerHTML = "";
       ITEMS.forEach(function (item, i) {
+        if (item.kind !== activeQueue) return;
         var li = document.createElement("li");
         var btn = document.createElement("button");
         btn.type = "button";
@@ -542,17 +631,19 @@
     }
 
     function render() {
+      ensureCurInQueue();
       var item = ITEMS[cur];
       renderQueueList();
-      var remaining = unapprovedCount();
+      var remaining = unapprovedCount(activeQueue);
       if (remaining === 0) {
-        el("wtCount").textContent = "All " + ITEMS.length + " approved";
+        el("wtCount").textContent = "All " + queueIndices(activeQueue).length + " approved";
       } else {
         var posInRemaining = 0;
-        for (var i = 0; i <= cur; i++) { if (ITEMS[i].state !== "validated") posInRemaining++; }
+        for (var i = 0; i <= cur; i++) { if (ITEMS[i].kind === activeQueue && ITEMS[i].state !== "validated") posInRemaining++; }
         if (item.state === "validated") posInRemaining = Math.max(1, posInRemaining);
         el("wtCount").textContent = posInRemaining + " of " + remaining;
       }
+      updateCardNav();
       el("wcKind").textContent = item.kind === "tn" ? "Translation note" : "Translation question";
       el("wcStateChip").className = "chip " + (item.trashed ? "chip-draft" : item.state === "validated" ? "chip-approved" : item.state === "edited" ? "chip-edited" : "chip-draft");
       el("wcStateChip").textContent = item.trashed ? "Trashed" : item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft";
@@ -632,7 +723,7 @@
     function doApprove() {
       ITEMS[cur].state = "validated";
       toast("Approved", { bundle: "E" });
-      var next = nextUnapproved(cur);
+      var next = nextUnapproved(cur, activeQueue);
       if (next === -1) {
         toast("Queue complete — nothing left to approve", { bundle: "E" });
       } else {
@@ -665,14 +756,14 @@
     el("approveAllNotes").addEventListener("click", function () {
       ITEMS.forEach(function (it) { if (it.kind === "tn") it.state = "validated"; });
       toast("Approving all notes…", { bundle: "E" });
-      var next = nextUnapproved(-1);
+      var next = nextUnapproved(-1, "tn");
       if (next !== -1) cur = next;
       render();
     });
     el("approveAllQuestions").addEventListener("click", function () {
       ITEMS.forEach(function (it) { if (it.kind === "tq") it.state = "validated"; });
       toast("Approving all questions…", { bundle: "E" });
-      var next = nextUnapproved(-1);
+      var next = nextUnapproved(-1, "tq");
       if (next !== -1) cur = next;
       render();
     });
@@ -782,16 +873,22 @@
 
     // F.1 NoteCard header-row secondary chrome: reorder / insert-after / retarget
     el("moveUpBtn").addEventListener("click", function () {
-      if (cur === 0) { toast("Already first", { bundle: "F" }); return; }
-      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[cur - 1]; ITEMS[cur - 1] = tmp;
-      cur--;
+      var idxs = queueIndices(ITEMS[cur].kind);
+      var pos = idxs.indexOf(cur);
+      if (pos <= 0) { toast("Already first", { bundle: "F" }); return; }
+      var otherIdx = idxs[pos - 1];
+      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[otherIdx]; ITEMS[otherIdx] = tmp;
+      cur = otherIdx;
       toast("Moved up (sort_order updated)", { bundle: "F" });
       render();
     });
     el("moveDownBtn").addEventListener("click", function () {
-      if (cur === ITEMS.length - 1) { toast("Already last", { bundle: "F" }); return; }
-      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[cur + 1]; ITEMS[cur + 1] = tmp;
-      cur++;
+      var idxs = queueIndices(ITEMS[cur].kind);
+      var pos = idxs.indexOf(cur);
+      if (pos === -1 || pos === idxs.length - 1) { toast("Already last", { bundle: "F" }); return; }
+      var otherIdx = idxs[pos + 1];
+      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[otherIdx]; ITEMS[otherIdx] = tmp;
+      cur = otherIdx;
       toast("Moved down (sort_order updated)", { bundle: "F" });
       render();
     });
@@ -809,7 +906,58 @@
       render();
     });
 
-    render();
+    // Notes/Questions segmented control — the two are separate queues (separate
+    // approve/approve-all endpoints already), each with its own card list and count.
+    function selectQueue(kind) {
+      activeQueue = kind;
+      el("segNotes").setAttribute("aria-pressed", kind === "tn" ? "true" : "false");
+      el("segQuestions").setAttribute("aria-pressed", kind === "tq" ? "true" : "false");
+      el("approveAllNotes").hidden = kind !== "tn";
+      el("approveAllQuestions").hidden = kind !== "tq";
+      el("addNoteBtn").hidden = kind !== "tn";
+      el("addQuestionBtn").hidden = kind !== "tq";
+      el("gridViewBtn").hidden = kind !== "tq";
+      if (kind !== "tq") {
+        el("questionsGrid").hidden = true;
+        el("gridViewBtn").setAttribute("aria-pressed", "false");
+        el("gridViewBtn").textContent = "Grid view";
+      }
+      var idxs = queueIndices(kind);
+      if (idxs.length) cur = idxs[0];
+      render();
+    }
+    el("segNotes").addEventListener("click", function () { selectQueue("tn"); });
+    el("segQuestions").addEventListener("click", function () { selectQueue("tq"); });
+
+    // mobile card-to-card nav — arrows
+    el("prevCardBtn").addEventListener("click", function () { goCard(-1); });
+    el("nextCardBtn").addEventListener("click", function () { goCard(1); });
+
+    // mobile card-to-card nav — touch swipe (left = next, right = previous)
+    (function () {
+      var startX = null, startY = null;
+      var card = el("workCard");
+      card.addEventListener("touchstart", function (ev) {
+        if (!ev.touches || ev.touches.length !== 1) return;
+        startX = ev.touches[0].clientX;
+        startY = ev.touches[0].clientY;
+      }, { passive: true });
+      card.addEventListener("touchend", function (ev) {
+        if (startX === null) return;
+        var touch = ev.changedTouches && ev.changedTouches[0];
+        var endX = touch ? touch.clientX : startX;
+        var endY = touch ? touch.clientY : startY;
+        var dx = endX - startX;
+        var dy = endY - startY;
+        startX = null; startY = null;
+        if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
+        goCard(dx < 0 ? 1 : -1);
+      }, { passive: true });
+    })();
+
+    // Deep-link: t2-review.html#notes / #questions selects the matching segment.
+    var initialHash = (window.location.hash || "").replace("#", "").toLowerCase();
+    selectQueue(initialHash === "questions" ? "tq" : "tn");
   })();
   </script>
 </body>
