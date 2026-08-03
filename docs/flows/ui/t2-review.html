@@ -312,15 +312,39 @@
         </span>
         <span class="spacer"></span>
         <button type="button" class="cluster-btn verse-btn-mobile" id="openSheetBtn">This verse</button>
+        <button type="button" class="cluster-btn authoring-only" id="gridViewBtn" data-handle="local:toggle-grid-view" data-bundle="F" aria-pressed="false">Grid view</button>
         <button type="button" class="cluster-btn" id="historyBtn">History</button>
         <button type="button" class="cluster-btn" id="demoConflictBtn">Demo: 409 conflict</button>
         <button type="button" class="cluster-btn" id="demoNudgeBtn">Demo: version nudge</button>
+      </div>
+
+      <div class="queue-panel authoring-only" id="questionsGrid" hidden style="margin-block-end:12px;">
+        <div class="qp-top">
+          <h2>Questions — dense grid (English authoring)</h2>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead>
+            <tr style="text-align:start; color:var(--ink-2);">
+              <th style="padding:6px 8px;">Ref</th>
+              <th style="padding:6px 8px;">Question</th>
+              <th style="padding:6px 8px;">Response</th>
+              <th style="padding:6px 8px;"></th>
+            </tr>
+          </thead>
+          <tbody id="questionsGridBody"></tbody>
+        </table>
       </div>
 
       <article class="work-card" id="workCard">
         <div class="wc-eyebrow">
           <span class="card-label" style="margin:0;"><span class="dot"></span><span id="wcKind">Note</span></span>
           <span class="chip chip-draft" id="wcStateChip">Draft</span>
+          <span class="quote-actions" id="noteChromeActions" style="margin-inline-start:auto;">
+            <button type="button" id="moveUpBtn" title="Move up" aria-label="Move up" data-bundle="F" data-headers="If-Match">↑</button>
+            <button type="button" id="moveDownBtn" title="Move down" aria-label="Move down" data-bundle="F" data-headers="If-Match">↓</button>
+            <button type="button" id="insertAfterBtn" title="Insert note after this one" aria-label="Insert note after this one" data-bundle="F">+</button>
+            <button type="button" id="retargetBtn" title="Retarget verse reference" data-bundle="F" data-headers="If-Match">Retarget</button>
+          </span>
         </div>
 
         <div class="greek-strip" id="greekStrip">
@@ -518,12 +542,42 @@
       [el("preserveChip"), el("hintChip"), el("trashChip")].forEach(function (b) { b.hidden = item.kind !== "tn"; });
       el("deleteChip").hidden = item.kind !== "tq";
 
+      // F.1 NoteCard secondary chrome — reorder/insert-after/retarget (tn only, header row)
+      el("noteChromeActions").hidden = item.kind !== "tn";
+      el("moveUpBtn").setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id");
+      el("moveDownBtn").setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id");
+      el("insertAfterBtn").setAttribute("data-handle", "POST /api/rows/" + handleKind);
+      el("retargetBtn").setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id");
+
       el("ctxBodyDesktop").innerHTML = ctxHtml(item);
       el("ctxBodyMobile").innerHTML = ctxHtml(item);
 
       var n = Object.keys(unsavedIds).length;
       el("unsavedChip").hidden = n === 0;
       el("unsavedText").textContent = n + (n === 1 ? " unsaved" : " unsaved");
+
+      renderQuestionsGrid();
+    }
+
+    // F.3 QuestionsTable — dense English-authoring grid, authoring-mode only
+    function renderQuestionsGrid() {
+      var tbody = el("questionsGridBody");
+      tbody.innerHTML = "";
+      ITEMS.forEach(function (it, i) {
+        if (it.kind !== "tq") return;
+        var tr = document.createElement("tr");
+        tr.style.borderBlockEnd = "1px solid var(--line)";
+        tr.innerHTML =
+          '<td style="padding:4px 8px;"><input type="text" value="' + it.ref + '" style="width:90px; font-size:12px;" data-grid-field="ref" /></td>' +
+          '<td style="padding:4px 8px;"><input type="text" value="' + (it.enQ || "") + '" style="width:100%; font-size:12px;" data-grid-field="enQ" /></td>' +
+          '<td style="padding:4px 8px;"><input type="text" value="' + (it.draft || "") + '" style="width:100%; font-size:12px;" data-grid-field="draft" /></td>' +
+          '<td style="padding:4px 8px; white-space:nowrap;">' +
+          '<button type="button" data-handle="PATCH /api/rows/tq/:id" data-headers="If-Match" data-bundle="F" title="Save">💾</button>' +
+          '<button type="button" data-handle="DELETE /api/rows/tq/:id" data-headers="If-Match" data-bundle="F" title="Delete">🗑</button>' +
+          "</td>";
+        tr.dataset.index = i;
+        tbody.appendChild(tr);
+      });
     }
 
     el("draftArea").addEventListener("input", function () {
@@ -681,6 +735,43 @@
     // build-from-source quote popper (lightweight demo)
     el("buildQuoteBtn").addEventListener("click", function () {
       window.flowShell.toast("Quote builder — click source words to select a run (local only)", { bundle: "F" });
+    });
+
+    // F.3 QuestionsTable — compact grid view toggle (authoring mode only)
+    el("gridViewBtn").addEventListener("click", function () {
+      var showing = el("questionsGrid").hidden;
+      el("questionsGrid").hidden = !showing;
+      el("gridViewBtn").setAttribute("aria-pressed", showing ? "true" : "false");
+      el("gridViewBtn").textContent = showing ? "Card view" : "Grid view";
+    });
+
+    // F.1 NoteCard header-row secondary chrome: reorder / insert-after / retarget
+    el("moveUpBtn").addEventListener("click", function () {
+      if (cur === 0) { toast("Already first", { bundle: "F" }); return; }
+      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[cur - 1]; ITEMS[cur - 1] = tmp;
+      cur--;
+      toast("Moved up (sort_order updated)", { bundle: "F" });
+      render();
+    });
+    el("moveDownBtn").addEventListener("click", function () {
+      if (cur === ITEMS.length - 1) { toast("Already last", { bundle: "F" }); return; }
+      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[cur + 1]; ITEMS[cur + 1] = tmp;
+      cur++;
+      toast("Moved down (sort_order updated)", { bundle: "F" });
+      render();
+    });
+    el("insertAfterBtn").addEventListener("click", function () {
+      ITEMS.splice(cur + 1, 0, { kind: "tn", ref: ITEMS[cur].ref, greek: "", support: "", quote: "", en: "New note — support reference and quote pending.", draft: "", state: "draft", trashed: false });
+      cur++;
+      toast("Note inserted after current", { bundle: "F" });
+      render();
+    });
+    el("retargetBtn").addEventListener("click", function () {
+      var next = window.prompt("Retarget to verse reference (e.g. ZEC 1:9)", ITEMS[cur].ref);
+      if (!next) return;
+      ITEMS[cur].ref = next;
+      toast("Retargeted to " + next, { bundle: "F" });
+      render();
     });
 
     render();

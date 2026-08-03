@@ -135,7 +135,13 @@
         <h3 id="wsModalTitle">Switch organization</h3>
         <p>Switching sets the workspace cookie, re-mints the session JWT, and does a full <code>location.reload()</code> — blocked while the outbox has pending ops.</p>
       </div>
-      <div class="modal-body" id="wsModalBody"></div>
+      <div class="modal-body">
+        <div class="field" style="margin-bottom:10px;">
+          <label class="f-label" for="wsOrgSearch">Search Door43 orgs</label>
+          <input class="tinput" id="wsOrgSearch" type="search" placeholder="Org name…" data-handle="GET /api/orgs/search" data-bundle="A">
+        </div>
+        <div id="wsModalBody"></div>
+      </div>
       <div class="modal-foot"><button class="btn btn-ghost" type="button" id="wsModalClose">Close</button></div>
     </div>
   </div>
@@ -207,14 +213,21 @@
       { slug: "dei-verbum-pt", name: "Dei Verbum PT-BR", current: false }
     ];
     var wsModal = document.getElementById("wsModal");
-    document.getElementById("openSwitcher").addEventListener("click", function () {
-      document.getElementById("wsModalBody").innerHTML = WORKSPACES.map(function (w) {
+    function renderWsList(filterText) {
+      var q = (filterText || "").trim().toLowerCase();
+      var rows = !q ? WORKSPACES : WORKSPACES.filter(function (w) { return w.name.toLowerCase().indexOf(q) !== -1 || w.slug.toLowerCase().indexOf(q) !== -1; });
+      document.getElementById("wsModalBody").innerHTML = rows.length ? rows.map(function (w) {
         return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.name) + (w.current ? ' <span class="chip chip-approved">current</span>' : "") + '</p><p class="ws-sub">' + w.slug + '</p></div>' +
           (w.current ? "" : '<button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch</button>') +
         "</div>";
-      }).join("");
+      }).join("") : '<p class="f-help">No matching orgs found.</p>';
+    }
+    document.getElementById("openSwitcher").addEventListener("click", function () {
+      document.getElementById("wsOrgSearch").value = "";
+      renderWsList("");
       wsModal.hidden = false;
     });
+    document.getElementById("wsOrgSearch").addEventListener("input", function (e) { renderWsList(e.target.value); });
     document.getElementById("wsModalClose").addEventListener("click", function () { wsModal.hidden = true; });
     wsModal.addEventListener("click", function (e) { if (e.target === wsModal) wsModal.hidden = true; });
   })();

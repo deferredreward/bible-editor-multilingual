@@ -87,6 +87,13 @@
   .lint-popover[hidden] { display: none; }
   .lint-list { margin: 6px 0 0; padding-inline-start: 18px; font-size: 12.5px; color: var(--ink-2); }
   .lint-list li + li { margin-top: 4px; }
+
+  /* B — Pending AI-import review queue */
+  .pending-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-block-end: 1px solid var(--line); font-size: 13.5px; }
+  .pending-row:last-child { border-block-end: none; }
+  .pending-row .pr-main { flex: 1; min-width: 0; }
+  .pending-row .pr-sub { font-size: 12px; color: var(--ink-2); }
+  .pending-empty { font-size: 13px; color: var(--ink-2); padding: 6px 0; }
 </style>
 </head>
 <body>
@@ -136,6 +143,19 @@
       <div id="detailHost"></div>
     </div>
 
+    <section class="panel" id="pendingImportsPanel">
+      <div class="panel-top">
+        <h2>Pending imports</h2>
+        <p class="panel-sub">Shared review queue of AI-pipeline proposals not yet resolved by any translator — not scoped to just you.</p>
+      </div>
+      <div class="panel-body" id="pendingImportsBody"></div>
+      <div class="panel-foot">
+        <span class="foot-state" id="pendingImportsFoot">Loaded via <code>GET /api/pending-imports</code></span>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" type="button" id="pendingImportsRefreshBtn" data-handle="GET /api/pending-imports" data-bundle="B">Refresh</button>
+      </div>
+    </section>
+
     <section class="panel" id="laneReplacementPanel">
       <div class="panel-top">
         <h2>Scripture source replacement</h2>
@@ -164,6 +184,7 @@
             <div class="lc-strip" id="laneLifecycle"></div>
             <p class="f-help" id="laneLifecycleNote"></p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+              <button class="btn btn-primary btn-sm" type="button" id="laneStartBtn" data-handle="POST /api/project-config/lanes/:lane/replacements" data-bundle="A">Start replacement</button>
               <button class="btn btn-approve btn-sm" type="button" id="laneActivateBtn" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/activate" data-bundle="A">Activate</button>
               <button class="btn btn-warn btn-sm" type="button" id="laneBackOutBtn" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/back-out" data-bundle="A">Back out</button>
             </div>
@@ -177,6 +198,7 @@
       <div class="panel-foot">
         <span class="foot-state" id="laneFoot"></span>
         <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" type="button" id="laneJobStatusBtn" data-handle="GET /api/project-config/lanes/:lane/replacements/:jobId" data-bundle="A">Refresh status</button>
         <span id="laneNextAction"></span>
       </div>
     </section>
@@ -238,6 +260,25 @@
       GEN: { flag: 0, escalate: 0, rows: [] },
       MAT: { flag: 0, escalate: 0, rows: [] }
     };
+
+    var PENDING_IMPORTS = [
+      { book: "ZEC", chapter: 6, kind: "tn", proposedBy: "Diego", detail: "3 AI-drafted notes awaiting review after a pipeline run" },
+      { book: "HOS", chapter: 2, kind: "tq", proposedBy: "Sarah", detail: "1 AI-drafted question awaiting review" }
+    ];
+
+    function renderPendingImports() {
+      var body = document.getElementById("pendingImportsBody");
+      if (!PENDING_IMPORTS.length) {
+        body.innerHTML = '<p class="pending-empty">Nothing pending — the queue is empty.</p>';
+        return;
+      }
+      body.innerHTML = PENDING_IMPORTS.map(function (p) {
+        return '<div class="pending-row"><div class="pr-main"><strong>' + p.book + " " + p.chapter + '</strong> <span class="chip chip-draft">' + p.kind + '</span>' +
+          '<div class="pr-sub">' + esc(p.detail) + " — proposed by " + esc(p.proposedBy) + '</div></div></div>';
+      }).join("");
+    }
+
+    document.getElementById("pendingImportsRefreshBtn").addEventListener("click", function () { renderPendingImports(); });
 
     var laneState = {
       proposedUrl: "https://git.door43.org/es-419_gl/es-419_glt_v2",
@@ -425,6 +466,7 @@
     var laneFootEl = document.getElementById("laneFoot");
     var laneNextActionEl = document.getElementById("laneNextAction");
     var laneActivateBtnEl = document.getElementById("laneActivateBtn");
+    var laneStartBtnEl = document.getElementById("laneStartBtn");
     var laneValidateResultEl = document.getElementById("laneValidateResult");
 
     function laneBookChip(bookState) {
@@ -444,6 +486,7 @@
       }).join("");
       laneLifecycleNoteEl.textContent = LC_NOTE[laneState.lifecycle];
       laneActivateBtnEl.disabled = laneState.lifecycle !== "ready";
+      laneStartBtnEl.disabled = laneState.lifecycle !== "reserved";
 
       laneBookRowsEl.innerHTML = laneState.books.map(function (b) {
         var chip = laneBookChip(b.state);
@@ -490,11 +533,23 @@
         renderLaneReplacement();
         return;
       }
+      if (e.target.closest("#laneStartBtn")) {
+        if (laneState.lifecycle !== "reserved") return;
+        laneState.lifecycle = "staging";
+        laneState.books.forEach(function (b) { b.state = "artifact_ok"; });
+        renderLaneReplacement();
+        return;
+      }
+      if (e.target.closest("#laneJobStatusBtn")) {
+        laneFootEl.textContent = "Replacement is " + laneState.lifecycle + " · job " + laneState.jobId + " (status refreshed)";
+        return;
+      }
     });
 
     renderBookGroups();
     renderDetail();
     updateCounter();
+    renderPendingImports();
     renderLaneReplacement();
   })();
   </script>
