@@ -38,6 +38,69 @@
   .book-tile .bt-name { font-size: 11.5px; color: var(--ink-2); }
   .book-tile.hidden { display: none; }
 
+  /* Mobile book list (<=820px): testament + canonical sub-group accordions,
+     collapsed by default, instead of the desktop grid. */
+  .book-groups-mobile { display: none; }
+  @media (max-width: 820px) {
+    .book-groups { display: none; }
+    .book-groups-mobile { display: block; }
+  }
+  .testament-accordion {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-block-end: 10px;
+  }
+  .testament-accordion:last-child { margin-block-end: 0; }
+  .testament-toggle, .subgroup-toggle {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--ink);
+    background: var(--card-2);
+  }
+  .testament-toggle::-webkit-details-marker, .subgroup-toggle::-webkit-details-marker { display: none; }
+  .testament-toggle::before, .subgroup-toggle::before {
+    content: "▸";
+    font-size: 10.5px;
+    color: var(--ink-2);
+    transition: transform 0.12s ease;
+    flex: none;
+  }
+  details[open] > .testament-toggle::before, details[open] > .subgroup-toggle::before { transform: rotate(90deg); }
+  .testament-body { padding: 8px; }
+  .subgroup-accordion { border: 1px solid var(--line); border-radius: var(--radius-sm); margin-block-end: 8px; overflow: hidden; }
+  .subgroup-accordion:last-child { margin-block-end: 0; }
+  .subgroup-toggle { font-weight: 600; font-size: 13px; padding: 8px 10px; }
+  .sg-count { color: var(--ink-2); font-weight: 400; }
+  .subgroup-body { display: flex; flex-direction: column; }
+  .mobile-book-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    appearance: none;
+    border: none;
+    border-block-end: 1px solid var(--line);
+    background: var(--card);
+    text-align: start;
+    padding: 9px 10px;
+    cursor: pointer;
+    color: var(--ink);
+    font-size: 13px;
+  }
+  .mobile-book-row:last-child { border-block-end: none; }
+  .mobile-book-row:hover { background: var(--card-2); }
+  .mobile-book-row[aria-current="true"] { background: var(--hl); }
+  .mobile-book-row .bt-code { font-weight: 700; }
+  .mobile-book-row .bt-name { flex: 1; color: var(--ink-2); }
+
   .book-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .book-detail-head h2 { margin: 0; }
   .adv-accordion { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; margin-top: 14px; }
@@ -132,6 +195,11 @@
             <input class="tinput" type="search" id="bookSearch" placeholder="Search books…" aria-label="Search books">
           </div>
           <div id="bookGroups" class="book-groups"></div>
+          <!-- Mobile-only canonical accordion tree (<=820px). Same book data,
+               same .book-tile leaf class (so the existing search filter keeps
+               working unmodified), just a collapsed-by-default nested
+               disclosure instead of the desktop grid. -->
+          <div id="bookGroupsMobile" class="book-groups-mobile"></div>
         </div>
         <div class="panel-foot">
           <span class="foot-state" id="listFoot">Loaded via <code>GET /api/books</code></span>
@@ -252,6 +320,24 @@
       PHM:"Philemon", HEB:"Hebrews", JAS:"James", "1PE":"1 Peter", "2PE":"2 Peter", "1JN":"1 John", "2JN":"2 John",
       "3JN":"3 John", JUD:"Jude", REV:"Revelation"
     };
+    // Canonical sub-groups for the mobile accordion (desktop grid stays OT/NT only).
+    var CANON_GROUPS = [
+      { testament: "OT", title: "Old Testament", groups: [
+        { name: "Law", books: ["GEN","EXO","LEV","NUM","DEU"] },
+        { name: "History", books: ["JOS","JDG","RUT","1SA","2SA","1KI","2KI","1CH","2CH","EZR","NEH","EST"] },
+        { name: "Wisdom & Poetry", books: ["JOB","PSA","PRO","ECC","SNG"] },
+        { name: "Major Prophets", books: ["ISA","JER","LAM","EZK","DAN"] },
+        { name: "Minor Prophets", books: ["HOS","JOL","AMO","OBA","JON","MIC","NAM","HAB","ZEP","HAG","ZEC","MAL"] }
+      ] },
+      { testament: "NT", title: "New Testament", groups: [
+        { name: "Gospels & Acts", books: ["MAT","MRK","LUK","JHN","ACT"] },
+        { name: "Pauline Epistles", books: ["ROM","1CO","2CO","GAL","EPH","PHP","COL","1TH","2TH","1TI","2TI","TIT","PHM"] },
+        { name: "General Epistles", books: ["HEB","JAS","1PE","2PE","1JN","2JN","3JN","JUD"] },
+        /* REV rides bare under NT — a one-book collapse group is pointless */
+        { name: null, books: ["REV"] }
+      ] }
+    ];
+
     var IMPORTED = { TIT: true, RUT: true, JON: true, GEN: true, MAT: true };
     var LINT = {
       TIT: { flag: 1, escalate: 0, rows: ["Flag — 2:3 quote run missing an alignment milestone"] },
@@ -332,6 +418,32 @@
       bookGroupsEl.innerHTML =
         '<div class="book-group"><h3>Old Testament (' + OT.length + ')</h3><div class="book-grid">' + OT.map(bookTile).join("") + "</div></div>" +
         '<div class="book-group"><h3>New Testament (' + NT.length + ')</h3><div class="book-grid">' + NT.map(bookTile).join("") + "</div></div>";
+      renderMobileGroups();
+    }
+
+    function mobileBookRow(code) {
+      var imported = !!IMPORTED[code];
+      return '<button type="button" class="book-tile mobile-book-row" data-book="' + code + '" aria-current="' + (state.selected === code) + '">' +
+        '<span class="bt-code">' + code + "</span>" +
+        '<span class="bt-name">' + esc(NAMES[code]) + "</span>" +
+        '<span class="chip ' + (imported ? "chip-approved" : "chip-draft") + '">' + (imported ? "Imported" : "Not imported") + "</span>" +
+      "</button>";
+    }
+
+    function renderMobileGroups() {
+      document.getElementById("bookGroupsMobile").innerHTML = CANON_GROUPS.map(function (t) {
+        var groupsHtml = t.groups.map(function (g) {
+          if (!g.name) return '<div class="subgroup-body">' + g.books.map(mobileBookRow).join("") + "</div>";
+          return '<details class="subgroup-accordion" data-subgroup="' + esc(g.name) + '">' +
+            '<summary class="subgroup-toggle">' + esc(g.name) + ' <span class="sg-count">(' + g.books.length + ')</span></summary>' +
+            '<div class="subgroup-body">' + g.books.map(mobileBookRow).join("") + "</div>" +
+          "</details>";
+        }).join("");
+        return '<details class="testament-accordion" data-testament="' + t.testament + '">' +
+          '<summary class="testament-toggle">' + esc(t.title) + "</summary>" +
+          '<div class="testament-body">' + groupsHtml + "</div>" +
+        "</details>";
+      }).join("");
     }
 
     function applyFilter(q) {
@@ -341,8 +453,24 @@
         var match = !q || code.indexOf(q) !== -1 || NAMES[code].toUpperCase().indexOf(q) !== -1;
         t.classList.toggle("hidden", !match);
       });
+      // Mobile accordions: auto-expand any group containing a match while
+      // searching; clearing the search re-collapses everything (default state).
+      document.querySelectorAll("#bookGroupsMobile .subgroup-accordion").forEach(function (sg) {
+        sg.open = q ? !!sg.querySelector(".book-tile:not(.hidden)") : false;
+      });
+      document.querySelectorAll("#bookGroupsMobile .testament-accordion").forEach(function (ts) {
+        ts.open = q ? !!ts.querySelector(".book-tile:not(.hidden)") : false;
+      });
     }
     document.getElementById("bookSearch").addEventListener("input", function (e) { applyFilter(e.target.value); });
+
+    document.getElementById("bookGroupsMobile").addEventListener("click", function (e) {
+      var t = e.target.closest(".book-tile");
+      if (!t) return;
+      state.selected = t.dataset.book;
+      renderBookGroups();
+      renderDetail();
+    });
 
     function updateCounter() {
       var n = Object.keys(IMPORTED).length;

@@ -42,8 +42,9 @@
   .lane-block .lane-top button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
   .source-block { font-family: var(--font-scripture); font-size: 16px; line-height: 1.6; background: var(--card-2); border-radius: var(--radius-sm); padding: 10px 12px; margin-block-end: 10px; }
   .target-box {
-    width: 100%; min-height: 100px; font-family: var(--font-scripture); font-size: 16.5px; line-height: 1.6; color: var(--ink);
-    background: var(--card-2); border: 1.5px solid var(--inspire); border-radius: var(--radius-sm); padding: 10px 12px; resize: vertical;
+    width: 100%; min-height: calc(1.6em + 20px); max-height: 60vh; font-family: var(--font-scripture); font-size: 16.5px; line-height: 1.6; color: var(--ink);
+    background: var(--card-2); border: 1.5px solid var(--inspire); border-radius: var(--radius-sm); padding: 10px 12px;
+    resize: vertical; overflow-x: hidden; overflow-y: hidden; field-sizing: content;
   }
   .lane-block.locked .target-box { border-color: var(--line); background: var(--skip-soft); pointer-events: none; }
   .lane-foot { display: flex; align-items: center; gap: 8px; margin-block-start: 8px; }
@@ -204,7 +205,7 @@
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q2</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\s1</button>
         </div>
-        <textarea class="target-box" id="litTarget">En el mes octavo, en el segundo año de Darío, vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddo, el profeta, diciendo:</textarea>
+        <textarea class="target-box" id="litTarget" spellcheck="false" rows="1">En el mes octavo, en el segundo año de Darío, vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddo, el profeta, diciendo:</textarea>
         <div class="lane-foot">
           <button type="button" class="btn btn-outline" id="litUndoBtn">Undo</button>
           <span class="spacer"></span>
@@ -227,7 +228,7 @@
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q2</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\s1</button>
         </div>
-        <textarea class="target-box" id="simTarget">Durante la noche tuve una visión. Vi a un hombre sentado en un caballo rojo, entre unos mirtos en un valle pequeño.</textarea>
+        <textarea class="target-box" id="simTarget" spellcheck="false" rows="1">Durante la noche tuve una visión. Vi a un hombre sentado en un caballo rojo, entre unos mirtos en un valle pequeño.</textarea>
         <div class="lane-foot">
           <button type="button" class="btn btn-outline" id="simUndoBtn">Undo</button>
           <span class="spacer"></span>
@@ -416,6 +417,24 @@
     el("boardBtn").addEventListener("click", function () { renderBoard(); el("boardBackdrop").hidden = false; });
     el("closeBoardBtn").addEventListener("click", function () { el("boardBackdrop").hidden = true; });
     el("closeBoardBtn2").addEventListener("click", function () { el("boardBackdrop").hidden = true; });
+
+    // Auto-sizing target editors — CSS `field-sizing: content` handles this in
+    // supporting browsers; this is the JS fallback (grow-on-input + set-on-init)
+    // for browsers that don't support it yet. Box fits content exactly (no
+    // extra blank space), capped at 60vh (CSS max-height) so a pathological
+    // paste can't fill the screen — overflow-y only switches on past that cap,
+    // so a normal-length edit never shows an inner scrollbar at rest.
+    function autoGrow(ta) {
+      ta.style.height = "auto";
+      var maxPx = window.innerHeight * 0.6;
+      ta.style.height = Math.min(ta.scrollHeight, maxPx) + "px";
+      ta.style.overflowY = ta.scrollHeight > maxPx ? "auto" : "hidden";
+    }
+    var autoGrowBoxes = [el("litTarget"), el("simTarget")];
+    autoGrowBoxes.forEach(function (ta) {
+      autoGrow(ta);
+      ta.addEventListener("input", function () { autoGrow(ta); });
+    });
 
     // save buttons flip state chip locally
     el("litSaveBtn").addEventListener("click", function () { el("litStateChip").className = "chip chip-edited"; el("litStateChip").textContent = "Edited"; });
