@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translator · Choose work</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <aside class="side" data-side></aside>
+  <div class="stage">
+    <div class="phone" id="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-body">
+        <div class="phone-bar">
+          <div>
+            <div style="font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase">Zacarías · es</div>
+            <h1>Buenos días, Ana</h1>
+          </div>
+          <button class="icon-chip" title="Profile" type="button">A</button>
+        </div>
+
+        <div class="meta-row">
+          <span class="pill teal">EN → ES</span>
+          <span class="pill" id="donePill">38% package</span>
+        </div>
+        <div class="progress"><i id="bar" style="width:38%"></i></div>
+
+        <p style="margin:0 0 14px;color:var(--ink-soft);line-height:1.4">
+          One package. Pick what you’ll work on next.
+        </p>
+
+        <button class="choice" type="button" data-href="t4-scripture.html" data-key="scripture">
+          <div class="top">
+            <strong>Scripture text</strong>
+            <span class="count" data-count>214 verses</span>
+          </div>
+          <div class="desc">ULT → GLT (literal) and UST → GST (simplified), verse by verse.</div>
+        </button>
+
+        <button class="choice" type="button" data-href="t2-note.html" data-key="notes">
+          <div class="top">
+            <strong>Translation notes</strong>
+            <span class="count" data-count>42 left</span>
+          </div>
+          <div class="desc">English note + AI Spanish. See literal &amp; simplified verses.</div>
+        </button>
+
+        <button class="choice" type="button" data-href="t3-article.html#questions" data-key="questions">
+          <div class="top">
+            <strong>Questions</strong>
+            <span class="count" data-count>18 left</span>
+          </div>
+          <div class="desc">Source question, AI draft, approve or skip.</div>
+        </button>
+
+        <button class="choice" type="button" data-href="t3-article.html#terms" data-key="terms">
+          <div class="top">
+            <strong>Key terms</strong>
+            <span class="count" data-count>9 left</span>
+          </div>
+          <div class="desc">Keyword articles linked from notes.</div>
+        </button>
+
+        <button class="choice" type="button" data-href="t3-article.html#articles" data-key="articles">
+          <div class="top">
+            <strong>Translation articles</strong>
+            <span class="count" data-count>6 left</span>
+          </div>
+          <div class="desc">tA pieces — metaphor, parallelism, names of God…</div>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const phone = document.getElementById('phone');
+  const state = {
+    notes: 42, questions: 18, terms: 9, articles: 6, scripture: 214,
+  };
+
+  function refresh() {
+    document.querySelectorAll('.choice[data-key]').forEach(btn => {
+      const k = btn.dataset.key;
+      const el = btn.querySelector('[data-count]');
+      if (k === 'scripture') el.textContent = state[k] + ' verses';
+      else el.textContent = state[k] + ' left';
+    });
+    const total = 214 + 42 + 18 + 9 + 6;
+    const left = state.scripture + state.notes + state.questions + state.terms + state.articles;
+    const done = total - left;
+    const pct = Math.min(92, Math.round((done / total) * 100) + 12);
+    document.getElementById('bar').style.width = pct + '%';
+    document.getElementById('donePill').textContent = pct + '% package';
+  }
+
+  document.querySelectorAll('.choice[data-href]').forEach(btn => {
+    btn.addEventListener('click', () => { location.href = btn.dataset.href; });
+  });
+
+  document.querySelectorAll('.choice[data-key]').forEach(btn => {
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const k = btn.dataset.key;
+      if (state[k] > 0) state[k]--;
+      refresh();
+      showToast(phone, 'Marked one done (demo).');
+    });
+  });
+</script>
+</body>
+</html>

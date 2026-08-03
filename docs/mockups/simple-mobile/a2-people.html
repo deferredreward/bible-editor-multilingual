@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · People & roles</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <aside class="side" data-side></aside>
+  <div class="stage">
+    <div class="admin-stage">
+      <div class="admin-top">
+        <button class="btn light" type="button" onclick="location.href='index.html'">Back</button>
+        <h1>Manage users · Zacarías ES</h1>
+        <button class="btn teal" type="button" id="inviteBtn">Invite user</button>
+      </div>
+      <div class="admin-body">
+        <p class="note" style="margin-top:0">
+          Render-flavored role assignment: who drafts, who peer-checks, who consults.
+          Click a role chip to cycle it. Invite adds a fake row.
+        </p>
+        <table class="table" id="table">
+          <thead>
+            <tr>
+              <th>Person</th>
+              <th>Roles</th>
+              <th>Sections</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="admin-foot">
+        <span class="note" id="footNote"></span>
+        <button class="btn dark" type="button" onclick="location.href='a3-sections.html'">Assign sections →</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const ROLE_CYCLE = ['Draft', 'Peer Check', 'Consultant', 'Admin'];
+  let people = [
+    { name: 'Ana Ruiz', email: 'ana@example.org', roles: ['Draft'], sections: '1–6', status: 'Active' },
+    { name: 'Luis Mora', email: 'luis@example.org', roles: ['Draft', 'Peer Check'], sections: '7–10', status: 'Active' },
+    { name: 'Dr. Ellen Cho', email: 'ellen@example.org', roles: ['Consultant'], sections: 'All', status: 'Active' },
+    { name: 'Marco Díaz', email: 'marco@example.org', roles: ['Peer Check'], sections: '1–3', status: 'Invited' },
+  ];
+
+  function render() {
+    const tb = document.querySelector('#table tbody');
+    tb.innerHTML = people.map((p, i) => `
+      <tr>
+        <td>
+          <strong>${p.name}</strong><br>
+          <span style="color:var(--muted);font-size:0.85rem">${p.email}</span>
+        </td>
+        <td>
+          ${p.roles.map((r, ri) =>
+            `<button type="button" class="chip" data-person="${i}" data-role="${ri}" title="Click to cycle role">${r}</button>`
+          ).join('')}
+          <button type="button" class="chip grey" data-add="${i}">+</button>
+        </td>
+        <td>${p.sections}</td>
+        <td><span class="chip ${p.status === 'Active' ? '' : 'amber'}">${p.status}</span></td>
+      </tr>
+    `).join('');
+
+    tb.querySelectorAll('[data-person]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pi = +btn.dataset.person;
+        const ri = +btn.dataset.role;
+        const cur = people[pi].roles[ri];
+        const next = ROLE_CYCLE[(ROLE_CYCLE.indexOf(cur) + 1) % ROLE_CYCLE.length];
+        people[pi].roles[ri] = next;
+        render();
+      });
+    });
+    tb.querySelectorAll('[data-add]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pi = +btn.dataset.add;
+        people[pi].roles.push('Draft');
+        render();
+      });
+    });
+
+    document.getElementById('footNote').textContent =
+      people.length + ' people · ' +
+      people.filter(p => p.roles.includes('Draft')).length + ' drafters · ' +
+      people.filter(p => p.roles.includes('Consultant')).length + ' consultants';
+  }
+
+  document.getElementById('inviteBtn').addEventListener('click', () => {
+    const n = people.length + 1;
+    people.push({
+      name: 'New translator ' + n,
+      email: 'user' + n + '@example.org',
+      roles: ['Draft'],
+      sections: 'Unassigned',
+      status: 'Invited',
+    });
+    render();
+  });
+
+  render();
+</script>
+</body>
+</html>
