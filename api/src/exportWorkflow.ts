@@ -1199,18 +1199,24 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
       const commit = await commitToDcs(dcsCfg, filename, built.content, message);
       if (!commit.branchTouched) {
-        const lingering = await findDcsOpenPr(dcsCfg);
-        if (lingering != null) {
-          try {
+        // Rendered content matches master — nothing to merge. Close any open PR
+        // lingering from an earlier night so empty (0-diff) PRs don't pile up.
+        // The whole lookup+close is opportunistic hygiene: a transient door43
+        // 429/500/502 (or an HTML gateway page) during findDcsOpenPr must not
+        // fail the export step on the routine unchanged-book path, so the
+        // lookup lives INSIDE the try alongside the close.
+        try {
+          const lingering = await findDcsOpenPr(dcsCfg);
+          if (lingering != null) {
             // Closing a stale PR mutates DCS — re-verify ownership first.
             await this.assertFencingOrThrow(lane, fencingToken);
             await closeDcsPr(dcsCfg, lingering);
-          } catch (e) {
-            console.error("export close-stale-PR failed", {
-              book, resource, repo: dcsRepo, pr: lingering,
-              error: e instanceof Error ? e.message : String(e),
-            });
           }
+        } catch (e) {
+          console.error("export close-stale-PR failed", {
+            book, resource, repo: dcsRepo,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
       dcsCommitSha = commit.commitSha || null;
