@@ -640,7 +640,7 @@
     // history dialog
     function openHist() {
       var restoreRow = ITEMS[cur].trashed
-        ? '<div class="hist-version"><span class="hv-main">This note is in the trash.</span><button type="button" id="restoreBtn" data-handle="POST /api/rows/tn/:id/restore" data-headers="If-Match" data-bundle="F">Restore</button></div>'
+        ? '<div class="hist-version"><span class="hv-main">This note is in the trash.</span><button type="button" id="restoreBtn" data-handle="POST /api/rows/tn/:id/restore" data-bundle="F">Restore</button></div>'
         : "";
       el("histBody").innerHTML = restoreRow +
         '<div class="hist-version"><span class="hv-num">v4</span><span class="hv-main">Current draft<span class="hv-meta"> · Ana · 2 min ago</span></span></div>' +

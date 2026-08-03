@@ -300,7 +300,7 @@
         <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
         <span class="spacer"></span>
         <button type="button" class="btn btn-primary" id="saveBtn"
-          data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+          data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
       </div>
     </div>
 
@@ -333,7 +333,7 @@
       <div class="action-bar">
         <span class="spacer"></span>
         <button type="button" class="btn btn-primary" id="saveBtnTap"
-          data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+          data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
       </div>
     </div>
   </main>
@@ -356,7 +356,7 @@
           <div class="sbs-col">
             <h3>ULT → GLT</h3>
             <div class="rl-actions">
-              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
               <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
             </div>
             <div class="reading-line" contenteditable="true" id="litReadingLine">En el mes octavo, en el segundo año de Darío…</div>
@@ -365,7 +365,7 @@
           <div class="sbs-col">
             <h3>UST → GST</h3>
             <div class="rl-actions">
-              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/UST" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
               <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
             </div>
             <div class="reading-line locked" id="simReadingLine" title="Locked while the UST alignment panel has unsaved drags">Durante la noche tuve una visión…</div>
