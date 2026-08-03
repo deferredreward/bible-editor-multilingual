@@ -44,7 +44,7 @@
   .target-box {
     width: 100%; min-height: calc(1.6em + 20px); max-height: 60vh; font-family: var(--font-scripture); font-size: 16.5px; line-height: 1.6; color: var(--ink);
     background: var(--card-2); border: 1.5px solid var(--inspire); border-radius: var(--radius-sm); padding: 10px 12px;
-    resize: vertical; overflow-x: hidden; overflow-y: hidden; field-sizing: content;
+    resize: vertical; overflow-x: hidden; overflow-y: auto; field-sizing: content;
   }
   .lane-block.locked .target-box { border-color: var(--line); background: var(--skip-soft); pointer-events: none; }
   .lane-foot { display: flex; align-items: center; gap: 8px; margin-block-start: 8px; }
@@ -143,12 +143,12 @@
 
   <nav class="flow-nav" aria-label="Translator screens">
     <a href="t1-home.html">Home</a>
-    <a href="t2-review.html">Review</a>
+    <a href="t2-review.html">Notes</a>
     <a href="t3-scripture.html" aria-current="page">Scripture</a>
     <a href="t4-align.html">Align</a>
     <a href="t5-articles.html">Articles</a>
     <a href="t6-words.html">Words</a>
-    <a href="../index.html">Hub ↗</a>
+    <a href="index.html">Hub ↗</a>
   </nav>
 
   <main id="main" class="scripture-wrap">
@@ -187,7 +187,7 @@
 
     <div class="ol-strip" aria-label="Original-language reference">
       <span class="ol-label">Hebrew</span>
-      <span class="ol-words" id="olWords"></span>
+      <span class="ol-words" id="olWords" dir="rtl"></span>
     </div>
 
     <div class="pair">
@@ -425,6 +425,8 @@
     // paste can't fill the screen — overflow-y only switches on past that cap,
     // so a normal-length edit never shows an inner scrollbar at rest.
     function autoGrow(ta) {
+      if (window.CSS && CSS.supports && CSS.supports("field-sizing", "content")) return;
+      if (!ta || ta.offsetParent === null) return;
       ta.style.height = "auto";
       var maxPx = window.innerHeight * 0.6;
       ta.style.height = Math.min(ta.scrollHeight, maxPx) + "px";

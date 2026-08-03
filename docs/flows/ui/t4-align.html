@@ -247,11 +247,11 @@
 
   <nav class="flow-nav" aria-label="Translator screens">
     <a href="t1-home.html">Home</a>
-    <a href="t2-review.html">Review</a>
+    <a href="t2-review.html">Notes</a>
     <a href="t3-scripture.html">Scripture</a>
     <a href="t4-align.html" aria-current="page">Align</a>
     <a href="t5-articles.html">Articles</a>
-    <a href="../index.html">Hub ↗</a>
+    <a href="index.html">Hub ↗</a>
   </nav>
 
   <main id="main" class="align-wrap">
@@ -282,7 +282,7 @@
         <button type="button" class="cluster-btn" id="refPanelRefreshBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion" data-bundle="H" title="Refresh from ULT verse content">⟳ Refresh</button>
       </div>
       <p class="ref-panel-note">Read-only — shown for comparison, not editable here.<span class="ref-panel-phone-note"> Whether this fits comfortably on a phone screen is still an open question; it's collapsed by default here.</span></p>
-      <div class="ref-groups" id="refGroups" role="list" aria-label="unfoldingWord ULT reference alignment"></div>
+      <div class="ref-groups" id="refGroups" role="list" aria-label="unfoldingWord ULT reference alignment" dir="rtl"></div>
     </div>
 
     <!-- ============ DRAG CANVAS VIEW ============ -->
@@ -300,7 +300,7 @@
 
       <p class="canvas-note">Drag affordances are shown statically here — the real aligner is a custom HTML5 drag-and-drop canvas, not native browser DnD.</p>
 
-      <div class="source-row" aria-label="Hebrew source words" role="list">
+      <div class="source-row" aria-label="Hebrew source words" role="list" dir="rtl">
         <span class="src-word" role="listitem" title="Hebrew: אִישׁ">a man</span>
         <span class="src-word" role="listitem" title="Hebrew: רֹכֵב">riding</span>
         <span class="src-word unaligned" role="listitem" title="Hebrew: עַל">on</span>
@@ -356,7 +356,7 @@
         <button type="button" class="cluster-btn" id="tapRefreshBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
       </div>
 
-      <div class="source-ribbon-outer">
+      <div class="source-ribbon-outer" dir="rtl">
         <div class="source-ribbon" id="sourceRibbon" role="list" aria-label="Hebrew source word groups"></div>
       </div>
 
@@ -461,7 +461,7 @@
     ];
     (function renderReferencePanel() {
       el("refGroups").innerHTML = REFERENCE_GROUPS.map(function (g) {
-        return '<div class="ref-group" role="listitem"><div class="rg-heb">' + escapeHtml(g.heb) + '</div><div class="rg-eng">' + escapeHtml(g.eng) + "</div></div>";
+        return '<div class="ref-group" role="listitem"><div class="rg-heb">' + escapeHtml(g.heb) + '</div><div class="rg-eng" dir="ltr">' + escapeHtml(g.eng) + "</div></div>";
       }).join("");
     })();
     el("refPanelToggle").addEventListener("click", function () {
