@@ -452,12 +452,32 @@
   (function () {
     "use strict";
 
+    // Each tn item's `quote`/`ustQuote` are the gateway-language words that
+    // correspond to its original-language Quote (item.greek — Hebrew here,
+    // field name kept as-is to match the rest of this file). `ult`/`ust` are
+    // that note's own verse text, so the highlighted words below actually
+    // change (both text and position) as the queue advances between verses.
     var ITEMS = [
-      { kind: "tn", ref: "ZEC 1:1", greek: "בֶּן־בֶּרֶכְיָ֥ה", support: "figs-idiom", quote: "the word of Yahweh came to", en: "This is an idiom meaning <b>Yahweh gave a message</b> to the prophet. Alternate translation: “Yahweh gave this message to”.", draft: "vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddó, el profeta.", state: "draft", trashed: false },
-      { kind: "tq", ref: "ZEC 1:1", greek: "", support: "", quote: "", enQ: "When did Yahweh give this message?", draft: "En el octavo mes del segundo año de Darío.", state: "draft" },
-      { kind: "tn", ref: "ZEC 1:3", greek: "יְהוָ֥ה צְבָא֖וֹת", support: "figs-explicit", quote: "Yahweh of hosts", en: "Here, <b>hosts</b> refers to the armies of angels that serve Yahweh. See how you translated this in the introduction.", draft: "Yahvé de los ejércitos", state: "edited", trashed: false },
-      { kind: "tn", ref: "ZEC 1:8", greek: "אִ֗ישׁ רֹכֵב֙ עַל־ס֣וּס אָדֹ֔ם", support: "writing-participants", quote: "a man riding on a red horse", en: "This introduces a new participant — the <b>angel of Yahweh</b>, though his identity is not yet stated here.", draft: "un hombre montado en un caballo rojo", state: "draft", trashed: false },
-      { kind: "tq", ref: "ZEC 1:8", greek: "", support: "", quote: "", enQ: "What did Zechariah see standing among the myrtle trees?", draft: "", state: "draft" }
+      { kind: "tn", ref: "ZEC 1:1", greek: "בֶּן־בֶּרֶכְיָ֥ה", support: "figs-idiom", quote: "the word of Yahweh came to", en: "This is an idiom meaning <b>Yahweh gave a message</b> to the prophet. Alternate translation: “Yahweh gave this message to”.", draft: "vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddó, el profeta.", state: "draft", trashed: false,
+        ult: "In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,",
+        ust: "During the eighth month of King Darius's second year as ruler, Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo.",
+        ustQuote: "Yahweh gave this message to" },
+      { kind: "tq", ref: "ZEC 1:1", greek: "", support: "", quote: "", enQ: "When did Yahweh give this message?", draft: "En el octavo mes del segundo año de Darío.", state: "draft",
+        ult: "In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,",
+        ust: "During the eighth month of King Darius's second year as ruler, Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo.",
+        ustQuote: "" },
+      { kind: "tn", ref: "ZEC 1:3", greek: "יְהוָ֥ה צְבָא֖וֹת", support: "figs-explicit", quote: "Yahweh of hosts", en: "Here, <b>hosts</b> refers to the armies of angels that serve Yahweh. See how you translated this in the introduction.", draft: "Yahvé de los ejércitos", state: "edited", trashed: false,
+        ult: "So you must say to them, ‘Yahweh of hosts says this: “Return to me,” declares Yahweh of hosts, “and I will return to you.”’",
+        ust: "So tell the people that the Commander of heaven's armies says, ‘Come back to me, and I will come back to you.’",
+        ustQuote: "the Commander of heaven's armies" },
+      { kind: "tn", ref: "ZEC 1:8", greek: "אִ֗ישׁ רֹכֵב֙ עַל־ס֣וּס אָדֹ֔ם", support: "writing-participants", quote: "a man riding on a red horse", en: "This introduces a new participant — the <b>angel of Yahweh</b>, though his identity is not yet stated here.", draft: "un hombre montado en un caballo rojo", state: "draft", trashed: false,
+        ult: "I looked, and behold, there was a man riding on a red horse, and he stood among the myrtle trees that were in the ravine, and behind him were red, sorrel, and white horses.",
+        ust: "I looked and saw an angel who appeared like a man sitting on a red horse. He was standing among some myrtle trees in a small valley, and behind him were other horses that were red, brown, and white.",
+        ustQuote: "an angel who appeared like a man sitting on a red horse" },
+      { kind: "tq", ref: "ZEC 1:8", greek: "", support: "", quote: "", enQ: "What did Zechariah see standing among the myrtle trees?", draft: "", state: "draft",
+        ult: "I looked, and behold, there was a man riding on a red horse, and he stood among the myrtle trees that were in the ravine, and behind him were red, sorrel, and white horses.",
+        ust: "I looked and saw an angel who appeared like a man sitting on a red horse. He was standing among some myrtle trees in a small valley, and behind him were other horses that were red, brown, and white.",
+        ustQuote: "" }
     ];
     var cur = 0;
     var unsavedIds = {};
@@ -493,12 +513,27 @@
       });
     }
 
+    // Highlight-link: wraps the gateway-language words that correspond to the
+    // active note's original-language Quote. In the real app this mapping
+    // comes from the verse's \zaln alignment data (quote → aligned ULT/UST
+    // words) — the same mechanism the app already uses for quote↔scripture
+    // highlighting elsewhere; here it's a hardcoded per-note phrase since
+    // these are static demo verses. A note with no quote (general notes,
+    // and every tq item here) highlights nothing.
+    function markQuote(text, phrase) {
+      text = text || "";
+      if (!phrase) return text;
+      var idx = text.indexOf(phrase);
+      if (idx === -1) return text;
+      return text.slice(0, idx) + "<mark>" + phrase + "</mark>" + text.slice(idx + phrase.length);
+    }
+
     function ctxHtml(item) {
       return (
         '<div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p>' +
-        '<p class="ctx-verse">In the eighth month, in the second year of Darius, <mark>' + (item.quote || "the word of Yahweh came to") + '</mark> Zechariah son of Berechiah son of Iddo, the prophet.</p></div>' +
+        '<p class="ctx-verse">' + markQuote(item.ult, item.quote) + '</p></div>' +
         '<div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p>' +
-        '<p class="ctx-verse">Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo.</p></div>' +
+        '<p class="ctx-verse">' + markQuote(item.ust, item.ustQuote) + '</p></div>' +
         '<div class="ctx-twl"><p class="lane-tag">Word links (read-only)</p>' +
         '<ul><li><span class="tw-target">Yahweh</span><span class="tw-article">kt/yahweh</span></li>' +
         '<li><span class="tw-target">prophet</span><span class="tw-article">kt/prophet</span></li></ul>' +

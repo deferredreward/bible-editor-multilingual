@@ -127,6 +127,32 @@
   .editor-top .back-mobile { display: none; }
   @media (max-width: 900px) { .editor-top .back-mobile { display: inline-flex; } }
   .editor-body { padding: 16px; }
+
+  /* Template editor box — was a bare, unstyled <textarea> (no .md-area rule
+     existed in this file, unlike l2-style.html's copy) which is why it
+     rendered small and cramped. Full column width, a monospace face so
+     {PLACEHOLDER} tokens stand out from the surrounding prose, and height
+     that tracks content exactly: one line + padding at minimum, grows to
+     fit with no inner scrollbar, caps at ~60vh where a real scrollbar takes
+     over for unusually long templates. */
+  .tmpl-editor-area {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: calc(1.6em + 28px);
+    max-height: 60vh;
+    padding: 14px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    overflow-y: auto;
+    field-sizing: content;
+  }
   .editor-foot {
     display: flex;
     align-items: center;
@@ -246,7 +272,7 @@
             </div>
             <div class="field">
               <label class="f-label" for="targetArea">Target (translated template)</label>
-              <textarea class="md-area" id="targetArea" oninput="window.__tmplDirty()">Esto es una metáfora. Significa que {TARGET} se describe como si fuera {SOURCE}. Si sería útil en su idioma, podría expresar el significado claramente.</textarea>
+              <textarea class="md-area tmpl-editor-area" id="targetArea" spellcheck="false" oninput="window.__tmplDirty(); window.__tmplAutosize(this);">Esto es una metáfora. Significa que {TARGET} se describe como si fuera {SOURCE}. Si sería útil en su idioma, podría expresar el significado claramente.</textarea>
             </div>
           </div>
           <div class="seg" role="group" aria-label="Preview or edit" style="max-width:200px; margin-block-start:10px;">
@@ -376,6 +402,13 @@
       renderRail();
     };
 
+    // JS fallback for browsers without `field-sizing: content` support —
+    // grow the textarea to fit its text on init/input/re-show.
+    window.__tmplAutosize = function (el) {
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
+    };
+
     document.getElementById("saveBtn").addEventListener("click", function () {
       var t = TEMPLATES.find(function (x) { return x.id === current; });
       t.unsaved = false;
@@ -407,7 +440,9 @@
     document.getElementById("editBtn").addEventListener("click", function () {
       document.getElementById("editBtn").setAttribute("aria-pressed", "true");
       document.getElementById("previewBtn").setAttribute("aria-pressed", "false");
-      document.getElementById("targetArea").style.display = "block";
+      var area = document.getElementById("targetArea");
+      area.style.display = "block";
+      window.__tmplAutosize(area);
     });
 
     document.getElementById("railSearch").addEventListener("input", function (ev) {
@@ -420,6 +455,7 @@
 
     renderRail();
     loadEditor(current);
+    window.__tmplAutosize(document.getElementById("targetArea"));
     if (window.matchMedia("(max-width: 900px)").matches) {
       document.body.dataset.view = "rail";
     }

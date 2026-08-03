@@ -135,6 +135,29 @@
   }
   .split-btn:hover { border-color: var(--inspire); color: var(--ink); }
 
+  /* ---------- reference alignment panel (issue #150 mockup) ---------- */
+  .ref-panel-toggle-row { margin-block-end: 12px; }
+  .ref-panel {
+    margin-block-end: 16px; background: var(--card-2); border: 1px dashed var(--line);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .ref-panel[hidden] { display: none; }
+  .ref-panel-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-block-end: 4px; }
+  .ref-panel-top h3 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0;
+  }
+  .ref-panel-top .spacer { margin-inline-start: auto; }
+  .ref-panel-note { font-size: 11.5px; color: var(--ink-2); margin: 0 0 10px; font-style: italic; }
+  .ref-panel-phone-note { display: none; }
+  @media (max-width: 559.98px) { .ref-panel-phone-note { display: block; } }
+  .ref-groups { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ref-group {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    padding: 6px 9px; cursor: default; opacity: 0.85;
+  }
+  .ref-group .rg-heb { font-family: var(--font-scripture); font-size: 14px; direction: rtl; }
+  .ref-group .rg-eng { font-family: var(--font-ui); font-size: 11px; color: var(--ink-2); margin-block-start: 2px; }
+
   .jump-pill {
     appearance: none; border: 1px solid var(--warn); background: var(--warn-soft); color: var(--warn-ink);
     border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; min-height: 34px;
@@ -245,6 +268,23 @@
       </div>
     </div>
 
+    <!-- Mockup for issue #150 — read-only reference, interactive copying is out of scope. -->
+    <div class="ref-panel-toggle-row">
+      <button type="button" class="cluster-btn" id="refPanelToggle" aria-pressed="false" aria-expanded="false" aria-controls="refPanel" data-handle="local:toggle-reference-panel" data-bundle="H">
+        Reference — unfoldingWord's ULT alignment
+      </button>
+    </div>
+    <div class="ref-panel" id="refPanel" hidden aria-label="Reference — unfoldingWord's ULT alignment (read-only)">
+      <div class="ref-panel-top">
+        <h3>Reference — unfoldingWord's ULT alignment</h3>
+        <span class="spacer"></span>
+        <!-- Refresh would reuse the existing verse-content GET for the ULT lane (00b, bundle G/H). -->
+        <button type="button" class="cluster-btn" id="refPanelRefreshBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion" data-bundle="H" title="Refresh from ULT verse content">⟳ Refresh</button>
+      </div>
+      <p class="ref-panel-note">Read-only — shown for comparison, not editable here.<span class="ref-panel-phone-note"> Whether this fits comfortably on a phone screen is still an open question; it's collapsed by default here.</span></p>
+      <div class="ref-groups" id="refGroups" role="list" aria-label="unfoldingWord ULT reference alignment"></div>
+    </div>
+
     <!-- ============ DRAG CANVAS VIEW ============ -->
     <div id="dragView">
       <div class="align-toolbar">
@@ -327,6 +367,7 @@
         <span class="spacer"></span>
         <button type="button" class="btn btn-warn" id="unalignBtn" data-handle="local:align-unalign" data-bundle="H">Unalign</button>
         <button type="button" class="btn btn-outline" id="combineBtn" data-handle="local:align-combine" data-bundle="H" hidden>⧉ Combine</button>
+        <button type="button" class="btn btn-outline" id="splitTargetBtn" data-handle="local:align-split-target" data-bundle="H" hidden>✂ Split words</button>
         <button type="button" class="btn btn-outline" id="clearSelBtn" data-handle="local:align-clear-selection" data-bundle="H">Clear</button>
       </div>
 
@@ -403,6 +444,32 @@
 
     el("sbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = false; });
     el("closeSbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = true; });
+
+    /* =========================================================
+       Reference alignment panel (issue #150 mockup) — read-only,
+       local fixture reflecting unfoldingWord's own ULT alignment
+       (independent of whatever the translator has paired below).
+       ========================================================= */
+    var REFERENCE_GROUPS = [
+      { heb: "אִישׁ", eng: "a man" },
+      { heb: "רֹכֵב", eng: "riding" },
+      { heb: "עַל", eng: "on" },
+      { heb: "סוּס", eng: "a horse" },
+      { heb: "אָדֹם", eng: "red" },
+      { heb: "וְהוּא", eng: "and he" },
+      { heb: "עֹמֵד", eng: "standing" }
+    ];
+    (function renderReferencePanel() {
+      el("refGroups").innerHTML = REFERENCE_GROUPS.map(function (g) {
+        return '<div class="ref-group" role="listitem"><div class="rg-heb">' + escapeHtml(g.heb) + '</div><div class="rg-eng">' + escapeHtml(g.eng) + "</div></div>";
+      }).join("");
+    })();
+    el("refPanelToggle").addEventListener("click", function () {
+      var willOpen = el("refPanel").hidden;
+      el("refPanel").hidden = !willOpen;
+      el("refPanelToggle").setAttribute("aria-pressed", willOpen ? "true" : "false");
+      el("refPanelToggle").setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
 
     el("acceptSuggestionsBtn").addEventListener("click", function () {
       window.flowShell.toast("Suggestion accepted (local) — Save to persist", { bundle: "H" });
@@ -521,6 +588,47 @@
       state.sourceGroups.splice.apply(state.sourceGroups, args);
     }
 
+    // Hebrew-order helper: a target's position is its index in state.targets,
+    // which is kept in verse order and used to sort chips so that a target
+    // aligned to an earlier source word always renders before one aligned to
+    // a later source word, and unaligned targets keep verse order in the pool.
+    function targetOrderIndex(tid) {
+      return state.targets.findIndex(function (t) { return t.id === tid; });
+    }
+
+    function isMultiWordTarget(tid) {
+      var t = findTarget(tid);
+      return !!t && t.text.trim().split(/\s+/).length > 1;
+    }
+
+    // Split a multi-word target chip (e.g. "a horse") into individual word
+    // chips. Split members stay attached to whatever source group the parent
+    // chip was aligned to (or stay unaligned if the parent was unaligned),
+    // and take the parent's position so verse order is preserved.
+    var targetSplitCounter = 0;
+    function doSplitTarget(tid) {
+      var t = findTarget(tid);
+      if (!t) return;
+      var words = t.text.trim().split(/\s+/);
+      if (words.length < 2) return;
+      var idx = state.targets.findIndex(function (x) { return x.id === tid; });
+      if (idx === -1) return;
+      var newTargets = words.map(function (w) {
+        targetSplitCounter++;
+        return { id: tid + "-s" + targetSplitCounter, text: w };
+      });
+      var args = [idx, 1].concat(newTargets);
+      state.targets.splice.apply(state.targets, args);
+      var newIds = newTargets.map(function (nt) { return nt.id; });
+      state.sourceGroups.forEach(function (g) {
+        var gi = g.aligned.indexOf(tid);
+        if (gi > -1) {
+          var spliceArgs = [gi, 1].concat(newIds);
+          g.aligned.splice.apply(g.aligned, spliceArgs);
+        }
+      });
+    }
+
     function toggleSourceSelection(gid) {
       var g = findGroup(gid);
       if (!g) return;
@@ -617,7 +725,8 @@
           return '<button type="button" class="src-word-btn' + (wordSelected ? " selected" : "") + '" data-src-select data-word-idx="' + w.idx + '" aria-pressed="' + wordSelected + '">' +
             '<span class="sw-idx">' + w.idx + "</span><span class=\"sw-heb\">" + escapeHtml(w.heb) + "</span></button>";
         }).join("");
-        var alignedHtml = g.aligned.map(function (tid) {
+        var sortedAligned = g.aligned.slice().sort(function (a, b) { return targetOrderIndex(a) - targetOrderIndex(b); });
+        var alignedHtml = sortedAligned.map(function (tid) {
           var t = findTarget(tid);
           if (!t) return "";
           var selected = state.selection.side === "target" && state.selection.ids.indexOf(tid) > -1;
@@ -654,6 +763,7 @@
       el("selectionDesc").textContent = n + " " + state.selection.side + " word" + (n > 1 ? "s" : "") + " selected";
       el("unalignBtn").hidden = state.selection.side !== "target";
       el("combineBtn").hidden = !(state.selection.side === "source" && n >= 2);
+      el("splitTargetBtn").hidden = !(state.selection.side === "target" && n === 1 && isMultiWordTarget(state.selection.ids[0]));
     }
 
     function renderCounter() {
@@ -714,6 +824,11 @@
     });
     el("combineBtn").addEventListener("click", function () {
       combineGroups(state.selection.ids);
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+    el("splitTargetBtn").addEventListener("click", function () {
+      doSplitTarget(state.selection.ids[0]);
       state.selection = { side: null, ids: [] };
       render();
     });

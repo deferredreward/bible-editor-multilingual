@@ -349,10 +349,18 @@
       <button type="button" class="btn btn-ghost banner-action" id="awayDismissBtn" data-handle="POST /api/pipelines/:jobId/notified" data-bundle="D">Dismiss</button>
     </div>
 
+    <!-- Tenant boundary: GET /api/pipelines is scoped to the caller's workspace
+         (project) on the server — the UI must never aggregate runs across
+         workspaces/orgs into one list. Cross-tenant run visibility is a real
+         leak here, not just a cosmetic nit: a team in one country could see
+         another organization's (possibly higher-risk-region) pipeline
+         activity — book/chapter scope, who's running what, when. This table,
+         its demo fixture rows, and its title all stay singular-workspace on
+         purpose; don't add a global/all-orgs view or cross-org demo rows. -->
     <section class="panel">
       <div class="panel-top">
-        <h2>Pipeline jobs</h2>
-        <span class="panel-sub">Single global bot slot — one job runs at a time; the rest queue in priority order. Foreign jobs (started by someone else) are read-only here.</span>
+        <h2>Runs — this workspace</h2>
+        <span class="panel-sub">Single global bot slot — one job runs at a time; the rest queue in priority order. Foreign jobs (started by someone else in this workspace) are read-only here. Other workspaces' runs are never shown — the API scopes jobs to your workspace and this UI does not aggregate across workspaces.</span>
       </div>
       <div class="panel-body flush">
         <div class="table-wrap">
@@ -369,6 +377,18 @@
         <span class="spacer"></span>
         <button type="button" class="btn btn-ghost" data-handle="GET /api/pipelines" data-bundle="D">Refresh</button>
         <button type="button" class="btn btn-ghost" id="dismissAllBtn">Dismiss all</button>
+      </div>
+    </section>
+
+    <section class="panel" id="apiRunsCard">
+      <div class="panel-top">
+        <h2>API-triggered runs</h2>
+        <p class="panel-sub">Future: pipelines will also be startable and queryable via API tokens, for automation outside this UI.</p>
+      </div>
+      <div class="panel-foot">
+        <span class="foot-state">Not built yet</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" data-handle="TODO:no-backend" data-bundle="D">Manage API tokens</button>
       </div>
     </section>
   </main>

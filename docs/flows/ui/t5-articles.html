@@ -76,17 +76,33 @@
   .editor-panel .ep-top h1 { font-size: 17px; margin: 0; }
   .editor-panel .ep-body { padding: 14px 16px; }
 
-  .part-block + .part-block { margin-block-start: 16px; padding-block-start: 16px; border-block-start: 1px solid var(--line); }
+  .part-block + .part-block { margin-block-start: 20px; padding-block-start: 20px; border-block-start: 1px solid var(--line); }
   .part-head { display: flex; align-items: center; gap: 8px; margin-block-end: 8px; }
   .part-head h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .part-head .part-num { color: var(--ink-2); font-weight: 400; text-transform: none; letter-spacing: normal; }
+  .part-head .part-dirty { display: inline-flex; width: 6px; height: 6px; border-radius: 50%; background: var(--kindle); }
   .part-head .spacer { margin-inline-start: auto; }
   .part-head button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+  .part-head button.preview-toggle[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+
+  .part-source { font-size: 12.5px; color: var(--ink-2); background: var(--card-2); border: 1px dashed var(--line); border-radius: var(--radius-sm); padding: 9px 11px; margin-block-end: 10px; line-height: 1.55; }
+  .part-source .ps-label { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin-block-end: 5px; }
+  .part-source p { margin: 0 0 8px; }
+  .part-source p:last-child { margin-block-end: 0; }
+
   textarea.part-area {
-    width: 100%; min-height: 90px; font-family: var(--font-ui); font-size: 14.5px; line-height: 1.55; color: var(--ink);
-    background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; resize: vertical;
+    display: block; width: 100%; min-height: 3.6em; max-height: 60vh; overflow-y: auto;
+    font-family: var(--font-ui); font-size: 15px; line-height: 1.6; color: var(--ink);
+    background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; resize: vertical;
+    field-sizing: content;
   }
   textarea.part-area:focus { border-color: var(--inspire); outline: none; }
-  .part-preview { font-size: 14.5px; line-height: 1.6; background: var(--card-2); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .part-preview {
+    font-size: 15px; line-height: 1.6; background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm);
+    padding: 14px 16px; min-height: 3.6em; max-height: 60vh; overflow-y: auto;
+  }
+  .part-preview p { margin: 0 0 10px; }
+  .part-preview p:last-child { margin-block-end: 0; }
   .part-preview b { color: var(--ocean); }
   :root[data-theme="dark"] .part-preview b { color: var(--cultivate); }
   @media (prefers-color-scheme: dark) { .part-preview b { color: var(--cultivate); } }
@@ -148,13 +164,13 @@
   <main id="main" class="articles-wrap">
     <div class="seg-row">
       <div class="seg" role="group" aria-label="Article type">
-        <button type="button" id="segTw" aria-pressed="true">translationWords</button>
-        <button type="button" id="segTa" aria-pressed="false">translationAcademy</button>
+        <button type="button" id="segTw" aria-pressed="false">translationWords</button>
+        <button type="button" id="segTa" aria-pressed="true">translationAcademy</button>
       </div>
       <span class="seg-note">Two focused views, not a shared tab bar — tW and tA never share one content region.</span>
     </div>
 
-    <div class="articles-layout" id="articlesLayout" data-view="list">
+    <div class="articles-layout" id="articlesLayout" data-view="editor">
       <aside class="rail-col">
         <div class="rail-panel">
           <div class="rail-top">
@@ -215,23 +231,47 @@
       tw: {
         parts: ["body"],
         items: [
-          { id: "faith", title: "faith", state: "edited", body: "<b>Faith</b> means trusting and believing in someone or something, especially trusting God." },
-          { id: "prophet", title: "prophet", state: "validated", body: "A <b>prophet</b> is a person who speaks messages from God to other people." },
-          { id: "grace", title: "grace", state: "draft", body: "" }
+          {
+            id: "faith", title: "fe (faith)", state: "edited",
+            body: "La **fe** significa confiar y creer en alguien o en algo, especialmente confiar en Dios.\n\nCuando la Biblia habla de tener fe en Dios, quiere decir confiar en que él es quien dice ser y que hará lo que ha prometido.",
+            bodySource: "**Faith** means trusting and believing in someone or something, especially trusting God.\n\nWhen the Bible talks about having faith in God, it means trusting that he is who he says he is and that he will do what he has promised."
+          },
+          { id: "prophet", title: "profeta (prophet)", state: "validated", body: "Un **profeta** es una persona que habla mensajes de parte de Dios a otras personas.", bodySource: "A **prophet** is a person who speaks messages from God to other people." },
+          { id: "grace", title: "gracia (grace)", state: "draft", body: "", bodySource: "**Grace** is help or favor that a person does not deserve, especially help that God gives to people." }
         ]
       },
       ta: {
         parts: ["title", "subtitle", "body"],
         items: [
-          { id: "figs-metaphor", title: "Metaphor", state: "draft", titlePart: "Metaphor", subtitlePart: "Figures of speech", body: "A <b>metaphor</b> is a figure of speech in which one thing is spoken of as if it were another." },
-          { id: "translate-names", title: "How to Translate Names", state: "validated", titlePart: "How to Translate Names", subtitlePart: "Names", body: "Names of people and places often need special treatment when translating." }
+          {
+            id: "figs-metaphor", title: "Metáfora (Metaphor)", state: "edited",
+            titlePart: "Metáfora", titleSource: "Metaphor",
+            subtitlePart: "Figuras retóricas", subtitleSource: "Figures of Speech",
+            body: "Una **metáfora** es una figura del habla en la que se habla de una cosa como si fuera otra, para mostrar que las dos cosas tienen algo en común.\n\nPor ejemplo, cuando alguien dice \"él es un león en la batalla\", no está diciendo que la persona sea literalmente un león. Está usando la imagen del león para comunicar valentía y fuerza.\n\nAl traducir una metáfora, primero hay que identificar las tres partes",
+            bodySource: "A **metaphor** is a figure of speech in which one thing is spoken of as if it were another, in order to show that the two things have a quality in common.\n\nFor example, when someone says \"he is a lion in battle,\" they are not saying the person is literally a lion. They are using the image of the lion to communicate courage and strength.\n\nWhen translating a metaphor, the translator needs to identify three things: the topic, the image, and the point of comparison."
+          },
+          { id: "translate-names", title: "Cómo traducir nombres (How to Translate Names)", state: "validated", titlePart: "Cómo traducir nombres", titleSource: "How to Translate Names", subtitlePart: "Nombres", subtitleSource: "Names", body: "Los nombres de personas y lugares a menudo necesitan un tratamiento especial al traducir.", bodySource: "Names of people and places often need special treatment when translating." }
         ]
       }
     };
 
-    var resource = "tw";
+    var resource = "ta";
     var curIdx = 0;
     var unsaved = false;
+    var partView = {}; // partName -> "edit" | "preview"
+
+    function mdToHtml(text) {
+      var esc = String(text || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      esc = esc.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*(?!\*)(.+?)\*(?!\*)/g, "$1<i>$2</i>");
+      return esc.split(/\n\n+/).map(function (p) { return "<p>" + p.replace(/\n/g, "<br>") + "</p>"; }).join("");
+    }
+
+    function autoSizeTextarea(ta) {
+      if (window.CSS && CSS.supports && CSS.supports("field-sizing", "content")) return;
+      ta.style.height = "auto";
+      ta.style.height = ta.scrollHeight + "px";
+    }
 
     function currentItems() { return RESOURCES[resource].items; }
 
@@ -249,6 +289,7 @@
           (item.unsavedDot ? '<span class="al-dot"></span>' : "");
         btn.addEventListener("click", function () {
           curIdx = i;
+          partView = {};
           el("articlesLayout").setAttribute("data-view", "editor");
           renderEditor();
         });
@@ -277,25 +318,68 @@
 
       var body = el("epBody");
       body.innerHTML = "";
-      parts.forEach(function (partName) {
+      parts.forEach(function (partName, partIdx) {
         var val = partName === "body" ? item.body : (partName === "title" ? item.titlePart : item.subtitlePart) || "";
+        var srcVal = partName === "body" ? item.bodySource : (partName === "title" ? item.titleSource : item.subtitleSource) || "";
+        var isMidEdit = partName === "body"; // the demo's "mid-edit" part
+        if (!(partName in partView)) partView[partName] = "edit";
+
         var block = document.createElement("div");
         block.className = "part-block";
+
         var head = document.createElement("div");
         head.className = "part-head";
         head.innerHTML =
-          '<h2>' + partName + '</h2>' +
+          '<h2>' + partName + ' <span class="part-num">(part ' + (partIdx + 1) + ' of ' + parts.length + ')</span></h2>' +
+          (isMidEdit ? '<span class="part-dirty" title="Unsaved changes in this part" aria-hidden="true"></span>' : '') +
           '<span class="spacer"></span>' +
           '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates)">✨ Draft with AI</button>' +
-          '<button type="button" class="preview-toggle" data-part="' + partName + '">Preview</button>';
+          '<button type="button" class="preview-toggle" data-part="' + partName + '" aria-pressed="' + (partView[partName] === "preview" ? "true" : "false") + '">' + (partView[partName] === "preview" ? "Edit" : "Preview") + '</button>';
         block.appendChild(head);
+
+        if (srcVal) {
+          var srcBlock = document.createElement("div");
+          srcBlock.className = "part-source";
+          srcBlock.innerHTML = '<span class="ps-label">Source (English, read-only)</span>' + mdToHtml(srcVal);
+          block.appendChild(srcBlock);
+        }
+
         var ta = document.createElement("textarea");
         ta.className = "part-area";
-        ta.value = val.replace(/<[^>]+>/g, "");
-        ta.setAttribute("aria-label", partName + " draft");
-        ta.addEventListener("input", function () { markUnsaved(); });
+        ta.value = val;
+        ta.setAttribute("spellcheck", "false");
+        ta.setAttribute("aria-label", partName + " draft (target language)");
+        ta.hidden = partView[partName] === "preview";
+        ta.addEventListener("input", function () { markUnsaved(); autoSizeTextarea(ta); });
         block.appendChild(ta);
+
+        var preview = document.createElement("div");
+        preview.className = "part-preview";
+        preview.hidden = partView[partName] !== "preview";
+        preview.innerHTML = mdToHtml(val);
+        block.appendChild(preview);
+
         body.appendChild(block);
+        autoSizeTextarea(ta);
+      });
+
+      body.querySelectorAll(".preview-toggle").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var partName = btn.getAttribute("data-part");
+          // Capture whatever is currently in the textarea so toggling to preview
+          // and back never discards an in-progress edit.
+          var block = btn.closest(".part-block");
+          var liveTa = block ? block.querySelector("textarea.part-area") : null;
+          if (liveTa) {
+            var liveVal = liveTa.value;
+            if (partName === "body") item.body = liveVal;
+            else if (partName === "title") item.titlePart = liveVal;
+            else if (partName === "subtitle") item.subtitlePart = liveVal;
+          }
+          var showingPreview = partView[partName] === "preview";
+          partView[partName] = showingPreview ? "edit" : "preview";
+          renderEditor();
+        });
       });
     }
 
@@ -320,15 +404,17 @@
     });
 
     el("segTw").addEventListener("click", function () {
-      resource = "tw"; curIdx = 0;
+      resource = "tw"; curIdx = 0; partView = {};
       el("segTw").setAttribute("aria-pressed", "true");
       el("segTa").setAttribute("aria-pressed", "false");
+      el("articlesLayout").setAttribute("data-view", "editor");
       renderList(); renderEditor();
     });
     el("segTa").addEventListener("click", function () {
-      resource = "ta"; curIdx = 0;
+      resource = "ta"; curIdx = 0; partView = {};
       el("segTa").setAttribute("aria-pressed", "true");
       el("segTw").setAttribute("aria-pressed", "false");
+      el("articlesLayout").setAttribute("data-view", "editor");
       renderList(); renderEditor();
     });
 
@@ -366,8 +452,14 @@
     wireMenu("accountBtn", "accountMenu");
     document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
 
+    // Default state: land straight in Edit mode on a realistic mid-edit article
+    // (per design feedback — see selected part with the unsaved chip active).
+    el("segTw").setAttribute("aria-pressed", "false");
+    el("segTa").setAttribute("aria-pressed", "true");
+    el("articlesLayout").setAttribute("data-view", "editor");
     renderList();
     renderEditor();
+    markUnsaved();
   })();
   </script>
 </body>

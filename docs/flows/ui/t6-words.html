@@ -58,10 +58,52 @@
   .twl-table tbody tr { cursor: pointer; }
   .twl-table tbody tr:hover { background: var(--card-2); }
   .twl-table tbody tr[aria-selected="true"] { background: var(--hl); }
+  .twl-table tbody tr.is-suggested { cursor: default; }
+  .twl-table tbody tr.is-suggested td { border-block-end: 1px dashed var(--line); }
   .twl-table .tw-quote { font-family: var(--font-scripture); }
   .twl-table .tw-gloss { color: var(--ink-2); font-size: 12px; }
+  .twl-table .row-actions { display: flex; gap: 6px; }
 
   .no-approve-note { font-size: 11.5px; color: var(--ink-2); margin: 8px 2px 0; font-style: italic; }
+
+  /* Suggestion "chip" — dashed border + label, distinct from a saved link row */
+  .chip-suggested {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--inspire-deep); background: var(--card-2);
+    border: 1px dashed var(--inspire); border-radius: 999px; padding: 2px 7px;
+  }
+  :root[data-theme="dark"] .chip-suggested { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .chip-suggested { color: var(--inspire); } }
+  :root[data-theme="light"] .chip-suggested { color: var(--inspire-deep); }
+  .row-accept, .row-reject {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  .row-accept { border-color: var(--ok); color: var(--ok-ink); }
+  .row-reject { border-color: var(--warn); color: var(--warn-ink); }
+  .sugg-controls { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+  .sugg-controls select { font-size: 11.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  .sugg-controls .cluster-btn { font-size: 11.5px; padding: 3px 8px; }
+
+  /* Mobile card-at-a-time list — replaces the table below 560px so nothing scrolls sideways */
+  .twl-cards { display: none; flex-direction: column; gap: 10px; }
+  @media (max-width: 559.98px) {
+    .table-wrap { display: none; }
+    .twl-cards { display: flex; }
+  }
+  .twl-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 12px 14px; cursor: pointer;
+  }
+  .twl-card[aria-selected="true"] { border-color: var(--inspire); background: var(--hl); }
+  .twl-card.is-suggested { border-style: dashed; cursor: default; }
+  .twl-card-row { padding-block: 6px; }
+  .twl-card-row + .twl-card-row { border-block-start: 1px solid var(--line); }
+  .twl-card-row .cr-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin-block-end: 2px; }
+  .twl-card-row .cr-value { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+  .twl-card-row .cr-value.tw-quote-value { font-family: var(--font-scripture); font-size: 17px; }
+  .twl-card-head { display: flex; align-items: center; gap: 8px; margin-block-end: 4px; }
+  .twl-card-head .spacer { margin-inline-start: auto; }
 
   .detail-col { position: sticky; top: 12px; }
   .detail-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-block-end: 14px; }
@@ -84,6 +126,12 @@
   .gloss-caption { font-size: 12.5px; color: var(--ink-2); margin: 6px 0 0; }
   .locate-btn { appearance: none; border: none; background: transparent; color: var(--ink-2); cursor: pointer; font-size: 15px; padding: 2px 4px; }
 
+  /* Target-language-in-context — shows which target word(s) render this
+     link's source word, inline in the sentence (see JS comment for the
+     real data source this stands in for). */
+  .tc-context { font-size: 13px; color: var(--ink-2); line-height: 1.5; overflow-wrap: anywhere; }
+  .tc-context mark { background: var(--hl); color: inherit; border-radius: 3px; padding: 0 2px; }
+
   .detail-actions { display: flex; gap: 8px; margin-block-start: 14px; flex-wrap: wrap; }
   .detail-actions .btn { flex: 1; }
   .kill-switch-note { font-size: 11px; color: var(--ink-2); margin: 10px 0 0; }
@@ -95,22 +143,7 @@
   .btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
 
-  .sugg-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
-  .sugg-top { padding: 12px 12px 8px; border-block-end: 1px solid var(--line); }
-  .sugg-top h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
-  .sugg-body { padding: 10px 12px 14px; }
-  .sugg-item { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; border-block-end: 1px solid var(--line); }
-  .sugg-item:last-child { border-block-end: none; }
-  .sugg-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .sugg-main .sq { font-family: var(--font-scripture); font-size: 14.5px; background: var(--card-2); border-radius: 6px; padding: 2px 7px; }
-  .sugg-main .sg { font-size: 11.5px; color: var(--ink-2); flex: 1; min-width: 100px; }
-  .sugg-actions { display: flex; gap: 6px; }
-  .sugg-actions button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
-  .sugg-actions button.accept { border-color: var(--ok); color: var(--ok-ink); }
-  .sugg-actions button.reject { border-color: var(--warn); color: var(--warn-ink); }
   .sugg-select { font-size: 11.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
-  .sugg-empty { font-size: 12.5px; color: var(--ink-2); padding: 4px 0; }
-  .sugg-paused { font-size: 12.5px; color: var(--ink-2); font-style: italic; }
 
   /* dialogs (quote builder, links sheet, verse sheet) */
   .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
@@ -166,9 +199,6 @@
   .lex-popover .lex-gloss { margin: 0 0 4px; color: var(--ink-2); }
   .lex-popover .lex-def { margin: 0; }
 
-  /* D/F.4 TwlSuggestions — filter affordance */
-  .sugg-filter-row { display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; font-size: 12px; color: var(--ink-2); }
-  .sugg-filter-row select { font-size: 11.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 </style>
 </head>
 <body data-mode="translation">
@@ -222,21 +252,37 @@
     </div>
 
     <div class="words-layout" id="wordsLayout" data-view="table">
+      <!--
+        Word links get touched rarely once a book is linked — gateway-language
+        teams mostly do occasional cleanup here, not bulk work like tN/tQ. So
+        this screen stays deliberately lightweight: one merged list, no
+        separate suggestions workspace, no bulk-action toolbar.
+      -->
       <section class="table-col">
         <div class="table-col-top">
           <span class="tally" id="tally">3 of 3 linked</span>
           <span class="spacer"></span>
+          <span class="sugg-controls">
+            <label for="suggFilterSelect">Suggestions</label>
+            <select id="suggFilterSelect" data-handle="GET /api/twl-filters/:book" data-bundle="D">
+              <option value="all">All candidates</option>
+              <option value="unlinked">Unlinked only</option>
+              <option value="hide-deleted">Hide previously-deleted</option>
+            </select>
+            <button type="button" class="cluster-btn" id="suggRefreshBtn" data-handle="GET /api/twl-suggestions/:book/:chapter/:verse" data-bundle="D">Refresh</button>
+          </span>
           <button type="button" class="add-link-btn" id="addLinkBtn">+ Add link</button>
         </div>
         <div class="table-wrap">
           <table class="twl-table">
             <thead>
-              <tr><th>Quote</th><th>Occ</th><th>tW link</th><th>Gloss</th></tr>
+              <tr><th>Quote</th><th>Occ</th><th>tW link</th><th>Gloss</th><th>Actions</th></tr>
             </thead>
             <tbody id="twlBody"></tbody>
           </table>
         </div>
-        <p class="no-approve-note">Word links have no approve lifecycle — there is no validate endpoint for TWL rows; Save is the only state-changing action here.</p>
+        <div class="twl-cards" id="twlCards" role="list" aria-label="Word links"></div>
+        <p class="no-approve-note">Word links have no approve lifecycle — there is no validate endpoint for TWL rows; Save is the only state-changing action here. AI suggestions below are unsaved candidates — Add or Reject each one.</p>
       </section>
 
       <aside class="detail-col">
@@ -275,6 +321,10 @@
               </datalist>
               <p class="gloss-caption" id="detailGloss"></p>
             </div>
+            <div class="field">
+              <span class="field-label">In target (GLT)</span>
+              <p class="tc-context" id="detailTargetContext"></p>
+            </div>
             <div class="detail-actions">
               <button type="button" class="btn btn-outline" id="undoLinkBtn" data-handle="local:undo-link" data-bundle="F">Undo</button>
               <button type="button" class="btn btn-outline" id="saveLinkBtn" data-handle="PATCH /api/rows/twl/:id" data-headers="If-Match" data-bundle="F">Save</button>
@@ -282,23 +332,6 @@
             </div>
             <p class="kill-switch-note">Manual reorder is disabled (kill-switched) — TWL is canonically ordered by source-word position.</p>
           </div>
-        </div>
-
-        <div class="sugg-panel" id="suggPanel">
-          <div class="sugg-top" style="display:flex; align-items:center; gap:8px;">
-            <h2 style="margin:0;">Suggestions</h2>
-            <span style="margin-inline-start:auto;"></span>
-            <button type="button" class="cluster-btn" id="suggRefreshBtn" data-handle="GET /api/twl-suggestions/:book/:chapter/:verse" data-bundle="D" style="font-size:11.5px; padding:3px 8px;">Refresh</button>
-          </div>
-          <div class="sugg-filter-row">
-            <label for="suggFilterSelect">Filter</label>
-            <select id="suggFilterSelect" data-handle="GET /api/twl-filters/:book" data-bundle="D">
-              <option value="all">All candidates</option>
-              <option value="unlinked">Unlinked only</option>
-              <option value="hide-deleted">Hide previously-deleted</option>
-            </select>
-          </div>
-          <div class="sugg-body" id="suggBody"></div>
         </div>
       </aside>
     </div>
@@ -361,6 +394,31 @@
     ];
     var TARGET_WORDS = ["a", "man", "riding", "on", "a", "red", "horse"];
 
+    // Target-language-in-context (Spanish GLT demo, matching t3-scripture.html's
+    // ZEC 1:8 target text). In the real app this quote->target-word mapping
+    // comes from the verse's \zaln-s/\zaln-e alignment data (source word ->
+    // aligned target word span) — the same mechanism that drives the
+    // quote<->scripture highlight elsewhere (e.g. the quote builder's target
+    // chips). Here it's a small fixture standing in for that lookup.
+    var TARGET_GLT_WORDS = ["un", "hombre", "montado", "en", "un", "caballo", "rojo"];
+    var SRC_QUOTE_TO_TARGET_IDX = {
+      "אִ֗ישׁ": 1,
+      "רֹכֵב֙": 2,
+      "עַל": 3,
+      "ס֣וּס": 5,
+      "אָדֹ֔ם": 6
+    };
+    function targetContextHtml(quote) {
+      var hit = {};
+      String(quote).split(/\s+/).filter(Boolean).forEach(function (w) {
+        var idx = SRC_QUOTE_TO_TARGET_IDX[w];
+        if (idx !== undefined) hit[idx] = true;
+      });
+      return TARGET_GLT_WORDS.map(function (w, i) {
+        return hit[i] ? "<mark>" + w + "</mark>" : w;
+      }).join(" ");
+    }
+
     var LINKS = [
       { id: "twl-101", quote: "אִ֗ישׁ", occurrence: 1, article: "kt/man", gloss: "a male human being", saved: true },
       { id: "twl-102", quote: "ס֣וּס", occurrence: 1, article: "other/horse", gloss: "a large animal used for riding", saved: true },
@@ -381,10 +439,29 @@
       el("tally").textContent = LINKS.length + " of " + LINKS.length + " linked";
     }
 
+    // Suggestions now render inline in the same list as saved links (table
+    // rows + mobile cards), visually marked as dashed/"Suggested" rather than
+    // living in a separate panel.
+    function suggestionCandidateHtml(s) {
+      return s.ambiguous
+        ? '<select class="sugg-select" data-sugg="' + s.id + '">' + s.candidates.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("") + '</select>'
+        : s.candidateArticle;
+    }
+
     function renderTable() {
       var body = el("twlBody");
+      var cards = el("twlCards");
       body.innerHTML = "";
+      cards.innerHTML = "";
+
       LINKS.forEach(function (link, i) {
+        function selectRow() {
+          cur = i;
+          el("wordsLayout").setAttribute("data-view", "detail");
+          renderDetail();
+          renderTable();
+        }
+
         var tr = document.createElement("tr");
         tr.setAttribute("aria-selected", i === cur ? "true" : "false");
         tr.setAttribute("role", "button");
@@ -394,19 +471,62 @@
           '<td class="tw-quote">' + link.quote + '</td>' +
           '<td>' + link.occurrence + '</td>' +
           '<td>' + link.article + '</td>' +
-          '<td class="tw-gloss">' + link.gloss + '</td>';
-        function selectRow() {
-          cur = i;
-          el("wordsLayout").setAttribute("data-view", "detail");
-          renderDetail();
-          renderTable();
-        }
+          '<td class="tw-gloss">' + link.gloss + '</td>' +
+          '<td></td>';
         tr.addEventListener("click", selectRow);
         tr.addEventListener("keydown", function (ev) {
           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRow(); }
         });
         body.appendChild(tr);
+
+        var card = document.createElement("div");
+        card.className = "twl-card";
+        card.setAttribute("role", "listitem");
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("aria-selected", i === cur ? "true" : "false");
+        card.setAttribute("aria-label", "Edit word link " + link.quote + " → " + link.article);
+        card.innerHTML =
+          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value">' + link.quote + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Occurrence</span><span class="cr-value">' + link.occurrence + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">tW link</span><span class="cr-value">' + link.article + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Gloss</span><span class="cr-value">' + link.gloss + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">In target (GLT)</span><span class="cr-value tc-context">' + targetContextHtml(link.quote) + '</span></div>';
+        card.addEventListener("click", selectRow);
+        card.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRow(); }
+        });
+        cards.appendChild(card);
       });
+
+      SUGGESTIONS.forEach(function (s) {
+        var candidateHtml = suggestionCandidateHtml(s);
+        var actionsHtml =
+          '<button type="button" class="row-accept" data-handle="POST /api/rows/twl" data-bundle="F" data-sugg-accept="' + s.id + '">✓ Add</button>' +
+          '<button type="button" class="row-reject" data-handle="local:reject-suggestion" data-bundle="F" data-sugg-reject="' + s.id + '">✗ Reject</button>';
+
+        var tr = document.createElement("tr");
+        tr.className = "is-suggested";
+        tr.innerHTML =
+          '<td class="tw-quote">' + s.quote + ' <span class="chip-suggested">Suggested</span></td>' +
+          '<td>' + s.occurrence + '</td>' +
+          '<td>' + candidateHtml + '</td>' +
+          '<td class="tw-gloss">' + s.gloss + '</td>' +
+          '<td class="row-actions">' + actionsHtml + '</td>';
+        body.appendChild(tr);
+
+        var card = document.createElement("div");
+        card.className = "twl-card is-suggested";
+        card.innerHTML =
+          '<div class="twl-card-head"><span class="chip-suggested">Suggested</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value">' + s.quote + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Occurrence</span><span class="cr-value">' + s.occurrence + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">tW link</span><span class="cr-value">' + candidateHtml + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Gloss</span><span class="cr-value">' + s.gloss + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">In target (GLT)</span><span class="cr-value tc-context">' + targetContextHtml(s.quote) + '</span></div>' +
+          '<div class="twl-card-row row-actions">' + actionsHtml + '</div>';
+        cards.appendChild(card);
+      });
+
       tally();
     }
 
@@ -421,6 +541,7 @@
       el("detailOcc").value = link.occurrence;
       el("detailArticle").value = link.article;
       el("detailGloss").textContent = link.gloss;
+      el("detailTargetContext").innerHTML = targetContextHtml(link.quote);
       el("readArticleLink").href = "t5-articles.html";
       var dirty = !!unsaved[link.id];
       el("saveLinkBtn").disabled = !dirty;
@@ -428,34 +549,9 @@
       el("backToTableBtn").style.display = "";
     }
 
-    function renderSuggestions() {
-      var body = el("suggBody");
-      if (SUGGESTIONS.length === 0) {
-        body.innerHTML = '<p class="sugg-empty">Suggestions paused — Words checked here.</p>';
-        return;
-      }
-      body.innerHTML = "";
-      SUGGESTIONS.forEach(function (s) {
-        var item = document.createElement("div");
-        item.className = "sugg-item";
-        var candidateHtml = s.ambiguous
-          ? '<select class="sugg-select" data-sugg="' + s.id + '">' + s.candidates.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("") + '</select>'
-          : '<span class="sg">' + s.candidateArticle + '</span>';
-        item.innerHTML =
-          '<div class="sugg-main"><span class="sq">' + s.quote + '</span>' + candidateHtml + '<span class="sg">' + s.gloss + '</span></div>' +
-          '<div class="sugg-actions">' +
-          '<button type="button" class="accept" data-handle="POST /api/rows/twl" data-bundle="F" data-sugg-accept="' + s.id + '">Add</button>' +
-          '<button type="button" class="reject" data-handle="local:reject-suggestion" data-bundle="F" data-sugg-reject="' + s.id + '">Reject</button>' +
-          '<button type="button" data-handle="TODO:no-backend" data-bundle="F" title="Read article (demo)">Read</button>' +
-          '</div>';
-        body.appendChild(item);
-      });
-    }
-
     function render() {
       renderTable();
       renderDetail();
-      renderSuggestions();
     }
 
     el("detailOcc").addEventListener("input", function () { unsaved[LINKS[cur].id] = true; renderDetail(); });
@@ -579,15 +675,18 @@
       render();
     });
 
-    // suggestions: accept / reject
-    el("suggBody").addEventListener("click", function (ev) {
+    // suggestions: accept / reject — rows appear inline in both the table
+    // (desktop/tablet) and the card list (mobile), so wire the same handler
+    // to both containers.
+    function handleSuggRowClick(ev) {
       var acceptBtn = ev.target.closest ? ev.target.closest("[data-sugg-accept]") : null;
       var rejectBtn = ev.target.closest ? ev.target.closest("[data-sugg-reject]") : null;
       if (acceptBtn) {
         var sid = acceptBtn.getAttribute("data-sugg-accept");
         var s = SUGGESTIONS.filter(function (x) { return x.id === sid; })[0];
         if (!s) return;
-        var select = el("suggBody").querySelector('select[data-sugg="' + sid + '"]');
+        var row = acceptBtn.closest("tr, .twl-card");
+        var select = row ? row.querySelector('select[data-sugg="' + sid + '"]') : null;
         var article = select ? select.value : s.candidateArticle;
         var newId = "twl-new-" + (nextSeq++);
         LINKS.push({ id: newId, quote: s.quote, occurrence: s.occurrence, article: article, gloss: s.gloss });
@@ -599,9 +698,11 @@
         var rid = rejectBtn.getAttribute("data-sugg-reject");
         SUGGESTIONS = SUGGESTIONS.filter(function (x) { return x.id !== rid; });
         toast("Rejected (client-only, never persisted)", { bundle: "F" });
-        renderSuggestions();
+        renderTable();
       }
-    });
+    }
+    el("twlBody").addEventListener("click", handleSuggRowClick);
+    el("twlCards").addEventListener("click", handleSuggRowClick);
 
     // mobile detail back
     el("backToTableBtn").addEventListener("click", function () { el("wordsLayout").setAttribute("data-view", "table"); });
@@ -679,11 +780,11 @@
     // D/F.4 TwlSuggestions — real refresh + filter handles (previously local-fixture only)
     el("suggRefreshBtn").addEventListener("click", function () {
       toast("Suggestions refreshed", { bundle: "D" });
-      renderSuggestions();
+      renderTable();
     });
     el("suggFilterSelect").addEventListener("change", function () {
       toast("Suggestions filtered — deny-lists reapplied", { bundle: "D" });
-      renderSuggestions();
+      renderTable();
     });
 
     // account menu
