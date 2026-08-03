@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Articles — tW / tA</title>
+<link rel="stylesheet" href="_tokens.css" />
+<!--
+  DraftMeta note: tW/tA drafts are book-agnostic (no book/chapter/verse fields),
+  same as note templates. Any consumer that switches on meta.kind must special-case
+  these two draft kinds rather than reading m.book. See docs/flows/00-code-inventory.md §Note save semantics.
+-->
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .articles-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 64px; }
+
+  .seg-row { display: flex; align-items: center; gap: 12px; margin-block-end: 14px; flex-wrap: wrap; }
+  .seg { display: flex; background: var(--skip-soft); border-radius: 10px; padding: 3px; gap: 3px; }
+  .seg button { flex: 1; border: none; background: transparent; border-radius: 8px; padding: 7px 14px; font-weight: 700; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(1,66,99,0.15); }
+  .seg-note { font-size: 11.5px; color: var(--ink-2); }
+
+  .articles-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 819.98px) {
+    .articles-layout { grid-template-columns: minmax(0, 1fr); }
+    .articles-layout[data-view="editor"] .rail-col { display: none; }
+    .articles-layout[data-view="list"] .editor-col { display: none; }
+  }
+
+  .rail-col { position: sticky; top: 12px; }
+  .rail-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .rail-top { padding: 10px 10px 8px; border-block-end: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  .rail-top input[type="search"] { width: 100%; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  .rail-tally { font-size: 12px; color: var(--ink-2); }
+  .populate-btn { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 8px; padding: 6px 9px; font-size: 12px; cursor: pointer; text-align: start; }
+
+  .article-list { list-style: none; margin: 0; padding: 6px; max-height: 60vh; overflow-y: auto; }
+  .article-list li { margin-bottom: 2px; }
+  .article-list button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: start; appearance: none; border: none; background: transparent; border-radius: 8px; padding: 8px; cursor: pointer; color: var(--ink); }
+  .article-list button:hover { background: var(--card-2); }
+  .article-list button[aria-current="true"] { background: var(--hl); }
+  .article-list .al-main { flex: 1; min-width: 0; }
+  .article-list .al-title { font-weight: 600; font-size: 13.5px; }
+  .article-list .al-sub { font-size: 11.5px; color: var(--ink-2); }
+  .article-list .al-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--kindle); flex: none; }
+
+  .editor-col .editor-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 10px; }
+  .editor-col .back-mobile { display: none; }
+  @media (max-width: 819.98px) { .editor-col .back-mobile { display: inline-flex; } }
+  .unsaved-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; background: var(--kindle-soft); color: var(--kindle-ink); border-radius: 999px; padding: 4px 10px; }
+
+  .editor-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .editor-panel .ep-top { padding: 14px 16px; border-block-end: 1px solid var(--line); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .editor-panel .ep-top h1 { font-size: 17px; margin: 0; }
+  .editor-panel .ep-body { padding: 14px 16px; }
+
+  .part-block + .part-block { margin-block-start: 16px; padding-block-start: 16px; border-block-start: 1px solid var(--line); }
+  .part-head { display: flex; align-items: center; gap: 8px; margin-block-end: 8px; }
+  .part-head h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .part-head .spacer { margin-inline-start: auto; }
+  .part-head button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+  textarea.part-area {
+    width: 100%; min-height: 90px; font-family: var(--font-ui); font-size: 14.5px; line-height: 1.55; color: var(--ink);
+    background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; resize: vertical;
+  }
+  textarea.part-area:focus { border-color: var(--inspire); outline: none; }
+  .part-preview { font-size: 14.5px; line-height: 1.6; background: var(--card-2); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .part-preview b { color: var(--ocean); }
+  :root[data-theme="dark"] .part-preview b { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .part-preview b { color: var(--cultivate); } }
+  :root[data-theme="light"] .part-preview b { color: var(--ocean); }
+
+  .ep-foot { padding: 12px 16px; border-block-start: 1px solid var(--line); background: var(--card-2); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .ep-foot .spacer { margin-inline-start: auto; }
+
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-approve { background: var(--ok); color: #fff; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--ink-2); }
+  .empty-state .btn { margin-block-start: 10px; }
+
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 520px; width: 100%; max-height: 84vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-body { padding: 14px 16px; overflow-y: auto; }
+  .dlg-foot { display: flex; gap: 8px; padding: 12px 16px; border-block-start: 1px solid var(--line); justify-content: flex-end; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Articles — tW / tA</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Review</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html" aria-current="page">Articles</a>
+    <a href="../index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="articles-wrap">
+    <div class="seg-row">
+      <div class="seg" role="group" aria-label="Article type">
+        <button type="button" id="segTw" aria-pressed="true">translationWords</button>
+        <button type="button" id="segTa" aria-pressed="false">translationAcademy</button>
+      </div>
+      <span class="seg-note">Two focused views, not a shared tab bar — tW and tA never share one content region.</span>
+    </div>
+
+    <div class="articles-layout" id="articlesLayout" data-view="list">
+      <aside class="rail-col">
+        <div class="rail-panel">
+          <div class="rail-top">
+            <input type="search" placeholder="Search articles…" aria-label="Search articles" />
+            <span class="rail-tally" id="railTally">9 of 15 approved</span>
+            <button type="button" class="populate-btn" id="populateBtn" data-handle="POST /api/articles/populate" data-bundle="J">Populate from books</button>
+          </div>
+          <ul class="article-list" id="articleList" role="list" aria-label="Articles"></ul>
+        </div>
+      </aside>
+
+      <section class="editor-col">
+        <div class="editor-toolbar">
+          <button type="button" class="cluster-btn back-mobile" id="backToListBtn">← Articles</button>
+          <span class="unsaved-chip" id="unsavedChip" hidden><span aria-hidden="true">●</span> <span id="unsavedText">1 unsaved</span></span>
+          <span style="margin-inline-start:auto;"></span>
+          <button type="button" class="cluster-btn" id="historyBtn" data-handle="TODO:no-backend" data-bundle="J">History</button>
+        </div>
+
+        <article class="editor-panel" id="editorPanel">
+          <div class="ep-top">
+            <h1 id="epTitle">faith</h1>
+            <span class="chip chip-edited" id="epStateChip">Edited</span>
+          </div>
+          <div class="ep-body" id="epBody"><!-- parts rendered here --></div>
+          <div class="ep-foot">
+            <button type="button" class="btn btn-outline" id="translateBtn" data-handle="POST /api/pipelines/start" data-bundle="D">Translate / Re-run AI</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-outline" id="saveBtn" data-handle="PATCH /api/articles/:resource/unit" data-headers="If-Match" data-bundle="J">Save</button>
+            <button type="button" class="btn btn-approve" id="approveBtn" data-handle="POST /api/articles/:resource/unit/validate" data-bundle="J">Approve</button>
+          </div>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <!-- history dialog (no backend today) -->
+  <div class="dlg-backdrop" id="histBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="histTitle">
+      <div class="dlg-top"><h2 id="histTitle">Article history</h2><button type="button" class="close-x" id="closeHistBtn" aria-label="Close">✕</button></div>
+      <div class="dlg-body"><p style="font-size:13.5px;color:var(--ink-2);">No history endpoint exists for tW/tA articles today (unlike note templates) — this is a real gap, not a mockup omission.</p></div>
+      <div class="dlg-foot"><button type="button" class="btn btn-outline" id="closeHistBtn2">Close</button></div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+
+    var RESOURCES = {
+      tw: {
+        parts: ["body"],
+        items: [
+          { id: "faith", title: "faith", state: "edited", body: "<b>Faith</b> means trusting and believing in someone or something, especially trusting God." },
+          { id: "prophet", title: "prophet", state: "validated", body: "A <b>prophet</b> is a person who speaks messages from God to other people." },
+          { id: "grace", title: "grace", state: "draft", body: "" }
+        ]
+      },
+      ta: {
+        parts: ["title", "subtitle", "body"],
+        items: [
+          { id: "figs-metaphor", title: "Metaphor", state: "draft", titlePart: "Metaphor", subtitlePart: "Figures of speech", body: "A <b>metaphor</b> is a figure of speech in which one thing is spoken of as if it were another." },
+          { id: "translate-names", title: "How to Translate Names", state: "validated", titlePart: "How to Translate Names", subtitlePart: "Names", body: "Names of people and places often need special treatment when translating." }
+        ]
+      }
+    };
+
+    var resource = "tw";
+    var curIdx = 0;
+    var unsaved = false;
+
+    function currentItems() { return RESOURCES[resource].items; }
+
+    function renderList() {
+      var ul = el("articleList");
+      ul.innerHTML = "";
+      currentItems().forEach(function (item, i) {
+        var li = document.createElement("li");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        if (i === curIdx) btn.setAttribute("aria-current", "true");
+        btn.innerHTML =
+          '<span class="al-main"><span class="al-title">' + item.title + '</span>' +
+          '<span class="al-sub">' + (item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft") + '</span></span>' +
+          (item.unsavedDot ? '<span class="al-dot"></span>' : "");
+        btn.addEventListener("click", function () {
+          curIdx = i;
+          el("articlesLayout").setAttribute("data-view", "editor");
+          renderEditor();
+        });
+        li.appendChild(btn);
+        ul.appendChild(li);
+      });
+      var approved = currentItems().filter(function (it) { return it.state === "validated"; }).length;
+      el("railTally").textContent = approved + " of " + currentItems().length + " approved";
+    }
+
+    function renderEditor() {
+      var item = currentItems()[curIdx];
+      var parts = RESOURCES[resource].parts;
+      el("epTitle").textContent = item.title;
+      el("epStateChip").className = "chip " + (item.state === "validated" ? "chip-approved" : item.state === "edited" ? "chip-edited" : "chip-draft");
+      el("epStateChip").textContent = item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft";
+
+      var kindAttr = resource; // tw|ta — used only to relabel the mocked handle path below
+      document.querySelectorAll('[data-handle^="PATCH /api/articles/"]').forEach(function (b) {
+        b.setAttribute("data-handle", "PATCH /api/articles/" + kindAttr + "/unit");
+      });
+      document.querySelectorAll('[data-handle^="POST /api/articles/:resource/unit/validate"]').forEach(function (b) {
+        b.setAttribute("data-handle", "POST /api/articles/" + kindAttr + "/unit/validate");
+      });
+
+      var body = el("epBody");
+      body.innerHTML = "";
+      parts.forEach(function (partName) {
+        var val = partName === "body" ? item.body : (partName === "title" ? item.titlePart : item.subtitlePart) || "";
+        var block = document.createElement("div");
+        block.className = "part-block";
+        var head = document.createElement("div");
+        head.className = "part-head";
+        head.innerHTML =
+          '<h2>' + partName + '</h2>' +
+          '<span class="spacer"></span>' +
+          '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates)">✨ Draft with AI</button>' +
+          '<button type="button" class="preview-toggle" data-part="' + partName + '">Preview</button>';
+        block.appendChild(head);
+        var ta = document.createElement("textarea");
+        ta.className = "part-area";
+        ta.value = val.replace(/<[^>]+>/g, "");
+        ta.setAttribute("aria-label", partName + " draft");
+        ta.addEventListener("input", function () { markUnsaved(); });
+        block.appendChild(ta);
+        body.appendChild(block);
+      });
+    }
+
+    function markUnsaved() {
+      unsaved = true;
+      el("unsavedChip").hidden = false;
+      el("unsavedText").textContent = "1 unsaved";
+    }
+
+    el("saveBtn").addEventListener("click", function () {
+      unsaved = false;
+      el("unsavedChip").hidden = true;
+      currentItems()[curIdx].state = "edited";
+      renderList();
+      renderEditor();
+    });
+    el("approveBtn").addEventListener("click", function () {
+      currentItems()[curIdx].state = "validated";
+      toast("Approved", { bundle: "J" });
+      renderList();
+      renderEditor();
+    });
+
+    el("segTw").addEventListener("click", function () {
+      resource = "tw"; curIdx = 0;
+      el("segTw").setAttribute("aria-pressed", "true");
+      el("segTa").setAttribute("aria-pressed", "false");
+      renderList(); renderEditor();
+    });
+    el("segTa").addEventListener("click", function () {
+      resource = "ta"; curIdx = 0;
+      el("segTa").setAttribute("aria-pressed", "true");
+      el("segTw").setAttribute("aria-pressed", "false");
+      renderList(); renderEditor();
+    });
+
+    el("backToListBtn").addEventListener("click", function () { el("articlesLayout").setAttribute("data-view", "list"); });
+
+    el("historyBtn").addEventListener("click", function () { el("histBackdrop").hidden = false; });
+    el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+    el("closeHistBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+
+    function wireMenu(btnId, menuId) {
+      var btn = el(btnId), menu = el(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+    }
+    wireMenu("accountBtn", "accountMenu");
+    document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
+
+    renderList();
+    renderEditor();
+  })();
+  </script>
+</body>
+</html>

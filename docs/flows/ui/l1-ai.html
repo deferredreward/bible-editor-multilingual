@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Run AI pipelines — Lead flow</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* ============================================================
+     l1-ai.html — bundles D (AI bulk pipelines) + K (trust/observe)
+     See docs/flows/02-architecture.md + 00-code-inventory.md §D/§K.
+     ============================================================ */
+  /* Author-level `display` rules (e.g. .banner{display:flex}) otherwise beat
+     the UA [hidden]{display:none} rule at equal specificity, since origin
+     wins before specificity in the cascade — this !important override is
+     what actually makes the `hidden` attribute hide `.banner`/`.status-pill`
+     elements below. */
+  [hidden] { display: none !important; }
+
+  .flow-nav {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .flow-nav a {
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 4px 9px;
+    border-radius: 999px;
+  }
+  .flow-nav a:hover { background: var(--card-2); color: var(--ink); }
+  .flow-nav a[aria-current="true"] { background: var(--hl); color: var(--ink); font-weight: 700; }
+
+  .demo-switch {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 8px 18px;
+    background: var(--card-2);
+    border-block-end: 1px dashed var(--line);
+    font-size: 12px;
+  }
+  .demo-switch span.dslabel { color: var(--ink-2); font-weight: 700; margin-inline-end: 4px; }
+  .demo-switch button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink-2);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .demo-switch button[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+
+  main.desk { max-width: 1180px; }
+
+  .picker-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-block-end: 14px;
+  }
+  .picker-row .field { min-width: 140px; margin-top: 0; }
+  .picker-row .field.grow { flex: 1; min-width: 220px; }
+
+  .ai-menu-wrap { position: relative; flex: none; }
+  .ai-menu {
+    position: absolute;
+    inset-block-start: calc(100% + 6px);
+    inset-inline-start: 0;
+    z-index: 30;
+    min-width: 300px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 6px;
+    display: none;
+  }
+  .ai-menu[data-open="true"] { display: block; }
+  .ai-menu .mi {
+    display: block;
+    width: 100%;
+    text-align: start;
+    appearance: none;
+    border: none;
+    background: transparent;
+    border-radius: 9px;
+    padding: 9px 11px;
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .ai-menu .mi:hover { background: var(--card-2); }
+  .ai-menu .mi:disabled { opacity: 0.5; cursor: default; }
+  .ai-menu .mi .mi-title { font-weight: 700; font-size: 14px; display: block; }
+  .ai-menu .mi .mi-desc { font-size: 12px; color: var(--ink-2); display: block; margin-top: 2px; }
+  .ai-menu .mi .mi-secondary { font-size: 11px; color: var(--warn-ink); display: block; margin-top: 2px; font-weight: 600; }
+  .ai-menu hr { border: none; border-block-start: 1px solid var(--line); margin: 6px 4px; }
+  .ai-menu .mi-admin-tag {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    background: var(--skip-soft);
+    border-radius: 999px;
+    padding: 1px 7px;
+    margin-inline-start: 6px;
+  }
+
+  .banner-stack { display: flex; flex-direction: column; gap: 8px; margin-block-end: 14px; }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 5px 12px;
+    background: var(--hl);
+    color: var(--inspire-deep);
+    border: none;
+    cursor: pointer;
+  }
+  :root[data-theme="dark"] .status-pill { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .status-pill { color: var(--inspire); } }
+
+  .stagebar { display: flex; align-items: center; gap: 3px; }
+  .stagebar .sdot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--skip-soft);
+    border: 1px solid var(--line);
+  }
+  .stagebar .sdot.done { background: var(--ok); border-color: var(--ok); }
+  .stagebar .sdot.active { background: var(--inspire); border-color: var(--inspire); }
+  .stagebar .slabel { font-size: 10.5px; color: var(--ink-2); margin-inline-start: 4px; }
+
+  .progress-cell { min-width: 130px; }
+  .progress-cell .bar { margin-block-end: 3px; }
+  .progress-cell .plabel { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .err-detail {
+    font-size: 12px;
+    margin-block-start: 4px;
+  }
+  .err-detail .raw {
+    text-decoration: line-through;
+    color: var(--ink-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .err-detail .friendly { color: var(--warn-ink); display: block; margin-block-start: 2px; }
+
+  .jobactions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .jobactions .btn { min-height: 30px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
+
+  .empty-noai {
+    max-width: 480px;
+    margin: 60px auto;
+    text-align: center;
+    padding: 32px 24px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .empty-noai h2 { margin: 10px 0 6px; font-size: 18px; }
+  .empty-noai p { color: var(--ink-2); font-size: 14px; margin: 0; }
+  .empty-noai .icn { color: var(--skip); }
+
+  dialog.confirm-dialog {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 0;
+    max-width: 460px;
+    width: 92vw;
+    color: var(--ink);
+    background: var(--card);
+  }
+  dialog.confirm-dialog::backdrop { background: rgba(1, 27, 39, 0.45); }
+  dialog.confirm-dialog .d-top { padding: 16px 18px 0; }
+  dialog.confirm-dialog h3 { margin: 0 0 4px; font-size: 16px; }
+  dialog.confirm-dialog .d-body { padding: 12px 18px; font-size: 13.5px; color: var(--ink-2); }
+  dialog.confirm-dialog .d-body .lock-note { font-style: italic; color: var(--warn-ink); margin-block-start: 8px; }
+  dialog.confirm-dialog .d-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px 16px;
+  }
+  dialog.confirm-dialog .checklist { display: flex; flex-direction: column; gap: 6px; margin-block-start: 8px; }
+  dialog.confirm-dialog label.chk { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); }
+
+  @media (max-width: 560px) {
+    .picker-row .field.grow { min-width: 0; width: 100%; }
+    .ai-menu-wrap { width: 100%; }
+    .ai-menu { min-width: 0; width: 100%; }
+  }
+</style>
+</head>
+<body data-mode="translation" data-scenario="normal">
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Lead — Run AI pipelines</span>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <nav class="flow-nav" style="padding:8px 18px; border-block-end:1px solid var(--line); background:var(--card);">
+    <a href="../index.html">Hub</a>
+    <a href="t1-home.html">Translator home</a>
+    <a href="l1-ai.html" aria-current="true">Run AI pipelines</a>
+    <a href="l2-style.html">Teach the AI our style</a>
+    <a href="l3-templates.html">Curate note templates</a>
+  </nav>
+
+  <!-- Demo-only scenario switcher — not part of the real app, lets a reviewer
+       see every required state without wiring a live backend. -->
+  <div class="demo-switch" role="group" aria-label="Preview scenario (demo control, not app UI)">
+    <span class="dslabel">Preview state:</span>
+    <button type="button" data-scenario-btn="normal" aria-pressed="true">Normal</button>
+    <button type="button" data-scenario-btn="locked" aria-pressed="false">Chapter locked</button>
+    <button type="button" data-scenario-btn="ready" aria-pressed="false">Drafts ready</button>
+    <button type="button" data-scenario-btn="no-ai" aria-pressed="false">AI not configured</button>
+  </div>
+
+  <!-- ============================================================
+       "AI not configured" full-screen empty state — BT_API_TOKEN absent
+       disables /api/tn-quick, /api/pipelines/start, AND /api/pipelines/:jobId
+       (job-status reads are gated too — easy to miss per 00b-api-inventory.md
+       Bundle D table). This is what a token-less workspace sees instead of
+       the whole screen below, not an error toast.
+       ============================================================ -->
+  <section class="empty-noai" id="noAiState" hidden>
+    <svg class="icn" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 2l1.9 5.8L20 9.3l-4.6 3.8L16.8 19 12 15.6 7.2 19l1.4-5.9L4 9.3l6.1-1.5L12 2Z"></path></svg>
+    <h2>AI not configured</h2>
+    <p>An admin needs to set <code>BT_API_TOKEN</code> for this workspace before AI pipelines can run. This isn't an error — the feature is simply off until then. Job status reads are disabled too, so no queue or job table can be shown.</p>
+  </section>
+
+  <main class="desk" id="mainAiUi">
+
+    <div class="panel-top" style="padding:0; border:none; margin-block-end:14px; align-items:flex-start;">
+      <div>
+        <h1 style="font-size:20px; margin:0 0 4px;">Run AI pipelines</h1>
+        <p class="panel-sub" style="margin:0;">Bulk-draft a chapter's ULT/UST, translation notes, or translation questions. A run locks the chapter for editing while it's in progress.</p>
+      </div>
+      <span class="spacer"></span>
+      <button type="button" class="status-pill" id="statusPill">2 pipelines running</button>
+    </div>
+
+    <div class="banner-stack" id="bannerStack">
+      <!-- Chapter-locked banner (K.1) — shown when the currently-picked chapter
+           has a job in {running, paused_for_outage, paused_for_usage_limit, dispatching}.
+           Discovered reactively (409 chapter_locked on a write), never via a GET. -->
+      <div class="banner banner--lock" id="lockBanner" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>
+        <span class="banner-msg">AI <strong id="lockPipelineType">generate</strong> run in progress for <strong id="lockScope">ZEC 6</strong> — started <span id="lockStarted">12 min ago</span>. Editing is locked for this chapter. You can still mark notes to keep before the new set lands.</span>
+      </div>
+
+      <!-- "New AI drafts are ready" banner (K.1 completion routing) — delivery
+           is not real-time; observed lag is 5–8 minutes via the */5 poll cron. -->
+      <div class="banner banner--ready" id="readyBanner" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+        <span class="banner-msg">New AI drafts are ready for <strong>ZEC 6</strong>. Save your work, then refresh.</span>
+        <button type="button" class="btn btn-ghost banner-action" data-handle="local:refetch-chapter" data-bundle="K">Refresh</button>
+      </div>
+    </div>
+
+    <div class="picker-row">
+      <div class="field">
+        <label class="f-label" for="pickBook">Book</label>
+        <select class="tselect" id="pickBook">
+          <option>ZEC</option><option>TIT</option><option>RUT</option><option>JON</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="f-label" for="pickChapter">Chapter</label>
+        <input class="tinput" id="pickChapter" type="text" value="6" style="max-width:90px;" />
+      </div>
+      <div class="ai-menu-wrap">
+        <button type="button" class="btn btn-primary" id="aiMenuBtn" aria-haspopup="true" aria-expanded="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l1.9 5.8L20 9.3l-4.6 3.8L16.8 19 12 15.6 7.2 19l1.4-5.9L4 9.3l6.1-1.5L12 2Z"></path></svg>
+          AI ▾
+        </button>
+        <!-- data-mode gating (D4): the 2 translate-only items are wrapped
+             .translation-only so the shared mode toggle hides them for the
+             English root/authoring project. Toggle "Mode" above to test. -->
+        <div class="ai-menu" id="aiMenu" role="menu">
+          <button type="button" class="mi" role="menuitem" data-pipeline="generate">
+            <span class="mi-title">Generate ULT + UST</span>
+            <span class="mi-desc">Aligned literal + simplified text and a draft issues list for the chapter. ~60–100 min.</span>
+          </button>
+          <button type="button" class="mi" role="menuitem" data-pipeline="notes">
+            <span class="mi-title">Write translation notes</span>
+            <span class="mi-desc">Translation notes (tn) for every verse in the chapter. ~30–60 min.</span>
+          </button>
+          <button type="button" class="mi" role="menuitem" data-pipeline="tqs">
+            <span class="mi-title">Write translation questions</span>
+            <span class="mi-desc">Translation questions (tq) aligned to the current ULT/UST. ~30–60 min.</span>
+          </button>
+          <div class="translation-only">
+            <button type="button" class="mi" role="menuitem" data-pipeline="translate">
+              <span class="mi-title">Translate chapter</span>
+              <span class="mi-desc">AI-translate this chapter's notes from the source language.</span>
+            </button>
+            <button type="button" class="mi" role="menuitem" data-pipeline="translate-tq">
+              <span class="mi-title">Translate questions</span>
+              <span class="mi-desc">AI-translate this chapter's questions from the source language.</span>
+            </button>
+          </div>
+          <hr />
+          <button type="button" class="mi" role="menuitem" data-handle="POST /api/books/:book/reimport" data-bundle="D">
+            <span class="mi-title">Import from Door43</span>
+            <span class="mi-desc">Re-pull ULT/UST/tN/tQ/TWL for a chapter range. Never overwrites human edits.</span>
+          </button>
+          <div class="translation-only">
+            <button type="button" class="mi" role="menuitem" data-handle="POST /api/books/:book/aquifer-drafts" data-bundle="D">
+              <span class="mi-title">Pull Aquifer drafts<span class="mi-admin-tag">Admin</span></span>
+              <span class="mi-desc">Merge Aquifer notes as unapproved drafts. Never overwrites validated/edited rows.</span>
+            </button>
+            <button type="button" class="mi" role="menuitem" data-handle="POST /api/books/:book/import" data-bundle="D">
+              <span class="mi-title">Re-source notes from English<span class="mi-admin-tag">Admin</span></span>
+              <span class="mi-desc">Two-step confirm; if local edits exist, a sharper dialog shows exact counts before discarding.</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Finding (D.1 in 00-code-inventory.md): a 6th "chain macro" menu item
+         does NOT exist today. followUpChain is scaffolded in types/plumbing
+         ("Currently used by the 'Generate everything' macro" per its own
+         comment) but no OPTIONS/TRANSLATE_OPTION entry sets it. Today's menu
+         is 5 items in translation-mode projects, 3 in root/English projects
+         — not 6. This screen matches that reality, not the old "5+chain" claim. -->
+
+    <!-- "While you were away" completion notice — pipelineStore retro-fires this
+         for jobs <24h old with notified_user_at===null. Dismiss marks it seen. -->
+    <div class="banner" id="awayBanner" style="background:var(--ok-soft); color:var(--ok-ink); border-color:var(--ok); margin-block-end:14px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+      <span class="banner-msg">"Generate ULT + UST" finished for ZEC 5 while you were away.</span>
+      <button type="button" class="btn btn-ghost banner-action" id="awayDismissBtn" data-handle="POST /api/pipelines/:jobId/notified" data-bundle="D">Dismiss</button>
+    </div>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Pipeline jobs</h2>
+        <span class="panel-sub">Single global bot slot — one job runs at a time; the rest queue in priority order. Foreign jobs (started by someone else) are read-only here.</span>
+      </div>
+      <div class="panel-body flush">
+        <div class="table-wrap">
+          <table class="dtable">
+            <thead>
+              <tr><th>Type</th><th>Scope</th><th>Stage</th><th>Progress</th><th>Started</th><th>Requested by</th><th></th></tr>
+            </thead>
+            <tbody id="jobsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <span class="foot-state" id="jobsFoot">3 jobs — 1 needs attention</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" data-handle="GET /api/pipelines" data-bundle="D">Refresh</button>
+        <button type="button" class="btn btn-ghost" id="dismissAllBtn">Dismiss all</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Confirm-before-run dialog (D.2) -->
+  <dialog class="confirm-dialog" id="confirmDialog">
+    <div class="d-top"><h3 id="confirmTitle">Start: Generate ULT + UST</h3></div>
+    <div class="d-body">
+      <div class="field">
+        <label class="f-label" for="confirmRange">Chapter / range</label>
+        <input class="tinput" id="confirmRange" type="text" value="6" />
+        <p class="f-help" id="confirmRangeHelp">1 chapter will run.</p>
+      </div>
+      <div class="checklist" id="generateOptions">
+        <label class="chk"><input type="checkbox" checked /> ULT (literal text)</label>
+        <label class="chk"><input type="checkbox" checked /> ULT alignment</label>
+        <label class="chk"><input type="checkbox" checked /> UST (simplified text)</label>
+        <label class="chk"><input type="checkbox" checked /> UST alignment</label>
+      </div>
+      <p class="lock-note">This locks <strong id="confirmScope">ZEC 6</strong> for editing while it runs. Translators can still mark notes to keep.</p>
+    </div>
+    <div class="d-foot">
+      <button type="button" class="btn btn-ghost" id="confirmCancelBtn">Cancel</button>
+      <button type="button" class="btn btn-primary" id="confirmStartBtn" data-handle="POST /api/pipelines/start" data-bundle="D">Start</button>
+    </div>
+  </dialog>
+
+  <!-- 409 conflict — "Already running" dialog (D.2). Close-only, no cancel/take-over. -->
+  <dialog class="confirm-dialog" id="conflictDialog">
+    <div class="d-top"><h3>Already running</h3></div>
+    <div class="d-body">
+      <p><strong id="conflictUser">Maria</strong> started <strong id="conflictType">write translation notes</strong> for <strong id="conflictScope">ZEC 6</strong> <span id="conflictAgo">4 min ago</span>. Current stage: <span id="conflictStage">Draft</span>.</p>
+      <p class="lock-note">This chapter is locked while the pipeline runs. Your request would overwrite this one when it completes — no take-over is offered here.</p>
+    </div>
+    <div class="d-foot">
+      <button type="button" class="btn btn-primary" id="conflictCloseBtn">Close</button>
+    </div>
+  </dialog>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    // Friendly PipelineErrorKind copy — the raw enum string is what the real
+    // app shows today (Shell.tsx toast interpolates error_kind verbatim; see
+    // 00-code-inventory.md §K.1 finding: "no i18n/friendly mapping exists
+    // anywhere for any PipelineErrorKind value"). This screen demonstrates
+    // the fix: map every value to a human sentence, including `interrupted`,
+    // which today renders as the bare word "interrupted" with zero explanation.
+    var ERROR_COPY = {
+      transient_outage: "The AI service had a temporary outage. It should recover on its own — try again in a few minutes.",
+      auth_error: "The AI service rejected our credentials. An admin needs to check the BT_API_TOKEN.",
+      usage_limit: "This workspace hit its daily AI usage limit. The run will resume automatically tomorrow.",
+      sdk_error: "Something went wrong talking to the AI service. Retrying usually fixes this.",
+      non_success_result: "The AI service finished but reported a failure. Retry, or check with an admin if it keeps happening.",
+      missing_output: "The AI service didn't return any content for this chapter. Retry — if it keeps happening, this chapter may need attention.",
+      stale_output: "The AI's draft was based on an older version of this chapter and was rejected to avoid overwriting newer edits. Retry to draft against the current text.",
+      interrupted: "This run was interrupted before it finished — likely the server restarted mid-job. Nothing was lost; retry to pick it back up.",
+      import_failed: "The finished draft couldn't be imported into the chapter. An admin may need to look at the import log."
+    };
+
+    var STAGES = {
+      generate: ["Draft", "Align", "Push"],
+      notes: ["Draft", "Batch", "Push"],
+      tqs: ["Draft", "Push"],
+      translate: ["Draft", "Push"],
+      "translate-tq": ["Draft", "Push"]
+    };
+    var LABELS = {
+      generate: "Generate ULT + UST",
+      notes: "Write translation notes",
+      tqs: "Write translation questions",
+      translate: "Translate chapter",
+      "translate-tq": "Translate questions"
+    };
+
+    var jobs = [
+      { id: "j1", type: "generate", scope: "ZEC 6", state: "running", stage: "Draft", batch: null, started: "12 min ago", mine: true, queuePos: null },
+      { id: "j2", type: "notes", scope: "ZEC 7", state: "running", stage: "Batch", batch: [3, 11], started: "4 min ago", mine: false, requestedBy: "Maria", queuePos: null },
+      { id: "j3", type: "tqs", scope: "ZEC 8", state: "failed", errorKind: "interrupted", started: "31 min ago", mine: true, queuePos: null },
+      { id: "j4", type: "translate", scope: "ZEC 9", state: "queued", started: null, mine: true, queuePos: 1 }
+    ];
+
+    var jobsBody = document.getElementById("jobsBody");
+    var jobsFoot = document.getElementById("jobsFoot");
+    var statusPill = document.getElementById("statusPill");
+
+    function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+    function stageBarHtml(job) {
+      var stages = STAGES[job.type] || ["Draft", "Push"];
+      var activeIdx = stages.indexOf(job.stage);
+      var html = '<div class="stagebar" role="list" aria-label="Pipeline stage">';
+      stages.forEach(function (s, i) {
+        var cls = "sdot";
+        if (job.state === "done") cls += " done";
+        else if (i < activeIdx) cls += " done";
+        else if (i === activeIdx && job.state === "running") cls += " active";
+        html += '<span class="' + cls + '" role="listitem" title="' + esc(s) + '"></span>';
+      });
+      html += '<span class="slabel">' + esc(job.state === "queued" ? "queued" : (job.stage || "—")) + '</span></div>';
+      return html;
+    }
+
+    function progressHtml(job) {
+      if (job.state === "queued") return '<span class="foot-state">#' + job.queuePos + ' in line</span>';
+      if (job.state === "failed") {
+        var friendly = ERROR_COPY[job.errorKind] || ("Unrecognized error: " + job.errorKind);
+        return '<div class="err-detail"><span class="raw">' + esc(job.errorKind) + '</span><span class="friendly">' + esc(friendly) + '</span></div>';
+      }
+      if (job.batch) {
+        var pct = Math.round((job.batch[0] / job.batch[1]) * 100);
+        return '<div class="progress-cell"><div class="bar"><i style="width:' + pct + '%"></i></div><span class="plabel">batch ' + job.batch[0] + '/' + job.batch[1] + '</span></div>';
+      }
+      return '<span class="plabel">running</span>';
+    }
+
+    function actionsHtml(job) {
+      var btns = [];
+      if (job.state === "running" || job.state === "queued") {
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-handle="GET /api/pipelines/:jobId" data-bundle="D" title="Poll this job\'s status">Details</button>');
+      }
+      if (job.state === "queued" && job.mine) {
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-job-cancel="' + job.id + '" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>');
+      }
+      if (job.state === "failed") {
+        btns.push('<button type="button" class="btn btn-rerun btn-sm" data-job-retry="' + job.id + '" data-handle="POST /api/pipelines/start" data-bundle="D">Retry</button>');
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-job-dismiss="' + job.id + '">Dismiss</button>');
+      }
+      if (job.state === "cancelled") {
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-job-dismiss="' + job.id + '">Dismiss</button>');
+      }
+      return '<div class="jobactions">' + btns.join("") + '</div>';
+    }
+
+    function renderJobs() {
+      jobsBody.innerHTML = jobs.map(function (job) {
+        return "<tr>" +
+          "<td><strong>" + esc(LABELS[job.type] || job.type) + "</strong></td>" +
+          "<td>" + esc(job.scope) + "</td>" +
+          "<td>" + stageBarHtml(job) + "</td>" +
+          "<td>" + progressHtml(job) + "</td>" +
+          "<td>" + esc(job.started || "—") + "</td>" +
+          "<td>" + (job.mine ? "You" : esc("requested by " + job.requestedBy)) + "</td>" +
+          "<td>" + actionsHtml(job) + "</td>" +
+          "</tr>";
+      }).join("");
+
+      var running = jobs.filter(function (j) { return j.state === "running"; }).length;
+      var queued = jobs.filter(function (j) { return j.state === "queued"; }).length;
+      var failed = jobs.filter(function (j) { return j.state === "failed"; }).length;
+      jobsFoot.textContent = jobs.length + " jobs" + (failed ? " — " + failed + " needs attention" : "");
+      statusPill.textContent = running
+        ? running + " pipeline" + (running > 1 ? "s" : "") + " running" + (queued ? " (" + queued + " queued)" : "")
+        : (queued ? queued + " queued" : (failed ? failed + " failed" : "AI ready to review"));
+      statusPill.hidden = !(running || queued || failed);
+    }
+
+    jobsBody.addEventListener("click", function (ev) {
+      var cancelId = ev.target.closest("[data-job-cancel]");
+      var dismissId = ev.target.closest("[data-job-dismiss]");
+      var retryId = ev.target.closest("[data-job-retry]");
+      if (cancelId) {
+        var id1 = cancelId.getAttribute("data-job-cancel");
+        jobs = jobs.filter(function (j) { return j.id !== id1; });
+        renderJobs();
+      } else if (dismissId) {
+        // Dismiss/dismissAll is localStorage-only (00-code-inventory.md §D.7)
+        // — no server call, purely a client-side "stop showing me this" flag.
+        var id2 = dismissId.getAttribute("data-job-dismiss");
+        jobs = jobs.filter(function (j) { return j.id !== id2; });
+        renderJobs();
+      } else if (retryId) {
+        // No dedicated retry endpoint exists — "Retry" re-issues the same
+        // POST /api/pipelines/start with the job's original options.
+        var id3 = retryId.getAttribute("data-job-retry");
+        jobs = jobs.map(function (j) { return j.id === id3 ? Object.assign({}, j, { state: "queued", queuePos: jobs.length }) : j; });
+        renderJobs();
+      }
+    });
+
+    document.getElementById("dismissAllBtn").addEventListener("click", function () {
+      jobs = jobs.filter(function (j) { return j.state === "running" || j.state === "queued"; });
+      renderJobs();
+    });
+
+    // --- AI menu ---
+    var menuBtn = document.getElementById("aiMenuBtn");
+    var menu = document.getElementById("aiMenu");
+    menuBtn.addEventListener("click", function () {
+      var open = menu.getAttribute("data-open") === "true";
+      menu.setAttribute("data-open", open ? "false" : "true");
+      menuBtn.setAttribute("aria-expanded", open ? "false" : "true");
+    });
+    document.addEventListener("click", function (ev) {
+      if (!menu.contains(ev.target) && ev.target !== menuBtn && !menuBtn.contains(ev.target)) {
+        menu.setAttribute("data-open", "false");
+        menuBtn.setAttribute("aria-expanded", "false");
+      }
+    });
+
+    var confirmDialog = document.getElementById("confirmDialog");
+    var conflictDialog = document.getElementById("conflictDialog");
+    var pendingType = null;
+
+    menu.querySelectorAll(".mi[data-pipeline]").forEach(function (mi) {
+      mi.addEventListener("click", function () {
+        menu.setAttribute("data-open", "false");
+        pendingType = mi.getAttribute("data-pipeline");
+        var book = document.getElementById("pickBook").value;
+        var chapter = document.getElementById("pickChapter").value;
+        var scope = book + " " + chapter;
+
+        // Conflict check: does a running/dispatching job already cover this scope?
+        var conflict = jobs.find(function (j) { return j.scope === scope && (j.state === "running" || j.state === "dispatching"); });
+        if (conflict && !conflict.mine) {
+          document.getElementById("conflictUser").textContent = conflict.requestedBy || "another translator";
+          document.getElementById("conflictType").textContent = (LABELS[conflict.type] || conflict.type).toLowerCase();
+          document.getElementById("conflictScope").textContent = conflict.scope;
+          document.getElementById("conflictAgo").textContent = conflict.started || "";
+          document.getElementById("conflictStage").textContent = conflict.stage || "running";
+          conflictDialog.showModal();
+          return;
+        }
+
+        document.getElementById("confirmTitle").textContent = "Start: " + LABELS[pendingType];
+        document.getElementById("confirmRange").value = chapter;
+        document.getElementById("confirmScope").textContent = scope;
+        document.getElementById("generateOptions").style.display = pendingType === "generate" ? "flex" : "none";
+        confirmDialog.showModal();
+      });
+    });
+
+    document.getElementById("confirmCancelBtn").addEventListener("click", function () { confirmDialog.close(); });
+    document.getElementById("conflictCloseBtn").addEventListener("click", function () { conflictDialog.close(); });
+
+    document.getElementById("confirmStartBtn").addEventListener("click", function () {
+      confirmDialog.close();
+      var book = document.getElementById("pickBook").value;
+      var chapter = document.getElementById("confirmRange").value;
+      var scope = book + " " + chapter;
+      var newJob = { id: "j" + Date.now(), type: pendingType, scope: scope, state: "running", stage: STAGES[pendingType][0], batch: pendingType === "notes" ? [1, 11] : null, started: "just now", mine: true, queuePos: null };
+      jobs.unshift(newJob);
+      renderJobs();
+      if (document.body.dataset.scenario !== "no-ai") {
+        document.getElementById("lockScope").textContent = scope;
+        document.getElementById("lockPipelineType").textContent = LABELS[pendingType];
+        document.getElementById("lockBanner").hidden = false;
+      }
+    });
+
+    // --- demo scenario switcher ---
+    var scenarioBtns = document.querySelectorAll("[data-scenario-btn]");
+    function applyScenario(name) {
+      document.body.dataset.scenario = name;
+      scenarioBtns.forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-scenario-btn") === name ? "true" : "false"); });
+      document.getElementById("noAiState").hidden = name !== "no-ai";
+      document.getElementById("mainAiUi").hidden = name === "no-ai";
+      document.getElementById("lockBanner").hidden = name !== "locked";
+      document.getElementById("readyBanner").hidden = name !== "ready";
+      if (name === "no-ai") document.getElementById("awayBanner").hidden = true;
+    }
+    scenarioBtns.forEach(function (b) {
+      b.addEventListener("click", function () { applyScenario(b.getAttribute("data-scenario-btn")); });
+    });
+
+    document.getElementById("awayDismissBtn").addEventListener("click", function () {
+      document.getElementById("awayBanner").hidden = true;
+    });
+
+    renderJobs();
+    applyScenario("normal");
+  })();
+  </script>
+</body>
+</html>

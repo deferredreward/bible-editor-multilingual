@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — Import books</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; flex: none; }
+  .flow-nav a { color: var(--ink-2); text-decoration: none; font-weight: 600; }
+  .flow-nav a[aria-current="page"] { color: var(--inspire-deep); }
+  :root[data-theme="dark"] .flow-nav a[aria-current="page"] { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .flow-nav a[aria-current="page"] { color: var(--inspire); } }
+  @media (max-width: 700px) { .flow-nav { display: none; } }
+  .topbar-shared .account-cluster button {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 8px; padding: 5px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+
+  /* two-pane: book grid (left) + detail (right), collapses to stacked below 900 */
+  .import-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .import-shell { grid-template-columns: minmax(0, 1fr); } }
+
+  .book-search { margin-bottom: 12px; }
+  .book-groups { display: flex; flex-direction: column; gap: 16px; }
+  .book-group h3 {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink-2); margin: 0 0 8px;
+  }
+  .book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .book-tile {
+    appearance: none; text-align: left; border: 1px solid var(--line); background: var(--card);
+    border-radius: var(--radius-sm); padding: 9px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+  }
+  .book-tile:hover { border-color: var(--inspire); }
+  .book-tile[aria-current="true"] { border-color: var(--inspire); background: var(--hl); }
+  .book-tile .bt-code { font-weight: 700; font-size: 13.5px; }
+  .book-tile .bt-name { font-size: 11.5px; color: var(--ink-2); }
+  .book-tile.hidden { display: none; }
+
+  .book-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .book-detail-head h2 { margin: 0; }
+  .adv-accordion { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; margin-top: 14px; }
+  .adv-toggle {
+    width: 100%; text-align: left; appearance: none; border: none; background: var(--card-2); cursor: pointer;
+    padding: 10px 12px; font-size: 13.5px; font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 8px;
+  }
+  .adv-body { padding: 12px; border-block-start: 1px solid var(--line); display: none; }
+  .adv-body.open { display: block; }
+  .src-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-block-end: 1px solid var(--line); font-size: 13.5px; }
+  .src-row:last-child { border-block-end: none; }
+  .ov-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; margin-top: 10px; }
+  .ov-form .field { margin: 0; }
+
+  .job-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-block-end: 1px solid var(--line); font-size: 13.5px; }
+  .job-row:last-child { border-block-end: none; }
+  .job-row .jr-main { flex: 1; min-width: 0; }
+  .job-row .jr-sub { font-size: 12px; color: var(--ink-2); }
+
+  .resource-check { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13.5px; }
+  .resource-check input { width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Admin — Import books</span>
+    <nav class="flow-nav" aria-label="Admin flow screens">
+      <a href="a1-setup.html">Setup</a>
+      <a href="a2-import.html" aria-current="page">Import</a>
+      <a href="a3-team.html">Team</a>
+      <a href="a4-observe.html">Observe</a>
+      <a href="t1-home.html">Translator home</a>
+      <a href="index.html">Hub</a>
+    </nav>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <main class="desk">
+    <header class="admin-head">
+      <p class="eyebrow">Bundle B · Bring in a book</p>
+      <h1>Import</h1>
+      <p class="sub" id="counterLine">0/66 imported</p>
+    </header>
+
+    <div class="import-shell">
+      <section class="panel">
+        <div class="panel-top">
+          <h2>Books</h2>
+          <p class="panel-sub">Whole 66-book canon, grouped Old/New Testament. A failed list-load shows an explicit error — it never silently falls back to "not imported."</p>
+        </div>
+        <div class="panel-body">
+          <div class="field book-search">
+            <input class="tinput" type="search" id="bookSearch" placeholder="Search books…" aria-label="Search books">
+          </div>
+          <div id="bookGroups" class="book-groups"></div>
+        </div>
+        <div class="panel-foot">
+          <span class="foot-state" id="listFoot">Loaded via <code>GET /api/books</code></span>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/books" data-bundle="B">Retry list</button>
+        </div>
+      </section>
+
+      <div id="detailHost"></div>
+    </div>
+  </main>
+
+  <!-- Re-pull dialog (ImportFromDoor43Dialog) -->
+  <div class="modal-overlay" id="repullModal" hidden role="dialog" aria-modal="true" aria-labelledby="repullTitle">
+    <div class="modal-box" style="max-width:480px;">
+      <div class="modal-head">
+        <h3 id="repullTitle">Import from Door43</h3>
+        <p>Non-destructive — a human-edited row is never overwritten; only pristine or AI-only rows are touched.</p>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="f-label" for="chapterRange">Chapter range</label>
+          <input class="tinput" id="chapterRange" type="text" value="1-16" placeholder="e.g. 1-16">
+        </div>
+        <div class="field">
+          <p class="f-label">Resources</p>
+          <label class="resource-check"><input type="checkbox" checked> ULT (literal text)</label>
+          <label class="resource-check"><input type="checkbox" checked> UST (simplified text)</label>
+          <label class="resource-check"><input type="checkbox" checked> translationNotes (tN)</label>
+          <label class="resource-check"><input type="checkbox"> translationQuestions (tQ)</label>
+          <label class="resource-check"><input type="checkbox"> translationWords Links (TWL)</label>
+        </div>
+      </div>
+      <div class="modal-foot" style="justify-content:space-between;">
+        <button class="btn btn-ghost" type="button" id="repullClose">Cancel</button>
+        <button class="btn btn-primary" type="button" data-handle="POST /api/books/:book/reimport" data-bundle="B" id="repullGo">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    var OT = ["GEN","EXO","LEV","NUM","DEU","JOS","JDG","RUT","1SA","2SA","1KI","2KI","1CH","2CH","EZR","NEH","EST","JOB","PSA","PRO","ECC","SNG","ISA","JER","LAM","EZK","DAN","HOS","JOL","AMO","OBA","JON","MIC","NAM","HAB","ZEP","HAG","ZEC","MAL"];
+    var NT = ["MAT","MRK","LUK","JHN","ACT","ROM","1CO","2CO","GAL","EPH","PHP","COL","1TH","2TH","1TI","2TI","TIT","PHM","HEB","JAS","1PE","2PE","1JN","2JN","3JN","JUD","REV"];
+    var NAMES = {
+      GEN:"Genesis", EXO:"Exodus", LEV:"Leviticus", NUM:"Numbers", DEU:"Deuteronomy", JOS:"Joshua", JDG:"Judges",
+      RUT:"Ruth", "1SA":"1 Samuel", "2SA":"2 Samuel", "1KI":"1 Kings", "2KI":"2 Kings", "1CH":"1 Chronicles",
+      "2CH":"2 Chronicles", EZR:"Ezra", NEH:"Nehemiah", EST:"Esther", JOB:"Job", PSA:"Psalms", PRO:"Proverbs",
+      ECC:"Ecclesiastes", SNG:"Song of Songs", ISA:"Isaiah", JER:"Jeremiah", LAM:"Lamentations", EZK:"Ezekiel",
+      DAN:"Daniel", HOS:"Hosea", JOL:"Joel", AMO:"Amos", OBA:"Obadiah", JON:"Jonah", MIC:"Micah", NAM:"Nahum",
+      HAB:"Habakkuk", ZEP:"Zephaniah", HAG:"Haggai", ZEC:"Zechariah", MAL:"Malachi",
+      MAT:"Matthew", MRK:"Mark", LUK:"Luke", JHN:"John", ACT:"Acts", ROM:"Romans", "1CO":"1 Corinthians",
+      "2CO":"2 Corinthians", GAL:"Galatians", EPH:"Ephesians", PHP:"Philippians", COL:"Colossians",
+      "1TH":"1 Thessalonians", "2TH":"2 Thessalonians", "1TI":"1 Timothy", "2TI":"2 Timothy", TIT:"Titus",
+      PHM:"Philemon", HEB:"Hebrews", JAS:"James", "1PE":"1 Peter", "2PE":"2 Peter", "1JN":"1 John", "2JN":"2 John",
+      "3JN":"3 John", JUD:"Jude", REV:"Revelation"
+    };
+    var IMPORTED = { TIT: true, RUT: true, JON: true, GEN: true, MAT: true };
+
+    var state = {
+      selected: "TIT",
+      advOpen: false,
+      intent: {},
+      jobs: [
+        { book: "ZEC", state: "running", detail: "Draft — chapter 6, ~40 min remaining" },
+        { book: "HOS", state: "failed", detail: "502 model_call_failed — retryable" },
+        { book: "MIC", state: "queued", detail: "#2 in line" }
+      ]
+    };
+
+    var bookGroupsEl = document.getElementById("bookGroups");
+    var detailHost = document.getElementById("detailHost");
+    var counterLine = document.getElementById("counterLine");
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function bookTile(code) {
+      var imported = !!IMPORTED[code];
+      return '<button type="button" class="book-tile" data-book="' + code + '" aria-current="' + (state.selected === code) + '">' +
+        '<span class="bt-code">' + code + "</span>" +
+        '<span class="bt-name">' + esc(NAMES[code]) + "</span>" +
+        '<span class="chip ' + (imported ? "chip-approved" : "chip-draft") + '">' + (imported ? "Imported" : "Not imported") + "</span>" +
+      "</button>";
+    }
+
+    function renderBookGroups() {
+      bookGroupsEl.innerHTML =
+        '<div class="book-group"><h3>Old Testament (' + OT.length + ')</h3><div class="book-grid">' + OT.map(bookTile).join("") + "</div></div>" +
+        '<div class="book-group"><h3>New Testament (' + NT.length + ')</h3><div class="book-grid">' + NT.map(bookTile).join("") + "</div></div>";
+    }
+
+    function applyFilter(q) {
+      q = q.trim().toUpperCase();
+      document.querySelectorAll(".book-tile").forEach(function (t) {
+        var code = t.dataset.book;
+        var match = !q || code.indexOf(q) !== -1 || NAMES[code].toUpperCase().indexOf(q) !== -1;
+        t.classList.toggle("hidden", !match);
+      });
+    }
+    document.getElementById("bookSearch").addEventListener("input", function (e) { applyFilter(e.target.value); });
+
+    function updateCounter() {
+      var n = Object.keys(IMPORTED).length;
+      counterLine.textContent = n + "/66 imported";
+    }
+
+    function renderDetail() {
+      var code = state.selected;
+      var imported = !!IMPORTED[code];
+      var intent = state.intent[code] || (imported ? "existing" : "new");
+
+      var primary;
+      if (!imported) {
+        primary = '<button class="btn btn-primary" type="button" data-handle="POST /api/books/:book/import" data-bundle="B" data-headers="120s timeout">Import ' + code + "</button>";
+      } else {
+        primary = '<a class="btn btn-primary" href="t1-home.html">Open ' + code + '</a>' +
+          '<button class="btn btn-rerun" type="button" id="repullBtn">Re-pull…</button>';
+      }
+
+      var aiTranslate = "";
+      if (imported && document.body.dataset.mode !== "authoring") {
+        aiTranslate = '<button class="btn btn-warn" type="button" data-handle="POST /api/pipelines/start" data-bundle="D" title="Book-level AI Translate loops per-chapter pipeline starts (bundle D action embedded here)">AI Translate whole book</button>';
+      }
+
+      detailHost.innerHTML = '<section class="panel">' +
+        '<div class="panel-top book-detail-head">' +
+          "<h2>" + code + " — " + esc(NAMES[code]) + "</h2>" +
+          '<span class="chip ' + (imported ? "chip-approved" : "chip-draft") + '">' + (imported ? "Imported" : "Not imported") + "</span>" +
+        "</div>" +
+        '<div class="panel-body">' +
+          '<div class="field">' +
+            '<p class="f-label">Intent</p>' +
+            '<div class="seg" id="intentSeg">' +
+              '<button type="button" data-value="new" aria-pressed="' + (intent === "new") + '">Translate a new book</button>' +
+              '<button type="button" data-value="existing" aria-pressed="' + (intent === "existing") + '">Load my existing work</button>' +
+            "</div>" +
+          "</div>" +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">' + primary + " " + aiTranslate + "</div>" +
+          '<div class="translation-only note-box" style="margin-top:14px;">Import pulls ULT/UST/tN/tQ/TWL from this project\'s configured translation source. Source-pulled scripture has no nightly-reimport hold-out (issue #142) — a fresh, unedited book is safe to re-pull; a populated one carries more risk of clobbering edits on the next reimport.</div>' +
+          '<div class="adv-accordion">' +
+            '<button type="button" class="adv-toggle" id="advToggle">▸ Advanced — per-book source overrides</button>' +
+            '<div class="adv-body' + (state.advOpen ? " open" : "") + '" id="advBody">' +
+              '<div class="src-row"><span style="flex:1;">tN chapters 1–1 → <code>BSOJ/es-419_tn</code></span></div>' +
+              '<div class="src-row"><span style="flex:1;">tQ — Aquifer (es)</span></div>' +
+              '<p class="f-help">Read via <span data-handle="GET /api/books/:book/sources" data-bundle="B" style="cursor:pointer;text-decoration:underline;">GET /api/books/:book/sources</span>; write is admin-only.</p>' +
+              '<div class="ov-form">' +
+                '<div class="field"><label class="f-label">Source type</label><select class="tselect"><option>DCS</option><option>Aquifer</option></select></div>' +
+                '<div class="field"><label class="f-label">Resource</label><select class="tselect"><option>tN</option><option>tQ</option></select></div>' +
+                '<div class="field"><label class="f-label">From ch.</label><input class="tinput" type="text" placeholder="1"></div>' +
+                '<div class="field"><label class="f-label">To ch.</label><input class="tinput" type="text" placeholder="16"></div>' +
+                '<button class="btn btn-primary" type="button" data-handle="PUT /api/books/:book/sources" data-bundle="B">Add override</button>' +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+        "</div>" +
+        '<div class="panel-foot"><span class="foot-state">' + (imported ? "Imported" : "Not yet imported") + "</span><span class=\"spacer\"></span></div>" +
+      "</section>" +
+      '<section class="panel">' +
+        '<div class="panel-top"><h2>Recent import activity</h2><p class="panel-sub">Book-level AI Translate loops per-chapter pipeline jobs (bundle D); status is read via <code>GET /api/pipelines/:jobId</code>.</p></div>' +
+        '<div class="panel-body">' + state.jobs.map(function (j) {
+          var chip = j.state === "running" ? "chip-edited" : j.state === "failed" ? "chip-needs" : "chip-draft";
+          return '<div class="job-row"><div class="jr-main"><strong>' + j.book + "</strong> <span class=\"chip " + chip + '">' + j.state + '</span><div class="jr-sub">' + esc(j.detail) + "</div></div>" +
+            (j.state === "failed" ? '<button class="btn btn-warn btn-sm" type="button" data-handle="POST /api/books/:book/import" data-bundle="B">Retry</button>' : "") +
+          "</div>";
+        }).join("") + "</div>" +
+        '<div class="panel-foot"><span class="foot-state">Polled every 120s while visible</span><span class="spacer"></span>' +
+          '<button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/pipelines/:jobId" data-bundle="D">Refresh status</button></div>' +
+      "</section>";
+    }
+
+    bookGroupsEl.addEventListener("click", function (e) {
+      var t = e.target.closest(".book-tile");
+      if (!t) return;
+      state.selected = t.dataset.book;
+      renderBookGroups();
+      renderDetail();
+    });
+
+    detailHost.addEventListener("click", function (e) {
+      var seg = e.target.closest("#intentSeg button");
+      if (seg) { state.intent[state.selected] = seg.dataset.value; renderDetail(); return; }
+      var adv = e.target.closest("#advToggle");
+      if (adv) { state.advOpen = !state.advOpen; renderDetail(); return; }
+      var rp = e.target.closest("#repullBtn");
+      if (rp) { document.getElementById("repullModal").hidden = false; return; }
+    });
+
+    document.getElementById("repullClose").addEventListener("click", function () { document.getElementById("repullModal").hidden = true; });
+    document.getElementById("repullGo").addEventListener("click", function () { document.getElementById("repullModal").hidden = true; });
+
+    renderBookGroups();
+    renderDetail();
+    updateCounter();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teach the AI our style — Lead flow</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* ============================================================
+     l2-style.html — bundle C (preferences / context-pack export).
+     IA per docs/preferences-panel-design.md §2: Brief, Instructions
+     (+ Common issues), Terminology, Examples, QA rules, Templates.
+     One shared translation_prefs row/version across Brief+Instructions
+     +Common-issues; Terminology/Examples/Templates are their own tables.
+     ============================================================ */
+  /* See l1-ai.html for why this is needed: an author `display` rule on a
+     class (e.g. .unsaved-chip{display:inline-flex}) otherwise beats the UA
+     [hidden]{display:none} rule at equal specificity — origin wins before
+     specificity in the cascade. */
+  [hidden] { display: none !important; }
+
+  .flow-nav {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .flow-nav a {
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 4px 9px;
+    border-radius: 999px;
+  }
+  .flow-nav a:hover { background: var(--card-2); color: var(--ink); }
+  .flow-nav a[aria-current="true"] { background: var(--hl); color: var(--ink); font-weight: 700; }
+
+  .prefs-shell {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 20px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 18px 18px 56px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .prefs-shell { grid-template-columns: minmax(0, 1fr); } }
+
+  .prefs-rail {
+    position: sticky;
+    inset-block-start: 18px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  @media (max-width: 900px) { .prefs-rail { position: static; flex-direction: row; overflow-x: auto; } }
+  .prefs-rail button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--ink-2);
+    text-align: start;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 9px;
+    padding: 9px 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+  .prefs-rail button:hover { background: var(--card-2); color: var(--ink); }
+  .prefs-rail button[aria-current="true"] { background: var(--hl); color: var(--ink); }
+  .prefs-rail .unsaved-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--kindle);
+    flex: none;
+    margin-inline-start: auto;
+  }
+
+  .pack-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-block-end: 16px;
+  }
+  .pack-status .pinned-note { font-size: 12.5px; color: var(--ink-2); flex-basis: 100%; }
+
+  .assisted-toggle {
+    margin-inline-start: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  section.pref-section { display: none; }
+  section.pref-section[data-active="true"] { display: block; }
+
+  .unsaved-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 3px 10px;
+    background: var(--kindle-soft);
+    color: var(--kindle-ink);
+  }
+
+  .conflict-box {
+    border: 1px solid var(--warn);
+    background: var(--warn-soft);
+    color: var(--warn-ink);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    font-size: 13.5px;
+    margin-block-end: 12px;
+    display: none;
+  }
+  .conflict-box[data-open="true"] { display: block; }
+  .conflict-box .cf-actions { display: flex; gap: 8px; margin-block-start: 8px; }
+
+  textarea.md-area {
+    width: 100%;
+    min-height: 140px;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    resize: vertical;
+  }
+  .char-count { font-size: 11.5px; color: var(--ink-2); text-align: end; margin-block-start: 3px; }
+  .char-count.over { color: var(--warn-ink); font-weight: 700; }
+
+  .term-row { border-block-end: 1px solid var(--line); padding: 10px 0; }
+  .term-row:last-child { border-block-end: none; }
+  .term-status-preferred { color: var(--ok-ink); }
+  .term-status-forbidden { color: var(--warn-ink); font-weight: 700; }
+  .term-status-do_not_translate { color: var(--ink-2); font-style: italic; }
+
+  .example-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-block-end: 8px;
+  }
+  .example-card .ex-source { color: var(--ink-2); font-size: 13px; }
+  .example-card .ex-target { font-size: 14px; margin-block-start: 3px; }
+</style>
+</head>
+<body data-mode="translation">
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Lead — Teach the AI our style</span>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <nav class="flow-nav" style="padding:8px 18px; border-block-end:1px solid var(--line); background:var(--card);">
+    <a href="../index.html">Hub</a>
+    <a href="t1-home.html">Translator home</a>
+    <a href="l1-ai.html">Run AI pipelines</a>
+    <a href="l2-style.html" aria-current="true">Teach the AI our style</a>
+    <a href="l3-templates.html">Curate note templates</a>
+  </nav>
+
+  <div class="prefs-shell">
+    <nav class="prefs-rail" aria-label="Preference sections">
+      <button type="button" data-section="brief" aria-current="true">Brief</button>
+      <button type="button" data-section="instructions">Instructions<span class="unsaved-dot" id="dotInstructions" hidden></span></button>
+      <button type="button" data-section="terminology">Terminology</button>
+      <button type="button" data-section="examples">Examples</button>
+      <button type="button" data-section="qa">QA rules</button>
+      <button type="button" data-section="templates">Templates</button>
+    </nav>
+
+    <main>
+      <!-- Context pack export status — the trust indicator + pinned-commit
+           explainer + templates.tsv row count (bundle C, all roles read,
+           admin-only Export/Export-force). -->
+      <div class="pack-status">
+        <span class="chip-pack" id="packChip">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+          Context pack ready <span class="sha">7f2a91c</span>
+        </span>
+        <span class="assisted-toggle">
+          <label for="modeToggle">Project mode</label>
+          <button type="button" class="switch" id="modeToggle" role="switch" aria-checked="true" data-handle="PATCH /api/project-config/mode" data-bundle="C" aria-label="Authoring vs translation mode"></button>
+          <span id="modeToggleLabel">translation</span>
+        </span>
+        <button type="button" class="btn btn-primary" style="min-height:34px; padding:0 12px;" data-handle="POST /api/exports/run" data-bundle="C">Export now</button>
+        <button type="button" class="btn btn-warn" id="exportForceBtn" style="min-height:34px; padding:0 12px; display:none;" data-handle="POST /api/exports/run" data-bundle="C">Export (force)</button>
+        <p class="pinned-note">The pack is a git-committed snapshot the AI reads from — <code>contextRef</code> pins the exact commit a run used, so a run is always reproducible even if the pack changes later. Templates section of the pack: <strong id="templatesTsvCount">27</strong> rows in <code>templates.tsv</code>.</p>
+      </div>
+
+      <!-- 409 version-conflict demo — the shared translation_prefs row means
+           Brief/Instructions/Common-issues share one version number. A demo
+           button below simulates another editor saving first; the real fix
+           (prefsConflict.ts) adopts the server's fresh row directly instead
+           of refetching, so an unsaved edit in a DIFFERENT field is never
+           clobbered. -->
+      <div class="conflict-box" id="conflictBox" role="alert">
+        <strong>Someone else saved preferences first.</strong> Your edits here are kept — only the fields you didn't touch were refreshed from their save.
+        <div class="cf-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="conflictKeepBtn">Keep my edits &amp; continue</button>
+        </div>
+      </div>
+
+      <!-- ---------------- Brief ---------------- -->
+      <section class="pref-section" data-section="brief" data-active="true">
+        <div class="panel">
+          <div class="panel-top">
+            <h2>Brief</h2>
+            <p class="panel-sub">The who/why/register of this language's translation — read once by the AI on every run, not per-verse detail.</p>
+          </div>
+          <div class="panel-body">
+            <div class="field">
+              <label class="f-label" for="fAudience">Audience</label>
+              <input class="tinput" id="fAudience" type="text" value="Adult native speakers, ESL high-school reading level" />
+            </div>
+            <div class="field">
+              <label class="f-label" for="fPurpose">Purpose</label>
+              <input class="tinput" id="fPurpose" type="text" value="Church use — public reading and personal study" />
+            </div>
+            <div class="field">
+              <label class="f-label" for="fRegister">Register</label>
+              <select class="tselect" id="fRegister">
+                <option value="default" selected>Default</option>
+                <option value="formal">Formal</option>
+                <option value="informal">Informal</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="f-label" for="fScript">Script / direction notes</label>
+              <input class="tinput" id="fScript" type="text" value="" placeholder="e.g. right-to-left, no diacritics in body text" />
+            </div>
+          </div>
+          <div class="panel-foot">
+            <span class="foot-state" id="briefFoot">Saved 2 days ago</span>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-primary" data-handle="PUT /api/translation-memory/prefs" data-headers="If-Match" data-bundle="C" id="saveBriefBtn">Save</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- Instructions + Common issues ---------------- -->
+      <section class="pref-section" data-section="instructions">
+        <div class="panel">
+          <div class="panel-top">
+            <h2>Instructions</h2>
+            <span class="unsaved-chip" id="unsavedInstructions" hidden>1 unsaved</span>
+            <p class="panel-sub">Standing guidance injected into every AI draft prompt. Keep it terse and durable — per-segment nuance belongs in Examples, not here.</p>
+          </div>
+          <div class="panel-body">
+            <div class="field">
+              <label class="f-label" for="fInstructions">Instructions (markdown, 20,000-char cap)</label>
+              <textarea class="md-area" id="fInstructions" maxlength="20000" oninput="window.__markDirty && window.__markDirty()">Always use "Yahweh" for the divine name, never a substitute title. Keep verbs in active voice where the source allows it.</textarea>
+              <p class="char-count" id="instructionsCount">118 / 20,000</p>
+            </div>
+            <hr style="border:none; border-block-start:1px solid var(--line); margin:14px 0;" />
+            <div class="field">
+              <label class="f-label" for="fCommonIssues">Common issues (markdown, 50,000-char cap)</label>
+              <p class="f-help" style="margin-block-end:6px;">Recurring problems this team hits — false friends, grammar traps, formatting habits. Rides inside <code>instructions.md</code> under a "Common issues" heading at export time.</p>
+              <textarea class="md-area" id="fCommonIssues" maxlength="50000" oninput="window.__markDirty && window.__markDirty()">Translators keep dropping the definite article before "Messiah" — check for this in every draft.</textarea>
+              <p class="char-count" id="commonIssuesCount">98 / 50,000</p>
+            </div>
+          </div>
+          <div class="panel-foot">
+            <span class="foot-state" id="instructionsFoot">Saved 5 hours ago</span>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" id="previewInstructionsBtn">Preview</button>
+            <button type="button" class="btn btn-primary" data-handle="PUT /api/translation-memory/prefs" data-headers="If-Match" data-bundle="C" id="saveInstructionsBtn">Save</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- Terminology ---------------- -->
+      <section class="pref-section" data-section="terminology">
+        <div class="panel">
+          <div class="panel-top">
+            <h2>Terminology</h2>
+            <p class="panel-sub">Concept-oriented termbase: preferred / admitted / deprecated / forbidden (with a required "use instead") / do-not-translate.</p>
+          </div>
+          <div class="panel-body">
+            <div class="picker-row" style="display:flex; gap:10px; flex-wrap:wrap; margin-block-end:12px;">
+              <input class="tinput" placeholder="Search terms…" style="max-width:220px;" data-handle="GET /api/translation-memory/terms" data-bundle="C" />
+              <select class="tselect" style="max-width:160px;">
+                <option>All statuses</option>
+                <option>Preferred</option><option>Admitted</option><option>Deprecated</option><option>Forbidden</option><option>Do not translate</option>
+              </select>
+              <span class="spacer"></span>
+              <button type="button" class="btn btn-ghost" id="toggleImportBtn">Import CSV</button>
+              <button type="button" class="btn btn-ghost" data-handle="GET /api/translation-memory/terms/export" data-bundle="C">Export CSV</button>
+            </div>
+            <div id="importPanel" hidden style="margin-block-end:12px; padding:10px; background:var(--card-2); border-radius:var(--radius-sm);">
+              <textarea class="md-area" style="min-height:70px;" placeholder="Paste CSV: concept_id,source_term,target_term,status,replacement,comment,tw_link"></textarea>
+              <div style="display:flex; gap:8px; margin-block-start:8px;">
+                <button type="button" class="btn btn-ghost" data-handle="POST /api/translation-memory/terms/import" data-bundle="C">Preview (dry run)</button>
+                <button type="button" class="btn btn-primary" data-handle="POST /api/translation-memory/terms/import" data-bundle="C">Apply import</button>
+              </div>
+            </div>
+
+            <div class="term-row">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <strong>God · <span class="term-status-preferred">preferred</span></strong>
+                <span style="font-size:12px; color:var(--ink-2);">rc://*/tw/dict/bible/kt/god</span>
+              </div>
+              <p style="margin:4px 0;">"Dios" — <em>rendering rationale: standard across GL Spanish resources</em></p>
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-ghost btn-sm" data-handle="PATCH /api/translation-memory/terms/:id" data-headers="If-Match" data-bundle="C">Edit</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-handle="DELETE /api/translation-memory/terms/:id" data-bundle="C">Delete</button>
+              </div>
+            </div>
+            <div class="term-row">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <strong>grace (mercy-flavored) · <span class="term-status-forbidden">forbidden → use "gracia"</span></strong>
+              </div>
+              <p style="margin:4px 0;">"favor" was a common mistranslation — flagged forbidden with a required replacement.</p>
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-ghost btn-sm" data-handle="PATCH /api/translation-memory/terms/:id" data-headers="If-Match" data-bundle="C">Edit</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-handle="DELETE /api/translation-memory/terms/:id" data-bundle="C">Delete</button>
+              </div>
+            </div>
+            <div class="term-row">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <strong>Selah · <span class="term-status-do_not_translate">do not translate</span></strong>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-ghost btn-sm" data-handle="PATCH /api/translation-memory/terms/:id" data-headers="If-Match" data-bundle="C">Edit</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-handle="DELETE /api/translation-memory/terms/:id" data-bundle="C">Delete</button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-rerun" style="margin-block-start:10px;" data-handle="POST /api/translation-memory/terms" data-bundle="C">+ Add term</button>
+          </div>
+          <div class="panel-foot">
+            <span class="foot-state" id="termsFoot"><span id="termsCount">3</span> terms · <span id="termsCountLive">GET /api/translation-memory/terms/count</span></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- Examples ---------------- -->
+      <section class="pref-section" data-section="examples">
+        <div class="panel">
+          <div class="panel-top">
+            <h2>Examples</h2>
+            <span class="chip chip-approved" id="feedingChip">feeding AI</span>
+            <p class="panel-sub">Validated source→target pairs the AI learns from — the same rows a translator Approved in the review queue. Revoke drops one from the next export.</p>
+          </div>
+          <div class="panel-body">
+            <div class="seg" role="group" aria-label="Resource" style="max-width:260px; margin-block-end:12px;">
+              <button type="button" aria-pressed="true">Notes</button>
+              <button type="button" aria-pressed="false">Questions</button>
+            </div>
+            <div class="example-card">
+              <div class="ex-source">EN — "The word translated 'righteousness' here means..."</div>
+              <div class="ex-target">ES — "La palabra traducida como 'justicia' aquí significa..."</div>
+              <button type="button" class="btn btn-ghost btn-sm" style="margin-block-start:6px;" data-handle="POST /api/rows/tn/:id/validate" data-bundle="C">Revoke</button>
+            </div>
+            <div class="example-card">
+              <div class="ex-source">EN — "This is a rhetorical question expecting..."</div>
+              <div class="ex-target">ES — "Esta es una pregunta retórica que espera..."</div>
+              <button type="button" class="btn btn-ghost btn-sm" style="margin-block-start:6px;" data-handle="POST /api/rows/tn/:id/validate" data-bundle="C">Revoke</button>
+            </div>
+          </div>
+          <div class="panel-foot">
+            <span class="foot-state">142 validated examples feeding the pack</span>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-handle="GET /api/translation-memory/examples" data-bundle="C">Search</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- QA rules ---------------- -->
+      <section class="pref-section" data-section="qa">
+        <div class="panel">
+          <div class="panel-top">
+            <h2>QA rules</h2>
+            <span class="chip chip-edited">Design-complete, build-deferred</span>
+            <p class="panel-sub">Deterministic checks with severities. Structural tN checks (quote/ID/reference integrity) already run at apply time in code — this config UI for enabling/tuning them and adding custom regex rules is designed but not yet built.</p>
+          </div>
+          <div class="panel-body">
+            <div class="kv">
+              <dt>Quote column untouched</dt><dd><span class="chip" style="background:var(--warn-soft); color:var(--warn-ink);">error</span></dd>
+              <dt>Empty translation</dt><dd><span class="chip" style="background:var(--warn-soft); color:var(--warn-ink);">error</span></dd>
+              <dt>Repeated word</dt><dd><span class="chip" style="background:var(--hl); color:var(--inspire-deep);">warning</span></dd>
+              <dt>Terminology enforcement</dt><dd><span class="chip" style="background:var(--hl); color:var(--inspire-deep);">warning</span></dd>
+            </div>
+          </div>
+          <div class="panel-foot">
+            <span class="foot-state">No API for this section exists yet</span>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-handle="TODO:no-backend" data-bundle="C">Add custom rule</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- Templates ---------------- -->
+      <section class="pref-section" data-section="templates">
+        <div class="panel">
+          <div class="panel-top">
+            <h2>Templates</h2>
+            <p class="panel-sub">Coverage summary for per-SupportReference note templates. Full curation (draft/save/approve/history) lives on its own screen.</p>
+          </div>
+          <div class="panel-body">
+            <div class="kv">
+              <dt>Coverage</dt><dd>18 / 42 SupportReference types translated</dd>
+              <dt>Exported as</dt><dd><code>templates.tsv</code> — <span id="templatesTsvCount2">27</span> rows</dd>
+            </div>
+          </div>
+          <div class="panel-foot">
+            <span class="foot-state">Curate templates on the dedicated screen</span>
+            <span class="spacer"></span>
+            <a class="btn btn-primary" href="l3-templates.html" style="text-decoration:none;">Open template curation →</a>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    // ---- rail section switching ----
+    var railBtns = document.querySelectorAll(".prefs-rail button[data-section]");
+    var sections = document.querySelectorAll(".pref-section");
+    railBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var target = btn.getAttribute("data-section");
+        railBtns.forEach(function (b) { b.setAttribute("aria-current", b === btn ? "true" : "false"); });
+        sections.forEach(function (s) { s.setAttribute("data-active", s.getAttribute("data-section") === target ? "true" : "false"); });
+      });
+    });
+
+    // ---- char counters ----
+    function wireCounter(taId, countId, cap) {
+      var ta = document.getElementById(taId);
+      var el = document.getElementById(countId);
+      function update() {
+        var len = ta.value.length;
+        el.textContent = len.toLocaleString() + " / " + cap.toLocaleString();
+        el.classList.toggle("over", len > cap);
+      }
+      ta.addEventListener("input", update);
+      update();
+    }
+    wireCounter("fInstructions", "instructionsCount", 20000);
+    wireCounter("fCommonIssues", "commonIssuesCount", 50000);
+
+    // ---- unsaved-reminder chip (drafts persist locally; explicit Save only) ----
+    var dirty = false;
+    window.__markDirty = function () {
+      dirty = true;
+      document.getElementById("unsavedInstructions").hidden = false;
+      document.getElementById("dotInstructions").hidden = false;
+    };
+    document.getElementById("saveInstructionsBtn").addEventListener("click", function () {
+      dirty = false;
+      document.getElementById("unsavedInstructions").hidden = true;
+      document.getElementById("dotInstructions").hidden = true;
+      document.getElementById("instructionsFoot").textContent = "Saved just now";
+    });
+    document.getElementById("saveBriefBtn").addEventListener("click", function () {
+      document.getElementById("briefFoot").textContent = "Saved just now";
+    });
+
+    // ---- 409 merge-prompt demo: fires once, on the first Save click, to show
+    // the "kept my edits" behavior without an actual second editor. ----
+    var conflictShown = false;
+    function maybeShowConflict() {
+      if (conflictShown) return;
+      conflictShown = true;
+      document.getElementById("conflictBox").setAttribute("data-open", "true");
+    }
+    document.getElementById("saveInstructionsBtn").addEventListener("click", maybeShowConflict);
+    document.getElementById("saveBriefBtn").addEventListener("click", maybeShowConflict);
+    document.getElementById("conflictKeepBtn").addEventListener("click", function () {
+      document.getElementById("conflictBox").setAttribute("data-open", "false");
+    });
+
+    // ---- import CSV toggle ----
+    document.getElementById("toggleImportBtn").addEventListener("click", function () {
+      var panel = document.getElementById("importPanel");
+      panel.hidden = !panel.hidden;
+    });
+
+    // ---- mode toggle (authoring vs translation, drives .translation-only) ----
+    var modeToggle = document.getElementById("modeToggle");
+    var modeLabel = document.getElementById("modeToggleLabel");
+    modeToggle.addEventListener("click", function () {
+      var checked = modeToggle.getAttribute("aria-checked") === "true";
+      modeToggle.setAttribute("aria-checked", checked ? "false" : "true");
+      modeLabel.textContent = checked ? "authoring" : "translation";
+      document.body.dataset.mode = checked ? "authoring" : "translation";
+    });
+
+    // ---- "Export (force)" only appears when a shrink was refused, per the
+    // shrinkOverride escape hatch (00-code-inventory.md §C.0) ----
+    document.getElementById("packChip").addEventListener("dblclick", function () {
+      var btn = document.getElementById("exportForceBtn");
+      btn.style.display = btn.style.display === "none" ? "inline-flex" : "none";
+    });
+  })();
+  </script>
+</body>
+</html>

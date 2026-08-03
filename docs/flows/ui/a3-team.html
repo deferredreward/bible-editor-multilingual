@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — Team &amp; access</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; flex: none; }
+  .flow-nav a { color: var(--ink-2); text-decoration: none; font-weight: 600; }
+  .flow-nav a[aria-current="page"] { color: var(--inspire-deep); }
+  :root[data-theme="dark"] .flow-nav a[aria-current="page"] { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .flow-nav a[aria-current="page"] { color: var(--inspire); } }
+  @media (max-width: 700px) { .flow-nav { display: none; } }
+  .topbar-shared .account-cluster button {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 8px; padding: 5px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+
+  .switcher-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--card-2);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .switcher-row .sw-main { flex: 1; min-width: 200px; }
+  .switcher-row .sw-name { font-weight: 700; font-size: 14.5px; margin: 0; }
+  .switcher-row .sw-sub { font-size: 12px; color: var(--ink-2); margin: 1px 0 0; }
+
+  .add-user-form { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-bottom: 6px; }
+  .add-user-form .field { margin: 0; min-width: 160px; }
+
+  .not-member { font-size: 11px; }
+
+  .roster-note { font-size: 12.5px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Admin — Team &amp; access</span>
+    <nav class="flow-nav" aria-label="Admin flow screens">
+      <a href="a1-setup.html">Setup</a>
+      <a href="a2-import.html">Import</a>
+      <a href="a3-team.html" aria-current="page">Team</a>
+      <a href="a4-observe.html">Observe</a>
+      <a href="t1-home.html">Translator home</a>
+      <a href="index.html">Hub</a>
+    </nav>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <main class="desk">
+    <header class="admin-head">
+      <p class="eyebrow">Bundle A/team · Org access administration</p>
+      <h1>Team &amp; user management</h1>
+      <p class="sub">Manual role grants layered on top of your Door43 org's team roles. Admin only.</p>
+    </header>
+
+    <div class="switcher-row">
+      <div class="sw-main">
+        <p class="sw-name">Alianza Bíblica Hispanoamericana <span class="chip chip-approved">current</span></p>
+        <p class="sw-sub">Switching orgs reloads the whole app — one D1 database serves one org.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/workspaces" data-bundle="A" id="openSwitcher">Switch organization…</button>
+    </div>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Add a person</h2>
+        <p class="panel-sub">Grants a manual role. An unverified Door43 username still gets added, with an info note.</p>
+      </div>
+      <div class="panel-body">
+        <div class="add-user-form">
+          <div class="field"><label class="f-label" for="addUsername">Door43 username</label><input class="tinput" id="addUsername" type="text" placeholder="e.g. maria_traductora"></div>
+          <div class="field"><label class="f-label" for="addRole">Role</label>
+            <select class="tselect" id="addRole"><option value="editor">Editor</option><option value="admin">Admin</option></select>
+          </div>
+          <button class="btn btn-primary" type="button" data-handle="PUT /api/admin/users/:username" data-bundle="A">Add</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Allowlist</h2>
+        <p class="panel-sub">Owners on Door43 are not automatically admins here — role is granted explicitly, and where a Door43 team also manages this user, team assignment wins over a manual grant on next sync.</p>
+      </div>
+      <div class="panel-body flush">
+        <div class="table-wrap">
+          <table class="dtable">
+            <thead><tr><th>User</th><th>Role</th><th>Added by</th><th>Source</th><th></th></tr></thead>
+            <tbody id="allowlistBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <span class="foot-state" id="allowlistFoot">Loaded via <code>GET /api/admin/users</code></span>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/admin/users/purge-manual" data-bundle="A">Purge manual grants…</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Live Door43 org roster</h2>
+        <p class="panel-sub roster-note">Read-only reconciliation view — never writes a role. Falls back through admin token → shared service token → public members, so it always renders something.</p>
+      </div>
+      <div class="panel-body flush">
+        <div class="table-wrap">
+          <table class="dtable">
+            <thead><tr><th>Door43 username</th><th>Team role</th></tr></thead>
+            <tbody id="rosterBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel-foot"><span class="foot-state" id="rosterFoot">Loaded via <code>GET /api/admin/users/org-members</code></span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Read-only vs editor gating</h2>
+        <p class="panel-sub">Notes on access, not editable here.</p>
+      </div>
+      <div class="panel-body">
+        <p class="f-help">Viewer-role sessions get a global read-only banner and every mutating request outside a small self-scoped allowlist is 403'd server-side (<code>blockViewerWrites</code>). Templates and tW/tA articles have <strong>no client-side role gating today</strong> — enforcement, if any, is server-side only and not surfaced in those editors; that gap is intentionally mirrored here, not silently fixed.</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-overlay" id="wsModal" hidden role="dialog" aria-modal="true" aria-labelledby="wsModalTitle">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="wsModalTitle">Switch organization</h3>
+        <p>Switching sets the workspace cookie, re-mints the session JWT, and does a full <code>location.reload()</code> — blocked while the outbox has pending ops.</p>
+      </div>
+      <div class="modal-body" id="wsModalBody"></div>
+      <div class="modal-foot"><button class="btn btn-ghost" type="button" id="wsModalClose">Close</button></div>
+    </div>
+  </div>
+
+  <style>
+    .modal-overlay { position: fixed; inset: 0; background: rgba(1, 42, 63, 0.45); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .modal-overlay[hidden] { display: none; }
+    .modal-box { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 420px; width: 100%; overflow: hidden; }
+    .modal-head { padding: 14px 16px; border-block-end: 1px solid var(--line); }
+    .modal-head h3 { margin: 0 0 3px; font-size: 15.5px; }
+    .modal-head p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+    .modal-body { padding: 10px 16px; max-height: 50vh; overflow-y: auto; }
+    .modal-foot { padding: 12px 16px; border-block-start: 1px solid var(--line); display: flex; justify-content: flex-end; }
+    .ws-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-block-end: 1px solid var(--line); }
+    .ws-row:last-child { border-block-end: none; }
+    .ws-row .ws-main { flex: 1; min-width: 0; }
+    .ws-row .ws-name { font-weight: 600; font-size: 14px; margin: 0; }
+    .ws-row .ws-sub { font-size: 12px; color: var(--ink-2); margin: 0; }
+  </style>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    var ALLOWLIST = [
+      { user: "maria_traductora", role: "admin", addedBy: "dcs_team", source: "Door43 team (Owners)", memberWarning: false },
+      { user: "jorge.p", role: "editor", addedBy: "maria_traductora", source: "manual grant", memberWarning: false },
+      { user: "consultant_liliana", role: "editor", addedBy: "maria_traductora", source: "manual grant", memberWarning: true },
+      { user: "old_contractor", role: "editor", addedBy: "system", source: "manual grant", memberWarning: true }
+    ];
+    var ROSTER = [
+      { user: "maria_traductora", team: "Owners" },
+      { user: "jorge.p", team: "Writers" },
+      { user: "ana.reviewer", team: "Reviewers (not yet added here)" }
+    ];
+
+    function renderAllowlist() {
+      document.getElementById("allowlistBody").innerHTML = ALLOWLIST.map(function (r) {
+        return "<tr><td>" + esc(r.user) + (r.memberWarning ? ' <span class="chip chip-needs not-member" title="Not currently a member of the Door43 org">not org member</span>' : "") + "</td>" +
+          '<td><select class="tselect" data-handle="PUT /api/admin/users/:username" data-bundle="A" style="width:auto;">' +
+            '<option value="editor"' + (r.role === "editor" ? " selected" : "") + '>Editor</option>' +
+            '<option value="admin"' + (r.role === "admin" ? " selected" : "") + '>Admin</option>' +
+          "</select></td>" +
+          "<td>" + esc(r.addedBy) + "</td><td>" + esc(r.source) + "</td>" +
+          '<td><button class="btn btn-ghost btn-sm" type="button" data-handle="DELETE /api/admin/users/:username" data-bundle="A" title="Remove — confirm required">Remove</button></td>' +
+        "</tr>";
+      }).join("");
+    }
+
+    function renderRoster() {
+      document.getElementById("rosterBody").innerHTML = ROSTER.map(function (r) {
+        return "<tr><td>" + esc(r.user) + "</td><td>" + esc(r.team) + "</td></tr>";
+      }).join("");
+    }
+
+    renderAllowlist();
+    renderRoster();
+
+    var WORKSPACES = [
+      { slug: "abh-es419", name: "Alianza Bíblica Hispanoamericana", current: true },
+      { slug: "wsib-fr", name: "Wycliffe Société Internationale (fr)", current: false },
+      { slug: "dei-verbum-pt", name: "Dei Verbum PT-BR", current: false }
+    ];
+    var wsModal = document.getElementById("wsModal");
+    document.getElementById("openSwitcher").addEventListener("click", function () {
+      document.getElementById("wsModalBody").innerHTML = WORKSPACES.map(function (w) {
+        return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.name) + (w.current ? ' <span class="chip chip-approved">current</span>' : "") + '</p><p class="ws-sub">' + w.slug + '</p></div>' +
+          (w.current ? "" : '<button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch</button>') +
+        "</div>";
+      }).join("");
+      wsModal.hidden = false;
+    });
+    document.getElementById("wsModalClose").addEventListener("click", function () { wsModal.hidden = true; });
+    wsModal.addEventListener("click", function (e) { if (e.target === wsModal) wsModal.hidden = true; });
+  })();
+  </script>
+</body>
+</html>
