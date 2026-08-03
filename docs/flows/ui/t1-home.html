@@ -289,6 +289,25 @@
       </span>
       <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
       <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-controls="moreMenu" title="View preferences">More ▾</button>
+        <div class="menu" id="moreMenu" role="menu" hidden>
+          <p class="menu-head">View</p>
+          <div class="job-row">
+            <span class="job-main">Text size</span>
+            <button type="button" id="textSizeDown" data-handle="local:text-size-decrease" data-bundle="K" aria-label="Decrease text size">A−</button>
+            <button type="button" id="textSizeUp" data-handle="local:text-size-increase" data-bundle="K" aria-label="Increase text size">A+</button>
+          </div>
+          <label class="menu-static" for="uiLanguageSelect" style="cursor:default;">Interface language
+            <select id="uiLanguageSelect" data-handle="local:set-ui-language" data-bundle="K" style="width:100%; margin-top:4px; font-size:12.5px;">
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="ar">العربية</option>
+            </select>
+          </label>
+          <p class="menu-note">View preferences only — saved to this device, no server sync.</p>
+        </div>
+      </span>
+      <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
           <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
         </button>
@@ -424,6 +443,7 @@
     }
     wireMenu("statusBtn", "statusMenu");
     wireMenu("accountBtn", "accountMenu");
+    wireMenu("moreBtn", "moreMenu");
     document.addEventListener("click", function () {
       document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
       document.querySelectorAll(".cluster-btn[aria-expanded]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });

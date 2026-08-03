@@ -94,6 +94,29 @@
   .fr-nav { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--ink-2); margin-block-end: 6px; }
   .fr-summary { font-size: 12.5px; color: var(--ink-2); margin: 8px 0 0; }
   .fr-note { font-size: 11.5px; color: var(--ink-2); margin: 10px 0 0; font-style: italic; }
+
+  /* K.4 original-language reference — tap a source word for a quick lexicon summary */
+  .ol-strip { display: flex; align-items: baseline; gap: 10px; margin-block-end: 14px; flex-wrap: wrap; }
+  .ol-strip .ol-label { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .ol-strip .ol-words { display: flex; gap: 6px; flex-wrap: wrap; font-family: var(--font-scripture); font-size: 16px; }
+  .lex-wrap { position: relative; display: inline-flex; }
+  .lex-word { appearance: none; border: none; background: transparent; font: inherit; color: var(--ink); cursor: pointer; padding: 1px 4px; border-radius: 4px; }
+  .lex-word:hover, .lex-word:focus { background: var(--hl); outline: none; }
+  .lex-popover {
+    /* Grows from the inline-start edge by default; flipped to inline-end via the
+       .flip class when the word sits near the viewport's trailing edge, so the
+       popover never overflows at 375px — same viewport-clamp approach as
+       a2-import.html's .lint-popover. */
+    position: absolute; inset-block-start: calc(100% + 6px); inset-inline-start: 0;
+    z-index: 40; min-width: 190px; max-width: min(260px, 84vw);
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow); padding: 9px 11px; font-family: var(--font-ui); font-size: 12.5px;
+  }
+  .lex-popover.flip { inset-inline-start: auto; inset-inline-end: 0; }
+  .lex-popover[hidden] { display: none; }
+  .lex-popover .lex-strong { font-weight: 700; margin: 0 0 4px; }
+  .lex-popover .lex-gloss { margin: 0 0 4px; color: var(--ink-2); }
+  .lex-popover .lex-def { margin: 0; }
 </style>
 </head>
 <body data-mode="translation">
@@ -159,6 +182,11 @@
         Verse marked done
       </span>
       <button type="button" class="cluster-btn" id="historyBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion/history" data-bundle="G">Verse history</button>
+    </div>
+
+    <div class="ol-strip" aria-label="Original-language reference">
+      <span class="ol-label">Hebrew</span>
+      <span class="ol-words" id="olWords"></span>
     </div>
 
     <div class="pair">
@@ -308,6 +336,47 @@
     wireMenu("accountBtn", "accountMenu");
     wireMenu("layoutBtn", "layoutMenu");
     document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
+
+    // K.4 original-language reference — tap a source word for a lexicon popover
+    var LEX_WORDS = [
+      { strong: "H0376", t: "אִ֗ישׁ" },
+      { strong: "H07392", t: "רֹכֵב֙" },
+      { strong: "H05921", t: "עַל" },
+      { strong: "H05483", t: "ס֣וּס" },
+      { strong: "H0122", t: "אָדֹ֔ם" }
+    ];
+    var LEX_DEMO = {
+      H0376: { gloss: "man, husband, someone", def: "Common noun for a male human being; here an unnamed messenger figure." },
+      H07392: { gloss: "to ride, mount", def: "Participle form here: 'riding'." },
+      H05921: { gloss: "on, upon, over", def: "Common preposition of position." },
+      H05483: { gloss: "horse", def: "A domesticated horse, used here as the messenger's mount." },
+      H0122: { gloss: "red, ruddy", def: "Color adjective, likely symbolic in this vision." }
+    };
+    (function renderOlStrip() {
+      el("olWords").innerHTML = LEX_WORDS.map(function (w, i) {
+        return '<span class="lex-wrap"><button type="button" class="lex-word" data-strong="' + w.strong + '" data-handle="GET /api/lexicon/:strong" data-bundle="K" aria-haspopup="true" aria-expanded="false" aria-controls="lexPop' + i + '">' + w.t + '</button>' +
+          '<div class="lex-popover" id="lexPop' + i + '" role="dialog" hidden></div></span>';
+      }).join("");
+    })();
+    document.addEventListener("click", function (ev) {
+      var word = ev.target.closest ? ev.target.closest(".lex-word") : null;
+      document.querySelectorAll(".lex-popover").forEach(function (p) {
+        if (!word || p !== word.parentElement.querySelector(".lex-popover")) { p.hidden = true; }
+      });
+      document.querySelectorAll(".lex-word[aria-expanded]").forEach(function (b) { if (b !== word) b.setAttribute("aria-expanded", "false"); });
+      if (!word) return;
+      ev.stopPropagation();
+      var pop = word.parentElement.querySelector(".lex-popover");
+      var willOpen = pop.hasAttribute("hidden");
+      if (!willOpen) { pop.hidden = true; word.setAttribute("aria-expanded", "false"); return; }
+      var entry = LEX_DEMO[word.dataset.strong] || { gloss: "(no entry found)", def: "" };
+      pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p><p class="lex-gloss">' + entry.gloss + '</p><p class="lex-def">' + entry.def + '</p>';
+      pop.classList.remove("flip");
+      pop.hidden = false;
+      word.setAttribute("aria-expanded", "true");
+      var rect = pop.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 8) pop.classList.add("flip");
+    });
 
     // verse status switch
     el("doneSwitch").addEventListener("click", function () {
