@@ -224,12 +224,12 @@
 
   <nav class="flow-nav" aria-label="Translator screens">
     <a href="t1-home.html">Home</a>
-    <a href="t2-review.html">Review</a>
+    <a href="t2-review.html">Notes</a>
     <a href="t3-scripture.html">Scripture</a>
     <a href="t4-align.html">Align</a>
     <a href="t5-articles.html">Articles</a>
     <a href="t6-words.html" aria-current="page">Words</a>
-    <a href="../index.html">Hub ↗</a>
+    <a href="index.html">Hub ↗</a>
   </nav>
 
   <main id="main" class="words-wrap">
@@ -248,7 +248,7 @@
 
     <div class="ol-strip" aria-label="Original-language reference">
       <span class="ol-label">Hebrew</span>
-      <span class="ol-words" id="olWords"></span>
+      <span class="ol-words" id="olWords" dir="rtl"></span>
     </div>
 
     <div class="words-layout" id="wordsLayout" data-view="table">
@@ -295,7 +295,7 @@
             <div class="field">
               <span class="field-label">Quote (original-language)</span>
               <div class="quote-row">
-                <span class="quote-display" id="detailQuote"></span>
+                <span class="quote-display" id="detailQuote" dir="rtl"></span>
                 <button type="button" id="buildQuoteBtn" data-handle="local:quote-builder" data-bundle="F">Build from source</button>
                 <button type="button" class="locate-btn" id="locateBtn" data-handle="local:locate-word" data-bundle="F" title="Preview where this occurs">📍</button>
               </div>
@@ -346,7 +346,7 @@
         <div class="qb-source" id="qbSource"></div>
         <p class="qb-hint">Target chips (ULT) — toggling shows the alignment-ancestor chain this quote would cover; cosmetic in this mockup.</p>
         <div class="qb-target" id="qbTarget"></div>
-        <p class="qb-preview">Quote: <b id="qbPreviewQuote">—</b> <span class="qb-occ" id="qbPreviewOcc"></span></p>
+        <p class="qb-preview">Quote: <b id="qbPreviewQuote" dir="rtl">—</b> <span class="qb-occ" id="qbPreviewOcc"></span></p>
       </div>
       <div class="dlg-foot">
         <button type="button" class="btn btn-outline" id="qbCancelBtn">Cancel</button>
@@ -468,7 +468,7 @@
         tr.setAttribute("tabindex", "0");
         tr.setAttribute("aria-label", "Edit word link " + link.quote + " → " + link.article);
         tr.innerHTML =
-          '<td class="tw-quote">' + link.quote + '</td>' +
+          '<td class="tw-quote" dir="rtl">' + link.quote + '</td>' +
           '<td>' + link.occurrence + '</td>' +
           '<td>' + link.article + '</td>' +
           '<td class="tw-gloss">' + link.gloss + '</td>' +
@@ -486,7 +486,7 @@
         card.setAttribute("aria-selected", i === cur ? "true" : "false");
         card.setAttribute("aria-label", "Edit word link " + link.quote + " → " + link.article);
         card.innerHTML =
-          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value">' + link.quote + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value" dir="rtl">' + link.quote + '</span></div>' +
           '<div class="twl-card-row"><span class="cr-label">Occurrence</span><span class="cr-value">' + link.occurrence + '</span></div>' +
           '<div class="twl-card-row"><span class="cr-label">tW link</span><span class="cr-value">' + link.article + '</span></div>' +
           '<div class="twl-card-row"><span class="cr-label">Gloss</span><span class="cr-value">' + link.gloss + '</span></div>' +
@@ -507,7 +507,7 @@
         var tr = document.createElement("tr");
         tr.className = "is-suggested";
         tr.innerHTML =
-          '<td class="tw-quote">' + s.quote + ' <span class="chip-suggested">Suggested</span></td>' +
+          '<td class="tw-quote"><span dir="rtl">' + s.quote + '</span> <span class="chip-suggested">Suggested</span></td>' +
           '<td>' + s.occurrence + '</td>' +
           '<td>' + candidateHtml + '</td>' +
           '<td class="tw-gloss">' + s.gloss + '</td>' +
@@ -518,7 +518,7 @@
         card.className = "twl-card is-suggested";
         card.innerHTML =
           '<div class="twl-card-head"><span class="chip-suggested">Suggested</span></div>' +
-          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value">' + s.quote + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value" dir="rtl">' + s.quote + '</span></div>' +
           '<div class="twl-card-row"><span class="cr-label">Occurrence</span><span class="cr-value">' + s.occurrence + '</span></div>' +
           '<div class="twl-card-row"><span class="cr-label">tW link</span><span class="cr-value">' + candidateHtml + '</span></div>' +
           '<div class="twl-card-row"><span class="cr-label">Gloss</span><span class="cr-value">' + s.gloss + '</span></div>' +
