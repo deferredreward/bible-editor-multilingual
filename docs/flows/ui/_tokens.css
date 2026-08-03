@@ -929,12 +929,14 @@ textarea.edit-area {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap; /* narrow screens: actions drop below the text instead of crushing it */
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 14px;
   border: 1px solid transparent;
 }
-.banner .banner-msg { flex: 1; }
+/* basis 220px (not 0) so the text never collapses into a sliver next to nowrap buttons */
+.banner .banner-msg { flex: 1 1 220px; min-width: 0; }
 .banner .banner-action {
   flex: none;
   white-space: nowrap;

@@ -162,6 +162,17 @@
   }
   .example-card .ex-source { color: var(--ink-2); font-size: 13px; }
   .example-card .ex-target { font-size: 14px; margin-block-start: 3px; }
+  /* One-liner brief fields: single-line <input> clipped its content on narrow
+     screens ("…ESL high-school re"). A wrap-capable box that hugs its text —
+     one line when it fits, wraps when it doesn't. */
+  .tinput-flow {
+    display: block; box-sizing: border-box; width: 100%;
+    min-height: calc(1.5em + 18px); max-height: 40vh;
+    resize: vertical; overflow-y: auto; field-sizing: content;
+    font: inherit; line-height: 1.5; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    padding: 8px 10px;
+  }
 </style>
 </head>
 <body data-mode="translation">
@@ -175,7 +186,7 @@
   </header>
 
   <nav class="flow-nav" style="padding:8px 18px; border-block-end:1px solid var(--line); background:var(--card);">
-    <a href="../index.html">Hub</a>
+    <a href="index.html">Hub</a>
     <a href="t1-home.html">Translator home</a>
     <a href="l1-ai.html">Run AI pipelines</a>
     <a href="l2-style.html" aria-current="true">Teach the AI our style</a>
@@ -234,11 +245,11 @@
           <div class="panel-body">
             <div class="field">
               <label class="f-label" for="fAudience">Audience</label>
-              <input class="tinput" id="fAudience" type="text" value="Adult native speakers, ESL high-school reading level" />
+              <textarea class="tinput-flow" id="fAudience" rows="1" spellcheck="false">Adult native speakers, ESL high-school reading level</textarea>
             </div>
             <div class="field">
               <label class="f-label" for="fPurpose">Purpose</label>
-              <input class="tinput" id="fPurpose" type="text" value="Church use — public reading and personal study" />
+              <textarea class="tinput-flow" id="fPurpose" rows="1" spellcheck="false">Church use — public reading and personal study</textarea>
             </div>
             <div class="field">
               <label class="f-label" for="fRegister">Register</label>
@@ -250,7 +261,7 @@
             </div>
             <div class="field">
               <label class="f-label" for="fScript">Script / direction notes</label>
-              <input class="tinput" id="fScript" type="text" value="" placeholder="e.g. right-to-left, no diacritics in body text" />
+              <textarea class="tinput-flow" id="fScript" rows="1" spellcheck="false" placeholder="e.g. right-to-left, no diacritics in body text"></textarea>
             </div>
           </div>
           <div class="panel-foot">

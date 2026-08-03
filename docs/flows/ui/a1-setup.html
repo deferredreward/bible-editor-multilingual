@@ -32,8 +32,15 @@
   .wiz-actions { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
   .wiz-actions .spacer { margin-inline-start: auto; }
 
-  .resrow { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-block-end: 1px solid var(--line); }
+  /* Grid so the switch+label share the first row, while the choice chips /
+     URL field / help text break out to the FULL row width (flush start) —
+     they used to inherit the switch-column indent, wasting a stripe of
+     white space at the start of every row. */
+  .resrow { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 12px; row-gap: 6px; padding: 12px 0; border-block-end: 1px solid var(--line); }
   .resrow:last-child { border-block-end: none; }
+  .resrow .res-main { display: contents; }
+  .resrow .res-name { grid-column: 2; margin: 0; }
+  .resrow .res-choice, .resrow .res-url, .resrow .f-help { grid-column: 1 / -1; margin-top: 0; }
   .res-main { flex: 1; min-width: 0; }
   .res-name { font-weight: 700; font-size: 14.5px; margin: 0 0 2px; }
   .res-choice { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }

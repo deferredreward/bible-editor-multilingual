@@ -219,7 +219,7 @@
   </header>
 
   <nav class="flow-nav" style="padding:8px 18px; border-block-end:1px solid var(--line); background:var(--card);">
-    <a href="../index.html">Hub</a>
+    <a href="index.html">Hub</a>
     <a href="t1-home.html">Translator home</a>
     <a href="l1-ai.html">Run AI pipelines</a>
     <a href="l2-style.html">Teach the AI our style</a>
@@ -383,6 +383,8 @@
       loadEditor(row.getAttribute("data-tmpl"));
       if (window.matchMedia("(max-width: 900px)").matches) {
         document.body.dataset.view = "editor";
+        // editor just became visible — re-measure for the non-field-sizing fallback
+        window.__tmplAutosize(document.getElementById("targetArea"));
       }
     });
 
@@ -405,6 +407,11 @@
     // JS fallback for browsers without `field-sizing: content` support —
     // grow the textarea to fit its text on init/input/re-show.
     window.__tmplAutosize = function (el) {
+      // field-sizing:content does this natively — writing an inline height here
+      // would permanently OVERRIDE it (that inline height, measured while the
+      // editor was display:none on mobile, was the tiny-box-with-scrollbar bug).
+      if (window.CSS && CSS.supports && CSS.supports("field-sizing", "content")) return;
+      if (!el || el.offsetParent === null) return; // hidden: scrollHeight is garbage
       el.style.height = "auto";
       el.style.height = el.scrollHeight + "px";
     };
