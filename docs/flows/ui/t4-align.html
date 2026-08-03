@@ -13,7 +13,7 @@
   .skip-link:focus { inset-inline-start: 0; }
 
   .cluster-item { position: relative; }
-  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; }
   .cluster-btn:hover { border-color: var(--inspire); }
   .cluster-btn[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
   .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
@@ -22,20 +22,6 @@
   .menu button:hover { background: var(--card-2); }
 
   .align-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 96px; }
-
-  /* --- mobile fallback: alignment needs a bigger screen --- */
-  .mobile-fallback { display: none; }
-  @media (max-width: 559.98px) {
-    .align-toolbar, .align-canvas, .side-by-side-toggle { display: none !important; }
-    .mobile-fallback {
-      display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px;
-      padding: 56px 20px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
-    }
-    .mobile-fallback .mf-icon { font-size: 40px; }
-    .mobile-fallback h1 { font-size: 18px; margin: 0; }
-    .mobile-fallback p { color: var(--ink-2); font-size: 14px; margin: 0; max-width: 320px; }
-  }
-  @media (min-width: 560px) { .mobile-fallback { display: none !important; } }
 
   .align-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 14px; }
   .align-toolbar .at-count { font-size: 12.5px; font-weight: 700; color: var(--warn-ink); background: var(--warn-soft); border-radius: 999px; padding: 4px 10px; }
@@ -47,6 +33,14 @@
   @media (prefers-color-scheme: dark) { .verse-ref-row .ref-big { color: var(--cultivate); } }
   :root[data-theme="light"] .verse-ref-row .ref-big { color: var(--ocean); }
 
+  /* ---------- mode toggle (segmented control) ---------- */
+  .mode-toggle-row { display: flex; align-items: center; gap: 10px; margin-block-end: 14px; flex-wrap: wrap; }
+  .mode-toggle-row .seg { max-width: 340px; }
+  @media (max-width: 559.98px) { .mode-toggle-row { display: none !important; } }
+
+  /* =========================================================
+     DRAG CANVAS VIEW (desktop-first; unchanged behaviour)
+     ========================================================= */
   .source-row {
     display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line);
     border-radius: var(--radius); box-shadow: var(--shadow); margin-block-end: 14px; font-family: var(--font-scripture); font-size: 17px;
@@ -77,11 +71,115 @@
 
   .action-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .action-bar .spacer { margin-inline-start: auto; }
-  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 44px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   .btn-primary { background: var(--inspire); color: #06293B; }
   .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
   .btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  /* =========================================================
+     TAP-TO-PAIR VIEW (mobile-first interaction; also default
+     on tablet, and toggleable on desktop)
+     ========================================================= */
+
+  /* suggestion queue */
+  .suggest-stack { margin-block-end: 14px; }
+  .suggest-card {
+    background: var(--card); border: 1.5px solid var(--inspire); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 14px 16px;
+  }
+  .suggest-meta { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 8px; }
+  .suggest-pair { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-block-end: 12px; }
+  .suggest-src { font-family: var(--font-scripture); font-size: 18px; }
+  .suggest-arrow { color: var(--inspire); font-weight: 700; }
+  .suggest-tgt { font-family: var(--font-scripture); font-size: 17px; font-weight: 600; }
+  .suggest-actions { display: flex; gap: 8px; }
+  .suggest-actions .btn { flex: 1; }
+  .suggest-done {
+    font-size: 13.5px; color: var(--ink-2); background: var(--card-2); border: 1px dashed var(--line);
+    border-radius: var(--radius-sm); padding: 10px 14px; margin-block-end: 14px;
+  }
+
+  .tap-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 12px; }
+  .tap-toolbar .at-count { font-size: 12.5px; font-weight: 700; color: var(--ok-ink); background: var(--ok-soft); border-radius: 999px; padding: 4px 10px; font-variant-numeric: tabular-nums; }
+  .tap-toolbar .spacer { margin-inline-start: auto; }
+
+  /* source ribbon — scrolls horizontally inside its own container */
+  .source-ribbon-outer {
+    overflow-x: auto; -webkit-overflow-scrolling: touch; margin-block-end: 12px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow);
+  }
+  .source-ribbon { display: flex; gap: 10px; padding: 12px; min-width: min-content; }
+  .src-group {
+    flex: none; min-width: 108px; border: 1.5px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--card-2); padding: 8px; display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  }
+  .src-group.group-selected { border-color: var(--inspire); background: var(--hl); }
+  .src-group[data-unaligned="true"] { border-bottom: 3px solid var(--warn); }
+  .src-group-words { display: flex; gap: 3px; flex-wrap: wrap; }
+  .src-word-btn {
+    appearance: none; border: 1px solid transparent; background: transparent; color: var(--ink);
+    border-radius: 7px; padding: 4px 6px; min-height: 44px; min-width: 44px; cursor: pointer;
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    font-family: var(--font-scripture); font-size: 16px;
+  }
+  .src-word-btn .sw-idx { font-family: var(--font-ui); font-size: 9.5px; color: var(--ink-2); font-weight: 700; }
+  .src-word-btn .sw-heb { line-height: 1.2; }
+  .src-word-btn.selected, .src-word-btn[aria-pressed="true"] { background: var(--inspire); color: #06293B; }
+  .src-word-btn.selected .sw-idx, .src-word-btn[aria-pressed="true"] .sw-idx { color: #06293B; }
+  .src-group-aligned { display: flex; flex-wrap: wrap; gap: 4px; min-height: 30px; }
+  .empty-slot { font-size: 11px; color: var(--ink-2); font-style: italic; align-self: center; }
+  .split-btn {
+    appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 700; cursor: pointer; align-self: flex-start;
+  }
+  .split-btn:hover { border-color: var(--inspire); color: var(--ink); }
+
+  .jump-pill {
+    appearance: none; border: 1px solid var(--warn); background: var(--warn-soft); color: var(--warn-ink);
+    border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; min-height: 34px;
+  }
+
+  /* target pool */
+  .target-pool {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow); margin-block-end: 14px; min-height: 60px;
+  }
+  .target-pool .empty-note { font-size: 13px; color: var(--ink-2); font-style: italic; }
+
+  /* chips — shared by pool + aligned-in-card, min 44px touch target */
+  .chip.pool-chip, .chip.aligned-chip {
+    appearance: none; border: 1.5px solid var(--line); background: var(--card-2); color: var(--ink);
+    font-family: var(--font-scripture); font-size: 15px; font-weight: 600; border-radius: 999px;
+    padding: 8px 14px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center;
+  }
+  .chip.aligned-chip { background: var(--ok-soft); border-color: var(--ok); color: var(--ok-ink); min-height: 38px; padding: 6px 12px; font-size: 14px; }
+  .chip.pool-chip.selected, .chip.pool-chip[aria-pressed="true"] { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+  .chip.aligned-chip.selected, .chip.aligned-chip[aria-pressed="true"] { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .chip, .src-group, .src-word-btn { transition: background-color 0.12s ease, border-color 0.12s ease; }
+  }
+
+  /* tap action bar */
+  .tap-action-bar {
+    position: sticky; inset-block-end: 0; z-index: 25; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--inspire); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 10px 14px; margin-block-end: 14px;
+  }
+  .tap-action-bar .spacer { margin-inline-start: auto; }
+
+  /* form-factor policy */
+  #dragView { display: none; }
+  #tapView { display: block; }
+  body[data-align-mode="drag"] #dragView { display: block; }
+  body[data-align-mode="drag"] #tapView { display: none; }
+  body[data-align-mode="tap"] #dragView { display: none; }
+  body[data-align-mode="tap"] #tapView { display: block; }
+  @media (max-width: 559.98px) {
+    #dragView { display: none !important; }
+    #tapView { display: block !important; }
+  }
 
   /* side-by-side dialog */
   .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 12px; }
@@ -103,7 +201,7 @@
   .rl-actions button { appearance: none; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
 </style>
 </head>
-<body data-mode="translation">
+<body data-mode="translation" data-align-mode="tap">
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar-shared">
     <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
@@ -134,73 +232,109 @@
   </nav>
 
   <main id="main" class="align-wrap">
-    <div class="mobile-fallback">
-      <span class="mf-icon" aria-hidden="true">📐</span>
-      <h1>Alignment needs a larger screen</h1>
-      <p>Word alignment is a drag-and-drop task that doesn't fit comfortably on a phone. Open this on a tablet or desktop, or go back to your queues.</p>
-      <a class="btn btn-primary" href="t1-home.html" style="text-decoration:none;">Back to home</a>
-    </div>
-
     <div class="verse-ref-row">
       <span class="ref-big">ZEC 1:8 · ULT</span>
       <button type="button" class="cluster-btn" id="historyBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion/history" data-bundle="H">Verse history</button>
       <button type="button" class="cluster-btn" id="sbsBtn">Side-by-side</button>
     </div>
 
-    <div class="align-toolbar">
-      <span class="at-count" id="unalignedCount">3 unaligned</span>
-      <span id="selectionCount" style="font-size:12.5px;color:var(--ink-2);">0 selected</span>
-      <button type="button" class="cluster-btn" id="colorsToggle" aria-pressed="true">Colors</button>
-      <button type="button" class="cluster-btn" id="hoverLinkToggle" aria-pressed="false">Hover-link</button>
-      <button type="button" class="cluster-btn" id="unalignedOnlyToggle" aria-pressed="false">Unaligned only</button>
-      <span class="spacer"></span>
-      <button type="button" class="cluster-btn" id="clearAllBtn" data-handle="local:clear-alignment" data-bundle="H">Clear</button>
-      <button type="button" class="cluster-btn" id="resetBtn" data-handle="local:reset-alignment" data-bundle="H">Reset</button>
+    <div class="mode-toggle-row">
+      <div class="seg" role="group" aria-label="Alignment interaction mode">
+        <button type="button" id="dragModeBtn" aria-pressed="false">Drag canvas</button>
+        <button type="button" id="tapModeBtn" aria-pressed="true">Tap mode (keyboard accessible)</button>
+      </div>
     </div>
 
-    <p class="canvas-note">Drag affordances are shown statically here — the real aligner is a custom HTML5 drag-and-drop canvas, not native browser DnD.</p>
+    <!-- ============ DRAG CANVAS VIEW ============ -->
+    <div id="dragView">
+      <div class="align-toolbar">
+        <span class="at-count" id="unalignedCount">3 unaligned</span>
+        <span id="selectionCount" style="font-size:12.5px;color:var(--ink-2);">0 selected</span>
+        <button type="button" class="cluster-btn" id="colorsToggle" aria-pressed="true">Colors</button>
+        <button type="button" class="cluster-btn" id="hoverLinkToggle" aria-pressed="false">Hover-link</button>
+        <button type="button" class="cluster-btn" id="unalignedOnlyToggle" aria-pressed="false">Unaligned only</button>
+        <span class="spacer"></span>
+        <button type="button" class="cluster-btn" id="clearAllBtn" data-handle="local:clear-alignment" data-bundle="H">Clear</button>
+        <button type="button" class="cluster-btn" id="resetBtn" data-handle="local:reset-alignment" data-bundle="H">Reset</button>
+      </div>
 
-    <div class="source-row" aria-label="Hebrew source words" role="list">
-      <span class="src-word" role="listitem" title="Hebrew: אִישׁ">a man</span>
-      <span class="src-word" role="listitem" title="Hebrew: רֹכֵב">riding</span>
-      <span class="src-word unaligned" role="listitem" title="Hebrew: עַל">on</span>
-      <span class="src-word" role="listitem" title="Hebrew: סוּס">a horse</span>
-      <span class="src-word unaligned" role="listitem" title="Hebrew: אָדֹם">red</span>
-      <span class="src-word" role="listitem" title="Hebrew: וְהוּא">and he</span>
-      <span class="src-word unaligned" role="listitem" title="Hebrew: עֹמֵד">standing</span>
+      <p class="canvas-note">Drag affordances are shown statically here — the real aligner is a custom HTML5 drag-and-drop canvas, not native browser DnD.</p>
+
+      <div class="source-row" aria-label="Hebrew source words" role="list">
+        <span class="src-word" role="listitem" title="Hebrew: אִישׁ">a man</span>
+        <span class="src-word" role="listitem" title="Hebrew: רֹכֵב">riding</span>
+        <span class="src-word unaligned" role="listitem" title="Hebrew: עַל">on</span>
+        <span class="src-word" role="listitem" title="Hebrew: סוּס">a horse</span>
+        <span class="src-word unaligned" role="listitem" title="Hebrew: אָדֹם">red</span>
+        <span class="src-word" role="listitem" title="Hebrew: וְהוּא">and he</span>
+        <span class="src-word unaligned" role="listitem" title="Hebrew: עֹמֵד">standing</span>
+      </div>
+
+      <div class="align-canvas" role="list" aria-label="Alignment cards">
+        <div class="align-card" role="listitem" draggable="true">
+          <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
+          <p class="ac-source">אִישׁ</p>
+          <p class="ac-target">a man</p>
+        </div>
+        <div class="align-card" role="listitem" draggable="true">
+          <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
+          <p class="ac-source">רֹכֵב</p>
+          <p class="ac-target">riding</p>
+        </div>
+        <div class="align-card ghost" role="listitem" draggable="true" title="Suggested — from wordMAP memory">
+          <button type="button" class="ac-clear" aria-label="Dismiss suggestion" data-handle="local:accept-suggestions" data-bundle="H">✓</button>
+          <p class="ac-source">עַל סוּס</p>
+          <p class="ac-target">on a horse</p>
+        </div>
+        <div class="align-card unaligned-slot" role="listitem">Drop “red” here</div>
+        <div class="align-card" role="listitem" draggable="true">
+          <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
+          <p class="ac-source">וְהוּא</p>
+          <p class="ac-target">and he</p>
+        </div>
+        <div class="align-card unaligned-slot" role="listitem">Drop “standing” here</div>
+      </div>
+
+      <div class="action-bar">
+        <button type="button" class="btn btn-outline" id="acceptSuggestionsBtn" data-handle="local:accept-suggestions" data-bundle="H">Accept 1 suggestion</button>
+        <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="saveBtn"
+          data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+      </div>
     </div>
 
-    <div class="align-canvas" role="list" aria-label="Alignment cards">
-      <div class="align-card" role="listitem" draggable="true">
-        <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
-        <p class="ac-source">אִישׁ</p>
-        <p class="ac-target">a man</p>
-      </div>
-      <div class="align-card" role="listitem" draggable="true">
-        <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
-        <p class="ac-source">רֹכֵב</p>
-        <p class="ac-target">riding</p>
-      </div>
-      <div class="align-card ghost" role="listitem" draggable="true" title="Suggested — from wordMAP memory">
-        <button type="button" class="ac-clear" aria-label="Dismiss suggestion" data-handle="local:accept-suggestions" data-bundle="H">✓</button>
-        <p class="ac-source">עַל סוּס</p>
-        <p class="ac-target">on a horse</p>
-      </div>
-      <div class="align-card unaligned-slot" role="listitem">Drop “red” here</div>
-      <div class="align-card" role="listitem" draggable="true">
-        <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
-        <p class="ac-source">וְהוּא</p>
-        <p class="ac-target">and he</p>
-      </div>
-      <div class="align-card unaligned-slot" role="listitem">Drop “standing” here</div>
-    </div>
+    <!-- ============ TAP-TO-PAIR VIEW ============ -->
+    <div id="tapView">
+      <div class="suggest-stack" id="suggestStack" aria-live="polite"></div>
+      <p class="suggest-done" id="suggestDone" hidden>All suggestions reviewed — manual tap-to-pair is below.</p>
 
-    <div class="action-bar">
-      <button type="button" class="btn btn-outline" id="acceptSuggestionsBtn" data-handle="local:accept-suggestions" data-bundle="H">Accept 1 suggestion</button>
-      <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
-      <span class="spacer"></span>
-      <button type="button" class="btn btn-primary" id="saveBtn"
-        data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+      <div class="tap-toolbar">
+        <span class="at-count" id="tapProgress">0 of 0 words aligned</span>
+        <button type="button" class="jump-pill" id="jumpUnalignedBtn">Jump to unaligned ↓</button>
+        <span class="spacer"></span>
+        <button type="button" class="cluster-btn" id="tapRefreshBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
+      </div>
+
+      <div class="source-ribbon-outer">
+        <div class="source-ribbon" id="sourceRibbon" role="list" aria-label="Hebrew source word groups"></div>
+      </div>
+
+      <div class="target-pool" id="targetPool" role="list" aria-label="Unaligned target words"></div>
+
+      <div class="tap-action-bar" id="tapActionBar" hidden role="region" aria-label="Alignment actions">
+        <span id="selectionDesc" style="font-size:12.5px;color:var(--ink-2);"></span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-warn" id="unalignBtn" data-handle="local:align-unalign" data-bundle="H">Unalign</button>
+        <button type="button" class="btn btn-outline" id="combineBtn" data-handle="local:align-combine" data-bundle="H" hidden>⧉ Combine</button>
+        <button type="button" class="btn btn-outline" id="clearSelBtn" data-handle="local:align-clear-selection" data-bundle="H">Clear</button>
+      </div>
+
+      <div class="action-bar">
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="saveBtnTap"
+          data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+      </div>
     </div>
   </main>
 
@@ -273,6 +407,334 @@
     el("acceptSuggestionsBtn").addEventListener("click", function () {
       window.flowShell.toast("Suggestion accepted (local) — Save to persist", { bundle: "H" });
     });
+
+    /* =========================================================
+       Form-factor policy: <560 tap-only; 560-899 tap default;
+       >=900 drag default. A segmented toggle lets 560+ switch.
+       ========================================================= */
+    var userOverride = false;
+    function band(w) { return w < 560 ? "phone" : (w < 900 ? "tablet" : "desktop"); }
+    var lastBand = null;
+
+    function setAlignMode(mode) {
+      document.body.setAttribute("data-align-mode", mode);
+      el("dragModeBtn").setAttribute("aria-pressed", mode === "drag" ? "true" : "false");
+      el("tapModeBtn").setAttribute("aria-pressed", mode === "tap" ? "true" : "false");
+    }
+
+    function applyDefaultForWidth() {
+      var w = window.innerWidth;
+      var b = band(w);
+      if (b === lastBand && userOverride) return;
+      lastBand = b;
+      userOverride = false;
+      if (b === "phone") { setAlignMode("tap"); return; }
+      if (b === "tablet") { setAlignMode("tap"); return; }
+      setAlignMode("drag");
+    }
+    applyDefaultForWidth();
+    window.addEventListener("resize", applyDefaultForWidth);
+
+    el("dragModeBtn").addEventListener("click", function () { userOverride = true; setAlignMode("drag"); });
+    el("tapModeBtn").addEventListener("click", function () { userOverride = true; setAlignMode("tap"); });
+
+    /* =========================================================
+       TAP-TO-PAIR interaction model (demo/local state only —
+       no per-tap network calls; Save alignment is the one write).
+       ========================================================= */
+    var comboCounter = 0;
+    var state = {
+      sourceGroups: [
+        { id: "g1", words: [{ idx: 1, heb: "אִישׁ" }], aligned: ["t1"] },
+        { id: "g2", words: [{ idx: 2, heb: "רֹכֵב" }], aligned: ["t2"] },
+        { id: "g3", words: [{ idx: 3, heb: "עַל" }], aligned: [] },
+        { id: "g4", words: [{ idx: 4, heb: "סוּס" }], aligned: [] },
+        { id: "g5", words: [{ idx: 5, heb: "אָדֹם" }], aligned: [] },
+        { id: "g6", words: [{ idx: 6, heb: "וְהוּא" }], aligned: ["t6"] },
+        { id: "g7", words: [{ idx: 7, heb: "עֹמֵד" }], aligned: [] }
+      ],
+      targets: [
+        { id: "t1", text: "a man" },
+        { id: "t2", text: "riding" },
+        { id: "t3", text: "on" },
+        { id: "t4", text: "a horse" },
+        { id: "t5", text: "red" },
+        { id: "t6", text: "and he" },
+        { id: "t7", text: "standing" }
+      ],
+      selection: { side: null, ids: [] },
+      suggestions: [
+        { sourceIds: ["g3", "g4"], targetIds: ["t3", "t4"], srcLabel: "עַל סוּס", tgtLabel: "on a horse" },
+        { sourceIds: ["g5"], targetIds: ["t5"], srcLabel: "אָדֹם", tgtLabel: "red" },
+        { sourceIds: ["g7"], targetIds: ["t7"], srcLabel: "עֹמֵד", tgtLabel: "standing" }
+      ],
+      suggestionIdx: 0
+    };
+
+    function findGroup(id) { for (var i = 0; i < state.sourceGroups.length; i++) { if (state.sourceGroups[i].id === id) return state.sourceGroups[i]; } return null; }
+    function findTarget(id) { for (var i = 0; i < state.targets.length; i++) { if (state.targets[i].id === id) return state.targets[i]; } return null; }
+
+    function removeFromAllGroups(tid) {
+      state.sourceGroups.forEach(function (g) {
+        var i = g.aligned.indexOf(tid);
+        if (i > -1) g.aligned.splice(i, 1);
+      });
+    }
+
+    function commitAttach(tids, destGid) {
+      var g = findGroup(destGid);
+      if (!g) return;
+      tids.forEach(function (tid) {
+        removeFromAllGroups(tid);
+        if (g.aligned.indexOf(tid) === -1) g.aligned.push(tid);
+      });
+    }
+
+    function combineGroups(ids) {
+      var groups = ids.map(findGroup).filter(Boolean);
+      if (groups.length < 2) return null;
+      groups.sort(function (a, b) { return a.words[0].idx - b.words[0].idx; });
+      var mergedWords = [];
+      var mergedAligned = [];
+      groups.forEach(function (g) {
+        mergedWords = mergedWords.concat(g.words);
+        g.aligned.forEach(function (tid) { if (mergedAligned.indexOf(tid) === -1) mergedAligned.push(tid); });
+      });
+      var newGroup = { id: "c" + (++comboCounter), words: mergedWords, aligned: mergedAligned };
+      var firstOriginalIndex = state.sourceGroups.findIndex(function (g) { return g.id === groups[0].id; });
+      var insertPos = 0;
+      for (var i = 0; i < firstOriginalIndex; i++) {
+        if (ids.indexOf(state.sourceGroups[i].id) === -1) insertPos++;
+      }
+      state.sourceGroups = state.sourceGroups.filter(function (g) { return ids.indexOf(g.id) === -1; });
+      state.sourceGroups.splice(insertPos, 0, newGroup);
+      return newGroup.id;
+    }
+
+    function doSplit(gid) {
+      var idx = state.sourceGroups.findIndex(function (g) { return g.id === gid; });
+      if (idx === -1) return;
+      var g = state.sourceGroups[idx];
+      if (g.words.length <= 1) return;
+      var singles = g.words.map(function (w) { return { id: "g" + w.idx, words: [w], aligned: [] }; });
+      var args = [idx, 1].concat(singles);
+      state.sourceGroups.splice.apply(state.sourceGroups, args);
+    }
+
+    function toggleSourceSelection(gid) {
+      var g = findGroup(gid);
+      if (!g) return;
+      if (g.words.length > 1) {
+        if (state.selection.side === "source" && state.selection.ids.length === 1 && state.selection.ids[0] === gid) {
+          state.selection = { side: null, ids: [] };
+        } else {
+          state.selection = { side: "source", ids: [gid] };
+        }
+        return;
+      }
+      if (state.selection.side !== "source") {
+        state.selection = { side: "source", ids: [gid] };
+        return;
+      }
+      var i = state.selection.ids.indexOf(gid);
+      if (i > -1) state.selection.ids.splice(i, 1); else state.selection.ids.push(gid);
+      if (!state.selection.ids.length) state.selection = { side: null, ids: [] };
+    }
+
+    function toggleTargetSelection(tid) {
+      if (state.selection.side !== "target") {
+        state.selection = { side: "target", ids: [tid] };
+        return;
+      }
+      var i = state.selection.ids.indexOf(tid);
+      if (i > -1) state.selection.ids.splice(i, 1); else state.selection.ids.push(tid);
+      if (!state.selection.ids.length) state.selection = { side: null, ids: [] };
+    }
+
+    function onTargetChipClick(tid) {
+      if (state.selection.side === "source") {
+        if (state.selection.ids.length === 1) {
+          commitAttach([tid], state.selection.ids[0]);
+          state.selection = { side: null, ids: [] };
+          render();
+          return;
+        }
+        if (state.selection.ids.length > 1) {
+          window.flowShell.toast("Select ⧉ Combine first, or Clear the source selection.", { bundle: "H" });
+          return;
+        }
+      }
+      toggleTargetSelection(tid);
+      render();
+    }
+
+    function applySuggestion(s) {
+      var destId = s.sourceIds.length > 1 ? combineGroups(s.sourceIds) : s.sourceIds[0];
+      if (!destId) return;
+      s.targetIds.forEach(function (tid) { commitAttach([tid], destId); });
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function renderSuggestions() {
+      var stack = el("suggestStack");
+      var done = el("suggestDone");
+      if (state.suggestionIdx >= state.suggestions.length) {
+        stack.hidden = true;
+        stack.innerHTML = "";
+        done.hidden = false;
+        return;
+      }
+      done.hidden = true;
+      stack.hidden = false;
+      var s = state.suggestions[state.suggestionIdx];
+      stack.innerHTML =
+        '<div class="suggest-card">' +
+          '<p class="suggest-meta">Suggestion ' + (state.suggestionIdx + 1) + " of " + state.suggestions.length + '</p>' +
+          '<div class="suggest-pair">' +
+            '<span class="suggest-src" dir="rtl">' + escapeHtml(s.srcLabel) + "</span>" +
+            '<span class="suggest-arrow" aria-hidden="true">↔</span>' +
+            '<span class="suggest-tgt">' + escapeHtml(s.tgtLabel) + "</span>" +
+          "</div>" +
+          '<div class="suggest-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="accept" data-handle="local:accept-suggestion" data-bundle="H">✓ Accept</button>' +
+            '<button type="button" class="btn btn-outline" data-action="skip" data-handle="local:skip-suggestion" data-bundle="H">✗ Skip</button>' +
+          "</div>" +
+        "</div>";
+    }
+
+    function renderRibbon() {
+      var ribbon = el("sourceRibbon");
+      ribbon.innerHTML = state.sourceGroups.map(function (g) {
+        var isCombined = g.words.length > 1;
+        var groupSelected = state.selection.side === "source" && state.selection.ids.indexOf(g.id) > -1;
+        var wordsHtml = g.words.map(function (w) {
+          var wordSelected = groupSelected;
+          return '<button type="button" class="src-word-btn' + (wordSelected ? " selected" : "") + '" data-src-select data-word-idx="' + w.idx + '" aria-pressed="' + wordSelected + '">' +
+            '<span class="sw-idx">' + w.idx + "</span><span class=\"sw-heb\">" + escapeHtml(w.heb) + "</span></button>";
+        }).join("");
+        var alignedHtml = g.aligned.map(function (tid) {
+          var t = findTarget(tid);
+          if (!t) return "";
+          var selected = state.selection.side === "target" && state.selection.ids.indexOf(tid) > -1;
+          return '<button type="button" class="chip aligned-chip' + (selected ? " selected" : "") + '" data-tchip data-target="' + tid + '" aria-pressed="' + selected + '">' + escapeHtml(t.text) + "</button>";
+        }).join("") || '<span class="empty-slot">unaligned</span>';
+        return '<div class="src-group' + (groupSelected ? " group-selected" : "") + '" role="listitem" data-group-id="' + g.id + '" data-unaligned="' + (g.aligned.length === 0) + '" dir="rtl">' +
+          '<div class="src-group-words">' + wordsHtml + "</div>" +
+          '<div class="src-group-aligned" dir="ltr" aria-label="Aligned target words">' + alignedHtml + "</div>" +
+          (isCombined ? '<button type="button" class="split-btn" data-action="split" data-group="' + g.id + '">Split</button>' : "") +
+        "</div>";
+      }).join("");
+    }
+
+    function renderPool() {
+      var pool = el("targetPool");
+      var poolTargets = state.targets.filter(function (t) {
+        return !state.sourceGroups.some(function (g) { return g.aligned.indexOf(t.id) > -1; });
+      });
+      if (!poolTargets.length) {
+        pool.innerHTML = '<span class="empty-note">All target words are aligned.</span>';
+        return;
+      }
+      pool.innerHTML = poolTargets.map(function (t) {
+        var selected = state.selection.side === "target" && state.selection.ids.indexOf(t.id) > -1;
+        return '<button type="button" class="chip pool-chip' + (selected ? " selected" : "") + '" data-tchip data-target="' + t.id + '" aria-pressed="' + selected + '">' + escapeHtml(t.text) + "</button>";
+      }).join("");
+    }
+
+    function renderActionBar() {
+      var bar = el("tapActionBar");
+      if (!state.selection.ids.length) { bar.hidden = true; return; }
+      bar.hidden = false;
+      var n = state.selection.ids.length;
+      el("selectionDesc").textContent = n + " " + state.selection.side + " word" + (n > 1 ? "s" : "") + " selected";
+      el("unalignBtn").hidden = state.selection.side !== "target";
+      el("combineBtn").hidden = !(state.selection.side === "source" && n >= 2);
+    }
+
+    function renderCounter() {
+      var aligned = 0;
+      state.sourceGroups.forEach(function (g) { aligned += g.aligned.length; });
+      el("tapProgress").textContent = aligned + " of " + state.targets.length + " words aligned";
+    }
+
+    function render() {
+      renderSuggestions();
+      renderRibbon();
+      renderPool();
+      renderActionBar();
+      renderCounter();
+    }
+
+    el("suggestStack").addEventListener("click", function (ev) {
+      var acc = ev.target.closest('[data-action="accept"]');
+      var skip = ev.target.closest('[data-action="skip"]');
+      if (acc) {
+        applySuggestion(state.suggestions[state.suggestionIdx]);
+        state.suggestionIdx++;
+        render();
+      } else if (skip) {
+        state.suggestionIdx++;
+        renderSuggestions();
+      }
+    });
+
+    el("sourceRibbon").addEventListener("click", function (ev) {
+      var splitBtn = ev.target.closest('[data-action="split"]');
+      if (splitBtn) { ev.stopPropagation(); doSplit(splitBtn.getAttribute("data-group")); render(); return; }
+      var chip = ev.target.closest("[data-tchip]");
+      if (chip) { onTargetChipClick(chip.getAttribute("data-target")); return; }
+      var wordBtn = ev.target.closest("[data-src-select]");
+      var groupEl = ev.target.closest(".src-group");
+      if (!groupEl) return;
+      var gid = groupEl.getAttribute("data-group-id");
+      if (state.selection.side === "target" && state.selection.ids.length) {
+        commitAttach(state.selection.ids.slice(), gid);
+        state.selection = { side: null, ids: [] };
+        render();
+        return;
+      }
+      if (wordBtn) { toggleSourceSelection(gid); render(); }
+    });
+
+    el("targetPool").addEventListener("click", function (ev) {
+      var chip = ev.target.closest("[data-tchip]");
+      if (!chip) return;
+      onTargetChipClick(chip.getAttribute("data-target"));
+    });
+
+    el("unalignBtn").addEventListener("click", function () {
+      state.selection.ids.forEach(removeFromAllGroups);
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+    el("combineBtn").addEventListener("click", function () {
+      combineGroups(state.selection.ids);
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+    el("clearSelBtn").addEventListener("click", function () {
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+
+    el("jumpUnalignedBtn").addEventListener("click", function () {
+      var target = el("sourceRibbon").querySelector('.src-group[data-unaligned="true"]');
+      if (!target) { window.flowShell.toast("Every source word has at least one aligned target.", { bundle: "H" }); return; }
+      var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      target.scrollIntoView({ inline: "center", block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+    });
+
+    el("tapRefreshBtn").addEventListener("click", function () {
+      state.suggestionIdx = 0;
+      renderSuggestions();
+    });
+
+    render();
   })();
   </script>
 </body>

@@ -74,14 +74,6 @@
     color: var(--ink-2);
     margin: 3px 0 0;
   }
-  .screen-row.missing { opacity: 0.6; }
-  .screen-row.missing .s-name::after {
-    content: " (not built yet)";
-    font-weight: 400;
-    font-family: var(--font-ui);
-    font-size: 11px;
-    color: var(--skip);
-  }
 
   .preview-panel {
     position: sticky;
@@ -185,7 +177,7 @@
   <main class="hub">
     <div class="hub-head">
       <p class="eyebrow">Adaptive UI flows</p>
-      <h1>12 screens · 3 roles · 3 form factors</h1>
+      <h1>13 screens · 3 roles · 3 form factors</h1>
       <p class="sub">Click a screen to load it in the device preview. Nothing here calls the network — every
         actionable control shows a toast naming the handle it would call (see <code>docs/flows/02-architecture.md</code>).</p>
     </div>
@@ -195,25 +187,29 @@
         <section class="flow-group">
           <h2>Translator</h2>
           <div class="screen-list">
-            <a class="screen-row missing" data-screen="t1-home.html">
+            <a class="screen-row" data-screen="t1-home.html">
               <span class="s-name">t1-home.html</span><span class="s-bundles">E · K</span>
               <p class="s-purpose">Queue dispatcher + trust chips — home screen, counts per queue.</p>
             </a>
-            <a class="screen-row missing" data-screen="t2-review.html">
+            <a class="screen-row" data-screen="t2-review.html">
               <span class="s-name">t2-review.html</span><span class="s-bundles">E · F</span>
               <p class="s-purpose">Unified review queue (notes + questions): approve / approve-all / suggest / template / edit+Save / history / 409s / lock.</p>
             </a>
-            <a class="screen-row missing" data-screen="t3-scripture.html">
+            <a class="screen-row" data-screen="t3-scripture.html">
               <span class="s-name">t3-scripture.html</span><span class="s-bundles">G</span>
               <p class="s-purpose">Paired lanes ULT→GLT / UST→GST, verse edit, verse status, ChapterBoard, verse history.</p>
             </a>
-            <a class="screen-row missing" data-screen="t4-align.html">
+            <a class="screen-row" data-screen="t4-align.html">
               <span class="s-name">t4-align.html</span><span class="s-bundles">H</span>
               <p class="s-purpose">Alignment canvas + side-by-side variant; mobile gets a graceful "larger screen" state.</p>
             </a>
-            <a class="screen-row missing" data-screen="t5-articles.html">
+            <a class="screen-row" data-screen="t5-articles.html">
               <span class="s-name">t5-articles.html</span><span class="s-bundles">J</span>
               <p class="s-purpose">tW/tA article queues + editor — split screens, no tabs.</p>
+            </a>
+            <a class="screen-row" data-screen="t6-words.html">
+              <span class="s-name">t6-words.html</span><span class="s-bundles">F</span>
+              <p class="s-purpose">Word links — edit TWL rows, quote builder, suggestions.</p>
             </a>
           </div>
         </section>
@@ -221,15 +217,15 @@
         <section class="flow-group">
           <h2>Lead</h2>
           <div class="screen-list">
-            <a class="screen-row missing" data-screen="l1-ai.html">
+            <a class="screen-row" data-screen="l1-ai.html">
               <span class="s-name">l1-ai.html</span><span class="s-bundles">D · K</span>
               <p class="s-purpose">Run pipelines (3 base + 2 translate-mode), job progress (batch x/y), confirm/conflict dialogs, lock implications.</p>
             </a>
-            <a class="screen-row missing" data-screen="l2-style.html">
+            <a class="screen-row" data-screen="l2-style.html">
               <span class="s-name">l2-style.html</span><span class="s-bundles">C</span>
               <p class="s-purpose">Preferences sections + context pack export + pack sha + templates.tsv count.</p>
             </a>
-            <a class="screen-row missing" data-screen="l3-templates.html">
+            <a class="screen-row" data-screen="l3-templates.html">
               <span class="s-name">l3-templates.html</span><span class="s-bundles">I</span>
               <p class="s-purpose">Template curation queue — Draft-with-AI / Save / Approve / history.</p>
             </a>
@@ -239,19 +235,19 @@
         <section class="flow-group">
           <h2>Admin</h2>
           <div class="screen-list">
-            <a class="screen-row missing" data-screen="a1-setup.html">
+            <a class="screen-row" data-screen="a1-setup.html">
               <span class="s-name">a1-setup.html</span><span class="s-bundles">A</span>
               <p class="s-purpose">Org setup wizard (5 linear steps), WorkspaceChoiceDialog.</p>
             </a>
-            <a class="screen-row missing" data-screen="a2-import.html">
+            <a class="screen-row" data-screen="a2-import.html">
               <span class="s-name">a2-import.html</span><span class="s-bundles">B</span>
               <p class="s-purpose">Book picker + wait states, ImportFromDoor43Dialog.</p>
             </a>
-            <a class="screen-row missing" data-screen="a3-team.html">
+            <a class="screen-row" data-screen="a3-team.html">
               <span class="s-name">a3-team.html</span><span class="s-bundles">A/team</span>
               <p class="s-purpose">Team/user management, org switch.</p>
             </a>
-            <a class="screen-row missing" data-screen="a4-observe.html">
+            <a class="screen-row" data-screen="a4-observe.html">
               <span class="s-name">a4-observe.html</span><span class="s-bundles">K</span>
               <p class="s-purpose">Dashboard — export runs, pipeline jobs, health, pack status; "Workflow stages" future card.</p>
             </a>
@@ -269,7 +265,7 @@
           </div>
         </div>
         <div class="preview-stage" id="previewStage">
-          <p class="preview-empty">Select a screen from the left to preview it here.<br />Screens are built incrementally — grey rows aren't wired up yet.</p>
+          <p class="preview-empty">Select a screen from the left to preview it here.</p>
         </div>
       </aside>
     </div>

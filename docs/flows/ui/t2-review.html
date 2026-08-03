@@ -96,6 +96,20 @@
     display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
     background: var(--kindle-soft); color: var(--kindle-ink); border-radius: 999px; padding: 4px 10px;
   }
+  .nudge-chip {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+    background: var(--kindle-soft); color: var(--kindle-ink); border-radius: 999px; padding: 4px 6px 4px 10px;
+  }
+  .nudge-chip button {
+    appearance: none; border: 1px solid var(--kindle-ink); background: transparent; color: inherit;
+    border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 700; cursor: pointer;
+  }
+  .add-row-actions { display: flex; gap: 6px; }
+  .add-row-actions button {
+    flex: 1; appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 8px; padding: 5px 6px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  .add-row-actions button:hover { border-color: var(--inspire); color: var(--ink); }
   .verse-btn-mobile { display: none; }
   @media (max-width: 899.98px) {
     .verse-btn-mobile { display: inline-flex; }
@@ -258,6 +272,7 @@
     <a href="t3-scripture.html">Scripture</a>
     <a href="t4-align.html">Align</a>
     <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html">Words</a>
     <a href="../index.html">Hub ↗</a>
   </nav>
 
@@ -278,6 +293,10 @@
             <button type="button" id="approveAllNotes" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve all notes (24)</button>
             <button type="button" id="approveAllQuestions" data-handle="POST /api/rows/tq/:id/validate" data-bundle="E">Approve all questions (18)</button>
           </div>
+          <div class="add-row-actions" style="margin-top:8px;">
+            <button type="button" id="addNoteBtn" data-handle="POST /api/rows/tn" data-bundle="F">+ Note</button>
+            <button type="button" id="addQuestionBtn" data-handle="POST /api/rows/tq" data-bundle="F">+ Question</button>
+          </div>
         </div>
         <ul class="queue-list" id="queueList" role="list" aria-label="Queue items"></ul>
       </div>
@@ -287,10 +306,15 @@
       <div class="work-toolbar">
         <span class="wt-count" id="wtCount">1 of 42</span>
         <span class="unsaved-chip" id="unsavedChip" hidden><span aria-hidden="true">●</span> <span id="unsavedText">1 unsaved</span></span>
+        <span class="nudge-chip" id="versionNudge" hidden>
+          <span aria-hidden="true">⬆️</span> New version available
+          <button type="button" id="versionRefreshBtn" data-handle="local:reload-app" data-bundle="K">Refresh</button>
+        </span>
         <span class="spacer"></span>
         <button type="button" class="cluster-btn verse-btn-mobile" id="openSheetBtn">This verse</button>
         <button type="button" class="cluster-btn" id="historyBtn">History</button>
         <button type="button" class="cluster-btn" id="demoConflictBtn">Demo: 409 conflict</button>
+        <button type="button" class="cluster-btn" id="demoNudgeBtn">Demo: version nudge</button>
       </div>
 
       <article class="work-card" id="workCard">
@@ -324,9 +348,11 @@
           <button type="button" class="foot-chip" id="preserveChip" aria-pressed="false" data-handle="POST /api/rows/tn/:id/preserve" data-bundle="F">Preserve</button>
           <button type="button" class="foot-chip" id="hintChip" aria-pressed="false" data-handle="POST /api/rows/tn/:id/hint" data-bundle="F">Hint</button>
           <button type="button" class="foot-chip" id="trashChip" data-handle="POST /api/rows/tn/:id/trash" data-bundle="F">Trash</button>
+          <button type="button" class="foot-chip" id="deleteChip" hidden data-handle="DELETE /api/rows/tq/:id" data-headers="If-Match" data-bundle="F">Delete</button>
         </div>
 
         <div class="action-row">
+          <button type="button" class="btn btn-outline" id="undoBtnDesktop" data-handle="local:undo-note" data-bundle="F">Undo</button>
           <button type="button" class="btn btn-outline" id="saveBtnDesktop" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Save</button>
           <button type="button" class="btn btn-approve" id="approveBtnDesktop" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve</button>
         </div>
@@ -342,6 +368,7 @@
   </main>
 
   <footer class="actionbar-mobile" id="actionbarMobile">
+    <button type="button" class="btn btn-outline" id="undoBtnMobile" data-handle="local:undo-note" data-bundle="F">Undo</button>
     <button type="button" class="btn btn-outline" id="saveBtnMobile" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Save</button>
     <button type="button" class="btn btn-approve" id="approveBtnMobile" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve</button>
   </footer>
@@ -402,15 +429,22 @@
     "use strict";
 
     var ITEMS = [
-      { kind: "tn", ref: "ZEC 1:1", greek: "בֶּן־בֶּרֶכְיָ֥ה", support: "figs-idiom", quote: "the word of Yahweh came to", en: "This is an idiom meaning <b>Yahweh gave a message</b> to the prophet. Alternate translation: “Yahweh gave this message to”.", draft: "vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddó, el profeta.", state: "draft" },
+      { kind: "tn", ref: "ZEC 1:1", greek: "בֶּן־בֶּרֶכְיָ֥ה", support: "figs-idiom", quote: "the word of Yahweh came to", en: "This is an idiom meaning <b>Yahweh gave a message</b> to the prophet. Alternate translation: “Yahweh gave this message to”.", draft: "vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddó, el profeta.", state: "draft", trashed: false },
       { kind: "tq", ref: "ZEC 1:1", greek: "", support: "", quote: "", enQ: "When did Yahweh give this message?", draft: "En el octavo mes del segundo año de Darío.", state: "draft" },
-      { kind: "tn", ref: "ZEC 1:3", greek: "יְהוָ֥ה צְבָא֖וֹת", support: "figs-explicit", quote: "Yahweh of hosts", en: "Here, <b>hosts</b> refers to the armies of angels that serve Yahweh. See how you translated this in the introduction.", draft: "Yahvé de los ejércitos", state: "edited" },
-      { kind: "tn", ref: "ZEC 1:8", greek: "אִ֗ישׁ רֹכֵב֙ עַל־ס֣וּס אָדֹ֔ם", support: "writing-participants", quote: "a man riding on a red horse", en: "This introduces a new participant — the <b>angel of Yahweh</b>, though his identity is not yet stated here.", draft: "un hombre montado en un caballo rojo", state: "draft" },
+      { kind: "tn", ref: "ZEC 1:3", greek: "יְהוָ֥ה צְבָא֖וֹת", support: "figs-explicit", quote: "Yahweh of hosts", en: "Here, <b>hosts</b> refers to the armies of angels that serve Yahweh. See how you translated this in the introduction.", draft: "Yahvé de los ejércitos", state: "edited", trashed: false },
+      { kind: "tn", ref: "ZEC 1:8", greek: "אִ֗ישׁ רֹכֵב֙ עַל־ס֣וּס אָדֹ֔ם", support: "writing-participants", quote: "a man riding on a red horse", en: "This introduces a new participant — the <b>angel of Yahweh</b>, though his identity is not yet stated here.", draft: "un hombre montado en un caballo rojo", state: "draft", trashed: false },
       { kind: "tq", ref: "ZEC 1:8", greek: "", support: "", quote: "", enQ: "What did Zechariah see standing among the myrtle trees?", draft: "", state: "draft" }
     ];
-
     var cur = 0;
     var unsavedIds = {};
+    var nextRowSeq = 1;
+
+    function unapprovedCount() { return ITEMS.filter(function (it) { return it.state !== "validated"; }).length; }
+    function nextUnapproved(fromIdx) {
+      for (var i = fromIdx + 1; i < ITEMS.length; i++) { if (ITEMS[i].state !== "validated") return i; }
+      for (var i = 0; i <= fromIdx; i++) { if (ITEMS[i].state !== "validated") return i; }
+      return -1;
+    }
 
     function el(id) { return document.getElementById(id); }
     function toast(t, o) { window.flowShell.toast(t, o); }
@@ -451,10 +485,18 @@
     function render() {
       var item = ITEMS[cur];
       renderQueueList();
-      el("wtCount").textContent = (cur + 1) + " of " + ITEMS.length;
+      var remaining = unapprovedCount();
+      if (remaining === 0) {
+        el("wtCount").textContent = "All " + ITEMS.length + " approved";
+      } else {
+        var posInRemaining = 0;
+        for (var i = 0; i <= cur; i++) { if (ITEMS[i].state !== "validated") posInRemaining++; }
+        if (item.state === "validated") posInRemaining = Math.max(1, posInRemaining);
+        el("wtCount").textContent = posInRemaining + " of " + remaining;
+      }
       el("wcKind").textContent = item.kind === "tn" ? "Translation note" : "Translation question";
-      el("wcStateChip").className = "chip " + (item.state === "validated" ? "chip-approved" : item.state === "edited" ? "chip-edited" : "chip-draft");
-      el("wcStateChip").textContent = item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft";
+      el("wcStateChip").className = "chip " + (item.trashed ? "chip-draft" : item.state === "validated" ? "chip-approved" : item.state === "edited" ? "chip-edited" : "chip-draft");
+      el("wcStateChip").textContent = item.trashed ? "Trashed" : item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft";
       el("greekStrip").hidden = !item.greek;
       el("greekText").textContent = item.greek || "";
       el("supportRef").hidden = !item.support;
@@ -464,13 +506,17 @@
       el("sourceEn").innerHTML = item.kind === "tn" ? item.en : ("<b>Q:</b> " + item.enQ);
       el("draftArea").value = item.draft || "";
 
-      var locked = item.locked;
+      var locked = item.locked || item.trashed;
       el("workCard").classList.toggle("locked", !!locked);
-      [el("saveBtnDesktop"), el("saveBtnMobile"), el("approveBtnDesktop"), el("approveBtnMobile")].forEach(function (b) { b.disabled = !!locked; });
+      [el("saveBtnDesktop"), el("saveBtnMobile"), el("approveBtnDesktop"), el("approveBtnMobile"), el("undoBtnDesktop"), el("undoBtnMobile")].forEach(function (b) { b.disabled = !!locked; });
 
       var handleKind = item.kind === "tn" ? "tn" : "tq";
       [el("saveBtnDesktop"), el("saveBtnMobile")].forEach(function (b) { b.setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id"); });
       [el("approveBtnDesktop"), el("approveBtnMobile")].forEach(function (b) { b.setAttribute("data-handle", "POST /api/rows/" + handleKind + "/:id/validate"); });
+
+      // F.1 (tn: soft trash/restore) vs F.3 (tq: hard delete, no trash/restore)
+      [el("preserveChip"), el("hintChip"), el("trashChip")].forEach(function (b) { b.hidden = item.kind !== "tn"; });
+      el("deleteChip").hidden = item.kind !== "tq";
 
       el("ctxBodyDesktop").innerHTML = ctxHtml(item);
       el("ctxBodyMobile").innerHTML = ctxHtml(item);
@@ -497,29 +543,79 @@
     function doApprove() {
       ITEMS[cur].state = "validated";
       toast("Approved", { bundle: "E" });
+      var next = nextUnapproved(cur);
+      if (next === -1) {
+        toast("Queue complete — nothing left to approve", { bundle: "E" });
+      } else {
+        cur = next;
+      }
+      render();
+    }
+    function doUndo() {
+      if (!unsavedIds[cur]) { toast("Nothing to undo", { bundle: "F" }); return; }
+      delete unsavedIds[cur];
+      el("draftArea").value = ITEMS[cur].draft;
+      render();
+    }
+    function doDelete() {
+      var removedRef = ITEMS[cur].ref;
+      ITEMS.splice(cur, 1);
+      if (ITEMS.length === 0) { toast("Queue empty", { bundle: "F" }); return; }
+      if (cur >= ITEMS.length) cur = ITEMS.length - 1;
+      toast("Deleted " + removedRef, { bundle: "F" });
       render();
     }
     el("saveBtnDesktop").addEventListener("click", doSave);
     el("saveBtnMobile").addEventListener("click", doSave);
     el("approveBtnDesktop").addEventListener("click", doApprove);
     el("approveBtnMobile").addEventListener("click", doApprove);
+    el("undoBtnDesktop").addEventListener("click", doUndo);
+    el("undoBtnMobile").addEventListener("click", doUndo);
+    el("deleteChip").addEventListener("click", doDelete);
 
     el("approveAllNotes").addEventListener("click", function () {
       ITEMS.forEach(function (it) { if (it.kind === "tn") it.state = "validated"; });
       toast("Approving all notes…", { bundle: "E" });
+      var next = nextUnapproved(-1);
+      if (next !== -1) cur = next;
       render();
     });
     el("approveAllQuestions").addEventListener("click", function () {
       ITEMS.forEach(function (it) { if (it.kind === "tq") it.state = "validated"; });
       toast("Approving all questions…", { bundle: "E" });
+      var next = nextUnapproved(-1);
+      if (next !== -1) cur = next;
       render();
     });
+
+    el("addNoteBtn").addEventListener("click", function () {
+      ITEMS.push({ kind: "tn", ref: "ZEC 1:" + (10 + nextRowSeq), greek: "", support: "", quote: "", en: "New note — support reference and quote pending.", draft: "", state: "draft", trashed: false });
+      nextRowSeq++;
+      cur = ITEMS.length - 1;
+      toast("New note added", { bundle: "F" });
+      render();
+    });
+    el("addQuestionBtn").addEventListener("click", function () {
+      ITEMS.push({ kind: "tq", ref: "ZEC 1:" + (10 + nextRowSeq), greek: "", support: "", quote: "", enQ: "New question — pending.", draft: "", state: "draft" });
+      nextRowSeq++;
+      cur = ITEMS.length - 1;
+      toast("New question added", { bundle: "F" });
+      render();
+    });
+
+    el("demoNudgeBtn").addEventListener("click", function () { el("versionNudge").hidden = false; });
+    el("versionRefreshBtn").addEventListener("click", function () { el("versionNudge").hidden = true; toast("Reloading app…", { bundle: "K" }); });
 
     document.querySelectorAll(".foot-chip[aria-pressed]").forEach(function (chip) {
       chip.addEventListener("click", function () {
         var pressed = chip.getAttribute("aria-pressed") === "true";
         chip.setAttribute("aria-pressed", pressed ? "false" : "true");
       });
+    });
+    el("trashChip").addEventListener("click", function () {
+      ITEMS[cur].trashed = true;
+      toast("Moved to trash", { bundle: "F" });
+      render();
     });
 
     // account menu
@@ -543,7 +639,10 @@
 
     // history dialog
     function openHist() {
-      el("histBody").innerHTML =
+      var restoreRow = ITEMS[cur].trashed
+        ? '<div class="hist-version"><span class="hv-main">This note is in the trash.</span><button type="button" id="restoreBtn" data-handle="POST /api/rows/tn/:id/restore" data-headers="If-Match" data-bundle="F">Restore</button></div>'
+        : "";
+      el("histBody").innerHTML = restoreRow +
         '<div class="hist-version"><span class="hv-num">v4</span><span class="hv-main">Current draft<span class="hv-meta"> · Ana · 2 min ago</span></span></div>' +
         '<div class="hist-version"><span class="hv-num">v3</span><span class="hv-main">AI draft (pipeline)<span class="hv-meta"> · 1 hour ago</span></span><button type="button" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Switch to v3</button></div>' +
         '<div class="hist-version"><span class="hv-num">v1</span><span class="hv-main">Imported from Door43<span class="hv-meta"> · book import</span></span><button type="button" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Switch to v1</button></div>';
@@ -555,6 +654,14 @@
     });
     el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
     el("histCloseBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+    el("histBody").addEventListener("click", function (ev) {
+      var btn = ev.target.closest ? ev.target.closest("#restoreBtn") : null;
+      if (!btn) return;
+      ITEMS[cur].trashed = false;
+      el("histBackdrop").hidden = true;
+      toast("Restored from trash", { bundle: "F" });
+      render();
+    });
 
     // 409 conflict demo
     el("demoConflictBtn").addEventListener("click", function () {
