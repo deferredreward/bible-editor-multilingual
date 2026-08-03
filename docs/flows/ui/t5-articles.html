@@ -46,6 +46,15 @@
   .rail-top input[type="search"] { width: 100%; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
   .rail-tally { font-size: 12px; color: var(--ink-2); }
   .populate-btn { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 8px; padding: 6px 9px; font-size: 12px; cursor: pointer; text-align: start; }
+  .add-row { display: flex; gap: 6px; }
+  .add-row input[type="text"] {
+    flex: 1; min-width: 0; font-family: var(--font-ui); font-size: 12.5px; color: var(--ink);
+    background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+  }
+  .add-row button { appearance: none; border: 1px solid var(--inspire); background: transparent; color: var(--inspire-deep); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  :root[data-theme="dark"] .add-row button { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .add-row button { color: var(--inspire); } }
+  :root[data-theme="light"] .add-row button { color: var(--inspire-deep); }
 
   .article-list { list-style: none; margin: 0; padding: 6px; max-height: 60vh; overflow-y: auto; }
   .article-list li { margin-bottom: 2px; }
@@ -132,6 +141,7 @@
     <a href="t3-scripture.html">Scripture</a>
     <a href="t4-align.html">Align</a>
     <a href="t5-articles.html" aria-current="page">Articles</a>
+    <a href="t6-words.html">Words</a>
     <a href="../index.html">Hub ↗</a>
   </nav>
 
@@ -151,6 +161,10 @@
             <input type="search" placeholder="Search articles…" aria-label="Search articles" />
             <span class="rail-tally" id="railTally">9 of 15 approved</span>
             <button type="button" class="populate-btn" id="populateBtn" data-handle="POST /api/articles/populate" data-bundle="J">Populate from books</button>
+            <div class="add-row">
+              <input type="text" id="addIdInput" placeholder="Add by id…" aria-label="Add article by id" />
+              <button type="button" id="addIdBtn" data-handle="POST /api/articles/tw/add" data-bundle="J">Add</button>
+            </div>
           </div>
           <ul class="article-list" id="articleList" role="list" aria-label="Articles"></ul>
         </div>
@@ -259,6 +273,7 @@
       document.querySelectorAll('[data-handle^="POST /api/articles/:resource/unit/validate"]').forEach(function (b) {
         b.setAttribute("data-handle", "POST /api/articles/" + kindAttr + "/unit/validate");
       });
+      el("addIdBtn").setAttribute("data-handle", "POST /api/articles/" + kindAttr + "/add");
 
       var body = el("epBody");
       body.innerHTML = "";
@@ -318,6 +333,22 @@
     });
 
     el("backToListBtn").addEventListener("click", function () { el("articlesLayout").setAttribute("data-view", "list"); });
+
+    el("addIdBtn").addEventListener("click", function () {
+      var id = el("addIdInput").value.trim();
+      if (!id) { toast("Enter an id to add", { bundle: "J" }); return; }
+      var exists = currentItems().some(function (it) { return it.id === id; });
+      if (exists) { toast("400 source_not_found — unknown id (demo: id already present)", { bundle: "J" }); return; }
+      var newItem = { id: id, title: id, state: "draft", body: "" };
+      if (resource === "ta") { newItem.titlePart = id; newItem.subtitlePart = ""; }
+      RESOURCES[resource].items.push(newItem);
+      curIdx = RESOURCES[resource].items.length - 1;
+      el("addIdInput").value = "";
+      el("articlesLayout").setAttribute("data-view", "editor");
+      renderList();
+      renderEditor();
+      toast("Added " + id, { bundle: "J" });
+    });
 
     el("historyBtn").addEventListener("click", function () { el("histBackdrop").hidden = false; });
     el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });

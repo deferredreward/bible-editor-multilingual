@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Word links (TWL) — Zechariah 1:8</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .words-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 64px; }
+
+  .nav-strip { display: flex; align-items: center; gap: 10px; margin-block-end: 14px; flex-wrap: wrap; }
+  .nav-strip .ref-big { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--ocean); }
+  :root[data-theme="dark"] .nav-strip .ref-big { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .nav-strip .ref-big { color: var(--cultivate); } }
+  :root[data-theme="light"] .nav-strip .ref-big { color: var(--ocean); }
+  .nav-strip .spacer { margin-inline-start: auto; }
+  .iconbtn { appearance: none; border: none; background: var(--skip-soft); color: var(--ink); width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+  .links-btn-mobile, .verse-btn-mobile { display: none; }
+  @media (max-width: 899.98px) { .links-btn-mobile, .verse-btn-mobile { display: inline-flex; } }
+
+  .words-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 899.98px) {
+    .words-layout { grid-template-columns: minmax(0, 1fr); }
+    .words-layout[data-view="detail"] .table-col { display: none; }
+    .words-layout[data-view="table"] .detail-col { display: none; }
+  }
+
+  .table-col-top { display: flex; align-items: center; gap: 10px; margin-block-end: 10px; flex-wrap: wrap; }
+  .table-col-top .tally { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .table-col-top .spacer { margin-inline-start: auto; }
+  .add-link-btn { appearance: none; border: 1.5px solid var(--inspire); background: transparent; color: var(--inspire-deep); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  :root[data-theme="dark"] .add-link-btn { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .add-link-btn { color: var(--inspire); } }
+  :root[data-theme="light"] .add-link-btn { color: var(--inspire-deep); }
+
+  .table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .twl-table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 480px; }
+  .twl-table th {
+    position: sticky; top: 0; background: var(--card-2); text-align: start; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); padding: 9px 12px; border-block-end: 1px solid var(--line); white-space: nowrap;
+  }
+  .twl-table td { padding: 10px 12px; border-block-end: 1px solid var(--line); vertical-align: middle; }
+  .twl-table tbody tr:last-child td { border-block-end: none; }
+  .twl-table tbody tr { cursor: pointer; }
+  .twl-table tbody tr:hover { background: var(--card-2); }
+  .twl-table tbody tr[aria-selected="true"] { background: var(--hl); }
+  .twl-table .tw-quote { font-family: var(--font-scripture); }
+  .twl-table .tw-gloss { color: var(--ink-2); font-size: 12px; }
+
+  .no-approve-note { font-size: 11.5px; color: var(--ink-2); margin: 8px 2px 0; font-style: italic; }
+
+  .detail-col { position: sticky; top: 12px; }
+  .detail-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-block-end: 14px; }
+  .detail-top { padding: 12px 12px 8px; border-block-end: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .detail-top h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .detail-body { padding: 14px; }
+
+  .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 5px; display: block; }
+  .field + .field { margin-block-start: 12px; }
+  .quote-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .quote-display { font-family: var(--font-scripture); font-size: 16px; background: var(--hl); border-radius: 6px; padding: 3px 9px; }
+  .quote-row button { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+  .occ-input { width: 64px; font-family: var(--font-ui); font-size: 14px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+  .article-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .article-input { flex: 1; min-width: 140px; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  .read-article-link { font-size: 12.5px; font-weight: 600; color: var(--inspire-deep); text-decoration: none; white-space: nowrap; }
+  :root[data-theme="dark"] .read-article-link { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .read-article-link { color: var(--inspire); } }
+  :root[data-theme="light"] .read-article-link { color: var(--inspire-deep); }
+  .gloss-caption { font-size: 12.5px; color: var(--ink-2); margin: 6px 0 0; }
+  .locate-btn { appearance: none; border: none; background: transparent; color: var(--ink-2); cursor: pointer; font-size: 15px; padding: 2px 4px; }
+
+  .detail-actions { display: flex; gap: 8px; margin-block-start: 14px; flex-wrap: wrap; }
+  .detail-actions .btn { flex: 1; }
+  .kill-switch-note { font-size: 11px; color: var(--ink-2); margin: 10px 0 0; }
+
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-approve { background: var(--ok); color: #fff; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  .sugg-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .sugg-top { padding: 12px 12px 8px; border-block-end: 1px solid var(--line); }
+  .sugg-top h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .sugg-body { padding: 10px 12px 14px; }
+  .sugg-item { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; border-block-end: 1px solid var(--line); }
+  .sugg-item:last-child { border-block-end: none; }
+  .sugg-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sugg-main .sq { font-family: var(--font-scripture); font-size: 14.5px; background: var(--card-2); border-radius: 6px; padding: 2px 7px; }
+  .sugg-main .sg { font-size: 11.5px; color: var(--ink-2); flex: 1; min-width: 100px; }
+  .sugg-actions { display: flex; gap: 6px; }
+  .sugg-actions button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+  .sugg-actions button.accept { border-color: var(--ok); color: var(--ok-ink); }
+  .sugg-actions button.reject { border-color: var(--warn); color: var(--warn-ink); }
+  .sugg-select { font-size: 11.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  .sugg-empty { font-size: 12.5px; color: var(--ink-2); padding: 4px 0; }
+  .sugg-paused { font-size: 12.5px; color: var(--ink-2); font-style: italic; }
+
+  /* dialogs (quote builder, links sheet, verse sheet) */
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 560px; width: 100%; max-height: 84vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-body { padding: 14px 16px; overflow-y: auto; }
+  .dlg-foot { display: flex; gap: 8px; padding: 12px 16px; border-block-start: 1px solid var(--line); justify-content: flex-end; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+
+  .qb-source { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-scripture); font-size: 17px; padding: 10px; background: var(--card-2); border-radius: var(--radius-sm); margin-block-end: 10px; direction: rtl; }
+  .qb-source button { appearance: none; border: none; background: transparent; color: var(--ink); font: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+  .qb-source button[data-selected="true"] { background: var(--hl); }
+  .qb-target { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-scripture); font-size: 15px; padding: 8px 10px; background: var(--card-2); border-radius: var(--radius-sm); margin-block-end: 10px; }
+  .qb-target .tchip { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 999px; padding: 2px 9px; font-size: 13px; cursor: pointer; }
+  .qb-target .tchip[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .qb-preview { font-size: 13.5px; color: var(--ink); margin: 0 0 4px; }
+  .qb-preview .qb-occ { color: var(--ink-2); }
+  .qb-hint { font-size: 11.5px; color: var(--ink-2); margin: 0; }
+
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.35); z-index: 60; }
+  .sheet-backdrop[hidden] { display: none; }
+  .sheet { position: fixed; inset-inline: 0; bottom: 0; z-index: 61; background: var(--card); border-radius: 16px 16px 0 0; box-shadow: var(--shadow); max-height: 78vh; display: flex; flex-direction: column; }
+  .sheet[hidden] { display: none; }
+  .sheet-handle { width: 36px; height: 4px; background: var(--line); border-radius: 2px; margin: 8px auto; flex: none; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px; flex: none; }
+  .sheet-head h2 { font-size: 14px; margin: 0; }
+  .sheet-body { padding: 0 16px 20px; overflow-y: auto; }
+  .ctx-lane { margin-bottom: 12px; }
+  .ctx-lane .lane-tag { margin-bottom: 4px; }
+  .ctx-lane .ctx-verse { background: var(--card-2); border-radius: var(--radius-sm); padding: 8px 10px; font-family: var(--font-scripture); font-size: 14.5px; line-height: 1.5; }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Word links (TWL) — Zechariah</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Review</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html" aria-current="page">Words</a>
+    <a href="../index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="words-wrap">
+    <div class="nav-strip">
+      <button type="button" class="iconbtn" id="prevVerseBtn" aria-label="Previous verse">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <span class="ref-big" id="refBig">ZEC 1:8</span>
+      <button type="button" class="iconbtn" id="nextVerseBtn" aria-label="Next verse">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+      <span class="spacer"></span>
+      <button type="button" class="cluster-btn links-btn-mobile" id="openLinksSheetBtn">Links list</button>
+      <button type="button" class="cluster-btn verse-btn-mobile" id="openVerseSheetBtn">This verse</button>
+    </div>
+
+    <div class="words-layout" id="wordsLayout" data-view="table">
+      <section class="table-col">
+        <div class="table-col-top">
+          <span class="tally" id="tally">3 of 3 linked</span>
+          <span class="spacer"></span>
+          <button type="button" class="add-link-btn" id="addLinkBtn">+ Add link</button>
+        </div>
+        <div class="table-wrap">
+          <table class="twl-table">
+            <thead>
+              <tr><th>Quote</th><th>Occ</th><th>tW link</th><th>Gloss</th></tr>
+            </thead>
+            <tbody id="twlBody"></tbody>
+          </table>
+        </div>
+        <p class="no-approve-note">Word links have no approve lifecycle — there is no validate endpoint for TWL rows; Save is the only state-changing action here.</p>
+      </section>
+
+      <aside class="detail-col">
+        <div class="detail-panel" id="detailPanel">
+          <div class="detail-top">
+            <button type="button" class="cluster-btn" id="backToTableBtn" style="display:none;">← Links</button>
+            <h2>Edit word link</h2>
+          </div>
+          <div class="detail-body">
+            <div class="field">
+              <span class="field-label">Quote (original-language)</span>
+              <div class="quote-row">
+                <span class="quote-display" id="detailQuote"></span>
+                <button type="button" id="buildQuoteBtn" data-handle="local:quote-builder" data-bundle="F">Build from source</button>
+                <button type="button" class="locate-btn" id="locateBtn" data-handle="local:locate-word" data-bundle="F" title="Preview where this occurs">📍</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label">Occurrence</span>
+              <input type="number" min="1" class="occ-input" id="detailOcc" aria-label="Occurrence" />
+            </div>
+            <div class="field">
+              <span class="field-label">tW article link</span>
+              <div class="article-row">
+                <input type="text" class="article-input" id="detailArticle" list="catalogList" aria-label="translationWords article id" data-handle="GET /api/catalogs" data-bundle="F" />
+                <a href="t5-articles.html" class="read-article-link" id="readArticleLink">Read article →</a>
+              </div>
+              <datalist id="catalogList">
+                <option value="kt/man"></option>
+                <option value="kt/prophet"></option>
+                <option value="kt/yahweh"></option>
+                <option value="other/horse"></option>
+                <option value="other/red"></option>
+                <option value="other/ride"></option>
+                <option value="kt/lord"></option>
+              </datalist>
+              <p class="gloss-caption" id="detailGloss"></p>
+            </div>
+            <div class="detail-actions">
+              <button type="button" class="btn btn-outline" id="undoLinkBtn" data-handle="local:undo-link" data-bundle="F">Undo</button>
+              <button type="button" class="btn btn-outline" id="saveLinkBtn" data-handle="PATCH /api/rows/twl/:id" data-headers="If-Match" data-bundle="F">Save</button>
+              <button type="button" class="btn btn-warn" id="deleteLinkBtn" data-handle="DELETE /api/rows/twl/:id" data-headers="If-Match" data-bundle="F">Delete</button>
+            </div>
+            <p class="kill-switch-note">Manual reorder is disabled (kill-switched) — TWL is canonically ordered by source-word position.</p>
+          </div>
+        </div>
+
+        <div class="sugg-panel" id="suggPanel">
+          <div class="sugg-top"><h2>Suggestions</h2></div>
+          <div class="sugg-body" id="suggBody"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Quote builder (F.4 QuoteBuilderPopper) -->
+  <div class="dlg-backdrop" id="qbBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="qbTitle">
+      <div class="dlg-top"><h2 id="qbTitle">Build quote from source</h2><button type="button" class="close-x" id="closeQbBtn" aria-label="Close">✕</button></div>
+      <div class="dlg-body">
+        <p class="qb-hint">Click, or shift-click to extend, the Hebrew source words this link should point to.</p>
+        <div class="qb-source" id="qbSource"></div>
+        <p class="qb-hint">Target chips (ULT) — toggling shows the alignment-ancestor chain this quote would cover; cosmetic in this mockup.</p>
+        <div class="qb-target" id="qbTarget"></div>
+        <p class="qb-preview">Quote: <b id="qbPreviewQuote">—</b> <span class="qb-occ" id="qbPreviewOcc"></span></p>
+      </div>
+      <div class="dlg-foot">
+        <button type="button" class="btn btn-outline" id="qbCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="qbUseBtn">Use selection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- mobile "Links" sheet — the rail list -->
+  <div class="sheet-backdrop" id="linksSheetBackdrop" hidden></div>
+  <div class="sheet" id="linksSheet" hidden role="dialog" aria-modal="true" aria-labelledby="linksSheetTitle">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="linksSheetTitle">Word links — ZEC 1:8</h2>
+      <button type="button" class="close-x" id="closeLinksSheetBtn" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body" id="linksSheetBody"></div>
+  </div>
+
+  <!-- mobile "This verse" context sheet -->
+  <div class="sheet-backdrop" id="verseSheetBackdrop" hidden></div>
+  <div class="sheet" id="verseSheet" hidden role="dialog" aria-modal="true" aria-labelledby="verseSheetTitle">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="verseSheetTitle">This verse — read-only context</h2>
+      <button type="button" class="close-x" id="closeVerseSheetBtn" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p>
+        <p class="ctx-verse">In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying, "I saw in the night, and behold, <mark>a man riding on a red horse</mark>, and he was standing among the myrtle trees that were in the ravine."</p></div>
+      <div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p>
+        <p class="ctx-verse">During the night I had a vision. I saw a man sitting on a red horse standing among some myrtle trees in a small valley.</p></div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+
+    var SOURCE_WORDS = [
+      { i: 0, t: "אִ֗ישׁ" }, { i: 1, t: "רֹכֵב֙" }, { i: 2, t: "עַל" }, { i: 3, t: "ס֣וּס" }, { i: 4, t: "אָדֹ֔ם" }
+    ];
+    var TARGET_WORDS = ["a", "man", "riding", "on", "a", "red", "horse"];
+
+    var LINKS = [
+      { id: "twl-101", quote: "אִ֗ישׁ", occurrence: 1, article: "kt/man", gloss: "a male human being", saved: true },
+      { id: "twl-102", quote: "ס֣וּס", occurrence: 1, article: "other/horse", gloss: "a large animal used for riding", saved: true },
+      { id: "twl-103", quote: "אָדֹ֔ם", occurrence: 1, article: "other/red", gloss: "a color, like blood", saved: true }
+    ];
+    var SUGGESTIONS = [
+      { id: "sug-1", quote: "רֹכֵב֙", occurrence: 1, candidateArticle: "other/ride", gloss: "to sit on and control an animal", ambiguous: false },
+      { id: "sug-2", quote: "עַל", occurrence: 1, candidates: ["kt/lord", "other/upon"], gloss: "ambiguous — could be a preposition or a title", ambiguous: true }
+    ];
+
+    var cur = 0;
+    var unsaved = {};
+    var lastSavedSnapshot = {};
+    var nextSeq = 1;
+    var qbTargetRow = null; // link being edited by the quote builder ("add" when creating a new one)
+
+    function tally() {
+      el("tally").textContent = LINKS.length + " of " + LINKS.length + " linked";
+    }
+
+    function renderTable() {
+      var body = el("twlBody");
+      body.innerHTML = "";
+      LINKS.forEach(function (link, i) {
+        var tr = document.createElement("tr");
+        tr.setAttribute("aria-selected", i === cur ? "true" : "false");
+        tr.setAttribute("role", "button");
+        tr.setAttribute("tabindex", "0");
+        tr.setAttribute("aria-label", "Edit word link " + link.quote + " → " + link.article);
+        tr.innerHTML =
+          '<td class="tw-quote">' + link.quote + '</td>' +
+          '<td>' + link.occurrence + '</td>' +
+          '<td>' + link.article + '</td>' +
+          '<td class="tw-gloss">' + link.gloss + '</td>';
+        function selectRow() {
+          cur = i;
+          el("wordsLayout").setAttribute("data-view", "detail");
+          renderDetail();
+          renderTable();
+        }
+        tr.addEventListener("click", selectRow);
+        tr.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRow(); }
+        });
+        body.appendChild(tr);
+      });
+      tally();
+    }
+
+    function renderDetail() {
+      if (LINKS.length === 0) {
+        el("detailPanel").hidden = true;
+        return;
+      }
+      el("detailPanel").hidden = false;
+      var link = LINKS[cur];
+      el("detailQuote").textContent = link.quote;
+      el("detailOcc").value = link.occurrence;
+      el("detailArticle").value = link.article;
+      el("detailGloss").textContent = link.gloss;
+      el("readArticleLink").href = "t5-articles.html";
+      var dirty = !!unsaved[link.id];
+      el("saveLinkBtn").disabled = !dirty;
+      el("undoLinkBtn").disabled = !dirty;
+      el("backToTableBtn").style.display = "";
+    }
+
+    function renderSuggestions() {
+      var body = el("suggBody");
+      if (SUGGESTIONS.length === 0) {
+        body.innerHTML = '<p class="sugg-empty">Suggestions paused — Words checked here.</p>';
+        return;
+      }
+      body.innerHTML = "";
+      SUGGESTIONS.forEach(function (s) {
+        var item = document.createElement("div");
+        item.className = "sugg-item";
+        var candidateHtml = s.ambiguous
+          ? '<select class="sugg-select" data-sugg="' + s.id + '">' + s.candidates.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("") + '</select>'
+          : '<span class="sg">' + s.candidateArticle + '</span>';
+        item.innerHTML =
+          '<div class="sugg-main"><span class="sq">' + s.quote + '</span>' + candidateHtml + '<span class="sg">' + s.gloss + '</span></div>' +
+          '<div class="sugg-actions">' +
+          '<button type="button" class="accept" data-handle="POST /api/rows/twl" data-bundle="F" data-sugg-accept="' + s.id + '">Add</button>' +
+          '<button type="button" class="reject" data-handle="local:reject-suggestion" data-bundle="F" data-sugg-reject="' + s.id + '">Reject</button>' +
+          '<button type="button" data-handle="TODO:no-backend" data-bundle="F" title="Read article (demo)">Read</button>' +
+          '</div>';
+        body.appendChild(item);
+      });
+    }
+
+    function render() {
+      renderTable();
+      renderDetail();
+      renderSuggestions();
+    }
+
+    el("detailOcc").addEventListener("input", function () { unsaved[LINKS[cur].id] = true; renderDetail(); });
+    el("detailArticle").addEventListener("input", function () { unsaved[LINKS[cur].id] = true; renderDetail(); });
+
+    el("saveLinkBtn").addEventListener("click", function () {
+      var link = LINKS[cur];
+      if (!unsaved[link.id]) { toast("Nothing to save", { bundle: "F" }); return; }
+      link.occurrence = Number(el("detailOcc").value) || link.occurrence;
+      link.article = el("detailArticle").value || link.article;
+      delete unsaved[link.id];
+      toast("Saved word link", { bundle: "F" });
+      renderTable();
+      renderDetail();
+    });
+    el("undoLinkBtn").addEventListener("click", function () {
+      var link = LINKS[cur];
+      if (!unsaved[link.id]) { toast("Nothing to undo", { bundle: "F" }); return; }
+      delete unsaved[link.id];
+      renderDetail();
+      toast("Reverted to last-saved", { bundle: "F" });
+    });
+    el("deleteLinkBtn").addEventListener("click", function () {
+      var link = LINKS[cur];
+      LINKS.splice(cur, 1);
+      if (cur >= LINKS.length) cur = Math.max(0, LINKS.length - 1);
+      toast("Deleted word link " + link.quote, { bundle: "F" });
+      render();
+    });
+    el("locateBtn").addEventListener("click", function () {
+      toast("Highlighting “" + LINKS[cur].quote + "” in the verse (hover-preview, local only)", { bundle: "F" });
+    });
+
+    el("addLinkBtn").addEventListener("click", function () {
+      qbTargetRow = "add";
+      openQuoteBuilder();
+    });
+    el("buildQuoteBtn").addEventListener("click", function () {
+      qbTargetRow = cur;
+      openQuoteBuilder();
+    });
+
+    // quote builder
+    var qbSelected = [];
+    function openQuoteBuilder() {
+      var src = el("qbSource");
+      src.innerHTML = "";
+      SOURCE_WORDS.forEach(function (w) {
+        var word = document.createElement("button");
+        word.type = "button";
+        word.textContent = w.t;
+        word.dataset.i = w.i;
+        word.dataset.selected = "false";
+        word.setAttribute("aria-label", "Source word " + w.t + " (shift-click to extend selection)");
+        word.addEventListener("click", function (ev) {
+          if (ev.shiftKey && qbSelected.length) {
+            var lo = Math.min(qbSelected[0], w.i), hi = Math.max(qbSelected[0], w.i);
+            qbSelected = [];
+            for (var k = lo; k <= hi; k++) qbSelected.push(k);
+          } else {
+            qbSelected = [w.i];
+          }
+          renderQbSource();
+          renderQbPreview();
+        });
+        src.appendChild(word);
+      });
+      qbSelected = [];
+      var tgt = el("qbTarget");
+      tgt.innerHTML = "";
+      TARGET_WORDS.forEach(function (w, i) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tchip";
+        btn.textContent = w;
+        btn.setAttribute("aria-pressed", "false");
+        btn.addEventListener("click", function () {
+          btn.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") === "true" ? "false" : "true");
+        });
+        tgt.appendChild(btn);
+      });
+      renderQbSource();
+      renderQbPreview();
+      el("qbBackdrop").hidden = false;
+    }
+    function renderQbSource() {
+      el("qbSource").querySelectorAll("button").forEach(function (span) {
+        span.dataset.selected = qbSelected.indexOf(Number(span.dataset.i)) !== -1 ? "true" : "false";
+      });
+    }
+    function renderQbPreview() {
+      var words = qbSelected.slice().sort(function (a, b) { return a - b; }).map(function (i) {
+        var w = SOURCE_WORDS.filter(function (s) { return s.i === i; })[0];
+        return w ? w.t : "";
+      });
+      el("qbPreviewQuote").textContent = words.length ? words.join(" ") : "—";
+      el("qbPreviewOcc").textContent = words.length ? "(occurrence 1)" : "";
+    }
+    el("closeQbBtn").addEventListener("click", function () { el("qbBackdrop").hidden = true; });
+    el("qbCancelBtn").addEventListener("click", function () { el("qbBackdrop").hidden = true; });
+    el("qbUseBtn").addEventListener("click", function () {
+      if (!qbSelected.length) { toast("Select at least one source word", { bundle: "F" }); return; }
+      var words = qbSelected.slice().sort(function (a, b) { return a - b; }).map(function (i) {
+        return SOURCE_WORDS.filter(function (s) { return s.i === i; })[0].t;
+      });
+      var quote = words.join(" ");
+      if (qbTargetRow === "add") {
+        var id = "twl-new-" + (nextSeq++);
+        LINKS.push({ id: id, quote: quote, occurrence: 1, article: "", gloss: "(new — set the tW article and Save)" });
+        cur = LINKS.length - 1;
+        unsaved[id] = true;
+        toast("Quote built — set the tW article, then Save", { bundle: "F" });
+      } else {
+        var link = LINKS[cur];
+        link.quote = quote;
+        unsaved[link.id] = true;
+        toast("Quote updated — commits on Save", { bundle: "F" });
+      }
+      el("qbBackdrop").hidden = true;
+      el("wordsLayout").setAttribute("data-view", "detail");
+      render();
+    });
+
+    // suggestions: accept / reject
+    el("suggBody").addEventListener("click", function (ev) {
+      var acceptBtn = ev.target.closest ? ev.target.closest("[data-sugg-accept]") : null;
+      var rejectBtn = ev.target.closest ? ev.target.closest("[data-sugg-reject]") : null;
+      if (acceptBtn) {
+        var sid = acceptBtn.getAttribute("data-sugg-accept");
+        var s = SUGGESTIONS.filter(function (x) { return x.id === sid; })[0];
+        if (!s) return;
+        var select = el("suggBody").querySelector('select[data-sugg="' + sid + '"]');
+        var article = select ? select.value : s.candidateArticle;
+        var newId = "twl-new-" + (nextSeq++);
+        LINKS.push({ id: newId, quote: s.quote, occurrence: s.occurrence, article: article, gloss: s.gloss });
+        SUGGESTIONS = SUGGESTIONS.filter(function (x) { return x.id !== sid; });
+        cur = LINKS.length - 1;
+        toast("Added from suggestion", { bundle: "F" });
+        render();
+      } else if (rejectBtn) {
+        var rid = rejectBtn.getAttribute("data-sugg-reject");
+        SUGGESTIONS = SUGGESTIONS.filter(function (x) { return x.id !== rid; });
+        toast("Rejected (client-only, never persisted)", { bundle: "F" });
+        renderSuggestions();
+      }
+    });
+
+    // mobile detail back
+    el("backToTableBtn").addEventListener("click", function () { el("wordsLayout").setAttribute("data-view", "table"); });
+
+    // mobile sheets
+    function renderLinksSheet() {
+      var body = el("linksSheetBody");
+      body.innerHTML = "";
+      LINKS.forEach(function (link, i) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "cluster-btn";
+        btn.style.width = "100%";
+        btn.style.marginBottom = "6px";
+        btn.style.textAlign = "start";
+        btn.textContent = link.quote + " → " + link.article;
+        btn.addEventListener("click", function () {
+          cur = i;
+          el("linksSheetBackdrop").hidden = true;
+          el("linksSheet").hidden = true;
+          el("wordsLayout").setAttribute("data-view", "detail");
+          renderDetail();
+          renderTable();
+        });
+        body.appendChild(btn);
+      });
+    }
+    el("openLinksSheetBtn").addEventListener("click", function () { renderLinksSheet(); el("linksSheetBackdrop").hidden = false; el("linksSheet").hidden = false; });
+    el("closeLinksSheetBtn").addEventListener("click", function () { el("linksSheetBackdrop").hidden = true; el("linksSheet").hidden = true; });
+    el("linksSheetBackdrop").addEventListener("click", function () { el("linksSheetBackdrop").hidden = true; el("linksSheet").hidden = true; });
+
+    el("openVerseSheetBtn").addEventListener("click", function () { el("verseSheetBackdrop").hidden = false; el("verseSheet").hidden = false; });
+    el("closeVerseSheetBtn").addEventListener("click", function () { el("verseSheetBackdrop").hidden = true; el("verseSheet").hidden = true; });
+    el("verseSheetBackdrop").addEventListener("click", function () { el("verseSheetBackdrop").hidden = true; el("verseSheet").hidden = true; });
+
+    el("prevVerseBtn").addEventListener("click", function () { toast("Loading previous verse (local nav)", { bundle: "F" }); });
+    el("nextVerseBtn").addEventListener("click", function () { toast("Loading next verse (local nav)", { bundle: "F" }); });
+
+    // account menu
+    (function () {
+      var btn = el("accountBtn"), menu = el("accountMenu");
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+      document.addEventListener("click", function () { menu.setAttribute("hidden", ""); btn.setAttribute("aria-expanded", "false"); });
+    })();
+
+    render();
+  })();
+  </script>
+</body>
+</html>

@@ -59,6 +59,32 @@
 
   .resource-check { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13.5px; }
   .resource-check input { width: 16px; height: 16px; }
+
+  /* Scripture-source replacement lifecycle strip (mirrors docs/mockups/desktop-first/admin-workflow.html) */
+  .lc-strip { display: flex; align-items: center; margin-block: 4px 10px; flex-wrap: wrap; gap: 0; }
+  .lc-node { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); }
+  .lc-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--card); border: 2px solid var(--skip); flex: none; }
+  .lc-node[data-state="done"] .lc-dot { background: var(--ok); border-color: var(--ok); }
+  .lc-node[data-state="current"] { color: var(--inspire-deep); }
+  :root[data-theme="dark"] .lc-node[data-state="current"] { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .lc-node[data-state="current"] { color: var(--inspire); } }
+  :root[data-theme="light"] .lc-node[data-state="current"] { color: var(--inspire-deep); }
+  .lc-node[data-state="current"] .lc-dot { background: var(--inspire); border-color: var(--inspire); }
+  .lc-sep { width: 30px; height: 2px; background: var(--line); margin-inline: 6px; flex: none; }
+  .lc-sep.done { background: var(--ok); }
+
+  /* Book-lint badge + popover on the book detail pane */
+  .lint-wrap { position: relative; display: inline-flex; }
+  .lint-badge { appearance: none; border: none; cursor: pointer; font: inherit; }
+  .lint-popover {
+    position: absolute; inset-block-start: calc(100% + 6px); inset-inline-start: 0;
+    z-index: 10; min-width: 230px; max-width: 300px;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow); padding: 10px 12px;
+  }
+  .lint-popover[hidden] { display: none; }
+  .lint-list { margin: 6px 0 0; padding-inline-start: 18px; font-size: 12.5px; color: var(--ink-2); }
+  .lint-list li + li { margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -107,6 +133,51 @@
 
       <div id="detailHost"></div>
     </div>
+
+    <section class="panel" id="laneReplacementPanel">
+      <div class="panel-top">
+        <h2>Scripture source replacement</h2>
+        <span class="chip chip-edited">Literal lane</span>
+        <p class="panel-sub">Swap the literal lane's upstream source across the whole canon — validate the URL, review which books are affected, work the per-book job to completion, then activate.</p>
+      </div>
+      <div class="panel-body">
+        <div class="grid-2">
+          <div>
+            <div class="kv">
+              <dt>Current source</dt><dd>es-419_glt</dd>
+              <dt>Proposed source</dt><dd>es-419_glt_v2</dd>
+            </div>
+            <div class="field" style="margin-top:12px;">
+              <label class="f-label" for="laneNewUrl">New Door43 URL</label>
+              <input class="tinput" id="laneNewUrl" type="text" value="https://git.door43.org/es-419_gl/es-419_glt_v2">
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+              <button class="btn btn-rerun btn-sm" type="button" id="laneValidateBtn" data-handle="POST /api/project-config/lanes/:lane/validate" data-bundle="A">Validate</button>
+              <button class="btn btn-ghost btn-sm" type="button" id="laneAffectedBtn" data-handle="GET /api/project-config/lanes/:lane/affected-books" data-bundle="A">View affected books</button>
+            </div>
+            <p class="f-help" id="laneValidateResult">Not yet validated this run — the last check found 3 affected books.</p>
+          </div>
+          <div>
+            <p class="f-label">Lifecycle</p>
+            <div class="lc-strip" id="laneLifecycle"></div>
+            <p class="f-help" id="laneLifecycleNote"></p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+              <button class="btn btn-approve btn-sm" type="button" id="laneActivateBtn" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/activate" data-bundle="A">Activate</button>
+              <button class="btn btn-warn btn-sm" type="button" id="laneBackOutBtn" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/back-out" data-bundle="A">Back out</button>
+            </div>
+          </div>
+        </div>
+        <div class="field" style="margin-top:16px;">
+          <p class="f-label">Replacement job — per-book status</p>
+          <div id="laneBookRows"></div>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <span class="foot-state" id="laneFoot"></span>
+        <span class="spacer"></span>
+        <span id="laneNextAction"></span>
+      </div>
+    </section>
   </main>
 
   <!-- Re-pull dialog (ImportFromDoor43Dialog) -->
@@ -158,6 +229,31 @@
       "3JN":"3 John", JUD:"Jude", REV:"Revelation"
     };
     var IMPORTED = { TIT: true, RUT: true, JON: true, GEN: true, MAT: true };
+    var LINT = {
+      TIT: { flag: 1, escalate: 0, rows: ["Flag — 2:3 quote run missing an alignment milestone"] },
+      RUT: { flag: 2, escalate: 0, rows: ["Flag — 1:6 unaligned quote run", "Flag — 2:1 unusual paragraph marker"] },
+      JON: { flag: 0, escalate: 1, rows: ["Escalate — footnote integrity mismatch (ULT/UST) in 2:4"] },
+      GEN: { flag: 0, escalate: 0, rows: [] },
+      MAT: { flag: 0, escalate: 0, rows: [] }
+    };
+
+    var laneState = {
+      proposedUrl: "https://git.door43.org/es-419_gl/es-419_glt_v2",
+      jobId: "repl-8841",
+      lifecycle: "staging",
+      books: [
+        { book: "TIT", state: "artifact_ok" },
+        { book: "RUT", state: "retryable_error" },
+        { book: "JON", state: "absent_authorized" }
+      ]
+    };
+    var LC_STEPS = ["reserved", "staging", "ready", "completed"];
+    var LC_NOTE = {
+      reserved: "A replacement slot is reserved but staging hasn't started.",
+      staging: "Books are staging into the replacement source now.",
+      ready: "Ready to activate — the literal lane will switch to the new source.",
+      completed: "This replacement is complete. The literal lane now reads from the new source."
+    };
 
     var state = {
       selected: "TIT",
@@ -210,6 +306,22 @@
       counterLine.textContent = n + "/66 imported";
     }
 
+    function lintBadgeHtml(code, imported) {
+      if (!imported) return "";
+      var lint = LINT[code] || { flag: 0, escalate: 0, rows: [] };
+      var total = lint.flag + lint.escalate;
+      var rows = lint.rows.length ? lint.rows.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") : "<li>No issues found.</li>";
+      return '<span class="lint-wrap">' +
+        '<button type="button" class="lint-badge chip ' + (total ? "chip-needs" : "chip-approved") + '" id="lintBadge" ' +
+          'data-handle="GET /api/books/:book/lint" data-bundle="B" aria-haspopup="true" aria-expanded="false" aria-controls="lintPopover">' +
+          "⚑ Lint " + total + "</button>" +
+        '<div class="lint-popover" id="lintPopover" role="dialog" aria-label="Lint findings for ' + code + '" hidden>' +
+          '<p class="f-label">Lint findings — ' + code + " (" + lint.flag + " flag, " + lint.escalate + " escalate)</p>" +
+          '<ul class="lint-list">' + rows + "</ul>" +
+        "</div>" +
+      "</span>";
+    }
+
     function renderDetail() {
       var code = state.selected;
       var imported = !!IMPORTED[code];
@@ -232,6 +344,7 @@
         '<div class="panel-top book-detail-head">' +
           "<h2>" + code + " — " + esc(NAMES[code]) + "</h2>" +
           '<span class="chip ' + (imported ? "chip-approved" : "chip-draft") + '">' + (imported ? "Imported" : "Not imported") + "</span>" +
+          lintBadgeHtml(code, imported) +
         "</div>" +
         '<div class="panel-body">' +
           '<div class="field">' +
@@ -246,8 +359,10 @@
           '<div class="adv-accordion">' +
             '<button type="button" class="adv-toggle" id="advToggle">▸ Advanced — per-book source overrides</button>' +
             '<div class="adv-body' + (state.advOpen ? " open" : "") + '" id="advBody">' +
-              '<div class="src-row"><span style="flex:1;">tN chapters 1–1 → <code>BSOJ/es-419_tn</code></span></div>' +
-              '<div class="src-row"><span style="flex:1;">tQ — Aquifer (es)</span></div>' +
+              '<div class="src-row"><span style="flex:1;">tN chapters 1–1 → <code>BSOJ/es-419_tn</code></span>' +
+                '<button class="btn btn-ghost btn-sm" type="button" data-handle="PUT /api/books/:book/sources" data-headers="body: clear=true" data-bundle="B">Remove</button></div>' +
+              '<div class="src-row"><span style="flex:1;">tQ — Aquifer (es)</span>' +
+                '<button class="btn btn-ghost btn-sm" type="button" data-handle="PUT /api/books/:book/sources" data-headers="body: clear=true" data-bundle="B">Remove</button></div>' +
               '<p class="f-help">Read via <span data-handle="GET /api/books/:book/sources" data-bundle="B" style="cursor:pointer;text-decoration:underline;">GET /api/books/:book/sources</span>; write is admin-only.</p>' +
               '<div class="ov-form">' +
                 '<div class="field"><label class="f-label">Source type</label><select class="tselect"><option>DCS</option><option>Aquifer</option></select></div>' +
@@ -289,14 +404,96 @@
       if (adv) { state.advOpen = !state.advOpen; renderDetail(); return; }
       var rp = e.target.closest("#repullBtn");
       if (rp) { document.getElementById("repullModal").hidden = false; return; }
+      var lint = e.target.closest("#lintBadge");
+      if (lint) {
+        var pop = document.getElementById("lintPopover");
+        var willOpen = pop.hasAttribute("hidden");
+        if (willOpen) { pop.removeAttribute("hidden"); lint.setAttribute("aria-expanded", "true"); }
+        else { pop.setAttribute("hidden", ""); lint.setAttribute("aria-expanded", "false"); }
+        return;
+      }
     });
 
     document.getElementById("repullClose").addEventListener("click", function () { document.getElementById("repullModal").hidden = true; });
     document.getElementById("repullGo").addEventListener("click", function () { document.getElementById("repullModal").hidden = true; });
 
+    var laneLifecycleEl = document.getElementById("laneLifecycle");
+    var laneLifecycleNoteEl = document.getElementById("laneLifecycleNote");
+    var laneBookRowsEl = document.getElementById("laneBookRows");
+    var laneFootEl = document.getElementById("laneFoot");
+    var laneNextActionEl = document.getElementById("laneNextAction");
+    var laneActivateBtnEl = document.getElementById("laneActivateBtn");
+    var laneValidateResultEl = document.getElementById("laneValidateResult");
+
+    function laneBookChip(bookState) {
+      if (bookState === "artifact_ok") return { cls: "chip-approved", label: "Staged OK" };
+      if (bookState === "retryable_error") return { cls: "chip-needs", label: "Failed — retryable" };
+      if (bookState === "waived") return { cls: "chip-draft", label: "Waived" };
+      return { cls: "chip-draft", label: "Waiting" };
+    }
+
+    function renderLaneReplacement() {
+      var curIdx = LC_STEPS.indexOf(laneState.lifecycle);
+      laneLifecycleEl.innerHTML = LC_STEPS.map(function (s, i) {
+        var st = i < curIdx ? "done" : (i === curIdx ? "current" : "pending");
+        var sep = i > 0 ? '<span class="lc-sep' + (i <= curIdx ? " done" : "") + '"></span>' : "";
+        var label = s.charAt(0).toUpperCase() + s.slice(1);
+        return sep + '<span class="lc-node" data-state="' + st + '"><span class="lc-dot"></span>' + label + "</span>";
+      }).join("");
+      laneLifecycleNoteEl.textContent = LC_NOTE[laneState.lifecycle];
+      laneActivateBtnEl.disabled = laneState.lifecycle !== "ready";
+
+      laneBookRowsEl.innerHTML = laneState.books.map(function (b) {
+        var chip = laneBookChip(b.state);
+        var actions = "";
+        if (b.state === "retryable_error") {
+          actions += '<button class="btn btn-warn btn-sm" type="button" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/retry-book" data-bundle="A" data-book="' + b.book + '">Retry</button>';
+        }
+        if (b.state === "retryable_error" || b.state === "absent_authorized") {
+          actions += '<button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/waive-book" data-bundle="A" data-book="' + b.book + '">Waive</button>';
+        }
+        return '<div class="job-row"><div class="jr-main"><strong>' + b.book + '</strong> <span class="chip ' + chip.cls + '">' + chip.label + '</span></div>' + actions + "</div>";
+      }).join("");
+
+      laneFootEl.textContent = "Replacement is " + laneState.lifecycle + " · job " + laneState.jobId;
+      laneNextActionEl.textContent = laneState.lifecycle === "ready" ? "Activate to switch the source"
+        : laneState.lifecycle === "completed" ? "No pending replacement"
+        : "Resolve remaining books to reach Ready";
+    }
+
+    document.getElementById("laneReplacementPanel").addEventListener("click", function (e) {
+      var retryBtn = e.target.closest('[data-handle*="/retry-book"]');
+      if (retryBtn) {
+        var retryRow = laneState.books.filter(function (b) { return b.book === retryBtn.dataset.book; })[0];
+        if (retryRow) { retryRow.state = "artifact_ok"; renderLaneReplacement(); }
+        return;
+      }
+      var waiveBtn = e.target.closest('[data-handle*="/waive-book"]');
+      if (waiveBtn) {
+        var waiveRow = laneState.books.filter(function (b) { return b.book === waiveBtn.dataset.book; })[0];
+        if (waiveRow) { waiveRow.state = "waived"; renderLaneReplacement(); }
+        return;
+      }
+      if (e.target.closest("#laneValidateBtn")) {
+        laneValidateResultEl.textContent = "Validated — 3 books affected (1 unedited, 2 with local edits); staging job " + laneState.jobId + " already in flight.";
+        return;
+      }
+      if (e.target.closest("#laneActivateBtn")) {
+        if (laneState.lifecycle === "ready") { laneState.lifecycle = "completed"; renderLaneReplacement(); }
+        return;
+      }
+      if (e.target.closest("#laneBackOutBtn")) {
+        laneState.lifecycle = "reserved";
+        laneState.books.forEach(function (b) { b.state = "absent_authorized"; });
+        renderLaneReplacement();
+        return;
+      }
+    });
+
     renderBookGroups();
     renderDetail();
     updateCounter();
+    renderLaneReplacement();
   })();
   </script>
 </body>

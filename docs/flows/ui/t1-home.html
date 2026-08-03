@@ -310,11 +310,17 @@
     <a href="t3-scripture.html">Scripture</a>
     <a href="t4-align.html">Align</a>
     <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html">Words</a>
     <a href="../index.html">Hub ↗</a>
   </nav>
 
   <main id="main" class="home">
     <div class="banners" id="banners">
+      <div class="banner banner--alert" data-banner="alert" hidden>
+        <span aria-hidden="true">⚠️</span>
+        <span class="banner-msg">Export run for ZEC failed — the pre-export freshness gate rejected stale D1 data. <a href="a4-observe.html" style="color:inherit;">View run</a></span>
+        <button type="button" class="banner-action" data-handle="POST /api/alerts/:id/dismiss" data-bundle="K" data-dismiss="alert" aria-label="Dismiss">✕</button>
+      </div>
       <div class="banner banner--lock" data-banner="lock" hidden>
         <span aria-hidden="true">🔒</span>
         <span class="banner-msg">AI generate run in progress for ZEC 3 — started 6 min ago. Editing is locked for this chapter. You can still mark notes to keep before the new set lands.</span>
@@ -339,6 +345,7 @@
       </span>
       <div class="demo-controls" role="group" aria-label="Demo triggers">
         <span class="demo-label">Demo</span>
+        <button type="button" id="demoAlert">Simulate system alert</button>
         <button type="button" id="demoLock">Simulate chapter lock</button>
         <button type="button" id="demoReady">Simulate drafts ready</button>
       </div>
@@ -422,6 +429,10 @@
       document.querySelectorAll(".cluster-btn[aria-expanded]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
     });
 
+    document.getElementById("demoAlert").addEventListener("click", function () {
+      window.flowShell.toast("→ GET /api/alerts/me", { bundle: "K" });
+      document.querySelector('[data-banner="alert"]').hidden = false;
+    });
     document.getElementById("demoLock").addEventListener("click", function () {
       document.querySelector('[data-banner="lock"]').hidden = false;
     });
