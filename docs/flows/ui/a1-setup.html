@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — Setup wizard</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* ---- shared admin topbar nav (this flow's screens + hub) ---- */
+  .flow-nav { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; flex: none; }
+  .flow-nav a { color: var(--ink-2); text-decoration: none; font-weight: 600; }
+  .flow-nav a[aria-current="page"] { color: var(--inspire-deep); }
+  :root[data-theme="dark"] .flow-nav a[aria-current="page"] { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .flow-nav a[aria-current="page"] { color: var(--inspire); } }
+  @media (max-width: 700px) { .flow-nav { display: none; } }
+  .topbar-shared .account-cluster button {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 8px; padding: 5px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+
+  /* ---- page-specific: setup wizard ---- */
+  .rail-num {
+    width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line);
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    font-size: 10.5px; font-weight: 700; color: var(--ink-2); background: var(--card);
+  }
+  .rail button[data-done="true"] .rail-num { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .rail button[aria-current="true"] .rail-num { border-color: var(--inspire); color: var(--inspire-deep); }
+  :root[data-theme="dark"] .rail button[aria-current="true"] .rail-num { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .rail button[aria-current="true"] .rail-num { color: var(--inspire); } }
+
+  .wiz-actions { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
+  .wiz-actions .spacer { margin-inline-start: auto; }
+
+  .resrow { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-block-end: 1px solid var(--line); }
+  .resrow:last-child { border-block-end: none; }
+  .res-main { flex: 1; min-width: 0; }
+  .res-name { font-weight: 700; font-size: 14.5px; margin: 0 0 2px; }
+  .res-choice { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+  .res-url { margin-top: 8px; }
+  .res-status { font-size: 12.5px; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+
+  .lane-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px; }
+  .lane-card + .lane-card { margin-top: 14px; }
+  .lane-card h3 { font-size: 14px; margin: 0 0 12px; color: var(--ocean); }
+  :root[data-theme="dark"] .lane-card h3 { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .lane-card h3 { color: var(--cultivate); } }
+
+  .done-badge {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--ok-soft); color: var(--ok-ink);
+    display: flex; align-items: center; justify-content: center; margin: 4px auto 14px;
+  }
+  .done-hero { text-align: center; padding: 8px 0 4px; }
+  .done-hero h2 { margin: 0 0 6px; font-size: 19px; }
+  .done-hero p { color: var(--ink-2); margin: 0 0 18px; font-size: 14px; }
+  .done-exits { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  .note-box {
+    background: var(--card-2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 10px 12px; font-size: 13px; color: var(--ink-2); margin: 0 0 14px;
+  }
+
+  /* modal overlay for WorkspaceChoiceDialog demo */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(1, 42, 63, 0.45); z-index: 70;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal-box {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    max-width: 420px; width: 100%; overflow: hidden;
+  }
+  .modal-head { padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .modal-head h3 { margin: 0 0 3px; font-size: 15.5px; }
+  .modal-head p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .modal-body { padding: 10px 16px; max-height: 50vh; overflow-y: auto; }
+  .ws-row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 0; border-block-end: 1px solid var(--line);
+  }
+  .ws-row:last-child { border-block-end: none; }
+  .ws-row .ws-main { flex: 1; min-width: 0; }
+  .ws-row .ws-name { font-weight: 600; font-size: 14px; margin: 0; }
+  .ws-row .ws-sub { font-size: 12px; color: var(--ink-2); margin: 0; }
+  .modal-foot { padding: 12px 16px; border-block-start: 1px solid var(--line); display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Admin — Setup wizard</span>
+    <nav class="flow-nav" aria-label="Admin flow screens">
+      <a href="a1-setup.html" aria-current="page">Setup</a>
+      <a href="a2-import.html">Import</a>
+      <a href="a3-team.html">Team</a>
+      <a href="a4-observe.html">Observe</a>
+      <a href="t1-home.html">Translator home</a>
+      <a href="index.html">Hub</a>
+    </nav>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <main class="desk">
+    <header class="admin-head">
+      <p class="eyebrow">Bundle A · Stand up an org</p>
+      <h1>Setup wizard</h1>
+      <p class="sub">Five linear steps: organization, sources to pull from, scripture lanes, review &amp; apply, done. Admin role only.</p>
+    </header>
+
+    <div class="desk-shell">
+      <nav class="rail" id="rail" aria-label="Setup steps"></nav>
+      <div id="panelHost"></div>
+    </div>
+  </main>
+
+  <!-- WorkspaceChoiceDialog demo -->
+  <div class="modal-overlay" id="wsModal" hidden role="dialog" aria-modal="true" aria-labelledby="wsModalTitle">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="wsModalTitle">Which organization?</h3>
+        <p>One-time picker shown right after Door43 OAuth when your account belongs to more than one org. Switching reloads the whole app — one D1 database per org.</p>
+      </div>
+      <div class="modal-body" id="wsModalBody"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" type="button" id="wsModalClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    var CHECK_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>';
+    var CHEVL_SVG = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"></path></svg>';
+    var CHEVR_SVG = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>';
+    var DONE_SVG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>';
+
+    var RESOURCES = [
+      { key: "glt", label: "Literal text (GLT)" },
+      { key: "gst", label: "Simplified text (GST)" },
+      { key: "tn",  label: "translationNotes" },
+      { key: "tq",  label: "translationQuestions" },
+      { key: "twl", label: "translationWords Links" },
+      { key: "tw",  label: "translationWords" },
+      { key: "ta",  label: "translationAcademy" }
+    ];
+
+    var state = {
+      step: 1,
+      completed: {},
+      org: "Alianza Bíblica Hispanoamericana",
+      resourceLanguage: "Español (LatAm)",
+      defaultUpstreamOrg: "unfoldingWord",
+      detectFailed: false,
+      resources: {
+        glt: { enabled: true,  choice: "blank", url: "", verify: "idle" },
+        gst: { enabled: true,  choice: "blank", url: "", verify: "idle" },
+        tn:  { enabled: true,  choice: "blank", url: "", verify: "idle" },
+        tq:  { enabled: true,  choice: "blank", url: "", verify: "idle" },
+        twl: { enabled: true,  choice: "blank", url: "", verify: "idle" },
+        tw:  { enabled: false, choice: "blank", url: "", verify: "idle" },
+        ta:  { enabled: false, choice: "custom", url: "https://git.door43.org/BSOJ/es-419_ta", verify: "verified" }
+      },
+      lanes: {
+        literal:    { targetRepo: "es-419_glt", task: "editing",  upstream: "unfoldingWord", url: "", locked: false },
+        simplified: { targetRepo: "es-419_gst", task: "editing", upstream: "url", url: "https://git.door43.org/BSOJ/es-419_gst", locked: false }
+      },
+      applying: false,
+      applied: false
+    };
+
+    var railEl = document.getElementById("rail");
+    var hostEl = document.getElementById("panelHost");
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    var STEP_TITLES = ["Your organization", "Sources to pull from", "Your scripture lanes", "Review & apply", "Done"];
+
+    function renderRail() {
+      var html = "";
+      STEP_TITLES.forEach(function (label, i) {
+        var n = i + 1;
+        var done = !!state.completed[n];
+        var current = state.step === n;
+        html += '<button type="button" data-step="' + n + '" aria-current="' + current + '" data-done="' + done + '">' +
+          '<span class="rail-num">' + (done ? CHECK_SVG : n) + "</span>" + esc(label) + "</button>";
+      });
+      railEl.innerHTML = html;
+    }
+    railEl.addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-step]");
+      if (!b) return;
+      var n = Number(b.dataset.step);
+      if (n <= state.step || state.completed[n - 1] || n === 1) goTo(n);
+    });
+
+    function goTo(n) {
+      state.step = n;
+      render();
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+
+    function panel(opts) {
+      return '<section class="panel">' +
+        '<div class="panel-top"><h2>' + esc(opts.title) + "</h2>" +
+        (opts.sub ? '<p class="panel-sub">' + opts.sub + "</p>" : "") + "</div>" +
+        '<div class="panel-body">' + opts.body + "</div>" +
+        '<div class="panel-foot"><span class="foot-state">' + (opts.footLeft || "") + '</span><span class="spacer"></span>' + (opts.footRight || "") + "</div>" +
+        "</section>";
+    }
+
+    function wizNav(step, nextLabel) {
+      var back = step > 1 ? '<button class="btn btn-ghost" type="button" data-act="back">' + CHEVL_SVG + " Back</button>" : "";
+      return back + '<button class="btn btn-primary" type="button" data-act="continue">' + (nextLabel || "Continue " + CHEVR_SVG) + "</button>";
+    }
+
+    /* ---------------- Step 1 — org identity ---------------- */
+    function renderStep1() {
+      return panel({
+        title: "Step 1 — Your organization",
+        sub: "The Door43 org that owns this project's repos. One database serves one org — the resource language seeds every AI draft.",
+        body:
+          '<div class="field">' +
+            '<label class="f-label" for="orgField">Organization</label>' +
+            '<input class="tinput" id="orgField" type="text" value="' + esc(state.org) + '" disabled>' +
+            '<p class="f-help">Read from <code>GET /api/workspaces</code>. Can\'t be changed after setup.</p>' +
+          "</div>" +
+          '<div class="field">' +
+            '<label class="f-label" for="langField">Resource language</label>' +
+            '<input class="tinput" id="langField" type="text" data-bind="resourceLanguage" value="' + esc(state.resourceLanguage) + '">' +
+            '<p class="f-help">Free-text/autocomplete, local only — seeds languageCode/languageName/direction.</p>' +
+          "</div>" +
+          (state.detectFailed
+            ? '<div class="banner banner--lock"><span class="banner-msg">Couldn\'t auto-detect a starting configuration for this org.</span>' +
+              '<button class="btn btn-warn banner-action" type="button" data-handle="GET /api/orgs/:org/inferred-config" data-bundle="A">Retry detection</button></div>'
+            : '<div class="note-box">Org inference already ran once for this org via <code>GET /api/orgs/:org/inferred-config</code> — draft only, nothing applied yet.' +
+              ' <button class="btn btn-ghost btn-sm" type="button" data-act="simulate-fail" style="margin-inline-start:8px;">Simulate detection failure</button></div>'),
+        footLeft: "Step 1 of 5",
+        footRight: wizNav(1)
+      });
+    }
+
+    /* ---------------- Step 2 — sources ---------------- */
+    function verifyChip(v) {
+      if (v === "verifying") return '<span class="chip chip-edited">Verifying…</span>';
+      if (v === "verified") return '<span class="chip chip-approved">Verified</span>';
+      if (v === "error") return '<span class="chip chip-needs">Unreachable — <button class="btn-ghost" style="text-decoration:underline;background:none;border:none;padding:0;cursor:pointer;color:inherit;" type="button" data-handle="GET /api/orgs/verify-source" data-bundle="A" data-act="verify-retry">Retry</button></span>';
+      return "";
+    }
+
+    function renderStep2() {
+      var rows = RESOURCES.map(function (r) {
+        var res = state.resources[r.key];
+        return '<div class="resrow">' +
+          '<button class="switch" role="switch" aria-checked="' + res.enabled + '" data-act="res-toggle" data-key="' + r.key + '"></button>' +
+          '<div class="res-main">' +
+            '<p class="res-name">' + esc(r.label) + "</p>" +
+            (res.enabled ?
+              '<div class="res-choice">' +
+                '<button class="tchip" type="button" data-act="res-choice" data-key="' + r.key + '" data-choice="blank" aria-pressed="' + (res.choice === "blank") + '">Leave blank (pull from ' + esc(state.defaultUpstreamOrg) + ')</button>' +
+                '<button class="tchip" type="button" data-act="res-choice" data-key="' + r.key + '" data-choice="custom" aria-pressed="' + (res.choice === "custom") + '">Use a different source</button>' +
+              "</div>" +
+              (res.choice === "custom"
+                ? '<div class="res-url"><input class="tinput" type="text" placeholder="https://git.door43.org/..." data-bind-url="' + r.key + '" value="' + esc(res.url) + '">' +
+                  '<div class="res-status">' + verifyChip(res.verify) +
+                  ' <button class="btn btn-ghost btn-sm" type="button" data-act="verify" data-key="' + r.key + '" data-handle="GET /api/orgs/verify-source" data-headers="checkBooks=1 for lit/sim" data-bundle="A">Verify source</button></div></div>'
+                : "")
+              : '<p class="f-help">Not pulled — this resource stays empty until a translator authors it.</p>')
+          + "</div>" +
+        "</div>";
+      }).join("");
+
+      return panel({
+        title: "Step 2 — Sources to pull from",
+        sub: 'Both a literal and simplified lane are offered by default — uncheck any resource above you don\'t want, rather than configuring from zero.',
+        body:
+          '<div class="field">' +
+            '<label class="f-label" for="upstreamField">Default upstream org</label>' +
+            '<input class="tinput" id="upstreamField" type="text" data-bind="defaultUpstreamOrg" data-handle="GET /api/orgs/:org/inferred-config" data-bundle="A" value="' + esc(state.defaultUpstreamOrg) + '">' +
+            '<p class="f-help"><code>unfoldingWord</code> is auto-verified with no round trip; anything else re-verifies on blur. Resources left "blank" below pull from this org.</p>' +
+          "</div>" +
+          '<div class="field">' + rows + "</div>",
+        footLeft: RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length + " of " + RESOURCES.length + " resources selected",
+        footRight: wizNav(2)
+      });
+    }
+
+    /* ---------------- Step 3 — scripture lanes ---------------- */
+    function laneCard(key, label, placeholder) {
+      var lane = state.lanes[key];
+      return '<div class="lane-card">' +
+        "<h3>" + esc(label) + "</h3>" +
+        '<div class="field">' +
+          '<label class="f-label">Target repository</label>' +
+          '<input class="tinput" type="text" data-bind-lane="' + key + '" data-bind-field="targetRepo" value="' + esc(lane.targetRepo) + '" placeholder="' + placeholder + '"' + (lane.locked ? " disabled" : "") + '>' +
+          '<p class="f-help">' + (lane.locked ? "Locked — once populated, the target repo can't change here (use Preferences → Scripture lanes → Change source)." : "Editable until this lane's first Apply.") + "</p>" +
+        "</div>" +
+        '<div class="field">' +
+          '<p class="f-label">Edit vs align</p>' +
+          '<div class="seg" data-lane-seg="task" data-lane="' + key + '">' +
+            '<button type="button" data-value="editing" aria-pressed="' + (lane.task === "editing") + '">Edit the text</button>' +
+            '<button type="button" data-value="aligning" aria-pressed="' + (lane.task === "aligning") + '">Align only</button>' +
+          "</div>" +
+          '<p class="f-help">Defaults to Edit — translators write the text here, not just word-align an existing translation.</p>' +
+        "</div>" +
+        '<div class="field">' +
+          '<p class="f-label">Upstream for this lane</p>' +
+          '<div class="seg" data-lane-seg="upstream" data-lane="' + key + '">' +
+            '<button type="button" data-value="unfoldingWord" aria-pressed="' + (lane.upstream === "unfoldingWord") + '">unfoldingWord</button>' +
+            '<button type="button" data-value="url" aria-pressed="' + (lane.upstream === "url") + '">A URL</button>' +
+            '<button type="button" data-value="none" aria-pressed="' + (lane.upstream === "none") + '">None (author locally)</button>' +
+          "</div>" +
+          (lane.upstream === "url"
+            ? '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;">' +
+                '<input class="tinput" type="text" placeholder="https://git.door43.org/..." data-bind-lane-url="' + key + '" value="' + esc(lane.url) + '">' +
+                '<button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/orgs/verify-source" data-headers="checkBooks=1" data-bundle="A">Verify</button>' +
+              "</div>"
+            : "") +
+        "</div>" +
+      "</div>";
+    }
+
+    function renderStep3() {
+      return panel({
+        title: "Step 3 — Your scripture lanes: target + edit/align",
+        sub: "This project runs two lanes: a literal text and a simplified text.",
+        body: laneCard("literal", "Literal lane (ULT → GLT)", "es-419_glt") + laneCard("simplified", "Simplified lane (UST → GST)", "es-419_gst"),
+        footLeft: "2 lanes configured",
+        footRight: wizNav(3)
+      });
+    }
+
+    /* ---------------- Step 4 — review & apply ---------------- */
+    function renderStep4() {
+      var pullDts = "", orgDts = "";
+      RESOURCES.forEach(function (r) {
+        var res = state.resources[r.key];
+        pullDts += "<dt>" + esc(r.label) + "</dt><dd>" + (res.enabled ? (res.choice === "blank" ? esc(state.defaultUpstreamOrg) + " (default)" : (esc(res.url) || "(no URL set)")) : "Not pulled") + "</dd>";
+        orgDts += "<dt>" + esc(r.label) + "</dt><dd>" + (res.enabled ? "AlianzaBiblica/es-419_" + r.key : "—") + "</dd>";
+      });
+      [["literal", "Literal lane"], ["simplified", "Simplified lane"]].forEach(function (pair) {
+        var lane = state.lanes[pair[0]];
+        var upstreamLabel = lane.upstream === "unfoldingWord" ? "unfoldingWord" : lane.upstream === "url" ? (esc(lane.url) || "(no URL set)") : "None — authored locally";
+        pullDts += "<dt>" + pair[1] + "</dt><dd>" + upstreamLabel + " (" + lane.task + ")</dd>";
+        orgDts += "<dt>" + pair[1] + "</dt><dd>AlianzaBiblica/" + esc(lane.targetRepo) + "</dd>";
+      });
+
+      var body =
+        '<div class="grid-2">' +
+          '<div><p class="f-label">Pull from (sources)</p><dl class="kv">' + pullDts + "</dl></div>" +
+          '<div><p class="f-label">Your org (targets)</p><dl class="kv">' + orgDts + "</dl></div>" +
+        "</div>" +
+        '<div class="note-box" style="margin-top:14px;">Applying writes sources via <code>PUT /api/project-config</code>, then patches each lane\'s edit/align mode via <code>PATCH /api/project-config/lanes/:lane</code>. Activating a scripture-source <em>replacement</em> later (Preferences → Scripture lanes) is always a separate, explicit Activate step — Apply here never silently swaps live content.</div>';
+
+      if (state.applyConflict) {
+        body += '<div class="banner banner--lock" style="margin-top:12px;"><span class="banner-msg">' +
+          '<code>409 lane_source_change_requires_migration</code> — the simplified lane already has content from a different source.</span>' +
+          '<button class="btn btn-warn banner-action" type="button" data-handle="PATCH /api/project-config/lanes/:lane" data-bundle="A" data-act="revert-lane">Revert simplified to es-419_gst</button></div>';
+      }
+
+      return panel({
+        title: "Step 4 — Review & apply",
+        sub: "Confirm what gets pulled from where before it's applied to " + esc(state.org) + ".",
+        body: body,
+        footLeft: RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length + " resources + 2 lanes ready to apply",
+        footRight:
+          '<button class="btn btn-ghost" type="button" data-act="back">' + CHEVL_SVG + " Back</button>" +
+          '<button class="btn btn-ghost btn-sm" type="button" data-act="toggle-conflict">Simulate 409</button>' +
+          '<button class="btn btn-primary" type="button" data-act="apply" data-handle="PUT /api/project-config" data-bundle="A"' + (state.applying ? " disabled" : "") + '>' +
+          (state.applying ? "Applying…" : "Apply configuration") + "</button>"
+      });
+    }
+
+    /* ---------------- Step 5 — done ---------------- */
+    function renderStep5() {
+      var n = RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length;
+      return panel({
+        title: "Step 5 — Configured",
+        sub: "",
+        body:
+          '<div class="done-hero">' +
+            '<div class="done-badge">' + DONE_SVG + "</div>" +
+            "<h2>You're configured.</h2>" +
+            "<p>" + esc(state.org) + " is pulling " + n + " resources from " + esc(state.defaultUpstreamOrg) + " and running two scripture lanes.</p>" +
+            '<div class="done-exits">' +
+              '<a class="btn btn-primary" href="a2-import.html">Go to Import ' + CHEVR_SVG + "</a>" +
+              '<button class="btn btn-rerun" type="button" data-act="open-ws-dialog">Preview workspace picker</button>' +
+              '<a class="btn btn-ghost" href="a3-team.html">Set up team access</a>' +
+            "</div>" +
+          "</div>",
+        footLeft: "Setup complete — org access lives on the Team screen",
+        footRight: ""
+      });
+    }
+
+    var STEP_RENDERERS = [null, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5];
+
+    function render() {
+      renderRail();
+      hostEl.innerHTML = STEP_RENDERERS[state.step]();
+    }
+
+    /* ---------------- event delegation ---------------- */
+    hostEl.addEventListener("click", function (e) {
+      var b = e.target.closest("button, a");
+      if (!b) return;
+      var act = b.dataset.act;
+      if (!act) return;
+
+      if (act === "back") { state.step -= 1; render(); return; }
+      if (act === "continue") { state.completed[state.step] = true; state.step += 1; render(); return; }
+      if (act === "simulate-fail") { state.detectFailed = true; render(); return; }
+      if (act === "res-toggle") {
+        var res = state.resources[b.dataset.key];
+        res.enabled = !res.enabled;
+        render();
+        return;
+      }
+      if (act === "res-choice") {
+        state.resources[b.dataset.key].choice = b.dataset.choice;
+        render();
+        return;
+      }
+      if (act === "verify" || act === "verify-retry") {
+        var key = b.dataset.key;
+        var target = key ? state.resources[key] : state.resources.ta;
+        target.verify = "verifying";
+        render();
+        setTimeout(function () { target.verify = Math.random() > 0.25 ? "verified" : "error"; render(); }, 700);
+        return;
+      }
+      if (act === "toggle-conflict") { state.applyConflict = !state.applyConflict; render(); return; }
+      if (act === "revert-lane") { state.applyConflict = false; render(); return; }
+      if (act === "apply") {
+        if (state.applyConflict) return; // handled by revert first
+        state.applying = true;
+        render();
+        setTimeout(function () {
+          state.applying = false;
+          state.applied = true;
+          state.completed[4] = true;
+          state.step = 5;
+          render();
+        }, 900);
+        return;
+      }
+      if (act === "open-ws-dialog") { openWsModal(); return; }
+    });
+
+    hostEl.addEventListener("change", function (e) {
+      var t = e.target;
+      if (t.dataset.bind) { state[t.dataset.bind] = t.value; }
+      if (t.dataset.bindUrl) { state.resources[t.dataset.bindUrl].url = t.value; state.resources[t.dataset.bindUrl].verify = "idle"; }
+      if (t.dataset.bindLane) { state.lanes[t.dataset.bindLane][t.dataset.bindField] = t.value; }
+      if (t.dataset.bindLaneUrl) { state.lanes[t.dataset.bindLaneUrl].url = t.value; }
+    });
+    hostEl.addEventListener("click", function (e) {
+      var seg = e.target.closest("[data-lane-seg]");
+      if (!seg) return;
+      var btn = e.target.closest("button[data-value]");
+      if (!btn) return;
+      state.lanes[seg.dataset.lane][seg.dataset.laneSeg === "task" ? "task" : "upstream"] = btn.dataset.value;
+      render();
+    });
+
+    /* ---------------- WorkspaceChoiceDialog demo ---------------- */
+    var WORKSPACES = [
+      { slug: "abh-es419", name: "Alianza Bíblica Hispanoamericana", current: true },
+      { slug: "wsib-fr", name: "Wycliffe Société Internationale (fr)", current: false },
+      { slug: "dei-verbum-pt", name: "Dei Verbum PT-BR", current: false }
+    ];
+    var wsModal = document.getElementById("wsModal");
+    var wsModalBody = document.getElementById("wsModalBody");
+    function openWsModal() {
+      wsModalBody.innerHTML = '<p class="f-help" style="margin:0 0 8px;">Loaded via <code>GET /api/workspaces</code>.</p>' + WORKSPACES.map(function (w) {
+        return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.name) + (w.current ? ' <span class="chip chip-approved">current</span>' : "") + '</p><p class="ws-sub">' + w.slug + '</p></div>' +
+          (w.current ? "" : '<button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch</button>') +
+        "</div>";
+      }).join("");
+      wsModal.hidden = false;
+    }
+    document.getElementById("wsModalClose").addEventListener("click", function () { wsModal.hidden = true; });
+    document.getElementById("wsModal").addEventListener("click", function (e) { if (e.target === wsModal) wsModal.hidden = true; });
+
+    render();
+  })();
+  </script>
+</body>
+</html>

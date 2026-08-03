@@ -1037,3 +1037,7 @@ textarea.edit-area {
 /* ---------- mode gating (authoring vs translation preview toggle) ---------- */
 [data-mode="authoring"] .translation-only { display: none; }
 [data-mode="translation"] .authoring-only { display: none; }
+
+/* The hidden attribute must always win: author display rules on the same element
+   (e.g. .banner{display:flex}) otherwise beat the UA [hidden] rule per cascade origin. */
+[hidden] { display: none !important; }

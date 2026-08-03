@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — Trust &amp; observe</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; flex: none; }
+  .flow-nav a { color: var(--ink-2); text-decoration: none; font-weight: 600; }
+  .flow-nav a[aria-current="page"] { color: var(--inspire-deep); }
+  :root[data-theme="dark"] .flow-nav a[aria-current="page"] { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .flow-nav a[aria-current="page"] { color: var(--inspire); } }
+  @media (max-width: 700px) { .flow-nav { display: none; } }
+  .topbar-shared .account-cluster button {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 8px; padding: 5px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat-tile { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+  .stat-tile .st-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 4px; }
+  .stat-tile .st-value { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-tile .st-sub { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+
+  .run-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-block-end: 1px solid var(--line); font-size: 13.5px; flex-wrap: wrap; }
+  .run-row:last-child { border-block-end: none; }
+  .run-row .rr-main { flex: 1; min-width: 200px; }
+  .run-row .rr-sub { font-size: 12px; color: var(--ink-2); }
+
+  .step-mini { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+  .step-mini .sm-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--skip-soft); border: 1px solid var(--line); }
+  .step-mini .sm-dot.ok { background: var(--ok); border-color: var(--ok); }
+  .step-mini .sm-dot.warn { background: var(--warn); border-color: var(--warn); }
+
+  .cron-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-block-end: 1px solid var(--line); font-size: 13.5px; }
+  .cron-row:last-child { border-block-end: none; }
+  .cron-row .cr-time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; flex: none; width: 74px; }
+  .cron-row .cr-main { flex: 1; }
+
+  .stageline { display: flex; gap: 8px; overflow-x: auto; padding: 3px 3px 8px; }
+  .stagetile {
+    flex: none; min-width: 168px; border: 1.5px solid var(--line); background: var(--card-2);
+    border-radius: var(--radius); padding: 10px 11px; display: flex; flex-direction: column; gap: 5px;
+  }
+  .stagetile .sg-top { display: flex; align-items: center; gap: 6px; }
+  .stagetile .sg-num { width: 20px; height: 20px; border-radius: 50%; background: var(--ocean); color: #fff; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  :root[data-theme="dark"] .stagetile .sg-num { background: var(--inspire-deep); }
+  @media (prefers-color-scheme: dark) { .stagetile .sg-num { background: var(--inspire-deep); } }
+  .stagetile .sg-name { font-weight: 700; font-size: 13.5px; flex: 1; }
+  .stagetile .sg-updown { display: flex; gap: 3px; }
+  .stagetile .sg-updown button { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-2); }
+  .stagetile .sg-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+
+  .ops-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Admin — Trust &amp; observe</span>
+    <nav class="flow-nav" aria-label="Admin flow screens">
+      <a href="a1-setup.html">Setup</a>
+      <a href="a2-import.html">Import</a>
+      <a href="a3-team.html">Team</a>
+      <a href="a4-observe.html" aria-current="page">Observe</a>
+      <a href="t1-home.html">Translator home</a>
+      <a href="index.html">Hub</a>
+    </nav>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <main class="desk">
+    <header class="admin-head">
+      <p class="eyebrow">Bundle K · Trust &amp; observe</p>
+      <h1>Dashboard</h1>
+      <p class="sub">Export runs, AI pipeline jobs, service health, and the context-pack that steers every AI draft.</p>
+    </header>
+
+    <div class="stat-row">
+      <div class="stat-tile"><p class="st-label">Health</p><p class="st-value" id="healthValue">—</p><p class="st-sub" id="healthSub">checking…</p></div>
+      <div class="stat-tile"><p class="st-label">Context pack</p><p class="st-value chip-pack" id="packValue">—</p><p class="st-sub" id="packSub">—</p></div>
+      <div class="stat-tile"><p class="st-label">Pipeline jobs</p><p class="st-value" id="jobsValue">—</p><p class="st-sub">running / queued / failed</p></div>
+      <div class="stat-tile"><p class="st-label">Last nightly export</p><p class="st-value" id="lastExportValue">—</p><p class="st-sub" id="lastExportSub">—</p></div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Nightly export runs</h2>
+        <span class="chip-pack"><span class="sha">GET /api/exports/instance/:id</span></span>
+        <p class="panel-sub">The single status-check route covers both the 05:30 UTC nightly cron and any manual/context-only run.</p>
+      </div>
+      <div class="panel-body" id="exportRuns"></div>
+      <div class="panel-foot">
+        <span class="foot-state" id="exportFoot">Listed via <code>GET /api/exports?limit=&amp;book=</code></span>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/exports/run" data-bundle="K">Run export now</button>
+        <button class="btn btn-warn btn-sm" type="button" data-handle="POST /api/exports/run" data-headers="shrinkOverride:true" data-bundle="K" title="Escape hatch when the shrink-guard refused a legitimate content drop">Export (force)</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Pipeline jobs</h2>
+        <p class="panel-sub">Shared queue view — every user's active jobs plus your own not-yet-notified ones. The <code>*/5</code> cron advances this even with no tab open.</p>
+      </div>
+      <div class="panel-body flush">
+        <div class="table-wrap">
+          <table class="dtable">
+            <thead><tr><th>Book·Ch</th><th>Type</th><th>State</th><th>Requested by</th><th class="num">Rows</th><th></th></tr></thead>
+            <tbody id="jobsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <span class="foot-state" id="jobsFoot">Loaded via <code>GET /api/pipelines</code></span>
+        <span class="spacer"></span>
+        <span>Cancel only works on your own still-queued jobs</span>
+      </div>
+    </section>
+
+    <div class="grid-2">
+      <section class="panel">
+        <div class="panel-top">
+          <h2>Health check</h2>
+          <p class="panel-sub">No auth, no side effects.</p>
+        </div>
+        <div class="panel-body">
+          <dl class="kv">
+            <dt>Endpoint</dt><dd><code>GET /api/health</code></dd>
+            <dt>Last check</dt><dd id="healthTime">—</dd>
+            <dt>Response</dt><dd id="healthBody">—</dd>
+          </dl>
+        </div>
+        <div class="panel-foot">
+          <span class="spacer"></span>
+          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/health" data-bundle="K">Check now</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-top">
+          <h2>Context pack status</h2>
+          <p class="panel-sub">The trust indicator every AI draft is pinned against.</p>
+        </div>
+        <div class="panel-body">
+          <dl class="kv">
+            <dt>Status</dt><dd><span class="chip-pack">Context pack ready <span class="sha">sha 8f2a1c9</span></span></dd>
+            <dt>Exported at</dt><dd>2026-08-03 05:32 UTC</dd>
+            <dt>templates.tsv rows</dt><dd>146</dd>
+          </dl>
+        </div>
+        <div class="panel-foot">
+          <span class="foot-state">Loaded via <code>GET /api/translation-memory/export-status</code></span>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Cron schedule</h2>
+        <p class="panel-sub">Not user-triggerable — shown here for observability only.</p>
+      </div>
+      <div class="panel-body">
+        <div class="cron-row"><span class="cr-time">05:30 UTC</span><span class="cr-main"><strong>Export</strong> — DCS→D1 sync, render, commit to <code>live-snapshot</code>. <span class="chip chip-approved">live</span></span></div>
+        <div class="cron-row"><span class="cr-time">*/5 min</span><span class="cr-main"><strong>Pipeline poll</strong> — advances AI jobs even with no tab open; sweeps stale import locks. <span class="chip chip-approved">live</span></span></div>
+        <div class="cron-row"><span class="cr-time">08:00 UTC</span><span class="cr-main"><strong>Reimport</strong> — chunked self-heal reimport for books with no recent render. <span class="chip chip-needs">dormant — not registered in wrangler.toml</span></span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Spare workspace pool</h2>
+        <span class="chip chip-edited">Super-admin</span>
+        <p class="panel-sub">Pre-provisioned D1 bindings, claimed on demand when a new org needs a database.</p>
+      </div>
+      <div class="panel-body">
+        <dl class="kv">
+          <dt>Available slots</dt><dd>3</dd>
+          <dt>Claimed (last 30d)</dt><dd>1</dd>
+        </dl>
+        <div class="ops-actions" style="margin-top:10px;">
+          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/workspaces/pool" data-bundle="K">View pool</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/workspaces/pool" data-bundle="K">Register a slot</button>
+          <button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/pool/claim" data-bundle="K">Claim for an org</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-top">
+        <h2>Workflow stages</h2>
+        <span class="chip chip-draft nudge">No backend yet</span>
+        <p class="panel-sub">A preview of a future stage-sequence editor. Fixed backbone steps, reordered with up/down buttons — never native drag-and-drop, per the known hit-testing trap. Nothing on this card is wired to a real endpoint.</p>
+      </div>
+      <div class="panel-body">
+        <div class="stageline" id="stageline" role="list" aria-label="Workflow stages (preview only)"></div>
+      </div>
+      <div class="panel-foot">
+        <span class="foot-state">Stage configuration has no backend today — this card is a design preview only.</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    /* health */
+    var healthValue = document.getElementById("healthValue");
+    var healthSub = document.getElementById("healthSub");
+    var healthTime = document.getElementById("healthTime");
+    var healthBody = document.getElementById("healthBody");
+    function simulateHealth() {
+      healthValue.textContent = "OK";
+      healthSub.textContent = "service reachable";
+      var t = new Date().toLocaleTimeString();
+      healthTime.textContent = t;
+      healthBody.textContent = '{ ok: true, service: "bible-editor-api", time: "' + t + '" }';
+    }
+    simulateHealth();
+
+    document.getElementById("packValue").textContent = "Ready";
+    document.getElementById("packSub").textContent = "sha 8f2a1c9 · 05:32 UTC";
+    document.getElementById("jobsValue").textContent = "2 / 1 / 1";
+    document.getElementById("lastExportValue").textContent = "05:32 UTC";
+    document.getElementById("lastExportSub").textContent = "34 book·resource steps, 0 skipped";
+
+    /* export runs */
+    var RUNS = [
+      { label: "Nightly — 2026-08-03 05:30 UTC", state: "ok", steps: [1,1,1,1,1,1,0,1,1,1], note: "34/34 book·resource steps committed. Freshness gate + shrink guard both passed." },
+      { label: "Manual — context-only, 2026-08-02 14:12 UTC", state: "ok", steps: [1,1,1], note: "Context pack rebuilt after Terminology import." },
+      { label: "Nightly — 2026-08-02 05:30 UTC", state: "warn", steps: [1,1,0,1,1,1,1,1,1,1], note: "twl_PSA shrink guard refused a render (would have deleted 41% of rows) — needs Export (force) after review." }
+    ];
+    document.getElementById("exportRuns").innerHTML = RUNS.map(function (r) {
+      var dots = r.steps.map(function (s) { return '<span class="sm-dot ' + (s ? "ok" : "warn") + '"></span>'; }).join("");
+      return '<div class="run-row"><div class="rr-main">' + esc(r.label) + ' <span class="chip ' + (r.state === "ok" ? "chip-approved" : "chip-needs") + '">' + (r.state === "ok" ? "committed" : "needs attention") + '</span>' +
+        '<div class="step-mini" title="Per-book×resource steps">' + dots + "</div>" +
+        '<div class="rr-sub">' + esc(r.note) + "</div></div>" +
+        '<button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/exports/instance/:id" data-bundle="K">Details</button>' +
+      "</div>";
+    }).join("");
+
+    /* pipeline jobs */
+    var JOBS = [
+      { ref: "TIT 2", type: "generate", state: "running", who: "you", rows: "—" },
+      { ref: "ZEC 6", type: "notes", state: "queued (#1)", who: "jorge.p", rows: "—" },
+      { ref: "RUT 1", type: "translate", state: "failed — interrupted", who: "you", rows: 12 },
+      { ref: "TIT 1", type: "tqs", state: "done", who: "maria_traductora", rows: 24 }
+    ];
+    document.getElementById("jobsBody").innerHTML = JOBS.map(function (j) {
+      var chip = j.state.indexOf("running") === 0 ? "chip-edited" : j.state.indexOf("failed") === 0 ? "chip-needs" : j.state.indexOf("done") === 0 ? "chip-approved" : "chip-draft";
+      var cancel = j.state.indexOf("queued") === 0 && j.who === "you"
+        ? '<button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>' : "";
+      return "<tr><td>" + esc(j.ref) + "</td><td>" + esc(j.type) + '</td><td><span class="chip ' + chip + '">' + esc(j.state) + "</span></td><td>" + esc(j.who) + '</td><td class="num">' + j.rows + "</td><td>" + cancel + "</td></tr>";
+    }).join("");
+
+    /* workflow stages preview (future card) */
+    var STAGES = ["Draft", "Peer check", "Source check", "Align", "Translate resources", "Harmonize", "Final validation", "Publish"];
+    function renderStages() {
+      document.getElementById("stageline").innerHTML = STAGES.map(function (name, i) {
+        return '<div class="stagetile" role="listitem">' +
+          '<div class="sg-top"><span class="sg-num">' + (i + 1) + '</span><span class="sg-name">' + esc(name) + '</span></div>' +
+          '<div class="sg-chips"><span class="tchip" data-handle="TODO:no-backend" data-bundle="K" aria-pressed="true">Literal</span><span class="tchip" data-handle="TODO:no-backend" data-bundle="K">Notes</span></div>' +
+          '<div class="sg-updown">' +
+            '<button type="button" data-handle="TODO:no-backend" data-bundle="K" data-act="stage-up" data-index="' + i + '" title="Move up" ' + (i === 0 ? "disabled" : "") + '>▲</button>' +
+            '<button type="button" data-handle="TODO:no-backend" data-bundle="K" data-act="stage-down" data-index="' + i + '" title="Move down" ' + (i === STAGES.length - 1 ? "disabled" : "") + '>▼</button>' +
+          "</div>" +
+        "</div>";
+      }).join("");
+    }
+    renderStages();
+    document.getElementById("stageline").addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-act]");
+      if (!b) return;
+      var i = Number(b.dataset.index);
+      if (b.dataset.act === "stage-up" && i > 0) { var t = STAGES[i - 1]; STAGES[i - 1] = STAGES[i]; STAGES[i] = t; renderStages(); }
+      if (b.dataset.act === "stage-down" && i < STAGES.length - 1) { var t2 = STAGES[i + 1]; STAGES[i + 1] = STAGES[i]; STAGES[i] = t2; renderStages(); }
+    });
+  })();
+  </script>
+</body>
+</html>

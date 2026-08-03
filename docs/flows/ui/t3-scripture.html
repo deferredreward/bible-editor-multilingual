@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Scripture — ULT→GLT · UST→GST</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .scripture-wrap { max-width: 980px; margin: 0 auto; padding: 14px 16px 56px; }
+
+  .nav-strip { display: flex; align-items: center; gap: 10px; margin-block-end: 14px; flex-wrap: wrap; }
+  .nav-strip .ref-big { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--ocean); }
+  :root[data-theme="dark"] .nav-strip .ref-big { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .nav-strip .ref-big { color: var(--cultivate); } }
+  :root[data-theme="light"] .nav-strip .ref-big { color: var(--ocean); }
+  .nav-strip .spacer { margin-inline-start: auto; }
+  .iconbtn { appearance: none; border: none; background: var(--skip-soft); color: var(--ink); width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+
+  .status-row { display: flex; align-items: center; gap: 10px; margin-block-end: 16px; flex-wrap: wrap; }
+  .status-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 780px) { .pair { grid-template-columns: minmax(0, 1fr); gap: 12px; } }
+
+  .lane-block { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; }
+  .lane-block .lane-top { display: flex; align-items: center; gap: 8px; margin-block-end: 8px; }
+  .lane-block .lane-top .spacer { margin-inline-start: auto; }
+  .lane-block .lane-top button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+  .source-block { font-family: var(--font-scripture); font-size: 16px; line-height: 1.6; background: var(--card-2); border-radius: var(--radius-sm); padding: 10px 12px; margin-block-end: 10px; }
+  .target-box {
+    width: 100%; min-height: 100px; font-family: var(--font-scripture); font-size: 16.5px; line-height: 1.6; color: var(--ink);
+    background: var(--card-2); border: 1.5px solid var(--inspire); border-radius: var(--radius-sm); padding: 10px 12px; resize: vertical;
+  }
+  .lane-block.locked .target-box { border-color: var(--line); background: var(--skip-soft); pointer-events: none; }
+  .lane-foot { display: flex; align-items: center; gap: 8px; margin-block-start: 8px; }
+  .lane-foot .spacer { margin-inline-start: auto; }
+
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  .paragraph-toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-block-end: 8px; }
+  .paragraph-toolbar button { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; font-family: ui-monospace, monospace; cursor: pointer; }
+
+  /* dialogs */
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 640px; width: 100%; max-height: 84vh; display: flex; flex-direction: column; }
+  .dlg-wide { max-width: 880px; }
+  .dlg-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-body { padding: 14px 16px; overflow: auto; }
+  .dlg-foot { display: flex; gap: 8px; padding: 12px 16px; border-block-start: 1px solid var(--line); justify-content: flex-end; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+
+  .hist-version { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-block-end: 1px solid var(--line); font-size: 13px; }
+  .hist-version:last-child { border-block-end: none; }
+  .hist-version .hv-num { font-weight: 700; width: 32px; flex: none; }
+  .hist-version .hv-main { flex: 1; }
+  .hist-version .hv-meta { color: var(--ink-2); font-size: 11.5px; }
+  .hist-version button { appearance: none; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 4px 8px; font-size: 11.5px; cursor: pointer; }
+
+  .board-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .board-table th, .board-table td { border: 1px solid var(--line); padding: 6px 8px; text-align: center; }
+  .board-table th { background: var(--card-2); font-weight: 700; font-size: 11.5px; }
+  .board-table td:first-child, .board-table th:first-child { text-align: start; font-weight: 600; }
+  .board-table input[type="checkbox"] { width: 16px; height: 16px; }
+  .board-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); margin-block-start: 8px; }
+
+  .layout-menu-note { font-size: 11.5px; color: var(--ink-2); margin: 0 0 8px; }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Scripture — Zechariah</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Review</a>
+    <a href="t3-scripture.html" aria-current="page">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="../index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="scripture-wrap">
+    <div class="nav-strip">
+      <button type="button" class="iconbtn" id="prevVerseBtn" aria-label="Previous verse">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <span class="ref-big" id="refBig">ZEC 1:8</span>
+      <button type="button" class="iconbtn" id="nextVerseBtn" aria-label="Next verse">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+      <span class="spacer"></span>
+      <button type="button" class="cluster-btn" id="boardBtn" data-handle="GET /api/chapters/:book/:chapter" data-bundle="K">Chapter board</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="layoutBtn" aria-haspopup="true" aria-expanded="false" aria-controls="layoutMenu">Layout</button>
+        <div class="menu" id="layoutMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="local:layout-menu" data-bundle="G">Save current as layout…</button>
+          <button type="button" role="menuitem" data-handle="local:layout-menu" data-bundle="G">Rename layout</button>
+          <button type="button" role="menuitem" data-handle="local:layout-menu" data-bundle="G">Duplicate layout</button>
+          <button type="button" role="menuitem" data-handle="local:layout-menu" data-bundle="G">Delete layout…</button>
+          <p class="layout-menu-note" style="padding:6px 9px 0;">Layout chrome is local-only — nothing here reaches the server.</p>
+        </div>
+      </span>
+    </div>
+
+    <div class="status-row">
+      <span class="status-toggle">
+        <button type="button" class="switch" id="doneSwitch" role="switch" aria-checked="false" data-handle="PATCH /api/chapters/:book/:chapter/:verse/status" data-bundle="G"></button>
+        Verse marked done
+      </span>
+      <button type="button" class="cluster-btn" id="historyBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion/history" data-bundle="G">Verse history</button>
+    </div>
+
+    <div class="pair">
+      <section class="lane-block" id="litLane">
+        <div class="lane-top">
+          <p class="lane-tag" style="margin:0;">ULT <span class="lane-arrow">→</span> GLT</p>
+          <span class="chip chip-edited" id="litStateChip">Edited</span>
+          <span class="spacer"></span>
+          <button type="button" id="litAlignBtn">Align →</button>
+        </div>
+        <p class="source-block">In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,</p>
+        <div class="paragraph-toolbar" aria-label="Paragraph markers">
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\p</button>
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q1</button>
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q2</button>
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\s1</button>
+        </div>
+        <textarea class="target-box" id="litTarget">En el mes octavo, en el segundo año de Darío, vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddo, el profeta, diciendo:</textarea>
+        <div class="lane-foot">
+          <button type="button" class="btn btn-outline" id="litUndoBtn">Undo</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-primary" id="litSaveBtn"
+            data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save</button>
+        </div>
+      </section>
+
+      <section class="lane-block" id="simLane">
+        <div class="lane-top">
+          <p class="lane-tag" style="margin:0;">UST <span class="lane-arrow">→</span> GST</p>
+          <span class="chip chip-draft" id="simStateChip">Draft</span>
+          <span class="spacer"></span>
+          <button type="button" id="simAlignBtn">Align →</button>
+        </div>
+        <p class="source-block">During the night I had a vision. I saw a man sitting on a red horse standing among some myrtle trees in a small valley.</p>
+        <div class="paragraph-toolbar" aria-label="Paragraph markers">
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\p</button>
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q1</button>
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q2</button>
+          <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\s1</button>
+        </div>
+        <textarea class="target-box" id="simTarget">Durante la noche tuve una visión. Vi a un hombre sentado en un caballo rojo, entre unos mirtos en un valle pequeño.</textarea>
+        <div class="lane-foot">
+          <button type="button" class="btn btn-outline" id="simUndoBtn">Undo</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-primary" id="simSaveBtn"
+            data-handle="PATCH /api/verses/:book/:chapter/:verse/UST" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- verse history dialog -->
+  <div class="dlg-backdrop" id="histBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="histTitle">
+      <div class="dlg-top"><h2 id="histTitle">Verse history — ZEC 1:8 (ULT)</h2><button type="button" class="close-x" id="closeHistBtn" aria-label="Close">✕</button></div>
+      <div class="dlg-body">
+        <div class="hist-version"><span class="hv-num">v5</span><span class="hv-main">Current<span class="hv-meta"> · Ana · just now</span></span></div>
+        <div class="hist-version"><span class="hv-num">v4</span><span class="hv-main">Edited wording of “red horse”<span class="hv-meta"> · Ana · yesterday</span></span>
+          <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Restore v4</button></div>
+        <div class="hist-version"><span class="hv-num">v1</span><span class="hv-main">Imported from Door43<span class="hv-meta"> · book import</span></span>
+          <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Restore v1</button></div>
+      </div>
+      <div class="dlg-foot"><button type="button" class="btn btn-outline" id="closeHistBtn2">Close</button></div>
+    </div>
+  </div>
+
+  <!-- chapter board dialog -->
+  <div class="dlg-backdrop" id="boardBackdrop" hidden>
+    <div class="dlg dlg-wide" role="dialog" aria-modal="true" aria-labelledby="boardTitle">
+      <div class="dlg-top"><h2 id="boardTitle">Chapter board — ZEC 1</h2><button type="button" class="close-x" id="closeBoardBtn" aria-label="Close">✕</button></div>
+      <div class="dlg-body">
+        <table class="board-table">
+          <thead><tr><th>Verse</th><th>Text <button type="button" data-handle="PATCH /api/chapters/:book/:chapter/lanes/:lane/bulk" data-bundle="K" title="Check all">✓all</button></th><th>tN</th><th>tW</th><th>tQ</th></tr></thead>
+          <tbody id="boardBody"></tbody>
+        </table>
+        <p class="board-foot"><span>9 of 21 verses fully checked</span><span>Per-cell toggle = PATCH .../lanes/:lane</span></p>
+      </div>
+      <div class="dlg-foot"><button type="button" class="btn btn-outline" id="closeBoardBtn2">Close</button></div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+
+    // account + layout menus
+    function wireMenu(btnId, menuId) {
+      var btn = el(btnId), menu = el(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); } else { btn.setAttribute("aria-expanded", "false"); }
+      });
+    }
+    wireMenu("accountBtn", "accountMenu");
+    wireMenu("layoutBtn", "layoutMenu");
+    document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
+
+    // verse status switch
+    el("doneSwitch").addEventListener("click", function () {
+      var checked = el("doneSwitch").getAttribute("aria-checked") === "true";
+      el("doneSwitch").setAttribute("aria-checked", checked ? "false" : "true");
+    });
+
+    // undo (clears local draft, no api call)
+    el("litUndoBtn").addEventListener("click", function () { toast("Draft cleared (local)", { bundle: "G" }); });
+    el("simUndoBtn").addEventListener("click", function () { toast("Draft cleared (local)", { bundle: "G" }); });
+    el("litAlignBtn").addEventListener("click", function () { location.href = "t4-align.html"; });
+    el("simAlignBtn").addEventListener("click", function () { location.href = "t4-align.html"; });
+
+    // history dialog
+    el("historyBtn").addEventListener("click", function () { el("histBackdrop").hidden = false; });
+    el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+    el("closeHistBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+
+    // chapter board dialog
+    var VERSES = [1,2,3,4,5,6,7,8,9,10];
+    function renderBoard() {
+      var body = el("boardBody");
+      body.innerHTML = "";
+      VERSES.forEach(function (v) {
+        var tr = document.createElement("tr");
+        var lanes = ["text", "tn", "tw", "tq"];
+        var cells = '<td>ZEC 1:' + v + '</td>';
+        lanes.forEach(function (lane) {
+          var checked = (v + lane.length) % 3 !== 0;
+          cells += '<td><input type="checkbox" ' + (checked ? "checked" : "") +
+            ' data-handle="PATCH /api/chapters/:book/:chapter/:verse/lanes/' + lane + '" data-bundle="K" aria-label="' + lane + ' check for verse ' + v + '" /></td>';
+        });
+        tr.innerHTML = cells;
+        body.appendChild(tr);
+      });
+    }
+    el("boardBtn").addEventListener("click", function () { renderBoard(); el("boardBackdrop").hidden = false; });
+    el("closeBoardBtn").addEventListener("click", function () { el("boardBackdrop").hidden = true; });
+    el("closeBoardBtn2").addEventListener("click", function () { el("boardBackdrop").hidden = true; });
+
+    // save buttons flip state chip locally
+    el("litSaveBtn").addEventListener("click", function () { el("litStateChip").className = "chip chip-edited"; el("litStateChip").textContent = "Edited"; });
+    el("simSaveBtn").addEventListener("click", function () { el("simStateChip").className = "chip chip-edited"; el("simStateChip").textContent = "Edited"; });
+
+    el("prevVerseBtn").addEventListener("click", function () { toast("Loading previous verse (local nav)", { bundle: "G" }); });
+    el("nextVerseBtn").addEventListener("click", function () { toast("Loading next verse (local nav)", { bundle: "G" }); });
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Review queue — notes &amp; questions</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav {
+    display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px;
+    background: var(--card); border-block-end: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
+  }
+  .flow-nav a {
+    flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600;
+    color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 11px; white-space: nowrap;
+  }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn {
+    appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink);
+    border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .menu {
+    position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+    min-width: 220px; padding: 6px; z-index: 50;
+  }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+  .menu .menu-note { font-size: 11.5px; color: var(--ink-2); padding: 0 9px 6px; margin: 0; }
+  .menu hr { border: none; border-block-start: 1px solid var(--line); margin: 4px 2px; }
+
+  .banners { padding: 10px 14px 0; display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---------- three-region review layout ---------- */
+  .review-wrap {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 12px 14px 96px;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 320px;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 899.98px) {
+    .review-wrap { grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.35fr); }
+    .review-wrap .rail-col { display: block; }
+    .review-wrap .context-col { display: none; }
+  }
+  @media (max-width: 559.98px) {
+    .review-wrap { grid-template-columns: minmax(0, 1fr); padding-block-end: 132px; }
+    .review-wrap .rail-col { display: none; }
+  }
+
+  /* rail column — queue-at-a-glance, desktop + tablet */
+  .rail-col { position: sticky; top: 12px; }
+  .queue-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .queue-panel .qp-top { padding: 12px 12px 8px; border-block-end: 1px solid var(--line); }
+  .queue-panel h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 8px; }
+  .approve-all-row { display: flex; flex-direction: column; gap: 6px; }
+  .approve-all-row button {
+    appearance: none; border: 1px solid var(--line); background: var(--ok-soft); color: var(--ok-ink);
+    border-radius: 8px; padding: 7px 9px; font-size: 12.5px; font-weight: 700; cursor: pointer; text-align: start;
+  }
+  .approve-all-row button[disabled] { opacity: 0.5; cursor: default; }
+  .queue-list { list-style: none; margin: 0; padding: 6px; max-height: 56vh; overflow-y: auto; }
+  .queue-list li { margin-bottom: 2px; }
+  .queue-list button {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: start; appearance: none;
+    border: none; background: transparent; border-radius: 8px; padding: 7px 8px; cursor: pointer; color: var(--ink);
+  }
+  .queue-list button:hover { background: var(--card-2); }
+  .queue-list button[aria-current="true"] { background: var(--hl); }
+  .queue-list .qi-kind { font-size: 10px; font-weight: 700; color: var(--ink-2); flex: none; width: 20px; }
+  .queue-list .qi-main { flex: 1; min-width: 0; }
+  .queue-list .qi-ref { font-size: 12.5px; font-weight: 600; }
+  .queue-list .qi-quote { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-list .qi-state { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--skip-soft); }
+  .queue-list .qi-state.approved { background: var(--ok); }
+  .queue-list .qi-state.edited { background: var(--inspire); }
+
+  /* work column */
+  .work-col { min-width: 0; }
+  .work-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 10px; }
+  .work-toolbar .wt-count { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .work-toolbar .spacer { margin-inline-start: auto; }
+  .unsaved-chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+    background: var(--kindle-soft); color: var(--kindle-ink); border-radius: 999px; padding: 4px 10px;
+  }
+  .verse-btn-mobile { display: none; }
+  @media (max-width: 899.98px) {
+    .verse-btn-mobile { display: inline-flex; }
+  }
+
+  .work-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+  .work-card.locked { opacity: 0.7; }
+  .work-card .wc-eyebrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+  .work-card .wc-eyebrow .chip { margin-inline-start: auto; }
+  .greek-strip { display: flex; align-items: baseline; gap: 10px; padding: 0 0 10px; }
+  .greek-eyebrow { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .greek-text { font-family: var(--font-scripture); font-size: 17px; color: var(--ink); margin: 0; }
+
+  .support-ref { font-size: 12px; font-weight: 700; color: var(--ink-2); margin: 0 0 6px; }
+  .quote-chip { display: inline-block; font-family: var(--font-scripture); font-size: 15px; background: var(--hl); border-radius: 6px; padding: 2px 8px; margin: 0 0 10px; }
+  .quote-actions { display: inline-flex; gap: 6px; margin-inline-start: 8px; vertical-align: middle; }
+  .quote-actions button { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
+
+  .source-en { background: var(--card-2); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 14.5px; line-height: 1.55; margin: 0 0 10px; }
+  .source-en b { color: var(--ocean); }
+  :root[data-theme="dark"] .source-en b { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .source-en b { color: var(--cultivate); } }
+  :root[data-theme="light"] .source-en b { color: var(--ocean); }
+
+  .draft-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+  .draft-toolbar button {
+    appearance: none; border: 1.5px solid var(--inspire); background: transparent; color: var(--inspire-deep);
+    border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  :root[data-theme="dark"] .draft-toolbar button { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .draft-toolbar button { color: var(--inspire); } }
+  :root[data-theme="light"] .draft-toolbar button { color: var(--inspire-deep); }
+  .draft-toolbar button[disabled] { opacity: 0.45; cursor: default; }
+
+  textarea.edit-area {
+    width: 100%; min-height: 110px; font-family: var(--font-ui); font-size: 15px; line-height: 1.55; color: var(--ink);
+    background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; resize: vertical;
+  }
+  textarea.edit-area:focus { border-color: var(--inspire); outline: none; }
+  .work-card.locked textarea.edit-area { pointer-events: none; background: var(--skip-soft); }
+
+  .footer-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-block-start: 12px; }
+  .foot-chip {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 999px; padding: 4px 10px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  .foot-chip[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+
+  .action-row { display: flex; gap: 10px; margin-block-start: 16px; }
+  .action-row .btn { flex: 1; }
+  @media (max-width: 559.98px) {
+    .action-row { display: none; } /* mobile uses fixed actionbar instead */
+  }
+
+  .actionbar-mobile {
+    display: none;
+  }
+  @media (max-width: 559.98px) {
+    .actionbar-mobile {
+      display: flex; position: fixed; bottom: 0; inset-inline-start: 0; inset-inline-end: 0;
+      gap: 10px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+      background: var(--card); border-block-start: 1px solid var(--line); z-index: 30;
+    }
+    .actionbar-mobile .btn { flex: 1; }
+  }
+
+  /* context column (desktop persistent, mobile bottom sheet) */
+  .context-col { position: sticky; top: 12px; }
+  .ctx-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .ctx-panel .ctx-top { padding: 12px 12px 8px; border-block-end: 1px solid var(--line); }
+  .ctx-panel h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .ctx-body { padding: 12px; max-height: 70vh; overflow-y: auto; }
+  .ctx-lane { margin-bottom: 12px; }
+  .ctx-lane .lane-tag { margin-bottom: 4px; }
+  .ctx-lane .ctx-verse { background: var(--card-2); border-radius: var(--radius-sm); padding: 8px 10px; font-family: var(--font-scripture); font-size: 14.5px; line-height: 1.5; }
+  .ctx-lane .ctx-verse mark { background: var(--hl); border-radius: 3px; padding: 0 2px; }
+  .ctx-twl { margin-block-start: 14px; padding-block-start: 12px; border-block-start: 1px solid var(--line); }
+  .ctx-twl ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .ctx-twl li { font-size: 13px; display: flex; justify-content: space-between; gap: 8px; }
+  .ctx-twl .tw-target { font-family: var(--font-scripture); }
+  .ctx-twl .tw-article { color: var(--ink-2); font-size: 12px; }
+  .ctx-note { font-size: 11.5px; color: var(--ink-2); margin: 8px 0 0; font-style: italic; }
+
+  /* mobile bottom sheet */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.35); z-index: 60; }
+  .sheet-backdrop[hidden] { display: none; }
+  .sheet {
+    position: fixed; inset-inline: 0; bottom: 0; z-index: 61; background: var(--card); border-radius: 16px 16px 0 0;
+    box-shadow: var(--shadow); max-height: 78vh; display: flex; flex-direction: column;
+  }
+  .sheet[hidden] { display: none; }
+  .sheet-handle { width: 36px; height: 4px; background: var(--line); border-radius: 2px; margin: 8px auto; flex: none; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px; flex: none; }
+  .sheet-head h2 { font-size: 14px; margin: 0; }
+  .sheet-body { padding: 0 16px 20px; overflow-y: auto; }
+
+  /* dialogs (history, quote builder, 409, lock demo) */
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 520px; width: 100%; max-height: 84vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-body { padding: 14px 16px; overflow-y: auto; }
+  .dlg-foot { display: flex; gap: 8px; padding: 12px 16px; border-block-start: 1px solid var(--line); justify-content: flex-end; }
+  .dlg .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+
+  .hist-version { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-block-end: 1px solid var(--line); font-size: 13px; }
+  .hist-version:last-child { border-block-end: none; }
+  .hist-version .hv-num { font-weight: 700; width: 32px; flex: none; }
+  .hist-version .hv-main { flex: 1; }
+  .hist-version .hv-meta { color: var(--ink-2); font-size: 11.5px; }
+  .hist-version button { appearance: none; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 4px 8px; font-size: 11.5px; cursor: pointer; }
+
+  .qb-source { display: flex; flex-wrap: wrap; gap: 5px; font-family: var(--font-scripture); font-size: 16px; padding: 8px; background: var(--card-2); border-radius: var(--radius-sm); margin-block-end: 10px; }
+  .qb-source span { cursor: pointer; padding: 1px 3px; border-radius: 4px; }
+  .qb-source span[data-selected="true"] { background: var(--hl); }
+  .qb-preview { font-size: 13px; color: var(--ink-2); margin: 0; }
+
+  .conflict-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 480px) { .conflict-cols { grid-template-columns: 1fr; } }
+  .conflict-col { background: var(--card-2); border-radius: var(--radius-sm); padding: 10px; font-size: 13.5px; line-height: 1.5; }
+  .conflict-col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); margin: 0 0 6px; }
+
+  .btn {
+    appearance: none; border: none; border-radius: 10px; min-height: 42px; padding: 0 14px; font-weight: 700; font-size: 14px;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  }
+  .btn-approve { background: var(--ok); color: #fff; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-ghost { background: transparent; color: var(--ink-2); }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Review queue — notes &amp; questions</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <p class="menu-note">Switching organization reloads the app.</p>
+          <hr />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html" aria-current="page">Review</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="../index.html">Hub ↗</a>
+  </nav>
+
+  <div class="banners" id="banners">
+    <div class="banner banner--lock" data-banner="lock" hidden>
+      <span aria-hidden="true">🔒</span>
+      <span class="banner-msg">AI notes run in progress for ZEC 5 — started 4 min ago. This chapter's questions are locked; notes stay editable.</span>
+      <button type="button" class="banner-action" data-handle="POST /api/rows/tn/:id/keep" data-bundle="E">Mark notes to keep</button>
+    </div>
+  </div>
+
+  <main id="main" class="review-wrap">
+    <aside class="rail-col">
+      <div class="queue-panel">
+        <div class="qp-top">
+          <h2>Approve all</h2>
+          <div class="approve-all-row">
+            <button type="button" id="approveAllNotes" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve all notes (24)</button>
+            <button type="button" id="approveAllQuestions" data-handle="POST /api/rows/tq/:id/validate" data-bundle="E">Approve all questions (18)</button>
+          </div>
+        </div>
+        <ul class="queue-list" id="queueList" role="list" aria-label="Queue items"></ul>
+      </div>
+    </aside>
+
+    <section class="work-col">
+      <div class="work-toolbar">
+        <span class="wt-count" id="wtCount">1 of 42</span>
+        <span class="unsaved-chip" id="unsavedChip" hidden><span aria-hidden="true">●</span> <span id="unsavedText">1 unsaved</span></span>
+        <span class="spacer"></span>
+        <button type="button" class="cluster-btn verse-btn-mobile" id="openSheetBtn">This verse</button>
+        <button type="button" class="cluster-btn" id="historyBtn">History</button>
+        <button type="button" class="cluster-btn" id="demoConflictBtn">Demo: 409 conflict</button>
+      </div>
+
+      <article class="work-card" id="workCard">
+        <div class="wc-eyebrow">
+          <span class="card-label" style="margin:0;"><span class="dot"></span><span id="wcKind">Note</span></span>
+          <span class="chip chip-draft" id="wcStateChip">Draft</span>
+        </div>
+
+        <div class="greek-strip" id="greekStrip">
+          <p class="greek-eyebrow">Greek</p>
+          <p class="greek-text" id="greekText"></p>
+        </div>
+
+        <p class="support-ref" id="supportRef"></p>
+        <p class="quote-chip" id="quoteChip">
+          <span id="quoteText"></span>
+          <span class="quote-actions">
+            <button type="button" data-handle="local:quote-builder" data-bundle="F" id="buildQuoteBtn">Build from source</button>
+          </span>
+        </p>
+
+        <p class="source-en" id="sourceEn"></p>
+
+        <div class="draft-toolbar">
+          <button type="button" id="suggestBtn" data-handle="POST /api/tn-quick" data-bundle="D">✨ Suggest</button>
+          <button type="button" id="templateBtn" data-handle="GET /api/note-templates" data-bundle="I">Template</button>
+        </div>
+        <textarea class="edit-area" id="draftArea" aria-label="Target draft"></textarea>
+
+        <div class="footer-chips" id="footerChips">
+          <button type="button" class="foot-chip" id="preserveChip" aria-pressed="false" data-handle="POST /api/rows/tn/:id/preserve" data-bundle="F">Preserve</button>
+          <button type="button" class="foot-chip" id="hintChip" aria-pressed="false" data-handle="POST /api/rows/tn/:id/hint" data-bundle="F">Hint</button>
+          <button type="button" class="foot-chip" id="trashChip" data-handle="POST /api/rows/tn/:id/trash" data-bundle="F">Trash</button>
+        </div>
+
+        <div class="action-row">
+          <button type="button" class="btn btn-outline" id="saveBtnDesktop" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Save</button>
+          <button type="button" class="btn btn-approve" id="approveBtnDesktop" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve</button>
+        </div>
+      </article>
+    </section>
+
+    <aside class="context-col">
+      <div class="ctx-panel" id="ctxPanelDesktop">
+        <div class="ctx-top"><h2>This verse</h2></div>
+        <div class="ctx-body" id="ctxBodyDesktop"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="actionbar-mobile" id="actionbarMobile">
+    <button type="button" class="btn btn-outline" id="saveBtnMobile" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Save</button>
+    <button type="button" class="btn btn-approve" id="approveBtnMobile" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve</button>
+  </footer>
+
+  <!-- mobile "This verse" bottom sheet -->
+  <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+  <div class="sheet" id="verseSheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="sheetTitle">This verse — read-only context</h2>
+      <button type="button" class="close-x" id="closeSheetBtn" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body" id="ctxBodyMobile"></div>
+  </div>
+
+  <!-- history dialog -->
+  <div class="dlg-backdrop" id="histBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="histTitle">
+      <div class="dlg-top">
+        <h2 id="histTitle">Note history</h2>
+        <button type="button" class="close-x" id="closeHistBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="dlg-body" id="histBody"></div>
+      <div class="dlg-foot"><button type="button" class="btn btn-ghost" id="histCloseBtn2">Close</button></div>
+    </div>
+  </div>
+
+  <!-- 409 merge prompt dialog -->
+  <div class="dlg-backdrop" id="conflictBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
+      <div class="dlg-top">
+        <h2 id="conflictTitle">Someone else saved this note first</h2>
+        <button type="button" class="close-x" id="closeConflictBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="dlg-body">
+        <p style="margin-top:0;font-size:13.5px;color:var(--ink-2);">Diego saved a change to this note while you were editing. Choose which version to keep — the other is discarded.</p>
+        <div class="conflict-cols">
+          <div class="conflict-col">
+            <h3>Mine</h3>
+            <p id="conflictMine"></p>
+          </div>
+          <div class="conflict-col">
+            <h3>Theirs (v4, Diego, 2 min ago)</h3>
+            <p id="conflictTheirs"></p>
+          </div>
+        </div>
+      </div>
+      <div class="dlg-foot">
+        <button type="button" class="btn btn-outline" id="keepTheirsBtn" data-handle="local:discard-local-edit" data-bundle="F">Keep theirs</button>
+        <button type="button" class="btn btn-approve" id="keepMineBtn" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Keep mine</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    var ITEMS = [
+      { kind: "tn", ref: "ZEC 1:1", greek: "בֶּן־בֶּרֶכְיָ֥ה", support: "figs-idiom", quote: "the word of Yahweh came to", en: "This is an idiom meaning <b>Yahweh gave a message</b> to the prophet. Alternate translation: “Yahweh gave this message to”.", draft: "vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddó, el profeta.", state: "draft" },
+      { kind: "tq", ref: "ZEC 1:1", greek: "", support: "", quote: "", enQ: "When did Yahweh give this message?", draft: "En el octavo mes del segundo año de Darío.", state: "draft" },
+      { kind: "tn", ref: "ZEC 1:3", greek: "יְהוָ֥ה צְבָא֖וֹת", support: "figs-explicit", quote: "Yahweh of hosts", en: "Here, <b>hosts</b> refers to the armies of angels that serve Yahweh. See how you translated this in the introduction.", draft: "Yahvé de los ejércitos", state: "edited" },
+      { kind: "tn", ref: "ZEC 1:8", greek: "אִ֗ישׁ רֹכֵב֙ עַל־ס֣וּס אָדֹ֔ם", support: "writing-participants", quote: "a man riding on a red horse", en: "This introduces a new participant — the <b>angel of Yahweh</b>, though his identity is not yet stated here.", draft: "un hombre montado en un caballo rojo", state: "draft" },
+      { kind: "tq", ref: "ZEC 1:8", greek: "", support: "", quote: "", enQ: "What did Zechariah see standing among the myrtle trees?", draft: "", state: "draft" }
+    ];
+
+    var cur = 0;
+    var unsavedIds = {};
+
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+
+    function renderQueueList() {
+      var ul = el("queueList");
+      ul.innerHTML = "";
+      ITEMS.forEach(function (item, i) {
+        var li = document.createElement("li");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        if (i === cur) btn.setAttribute("aria-current", "true");
+        var stateClass = item.state === "validated" ? "approved" : item.state === "edited" ? "edited" : "";
+        btn.innerHTML =
+          '<span class="qi-kind">' + (item.kind === "tn" ? "N" : "Q") + '</span>' +
+          '<span class="qi-main"><span class="qi-ref">' + item.ref + '</span>' +
+          '<span class="qi-quote">' + (item.quote || item.enQ || "") + '</span></span>' +
+          '<span class="qi-state ' + stateClass + '"></span>';
+        btn.addEventListener("click", function () { cur = i; render(); });
+        li.appendChild(btn);
+        ul.appendChild(li);
+      });
+    }
+
+    function ctxHtml(item) {
+      return (
+        '<div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p>' +
+        '<p class="ctx-verse">In the eighth month, in the second year of Darius, <mark>' + (item.quote || "the word of Yahweh came to") + '</mark> Zechariah son of Berechiah son of Iddo, the prophet.</p></div>' +
+        '<div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p>' +
+        '<p class="ctx-verse">Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo.</p></div>' +
+        '<div class="ctx-twl"><p class="lane-tag">Word links (read-only)</p>' +
+        '<ul><li><span class="tw-target">Yahweh</span><span class="tw-article">kt/yahweh</span></li>' +
+        '<li><span class="tw-target">prophet</span><span class="tw-article">kt/prophet</span></li></ul>' +
+        '<p class="ctx-note">Word links have no approve lifecycle — shown here for reference only.</p></div>'
+      );
+    }
+
+    function render() {
+      var item = ITEMS[cur];
+      renderQueueList();
+      el("wtCount").textContent = (cur + 1) + " of " + ITEMS.length;
+      el("wcKind").textContent = item.kind === "tn" ? "Translation note" : "Translation question";
+      el("wcStateChip").className = "chip " + (item.state === "validated" ? "chip-approved" : item.state === "edited" ? "chip-edited" : "chip-draft");
+      el("wcStateChip").textContent = item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft";
+      el("greekStrip").hidden = !item.greek;
+      el("greekText").textContent = item.greek || "";
+      el("supportRef").hidden = !item.support;
+      el("supportRef").textContent = item.support || "";
+      el("quoteChip").hidden = item.kind !== "tn";
+      el("quoteText").textContent = item.quote || "";
+      el("sourceEn").innerHTML = item.kind === "tn" ? item.en : ("<b>Q:</b> " + item.enQ);
+      el("draftArea").value = item.draft || "";
+
+      var locked = item.locked;
+      el("workCard").classList.toggle("locked", !!locked);
+      [el("saveBtnDesktop"), el("saveBtnMobile"), el("approveBtnDesktop"), el("approveBtnMobile")].forEach(function (b) { b.disabled = !!locked; });
+
+      var handleKind = item.kind === "tn" ? "tn" : "tq";
+      [el("saveBtnDesktop"), el("saveBtnMobile")].forEach(function (b) { b.setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id"); });
+      [el("approveBtnDesktop"), el("approveBtnMobile")].forEach(function (b) { b.setAttribute("data-handle", "POST /api/rows/" + handleKind + "/:id/validate"); });
+
+      el("ctxBodyDesktop").innerHTML = ctxHtml(item);
+      el("ctxBodyMobile").innerHTML = ctxHtml(item);
+
+      var n = Object.keys(unsavedIds).length;
+      el("unsavedChip").hidden = n === 0;
+      el("unsavedText").textContent = n + (n === 1 ? " unsaved" : " unsaved");
+    }
+
+    el("draftArea").addEventListener("input", function () {
+      unsavedIds[cur] = true;
+      var n = Object.keys(unsavedIds).length;
+      el("unsavedChip").hidden = n === 0;
+      el("unsavedText").textContent = n + (n === 1 ? " unsaved" : " unsaved");
+    });
+
+    function doSave() {
+      if (!unsavedIds[cur]) { toast("Nothing to save", { bundle: "F" }); return; }
+      delete unsavedIds[cur];
+      ITEMS[cur].draft = el("draftArea").value;
+      ITEMS[cur].state = "edited";
+      render();
+    }
+    function doApprove() {
+      ITEMS[cur].state = "validated";
+      toast("Approved", { bundle: "E" });
+      render();
+    }
+    el("saveBtnDesktop").addEventListener("click", doSave);
+    el("saveBtnMobile").addEventListener("click", doSave);
+    el("approveBtnDesktop").addEventListener("click", doApprove);
+    el("approveBtnMobile").addEventListener("click", doApprove);
+
+    el("approveAllNotes").addEventListener("click", function () {
+      ITEMS.forEach(function (it) { if (it.kind === "tn") it.state = "validated"; });
+      toast("Approving all notes…", { bundle: "E" });
+      render();
+    });
+    el("approveAllQuestions").addEventListener("click", function () {
+      ITEMS.forEach(function (it) { if (it.kind === "tq") it.state = "validated"; });
+      toast("Approving all questions…", { bundle: "E" });
+      render();
+    });
+
+    document.querySelectorAll(".foot-chip[aria-pressed]").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var pressed = chip.getAttribute("aria-pressed") === "true";
+        chip.setAttribute("aria-pressed", pressed ? "false" : "true");
+      });
+    });
+
+    // account menu
+    (function () {
+      var btn = el("accountBtn"), menu = el("accountMenu");
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        menu.toggleAttribute("hidden", !open ? true : false);
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+      document.addEventListener("click", function () { menu.setAttribute("hidden", ""); btn.setAttribute("aria-expanded", "false"); });
+    })();
+
+    // mobile "this verse" sheet
+    function openSheet() { el("sheetBackdrop").hidden = false; el("verseSheet").hidden = false; }
+    function closeSheet() { el("sheetBackdrop").hidden = true; el("verseSheet").hidden = true; }
+    el("openSheetBtn").addEventListener("click", openSheet);
+    el("closeSheetBtn").addEventListener("click", closeSheet);
+    el("sheetBackdrop").addEventListener("click", closeSheet);
+
+    // history dialog
+    function openHist() {
+      el("histBody").innerHTML =
+        '<div class="hist-version"><span class="hv-num">v4</span><span class="hv-main">Current draft<span class="hv-meta"> · Ana · 2 min ago</span></span></div>' +
+        '<div class="hist-version"><span class="hv-num">v3</span><span class="hv-main">AI draft (pipeline)<span class="hv-meta"> · 1 hour ago</span></span><button type="button" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Switch to v3</button></div>' +
+        '<div class="hist-version"><span class="hv-num">v1</span><span class="hv-main">Imported from Door43<span class="hv-meta"> · book import</span></span><button type="button" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Switch to v1</button></div>';
+      el("histBackdrop").hidden = false;
+    }
+    el("historyBtn").addEventListener("click", function () {
+      window.flowShell.toast("→ GET /api/rows/tn/:id/history", { bundle: "F" });
+      openHist();
+    });
+    el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+    el("histCloseBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+
+    // 409 conflict demo
+    el("demoConflictBtn").addEventListener("click", function () {
+      el("conflictMine").textContent = el("draftArea").value || "(your edited draft)";
+      el("conflictTheirs").textContent = "vino la palabra de Yahvé a Zacarías, hijo de Berequías y nieto de Iddó, el profeta, diciendo:";
+      el("conflictBackdrop").hidden = false;
+    });
+    el("closeConflictBtn").addEventListener("click", function () { el("conflictBackdrop").hidden = true; });
+    el("keepMineBtn").addEventListener("click", function () { el("conflictBackdrop").hidden = true; toast("Kept your version, retried save", { bundle: "F" }); });
+    el("keepTheirsBtn").addEventListener("click", function () {
+      el("draftArea").value = el("conflictTheirs").textContent;
+      delete unsavedIds[cur];
+      el("conflictBackdrop").hidden = true;
+      render();
+    });
+
+    // build-from-source quote popper (lightweight demo)
+    el("buildQuoteBtn").addEventListener("click", function () {
+      window.flowShell.toast("Quote builder — click source words to select a run (local only)", { bundle: "F" });
+    });
+
+    render();
+  })();
+  </script>
+</body>
+</html>

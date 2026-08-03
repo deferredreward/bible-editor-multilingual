@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Alignment — ZEC 1:8</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .cluster-btn[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .align-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 96px; }
+
+  /* --- mobile fallback: alignment needs a bigger screen --- */
+  .mobile-fallback { display: none; }
+  @media (max-width: 559.98px) {
+    .align-toolbar, .align-canvas, .side-by-side-toggle { display: none !important; }
+    .mobile-fallback {
+      display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px;
+      padding: 56px 20px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    }
+    .mobile-fallback .mf-icon { font-size: 40px; }
+    .mobile-fallback h1 { font-size: 18px; margin: 0; }
+    .mobile-fallback p { color: var(--ink-2); font-size: 14px; margin: 0; max-width: 320px; }
+  }
+  @media (min-width: 560px) { .mobile-fallback { display: none !important; } }
+
+  .align-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 14px; }
+  .align-toolbar .at-count { font-size: 12.5px; font-weight: 700; color: var(--warn-ink); background: var(--warn-soft); border-radius: 999px; padding: 4px 10px; }
+  .align-toolbar .spacer { margin-inline-start: auto; }
+
+  .verse-ref-row { display: flex; align-items: center; gap: 10px; margin-block-end: 10px; flex-wrap: wrap; }
+  .verse-ref-row .ref-big { font-size: 18px; font-weight: 700; color: var(--ocean); }
+  :root[data-theme="dark"] .verse-ref-row .ref-big { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .verse-ref-row .ref-big { color: var(--cultivate); } }
+  :root[data-theme="light"] .verse-ref-row .ref-big { color: var(--ocean); }
+
+  .source-row {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow); margin-block-end: 14px; font-family: var(--font-scripture); font-size: 17px;
+  }
+  .source-row .src-word {
+    cursor: grab; padding: 3px 7px; border-radius: 6px; border: 1px solid transparent;
+  }
+  .source-row .src-word:hover { background: var(--hl); border-color: var(--inspire); }
+  .source-row .src-word.unaligned { border-bottom: 2px dashed var(--warn); }
+
+  .align-canvas { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-block-end: 16px; }
+  .align-card {
+    background: var(--card); border: 1.5px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow);
+    padding: 10px; position: relative; cursor: grab;
+  }
+  .align-card:hover { border-color: var(--inspire); }
+  .align-card .ac-source { font-family: var(--font-scripture); font-size: 15px; color: var(--ink-2); margin: 0 0 4px; }
+  .align-card .ac-target { font-family: var(--font-scripture); font-size: 16px; font-weight: 600; margin: 0; }
+  .align-card .ac-clear {
+    position: absolute; top: 4px; inset-inline-end: 4px; appearance: none; border: none; background: transparent;
+    color: var(--ink-2); font-size: 12px; cursor: pointer; width: 18px; height: 18px; border-radius: 50%;
+  }
+  .align-card.ghost { border-style: dashed; opacity: 0.85; }
+  .align-card.ghost .ac-target::after { content: " ●"; color: var(--inspire); font-size: 10px; }
+  .align-card.unaligned-slot { display: flex; align-items: center; justify-content: center; color: var(--ink-2); font-size: 12.5px; border-style: dashed; min-height: 56px; }
+
+  .canvas-note { font-size: 12px; color: var(--ink-2); margin: -6px 0 14px; }
+
+  .action-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .action-bar .spacer { margin-inline-start: auto; }
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  /* side-by-side dialog */
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 12px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg-full { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); width: 100%; max-width: 1100px; max-height: 92vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-block-end: 1px solid var(--line); flex-wrap: wrap; }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-top .spacer { margin-inline-start: auto; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+  .dlg-body { padding: 14px 16px; overflow: auto; }
+  .sbs-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 780px) { .sbs-cols { grid-template-columns: 1fr; } }
+  .sbs-col { background: var(--card-2); border-radius: var(--radius-sm); padding: 10px; }
+  .sbs-col h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2); margin: 0 0 8px; }
+  .reading-line { font-family: var(--font-scripture); font-size: 14.5px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-block-end: 8px; }
+  .reading-line[contenteditable="true"]:focus { border-color: var(--inspire); outline: none; }
+  .reading-line.locked { opacity: 0.6; pointer-events: none; }
+  .rl-actions { display: flex; gap: 6px; margin-block-end: 10px; }
+  .rl-actions button { appearance: none; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Alignment — Zechariah</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Review</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html" aria-current="page">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="../index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="align-wrap">
+    <div class="mobile-fallback">
+      <span class="mf-icon" aria-hidden="true">📐</span>
+      <h1>Alignment needs a larger screen</h1>
+      <p>Word alignment is a drag-and-drop task that doesn't fit comfortably on a phone. Open this on a tablet or desktop, or go back to your queues.</p>
+      <a class="btn btn-primary" href="t1-home.html" style="text-decoration:none;">Back to home</a>
+    </div>
+
+    <div class="verse-ref-row">
+      <span class="ref-big">ZEC 1:8 · ULT</span>
+      <button type="button" class="cluster-btn" id="historyBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion/history" data-bundle="H">Verse history</button>
+      <button type="button" class="cluster-btn" id="sbsBtn">Side-by-side</button>
+    </div>
+
+    <div class="align-toolbar">
+      <span class="at-count" id="unalignedCount">3 unaligned</span>
+      <span id="selectionCount" style="font-size:12.5px;color:var(--ink-2);">0 selected</span>
+      <button type="button" class="cluster-btn" id="colorsToggle" aria-pressed="true">Colors</button>
+      <button type="button" class="cluster-btn" id="hoverLinkToggle" aria-pressed="false">Hover-link</button>
+      <button type="button" class="cluster-btn" id="unalignedOnlyToggle" aria-pressed="false">Unaligned only</button>
+      <span class="spacer"></span>
+      <button type="button" class="cluster-btn" id="clearAllBtn" data-handle="local:clear-alignment" data-bundle="H">Clear</button>
+      <button type="button" class="cluster-btn" id="resetBtn" data-handle="local:reset-alignment" data-bundle="H">Reset</button>
+    </div>
+
+    <p class="canvas-note">Drag affordances are shown statically here — the real aligner is a custom HTML5 drag-and-drop canvas, not native browser DnD.</p>
+
+    <div class="source-row" aria-label="Hebrew source words" role="list">
+      <span class="src-word" role="listitem" title="Hebrew: אִישׁ">a man</span>
+      <span class="src-word" role="listitem" title="Hebrew: רֹכֵב">riding</span>
+      <span class="src-word unaligned" role="listitem" title="Hebrew: עַל">on</span>
+      <span class="src-word" role="listitem" title="Hebrew: סוּס">a horse</span>
+      <span class="src-word unaligned" role="listitem" title="Hebrew: אָדֹם">red</span>
+      <span class="src-word" role="listitem" title="Hebrew: וְהוּא">and he</span>
+      <span class="src-word unaligned" role="listitem" title="Hebrew: עֹמֵד">standing</span>
+    </div>
+
+    <div class="align-canvas" role="list" aria-label="Alignment cards">
+      <div class="align-card" role="listitem" draggable="true">
+        <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
+        <p class="ac-source">אִישׁ</p>
+        <p class="ac-target">a man</p>
+      </div>
+      <div class="align-card" role="listitem" draggable="true">
+        <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
+        <p class="ac-source">רֹכֵב</p>
+        <p class="ac-target">riding</p>
+      </div>
+      <div class="align-card ghost" role="listitem" draggable="true" title="Suggested — from wordMAP memory">
+        <button type="button" class="ac-clear" aria-label="Dismiss suggestion" data-handle="local:accept-suggestions" data-bundle="H">✓</button>
+        <p class="ac-source">עַל סוּס</p>
+        <p class="ac-target">on a horse</p>
+      </div>
+      <div class="align-card unaligned-slot" role="listitem">Drop “red” here</div>
+      <div class="align-card" role="listitem" draggable="true">
+        <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
+        <p class="ac-source">וְהוּא</p>
+        <p class="ac-target">and he</p>
+      </div>
+      <div class="align-card unaligned-slot" role="listitem">Drop “standing” here</div>
+    </div>
+
+    <div class="action-bar">
+      <button type="button" class="btn btn-outline" id="acceptSuggestionsBtn" data-handle="local:accept-suggestions" data-bundle="H">Accept 1 suggestion</button>
+      <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="saveBtn"
+        data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+    </div>
+  </main>
+
+  <!-- side-by-side dialog -->
+  <div class="dlg-backdrop" id="sbsBackdrop" hidden>
+    <div class="dlg-full" role="dialog" aria-modal="true" aria-labelledby="sbsTitle">
+      <div class="dlg-top">
+        <button type="button" class="iconbtn" id="sbsPrevBtn" aria-label="Previous verse" style="width:28px;height:28px;">‹</button>
+        <h2 id="sbsTitle">ZEC 1:8 — ULT + UST side-by-side</h2>
+        <button type="button" class="iconbtn" id="sbsNextBtn" aria-label="Next verse" style="width:28px;height:28px;">›</button>
+        <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:5px;">
+          <input type="checkbox" id="hebrewInfoToggle" /> Hebrew info
+        </label>
+        <span class="spacer"></span>
+        <button type="button" class="close-x" id="closeSbsBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="dlg-body">
+        <div class="sbs-cols">
+          <div class="sbs-col">
+            <h3>ULT → GLT</h3>
+            <div class="rl-actions">
+              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/ULT" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
+            </div>
+            <div class="reading-line" contenteditable="true" id="litReadingLine">En el mes octavo, en el segundo año de Darío…</div>
+            <p style="font-size:12px;color:var(--ink-2);margin:0 0 8px;">Alignment canvas (ULT) — same card grid as the main view, omitted here for brevity.</p>
+          </div>
+          <div class="sbs-col">
+            <h3>UST → GST</h3>
+            <div class="rl-actions">
+              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/UST" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
+            </div>
+            <div class="reading-line locked" id="simReadingLine" title="Locked while the UST alignment panel has unsaved drags">Durante la noche tuve una visión…</div>
+            <p style="font-size:12px;color:var(--ink-2);margin:0 0 8px;">Reading-line text is locked while this side's alignment has unsaved drags.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+
+    function wireMenu(btnId, menuId) {
+      var btn = el(btnId), menu = el(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+    }
+    wireMenu("accountBtn", "accountMenu");
+    document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
+
+    ["colorsToggle", "hoverLinkToggle", "unalignedOnlyToggle"].forEach(function (id) {
+      el(id).addEventListener("click", function () {
+        var p = el(id).getAttribute("aria-pressed") === "true";
+        el(id).setAttribute("aria-pressed", p ? "false" : "true");
+      });
+    });
+
+    el("sbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = false; });
+    el("closeSbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = true; });
+
+    el("acceptSuggestionsBtn").addEventListener("click", function () {
+      window.flowShell.toast("Suggestion accepted (local) — Save to persist", { bundle: "H" });
+    });
+  })();
+  </script>
+</body>
+</html>

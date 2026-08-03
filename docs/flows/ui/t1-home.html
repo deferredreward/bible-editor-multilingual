@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Home — queue dispatcher</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* ---------- shared flow nav (repeated per-screen, not in _tokens.css) ---------- */
+  .flow-nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px 18px;
+    background: var(--card);
+    border-block-end: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
+  }
+  .flow-nav a {
+    flex: none;
+    text-decoration: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 5px 11px;
+    white-space: nowrap;
+  }
+  .flow-nav a[aria-current="page"] {
+    background: var(--hl);
+    border-color: var(--inspire);
+    color: var(--ink);
+  }
+  .skip-link {
+    position: absolute;
+    inset-inline-start: -999px;
+    top: 0;
+    background: var(--ocean);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 0 0 8px 0;
+    z-index: 100;
+  }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .home {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 16px 16px 64px;
+  }
+
+  .banners { display: flex; flex-direction: column; gap: 8px; margin-block-end: 14px; }
+
+  .home-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-block-end: 16px;
+  }
+  .home-head h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .home-head .sub { color: var(--ink-2); font-size: 13.5px; margin: 2px 0 0; }
+  .head-titles { flex: 1; min-width: 220px; }
+  .demo-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 12px;
+  }
+  .demo-controls .demo-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin-inline-end: 2px;
+  }
+  .demo-controls button {
+    appearance: none;
+    border: 1px dashed var(--line);
+    background: transparent;
+    color: var(--ink-2);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .demo-controls button:hover { border-color: var(--inspire); color: var(--ink); }
+
+  .home-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+    gap: 18px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .home-layout { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .queues {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  @media (max-width: 820px) {
+    .queues { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .qcard {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .qcard:hover { border-color: var(--inspire); }
+  .qcard .q-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 0 0 6px;
+  }
+  .qcard .q-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--inspire); flex: none; }
+  .qcard h2 { font-size: 17px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .qcard .q-count {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--ocean);
+    margin: 0 0 8px;
+  }
+  :root[data-theme="dark"] .qcard .q-count { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .qcard .q-count { color: var(--cultivate); } }
+  :root[data-theme="light"] .qcard .q-count { color: var(--ocean); }
+  .qcard .q-desc { font-size: 13.5px; color: var(--ink-2); margin: 0 0 12px; line-height: 1.45; }
+  .qcard .q-bar { height: 6px; border-radius: 3px; background: var(--skip-soft); overflow: hidden; }
+  .qcard .q-bar > i { display: block; height: 100%; background: var(--inspire); border-radius: 3px; }
+  .qcard .q-bar > i.ok { background: var(--ok); }
+  .qcard .q-bar > i.warn { background: var(--warn); }
+  .qcard .q-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .qcard .q-arrow { color: var(--inspire-deep); font-weight: 700; }
+  :root[data-theme="dark"] .qcard .q-arrow { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .qcard .q-arrow { color: var(--inspire); } }
+  :root[data-theme="light"] .qcard .q-arrow { color: var(--inspire-deep); }
+
+  .recent {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px;
+  }
+  .recent h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 0 0 10px;
+  }
+  .recent ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .recent li { font-size: 13px; line-height: 1.4; padding-block-end: 10px; border-block-end: 1px solid var(--line); }
+  .recent li:last-child { border-block-end: none; padding-block-end: 0; }
+  .recent .r-time { display: block; color: var(--ink-2); font-size: 11.5px; margin-block-start: 2px; }
+  @media (max-width: 900px) {
+    .recent { margin-block-start: 14px; }
+  }
+
+  /* ---------- account/status cluster ---------- */
+  .cluster-item { position: relative; }
+  .cluster-btn {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card-2);
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .status-pill { background: var(--hl); border-color: transparent; color: var(--inspire-deep); }
+  :root[data-theme="dark"] .status-pill { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .status-pill { color: var(--inspire); } }
+  :root[data-theme="light"] .status-pill { color: var(--inspire-deep); }
+  .menu {
+    position: absolute;
+    inset-block-start: calc(100% + 6px);
+    inset-inline-end: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    min-width: 240px;
+    padding: 6px;
+    z-index: 50;
+  }
+  .menu[hidden] { display: none; }
+  .menu .menu-head {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 7px 9px 4px;
+  }
+  .menu button, .menu .menu-static {
+    display: block;
+    width: 100%;
+    text-align: start;
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    padding: 8px 9px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .menu button:hover { background: var(--card-2); }
+  .menu .menu-note { font-size: 11.5px; color: var(--ink-2); padding: 0 9px 6px; margin: 0; }
+  .menu hr { border: none; border-block-start: 1px solid var(--line); margin: 4px 2px; }
+  .menu .job-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    padding: 7px 9px;
+  }
+  .menu .job-row .job-main { flex: 1; min-width: 0; }
+  .menu .job-row .job-title { font-weight: 600; }
+  .menu .job-row .job-sub { color: var(--ink-2); font-size: 11.5px; }
+  .menu .job-row button { width: auto; padding: 3px 8px; font-size: 11.5px; background: var(--skip-soft); }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">ZEC · gateway translation workspace</span>
+    <span class="account-cluster">
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn status-pill" id="statusBtn" aria-haspopup="true" aria-expanded="false" aria-controls="statusMenu">
+          <span aria-hidden="true">●</span> 2 running
+        </button>
+        <div class="menu" id="statusMenu" role="menu" hidden>
+          <p class="menu-head">Pipeline jobs</p>
+          <div class="job-row">
+            <span aria-hidden="true">⏳</span>
+            <span class="job-main"><span class="job-title">Generate ULT+UST</span><span class="job-sub">ZEC 3 · started 6 min ago</span></span>
+            <button type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>
+          </div>
+          <div class="job-row">
+            <span aria-hidden="true">⏳</span>
+            <span class="job-main"><span class="job-title">Translate notes</span><span class="job-sub">ZEC 5 · queued, #2 in line</span></span>
+            <button type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>
+          </div>
+          <hr />
+          <button type="button" data-handle="GET /api/pipelines" data-bundle="K">Refresh</button>
+        </div>
+      </span>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" data-action="toggle-mode" aria-pressed="false" title="Preview authoring vs translation mode">Mode</button>
+      </span>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <p class="menu-head">Ana Ruiz · editor</p>
+          <button type="button" role="menuitem" data-handle="PATCH /api/project-config/mode" data-bundle="C">Switch to authoring mode</button>
+          <button type="button" role="menuitem" id="orgSwitchItem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <p class="menu-note">Switching organization reloads the app.</p>
+          <hr />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html" aria-current="page">Home</a>
+    <a href="t2-review.html">Review</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="../index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="home">
+    <div class="banners" id="banners">
+      <div class="banner banner--lock" data-banner="lock" hidden>
+        <span aria-hidden="true">🔒</span>
+        <span class="banner-msg">AI generate run in progress for ZEC 3 — started 6 min ago. Editing is locked for this chapter. You can still mark notes to keep before the new set lands.</span>
+        <button type="button" class="banner-action" data-handle="POST /api/rows/tn/:id/keep" data-bundle="E">Mark notes to keep</button>
+        <button type="button" class="banner-action" data-handle="local:dismiss-banner" data-bundle="K" data-dismiss="lock" aria-label="Dismiss">✕</button>
+      </div>
+      <div class="banner banner--ready" data-banner="ready" hidden>
+        <span aria-hidden="true">✨</span>
+        <span class="banner-msg">New AI translate drafts are ready for ZEC 5. Save your work, then refresh.</span>
+        <button type="button" class="banner-action" data-handle="local:refresh-chapter" data-bundle="K">Refresh</button>
+        <button type="button" class="banner-action" data-handle="local:dismiss-banner" data-bundle="K" data-dismiss="ready" aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+
+    <div class="home-head">
+      <div class="head-titles">
+        <h1>Good morning, Ana</h1>
+        <p class="sub">Zechariah · English → Spanish (LatAm)</p>
+      </div>
+      <span class="chip-pack" title="Feeds AI drafting for this workspace">
+        <span aria-hidden="true">🧠</span> Context pack ready <span class="sha">a1b2c3d</span>
+      </span>
+      <div class="demo-controls" role="group" aria-label="Demo triggers">
+        <span class="demo-label">Demo</span>
+        <button type="button" id="demoLock">Simulate chapter lock</button>
+        <button type="button" id="demoReady">Simulate drafts ready</button>
+      </div>
+    </div>
+
+    <div class="home-layout">
+      <section class="queues" aria-label="Work queues" role="list">
+        <a class="qcard" role="listitem" href="t3-scripture.html">
+          <p class="q-eyebrow"><span class="dot"></span>Scripture text</p>
+          <h2>Zechariah</h2>
+          <p class="q-count">142 of 187 verses done</p>
+          <div class="q-bar"><i style="width:76%"></i></div>
+          <p class="q-desc">ULT → GLT (literal) and UST → GST (simplified), verse by verse.</p>
+          <p class="q-foot"><span>3 chapters remaining</span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t2-review.html">
+          <p class="q-eyebrow"><span class="dot"></span>Notes &amp; questions</p>
+          <h2>Review queue</h2>
+          <p class="q-count">58 of 100 approved</p>
+          <div class="q-bar"><i class="ok" style="width:58%"></i></div>
+          <p class="q-desc">AI-drafted translation notes and questions, one card at a time.</p>
+          <p class="q-foot"><span>42 left</span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t4-align.html">
+          <p class="q-eyebrow"><span class="dot"></span>Word alignment</p>
+          <h2>Alignment</h2>
+          <p class="q-count">12 unaligned words</p>
+          <div class="q-bar"><i class="warn" style="width:31%"></i></div>
+          <p class="q-desc">Link target words to the Hebrew/Greek source, verse by verse.</p>
+          <p class="q-foot"><span>ZEC 1–2</span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t5-articles.html">
+          <p class="q-eyebrow"><span class="dot"></span>tW / tA articles</p>
+          <h2>Articles</h2>
+          <p class="q-count">9 of 15 approved</p>
+          <div class="q-bar"><i style="width:60%"></i></div>
+          <p class="q-desc">Key-term and translation-academy articles referenced from this book.</p>
+          <p class="q-foot"><span>6 left</span><span class="q-arrow">Open →</span></p>
+        </a>
+      </section>
+
+      <aside class="recent" aria-label="Recent activity">
+        <h2>Recent activity</h2>
+        <ul>
+          <li>Sarah approved 12 notes in ZEC 2.<span class="r-time">18 min ago</span></li>
+          <li>AI generate applied to ZEC 3.<span class="r-time">1 hour ago</span></li>
+          <li>You approved GLT + GST for ZEC 1:8.<span class="r-time">Yesterday</span></li>
+          <li>Context pack refreshed (a1b2c3d).<span class="r-time">Yesterday</span></li>
+          <li>Diego re-sourced tW article “faith” from English.<span class="r-time">2 days ago</span></li>
+        </ul>
+      </aside>
+    </div>
+  </main>
+
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    function wireMenu(btnId, menuId) {
+      var btn = document.getElementById(btnId);
+      var menu = document.getElementById(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        document.querySelectorAll(".cluster-btn[aria-expanded]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+        if (open) {
+          menu.removeAttribute("hidden");
+          btn.setAttribute("aria-expanded", "true");
+        }
+      });
+    }
+    wireMenu("statusBtn", "statusMenu");
+    wireMenu("accountBtn", "accountMenu");
+    document.addEventListener("click", function () {
+      document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+      document.querySelectorAll(".cluster-btn[aria-expanded]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+    });
+
+    document.getElementById("demoLock").addEventListener("click", function () {
+      document.querySelector('[data-banner="lock"]').hidden = false;
+    });
+    document.getElementById("demoReady").addEventListener("click", function () {
+      document.querySelector('[data-banner="ready"]').hidden = false;
+    });
+    document.addEventListener("click", function (ev) {
+      var dismiss = ev.target.closest ? ev.target.closest("[data-dismiss]") : null;
+      if (!dismiss) return;
+      var target = document.querySelector('[data-banner="' + dismiss.getAttribute("data-dismiss") + '"]');
+      if (target) target.hidden = true;
+    });
+  })();
+  </script>
+</body>
+</html>
