@@ -57,7 +57,9 @@
     padding: 10px; position: relative; cursor: grab;
   }
   .align-card:hover { border-color: var(--inspire); }
-  .align-card .ac-source { font-family: var(--font-scripture); font-size: 15px; color: var(--ink-2); margin: 0 0 4px; }
+  /* canvas is dir=rtl for Hebrew card ORDER; card content is per-language */
+  .align-card { direction: ltr; }
+  .align-card .ac-source { font-family: var(--font-scripture); font-size: 15px; color: var(--ink-2); margin: 0 0 4px; direction: rtl; text-align: start; unicode-bidi: plaintext; }
   .align-card .ac-target { font-family: var(--font-scripture); font-size: 16px; font-weight: 600; margin: 0; }
   .align-card .ac-clear {
     position: absolute; top: 4px; inset-inline-end: 4px; appearance: none; border: none; background: transparent;
@@ -300,7 +302,12 @@
 
       <p class="canvas-note">Drag affordances are shown statically here — the real aligner is a custom HTML5 drag-and-drop canvas, not native browser DnD.</p>
 
-      <div class="source-row" aria-label="Hebrew source words" role="list" dir="rtl">
+      <!-- These are TARGET-language words (Hebrew is only in the tooltips) — they
+           follow the TARGET language's direction (LTR here). Direction must always
+           be driven by language, never hardcoded: source rows follow the source
+           (Hebrew hbo = rtl, Greek grc = LTR — an NT book must NOT flip), target
+           rows follow the target. -->
+      <div class="source-row" aria-label="Target language words" role="list" dir="ltr">
         <span class="src-word" role="listitem" title="Hebrew: אִישׁ">a man</span>
         <span class="src-word" role="listitem" title="Hebrew: רֹכֵב">riding</span>
         <span class="src-word unaligned" role="listitem" title="Hebrew: עַל">on</span>
@@ -310,7 +317,10 @@
         <span class="src-word unaligned" role="listitem" title="Hebrew: עֹמֵד">standing</span>
       </div>
 
-      <div class="align-canvas" role="list" aria-label="Alignment cards">
+      <!-- Cards follow SOURCE order/direction (Hebrew: first word rightmost).
+           Card *content* stays direction-per-language via CSS (.align-card ltr,
+           .ac-source rtl). For a Greek (grc) source this container would be ltr. -->
+      <div class="align-canvas" role="list" aria-label="Alignment cards" dir="rtl">
         <div class="align-card" role="listitem" draggable="true">
           <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
           <p class="ac-source">אִישׁ</p>
