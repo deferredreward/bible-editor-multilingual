@@ -70,7 +70,12 @@
   }
   .align-card.ghost { border-style: dashed; opacity: 0.85; }
   .align-card.ghost .ac-target::after { content: " ●"; color: var(--inspire); font-size: 10px; }
-  .align-card.unaligned-slot { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--ink-2); font-size: 12.5px; border-style: dashed; min-height: 78px; }
+  /* empty (unaligned) cards keep their Hebrew visible; only the hint is muted */
+  .align-card.unaligned-slot { align-items: center; justify-content: center; text-align: center; border-style: dashed; min-height: 78px; }
+  .align-card.unaligned-slot .ac-hint { color: var(--ink-2); font-size: 12.5px; margin: 4px 0 0; }
+  .align-card.drop-hot { border-color: var(--inspire); background: var(--hl); }
+  .source-row .src-word[draggable="true"] { cursor: grab; }
+  .source-row .src-word.dragging { opacity: 0.4; }
 
   .canvas-note { font-size: 12px; color: var(--ink-2); margin: -6px 0 14px; }
 
@@ -303,50 +308,19 @@
         <button type="button" class="cluster-btn" id="resetBtn" data-handle="local:reset-alignment" data-bundle="H">Reset</button>
       </div>
 
-      <p class="canvas-note">Drag affordances are shown statically here — the real aligner is a custom HTML5 drag-and-drop canvas, not native browser DnD.</p>
+      <p class="canvas-note">This demo supports basic drag — pick up an underlined word and drop it on a Hebrew card. The production aligner is a richer custom HTML5 DnD canvas.</p>
 
-      <!-- These are TARGET-language words (Hebrew is only in the tooltips) — they
-           follow the TARGET language's direction (LTR here). Direction must always
-           be driven by language, never hardcoded: source rows follow the source
-           (Hebrew hbo = rtl, Greek grc = LTR — an NT book must NOT flip), target
-           rows follow the target. -->
-      <div class="source-row" aria-label="Target language words" role="list" dir="ltr">
-        <span class="src-word" role="listitem" title="Hebrew: אִישׁ">a man</span>
-        <span class="src-word" role="listitem" title="Hebrew: רֹכֵב">riding</span>
-        <span class="src-word unaligned" role="listitem" title="Hebrew: עַל">on</span>
-        <span class="src-word" role="listitem" title="Hebrew: סוּס">a horse</span>
-        <span class="src-word unaligned" role="listitem" title="Hebrew: אָדֹם">red</span>
-        <span class="src-word" role="listitem" title="Hebrew: וְהוּא">and he</span>
-        <span class="src-word unaligned" role="listitem" title="Hebrew: עֹמֵד">standing</span>
-      </div>
+      <!-- Target-language words: follow the TARGET language's direction (LTR here).
+           Direction must always be driven by language, never hardcoded: source rows
+           follow the source (Hebrew hbo = rtl, Greek grc = LTR — an NT book must
+           NOT flip), target rows follow the target. Rendered from DRAG state. -->
+      <div class="source-row" id="dragTargetRow" aria-label="Target language words" role="list" dir="ltr"></div>
 
-      <!-- Cards follow SOURCE order/direction (Hebrew: first word rightmost).
-           Card *content* stays direction-per-language via CSS (.align-card ltr,
-           .ac-source rtl). For a Greek (grc) source this container would be ltr. -->
-      <div class="align-canvas" role="list" aria-label="Alignment cards" dir="rtl">
-        <div class="align-card" role="listitem" draggable="true">
-          <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
-          <p class="ac-source">אִישׁ</p>
-          <p class="ac-target">a man</p>
-        </div>
-        <div class="align-card" role="listitem" draggable="true">
-          <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
-          <p class="ac-source">רֹכֵב</p>
-          <p class="ac-target">riding</p>
-        </div>
-        <div class="align-card ghost" role="listitem" draggable="true" title="Suggested — from wordMAP memory">
-          <button type="button" class="ac-clear" aria-label="Dismiss suggestion" data-handle="local:accept-suggestions" data-bundle="H">✓</button>
-          <p class="ac-source">עַל סוּס</p>
-          <p class="ac-target">on a horse</p>
-        </div>
-        <div class="align-card unaligned-slot" role="listitem">Drop “red” here</div>
-        <div class="align-card" role="listitem" draggable="true">
-          <button type="button" class="ac-clear" aria-label="Clear alignment" data-handle="local:clear-alignment" data-bundle="H">✕</button>
-          <p class="ac-source">וְהוּא</p>
-          <p class="ac-target">and he</p>
-        </div>
-        <div class="align-card unaligned-slot" role="listitem">Drop “standing” here</div>
-      </div>
+      <!-- One card per SOURCE word/group — every Hebrew word is always present,
+           aligned or not. Cards follow SOURCE order/direction (Hebrew: first word
+           rightmost); card content stays per-language (.align-card ltr, .ac-source
+           rtl). For a Greek (grc) source this container would be ltr. -->
+      <div class="align-canvas" id="dragCanvas" role="list" aria-label="Alignment cards" dir="rtl"></div>
 
       <div class="action-bar">
         <button type="button" class="btn btn-outline" id="acceptSuggestionsBtn" data-handle="local:accept-suggestions" data-bundle="H">Accept 1 suggestion</button>
@@ -484,9 +458,113 @@
       el("refPanelToggle").setAttribute("aria-expanded", willOpen ? "true" : "false");
     });
 
+    /* =========================================================
+       Drag view — data-driven, with WORKING native DnD for the demo.
+       Every source word always renders a card (Hebrew visible even
+       when unaligned). Ghost = wordMAP suggestion awaiting accept.
+       ========================================================= */
+    var DRAG_INITIAL = [
+      { heb: "אִישׁ", targets: ["a man"], ghost: false },
+      { heb: "רֹכֵב", targets: ["riding"], ghost: false },
+      { heb: "עַל סוּס", targets: ["on", "a horse"], ghost: true },
+      { heb: "אָדֹם", targets: [], ghost: false },
+      { heb: "וְהוּא", targets: ["and he"], ghost: false },
+      { heb: "עֹמֵד", targets: [], ghost: false }
+    ];
+    var DRAG_TARGET_WORDS = ["a man", "riding", "on", "a horse", "red", "and he", "standing"];
+    var dragCards = JSON.parse(JSON.stringify(DRAG_INITIAL));
+
+    function dragAlignedWords() {
+      var set = {};
+      dragCards.forEach(function (c) { if (!c.ghost) c.targets.forEach(function (t) { set[t] = c.heb; }); });
+      return set;
+    }
+
+    function renderDragView() {
+      var aligned = dragAlignedWords();
+      var unalignedCount = DRAG_TARGET_WORDS.filter(function (w) { return !aligned[w]; }).length;
+      el("unalignedCount").textContent = unalignedCount + " unaligned";
+
+      el("dragTargetRow").innerHTML = DRAG_TARGET_WORDS.map(function (w) {
+        var isAligned = !!aligned[w];
+        return '<span class="src-word' + (isAligned ? "" : " unaligned") + '" role="listitem"' +
+          (isAligned ? ' title="' + escapeHtml(aligned[w]) + '"' : ' draggable="true"') +
+          ' data-word="' + escapeHtml(w) + '">' + escapeHtml(w) + "</span>";
+      }).join("");
+
+      var unalignedOnly = el("unalignedOnlyToggle").getAttribute("aria-pressed") === "true";
+      el("dragCanvas").innerHTML = dragCards.map(function (c, i) {
+        if (unalignedOnly && c.targets.length && !c.ghost) return "";
+        var empty = c.targets.length === 0;
+        var cls = "align-card" + (empty ? " unaligned-slot" : "") + (c.ghost ? " ghost" : "");
+        var btn = c.ghost
+          ? '<button type="button" class="ac-clear" aria-label="Accept suggestion" data-drag-accept="' + i + '" data-handle="local:accept-suggestions" data-bundle="H">✓</button>'
+          : (empty ? "" : '<button type="button" class="ac-clear" aria-label="Clear alignment" data-drag-clear="' + i + '" data-handle="local:clear-alignment" data-bundle="H">✕</button>');
+        return '<div class="' + cls + '" role="listitem" data-card="' + i + '"' + (c.ghost ? ' title="Suggested — from wordMAP memory"' : "") + '>' +
+          btn + '<p class="ac-source">' + escapeHtml(c.heb) + "</p>" +
+          (empty ? '<p class="ac-hint">drag a word here</p>' : '<p class="ac-target">' + c.targets.map(escapeHtml).join(" ") + "</p>") +
+        "</div>";
+      }).join("");
+    }
+
+    el("dragTargetRow").addEventListener("dragstart", function (ev) {
+      var w = ev.target.closest && ev.target.closest(".src-word[draggable]");
+      if (!w) return;
+      ev.dataTransfer.setData("text/plain", w.getAttribute("data-word"));
+      ev.dataTransfer.effectAllowed = "move";
+      w.classList.add("dragging");
+    });
+    el("dragTargetRow").addEventListener("dragend", function (ev) {
+      if (ev.target.classList) ev.target.classList.remove("dragging");
+    });
+    el("dragCanvas").addEventListener("dragover", function (ev) {
+      var card = ev.target.closest && ev.target.closest(".align-card");
+      if (!card || card.classList.contains("ghost")) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+      card.classList.add("drop-hot");
+    });
+    el("dragCanvas").addEventListener("dragleave", function (ev) {
+      var card = ev.target.closest && ev.target.closest(".align-card");
+      if (card) card.classList.remove("drop-hot");
+    });
+    el("dragCanvas").addEventListener("drop", function (ev) {
+      var card = ev.target.closest && ev.target.closest(".align-card");
+      if (!card || card.classList.contains("ghost")) return;
+      ev.preventDefault();
+      var word = ev.dataTransfer.getData("text/plain");
+      var c = dragCards[parseInt(card.getAttribute("data-card"), 10)];
+      if (!word || !c) return;
+      c.targets.push(word);
+      renderDragView();
+      window.flowShell.toast("Aligned “" + word + "” → " + c.heb + " (local — Save to persist)", { bundle: "H" });
+    });
+    el("dragCanvas").addEventListener("click", function (ev) {
+      var acc = ev.target.closest && ev.target.closest("[data-drag-accept]");
+      if (acc) { dragCards[parseInt(acc.getAttribute("data-drag-accept"), 10)].ghost = false; renderDragView(); return; }
+      var clr = ev.target.closest && ev.target.closest("[data-drag-clear]");
+      if (clr) { dragCards[parseInt(clr.getAttribute("data-drag-clear"), 10)].targets = []; renderDragView(); }
+    });
+
     el("acceptSuggestionsBtn").addEventListener("click", function () {
+      dragCards.forEach(function (c) { c.ghost = false; });
+      renderDragView();
       window.flowShell.toast("Suggestion accepted (local) — Save to persist", { bundle: "H" });
     });
+    el("clearAllBtn").addEventListener("click", function () {
+      dragCards.forEach(function (c) { c.targets = []; c.ghost = false; });
+      renderDragView();
+    });
+    el("resetBtn").addEventListener("click", function () {
+      dragCards = JSON.parse(JSON.stringify(DRAG_INITIAL));
+      renderDragView();
+    });
+    el("unalignedOnlyToggle").addEventListener("click", function () {
+      var on = el("unalignedOnlyToggle").getAttribute("aria-pressed") === "true";
+      el("unalignedOnlyToggle").setAttribute("aria-pressed", on ? "false" : "true");
+      renderDragView();
+    });
+    renderDragView();
 
     /* =========================================================
        Form-factor policy: <560 tap-only; 560-899 tap default;
