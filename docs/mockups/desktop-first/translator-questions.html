@@ -1,0 +1,1346 @@
+<title>Translate Questions — Titus 1</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ============================================================
+   unfoldingWord — Book Package mockups · shared design system
+   Brand: Inspire #31ADE3 · Ocean #014263 · Tech #231F20
+          Cultivate #70C9CC · Kindle #E59D33
+   Type:  UI = system sans · Scripture/articles = humanist serif
+   Every color decision goes through the tokens below.
+   ============================================================ */
+
+:root {
+  --inspire: #31ADE3;
+  --inspire-deep: #1B84B8;
+  --ocean: #014263;
+  --tech: #231F20;
+  --cultivate: #70C9CC;
+  --kindle: #E59D33;
+
+  /* grounds & ink — cool, ocean-biased neutrals */
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;          /* inset panels, verse blocks */
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);   /* quote highlight in scripture */
+
+  /* semantic (separate from accent) */
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-scripture: "Iowan Old Style", Charter, "Palatino Linotype", Georgia, Cambria, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0B1B23;
+    --card: #13272F;
+    --card-2: #0F2129;
+    --ink: #E3EDF2;
+    --ink-2: #90A6B1;
+    --line: #23404B;
+    --hl: rgba(49, 173, 227, 0.26);
+    --ok: #4BB8A9;
+    --ok-ink: #9ADFD5;
+    --ok-soft: rgba(46, 158, 143, 0.20);
+    --warn: #E8A94E;
+    --warn-ink: #F1CE9A;
+    --warn-soft: rgba(229, 157, 51, 0.18);
+    --skip: #8FA5B0;
+    --skip-soft: rgba(100, 121, 132, 0.25);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0B1B23;
+  --card: #13272F;
+  --card-2: #0F2129;
+  --ink: #E3EDF2;
+  --ink-2: #90A6B1;
+  --line: #23404B;
+  --hl: rgba(49, 173, 227, 0.26);
+  --ok: #4BB8A9;
+  --ok-ink: #9ADFD5;
+  --ok-soft: rgba(46, 158, 143, 0.20);
+  --warn: #E8A94E;
+  --warn-ink: #F1CE9A;
+  --warn-soft: rgba(229, 157, 51, 0.18);
+  --skip: #8FA5B0;
+  --skip-soft: rgba(100, 121, 132, 0.25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+}
+
+/* ---------- base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; font-size: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--inspire); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- phone shell (translator mockups) ---------- */
+.phone {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px 10px;
+}
+.topbar .title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topbar h1 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.topbar .sub {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin: 1px 0 0;
+}
+.count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--skip-soft);
+  margin-top: 10px;
+  overflow: hidden;
+}
+.progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--inspire);
+  transition: width 0.35s ease;
+}
+
+/* ---------- content & cards ---------- */
+.content {
+  flex: 1;
+  padding: 16px 16px 120px;   /* room for actionbar */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+.card-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 8px;
+}
+.card-label .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--inspire); }
+
+/* scripture */
+.ref {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ocean);
+  margin: 0 0 6px;
+}
+:root[data-theme="dark"] .ref { color: var(--cultivate); }
+@media (prefers-color-scheme: dark) { .ref { color: var(--cultivate); } }
+:root[data-theme="light"] .ref { color: var(--ocean); }
+.verse {
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.verse + .verse { margin-top: 8px; }
+.verse .vlabel {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  display: block;
+  margin-bottom: 3px;
+}
+.verse mark {
+  background: var(--hl);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.quote-chip {
+  display: inline-block;
+  font-family: var(--font-scripture);
+  font-size: 15px;
+  background: var(--hl);
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 0 0 8px;
+}
+.quote-chip small { font-family: var(--font-ui); color: var(--ink-2); font-style: italic; }
+
+.note-body { font-size: 15.5px; line-height: 1.55; margin: 0; }
+.note-body b, .note-body strong { color: var(--ocean); }
+@media (prefers-color-scheme: dark) { .note-body b, .note-body strong { color: var(--cultivate); } }
+:root[data-theme="dark"] .note-body b, :root[data-theme="dark"] .note-body strong { color: var(--cultivate); }
+:root[data-theme="light"] .note-body b, :root[data-theme="light"] .note-body strong { color: var(--ocean); }
+
+/* editable target draft */
+.editable { cursor: text; border-radius: 6px; }
+.editable:hover { background: var(--hl); }
+textarea.edit-area {
+  width: 100%;
+  min-height: 110px;
+  font-family: var(--font-ui);
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- chips / status ---------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.chip-draft    { background: var(--skip-soft); color: var(--skip); }
+.chip-approved { background: var(--ok-soft);   color: var(--ok-ink); }
+.chip-edited   { background: var(--hl);        color: var(--inspire-deep); }
+.chip-needs    { background: var(--warn-soft); color: var(--warn-ink); }
+.chip-skipped  { background: var(--skip-soft); color: var(--skip); text-decoration: none; }
+
+/* ---------- buttons ---------- */
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  min-height: 50px;
+  padding: 0 14px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.btn:active { transform: scale(0.97); }
+.btn svg { flex: none; }
+
+.btn-approve { background: var(--ok); color: #fff; flex: 1.4; }
+.btn-primary { background: var(--inspire); color: #06293B; }
+.btn-rerun {
+  background: transparent;
+  color: var(--inspire-deep);
+  border: 1.5px solid var(--inspire);
+}
+@media (prefers-color-scheme: dark) { .btn-rerun { color: var(--inspire); } }
+:root[data-theme="dark"] .btn-rerun { color: var(--inspire); }
+:root[data-theme="light"] .btn-rerun { color: var(--inspire-deep); }
+.btn-skip { background: var(--skip-soft); color: var(--skip); }
+.btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+.btn-ghost { background: transparent; color: var(--ink-2); min-height: 40px; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+
+/* icon-only round button (back chevrons etc.) */
+.iconbtn {
+  appearance: none;
+  border: none;
+  background: var(--skip-soft);
+  color: var(--ink);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+
+/* ---------- bottom action bar ---------- */
+.actionbar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  z-index: 30;
+}
+.actionbar .btn { flex: 1; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--ocean);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 9px 18px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+  max-width: 90%;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- spinner ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
+
+/* ---------- list rows (words/articles, admin) ---------- */
+.listitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.listitem:hover { border-color: var(--inspire); }
+.listitem .li-main { flex: 1; min-width: 0; }
+.listitem .li-title { font-weight: 600; font-size: 15.5px; margin: 0; }
+.listitem .li-sub { font-size: 13px; color: var(--ink-2); margin: 1px 0 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 2px 2px;
+}
+.section-head h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+.section-head .tally {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- segmented control ---------- */
+.seg {
+  display: flex;
+  background: var(--skip-soft);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.seg button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(1, 66, 99, 0.15);
+}
+
+/* ---------- switches (admin) ---------- */
+.switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  border: none;
+  background: var(--skip-soft);
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { left: 21px; }
+
+/* ---------- admin shell ---------- */
+.admin {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 16px 96px;
+}
+.admin-head { margin: 4px 2px 16px; }
+.admin-head .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--inspire-deep);
+  margin: 0 0 4px;
+}
+@media (prefers-color-scheme: dark) { .admin-head .eyebrow { color: var(--inspire); } }
+:root[data-theme="dark"] .admin-head .eyebrow { color: var(--inspire); }
+:root[data-theme="light"] .admin-head .eyebrow { color: var(--inspire-deep); }
+.admin-head h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+.admin-head .sub { color: var(--ink-2); font-size: 14px; margin: 4px 0 0; }
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ocean);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.avatar.alt { background: var(--inspire-deep); }
+.avatar.alt2 { background: var(--kindle); color: #3A2600; }
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--skip-soft);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--inspire);
+  border-radius: 3px;
+  transition: width 0.35s ease;
+}
+.bar > i.ok { background: var(--ok); }
+.bar > i.warn { background: var(--warn); }
+
+/* ============================================================
+   Desk-class admin primitives (tablet + desktop first,
+   still usable at 375px). Panels carry a top / body / foot
+   chrome; the foot always states live state on the left and
+   the next action on the right.
+   ============================================================ */
+
+.desk {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 18px 56px;
+}
+.desk-shell {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .desk-shell { grid-template-columns: minmax(0, 1fr); }
+}
+
+.rail {
+  position: sticky;
+  top: 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+.rail button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+.rail button:hover { background: var(--card-2); color: var(--ink); }
+.rail button[aria-current="true"] {
+  background: var(--hl);
+  color: var(--ink);
+}
+.rail .rail-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 8px 11px 4px;
+}
+@media (max-width: 900px) { .rail .rail-head { display: none; } }
+.rail .rail-tally {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.panel + .panel { margin-top: 16px; }
+.panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.panel-top h2 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.panel-top .panel-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 2px 0 0;
+  width: 100%;
+}
+.panel-top .spacer { margin-left: auto; }
+.panel-body { padding: 16px; }
+.panel-body.flush { padding: 0; }
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--card-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.panel-foot .foot-state { font-variant-numeric: tabular-nums; }
+.panel-foot .spacer { margin-left: auto; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 820px) {
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* data tables — every column real data, header sticks while the body scrolls */
+.table-wrap { overflow-x: auto; }
+.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  min-width: 560px;
+}
+.dtable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card-2);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.dtable tbody tr:last-child td { border-bottom: none; }
+.dtable tbody tr.selectable { cursor: pointer; }
+.dtable tbody tr.selectable:hover { background: var(--card-2); }
+.dtable tbody tr[aria-selected="true"] { background: var(--hl); }
+.dtable .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* small tappable toggle chip used for applies-to / lane pickers */
+.tchip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tchip[aria-pressed="true"] {
+  background: var(--hl);
+  border-color: var(--inspire);
+  color: var(--ink);
+}
+.chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* key/value definition rows for settings summaries */
+.kv { display: grid; grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.6fr); gap: 6px 14px; font-size: 14px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; }
+
+/* text inputs / selects shared by setup + preferences screens */
+.tinput, .tselect {
+  width: 100%;
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.tinput:focus, .tselect:focus { border-color: var(--inspire); outline: none; box-shadow: 0 0 0 3px var(--hl); }
+.f-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 5px;
+}
+.field + .field { margin-top: 13px; }
+.f-help { font-size: 12.5px; color: var(--ink-2); margin: 5px 0 0; }
+
+/* ---------- verse-bundle step rail (phone) ---------- */
+.steps {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 0 1px;
+  -webkit-overflow-scrolling: touch;
+}
+.step {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 6px 12px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+.step .step-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.step[aria-current="true"] {
+  border-color: var(--inspire);
+  background: var(--hl);
+  color: var(--ink);
+}
+.step[data-state="approved"] .step-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.step[data-state="skipped"] .step-mark { background: var(--skip); border-color: var(--skip); color: #fff; }
+.step[data-state="edited"] .step-mark { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+
+/* ---------- scripture lanes (ULT to GLT, UST to GST) ---------- */
+.lane-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.lane-arrow { color: var(--inspire); font-weight: 700; }
+.target-box {
+  width: 100%;
+  min-height: 96px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- side-by-side / block-paired article view ---------- */
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+@media (max-width: 560px) {
+  .pair { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+.pair-col-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 4px;
+}
+.blockpair + .blockpair {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* ============================================================
+   Page: Translate Questions — Titus 1
+   ============================================================ */
+/* source (English, read-only) sits quietly above the target so the
+   translator's eye compares question-to-question / answer-to-answer,
+   never crossing a language boundary between two different fields. */
+.lang-tag {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 3px;
+}
+.src-line {
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px 7px;
+  margin-bottom: 8px;
+}
+.src-line p { margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.5; }
+
+.tgt-line .lang-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.tgt-line .lang-row .lang-tag { margin: 0; }
+.tgt-line .lang-row .chip { margin-left: auto; }
+.tgt-line .note-body.editable { padding: 2px 4px; margin: 0 -4px; }
+.tgt-line textarea.edit-area { min-height: 76px; }
+
+.qa-pair + .qa-pair { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+
+.edit-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.btn-sm { min-height: 40px; padding: 0 16px; font-size: 14px; border-radius: 10px; }
+.hint { font-size: 12px; color: var(--ink-2); text-align: center; margin: 12px 0 0; }
+
+.pagenav { display: flex; justify-content: space-between; }
+
+.actionbar .btn { padding: 0 8px; font-size: 14.5px; }
+
+.summary-hero { text-align: center; padding: 26px 16px 22px; }
+.summary-hero .bigcheck {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 10px;
+}
+.summary-hero h2 { margin: 0 0 4px; font-size: 19px; letter-spacing: -0.01em; }
+.summary-hero p { margin: 0; color: var(--ink-2); font-size: 14px; }
+
+.stats { display: flex; gap: 10px; }
+.stat {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-align: center;
+  padding: 12px 6px 10px;
+}
+.stat b { display: block; font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.stat.s-ok b { color: var(--ok); }
+.stat.s-edit b { color: var(--inspire-deep); }
+@media (prefers-color-scheme: dark) { .stat.s-edit b { color: var(--inspire); } }
+:root[data-theme="dark"] .stat.s-edit b { color: var(--inspire); }
+:root[data-theme="light"] .stat.s-edit b { color: var(--inspire-deep); }
+.stat.s-skip b { color: var(--skip); }
+
+.sumlist { display: flex; flex-direction: column; gap: 10px; }
+.listitem .li-title, .listitem .li-sub { display: block; }
+.listitem .li-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+
+<div class="phone">
+  <header class="topbar">
+    <div class="title-row">
+      <button class="iconbtn" data-action="back" aria-label="Back to Titus package">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <div>
+        <h1>Translation Questions</h1>
+        <p class="sub">Titus 1 · English → Español (LatAm)</p>
+      </div>
+      <span class="count" id="count">1 of 6</span>
+    </div>
+    <div class="progress"><i id="progressbar" style="width:0%"></i></div>
+  </header>
+
+  <main class="content" id="content"></main>
+
+  <div class="actionbar" id="actionbar"></div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var VERSES = {
+    "Titus 1:1": {
+      ult: "Paul, a servant of God and an apostle of Jesus Christ, for the faith of the chosen people of God and the knowledge of the truth that agrees with godliness,",
+      ust: "I, Paul, write this letter to you, Titus. I serve God and am an apostle of Jesus Christ. God sent me to strengthen the faith of the people he has chosen and to teach them the true message about how to live in a way that honors God."
+    },
+    "Titus 1:2": {
+      ult: "in the hope of eternal life that the non-lying God promised before eternal times,",
+      ust: "We confidently expect that God will give us eternal life. God, who never lies, promised that life before time began."
+    },
+    "Titus 1:3": {
+      ult: "but at the right time he revealed his word by the proclamation with which I was entrusted by the command of God our Savior,",
+      ust: "At the time he chose, God made his message known. God our Savior trusted me to be the one who announces it."
+    },
+    "Titus 1:4": {
+      ult: "to Titus, a true son according to our common faith. Grace and peace from God the Father and Christ Jesus our Savior.",
+      ust: "Titus, you are like a true son to me, because we both believe the same message. I pray that God the Father and Christ Jesus our Savior will continue to be kind to you and give you peace."
+    },
+    "Titus 1:5": {
+      ult: "For this purpose I left you in Crete, so that you might set in order the things that remain and appoint elders in every city, as I directed you -",
+      ust: "I left you on the island of Crete so that you would finish arranging the things that still needed to be done, and appoint elders in every town, just as I told you."
+    }
+  };
+
+  var ITEMS = [
+    {
+      ref: "Titus 1:1",
+      enQ: "For what purpose was Paul an apostle?",
+      enA: "He was an apostle to establish the faith of God's chosen people and their knowledge of the truth.",
+      esP: "¿Con qué propósito era Pablo un apóstol?",
+      esR: "Era apóstol para establecer la fe del pueblo escogido de Dios y su conocimiento de la verdad.",
+      varP: "¿Para qué fue Pablo hecho apóstol?",
+      varR: "Fue hecho apóstol para fortalecer la fe de los escogidos de Dios y su conocimiento de la verdad.",
+      status: "draft",
+      edited: false
+    },
+    {
+      ref: "Titus 1:2",
+      enQ: "What has God promised, and when did he promise it?",
+      enA: "God promised eternal life before time began.",
+      esP: "¿Qué ha prometido Dios, y cuándo lo prometió?",
+      esR: "Dios prometió la vida eterna antes de que comenzara el tiempo.",
+      varP: "¿Qué prometió Dios, y en qué momento lo prometió?",
+      varR: "Prometió la vida eterna antes del comienzo del tiempo.",
+      status: "draft",
+      edited: false
+    },
+    {
+      ref: "Titus 1:3",
+      enQ: "Who entrusted the proclamation of God's word to Paul?",
+      enA: "God our Savior entrusted the proclamation to Paul by his command.",
+      esP: "¿Quién le confió a Pablo la proclamación de la palabra de Dios?",
+      esR: "Dios nuestro Salvador le confió a Pablo la proclamación por su mandato.",
+      varP: "¿Quién encargó a Pablo la proclamación de la palabra de Dios?",
+      varR: "Dios nuestro Salvador se la encargó por medio de su mandato.",
+      status: "draft",
+      edited: false
+    },
+    {
+      ref: "Titus 1:4",
+      enQ: "Why does Paul call Titus a true son, and what does he pray for him?",
+      enA: "Paul calls Titus a true son because they share a common faith, and he prays that Titus will have grace and peace from God the Father and Christ Jesus our Savior.",
+      esP: "¿Por qué llama Pablo a Tito un verdadero hijo, y qué pide para él?",
+      esR: "Pablo llama a Tito un verdadero hijo porque comparten una fe común, y pide que tenga gracia y paz de parte de Dios el Padre y de Cristo Jesús nuestro Salvador.",
+      varP: "¿Por qué considera Pablo a Tito un hijo verdadero, y qué le desea?",
+      varR: "Lo considera un hijo verdadero porque ambos creen el mismo mensaje, y le desea gracia y paz de parte de Dios el Padre y de Cristo Jesús nuestro Salvador.",
+      status: "draft",
+      edited: false
+    },
+    {
+      ref: "Titus 1:5",
+      enQ: "Why did Paul leave Titus in Crete?",
+      enA: "Paul left Titus in Crete so that he would set in order the things that remained to be done.",
+      esP: "¿Por qué dejó Pablo a Tito en Creta?",
+      esR: "Pablo dejó a Tito en Creta para que pusiera en orden las cosas que aún faltaban por hacer.",
+      varP: "¿Con qué propósito dejó Pablo a Tito en Creta?",
+      varR: "Lo dejó allí para que terminara de arreglar las cosas que todavía quedaban pendientes.",
+      status: "draft",
+      edited: false
+    },
+    {
+      ref: "Titus 1:5",
+      enQ: "Whom was Titus to appoint in every city?",
+      enA: "Titus was to appoint elders in every city, as Paul had directed him.",
+      esP: "¿A quiénes debía nombrar Tito en cada ciudad?",
+      esR: "Tito debía nombrar ancianos en cada ciudad, tal como Pablo le había indicado.",
+      varP: "¿Qué debía nombrar Tito en cada ciudad?",
+      varR: "Debía nombrar ancianos en cada ciudad, según las instrucciones que Pablo le dio.",
+      status: "draft",
+      edited: false
+    }
+  ];
+
+  var state = {
+    idx: 0,
+    view: "card",            /* "card" | "summary" */
+    redoing: false,
+    editing: { esP: false, esR: false }
+  };
+
+  var contentEl = document.getElementById("content");
+  var actionbarEl = document.getElementById("actionbar");
+  var countEl = document.getElementById("count");
+  var progressEl = document.getElementById("progressbar");
+  var toastEl = document.getElementById("toast");
+  var toastTimer = null;
+  var advanceTimer = null;
+
+  /* ---------- helpers ---------- */
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 1400);
+  }
+
+  function chipFor(item) {
+    if (item.status === "approved") return { cls: "chip-approved", label: "Approved" };
+    if (item.status === "notneeded") return { cls: "chip-skipped", label: "Not needed" };
+    if (item.edited) return { cls: "chip-edited", label: "Edited" };
+    return { cls: "chip-draft", label: "AI draft" };
+  }
+
+  function resolvedCount() {
+    var n = 0;
+    for (var i = 0; i < ITEMS.length; i++) {
+      if (ITEMS[i].status !== "draft") n++;
+    }
+    return n;
+  }
+
+  /* Save any open textarea values back into the item.
+     close=true also exits edit mode for those fields. */
+  function captureEdits(close) {
+    var tas = contentEl.querySelectorAll("textarea.edit-area[data-field]");
+    var item = ITEMS[state.idx];
+    Array.prototype.forEach.call(tas, function (ta) {
+      var f = ta.getAttribute("data-field");
+      if (ta.value !== item[f]) {
+        item[f] = ta.value;
+        item.edited = true;
+      }
+      if (close) state.editing[f] = false;
+    });
+  }
+
+  /* ---------- icons ---------- */
+
+  function redoIcon(spinning) {
+    return '<svg ' + (spinning ? 'class="spin" ' : '') +
+      'width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="23 4 23 10 17 10"></polyline>' +
+      '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+  }
+  var ICON_CHECK = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+  var ICON_PREV = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+  var ICON_NEXT = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+  var ICON_BIG_CHECK = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+  /* ---------- render ---------- */
+
+  /* One field pair: the English source (quiet, read-only) directly
+     above the Spanish target (normal ink, tap-to-edit) — grouped by
+     field (Q with Q, A with A) rather than by language. */
+  function pairHtml(sourceText, fieldKey, targetValue, chip) {
+    var target;
+    if (state.editing[fieldKey]) {
+      target = '<textarea class="edit-area" data-field="' + fieldKey + '">' + esc(targetValue) + '</textarea>' +
+        '<div class="edit-actions"><button class="btn btn-primary btn-sm" data-action="done" data-field="' + fieldKey + '">Done</button></div>';
+    } else {
+      target = '<p class="note-body editable" data-action="edit" data-field="' + fieldKey + '">' + esc(targetValue) + '</p>';
+    }
+    return '<div class="qa-pair">' +
+      '<div class="src-line"><span class="lang-tag">English</span><p>' + esc(sourceText) + '</p></div>' +
+      '<div class="tgt-line">' +
+        '<div class="lang-row"><span class="lang-tag">Español</span><span class="chip ' + chip.cls + '">' + chip.label + '</span></div>' +
+        target +
+      '</div>' +
+      '</div>';
+  }
+
+  function cardHtml() {
+    var item = ITEMS[state.idx];
+    var v = VERSES[item.ref];
+    var chip = chipFor(item);
+    var h = "";
+
+    h += '<section class="card">' +
+      '<p class="ref">' + esc(item.ref) + '</p>' +
+      '<div class="verse"><span class="vlabel">ULT</span>' + esc(v.ult) + '</div>' +
+      '<div class="verse"><span class="vlabel">UST</span>' + esc(v.ust) + '</div>' +
+      '</section>';
+
+    h += '<section class="card">' +
+      '<p class="card-label"><span class="dot"></span>Question</p>' +
+      pairHtml(item.enQ, "esP", item.esP, chip) +
+      '<p class="hint">Tap to edit</p>' +
+      '</section>';
+
+    h += '<section class="card">' +
+      '<p class="card-label"><span class="dot"></span>Expected answer</p>' +
+      pairHtml(item.enA, "esR", item.esR, chip) +
+      '<p class="hint">Tap to edit</p>' +
+      '</section>';
+
+    h += '<div class="pagenav">' +
+      '<button class="btn btn-ghost" data-action="prev"' + (state.idx === 0 ? " disabled" : "") + '>' + ICON_PREV + 'Previous</button>' +
+      '<button class="btn btn-ghost" data-action="next"' + (state.idx === ITEMS.length - 1 ? " disabled" : "") + '>Next' + ICON_NEXT + '</button>' +
+      '</div>';
+
+    return h;
+  }
+
+  function statHtml(n, label, cls) {
+    return '<div class="stat ' + cls + '"><b>' + n + '</b><span>' + label + '</span></div>';
+  }
+
+  function summaryHtml() {
+    var approved = 0, edited = 0, notneeded = 0;
+    ITEMS.forEach(function (it) {
+      if (it.status === "approved") approved++;
+      if (it.status === "notneeded") notneeded++;
+      if (it.edited) edited++;
+    });
+
+    var h = "";
+    h += '<section class="card summary-hero">' +
+      '<div class="bigcheck">' + ICON_BIG_CHECK + '</div>' +
+      '<h2>Titus 1 questions reviewed</h2>' +
+      '<p>All ' + ITEMS.length + ' questions have a decision.</p>' +
+      '</section>';
+
+    h += '<div class="stats">' +
+      statHtml(approved, "Approved", "s-ok") +
+      statHtml(edited, "Edited", "s-edit") +
+      statHtml(notneeded, "Not needed", "s-skip") +
+      '</div>';
+
+    h += '<div class="section-head"><h2>Questions</h2><span class="tally">' + ITEMS.length + ' items</span></div>';
+    h += '<div class="sumlist">';
+    ITEMS.forEach(function (it, i) {
+      var chip = chipFor(it);
+      h += '<button class="listitem" data-action="goto" data-idx="' + i + '">' +
+        '<span class="li-main">' +
+        '<span class="li-title">' + esc(it.ref) + '</span>' +
+        '<span class="li-sub">' + esc(it.esP) + '</span>' +
+        '</span>' +
+        '<span class="chip ' + chip.cls + '">' + chip.label + '</span>' +
+        '</button>';
+    });
+    h += '</div>';
+    return h;
+  }
+
+  function actionbarHtml() {
+    if (state.view === "summary") {
+      return '<button class="btn btn-rerun" data-action="review">Review again</button>' +
+        '<button class="btn btn-approve" data-action="continue">Continue to Titus 2</button>';
+    }
+    var d = state.redoing ? " disabled" : "";
+    return '<button class="btn btn-rerun" data-action="redo"' + d + '>' + redoIcon(state.redoing) + 'Redo</button>' +
+      '<button class="btn btn-skip" data-action="notneeded"' + d + '>Not needed</button>' +
+      '<button class="btn btn-approve" data-action="approve"' + d + '>' + ICON_CHECK + 'Approve</button>';
+  }
+
+  function render() {
+    var done = resolvedCount();
+    progressEl.style.width = (done / ITEMS.length * 100) + "%";
+    countEl.textContent = state.view === "summary" ? "Done" : (state.idx + 1) + " of " + ITEMS.length;
+    contentEl.innerHTML = state.view === "summary" ? summaryHtml() : cardHtml();
+    actionbarEl.innerHTML = actionbarHtml();
+  }
+
+  /* ---------- flow ---------- */
+
+  function advance() {
+    var n = ITEMS.length;
+    for (var s = 1; s <= n; s++) {
+      var j = (state.idx + s) % n;
+      if (ITEMS[j].status === "draft") {
+        state.idx = j;
+        window.scrollTo(0, 0);
+        render();
+        return;
+      }
+    }
+    state.view = "summary";
+    window.scrollTo(0, 0);
+    render();
+  }
+
+  function decideAndAdvance(status, msg) {
+    captureEdits(true);
+    ITEMS[state.idx].status = status;
+    render();
+    toast(msg);
+    clearTimeout(advanceTimer);
+    advanceTimer = setTimeout(advance, 450);
+  }
+
+  /* ---------- events ---------- */
+
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-action]") : null;
+    if (!el || el.disabled) return;
+    var action = el.getAttribute("data-action");
+    var item = ITEMS[state.idx];
+
+    if (action === "back") {
+      toast("Back to Titus package");
+
+    } else if (action === "prev" || action === "next") {
+      captureEdits(true);
+      state.idx += (action === "next" ? 1 : -1);
+      if (state.idx < 0) state.idx = 0;
+      if (state.idx > ITEMS.length - 1) state.idx = ITEMS.length - 1;
+      window.scrollTo(0, 0);
+      render();
+
+    } else if (action === "edit") {
+      captureEdits(false);
+      var f = el.getAttribute("data-field");
+      state.editing[f] = true;
+      render();
+      var ta = contentEl.querySelector('textarea.edit-area[data-field="' + f + '"]');
+      if (ta) {
+        ta.focus();
+        var L = ta.value.length;
+        ta.setSelectionRange(L, L);
+      }
+
+    } else if (action === "done") {
+      var fd = el.getAttribute("data-field");
+      var taDone = contentEl.querySelector('textarea.edit-area[data-field="' + fd + '"]');
+      var changed = !!(taDone && taDone.value !== item[fd]);
+      captureEdits(false);
+      state.editing[fd] = false;
+      render();
+      if (changed) toast("Draft updated");
+
+    } else if (action === "redo") {
+      captureEdits(true);
+      if (state.redoing) return;
+      state.redoing = true;
+      render();
+      setTimeout(function () {
+        var it = ITEMS[state.idx];
+        it.esP = it.varP;
+        it.esR = it.varR;
+        it.edited = false;
+        it.status = "draft";
+        state.redoing = false;
+        render();
+        toast("New draft ready");
+      }, 900);
+
+    } else if (action === "notneeded") {
+      decideAndAdvance("notneeded", "Marked not needed");
+
+    } else if (action === "approve") {
+      decideAndAdvance("approved", "Approved");
+
+    } else if (action === "review") {
+      state.view = "card";
+      state.idx = 0;
+      window.scrollTo(0, 0);
+      render();
+
+    } else if (action === "goto") {
+      state.view = "card";
+      state.idx = parseInt(el.getAttribute("data-idx"), 10) || 0;
+      window.scrollTo(0, 0);
+      render();
+
+    } else if (action === "continue") {
+      toast("Opening Titus 2");
+    }
+  });
+
+  render();
+})();
+</script>

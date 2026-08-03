@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translator · Scripture ULT→GLT · UST→GST</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <aside class="side" data-side></aside>
+  <div class="stage">
+    <div class="phone" id="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-body">
+        <div class="phone-bar">
+          <button class="ghost-btn" type="button" onclick="location.href='t1-home.html'">← Scripture</button>
+          <span class="pill" id="pos">1 of 3</span>
+        </div>
+
+        <div id="view" class="fade-in"></div>
+
+        <div class="stack" style="margin-top:8px">
+          <button class="soft-btn" type="button" id="rerun">↻ Regenerar IA (ambas)</button>
+          <div class="row">
+            <button class="soft-btn" type="button" id="draftBtn" style="background:#eceae4;color:var(--ink)">Borrador</button>
+            <button class="primary-btn" type="button" id="approve" style="width:auto;flex:1;border-radius:999px">Aprobar verso</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  /**
+   * Gateway-language scripture: ULT → GLT (literal), UST → GST (simplified).
+   * Important when the gateway team produces both styles for downstream MT.
+   */
+  const verses = [
+    {
+      ref: 'Zac 1:1',
+      ult: 'In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,',
+      ust: 'In the eighth month of the second year that Darius ruled Persia, Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo:',
+      glt: 'En el mes octavo, en el segundo año de Darío, vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddo, el profeta, diciendo:',
+      gst: 'En el octavo mes del segundo año del reinado de Darío en Persia, Yahvé le dio este mensaje al profeta Zacarías, hijo de Berequías y nieto de Iddo:',
+      gltAlt: 'En el octavo mes, en el año segundo de Darío, la palabra de Yahvé llegó a Zacarías hijo de Berequías hijo de Iddo, el profeta, y dijo:',
+      gstAlt: 'Durante el octavo mes del segundo año en que Darío gobernaba Persia, Yahvé dio un mensaje al profeta Zacarías (hijo de Berequías, nieto de Iddo):',
+    },
+    {
+      ref: 'Zac 1:3',
+      ult: 'Therefore say to them, “Thus says Yahweh of hosts: Return to me,” says Yahweh of hosts, “and I will return to you,” says Yahweh of hosts.',
+      ust: 'So tell the people that Yahweh, the Commander of the angel armies, says this: “Return to me, and I will return to you.”',
+      glt: 'Por tanto, diles: «Así dice Yahvé de los ejércitos: Vuélvanse a mí», dice Yahvé de los ejércitos, «y yo me volveré a ustedes», dice Yahvé de los ejércitos.',
+      gst: 'Así que dile al pueblo que Yahvé, el Comandante de los ejércitos de ángeles, dice esto: «Vuélvanse a mí, y yo me volveré a ustedes».',
+      gltAlt: 'Por eso diles: «Así dice Yahvé de los ejércitos: Regresen a mí —afirma Yahvé de los ejércitos— y yo regresaré a ustedes —afirma Yahvé de los ejércitos».',
+      gstAlt: 'Dile entonces al pueblo: Yahvé, Comandante de los ejércitos angelicales, dice: «Regresen a mí y yo regresaré a ustedes».',
+    },
+    {
+      ref: 'Zac 1:8',
+      ult: 'I saw in the night, and behold, a man riding on a red horse, and he was standing among the myrtle trees that were in the ravine; and behind him there were red, sorrel, and white horses.',
+      ust: 'During the night I had a vision. I saw a man sitting on a red horse. He was standing among some myrtle trees in a small valley. Behind him were other horses — red, brown, and white.',
+      glt: 'Vi en la noche, y he aquí un hombre montado en un caballo rojo, y estaba entre los mirtos que había en la quebrada; y detrás de él había caballos rojos, bayos y blancos.',
+      gst: 'Durante la noche tuve una visión. Vi a un hombre sentado en un caballo rojo. Estaba entre unos mirtos en un valle pequeño. Detrás de él había otros caballos: rojos, cafés y blancos.',
+      gltAlt: 'Vi de noche, y miren: un hombre cabalgaba un caballo rojo y estaba entre los mirtos de la hondonada; detrás de él había caballos rojos, alazanes y blancos.',
+      gstAlt: 'De noche tuve una visión: un hombre en un caballo rojo estaba entre mirtos en un vallecito, y detrás había más caballos rojos, cafés y blancos.',
+    },
+  ];
+
+  let i = 0;
+  const phone = document.getElementById('phone');
+  const view = document.getElementById('view');
+
+  function readDrafts() {
+    return {
+      glt: document.getElementById('glt')?.value ?? verses[i].glt,
+      gst: document.getElementById('gst')?.value ?? verses[i].gst,
+    };
+  }
+
+  function render() {
+    const v = verses[i];
+    document.getElementById('pos').textContent = (i + 1) + ' of ' + verses.length + ' (demo)';
+    view.classList.remove('fade-in');
+    void view.offsetWidth;
+    view.classList.add('fade-in');
+    view.innerHTML = `
+      <div class="meta-row">
+        <span class="pill teal">${v.ref}</span>
+        <span class="pill">ULT→GLT</span>
+        <span class="pill">UST→GST</span>
+      </div>
+
+      <p style="margin:0 0 12px;color:var(--ink-soft);font-size:0.92rem;line-height:1.4">
+        Two gateway texts for this verse — literal and simplified.
+      </p>
+
+      <div class="card">
+        <h3>Source literal · ULT</h3>
+        <p class="body serif"><span class="verse-ref">${v.ref}</span>${v.ult}</p>
+      </div>
+      <div class="card white" style="border-color:#b9ddd7;box-shadow:0 0 0 3px var(--accent-soft)">
+        <h3>Target literal · GLT · editable</h3>
+        <textarea class="textarea" id="glt">${v.glt}</textarea>
+      </div>
+
+      <div class="card" style="margin-top:4px">
+        <h3>Source simplified · UST</h3>
+        <p class="body serif"><span class="verse-ref">${v.ref}</span>${v.ust}</p>
+      </div>
+      <div class="card white" style="border-color:#b9ddd7;box-shadow:0 0 0 3px var(--accent-soft)">
+        <h3>Target simplified · GST · editable</h3>
+        <textarea class="textarea" id="gst">${v.gst}</textarea>
+      </div>
+    `;
+  }
+
+  function persist() {
+    const d = readDrafts();
+    verses[i].glt = d.glt;
+    verses[i].gst = d.gst;
+  }
+
+  document.getElementById('approve').addEventListener('click', () => {
+    persist();
+    showToast(phone, 'GLT + GST approved');
+    i = (i + 1) % verses.length;
+    setTimeout(render, 220);
+  });
+
+  document.getElementById('draftBtn').addEventListener('click', () => {
+    persist();
+    showToast(phone, 'Saved draft for ' + verses[i].ref);
+  });
+
+  document.getElementById('rerun').addEventListener('click', () => {
+    const btn = document.getElementById('rerun');
+    btn.innerHTML = '<span class="spinning">↻</span> Generando GLT y GST…';
+    btn.disabled = true;
+    setTimeout(() => {
+      const v = verses[i];
+      document.getElementById('glt').value = v.gltAlt;
+      document.getElementById('gst').value = v.gstAlt;
+      btn.innerHTML = '↻ Regenerar IA (ambas)';
+      btn.disabled = false;
+      showToast(phone, 'New AI drafts for both lanes');
+    }, 950);
+  });
+
+  render();
+</script>
+</body>
+</html>

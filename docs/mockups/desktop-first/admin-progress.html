@@ -1,0 +1,1641 @@
+<title>Admin · Progress — Book Packages</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ============================================================
+   unfoldingWord — Book Package mockups · shared design system
+   Brand: Inspire #31ADE3 · Ocean #014263 · Tech #231F20
+          Cultivate #70C9CC · Kindle #E59D33
+   Type:  UI = system sans · Scripture/articles = humanist serif
+   Every color decision goes through the tokens below.
+   ============================================================ */
+
+:root {
+  --inspire: #31ADE3;
+  --inspire-deep: #1B84B8;
+  --ocean: #014263;
+  --tech: #231F20;
+  --cultivate: #70C9CC;
+  --kindle: #E59D33;
+
+  /* grounds & ink — cool, ocean-biased neutrals */
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;          /* inset panels, verse blocks */
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);   /* quote highlight in scripture */
+
+  /* semantic (separate from accent) */
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-scripture: "Iowan Old Style", Charter, "Palatino Linotype", Georgia, Cambria, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0B1B23;
+    --card: #13272F;
+    --card-2: #0F2129;
+    --ink: #E3EDF2;
+    --ink-2: #90A6B1;
+    --line: #23404B;
+    --hl: rgba(49, 173, 227, 0.26);
+    --ok: #4BB8A9;
+    --ok-ink: #9ADFD5;
+    --ok-soft: rgba(46, 158, 143, 0.20);
+    --warn: #E8A94E;
+    --warn-ink: #F1CE9A;
+    --warn-soft: rgba(229, 157, 51, 0.18);
+    --skip: #8FA5B0;
+    --skip-soft: rgba(100, 121, 132, 0.25);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0B1B23;
+  --card: #13272F;
+  --card-2: #0F2129;
+  --ink: #E3EDF2;
+  --ink-2: #90A6B1;
+  --line: #23404B;
+  --hl: rgba(49, 173, 227, 0.26);
+  --ok: #4BB8A9;
+  --ok-ink: #9ADFD5;
+  --ok-soft: rgba(46, 158, 143, 0.20);
+  --warn: #E8A94E;
+  --warn-ink: #F1CE9A;
+  --warn-soft: rgba(229, 157, 51, 0.18);
+  --skip: #8FA5B0;
+  --skip-soft: rgba(100, 121, 132, 0.25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+}
+
+/* ---------- base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; font-size: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--inspire); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- phone shell (translator mockups) ---------- */
+.phone {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px 10px;
+}
+.topbar .title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topbar h1 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.topbar .sub {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin: 1px 0 0;
+}
+.count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--skip-soft);
+  margin-top: 10px;
+  overflow: hidden;
+}
+.progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--inspire);
+  transition: width 0.35s ease;
+}
+
+/* ---------- content & cards ---------- */
+.content {
+  flex: 1;
+  padding: 16px 16px 120px;   /* room for actionbar */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+.card-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 8px;
+}
+.card-label .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--inspire); }
+
+/* scripture */
+.ref {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ocean);
+  margin: 0 0 6px;
+}
+:root[data-theme="dark"] .ref { color: var(--cultivate); }
+@media (prefers-color-scheme: dark) { .ref { color: var(--cultivate); } }
+:root[data-theme="light"] .ref { color: var(--ocean); }
+.verse {
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.verse + .verse { margin-top: 8px; }
+.verse .vlabel {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  display: block;
+  margin-bottom: 3px;
+}
+.verse mark {
+  background: var(--hl);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.quote-chip {
+  display: inline-block;
+  font-family: var(--font-scripture);
+  font-size: 15px;
+  background: var(--hl);
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 0 0 8px;
+}
+.quote-chip small { font-family: var(--font-ui); color: var(--ink-2); font-style: italic; }
+
+.note-body { font-size: 15.5px; line-height: 1.55; margin: 0; }
+.note-body b, .note-body strong { color: var(--ocean); }
+@media (prefers-color-scheme: dark) { .note-body b, .note-body strong { color: var(--cultivate); } }
+:root[data-theme="dark"] .note-body b, :root[data-theme="dark"] .note-body strong { color: var(--cultivate); }
+:root[data-theme="light"] .note-body b, :root[data-theme="light"] .note-body strong { color: var(--ocean); }
+
+/* editable target draft */
+.editable { cursor: text; border-radius: 6px; }
+.editable:hover { background: var(--hl); }
+textarea.edit-area {
+  width: 100%;
+  min-height: 110px;
+  font-family: var(--font-ui);
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- chips / status ---------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.chip-draft    { background: var(--skip-soft); color: var(--skip); }
+.chip-approved { background: var(--ok-soft);   color: var(--ok-ink); }
+.chip-edited   { background: var(--hl);        color: var(--inspire-deep); }
+.chip-needs    { background: var(--warn-soft); color: var(--warn-ink); }
+.chip-skipped  { background: var(--skip-soft); color: var(--skip); text-decoration: none; }
+
+/* ---------- buttons ---------- */
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  min-height: 50px;
+  padding: 0 14px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.btn:active { transform: scale(0.97); }
+.btn svg { flex: none; }
+
+.btn-approve { background: var(--ok); color: #fff; flex: 1.4; }
+.btn-primary { background: var(--inspire); color: #06293B; }
+.btn-rerun {
+  background: transparent;
+  color: var(--inspire-deep);
+  border: 1.5px solid var(--inspire);
+}
+@media (prefers-color-scheme: dark) { .btn-rerun { color: var(--inspire); } }
+:root[data-theme="dark"] .btn-rerun { color: var(--inspire); }
+:root[data-theme="light"] .btn-rerun { color: var(--inspire-deep); }
+.btn-skip { background: var(--skip-soft); color: var(--skip); }
+.btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+.btn-ghost { background: transparent; color: var(--ink-2); min-height: 40px; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+
+/* icon-only round button (back chevrons etc.) */
+.iconbtn {
+  appearance: none;
+  border: none;
+  background: var(--skip-soft);
+  color: var(--ink);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+
+/* ---------- bottom action bar ---------- */
+.actionbar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  z-index: 30;
+}
+.actionbar .btn { flex: 1; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--ocean);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 9px 18px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+  max-width: 90%;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- spinner ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
+
+/* ---------- list rows (words/articles, admin) ---------- */
+.listitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.listitem:hover { border-color: var(--inspire); }
+.listitem .li-main { flex: 1; min-width: 0; }
+.listitem .li-title { font-weight: 600; font-size: 15.5px; margin: 0; }
+.listitem .li-sub { font-size: 13px; color: var(--ink-2); margin: 1px 0 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 2px 2px;
+}
+.section-head h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+.section-head .tally {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- segmented control ---------- */
+.seg {
+  display: flex;
+  background: var(--skip-soft);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.seg button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(1, 66, 99, 0.15);
+}
+
+/* ---------- switches (admin) ---------- */
+.switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  border: none;
+  background: var(--skip-soft);
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { left: 21px; }
+
+/* ---------- admin shell ---------- */
+.admin {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 16px 96px;
+}
+.admin-head { margin: 4px 2px 16px; }
+.admin-head .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--inspire-deep);
+  margin: 0 0 4px;
+}
+@media (prefers-color-scheme: dark) { .admin-head .eyebrow { color: var(--inspire); } }
+:root[data-theme="dark"] .admin-head .eyebrow { color: var(--inspire); }
+:root[data-theme="light"] .admin-head .eyebrow { color: var(--inspire-deep); }
+.admin-head h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+.admin-head .sub { color: var(--ink-2); font-size: 14px; margin: 4px 0 0; }
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ocean);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.avatar.alt { background: var(--inspire-deep); }
+.avatar.alt2 { background: var(--kindle); color: #3A2600; }
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--skip-soft);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--inspire);
+  border-radius: 3px;
+  transition: width 0.35s ease;
+}
+.bar > i.ok { background: var(--ok); }
+.bar > i.warn { background: var(--warn); }
+
+/* ============================================================
+   Desk-class admin primitives (tablet + desktop first,
+   still usable at 375px). Panels carry a top / body / foot
+   chrome; the foot always states live state on the left and
+   the next action on the right.
+   ============================================================ */
+
+.desk {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 18px 56px;
+}
+.desk-shell {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .desk-shell { grid-template-columns: minmax(0, 1fr); }
+}
+
+.rail {
+  position: sticky;
+  top: 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+.rail button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+.rail button:hover { background: var(--card-2); color: var(--ink); }
+.rail button[aria-current="true"] {
+  background: var(--hl);
+  color: var(--ink);
+}
+.rail .rail-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 8px 11px 4px;
+}
+@media (max-width: 900px) { .rail .rail-head { display: none; } }
+.rail .rail-tally {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.panel + .panel { margin-top: 16px; }
+.panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.panel-top h2 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.panel-top .panel-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 2px 0 0;
+  width: 100%;
+}
+.panel-top .spacer { margin-left: auto; }
+.panel-body { padding: 16px; }
+.panel-body.flush { padding: 0; }
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--card-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.panel-foot .foot-state { font-variant-numeric: tabular-nums; }
+.panel-foot .spacer { margin-left: auto; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 820px) {
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* data tables — every column real data, header sticks while the body scrolls */
+.table-wrap { overflow-x: auto; }
+.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  min-width: 560px;
+}
+.dtable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card-2);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.dtable tbody tr:last-child td { border-bottom: none; }
+.dtable tbody tr.selectable { cursor: pointer; }
+.dtable tbody tr.selectable:hover { background: var(--card-2); }
+.dtable tbody tr[aria-selected="true"] { background: var(--hl); }
+.dtable .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* small tappable toggle chip used for applies-to / lane pickers */
+.tchip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tchip[aria-pressed="true"] {
+  background: var(--hl);
+  border-color: var(--inspire);
+  color: var(--ink);
+}
+.chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* key/value definition rows for settings summaries */
+.kv { display: grid; grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.6fr); gap: 6px 14px; font-size: 14px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; }
+
+/* text inputs / selects shared by setup + preferences screens */
+.tinput, .tselect {
+  width: 100%;
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.tinput:focus, .tselect:focus { border-color: var(--inspire); outline: none; box-shadow: 0 0 0 3px var(--hl); }
+.f-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 5px;
+}
+.field + .field { margin-top: 13px; }
+.f-help { font-size: 12.5px; color: var(--ink-2); margin: 5px 0 0; }
+
+/* ---------- verse-bundle step rail (phone) ---------- */
+.steps {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 0 1px;
+  -webkit-overflow-scrolling: touch;
+}
+.step {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 6px 12px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+.step .step-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.step[aria-current="true"] {
+  border-color: var(--inspire);
+  background: var(--hl);
+  color: var(--ink);
+}
+.step[data-state="approved"] .step-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.step[data-state="skipped"] .step-mark { background: var(--skip); border-color: var(--skip); color: #fff; }
+.step[data-state="edited"] .step-mark { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+
+/* ---------- scripture lanes (ULT to GLT, UST to GST) ---------- */
+.lane-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.lane-arrow { color: var(--inspire); font-weight: 700; }
+.target-box {
+  width: 100%;
+  min-height: 96px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- side-by-side / block-paired article view ---------- */
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+@media (max-width: 560px) {
+  .pair { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+.pair-col-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 4px;
+}
+.blockpair + .blockpair {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* ============================================================
+   Page: Admin · Progress (book-package model)
+   ============================================================ */
+
+.legend-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin: 0 0 18px;
+}
+.legend-line .chip { padding: 2px 9px; }
+
+.tier-chip { font-size: 10.5px; padding: 2px 8px; font-weight: 700; }
+
+.kpi-tile .panel-body { padding: 14px 16px 15px; display: flex; flex-direction: column; gap: 8px; }
+.kpi-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+.kpi-num {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+.kpi-num .kpi-of { font-size: 15px; font-weight: 600; color: var(--ink-2); margin-left: 4px; }
+.kpi-cap { font-size: 12.5px; color: var(--ink-2); margin: 0; }
+
+/* step number pill re-using the phone step-mark token */
+.steppill { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; font-size: 13.5px; white-space: nowrap; }
+.steppill .step-mark {
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--hl);
+  border: 1.5px solid var(--inspire);
+  color: var(--inspire-deep);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+:root[data-theme="dark"] .steppill .step-mark { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .steppill .step-mark { color: var(--inspire); } }
+
+.pair-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* 5-segment stacked coverage bar: both / me / others / open / n/a */
+.bar.stack { display: flex; }
+.bar.stack > i { border-radius: 0; flex: none; }
+.seg-both   { background: var(--ok); }
+.seg-me     { background: var(--inspire); }
+.seg-others { background: var(--warn); }
+.seg-open   { background: var(--skip); opacity: 0.4; }
+.seg-na     { background: var(--line); }
+.cf-stack { width: 100px; height: 8px; }
+.cf-stack.small { width: 74px; }
+
+.cf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 10px 0 0;
+}
+.cf-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cf-legend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+
+.pkg-row { }
+.pkg-name-cell { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.pkg-chev { color: var(--ink-2); transition: transform 0.15s ease; flex: none; }
+.pkg-row[aria-selected="true"] .pkg-chev { transform: rotate(180deg); }
+.pct-cell { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.pct-cell .bar { width: 56px; }
+.overall-cell { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.overall-cell .bar { width: 64px; }
+
+.drawer-row td { background: var(--card-2); padding: 14px 16px 16px; }
+.drawer-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 9px;
+}
+.ch-dtable { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.ch-dtable th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.ch-dtable td { padding: 6px 10px; vertical-align: middle; }
+.ch-dtable tbody tr + tr td { border-top: 1px solid var(--line); }
+.ch-cell { display: flex; align-items: center; gap: 8px; }
+.ch-cell .pctlabel { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+
+.seg.chapter-seg { max-width: 260px; }
+
+/* per-verse checkoff grid */
+.cf-grid-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; font-size: 13px; }
+.cf-grid-table th {
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 0 8px 6px;
+}
+.cf-grid-table th.v-col { text-align: left; }
+.cf-grid-table td { padding: 2px 8px; text-align: center; }
+.cf-grid-table td.v-col {
+  text-align: left;
+  font-weight: 700;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cf-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 46px;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: default;
+}
+.cf-cell[data-state="open"] { background: var(--skip-soft); color: var(--skip); }
+.cf-cell[data-state="me"] { background: var(--hl); color: var(--inspire-deep); }
+:root[data-theme="dark"] .cf-cell[data-state="me"] { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .cf-cell[data-state="me"] { color: var(--inspire); } }
+.cf-cell[data-state="others"] { background: var(--warn-soft); color: var(--warn-ink); }
+.cf-cell[data-state="both"] { background: var(--ok-soft); color: var(--ok-ink); }
+.cf-cell[data-state="na"] { background: transparent; color: var(--line); border: 1px dashed var(--line); }
+.cf-cell.reopened { outline: 2px solid var(--kindle); outline-offset: 1px; }
+
+.reopen-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 13px;
+  margin: 12px 0 0;
+}
+.reopen-note svg { flex: none; }
+
+.lane-head-line { font-size: 12px; color: var(--ink-2); margin: 0; }
+.lane-head-line b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.wait-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+.wait-row + .wait-row { border-top: 1px solid var(--line); }
+.wait-main { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; }
+.wait-main small { display: block; color: var(--ink-2); font-size: 12.5px; }
+.btn.nudge {
+  min-height: 34px;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--inspire-deep);
+}
+:root[data-theme="dark"] .btn.nudge { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .btn.nudge { color: var(--inspire); } }
+.btn.nudge[disabled] { color: var(--ink-2); }
+
+.feed { display: flex; flex-direction: column; }
+.feed-item { display: flex; gap: 10px; padding: 8px 0; font-size: 14px; line-height: 1.45; }
+.feed-item + .feed-item { border-top: 1px solid var(--line); }
+.feed-when {
+  flex: none;
+  width: 76px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  padding-top: 1.5px;
+  font-variant-numeric: tabular-nums;
+}
+.feed-text { flex: 1; min-width: 0; }
+</style>
+
+<main class="desk">
+  <header class="admin-head">
+    <p class="eyebrow">Español (LatAm) · Gateway Language</p>
+    <h1>Progress</h1>
+    <p class="sub">Titus, Ruth, and Jonah are in flight — three of the program's 39 book packages.</p>
+  </header>
+
+  <p class="legend-line">
+    <span class="chip chip-approved">Today</span> real, live in the app right now
+    <span class="chip chip-edited">Phase 2</span> designed, not wired up yet
+    <span class="chip chip-draft">Later</span> idea only, not committed
+  </p>
+
+  <section class="grid-3" id="kpi-row" style="margin-bottom:16px"></section>
+
+  <section class="panel" id="board-panel">
+    <div class="panel-top">
+      <h2>Book package board</h2>
+      <span class="chip chip-approved tier-chip">Today</span>
+      <span class="spacer"></span>
+      <p class="panel-sub">A package isn't done until its literal and simplified text are aligned, its notes / word links / questions are drafted, <b>and</b> every translationWords / translationAcademy article those notes and links point to is itself translated. Click a row for the per-chapter breakdown.</p>
+    </div>
+    <div class="panel-body flush">
+      <div class="table-wrap">
+        <table class="dtable" style="min-width:980px" id="board-table">
+          <thead>
+            <tr>
+              <th>Package</th>
+              <th>Step</th>
+              <th>Pair <span class="tier-chip chip chip-edited" style="margin-left:4px">Phase 2</span></th>
+              <th class="num">Literal</th>
+              <th class="num">Simplified</th>
+              <th class="num">Notes</th>
+              <th class="num">Word links</th>
+              <th class="num">Questions</th>
+              <th class="num">Articles</th>
+              <th class="num">Overall</th>
+            </tr>
+          </thead>
+          <tbody id="board-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel-foot">
+      <span class="foot-state">Article coverage is a real completeness gate, not a footnote — a package with 100% notes and 40% article coverage is not done.</span>
+    </div>
+  </section>
+
+  <section class="panel" id="checkoff-panel">
+    <div class="panel-top">
+      <h2>Chapter checkoff board</h2>
+      <span class="chip chip-approved tier-chip">Today</span>
+      <span class="spacer"></span>
+      <div class="seg chapter-seg" role="group" aria-label="Chapter" id="chapter-seg">
+        <button type="button" data-ch="1" aria-pressed="true">Titus 1</button>
+        <button type="button" data-ch="2" aria-pressed="false">Titus 2</button>
+        <button type="button" data-ch="3" aria-pressed="false">Titus 3</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <p id="lane-heads" class="lane-head-line" style="margin-bottom:10px"></p>
+      <div class="table-wrap">
+        <table class="cf-grid-table" id="cf-grid" style="min-width:520px"></table>
+      </div>
+      <div class="cf-legend">
+        <span><i style="background:var(--skip-soft);border:1px dashed var(--skip)"></i>Open — nobody has checked it</span>
+        <span><i style="background:var(--hl)"></i>Me</span>
+        <span><i style="background:var(--warn-soft)"></i>Others</span>
+        <span><i style="background:var(--ok-soft)"></i>Both</span>
+        <span><i style="background:transparent;border:1px dashed var(--line)"></i>N/A — nothing to check in this lane</span>
+      </div>
+      <div class="reopen-note">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path></svg>
+        <span id="reopen-text"></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="grid-2">
+    <section class="panel" id="waiting-panel">
+      <div class="panel-top">
+        <h2>Waiting on</h2>
+        <span class="chip chip-edited tier-chip">Phase 2</span>
+        <p class="panel-sub">A validation queue that pings the right pair — designed, not wired up.</p>
+      </div>
+      <div class="panel-body" id="waiting-body"></div>
+      <div class="panel-foot">
+        <span class="foot-state"><span class="chip chip-draft tier-chip">Later</span> auto-escalating a stalled item to a lead after N days — idea only.</span>
+      </div>
+    </section>
+
+    <section class="panel" id="activity-panel">
+      <div class="panel-top">
+        <h2>Activity</h2>
+        <span class="chip chip-approved tier-chip">Today</span>
+      </div>
+      <div class="panel-body" id="activity-body"></div>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Data model — the book-package unit: literal + simplified text
+   (both aligned), translationNotes, translationWords Links,
+   translationQuestions, and every referenced tW/tA article
+   translated. Every number on the page is computed from the
+   per-chapter counts below — nothing is hand-typed twice.
+   ============================================================ */
+
+var STEPS = ["Draft", "Peer check", "Source check", "Align", "Translate resources", "Harmonize", "Final validation", "Publish"];
+
+var PACKAGES = {
+  titus: {
+    name: "Titus", step: 4, pair: "Pair 2",
+    articles: { translated: 61, referenced: 92 },
+    chapters: [
+      {
+        num: 1, verses: 16,
+        lit: { done: 16, total: 16 }, simp: { done: 14, total: 16 },
+        notes: { total: 22, approved: 10, edited: 6, review: 4, ai: 2 },
+        tw: { total: 9, approved: 5, edited: 2, review: 1, ai: 1 },
+        tq: { total: 6, approved: 4, edited: 1, review: 1 },
+        checkoff: {
+          text: ["b","b","b","b","b","b","m","b","o","b","b","b","t","b","b","m"],
+          tn:   ["b","b","m","t","o","b","m","b","b","o","t","o","m","b","t","o"],
+          tw:   ["n","n","n","b","m","n","o","n","b","n","o","n","m","n","n","n"],
+          tq:   ["n","n","n","n","n","b","n","n","n","n","m","n","n","n","o","n"],
+          reopened: { text: 8 } /* verse 9 (index 8): edited after being checked */
+        }
+      },
+      {
+        num: 2, verses: 15,
+        lit: { done: 12, total: 15 }, simp: { done: 10, total: 15 },
+        notes: { total: 19, approved: 6, edited: 5, review: 4, ai: 4 },
+        tw: { total: 8, approved: 3, edited: 2, review: 2, ai: 1 },
+        tq: { total: 5, approved: 2, edited: 1, review: 1, ai: 1 },
+        checkoff: {
+          text: ["b","b","b","m","b","o","b","m","o","b","t","o","m","o","o"],
+          tn:   ["b","m","b","o","t","o","m","o","o","b","m","o","o","o","o"],
+          tw:   ["n","n","b","n","m","n","n","o","n","n","m","n","o","n","n"],
+          tq:   ["n","n","n","n","n","b","n","n","n","n","n","m","n","n","o"]
+        }
+      },
+      {
+        num: 3, verses: 15,
+        lit: { done: 8, total: 15 }, simp: { done: 6, total: 15 },
+        notes: { total: 17, approved: 3, edited: 4, review: 3, ai: 5, untranslated: 2 },
+        tw: { total: 7, approved: 1, edited: 2, review: 2, ai: 2 },
+        tq: { total: 5, approved: 1, edited: 1, review: 1, ai: 2 },
+        checkoff: {
+          text: ["b","b","m","o","o","o","m","o","o","b","o","o","o","o","o"],
+          tn:   ["b","m","o","o","t","o","o","o","o","m","o","o","o","o","o"],
+          tw:   ["n","b","n","n","m","n","n","o","n","n","n","n","n","n","n"],
+          tq:   ["n","n","n","n","n","b","n","n","n","n","n","o","n","n","n"]
+        }
+      }
+    ],
+    waiting: { task: "Source check", detailCount: 9, detailUnit: "word links", pair: "Pair 2", days: 1 }
+  },
+
+  ruth: {
+    name: "Ruth", step: 7, pair: "Pair 1",
+    articles: { translated: 79, referenced: 88 },
+    chapters: [
+      {
+        num: 1, verses: 22,
+        lit: { done: 22, total: 22 }, simp: { done: 22, total: 22 },
+        notes: { total: 14, approved: 13, edited: 1 },
+        tw: { total: 6, approved: 6 },
+        tq: { total: 5, approved: 5 },
+        checkoffAgg: {
+          text: { b: 20, m: 1, t: 1 }, tn: { b: 19, m: 2, t: 1 },
+          tw: { b: 6, n: 16 }, tq: { b: 5, n: 17 }
+        }
+      },
+      {
+        num: 2, verses: 23,
+        lit: { done: 23, total: 23 }, simp: { done: 22, total: 23 },
+        notes: { total: 15, approved: 14, edited: 1 },
+        tw: { total: 7, approved: 6, edited: 1 },
+        tq: { total: 6, approved: 5, edited: 1 },
+        checkoffAgg: {
+          text: { b: 21, m: 1, t: 1 }, tn: { b: 20, m: 2, t: 1 },
+          tw: { b: 7, n: 16 }, tq: { b: 6, n: 17 }
+        }
+      },
+      {
+        num: 3, verses: 18,
+        lit: { done: 18, total: 18 }, simp: { done: 18, total: 18 },
+        notes: { total: 11, approved: 10, review: 1 },
+        tw: { total: 5, approved: 5 },
+        tq: { total: 4, approved: 4 },
+        checkoffAgg: {
+          text: { b: 18 }, tn: { b: 17, m: 1 },
+          tw: { b: 5, n: 13 }, tq: { b: 4, n: 14 }
+        }
+      },
+      {
+        num: 4, verses: 22,
+        lit: { done: 20, total: 22 }, simp: { done: 19, total: 22 },
+        notes: { total: 13, approved: 11, edited: 1, review: 1 },
+        tw: { total: 6, approved: 5, edited: 1 },
+        tq: { total: 5, approved: 4, review: 1 },
+        checkoffAgg: {
+          text: { b: 19, m: 1, o: 2 }, tn: { b: 18, m: 1, t: 1, o: 2 },
+          tw: { b: 5, o: 1, n: 16 }, tq: { b: 4, o: 1, n: 17 }
+        }
+      }
+    ],
+    waiting: { task: "Final validation", detailCount: 14, detailUnit: "notes", pair: "Pair 1", days: 3 }
+  },
+
+  jonah: {
+    name: "Jonah", step: 1, pair: "Pair 3",
+    articles: { translated: 22, referenced: 74 },
+    chapters: [
+      {
+        num: 1, verses: 17,
+        lit: { done: 3, total: 17 }, simp: { done: 2, total: 17 },
+        notes: { total: 20, ai: 18, approved: 2 },
+        tw: { total: 8, ai: 7, approved: 1 },
+        tq: { total: 6, ai: 6 },
+        checkoffAgg: {
+          text: { o: 14, m: 3 }, tn: { o: 17 },
+          tw: { o: 8, n: 9 }, tq: { o: 6, n: 11 }
+        }
+      },
+      {
+        num: 2, verses: 10,
+        lit: { done: 1, total: 10 }, simp: { done: 0, total: 10 },
+        notes: { total: 12, ai: 11, aquifer: 1 },
+        tw: { total: 5, ai: 5 },
+        tq: { total: 4, ai: 4 },
+        checkoffAgg: {
+          text: { o: 10 }, tn: { o: 10 },
+          tw: { o: 4, n: 6 }, tq: { o: 2, n: 8 }
+        }
+      },
+      {
+        num: 3, verses: 10,
+        lit: { done: 0, total: 10 }, simp: { done: 0, total: 10 },
+        notes: { total: 11, ai: 10, approved: 1 },
+        tw: { total: 5, ai: 4, aquifer: 1 },
+        tq: { total: 4, ai: 4 },
+        checkoffAgg: {
+          text: { o: 10 }, tn: { o: 10 },
+          tw: { o: 4, n: 6 }, tq: { o: 2, n: 8 }
+        }
+      },
+      {
+        num: 4, verses: 11,
+        lit: { done: 0, total: 11 }, simp: { done: 0, total: 11 },
+        notes: { total: 13, ai: 13 },
+        tw: { total: 6, ai: 6 },
+        tq: { total: 4, ai: 4 },
+        checkoffAgg: {
+          text: { o: 11 }, tn: { o: 11 },
+          tw: { o: 4, n: 7 }, tq: { o: 2, n: 9 }
+        }
+      }
+    ],
+    waiting: { task: "Peer check", detailCount: 22, detailUnit: "verses", pair: "Pair 3", days: 5 }
+  }
+};
+
+var ARTICLES_GLOBAL = { translated: 117, referenced: 181 };
+var TOTAL_PACKAGES = 39;
+var ACTIVE_PACKAGES = 3;
+var STALL_THRESHOLD_DAYS = 4;
+
+var PKG_ORDER = ["titus", "ruth", "jonah"];
+
+var FEED = [
+  { when: "05:31", text: "Nightly export rendered D1 → USFM and published to Door43 (live-snapshot) — 39 packages synced" },
+  { when: "08:14", text: "AI drafting pipeline paused on Jonah 3 (translationWords) — usage limit reached" },
+  { when: "Yesterday", text: "Pair 2 finished Align on Titus 1 — 16 of 16 verses aligned" },
+  { when: "Yesterday", text: "Pair 1 cleared Final validation on Ruth 3 — 11 notes signed off" },
+  { when: "Mon", text: "Pair 3 started Draft on Jonah 4" }
+];
+
+/* ---------- pure math (also mirrored in the Node verify script) ---------- */
+
+function pct(a, b) { return b ? Math.round((a / b) * 100) : 0; }
+
+function sumRange(chapters, key) {
+  var done = 0, total = 0;
+  chapters.forEach(function (c) { done += c[key].done; total += c[key].total; });
+  return { done: done, total: total };
+}
+
+function sumItem(chapters, key) {
+  var approved = 0, total = 0;
+  chapters.forEach(function (c) { approved += (c[key].approved || 0); total += c[key].total; });
+  return { approved: approved, total: total };
+}
+
+function pkgPercents(pkg) {
+  var lit = sumRange(pkg.chapters, "lit");
+  var simp = sumRange(pkg.chapters, "simp");
+  var notes = sumItem(pkg.chapters, "notes");
+  var tw = sumItem(pkg.chapters, "tw");
+  var tq = sumItem(pkg.chapters, "tq");
+  var litP = pct(lit.done, lit.total);
+  var simpP = pct(simp.done, simp.total);
+  var notesP = pct(notes.approved, notes.total);
+  var twP = pct(tw.approved, tw.total);
+  var tqP = pct(tq.approved, tq.total);
+  var artP = pct(pkg.articles.translated, pkg.articles.referenced);
+  var overall = Math.round((litP + simpP + notesP + twP + tqP + artP) / 6);
+  return { litP: litP, simpP: simpP, notesP: notesP, twP: twP, tqP: tqP, artP: artP, overall: overall };
+}
+
+function laneCounts(chapter, lane) {
+  var c = { b: 0, m: 0, t: 0, o: 0, n: 0 };
+  if (chapter.checkoff) {
+    chapter.checkoff[lane].forEach(function (code) { c[code]++; });
+  } else {
+    var agg = chapter.checkoffAgg[lane];
+    Object.keys(agg).forEach(function (k) { c[k] = agg[k]; });
+  }
+  return c;
+}
+
+function laneCompletePct(chapter, lane) {
+  var c = laneCounts(chapter, lane);
+  var applicable = chapter.verses - c.n;
+  var checked = c.b + c.m + c.t;
+  return applicable ? Math.round((checked / applicable) * 100) : 0;
+}
+
+/* ---------- render helpers ---------- */
+
+var toastTimer = null;
+function toast(msg) {
+  var t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1500);
+}
+
+function bar(percent, cls) {
+  return '<div class="bar"><i class="' + (cls || "") + '" style="width:' + percent + '%"></i></div>';
+}
+
+function stackBar(counts, verses, extraClass) {
+  function seg(cls, n) { return n ? '<i class="seg-' + cls + '" style="width:' + ((n / verses) * 100).toFixed(2) + '%"></i>' : ""; }
+  return '<div class="bar stack cf-stack ' + (extraClass || "") + '" aria-hidden="true">' +
+    seg("both", counts.b) + seg("me", counts.m) + seg("others", counts.t) + seg("open", counts.o) + seg("na", counts.n) +
+    "</div>";
+}
+
+var CHEV = '<svg class="pkg-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>';
+
+/* ---------- KPI row ---------- */
+
+function renderKpis() {
+  var percents = PKG_ORDER.map(function (id) { return pkgPercents(PACKAGES[id]); });
+  var avgProgress = Math.round(percents.reduce(function (s, p) { return s + p.overall; }, 0) / percents.length);
+  var articlesPct = pct(ARTICLES_GLOBAL.translated, ARTICLES_GLOBAL.referenced);
+  var validationCount = 0;
+  PKG_ORDER.forEach(function (id) {
+    var w = PACKAGES[id].waiting;
+    if (w.task === "Final validation") { validationCount += w.detailCount; }
+  });
+  var stalledCount = 0;
+  PKG_ORDER.forEach(function (id) {
+    if (PACKAGES[id].waiting.days >= STALL_THRESHOLD_DAYS + 1) { stalledCount += 1; }
+  });
+
+  var tiles = [
+    {
+      label: "Packages active", today: true,
+      num: ACTIVE_PACKAGES, of: "of " + TOTAL_PACKAGES,
+      barPct: Math.round((ACTIVE_PACKAGES / TOTAL_PACKAGES) * 100), barCls: "",
+      cap: "in flight this quarter"
+    },
+    {
+      label: "Average progress", today: true,
+      num: avgProgress + "%", of: "",
+      barPct: avgProgress, barCls: "",
+      cap: "mean of Titus, Ruth, Jonah overall bars"
+    },
+    {
+      label: "Articles translated", today: true,
+      num: ARTICLES_GLOBAL.translated, of: "of " + ARTICLES_GLOBAL.referenced,
+      barPct: articlesPct, barCls: "",
+      cap: "shared library, program-wide — the completeness gate"
+    },
+    {
+      label: "Awaiting final validation", today: false,
+      num: validationCount, of: "notes",
+      barPct: null, barCls: "",
+      cap: "queued in the validation step", chip: "chip-edited"
+    },
+    {
+      label: "Stalled", today: false,
+      num: stalledCount, of: stalledCount === 1 ? "package" : "packages",
+      barPct: null, barCls: "",
+      cap: "no movement in " + STALL_THRESHOLD_DAYS + "+ days", chip: "chip-warn-solo"
+    }
+  ];
+
+  document.getElementById("kpi-row").innerHTML = tiles.map(function (t) {
+    var tierChip = t.today
+      ? '<span class="chip chip-approved tier-chip">Today</span>'
+      : '<span class="chip chip-edited tier-chip">Phase 2</span>';
+    var body = '<p class="kpi-num">' + t.num + (t.of ? '<span class="kpi-of">' + t.of + '</span>' : "") + '</p>';
+    var barHtml = (t.barPct !== null) ? bar(t.barPct) : "";
+    return '<div class="panel kpi-tile"><div class="panel-body">' +
+      '<div class="kpi-top"><p class="kpi-label">' + t.label + '</p>' + tierChip + '</div>' +
+      body + barHtml +
+      '<p class="kpi-cap">' + t.cap + '</p>' +
+      '</div></div>';
+  }).join("");
+}
+
+/* ---------- book package board ---------- */
+
+var boardState = { expanded: { titus: true, ruth: false, jonah: false } };
+
+function pctCell(percent) {
+  return '<td class="num"><div class="pct-cell"><span>' + percent + '%</span>' + bar(percent) + '</div></td>';
+}
+
+function renderBoardRow(id) {
+  var pkg = PACKAGES[id];
+  var p = pkgPercents(pkg);
+  var open = !!boardState.expanded[id];
+  var overallCls = p.overall >= 90 ? "ok" : (p.overall >= 40 ? "" : "warn");
+
+  var head = '<tr class="dtable-row pkg-row selectable" data-pkg="' + id + '" aria-selected="' + open + '">' +
+    '<td><span class="pkg-name-cell">' + CHEV + pkg.name + '</span></td>' +
+    '<td><span class="steppill"><span class="step-mark">' + pkg.step + '</span>' + STEPS[pkg.step - 1] + '</span></td>' +
+    '<td><span class="pair-tag">' + pkg.pair + '</span></td>' +
+    pctCell(p.litP) + pctCell(p.simpP) + pctCell(p.notesP) + pctCell(p.twP) + pctCell(p.tqP) + pctCell(p.artP) +
+    '<td class="num"><div class="overall-cell"><b>' + p.overall + '%</b>' + bar(p.overall, overallCls) + '</div></td>' +
+    "</tr>";
+
+  var drawer = "";
+  if (open) {
+    var rows = pkg.chapters.map(function (ch) {
+      var textCounts = { b: 0, m: 0, t: 0, o: 0, n: 0 };
+      var laneVals = ["text", "tn", "tw", "tq"].map(function (lane) {
+        var counts = laneCounts(ch, lane);
+        var complete = laneCompletePct(ch, lane);
+        return '<td><div class="ch-cell">' + stackBar(counts, ch.verses, "small") +
+          '<span class="pctlabel">' + complete + '%</span></div></td>';
+      }).join("");
+      return "<tr><td>Ch " + ch.num + " <span style=\"color:var(--ink-2);font-weight:400\">(" + ch.verses + " vv)</span></td>" + laneVals + "</tr>";
+    }).join("");
+
+    drawer = '<tr class="drawer-row"><td colspan="10">' +
+      '<p class="drawer-title">Per-chapter coverage — text / notes / word links / questions</p>' +
+      '<table class="ch-dtable"><thead><tr><th>Chapter</th><th>Text</th><th>Notes</th><th>Word links</th><th>Questions</th></tr></thead>' +
+      "<tbody>" + rows + "</tbody></table>" +
+      '<p style="font-size:12px;color:var(--ink-2);margin:9px 0 0">Bars use the same five-state checkoff palette as the board below: both · me · others · open · n/a. Percent is the share of applicable verses checked by at least one person.</p>' +
+      "</td></tr>";
+  }
+  return head + drawer;
+}
+
+function renderBoard() {
+  document.getElementById("board-body").innerHTML = PKG_ORDER.map(renderBoardRow).join("");
+}
+
+/* ---------- chapter checkoff board (Titus 1 / 2 / 3) ---------- */
+
+var LANE_LABELS = { text: "Text", tn: "Notes", tw: "Word links", tq: "Questions" };
+var STATE_LABELS = { o: "Open — nobody has checked it", m: "Checked by me", t: "Checked by others", b: "Checked by both", n: "N/A — nothing to check here" };
+
+var checkoffState = { chapter: 1 };
+
+function renderCheckoffBoard() {
+  var ch = PACKAGES.titus.chapters[checkoffState.chapter - 1];
+  var lanes = ["text", "tn", "tw", "tq"];
+
+  var heads = lanes.map(function (lane) {
+    return LANE_LABELS[lane] + " <b>" + laneCompletePct(ch, lane) + "%</b> complete";
+  }).join(" &nbsp;·&nbsp; ");
+  document.getElementById("lane-heads").innerHTML = "Titus " + ch.num + " — " + heads;
+
+  var reopenedLane = ch.checkoff && ch.checkoff.reopened;
+  var rowsHtml = "";
+  for (var i = 0; i < ch.verses; i++) {
+    var cells = lanes.map(function (lane) {
+      var code = ch.checkoff ? ch.checkoff[lane][i] : "n";
+      var isReopened = reopenedLane && reopenedLane[lane] === i;
+      var label = code === "n" ? "—" : code.toUpperCase();
+      var title = STATE_LABELS[code] + (isReopened ? " — reopened by a recent edit" : "");
+      return '<td><span class="cf-cell' + (isReopened ? " reopened" : "") + '" data-state="' +
+        (code === "o" ? "open" : code === "m" ? "me" : code === "t" ? "others" : code === "b" ? "both" : "na") +
+        '" title="' + title + '">' + (isReopened ? "↻" : label) + "</span></td>";
+    }).join("");
+    rowsHtml += "<tr><td class=\"v-col\">V" + (i + 1) + "</td>" + cells + "</tr>";
+  }
+
+  var headCells = lanes.map(function (lane) { return "<th>" + LANE_LABELS[lane] + "</th>"; }).join("");
+  document.getElementById("cf-grid").innerHTML =
+    "<thead><tr><th class=\"v-col\">Verse</th>" + headCells + "</tr></thead><tbody>" + rowsHtml + "</tbody>";
+
+  var reopenText = "Editing a verse clears its check for that lane — in Titus " + ch.num + ", verse " +
+    ((reopenedLane && reopenedLane.text !== undefined) ? (reopenedLane.text + 1) : 9) +
+    (reopenedLane && reopenedLane.text !== undefined
+      ? " shows this: it was fully checked, someone edited the text, and the check reopened automatically."
+      : " demonstrated this in Titus 1; switch to that chapter to see the ↻ marker.");
+  document.getElementById("reopen-text").textContent = reopenText;
+}
+
+/* ---------- waiting on ---------- */
+
+var nudged = {};
+
+function renderWaiting() {
+  var html = PKG_ORDER.map(function (id) {
+    var pkg = PACKAGES[id];
+    var w = pkg.waiting;
+    var key = id;
+    var sent = !!nudged[key];
+    return '<div class="wait-row">' +
+      '<div class="wait-main">' + w.task + " · " + w.detailCount + " " + w.detailUnit + " · " + w.pair + " · " + w.days + " day" + (w.days === 1 ? "" : "s") +
+      "<small>" + pkg.name + " package" + (w.days >= STALL_THRESHOLD_DAYS + 1 ? " — stalled" : "") + "</small></div>" +
+      '<button type="button" class="btn btn-ghost nudge" data-nudge="' + key + '" data-pair="' + w.pair + '"' + (sent ? " disabled" : "") + ">" +
+      (sent ? "Sent" : "Nudge") + "</button>" +
+      "</div>";
+  }).join("");
+  document.getElementById("waiting-body").innerHTML = html;
+}
+
+/* ---------- activity ---------- */
+
+function renderActivity() {
+  document.getElementById("activity-body").innerHTML =
+    '<div class="feed">' + FEED.map(function (f) {
+      return '<div class="feed-item"><span class="feed-when">' + f.when + '</span><span class="feed-text">' + f.text + "</span></div>";
+    }).join("") + "</div>";
+}
+
+/* ---------- events ---------- */
+
+document.getElementById("board-body").addEventListener("click", function (e) {
+  var row = e.target.closest("[data-pkg]");
+  if (!row) { return; }
+  var id = row.dataset.pkg;
+  boardState.expanded[id] = !boardState.expanded[id];
+  renderBoard();
+});
+
+document.getElementById("chapter-seg").addEventListener("click", function (e) {
+  var btn = e.target.closest("[data-ch]");
+  if (!btn) { return; }
+  checkoffState.chapter = Number(btn.dataset.ch);
+  document.querySelectorAll("#chapter-seg button").forEach(function (b) {
+    b.setAttribute("aria-pressed", String(b === btn));
+  });
+  renderCheckoffBoard();
+});
+
+document.getElementById("waiting-body").addEventListener("click", function (e) {
+  var btn = e.target.closest("[data-nudge]");
+  if (!btn) { return; }
+  var key = btn.dataset.nudge;
+  if (!nudged[key]) {
+    nudged[key] = true;
+    toast("Reminder sent to " + btn.dataset.pair);
+    renderWaiting();
+  }
+});
+
+renderKpis();
+renderBoard();
+renderCheckoffBoard();
+renderWaiting();
+renderActivity();
+</script>

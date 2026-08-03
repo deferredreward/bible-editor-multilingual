@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Configure workflow</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <aside class="side" data-side></aside>
+  <div class="stage">
+    <div class="admin-stage" id="desk">
+      <div class="admin-top">
+        <button class="btn light" type="button" onclick="location.href='index.html'">Back</button>
+        <h1>Configure workflow · Zacarías ES</h1>
+        <button class="btn teal" type="button" id="saveBtn">Next</button>
+      </div>
+      <div class="admin-body">
+        <p class="note" style="margin-top:0">
+          Inspired by Render: <strong>Draft</strong> and <strong>Consultant Approval</strong> stay locked.
+          Drag optional stages into the rail. Fake project — changes are local only.
+        </p>
+
+        <h2 style="font-size:0.95rem;margin:18px 0 10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Active stages</h2>
+        <div class="workflow-track" id="track"></div>
+
+        <div class="palette">
+          <h2>Available stages — drag onto the rail</h2>
+          <div class="palette-row" id="palette"></div>
+        </div>
+
+        <div id="settings" style="margin-top:22px"></div>
+      </div>
+      <div class="admin-foot">
+        <span class="note" id="summary"></span>
+        <button class="btn dark" type="button" id="resetBtn">Reset demo</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const LOCKED_START = { id: 'draft', name: 'Draft', sub: 'Record translation', locked: true };
+  const LOCKED_END = { id: 'consultant-approval', name: 'Consultant Approval', sub: 'Final sign-off', locked: true };
+  const OPTIONAL = [
+    { id: 'peer', name: 'Peer Check', sub: 'Translator review' },
+    { id: 'community', name: 'Community Test', sub: 'Listen & check' },
+    { id: 'consultant-check', name: 'Consultant Check', sub: 'Before approval' },
+  ];
+
+  let rail = [LOCKED_START, OPTIONAL[0], LOCKED_END];
+  let selected = 'draft';
+
+  const settingsMap = {
+    draft: [
+      ['Allow AI draft seed', true],
+      ['Require quote match', true],
+      ['Offline recording', false],
+    ],
+    peer: [
+      ['Same-language peers only', true],
+      ['Blind to translator name', false],
+    ],
+    community: [
+      ['Audio playback required', true],
+      ['Minimum listeners', false],
+    ],
+    'consultant-check': [
+      ['Back-translation view', true],
+      ['Can return to Draft', true],
+    ],
+    'consultant-approval': [
+      ['Blocks export until done', true],
+      ['Notify project lead', true],
+    ],
+  };
+
+  function available() {
+    const used = new Set(rail.map(s => s.id));
+    return OPTIONAL.filter(s => !used.has(s.id));
+  }
+
+  function renderTrack() {
+    const track = document.getElementById('track');
+    track.innerHTML = rail.map((s, idx) => `
+      <div class="stage-tile ${s.locked ? 'locked' : ''}" draggable="${!s.locked}" data-id="${s.id}" data-idx="${idx}">
+        ${s.locked ? '<span class="lock">Locked</span>' : ''}
+        <h3>${s.name}</h3>
+        <div class="sub">${s.sub}</div>
+        <button class="btn light" type="button" data-settings="${s.id}" style="width:100%;padding:8px">Settings</button>
+        ${!s.locked ? `<button class="btn light" type="button" data-remove="${s.id}" style="width:100%;padding:8px;margin-top:6px;color:var(--danger)">Remove</button>` : ''}
+      </div>
+    `).join('') + `<div class="drop-zone" id="dropZone">Drag stage here</div>`;
+
+    track.querySelectorAll('[data-settings]').forEach(b => {
+      b.addEventListener('click', () => { selected = b.dataset.settings; renderSettings(); });
+    });
+    track.querySelectorAll('[data-remove]').forEach(b => {
+      b.addEventListener('click', () => {
+        rail = rail.filter(s => s.id !== b.dataset.remove);
+        renderAll();
+      });
+    });
+
+    track.querySelectorAll('.stage-tile[draggable="true"]').forEach(tile => {
+      tile.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', tile.dataset.id);
+        e.dataTransfer.setData('from', 'rail');
+        tile.classList.add('dragging');
+      });
+      tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+    });
+
+    const zone = document.getElementById('dropZone');
+    zone.addEventListener('dragover', (e) => e.preventDefault());
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData('text/plain');
+      const from = e.dataTransfer.getData('from');
+      if (from === 'palette') {
+        const item = OPTIONAL.find(s => s.id === id);
+        if (item && !rail.some(s => s.id === id)) {
+          rail.splice(rail.length - 1, 0, item);
+          renderAll();
+        }
+      }
+    });
+
+    // reorder optional tiles by dropping on another tile
+    track.querySelectorAll('.stage-tile').forEach(tile => {
+      tile.addEventListener('dragover', (e) => e.preventDefault());
+      tile.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const id = e.dataTransfer.getData('text/plain');
+        const from = e.dataTransfer.getData('from');
+        const targetId = tile.dataset.id;
+        if (targetId === 'draft' || targetId === 'consultant-approval') return;
+        if (from === 'palette') {
+          const item = OPTIONAL.find(s => s.id === id);
+          if (!item || rail.some(s => s.id === id)) return;
+          const tIdx = rail.findIndex(s => s.id === targetId);
+          rail.splice(tIdx, 0, item);
+          renderAll();
+          return;
+        }
+        const fromIdx = rail.findIndex(s => s.id === id);
+        const toIdx = rail.findIndex(s => s.id === targetId);
+        if (fromIdx < 0 || toIdx < 0 || rail[fromIdx].locked) return;
+        const [moved] = rail.splice(fromIdx, 1);
+        rail.splice(toIdx, 0, moved);
+        // keep locks at ends
+        rail = [LOCKED_START, ...rail.filter(s => !s.locked), LOCKED_END];
+        renderAll();
+      });
+    });
+  }
+
+  function renderPalette() {
+    const pal = document.getElementById('palette');
+    const items = available();
+    if (!items.length) {
+      pal.innerHTML = '<span class="note">All optional stages are on the rail.</span>';
+      return;
+    }
+    pal.innerHTML = items.map(s => `
+      <div class="stage-tile" draggable="true" data-id="${s.id}">
+        <h3>${s.name}</h3>
+        <div class="sub">${s.sub}</div>
+      </div>
+    `).join('');
+    pal.querySelectorAll('.stage-tile').forEach(tile => {
+      tile.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', tile.dataset.id);
+        e.dataTransfer.setData('from', 'palette');
+      });
+    });
+  }
+
+  function renderSettings() {
+    const box = document.getElementById('settings');
+    const stage = rail.find(s => s.id === selected) || OPTIONAL.find(s => s.id === selected) || LOCKED_START;
+    const rows = settingsMap[selected] || [];
+    box.innerHTML = `
+      <h2 style="font-size:1.05rem;margin:0 0 8px">Settings · ${stage.name}</h2>
+      <p class="note" style="margin-top:0">Demo toggles — they flip visually only.</p>
+      ${rows.map(([label, on], i) => `
+        <div class="toggle-row">
+          <span>${label}</span>
+          <button type="button" class="toggle ${on ? 'on' : ''}" data-i="${i}" aria-label="${label}"></button>
+        </div>
+      `).join('')}
+    `;
+    box.querySelectorAll('.toggle').forEach(t => {
+      t.addEventListener('click', () => t.classList.toggle('on'));
+    });
+  }
+
+  function renderSummary() {
+    document.getElementById('summary').textContent =
+      rail.map(s => s.name).join(' → ');
+  }
+
+  function renderAll() {
+    renderTrack();
+    renderPalette();
+    renderSettings();
+    renderSummary();
+  }
+
+  document.getElementById('saveBtn').addEventListener('click', () => {
+    alert('Saved workflow (mock):\n' + rail.map(s => s.name).join(' → '));
+  });
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    rail = [LOCKED_START, OPTIONAL[0], LOCKED_END];
+    selected = 'draft';
+    renderAll();
+  });
+
+  renderAll();
+</script>
+</body>
+</html>
