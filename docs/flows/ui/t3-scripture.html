@@ -34,7 +34,7 @@
   .status-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 
   .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-  @media (max-width: 780px) { .pair { grid-template-columns: minmax(0, 1fr); gap: 12px; } }
+  @media (max-width: 820px) { .pair { grid-template-columns: minmax(0, 1fr); gap: 12px; } }
 
   .lane-block { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; }
   .lane-block .lane-top { display: flex; align-items: center; gap: 8px; margin-block-end: 8px; }
@@ -191,21 +191,23 @@
     </div>
 
     <div class="pair">
-      <section class="lane-block" id="litLane">
+      <section class="lane-block" id="litLane" data-param-bibleVersion="ULT" data-version-key="verse-ULT" data-source-generation="1">
         <div class="lane-top">
           <p class="lane-tag" style="margin:0;">ULT <span class="lane-arrow">→</span> GLT</p>
           <span class="chip chip-edited" id="litStateChip">Edited</span>
           <span class="spacer"></span>
           <button type="button" id="litAlignBtn">Align →</button>
         </div>
-        <p class="source-block">In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,</p>
+        <!-- Source reference shown here is the Hebrew (UHB) original — this project has
+             no separate gateway-language "source" row; ULT itself is the editable target. -->
+        <p class="source-block" id="litSource" dir="rtl"></p>
         <div class="paragraph-toolbar" aria-label="Paragraph markers">
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\p</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q1</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q2</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\s1</button>
         </div>
-        <textarea class="target-box" id="litTarget" spellcheck="false" rows="1">En el mes octavo, en el segundo año de Darío, vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddo, el profeta, diciendo:</textarea>
+        <textarea class="target-box" id="litTarget" spellcheck="false" rows="1"></textarea>
         <div class="lane-foot">
           <button type="button" class="btn btn-outline" id="litUndoBtn">Undo</button>
           <span class="spacer"></span>
@@ -214,21 +216,21 @@
         </div>
       </section>
 
-      <section class="lane-block" id="simLane">
+      <section class="lane-block" id="simLane" data-param-bibleVersion="UST" data-version-key="verse-UST" data-source-generation="1">
         <div class="lane-top">
           <p class="lane-tag" style="margin:0;">UST <span class="lane-arrow">→</span> GST</p>
           <span class="chip chip-draft" id="simStateChip">Draft</span>
           <span class="spacer"></span>
           <button type="button" id="simAlignBtn">Align →</button>
         </div>
-        <p class="source-block">During the night I had a vision. I saw a man sitting on a red horse standing among some myrtle trees in a small valley.</p>
+        <p class="source-block" id="simSource" dir="rtl"></p>
         <div class="paragraph-toolbar" aria-label="Paragraph markers">
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\p</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q1</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\q2</button>
           <button type="button" data-handle="local:paragraph-marker" data-bundle="G">\s1</button>
         </div>
-        <textarea class="target-box" id="simTarget" spellcheck="false" rows="1">Durante la noche tuve una visión. Vi a un hombre sentado en un caballo rojo, entre unos mirtos en un valle pequeño.</textarea>
+        <textarea class="target-box" id="simTarget" spellcheck="false" rows="1"></textarea>
         <div class="lane-foot">
           <button type="button" class="btn btn-outline" id="simUndoBtn">Undo</button>
           <span class="spacer"></span>
@@ -243,13 +245,7 @@
   <div class="dlg-backdrop" id="histBackdrop" hidden>
     <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="histTitle">
       <div class="dlg-top"><h2 id="histTitle">Verse history — ZEC 1:8 (ULT)</h2><button type="button" class="close-x" id="closeHistBtn" aria-label="Close">✕</button></div>
-      <div class="dlg-body">
-        <div class="hist-version"><span class="hv-num">v5</span><span class="hv-main">Current<span class="hv-meta"> · Ana · just now</span></span></div>
-        <div class="hist-version"><span class="hv-num">v4</span><span class="hv-main">Edited wording of “red horse”<span class="hv-meta"> · Ana · yesterday</span></span>
-          <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Restore v4</button></div>
-        <div class="hist-version"><span class="hv-num">v1</span><span class="hv-main">Imported from Door43<span class="hv-meta"> · book import</span></span>
-          <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Restore v1</button></div>
-      </div>
+      <div class="dlg-body" id="histBody"></div>
       <div class="dlg-foot"><button type="button" class="btn btn-outline" id="closeHistBtn2">Close</button></div>
     </div>
   </div>
@@ -260,10 +256,10 @@
       <div class="dlg-top"><h2 id="boardTitle">Chapter board — ZEC 1</h2><button type="button" class="close-x" id="closeBoardBtn" aria-label="Close">✕</button></div>
       <div class="dlg-body">
         <table class="board-table">
-          <thead><tr><th>Verse</th><th>Text <button type="button" data-handle="PATCH /api/chapters/:book/:chapter/lanes/:lane/bulk" data-bundle="K" title="Check all">✓all</button></th><th>tN</th><th>tW</th><th>tQ</th></tr></thead>
+          <thead><tr><th>Verse</th><th>Text <button type="button" id="boardCheckAllBtn" data-handle="PATCH /api/chapters/:book/:chapter/lanes/:lane/bulk" data-param-lane="text" data-bundle="K" title="Check all">✓all</button></th><th>tN</th><th>tW</th><th>tQ</th></tr></thead>
           <tbody id="boardBody"></tbody>
         </table>
-        <p class="board-foot"><span>9 of 21 verses fully checked</span><span>Per-cell toggle = PATCH .../lanes/:lane</span></p>
+        <p class="board-foot"><span id="boardFullCount">— of — verses fully checked</span><span>Per-cell toggle = PATCH .../lanes/:lane</span></p>
       </div>
       <div class="dlg-foot"><button type="button" class="btn btn-outline" id="closeBoardBtn2">Close</button></div>
     </div>
@@ -317,6 +313,7 @@
     </div>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -338,27 +335,62 @@
     wireMenu("layoutBtn", "layoutMenu");
     document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
 
-    // K.4 original-language reference — tap a source word for a lexicon popover
-    var LEX_WORDS = [
-      { strong: "H0376", t: "אִ֗ישׁ" },
-      { strong: "H07392", t: "רֹכֵב֙" },
-      { strong: "H05921", t: "עַל" },
-      { strong: "H05483", t: "ס֣וּס" },
-      { strong: "H0122", t: "אָדֹ֔ם" }
-    ];
-    var LEX_DEMO = {
-      H0376: { gloss: "man, husband, someone", def: "Common noun for a male human being; here an unnamed messenger figure." },
-      H07392: { gloss: "to ride, mount", def: "Participle form here: 'riding'." },
-      H05921: { gloss: "on, upon, over", def: "Common preposition of position." },
-      H05483: { gloss: "horse", def: "A domesticated horse, used here as the messenger's mount." },
-      H0122: { gloss: "red, ruddy", def: "Color adjective, likely symbolic in this vision." }
-    };
-    (function renderOlStrip() {
-      el("olWords").innerHTML = LEX_WORDS.map(function (w, i) {
-        return '<span class="lex-wrap"><button type="button" class="lex-word" data-strong="' + w.strong + '" data-handle="GET /api/lexicon/:strong" data-bundle="K" aria-haspopup="true" aria-expanded="false" aria-controls="lexPop' + i + '">' + w.t + '</button>' +
+    // ---- chapter/book/verse state (real backend data) ----------------------
+    var BOOK = "ZEC";
+    var CHAPTER = 1;
+    var curVerse = 8; // ZEC 1:8 kept as the default landing verse (matches the original mock)
+    var chapterData = null; // full GET /api/chapters/:book/:chapter response
+    var verseNums = []; // sorted verse numbers > 0 present in this chapter
+
+    // Deep-link support: #/{book}/{chapter}/{verse}. Falls back to the
+    // hard-coded ZEC 1 default (read into flowShell.context below) when absent.
+    (function parseHash() {
+      var h = (window.location.hash || "").replace(/^#\/?/, "");
+      var parts = h.split("/").filter(Boolean);
+      if (parts[0]) BOOK = parts[0].toUpperCase();
+      if (parts[1]) CHAPTER = parseInt(parts[1], 10) || CHAPTER;
+      if (parts[2]) curVerse = parseInt(parts[2], 10) || curVerse;
+    })();
+
+    function verseRow(bibleVersion, verse) {
+      return chapterData && chapterData.verses && chapterData.verses[bibleVersion]
+        ? chapterData.verses[bibleVersion][String(verse)]
+        : undefined;
+    }
+
+    // Flattens a USFM-JSON verseObjects tree (Hebrew \w word nodes are nested
+    // inside \zaln alignment milestones) into a flat, source-order word list.
+    function flattenWords(nodes) {
+      var out = [];
+      (nodes || []).forEach(function (n) {
+        if (!n) return;
+        if (n.tag === "w" && n.text) out.push({ text: n.text, strong: n.strong });
+        if (n.children) out = out.concat(flattenWords(n.children));
+      });
+      return out;
+    }
+
+    // K.4 original-language reference — tap a source word for a lexicon popover.
+    // The tap itself fires a real GET /api/lexicon/:strong via data-handle (the
+    // shared shell dispatches it and toasts the outcome); this function only
+    // renders the words. The popover content is filled in by the flow:handled
+    // listener below, once the real response lands.
+    function renderOlStrip() {
+      var uhb = verseRow("UHB", curVerse);
+      var words = uhb && uhb.content ? flattenWords(uhb.content.verseObjects) : [];
+      if (!words.length) {
+        el("olWords").innerHTML = '<span style="font-size:13px;color:var(--ink-2);font-family:var(--font-ui);">No Hebrew source text loaded for this verse.</span>';
+        return;
+      }
+      el("olWords").innerHTML = words.map(function (w, i) {
+        // Alignment content prefixes some strong numbers with a single-letter
+        // affix marker (e.g. "b:H2320" = the prefixed preposition ב). Strip it
+        // for the lexicon lookup key.
+        var strong = (w.strong || "").replace(/^[a-z]:/, "");
+        return '<span class="lex-wrap"><button type="button" class="lex-word" data-strong="' + strong + '" data-handle="GET /api/lexicon/:strong" data-param-strong="' + strong + '" data-bundle="K" aria-haspopup="true" aria-expanded="false" aria-controls="lexPop' + i + '">' + w.text + '</button>' +
           '<div class="lex-popover" id="lexPop' + i + '" role="dialog" hidden></div></span>';
       }).join("");
-    })();
+    }
     document.addEventListener("click", function (ev) {
       var word = ev.target.closest ? ev.target.closest(".lex-word") : null;
       document.querySelectorAll(".lex-popover").forEach(function (p) {
@@ -370,50 +402,122 @@
       var pop = word.parentElement.querySelector(".lex-popover");
       var willOpen = pop.hasAttribute("hidden");
       if (!willOpen) { pop.hidden = true; word.setAttribute("aria-expanded", "false"); return; }
-      var entry = LEX_DEMO[word.dataset.strong] || { gloss: "(no entry found)", def: "" };
-      pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p><p class="lex-gloss">' + entry.gloss + '</p><p class="lex-def">' + entry.def + '</p>';
+      pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p><p class="lex-gloss">Loading…</p>';
       pop.classList.remove("flip");
       pop.hidden = false;
       word.setAttribute("aria-expanded", "true");
-      var rect = pop.getBoundingClientRect();
-      if (rect.right > window.innerWidth - 8) pop.classList.add("flip");
     });
 
-    // verse status switch
+    // verse status switch — data-handle already fires the real PATCH; this just
+    // reflects the actual chapter data (and optimistically toggles on click,
+    // reconciled by the flow:handled listener below).
+    function renderDoneSwitch() {
+      var statuses = (chapterData && chapterData.verseStatuses) || [];
+      var st = statuses.filter(function (s) { return s.verse === curVerse; })[0];
+      el("doneSwitch").setAttribute("aria-checked", st && st.done ? "true" : "false");
+    }
+    // Capture phase so this runs BEFORE _shell.js's bubble-phase [data-handle]
+    // dispatcher (registered on document too) reads data-body — the PATCH
+    // needs {done: bool} and there's no static value to put in the markup
+    // since it flips each click.
     el("doneSwitch").addEventListener("click", function () {
       var checked = el("doneSwitch").getAttribute("aria-checked") === "true";
+      el("doneSwitch").setAttribute("data-body", JSON.stringify({ done: !checked }));
       el("doneSwitch").setAttribute("aria-checked", checked ? "false" : "true");
-    });
+    }, true);
 
-    // undo (clears local draft, no api call)
-    el("litUndoBtn").addEventListener("click", function () { toast("Draft cleared (local)", { bundle: "G" }); });
-    el("simUndoBtn").addEventListener("click", function () { toast("Draft cleared (local)", { bundle: "G" }); });
+    // undo (clears local draft, no api call) — reverts the textarea to the
+    // last-loaded server value.
+    el("litUndoBtn").addEventListener("click", function () { renderLane("lit", "ULT"); toast("Draft cleared (reverted to last saved)", { bundle: "G" }); });
+    el("simUndoBtn").addEventListener("click", function () { renderLane("sim", "UST"); toast("Draft cleared (reverted to last saved)", { bundle: "G" }); });
     el("litAlignBtn").addEventListener("click", function () { location.href = "t4-align.html"; });
     el("simAlignBtn").addEventListener("click", function () { location.href = "t4-align.html"; });
 
-    // history dialog
-    el("historyBtn").addEventListener("click", function () { el("histBackdrop").hidden = false; });
+    // history dialog — data-handle fires the real GET; render the loading
+    // state here, fill in the result via the flow:handled listener below.
+    el("historyBtn").addEventListener("click", function () {
+      el("histTitle").textContent = "Verse history — " + BOOK + " " + CHAPTER + ":" + curVerse + " (ULT)";
+      el("histBody").innerHTML = '<p style="font-size:13px;color:var(--ink-2);">Loading…</p>';
+      el("histBackdrop").hidden = false;
+    });
     el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
     el("closeHistBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
 
+    function renderHistoryVersion(v) {
+      var who = v.user ? (v.user.full_name || v.user.username) : (v.action === "imported" ? "book import" : "system");
+      var when = v.created_at ? new Date(v.created_at * 1000).toLocaleString() : "";
+      var restoreBtn = "";
+      if (!v.current && v.restorable) {
+        var body = JSON.stringify({ content: v.content, plain_text: v.plain_text, alignment_intent: "text_edit" });
+        restoreBtn = '<button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G" data-body=\'' + body.replace(/'/g, "&#39;") + '\'>Restore v' + v.version + '</button>';
+      }
+      return '<div class="hist-version"><span class="hv-num">v' + v.version + '</span>' +
+        '<span class="hv-main">' + (v.current ? "Current" : v.action) + '<span class="hv-meta"> · ' + who + ' · ' + when + '</span></span>' + restoreBtn + '</div>';
+    }
+
     // chapter board dialog
-    var VERSES = [1,2,3,4,5,6,7,8,9,10];
     function renderBoard() {
       var body = el("boardBody");
       body.innerHTML = "";
-      VERSES.forEach(function (v) {
+      var checksByKey = {};
+      ((chapterData && chapterData.verseLaneChecks) || []).forEach(function (c) {
+        checksByKey[c.verse + ":" + c.lane] = Array.isArray(c.checkers) && c.checkers.length > 0;
+      });
+      var lanes = ["text", "tn", "tw", "tq"];
+      verseNums.forEach(function (v) {
         var tr = document.createElement("tr");
-        var lanes = ["text", "tn", "tw", "tq"];
-        var cells = '<td>ZEC 1:' + v + '</td>';
+        var cells = "<td>" + BOOK + " " + CHAPTER + ":" + v + "</td>";
         lanes.forEach(function (lane) {
-          var checked = (v + lane.length) % 3 !== 0;
+          var checked = !!checksByKey[v + ":" + lane];
+          // data-handle stays a stable, greppable registry key (matches the
+          // rest of this file's convention); data-handle-manual tells
+          // _shell.js NOT to auto-dispatch it, because _shell.js's document
+          // click listener unconditionally calls ev.preventDefault() on any
+          // [data-handle] element — which cancels a real checkbox's native
+          // checked-toggle. We dispatch the real PATCH ourselves below instead,
+          // so the box actually flips.
           cells += '<td><input type="checkbox" ' + (checked ? "checked" : "") +
-            ' data-handle="PATCH /api/chapters/:book/:chapter/:verse/lanes/' + lane + '" data-bundle="K" aria-label="' + lane + ' check for verse ' + v + '" /></td>';
+            ' data-handle="PATCH /api/chapters/:book/:chapter/:verse/lanes/:lane" data-handle-manual data-param-lane="' + lane + '" data-param-verse="' + v + '" data-bundle="K" aria-label="' + lane + ' check for verse ' + v + '" /></td>';
         });
         tr.innerHTML = cells;
         body.appendChild(tr);
       });
+      updateBoardFullCount(checksByKey);
+      el("boardCheckAllBtn").setAttribute("data-body", JSON.stringify({ checked: true, verses: verseNums }));
     }
+    function updateBoardFullCount(checksByKey) {
+      var lanes = ["text", "tn", "tw", "tq"];
+      var fullyChecked = verseNums.filter(function (v) {
+        return lanes.every(function (lane) { return checksByKey ? checksByKey[v + ":" + lane] : false; });
+      }).length;
+      el("boardFullCount").textContent = fullyChecked + " of " + verseNums.length + " verses fully checked";
+    }
+
+    // Manual dispatch for the per-cell lane checkboxes (see the comment above).
+    document.addEventListener("click", function (ev) {
+      var cb = ev.target.closest ? ev.target.closest('#boardBody input[type="checkbox"]') : null;
+      if (!cb) return;
+      var lane = cb.getAttribute("data-param-lane");
+      var verse = cb.getAttribute("data-param-verse");
+      // At this point in the dispatch, cb.checked already reflects the NEW
+      // (post-click) state — the browser flips it before running click
+      // listeners. _shell.js's own listener (registered before ours, so it
+      // runs first) calls preventDefault() on any [data-handle] element,
+      // which queues the native "canceled activation" revert; that revert
+      // only actually applies once the whole synchronous dispatch finishes,
+      // so we restore the intended value on a macrotask after it.
+      var next = cb.checked;
+      setTimeout(function () { cb.checked = next; }, 0);
+      window.flowApi.request("PATCH", "/api/chapters/" + BOOK + "/" + CHAPTER + "/" + verse + "/lanes/" + lane, { body: { checked: next } }).then(function (result) {
+        if (!result.ok) {
+          cb.checked = !next;
+          toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "K" });
+          return;
+        }
+        toast("✓ " + result.status + " PATCH lanes/" + lane, { bundle: "K" });
+      });
+    });
+
     el("boardBtn").addEventListener("click", function () { renderBoard(); el("boardBackdrop").hidden = false; });
     el("closeBoardBtn").addEventListener("click", function () { el("boardBackdrop").hidden = true; });
     el("closeBoardBtn2").addEventListener("click", function () { el("boardBackdrop").hidden = true; });
@@ -434,22 +538,185 @@
     }
     var autoGrowBoxes = [el("litTarget"), el("simTarget")];
     autoGrowBoxes.forEach(function (ta) {
-      autoGrow(ta);
       ta.addEventListener("input", function () { autoGrow(ta); });
     });
 
-    // save buttons flip state chip locally
-    el("litSaveBtn").addEventListener("click", function () { el("litStateChip").className = "chip chip-edited"; el("litStateChip").textContent = "Edited"; });
-    el("simSaveBtn").addEventListener("click", function () { el("simStateChip").className = "chip chip-edited"; el("simStateChip").textContent = "Edited"; });
+    // Save buttons have no static data-body (the textarea's value changes on
+    // every edit), so build it just before _shell.js's dispatcher reads it —
+    // same capture-phase trick as doneSwitch/board checkboxes above. This is a
+    // plain-text round-trip only (single text node) — there is no alignment
+    // editor in this preview, so \zaln milestones are not reconstructed here.
+    document.addEventListener("click", function (ev) {
+      var btn = ev.target.closest ? ev.target.closest("#litSaveBtn, #simSaveBtn") : null;
+      if (!btn) return;
+      var isLit = btn.id === "litSaveBtn";
+      var value = el(isLit ? "litTarget" : "simTarget").value;
+      btn.setAttribute("data-body", JSON.stringify({
+        content: { verseObjects: [{ type: "text", text: value }] },
+        plain_text: value,
+        alignment_intent: "text_edit",
+      }));
+    }, true);
 
-    el("prevVerseBtn").addEventListener("click", function () { toast("Loading previous verse (local nav)", { bundle: "G" }); });
-    el("nextVerseBtn").addEventListener("click", function () { toast("Loading next verse (local nav)", { bundle: "G" }); });
+    // Renders one lane (lit=ULT, sim=UST) from real chapter data: the read-only
+    // Hebrew source line, the editable target box, the state chip, and the
+    // version/generation the Save button's If-Match / X-Source-Generation
+    // headers read from (via data-version-key / data-source-generation on the
+    // lane-block — see _shell.js resolveHeaders).
+    function renderLane(prefix, bibleVersion) {
+      var row = verseRow(bibleVersion, curVerse);
+      var uhb = verseRow("UHB", curVerse);
+      el(prefix + "Source").textContent = uhb ? uhb.plain_text : "(no Hebrew source loaded for this verse)";
+      var target = el(prefix + "Target");
+      target.value = row ? row.plain_text : "";
+      target.disabled = !row;
+      var chip = el(prefix + "StateChip");
+      var lane = el(prefix === "lit" ? "litLane" : "simLane");
+      if (!row) {
+        chip.className = "chip chip-draft";
+        chip.textContent = "No data";
+      } else {
+        // Heuristic: a row with no human editor on record is still the original
+        // import; anything touched by a user reads as "Edited". There is no
+        // separate draft/approved state on verses.
+        var edited = row.updated_by !== null && row.updated_by !== undefined;
+        chip.className = "chip " + (edited ? "chip-edited" : "chip-draft");
+        chip.textContent = edited ? "Edited" : "Draft";
+        window.flowApi.setVersion(prefix === "lit" ? "verse-ULT" : "verse-UST", row.version);
+        lane.setAttribute("data-source-generation", String(row.source_generation || 1));
+      }
+      lane.classList.remove("locked"); // reset — flow:handled re-locks on lane_replacement_required
+      autoGrow(target);
+    }
+
+    function render() {
+      el("refBig").textContent = BOOK + " " + CHAPTER + ":" + curVerse;
+      renderOlStrip();
+      renderLane("lit", "ULT");
+      renderLane("sim", "UST");
+      renderDoneSwitch();
+      window.flowShell.setContext({ book: BOOK, chapter: CHAPTER, verse: curVerse, bibleVersion: "ULT", sourceGeneration: 1 });
+    }
+
+    function goVerse(delta) {
+      var idx = verseNums.indexOf(curVerse);
+      if (idx === -1) idx = 0;
+      idx = Math.max(0, Math.min(verseNums.length - 1, idx + delta));
+      if (verseNums[idx] === curVerse) return;
+      curVerse = verseNums[idx];
+      render();
+    }
+    el("prevVerseBtn").addEventListener("click", function () { goVerse(-1); });
+    el("nextVerseBtn").addEventListener("click", function () { goVerse(1); });
+
+    function loadChapter() {
+      return window.flowApi.chapter(BOOK, CHAPTER).then(function (result) {
+        if (!result.ok) {
+          toast("Could not load " + BOOK + " " + CHAPTER + " (" + result.kind + ")", { nudge: true, bundle: "G" });
+          el("refBig").textContent = BOOK + " " + CHAPTER + " — load failed";
+          return;
+        }
+        chapterData = result.data;
+        // Prefer the Hebrew (UHB) key set for "which verses exist" — it's
+        // always present, where ULT/UST can be entirely absent from this
+        // response while a lane is mid-replacement (observed live during
+        // development: this workspace's ZEC 1 briefly had verses.UHB only).
+        var refVerses = (chapterData.verses && (chapterData.verses.UHB || chapterData.verses.ULT)) || {};
+        verseNums = Object.keys(refVerses)
+          .map(Number)
+          .filter(function (n) { return n > 0; })
+          .sort(function (a, b) { return a - b; });
+        if (verseNums.indexOf(curVerse) === -1) curVerse = verseNums[0] || curVerse;
+        render();
+      });
+    }
+    window.flowApi.ready.then(loadChapter);
+
+    // ---- reconcile real API responses fired via data-handle (see _shell.js) ----
+    document.addEventListener("flow:handled", function (ev) {
+      var result = ev.detail && ev.detail.result;
+      if (!result) return;
+
+      if (ev.target === el("doneSwitch")) {
+        if (result.ok && result.data) {
+          el("doneSwitch").setAttribute("aria-checked", result.data.done ? "true" : "false");
+        } else {
+          var checked = el("doneSwitch").getAttribute("aria-checked") === "true";
+          el("doneSwitch").setAttribute("aria-checked", checked ? "false" : "true");
+        }
+        return;
+      }
+
+      if (ev.target === el("litSaveBtn") || ev.target === el("simSaveBtn")) {
+        var prefix = ev.target === el("litSaveBtn") ? "lit" : "sim";
+        var bv = prefix === "lit" ? "ULT" : "UST";
+        var chip = el(prefix + "StateChip");
+        var lane = el(prefix === "lit" ? "litLane" : "simLane");
+        if (result.ok) {
+          chip.className = "chip chip-edited";
+          chip.textContent = "Edited";
+          lane.classList.remove("locked");
+          if (result.data && typeof result.data.version === "number") {
+            window.flowApi.setVersion(prefix === "lit" ? "verse-ULT" : "verse-UST", result.data.version);
+          }
+        } else if (result.body && result.body.error === "lane_replacement_required") {
+          // Real environment finding: this workspace has the lit/sim lane mid
+          // BSOJ replacement (textReadOnly) — text edits are rejected 409 no
+          // matter what the client sends. Reflect that honestly instead of
+          // pretending the save worked.
+          lane.classList.add("locked");
+          var label = "";
+          try {
+            var pending = result.body.detail && result.body.detail.pendingTarget;
+            label = pending ? (JSON.parse(pending).label || "") : "";
+          } catch (e) { /* ignore */ }
+          toast(bv + " text is locked pending replacement" + (label ? " (" + label + ")" : ""), { nudge: true, bundle: "G" });
+        }
+        return;
+      }
+
+      if (ev.target === el("historyBtn")) {
+        if (result.ok && result.data && Array.isArray(result.data.versions)) {
+          var versions = result.data.versions;
+          el("histBody").innerHTML = versions.length
+            ? versions.slice().reverse().map(renderHistoryVersion).join("")
+            : '<p style="font-size:13px;color:var(--ink-2);">No history recorded yet.</p>';
+        } else if (result.body && result.body.error === "lane_replacement_required") {
+          el("histBody").innerHTML = '<p style="font-size:13px;color:var(--ink-2);">This lane is mid-replacement — history is temporarily unavailable.</p>';
+        } else {
+          el("histBody").innerHTML = '<p style="font-size:13px;color:var(--ink-2);">Could not load history (' + (result.kind || "error") + ').</p>';
+        }
+        return;
+      }
+
+      var word = ev.target.closest ? ev.target.closest(".lex-word") : null;
+      if (word) {
+        var pop = word.parentElement.querySelector(".lex-popover");
+        if (!pop || pop.hidden) return;
+        if (result.ok && result.data) {
+          var entry = result.data;
+          pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p>' +
+            '<p class="lex-gloss">' + (entry.gloss || entry.definition || "(no gloss)") + '</p>' +
+            '<p class="lex-def">' + (entry.def || entry.definition || "") + '</p>';
+        } else {
+          // The local lexicon table is empty in this preview — an honest empty
+          // state, not a fabricated gloss.
+          pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p><p class="lex-gloss">No lexicon entry loaded for this Strong’s number.</p>';
+        }
+        var rect = pop.getBoundingClientRect();
+        pop.classList.toggle("flip", rect.right > window.innerWidth - 8);
+      }
+    });
 
     // Export / Copy (client-side, read-only, no PATCH)
     el("exportUsfmBtn").addEventListener("click", function () { toast("Assembling USFM from read-only GETs (client-side export, no write)", { bundle: "G" }); });
     el("copyChapterBtn").addEventListener("click", function () { toast("Chapter copied to clipboard", { bundle: "G" }); });
 
-    // Find/Replace overlay
+    // Find/Replace overlay — the backend has no full-text search endpoint, so
+    // match-finding stays local/demo (matches shown are illustrative, not a
+    // real scan of this chapter). The Replace / Replace-all buttons keep their
+    // real data-handle wiring for header/flow-completeness, but with no verse
+    // in scope they'll surface "missing param" rather than silently succeeding.
     var frMatches = ["Yahvé", "Yahvé", "Yahvé", "Yahvé"];
     var frIdx = 0;
     function frUpdateMatchInfo() { el("frMatchInfo").textContent = "Match " + (frIdx + 1) + " of " + frMatches.length + " (this chapter)"; }

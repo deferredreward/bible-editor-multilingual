@@ -158,19 +158,29 @@
   .jobactions { display: flex; gap: 6px; flex-wrap: wrap; }
   .jobactions .btn { min-height: 30px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
 
+  /* AI-not-configured notice — inline banner (real degraded state, detected
+     via a side-effect-free probe against a gated endpoint; see script). Was
+     a full-screen fixture toggle that swapped out the whole runs table —
+     but GET /api/pipelines (the jobs list) is genuinely NOT gated, so the
+     honest behavior is: keep the runs table working, disable only the
+     actions that really are gated (start/retry/status-poll), and explain
+     why inline. */
   .empty-noai {
-    max-width: 480px;
-    margin: 60px auto;
-    text-align: center;
-    padding: 32px 24px;
+    max-width: 640px;
+    margin: 0 0 14px;
+    text-align: start;
+    padding: 16px 20px;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
   }
-  .empty-noai h2 { margin: 10px 0 6px; font-size: 18px; }
-  .empty-noai p { color: var(--ink-2); font-size: 14px; margin: 0; }
-  .empty-noai .icn { color: var(--skip); }
+  .empty-noai h2 { margin: 0 0 4px; font-size: 15px; }
+  .empty-noai p { color: var(--ink-2); font-size: 13.5px; margin: 0; }
+  .empty-noai .icn { color: var(--skip); flex: none; margin-top: 2px; }
 
   dialog.confirm-dialog {
     border: 1px solid var(--line);
@@ -203,7 +213,7 @@
   }
 </style>
 </head>
-<body data-mode="translation" data-scenario="normal">
+<body data-mode="translation">
   <header class="topbar-shared">
     <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
     <span class="screen-title">Lead — Run AI pipelines</span>
@@ -221,27 +231,22 @@
     <a href="l3-templates.html">Curate note templates</a>
   </nav>
 
-  <!-- Demo-only scenario switcher — not part of the real app, lets a reviewer
-       see every required state without wiring a live backend. -->
-  <div class="demo-switch" role="group" aria-label="Preview scenario (demo control, not app UI)">
-    <span class="dslabel">Preview state:</span>
-    <button type="button" data-scenario-btn="normal" aria-pressed="true">Normal</button>
-    <button type="button" data-scenario-btn="locked" aria-pressed="false">Chapter locked</button>
-    <button type="button" data-scenario-btn="ready" aria-pressed="false">Drafts ready</button>
-    <button type="button" data-scenario-btn="no-ai" aria-pressed="false">AI not configured</button>
-  </div>
-
   <!-- ============================================================
-       "AI not configured" full-screen empty state — BT_API_TOKEN absent
+       "AI not configured" honest degraded state — BT_API_TOKEN absent
        disables /api/tn-quick, /api/pipelines/start, AND /api/pipelines/:jobId
        (job-status reads are gated too — easy to miss per 00b-api-inventory.md
-       Bundle D table). This is what a token-less workspace sees instead of
-       the whole screen below, not an error toast.
+       Bundle D table). Detected for real on load via a side-effect-free GET
+       against the gated job-status endpoint (see script) — not a demo toggle.
+       GET /api/pipelines (the list below) is NOT gated, so the runs table
+       keeps working; only start/retry/status-poll are disabled and explained
+       here instead of erroring.
        ============================================================ -->
   <section class="empty-noai" id="noAiState" hidden>
-    <svg class="icn" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 2l1.9 5.8L20 9.3l-4.6 3.8L16.8 19 12 15.6 7.2 19l1.4-5.9L4 9.3l6.1-1.5L12 2Z"></path></svg>
-    <h2>AI not configured</h2>
-    <p>An admin needs to set <code>BT_API_TOKEN</code> for this workspace before AI pipelines can run. This isn't an error — the feature is simply off until then. Job status reads are disabled too, so no queue or job table can be shown.</p>
+    <svg class="icn" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 2l1.9 5.8L20 9.3l-4.6 3.8L16.8 19 12 15.6 7.2 19l1.4-5.9L4 9.3l6.1-1.5L12 2Z"></path></svg>
+    <div>
+      <h2>AI not configured</h2>
+      <p>An admin needs to set <code>BT_API_TOKEN</code> for this workspace before AI pipelines can run. This isn't an error — the feature is simply off until then. Job status reads (Details/Retry above) are disabled too, so those actions are turned off below rather than left to fail on click.</p>
+    </div>
   </section>
 
   <main class="desk" id="mainAiUi">
@@ -310,7 +315,12 @@
               <span class="mi-title">Translate chapter</span>
               <span class="mi-desc">AI-translate this chapter's notes from the source language.</span>
             </button>
-            <button type="button" class="mi" role="menuitem" data-pipeline="translate-tq">
+            <!-- No confirmed backend pipelineType for a separate "translate
+                 questions" run — POST /api/pipelines/start only accepts
+                 pipelineType generate|notes|tqs|translate (api/src/pipelines.ts
+                 PIPELINE_TYPES). Disabled rather than guessing a request shape
+                 that might silently do the wrong thing. -->
+            <button type="button" class="mi" role="menuitem" data-pipeline="translate-tq" disabled title="No confirmed backend pipeline type for this yet — see code comment">
               <span class="mi-title">Translate questions</span>
               <span class="mi-desc">AI-translate this chapter's questions from the source language.</span>
             </button>
@@ -343,10 +353,10 @@
 
     <!-- "While you were away" completion notice — pipelineStore retro-fires this
          for jobs <24h old with notified_user_at===null. Dismiss marks it seen. -->
-    <div class="banner" id="awayBanner" style="background:var(--ok-soft); color:var(--ok-ink); border-color:var(--ok); margin-block-end:14px;">
+    <div class="banner" id="awayBanner" hidden style="background:var(--ok-soft); color:var(--ok-ink); border-color:var(--ok); margin-block-end:14px;">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
-      <span class="banner-msg">"Generate ULT + UST" finished for ZEC 5 while you were away.</span>
-      <button type="button" class="btn btn-ghost banner-action" id="awayDismissBtn" data-handle="POST /api/pipelines/:jobId/notified" data-bundle="D">Dismiss</button>
+      <span class="banner-msg">Finished while you were away.</span>
+      <button type="button" class="btn btn-ghost banner-action" id="awayDismissBtn" data-handle="POST /api/pipelines/:jobId/notified" data-bundle="D" data-handle-manual>Dismiss</button>
     </div>
 
     <!-- Tenant boundary: GET /api/pipelines is scoped to the caller's workspace
@@ -402,17 +412,20 @@
         <input class="tinput" id="confirmRange" type="text" value="6" />
         <p class="f-help" id="confirmRangeHelp">1 chapter will run.</p>
       </div>
+      <!-- Maps to the real POST /api/pipelines/start options (PipelineOptions,
+           .strict() in api/src/pipelines.ts): contentTypes: ("ult"|"ust")[]
+           picks which text(s) to generate; there is no per-lane alignment
+           flag in the schema, only one shared noAlign toggle for both. -->
       <div class="checklist" id="generateOptions">
-        <label class="chk"><input type="checkbox" checked /> ULT (literal text)</label>
-        <label class="chk"><input type="checkbox" checked /> ULT alignment</label>
-        <label class="chk"><input type="checkbox" checked /> UST (simplified text)</label>
-        <label class="chk"><input type="checkbox" checked /> UST alignment</label>
+        <label class="chk"><input type="checkbox" id="optUlt" checked /> ULT (literal text)</label>
+        <label class="chk"><input type="checkbox" id="optUst" checked /> UST (simplified text)</label>
+        <label class="chk"><input type="checkbox" id="optAlign" checked /> Compute alignment</label>
       </div>
       <p class="lock-note">This locks <strong id="confirmScope">ZEC 6</strong> for editing while it runs. Translators can still mark notes to keep.</p>
     </div>
     <div class="d-foot">
       <button type="button" class="btn btn-ghost" id="confirmCancelBtn">Cancel</button>
-      <button type="button" class="btn btn-primary" id="confirmStartBtn" data-handle="POST /api/pipelines/start" data-bundle="D">Start</button>
+      <button type="button" class="btn btn-primary" id="confirmStartBtn" data-handle="POST /api/pipelines/start" data-bundle="D" data-handle-manual>Start</button>
     </div>
   </dialog>
 
@@ -428,6 +441,7 @@
     </div>
   </dialog>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -451,13 +465,9 @@
       import_failed: "The finished draft couldn't be imported into the chapter. An admin may need to look at the import log."
     };
 
-    var STAGES = {
-      generate: ["Draft", "Align", "Push"],
-      notes: ["Draft", "Batch", "Push"],
-      tqs: ["Draft", "Push"],
-      translate: ["Draft", "Push"],
-      "translate-tq": ["Draft", "Push"]
-    };
+    // Real backend enum (api/src/pipelines.ts PIPELINE_TYPES) — "translate-tq"
+    // is NOT one of these; its menu item is disabled in the HTML instead of
+    // guessing a request shape.
     var LABELS = {
       generate: "Generate ULT + UST",
       notes: "Write translation notes",
@@ -466,114 +476,202 @@
       "translate-tq": "Translate questions"
     };
 
-    var jobs = [
-      { id: "j1", type: "generate", scope: "ZEC 6", state: "running", stage: "Draft", batch: null, started: "12 min ago", mine: true, queuePos: null },
-      { id: "j2", type: "notes", scope: "ZEC 7", state: "running", stage: "Batch", batch: [3, 11], started: "4 min ago", mine: false, requestedBy: "Maria", queuePos: null },
-      { id: "j3", type: "tqs", scope: "ZEC 8", state: "failed", errorKind: "interrupted", started: "31 min ago", mine: true, queuePos: null },
-      { id: "j4", type: "translate", scope: "ZEC 9", state: "queued", started: null, mine: true, queuePos: 1 }
-    ];
-
     var jobsBody = document.getElementById("jobsBody");
     var jobsFoot = document.getElementById("jobsFoot");
     var statusPill = document.getElementById("statusPill");
+    var noAiState = document.getElementById("noAiState");
+    var jobs = []; // real GET /api/pipelines rows — see loadJobs()
+    var aiDisabled = false; // detected for real — see checkAiAvailability()
 
     function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
 
-    function stageBarHtml(job) {
-      var stages = STAGES[job.type] || ["Draft", "Push"];
-      var activeIdx = stages.indexOf(job.stage);
-      var html = '<div class="stagebar" role="list" aria-label="Pipeline stage">';
-      stages.forEach(function (s, i) {
-        var cls = "sdot";
-        if (job.state === "done") cls += " done";
-        else if (i < activeIdx) cls += " done";
-        else if (i === activeIdx && job.state === "running") cls += " active";
-        html += '<span class="' + cls + '" role="listitem" title="' + esc(s) + '"></span>';
-      });
-      html += '<span class="slabel">' + esc(job.state === "queued" ? "queued" : (job.stage || "—")) + '</span></div>';
-      return html;
+    // created_at/updated_at from D1 are unix seconds (see pipeline_jobs schema).
+    function timeAgo(unixSeconds) {
+      if (!unixSeconds) return "—";
+      var deltaMs = Date.now() - unixSeconds * 1000;
+      var mins = Math.round(deltaMs / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + " min ago";
+      var hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + " hr" + (hrs === 1 ? "" : "s") + " ago";
+      return Math.round(hrs / 24) + " day(s) ago";
     }
 
+    function scopeOf(job) {
+      if (!job.book) return job.pipeline_type; // article (tw/ta) jobs carry no book/chapter
+      return job.start_chapter === job.end_chapter
+        ? job.book + " " + job.start_chapter
+        : job.book + " " + job.start_chapter + "–" + job.end_chapter;
+    }
+
+    // No per-stage breakdown is exposed by the API beyond current_skill /
+    // current_status (free-text set by the bot) — the old fixture's
+    // Draft/Align/Push dot-stepper assumed named stages that were never
+    // confirmed against a real job, so this shows the raw fields instead of
+    // inventing a mapping.
     function progressHtml(job) {
-      if (job.state === "queued") return '<span class="foot-state">#' + job.queuePos + ' in line</span>';
+      if (job.state === "queued") {
+        var pos = job.queue_position;
+        return '<span class="foot-state">' + (pos != null ? "#" + esc(pos) + " in line" : "queued") + '</span>';
+      }
       if (job.state === "failed") {
-        var friendly = ERROR_COPY[job.errorKind] || ("Unrecognized error: " + job.errorKind);
-        return '<div class="err-detail"><span class="raw">' + esc(job.errorKind) + '</span><span class="friendly">' + esc(friendly) + '</span></div>';
+        var friendly = ERROR_COPY[job.error_kind] || ("Unrecognized error: " + job.error_kind);
+        return '<div class="err-detail"><span class="raw">' + esc(job.error_kind) + '</span><span class="friendly">' + esc(friendly) + '</span></div>';
       }
-      if (job.batch) {
-        var pct = Math.round((job.batch[0] / job.batch[1]) * 100);
-        return '<div class="progress-cell"><div class="bar"><i style="width:' + pct + '%"></i></div><span class="plabel">batch ' + job.batch[0] + '/' + job.batch[1] + '</span></div>';
-      }
-      return '<span class="plabel">running</span>';
+      var text = job.current_status || job.current_skill || job.state;
+      return '<span class="plabel">' + esc(text) + '</span>';
     }
 
     function actionsHtml(job) {
       var btns = [];
-      if (job.state === "running" || job.state === "queued") {
-        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-handle="GET /api/pipelines/:jobId" data-bundle="D" title="Poll this job\'s status">Details</button>');
+      var mine = window.flowApi.me && job.user_id === window.flowApi.me.userId;
+      if ((job.state === "running" || job.state === "queued" || job.state === "dispatching") && mine) {
+        // GET /api/pipelines/:jobId is gated by the same BT_API_TOKEN check —
+        // disabled outright (not left to fail on click) once we know AI is off.
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-param-jobid="' + esc(job.job_id) + '" data-handle="GET /api/pipelines/:jobId" data-bundle="D" title="Poll this job\'s status"' + (aiDisabled ? " disabled" : "") + '>Details</button>');
       }
-      if (job.state === "queued" && job.mine) {
-        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-job-cancel="' + job.id + '" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>');
+      if (job.state === "queued" && mine) {
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-param-jobid="' + esc(job.job_id) + '" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>');
       }
-      if (job.state === "failed") {
-        btns.push('<button type="button" class="btn btn-rerun btn-sm" data-job-retry="' + job.id + '" data-handle="POST /api/pipelines/start" data-bundle="D">Retry</button>');
-        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-job-dismiss="' + job.id + '">Dismiss</button>');
+      if (job.state === "failed" && mine) {
+        btns.push('<button type="button" class="btn btn-rerun btn-sm" data-job-retry="' + esc(job.job_id) + '"' + (aiDisabled ? " disabled title=\"AI not configured\"" : "") + '>Retry</button>');
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-param-jobid="' + esc(job.job_id) + '" data-handle="POST /api/pipelines/:jobId/notified" data-bundle="D">Dismiss</button>');
       }
-      if (job.state === "cancelled") {
-        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-job-dismiss="' + job.id + '">Dismiss</button>');
+      if (job.state === "cancelled" || job.state === "done") {
+        btns.push('<button type="button" class="btn btn-ghost btn-sm" data-param-jobid="' + esc(job.job_id) + '" data-handle="POST /api/pipelines/:jobId/notified" data-bundle="D">Dismiss</button>');
       }
       return '<div class="jobactions">' + btns.join("") + '</div>';
     }
 
     function renderJobs() {
-      jobsBody.innerHTML = jobs.map(function (job) {
-        return "<tr>" +
-          "<td><strong>" + esc(LABELS[job.type] || job.type) + "</strong></td>" +
-          "<td>" + esc(job.scope) + "</td>" +
-          "<td>" + stageBarHtml(job) + "</td>" +
-          "<td>" + progressHtml(job) + "</td>" +
-          "<td>" + esc(job.started || "—") + "</td>" +
-          "<td>" + (job.mine ? "You" : esc("requested by " + job.requestedBy)) + "</td>" +
-          "<td>" + actionsHtml(job) + "</td>" +
-          "</tr>";
-      }).join("");
+      if (!jobs.length) {
+        jobsBody.innerHTML = '<tr><td colspan="7" class="foot-state" style="padding:14px 4px;">No runs in this workspace right now.</td></tr>';
+      } else {
+        jobsBody.innerHTML = jobs.map(function (job) {
+          return "<tr>" +
+            "<td><strong>" + esc(LABELS[job.pipeline_type] || job.pipeline_type) + "</strong></td>" +
+            "<td>" + esc(scopeOf(job)) + "</td>" +
+            "<td>" + esc(job.state) + "</td>" +
+            "<td>" + progressHtml(job) + "</td>" +
+            "<td>" + esc(timeAgo(job.created_at)) + "</td>" +
+            "<td>" + ((window.flowApi.me && job.user_id === window.flowApi.me.userId) ? "You" : esc("requested by " + (job.started_by_username || "someone else"))) + "</td>" +
+            "<td>" + actionsHtml(job) + "</td>" +
+            "</tr>";
+        }).join("");
+      }
 
-      var running = jobs.filter(function (j) { return j.state === "running"; }).length;
+      var running = jobs.filter(function (j) { return j.state === "running" || j.state === "dispatching"; }).length;
       var queued = jobs.filter(function (j) { return j.state === "queued"; }).length;
       var failed = jobs.filter(function (j) { return j.state === "failed"; }).length;
-      jobsFoot.textContent = jobs.length + " jobs" + (failed ? " — " + failed + " needs attention" : "");
+      jobsFoot.textContent = jobs.length + " job" + (jobs.length === 1 ? "" : "s") + (failed ? " — " + failed + " needs attention" : "");
       statusPill.textContent = running
         ? running + " pipeline" + (running > 1 ? "s" : "") + " running" + (queued ? " (" + queued + " queued)" : "")
         : (queued ? queued + " queued" : (failed ? failed + " failed" : "AI ready to review"));
       statusPill.hidden = !(running || queued || failed);
+
+      updateBanners();
+    }
+
+    // Chapter-locked / drafts-ready banners driven by real data: a running
+    // job for the currently-picked scope, and GET /api/pending-imports for
+    // the same scope.
+    function updateBanners() {
+      var book = document.getElementById("pickBook").value;
+      var chapter = document.getElementById("pickChapter").value;
+      var scope = book + " " + chapter;
+      var lock = jobs.find(function (j) { return scopeOf(j) === scope && (j.state === "running" || j.state === "dispatching"); });
+      var lockBanner = document.getElementById("lockBanner");
+      if (lock) {
+        document.getElementById("lockPipelineType").textContent = LABELS[lock.pipeline_type] || lock.pipeline_type;
+        document.getElementById("lockScope").textContent = scope;
+        document.getElementById("lockStarted").textContent = timeAgo(lock.created_at);
+        lockBanner.hidden = false;
+      } else {
+        lockBanner.hidden = true;
+      }
+
+      if (book && chapter) {
+        window.flowApi.get("/api/pending-imports", { book: book, chapter: chapter }).then(function (res) {
+          var readyBanner = document.getElementById("readyBanner");
+          readyBanner.hidden = !(res.ok && res.data && res.data.items && res.data.items.length);
+        });
+      }
+    }
+
+    function loadJobs() {
+      return window.flowApi.get("/api/pipelines").then(function (res) {
+        if (res.ok) {
+          jobs = res.data.jobs || [];
+        } else {
+          window.flowShell.toast("Couldn't load runs — " + res.status + " " + res.kind, { nudge: true });
+          jobs = [];
+        }
+        renderJobs();
+      });
+    }
+
+    // Real, side-effect-free detection of the "AI not configured" state: GET
+    // /api/pipelines/:jobId is gated by the same BT_API_TOKEN check as start —
+    // verified live (curl) to return 503 {"error":"pipeline_api_disabled"}
+    // even for a made-up jobId, before any existence check. A bogus id is
+    // safe here because the route is read-only.
+    function checkAiAvailability() {
+      return window.flowApi.get("/api/pipelines/__availability_probe__").then(function (res) {
+        aiDisabled = !res.ok && res.status === 503 && res.body && res.body.error === "pipeline_api_disabled";
+        noAiState.hidden = !aiDisabled;
+        var menuBtn = document.getElementById("aiMenuBtn");
+        menuBtn.disabled = aiDisabled;
+        menuBtn.title = aiDisabled ? "AI not configured for this workspace" : "";
+        renderJobs();
+      });
     }
 
     jobsBody.addEventListener("click", function (ev) {
-      var cancelId = ev.target.closest("[data-job-cancel]");
-      var dismissId = ev.target.closest("[data-job-dismiss]");
-      var retryId = ev.target.closest("[data-job-retry]");
-      if (cancelId) {
-        var id1 = cancelId.getAttribute("data-job-cancel");
-        jobs = jobs.filter(function (j) { return j.id !== id1; });
-        renderJobs();
-      } else if (dismissId) {
-        // Dismiss/dismissAll is localStorage-only (00-code-inventory.md §D.7)
-        // — no server call, purely a client-side "stop showing me this" flag.
-        var id2 = dismissId.getAttribute("data-job-dismiss");
-        jobs = jobs.filter(function (j) { return j.id !== id2; });
-        renderJobs();
-      } else if (retryId) {
-        // No dedicated retry endpoint exists — "Retry" re-issues the same
-        // POST /api/pipelines/start with the job's original options.
-        var id3 = retryId.getAttribute("data-job-retry");
-        jobs = jobs.map(function (j) { return j.id === id3 ? Object.assign({}, j, { state: "queued", queuePos: jobs.length }) : j; });
+      var retryBtn = ev.target.closest("[data-job-retry]");
+      if (!retryBtn || retryBtn.disabled) return;
+      var jobId = retryBtn.getAttribute("data-job-retry");
+      var job = jobs.find(function (j) { return j.job_id === jobId; });
+      if (!job) return;
+      // No dedicated retry endpoint — re-issue the same POST /api/pipelines/start.
+      var sessionKey = "retry-" + job.pipeline_type + "-" + Date.now();
+      var body = { pipelineType: job.pipeline_type, sessionKey: sessionKey };
+      if (job.book) { body.book = job.book; body.startChapter = job.start_chapter; body.endChapter = job.end_chapter; }
+      window.flowApi.post("/api/pipelines/start", body).then(function (res) {
+        if (res.ok) {
+          window.flowShell.toast("Retry queued for " + scopeOf(job));
+        } else if (res.status === 503) {
+          aiDisabled = true;
+          noAiState.hidden = false;
+          window.flowShell.toast("AI not configured — retry unavailable", { nudge: true });
+        } else if (res.status === 409) {
+          window.flowShell.toast("Already running/queued elsewhere", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+        loadJobs();
+      });
+    });
+
+    // Every real call the shell dispatches (Details/Cancel/Dismiss) reloads
+    // the list afterward so state reflects the server, not a local guess.
+    jobsBody.addEventListener("flow:handled", function (ev) {
+      var detail = ev.detail;
+      if (!detail || !detail.result) return;
+      if (detail.result.ok) {
+        loadJobs();
+      } else if (detail.result.status === 503) {
+        aiDisabled = true;
+        noAiState.hidden = false;
         renderJobs();
       }
     });
 
     document.getElementById("dismissAllBtn").addEventListener("click", function () {
-      jobs = jobs.filter(function (j) { return j.state === "running" || j.state === "queued"; });
-      renderJobs();
+      var dismissable = jobs.filter(function (j) { return j.state === "failed" || j.state === "cancelled" || j.state === "done"; });
+      if (!dismissable.length) return;
+      Promise.all(dismissable.map(function (j) {
+        return window.flowApi.post("/api/pipelines/" + encodeURIComponent(j.job_id) + "/notified");
+      })).then(function () { loadJobs(); });
     });
 
     // --- AI menu ---
@@ -596,6 +694,7 @@
     var pendingType = null;
 
     menu.querySelectorAll(".mi[data-pipeline]").forEach(function (mi) {
+      if (mi.disabled) return;
       mi.addEventListener("click", function () {
         menu.setAttribute("data-open", "false");
         pendingType = mi.getAttribute("data-pipeline");
@@ -603,14 +702,16 @@
         var chapter = document.getElementById("pickChapter").value;
         var scope = book + " " + chapter;
 
-        // Conflict check: does a running/dispatching job already cover this scope?
-        var conflict = jobs.find(function (j) { return j.scope === scope && (j.state === "running" || j.state === "dispatching"); });
-        if (conflict && !conflict.mine) {
-          document.getElementById("conflictUser").textContent = conflict.requestedBy || "another translator";
-          document.getElementById("conflictType").textContent = (LABELS[conflict.type] || conflict.type).toLowerCase();
-          document.getElementById("conflictScope").textContent = conflict.scope;
-          document.getElementById("conflictAgo").textContent = conflict.started || "";
-          document.getElementById("conflictStage").textContent = conflict.stage || "running";
+        // Client-side pre-check against the jobs we already have loaded —
+        // the server re-checks for real on POST and returns 409 "conflict"
+        // if someone else's job covers the same scope (handled below too).
+        var conflict = jobs.find(function (j) { return scopeOf(j) === scope && (j.state === "running" || j.state === "dispatching") && (!window.flowApi.me || j.user_id !== window.flowApi.me.userId); });
+        if (conflict) {
+          document.getElementById("conflictUser").textContent = conflict.started_by_username || "another translator";
+          document.getElementById("conflictType").textContent = (LABELS[conflict.pipeline_type] || conflict.pipeline_type).toLowerCase();
+          document.getElementById("conflictScope").textContent = scope;
+          document.getElementById("conflictAgo").textContent = timeAgo(conflict.created_at);
+          document.getElementById("conflictStage").textContent = conflict.current_status || conflict.current_skill || "running";
           conflictDialog.showModal();
           return;
         }
@@ -629,39 +730,90 @@
     document.getElementById("confirmStartBtn").addEventListener("click", function () {
       confirmDialog.close();
       var book = document.getElementById("pickBook").value;
-      var chapter = document.getElementById("confirmRange").value;
-      var scope = book + " " + chapter;
-      var newJob = { id: "j" + Date.now(), type: pendingType, scope: scope, state: "running", stage: STAGES[pendingType][0], batch: pendingType === "notes" ? [1, 11] : null, started: "just now", mine: true, queuePos: null };
-      jobs.unshift(newJob);
-      renderJobs();
-      if (document.body.dataset.scenario !== "no-ai") {
-        document.getElementById("lockScope").textContent = scope;
-        document.getElementById("lockPipelineType").textContent = LABELS[pendingType];
-        document.getElementById("lockBanner").hidden = false;
+      var chapterNum = parseInt(document.getElementById("confirmRange").value, 10);
+      if (!book || !chapterNum) {
+        window.flowShell.toast("Pick a book and chapter first", { nudge: true });
+        return;
       }
-    });
+      var scope = book + " " + chapterNum;
+      var sessionKey = pendingType + "-" + book + "-" + chapterNum + "-" + Date.now();
+      var body = { pipelineType: pendingType, sessionKey: sessionKey, book: book, startChapter: chapterNum, endChapter: chapterNum };
+      if (pendingType === "generate") {
+        // Maps 1:1 onto the real PipelineOptions schema (.strict() —
+        // api/src/pipelines.ts): contentTypes picks ult/ust; there is only
+        // one shared alignment flag for both, not a per-lane toggle.
+        var wantUlt = document.getElementById("optUlt").checked;
+        var wantUst = document.getElementById("optUst").checked;
+        var wantAlign = document.getElementById("optAlign").checked;
+        var options = {};
+        var contentTypes = [];
+        if (wantUlt) contentTypes.push("ult");
+        if (wantUst) contentTypes.push("ust");
+        if (!contentTypes.length) {
+          window.flowShell.toast("Pick at least one of ULT/UST", { nudge: true });
+          return;
+        }
+        if (contentTypes.length < 2) options.contentTypes = contentTypes;
+        if (!wantAlign) options.noAlign = true;
+        if (Object.keys(options).length) body.options = options;
+      }
 
-    // --- demo scenario switcher ---
-    var scenarioBtns = document.querySelectorAll("[data-scenario-btn]");
-    function applyScenario(name) {
-      document.body.dataset.scenario = name;
-      scenarioBtns.forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-scenario-btn") === name ? "true" : "false"); });
-      document.getElementById("noAiState").hidden = name !== "no-ai";
-      document.getElementById("mainAiUi").hidden = name === "no-ai";
-      document.getElementById("lockBanner").hidden = name !== "locked";
-      document.getElementById("readyBanner").hidden = name !== "ready";
-      if (name === "no-ai") document.getElementById("awayBanner").hidden = true;
-    }
-    scenarioBtns.forEach(function (b) {
-      b.addEventListener("click", function () { applyScenario(b.getAttribute("data-scenario-btn")); });
+      window.flowShell.toast("→ POST /api/pipelines/start", { bundle: "D" });
+      window.flowApi.post("/api/pipelines/start", body).then(function (res) {
+        if (res.ok) {
+          window.flowShell.toast("✓ " + res.status + " run " + (res.data.status || "queued") + " for " + scope);
+        } else if (res.status === 503) {
+          aiDisabled = true;
+          noAiState.hidden = false;
+          window.flowShell.toast("AI not configured for this workspace", { nudge: true });
+        } else if (res.status === 409 && res.body && res.body.error === "conflict") {
+          var existing = res.body.existing || {};
+          document.getElementById("conflictUser").textContent = existing.started_by_username || "another translator";
+          document.getElementById("conflictType").textContent = (LABELS[existing.pipeline_type] || existing.pipeline_type || "").toLowerCase();
+          document.getElementById("conflictScope").textContent = scope;
+          document.getElementById("conflictAgo").textContent = timeAgo(existing.created_at);
+          document.getElementById("conflictStage").textContent = existing.current_status || existing.current_skill || "running";
+          conflictDialog.showModal();
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + (res.error || res.kind), { nudge: true });
+        }
+        loadJobs();
+      });
     });
 
     document.getElementById("awayDismissBtn").addEventListener("click", function () {
+      var btn = document.getElementById("awayDismissBtn");
+      var jobId = btn.getAttribute("data-param-jobid");
       document.getElementById("awayBanner").hidden = true;
+      if (jobId) window.flowApi.post("/api/pipelines/" + encodeURIComponent(jobId) + "/notified");
     });
 
-    renderJobs();
-    applyScenario("normal");
+    // The "while you were away" banner has no fixture — it only shows when a
+    // real terminal job in the loaded list hasn't been notified yet.
+    function updateAwayBanner() {
+      var candidate = jobs.find(function (j) {
+        return (j.state === "done" || j.state === "failed" || j.state === "cancelled") && !j.notified_user_at
+          && window.flowApi.me && j.user_id === window.flowApi.me.userId;
+      });
+      var banner = document.getElementById("awayBanner");
+      if (candidate) {
+        banner.querySelector(".banner-msg").textContent = "\"" + (LABELS[candidate.pipeline_type] || candidate.pipeline_type) + "\" finished for " + scopeOf(candidate) + " while you were away.";
+        document.getElementById("awayDismissBtn").setAttribute("data-param-jobid", candidate.job_id);
+        banner.hidden = false;
+      } else {
+        banner.hidden = true;
+      }
+    }
+    var origRenderJobs = renderJobs;
+    renderJobs = function () { origRenderJobs(); updateAwayBanner(); };
+
+    document.getElementById("pickBook").addEventListener("change", updateBanners);
+    document.getElementById("pickChapter").addEventListener("change", updateBanners);
+
+    window.flowApi.ready.then(function () {
+      checkAiAvailability();
+      loadJobs();
+    });
   })();
   </script>
 </body>

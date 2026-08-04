@@ -224,7 +224,7 @@
   .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
   .dlg-body { padding: 14px 16px; overflow: auto; }
   .sbs-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  @media (max-width: 780px) { .sbs-cols { grid-template-columns: 1fr; } }
+  @media (max-width: 820px) { .sbs-cols { grid-template-columns: 1fr; } }
   .sbs-col { background: var(--card-2); border-radius: var(--radius-sm); padding: 10px; }
   .sbs-col h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2); margin: 0 0 8px; }
   .reading-line { font-family: var(--font-scripture); font-size: 14.5px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-block-end: 8px; }
@@ -289,7 +289,7 @@
         <h3>Reference — unfoldingWord's ULT alignment</h3>
         <span class="spacer"></span>
         <!-- Refresh would reuse the existing verse-content GET for the ULT lane (00b, bundle G/H). -->
-        <button type="button" class="cluster-btn" id="refPanelRefreshBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion" data-bundle="H" title="Refresh from ULT verse content">⟳ Refresh</button>
+        <button type="button" class="cluster-btn" id="refPanelRefreshBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion" data-handle-manual data-bundle="H" title="Refresh from ULT verse content">⟳ Refresh</button>
       </div>
       <p class="ref-panel-note">Read-only — shown for comparison, not editable here.<span class="ref-panel-phone-note"> Whether this fits comfortably on a phone screen is still an open question; it's collapsed by default here.</span></p>
       <div class="ref-groups" id="refGroups" role="list" aria-label="unfoldingWord ULT reference alignment" dir="rtl"></div>
@@ -324,11 +324,12 @@
 
       <div class="action-bar">
         <button type="button" class="btn btn-outline" id="acceptSuggestionsBtn" data-handle="local:accept-suggestions" data-bundle="H">Accept 1 suggestion</button>
-        <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
+        <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-handle-manual data-bundle="H">Refresh suggestions</button>
         <span class="spacer"></span>
-        <button type="button" class="btn btn-primary" id="saveBtn"
+        <button type="button" class="btn btn-primary" id="saveBtn" disabled
           data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
       </div>
+      <p class="canvas-note" id="saveDisabledNote">Save is disabled in this preview: it cannot faithfully reconstruct a valid USFM <code>\zaln-s/\zaln-e</code> verseObjects tree from the drag-canvas state (see web/src/lib/replace.ts for what that reconstruction actually requires). Sending a malformed body would be worse than not saving.</p>
     </div>
 
     <!-- ============ TAP-TO-PAIR VIEW ============ -->
@@ -340,7 +341,7 @@
         <span class="at-count" id="tapProgress">0 of 0 words aligned</span>
         <button type="button" class="jump-pill" id="jumpUnalignedBtn">Jump to unaligned ↓</button>
         <span class="spacer"></span>
-        <button type="button" class="cluster-btn" id="tapRefreshBtn" data-handle="GET /api/align/suggest" data-bundle="H">Refresh suggestions</button>
+        <button type="button" class="cluster-btn" id="tapRefreshBtn" data-handle="GET /api/align/suggest" data-handle-manual data-bundle="H">Refresh suggestions</button>
       </div>
 
       <div class="source-ribbon-outer" dir="rtl">
@@ -360,9 +361,10 @@
 
       <div class="action-bar">
         <span class="spacer"></span>
-        <button type="button" class="btn btn-primary" id="saveBtnTap"
+        <button type="button" class="btn btn-primary" id="saveBtnTap" disabled
           data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
       </div>
+      <p class="canvas-note">Save is disabled here for the same reason as the drag view — see the note above.</p>
     </div>
   </main>
 
@@ -404,11 +406,156 @@
     </div>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
     "use strict";
     function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    var CTX = { book: "ZEC", chapter: 1, verse: 8 };
+    var chapterData = null;
+    var ultAvailable = false;
+    var SOURCE_WORDS = []; // real UHB word list [{i,t,strong,occurrence}]
+
+    // Real ULT \zaln alignment, flattened the same way as t6-words.html:
+    // groups = one per top-level milestone {sourceText}; words = every
+    // rendered ULT word in verse order tagged with its groupIdx (-1 = not
+    // covered by a milestone). This IS the verse's current real alignment —
+    // used both to seed the editor's starting state and (best-effort) to
+    // rebuild source-word groupings that span more than one Hebrew word.
+    function extractTargetWordList(ultVerse) {
+      var vo = ultVerse && ultVerse.content && ultVerse.content.verseObjects;
+      var words = [];
+      var groups = [];
+      if (!Array.isArray(vo)) return { words: words, groups: groups };
+      function walk(nodes, groupIdx) {
+        (nodes || []).forEach(function (node) {
+          if (!node) return;
+          if (node.tag === "zaln" && node.type === "milestone") {
+            var gi = groups.length;
+            groups.push({ sourceText: node.content || "" });
+            walk(node.children, gi);
+            return;
+          }
+          if (node.type === "word" && node.text) {
+            words.push({ text: node.text, groupIdx: groupIdx });
+            return;
+          }
+          if (Array.isArray(node.children)) walk(node.children, groupIdx);
+        });
+      }
+      walk(vo, -1);
+      return { words: words, groups: groups };
+    }
+
+    function extractSourceWords(uhbVerse) {
+      var vo = uhbVerse && uhbVerse.content && uhbVerse.content.verseObjects;
+      if (!Array.isArray(vo)) return [];
+      var out = [];
+      vo.forEach(function (node) {
+        if (node && node.type === "word" && node.text) {
+          out.push({ i: out.length, t: node.text, strong: node.strong || null, occurrence: node.occurrence ? Number(node.occurrence) : 1 });
+        }
+      });
+      return out;
+    }
+
+    // Best-effort: fold contiguous runs of UHB words into ONE source group
+    // when a real zaln milestone's `content` (which may be multi-word, e.g.
+    // "עַל סוּס") matches them in sequence — this reconstructs the verse's
+    // actual current groupings rather than always showing one card per word.
+    // A milestone whose content can't be matched contiguously (rare; would
+    // mean the source text doesn't literally match its own alignment content)
+    // is simply left unmatched — its target words show up unaligned instead
+    // of guessed at.
+    function buildSourceGroups(uhbWords, extraction) {
+      var targets = extraction.words.map(function (w, i) { return { id: "t" + i, text: w.text }; });
+      var targetIdsByGroupIdx = {};
+      extraction.words.forEach(function (w, i) {
+        if (w.groupIdx > -1) {
+          (targetIdsByGroupIdx[w.groupIdx] = targetIdsByGroupIdx[w.groupIdx] || []).push("t" + i);
+        }
+      });
+      var claimed = uhbWords.map(function () { return false; });
+      var milestoneForStart = {};
+      extraction.groups.forEach(function (g, gi) {
+        var tokens = (g.sourceText || "").trim().split(/\s+/).filter(Boolean);
+        if (!tokens.length) return;
+        for (var start = 0; start + tokens.length <= uhbWords.length; start++) {
+          var ok = true;
+          for (var k = 0; k < tokens.length; k++) {
+            if (claimed[start + k] || uhbWords[start + k].t !== tokens[k]) { ok = false; break; }
+          }
+          if (ok) {
+            for (var k2 = 0; k2 < tokens.length; k2++) claimed[start + k2] = true;
+            milestoneForStart[start] = { end: start + tokens.length - 1, targetIds: (targetIdsByGroupIdx[gi] || []).slice() };
+            break;
+          }
+        }
+      });
+      var groups = [];
+      var i = 0, gcounter = 0;
+      while (i < uhbWords.length) {
+        var m = milestoneForStart[i];
+        if (m) {
+          groups.push({ id: "g" + (gcounter++), words: uhbWords.slice(i, m.end + 1).map(function (w) { return { idx: w.i, heb: w.t }; }), aligned: m.targetIds });
+          i = m.end + 1;
+        } else {
+          groups.push({ id: "g" + (gcounter++), words: [{ idx: uhbWords[i].i, heb: uhbWords[i].t }], aligned: [] });
+          i++;
+        }
+      }
+      return { groups: groups, targets: targets };
+    }
+
+    function loadReal() {
+      return window.flowApi.ready.then(function () {
+        window.flowShell.setContext({ book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, bibleVersion: "ULT" });
+        return window.flowApi.chapter(CTX.book, CTX.chapter);
+      }).then(function (res) {
+        if (!res.ok) {
+          toast("Could not load chapter data (" + res.status + " " + res.error + ")", { bundle: "H" });
+          return;
+        }
+        chapterData = res.data;
+        var uhb = chapterData.verses && chapterData.verses.UHB && chapterData.verses.UHB[CTX.verse];
+        SOURCE_WORDS = extractSourceWords(uhb);
+        var ult = chapterData.verses && chapterData.verses.ULT && chapterData.verses.ULT[CTX.verse];
+        ultAvailable = !!ult;
+        if (!ultAvailable) {
+          // Verified live against this environment: chapters.ts omits a lane
+          // entirely once scripture_lane_state.replacement_required = 1 (checked
+          // via `wrangler d1 execute ... SELECT * FROM scripture_lane_state`).
+          // ULT is currently quarantined here, so there is no target text or
+          // alignment to edit — render that honestly instead of a fixture.
+          showUltUnavailable();
+          return;
+        }
+        var extraction = extractTargetWordList(ult);
+        var built = buildSourceGroups(SOURCE_WORDS, extraction);
+        initFromReal(built.groups, built.targets, extraction.groups);
+      });
+    }
+
+    function showUltUnavailable() {
+      // Replaces each view's ENTIRE contents (toolbar, canvas, action bar —
+      // everything), so nothing inside them (unalignedCount, tapProgress, the
+      // Save buttons, etc.) exists to update afterward. Do that first, then stop.
+      ["dragView", "tapView"].forEach(function (id) {
+        el(id).innerHTML = '<p class="canvas-note" style="font-style:italic;">' +
+          'ULT verse content is unavailable in this environment right now — the ULT scripture lane is flagged ' +
+          '<code>replacement_required</code> (verified via the live D1 scripture_lane_state table), so chapters.ts omits it entirely. ' +
+          'There is nothing real to align until that lane is replaced. Nothing on this screen is faked to look otherwise.</p>';
+      });
+      el("refPanel").innerHTML = '<p class="ref-panel-note">Same reason — no ULT alignment data to show.</p>';
+    }
 
     function wireMenu(btnId, menuId) {
       var btn = el(btnId), menu = el(menuId);
@@ -433,24 +580,24 @@
     el("closeSbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = true; });
 
     /* =========================================================
-       Reference alignment panel (issue #150 mockup) — read-only,
-       local fixture reflecting unfoldingWord's own ULT alignment
-       (independent of whatever the translator has paired below).
+       Reference alignment panel (issue #150 mockup) — real data note: this
+       environment has no data source distinct from the working ULT copy
+       (no separate "unfoldingWord canonical" snapshot table), so rather than
+       inventing a second fixture, the panel shows the SAME real \zaln
+       alignment the editor below loads, read-only. Populated by
+       initFromReal() once the real chapter data is in.
        ========================================================= */
-    var REFERENCE_GROUPS = [
-      { heb: "אִישׁ", eng: "a man" },
-      { heb: "רֹכֵב", eng: "riding" },
-      { heb: "עַל", eng: "on" },
-      { heb: "סוּס", eng: "a horse" },
-      { heb: "אָדֹם", eng: "red" },
-      { heb: "וְהוּא", eng: "and he" },
-      { heb: "עֹמֵד", eng: "standing" }
-    ];
-    (function renderReferencePanel() {
-      el("refGroups").innerHTML = REFERENCE_GROUPS.map(function (g) {
-        return '<div class="ref-group" role="listitem"><div class="rg-heb">' + escapeHtml(g.heb) + '</div><div class="rg-eng" dir="ltr">' + escapeHtml(g.eng) + "</div></div>";
+    function renderReferencePanel(groups, targets) {
+      function targetText(id) {
+        var t = targets.filter(function (x) { return x.id === id; })[0];
+        return t ? t.text : "";
+      }
+      el("refGroups").innerHTML = groups.map(function (g) {
+        var heb = g.words.map(function (w) { return w.heb; }).join(" ");
+        var eng = g.aligned.length ? g.aligned.map(targetText).join(" ") : "(unaligned)";
+        return '<div class="ref-group" role="listitem"><div class="rg-heb">' + escapeHtml(heb) + '</div><div class="rg-eng" dir="ltr">' + escapeHtml(eng) + "</div></div>";
       }).join("");
-    })();
+    }
     el("refPanelToggle").addEventListener("click", function () {
       var willOpen = el("refPanel").hidden;
       el("refPanel").hidden = !willOpen;
@@ -461,18 +608,16 @@
     /* =========================================================
        Drag view — data-driven, with WORKING native DnD for the demo.
        Every source word always renders a card (Hebrew visible even
-       when unaligned). Ghost = wordMAP suggestion awaiting accept.
+       when unaligned). Populated from the real \zaln groups/targets by
+       initFromReal() — there is no local fixture data on this screen.
+       "ghost" (wordMAP suggestion awaiting accept) never populates from real
+       data here: GET /api/align/suggest returns per-Strong's candidate
+       surfaces, not a ready-to-drop card, so this preview doesn't attempt to
+       synthesize ghost cards from it (see refreshSuggestBtn's handler for
+       what that endpoint's real response looks like instead).
        ========================================================= */
-    var DRAG_INITIAL = [
-      { heb: "אִישׁ", targets: ["a man"], ghost: false },
-      { heb: "רֹכֵב", targets: ["riding"], ghost: false },
-      { heb: "עַל סוּס", targets: ["on", "a horse"], ghost: true },
-      { heb: "אָדֹם", targets: [], ghost: false },
-      { heb: "וְהוּא", targets: ["and he"], ghost: false },
-      { heb: "עֹמֵד", targets: [], ghost: false }
-    ];
-    var DRAG_TARGET_WORDS = ["a man", "riding", "on", "a horse", "red", "and he", "standing"];
-    var dragCards = JSON.parse(JSON.stringify(DRAG_INITIAL));
+    var DRAG_TARGET_WORDS = [];
+    var dragCards = [];
 
     function dragAlignedWords() {
       var set = {};
@@ -546,17 +691,17 @@
       if (clr) { dragCards[parseInt(clr.getAttribute("data-drag-clear"), 10)].targets = []; renderDragView(); }
     });
 
-    el("acceptSuggestionsBtn").addEventListener("click", function () {
-      dragCards.forEach(function (c) { c.ghost = false; });
-      renderDragView();
-      window.flowShell.toast("Suggestion accepted (local) — Save to persist", { bundle: "H" });
-    });
+    // No ghost cards ever populate from real data (see comment above dragCards) —
+    // there's nothing for this button to accept, so hide it rather than leave a
+    // dead control that would toast a fake success.
+    el("acceptSuggestionsBtn").style.display = "none";
     el("clearAllBtn").addEventListener("click", function () {
       dragCards.forEach(function (c) { c.targets = []; c.ghost = false; });
       renderDragView();
     });
+    var dragInitialSnapshot = [];
     el("resetBtn").addEventListener("click", function () {
-      dragCards = JSON.parse(JSON.stringify(DRAG_INITIAL));
+      dragCards = JSON.parse(JSON.stringify(dragInitialSnapshot));
       renderDragView();
     });
     el("unalignedOnlyToggle").addEventListener("click", function () {
@@ -564,7 +709,6 @@
       el("unalignedOnlyToggle").setAttribute("aria-pressed", on ? "false" : "true");
       renderDragView();
     });
-    renderDragView();
 
     /* =========================================================
        Form-factor policy: <560 tap-only; 560-899 tap default;
@@ -601,31 +745,16 @@
        no per-tap network calls; Save alignment is the one write).
        ========================================================= */
     var comboCounter = 0;
+    // Populated from the real \zaln data by initFromReal(); starts empty (no
+    // fixture) — this is the verse's actual current alignment, not a demo state.
+    // `suggestions` stays empty: GET /api/align/suggest returns per-Strong's
+    // candidate surfaces (see refreshSuggestBtn), not ready-made source/target
+    // id pairs, so this preview doesn't fabricate the combine-suggestion queue.
     var state = {
-      sourceGroups: [
-        { id: "g1", words: [{ idx: 1, heb: "אִישׁ" }], aligned: ["t1"] },
-        { id: "g2", words: [{ idx: 2, heb: "רֹכֵב" }], aligned: ["t2"] },
-        { id: "g3", words: [{ idx: 3, heb: "עַל" }], aligned: [] },
-        { id: "g4", words: [{ idx: 4, heb: "סוּס" }], aligned: [] },
-        { id: "g5", words: [{ idx: 5, heb: "אָדֹם" }], aligned: [] },
-        { id: "g6", words: [{ idx: 6, heb: "וְהוּא" }], aligned: ["t6"] },
-        { id: "g7", words: [{ idx: 7, heb: "עֹמֵד" }], aligned: [] }
-      ],
-      targets: [
-        { id: "t1", text: "a man" },
-        { id: "t2", text: "riding" },
-        { id: "t3", text: "on" },
-        { id: "t4", text: "a horse" },
-        { id: "t5", text: "red" },
-        { id: "t6", text: "and he" },
-        { id: "t7", text: "standing" }
-      ],
+      sourceGroups: [],
+      targets: [],
       selection: { side: null, ids: [] },
-      suggestions: [
-        { sourceIds: ["g3", "g4"], targetIds: ["t3", "t4"], srcLabel: "עַל סוּס", tgtLabel: "on a horse" },
-        { sourceIds: ["g5"], targetIds: ["t5"], srcLabel: "אָדֹם", tgtLabel: "red" },
-        { sourceIds: ["g7"], targetIds: ["t7"], srcLabel: "עֹמֵד", tgtLabel: "standing" }
-      ],
+      suggestions: [],
       suggestionIdx: 0
     };
 
@@ -773,12 +902,6 @@
       s.targetIds.forEach(function (tid) { commitAttach([tid], destId); });
     }
 
-    function escapeHtml(str) {
-      return String(str).replace(/[&<>"']/g, function (c) {
-        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
-      });
-    }
-
     function renderSuggestions() {
       var stack = el("suggestStack");
       var done = el("suggestDone");
@@ -786,6 +909,9 @@
         stack.hidden = true;
         stack.innerHTML = "";
         done.hidden = false;
+        done.textContent = state.suggestions.length
+          ? "All suggestions reviewed — manual tap-to-pair is below."
+          : "No combine-suggestions synthesized in this preview (see the code comment above `state.suggestions`) — manual tap-to-pair is below.";
         return;
       }
       done.hidden = true;
@@ -935,12 +1061,55 @@
       target.scrollIntoView({ inline: "center", block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
     });
 
-    el("tapRefreshBtn").addEventListener("click", function () {
-      state.suggestionIdx = 0;
-      renderSuggestions();
+    // Real GET /api/align/suggest over this verse's real UHB Strong's numbers.
+    // The response is per-Strong's candidate target surfaces + confidence
+    // (align_freq corpus / lexicon fallback) — informational only in this
+    // preview (see comments above `state.suggestions`), so it's rendered as a
+    // toast/summary rather than synthesized into draggable ghost cards.
+    function fetchAlignSuggestions() {
+      var strongs = SOURCE_WORDS.map(function (w) { return w.strong; }).filter(Boolean);
+      var uniq = strongs.filter(function (s, i) { return strongs.indexOf(s) === i; });
+      if (!uniq.length) { toast("No Strong's numbers on this verse's source words", { bundle: "H" }); return; }
+      window.flowApi.get("/api/align/suggest", { bible: "ult", strongs: uniq.join(",") }).then(function (res) {
+        if (!res.ok) { toast("Suggestion lookup failed: " + res.status + " " + res.error, { bundle: "H" }); return; }
+        var keys = Object.keys(res.data.suggestions || {});
+        if (!keys.length) {
+          toast("No learned alignment suggestions for these " + uniq.length + " Strong's numbers in this environment (align_freq has no rows for them)", { bundle: "H" });
+          return;
+        }
+        var summary = keys.slice(0, 3).map(function (k) {
+          var top = res.data.suggestions[k].words[0];
+          return k + "→" + (top ? top.surface : "?");
+        }).join(", ");
+        toast("Suggestions for " + keys.length + " word(s): " + summary + (keys.length > 3 ? "…" : ""), { bundle: "H" });
+      });
+    }
+    el("refreshSuggestBtn").addEventListener("click", fetchAlignSuggestions);
+    el("tapRefreshBtn").addEventListener("click", fetchAlignSuggestions);
+
+    el("refPanelRefreshBtn").addEventListener("click", function () {
+      loadReal();
     });
 
-    render();
+    // Wire the real \zaln-derived groups/targets into both interaction models
+    // and render everything. Called once after loadReal() fetches real data
+    // (or not at all if the ULT lane is quarantined — see showUltUnavailable).
+    function initFromReal(groups, targets, zalnGroups) {
+      renderReferencePanel(groups, targets);
+
+      dragCards = groups.map(function (g) {
+        return { heb: g.words.map(function (w) { return w.heb; }).join(" "), targets: g.aligned.map(function (id) { var t = targets.filter(function (x) { return x.id === id; })[0]; return t ? t.text : ""; }), ghost: false };
+      });
+      DRAG_TARGET_WORDS = targets.map(function (t) { return t.text; });
+      dragInitialSnapshot = JSON.parse(JSON.stringify(dragCards));
+      renderDragView();
+
+      state.sourceGroups = groups;
+      state.targets = targets;
+      render();
+    }
+
+    loadReal();
   })();
   </script>
 </body>

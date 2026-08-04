@@ -210,24 +210,24 @@
       <div class="pack-status">
         <span class="chip-pack" id="packChip">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
-          Context pack ready <span class="sha">7f2a91c</span>
+          <span id="packChipText">Loading export status…</span>
         </span>
         <span class="assisted-toggle">
           <label for="modeToggle">Project mode</label>
           <button type="button" class="switch" id="modeToggle" role="switch" aria-checked="true" data-handle="PATCH /api/project-config/mode" data-bundle="C" aria-label="Authoring vs translation mode"></button>
           <span id="modeToggleLabel">translation</span>
         </span>
-        <button type="button" class="btn btn-primary" style="min-height:34px; padding:0 12px;" data-handle="POST /api/exports/run" data-bundle="C">Export now</button>
-        <button type="button" class="btn btn-warn" id="exportForceBtn" style="min-height:34px; padding:0 12px; display:none;" data-handle="POST /api/exports/run" data-bundle="C">Export (force)</button>
-        <p class="pinned-note">The pack is a git-committed snapshot the AI reads from — <code>contextRef</code> pins the exact commit a run used, so a run is always reproducible even if the pack changes later. Templates section of the pack: <strong id="templatesTsvCount">27</strong> rows in <code>templates.tsv</code>.</p>
+        <button type="button" class="btn btn-primary" id="exportNowBtn" style="min-height:34px; padding:0 12px;" data-handle="POST /api/exports/run" data-bundle="C" data-handle-manual>Export now</button>
+        <button type="button" class="btn btn-warn" id="exportForceBtn" style="min-height:34px; padding:0 12px; display:none;" data-handle="POST /api/exports/run" data-bundle="C" data-handle-manual>Export (force)</button>
+        <p class="pinned-note">The pack is a git-committed snapshot the AI reads from — <code>contextRef</code> pins the exact commit a run used, so a run is always reproducible even if the pack changes later. <span id="packDetail"></span></p>
       </div>
 
-      <!-- 409 version-conflict demo — the shared translation_prefs row means
-           Brief/Instructions/Common-issues share one version number. A demo
-           button below simulates another editor saving first; the real fix
-           (prefsConflict.ts) adopts the server's fresh row directly instead
-           of refetching, so an unsaved edit in a DIFFERENT field is never
-           clobbered. -->
+      <!-- Real 409 version-conflict handling — the shared translation_prefs row
+           means Brief/Instructions/Common-issues share one version number.
+           Shown for real when a PUT actually comes back 409 version_mismatch
+           (e.g. a second tab/editor saved first); fields you haven't touched
+           are refreshed from the server's row, unsaved edits in a field you
+           DID touch are kept. -->
       <div class="conflict-box" id="conflictBox" role="alert">
         <strong>Someone else saved preferences first.</strong> Your edits here are kept — only the fields you didn't touch were refreshed from their save.
         <div class="cf-actions">
@@ -245,11 +245,11 @@
           <div class="panel-body">
             <div class="field">
               <label class="f-label" for="fAudience">Audience</label>
-              <textarea class="tinput-flow" id="fAudience" rows="1" spellcheck="false">Adult native speakers, ESL high-school reading level</textarea>
+              <textarea class="tinput-flow" id="fAudience" rows="1" spellcheck="false"></textarea>
             </div>
             <div class="field">
               <label class="f-label" for="fPurpose">Purpose</label>
-              <textarea class="tinput-flow" id="fPurpose" rows="1" spellcheck="false">Church use — public reading and personal study</textarea>
+              <textarea class="tinput-flow" id="fPurpose" rows="1" spellcheck="false"></textarea>
             </div>
             <div class="field">
               <label class="f-label" for="fRegister">Register</label>
@@ -265,9 +265,9 @@
             </div>
           </div>
           <div class="panel-foot">
-            <span class="foot-state" id="briefFoot">Saved 2 days ago</span>
+            <span class="foot-state" id="briefFoot">Loading…</span>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-primary" data-handle="PUT /api/translation-memory/prefs" data-headers="If-Match" data-bundle="C" id="saveBriefBtn">Save</button>
+            <button type="button" class="btn btn-primary" data-handle="PUT /api/translation-memory/prefs" data-headers="If-Match" data-bundle="C" data-handle-manual id="saveBriefBtn">Save</button>
           </div>
         </div>
       </section>
@@ -283,22 +283,22 @@
           <div class="panel-body">
             <div class="field">
               <label class="f-label" for="fInstructions">Instructions (markdown, 20,000-char cap)</label>
-              <textarea class="md-area" id="fInstructions" maxlength="20000" oninput="window.__markDirty && window.__markDirty()">Always use "Yahweh" for the divine name, never a substitute title. Keep verbs in active voice where the source allows it.</textarea>
-              <p class="char-count" id="instructionsCount">118 / 20,000</p>
+              <textarea class="md-area" id="fInstructions" maxlength="20000" oninput="window.__markDirty && window.__markDirty()"></textarea>
+              <p class="char-count" id="instructionsCount">0 / 20,000</p>
             </div>
             <hr style="border:none; border-block-start:1px solid var(--line); margin:14px 0;" />
             <div class="field">
               <label class="f-label" for="fCommonIssues">Common issues (markdown, 50,000-char cap)</label>
               <p class="f-help" style="margin-block-end:6px;">Recurring problems this team hits — false friends, grammar traps, formatting habits. Rides inside <code>instructions.md</code> under a "Common issues" heading at export time.</p>
-              <textarea class="md-area" id="fCommonIssues" maxlength="50000" oninput="window.__markDirty && window.__markDirty()">Translators keep dropping the definite article before "Messiah" — check for this in every draft.</textarea>
-              <p class="char-count" id="commonIssuesCount">98 / 50,000</p>
+              <textarea class="md-area" id="fCommonIssues" maxlength="50000" oninput="window.__markDirty && window.__markDirty()"></textarea>
+              <p class="char-count" id="commonIssuesCount">0 / 50,000</p>
             </div>
           </div>
           <div class="panel-foot">
-            <span class="foot-state" id="instructionsFoot">Saved 5 hours ago</span>
+            <span class="foot-state" id="instructionsFoot">Loading…</span>
             <span class="spacer"></span>
             <button type="button" class="btn btn-ghost" id="previewInstructionsBtn">Preview</button>
-            <button type="button" class="btn btn-primary" data-handle="PUT /api/translation-memory/prefs" data-headers="If-Match" data-bundle="C" id="saveInstructionsBtn">Save</button>
+            <button type="button" class="btn btn-primary" data-handle="PUT /api/translation-memory/prefs" data-headers="If-Match" data-bundle="C" data-handle-manual id="saveInstructionsBtn">Save</button>
           </div>
         </div>
       </section>
@@ -312,57 +312,44 @@
           </div>
           <div class="panel-body">
             <div class="picker-row" style="display:flex; gap:10px; flex-wrap:wrap; margin-block-end:12px;">
-              <input class="tinput" placeholder="Search terms…" style="max-width:220px;" data-handle="GET /api/translation-memory/terms" data-bundle="C" />
-              <select class="tselect" style="max-width:160px;">
-                <option>All statuses</option>
-                <option>Preferred</option><option>Admitted</option><option>Deprecated</option><option>Forbidden</option><option>Do not translate</option>
+              <input class="tinput" id="termSearch" placeholder="Search terms…" style="max-width:220px;" />
+              <select class="tselect" id="termStatusFilter" style="max-width:160px;">
+                <option value="">All statuses</option>
+                <option value="preferred">Preferred</option><option value="admitted">Admitted</option><option value="deprecated">Deprecated</option><option value="forbidden">Forbidden</option><option value="do_not_translate">Do not translate</option>
               </select>
               <span class="spacer"></span>
               <button type="button" class="btn btn-ghost" id="toggleImportBtn">Import CSV</button>
-              <button type="button" class="btn btn-ghost" data-handle="GET /api/translation-memory/terms/export" data-bundle="C">Export CSV</button>
+              <button type="button" class="btn btn-ghost" id="exportCsvBtn" data-handle="GET /api/translation-memory/terms/export" data-bundle="C" data-handle-manual>Export CSV</button>
             </div>
             <div id="importPanel" hidden style="margin-block-end:12px; padding:10px; background:var(--card-2); border-radius:var(--radius-sm);">
-              <textarea class="md-area" style="min-height:70px;" placeholder="Paste CSV: concept_id,source_term,target_term,status,replacement,comment,tw_link"></textarea>
+              <textarea class="md-area" id="importCsvArea" style="min-height:70px;" placeholder="Paste CSV: concept_id,source_term,target_term,status,replacement,comment,tw_link"></textarea>
               <div style="display:flex; gap:8px; margin-block-start:8px;">
-                <button type="button" class="btn btn-ghost" data-handle="POST /api/translation-memory/terms/import" data-bundle="C">Preview (dry run)</button>
-                <button type="button" class="btn btn-primary" data-handle="POST /api/translation-memory/terms/import" data-bundle="C">Apply import</button>
+                <button type="button" class="btn btn-ghost" id="importDryRunBtn">Preview (dry run)</button>
+                <button type="button" class="btn btn-primary" id="importApplyBtn">Apply import</button>
               </div>
+              <p class="f-help" id="importResult" style="margin-block-start:6px;"></p>
             </div>
 
-            <div class="term-row">
-              <div style="display:flex; justify-content:space-between; align-items:baseline;">
-                <strong>God · <span class="term-status-preferred">preferred</span></strong>
-                <span style="font-size:12px; color:var(--ink-2);">rc://*/tw/dict/bible/kt/god</span>
-              </div>
-              <p style="margin:4px 0;">"Dios" — <em>rendering rationale: standard across GL Spanish resources</em></p>
-              <div style="display:flex; gap:8px;">
-                <button type="button" class="btn btn-ghost btn-sm" data-handle="PATCH /api/translation-memory/terms/:id" data-headers="If-Match" data-bundle="C">Edit</button>
-                <button type="button" class="btn btn-ghost btn-sm" data-handle="DELETE /api/translation-memory/terms/:id" data-bundle="C">Delete</button>
-              </div>
+            <!-- Add-term row — real fields for POST /api/translation-memory/terms
+                 (TermBody: concept_id + source_term required, concept_id is a
+                 free-text string identifier here, NOT a numeric id despite the
+                 task brief's "1..200" range — verified live: {"concept_id":1,...}
+                 400s invalid_type expected string; {"concept_id":"1",...} works). -->
+            <div class="term-row" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+              <input class="tinput" id="newConceptId" placeholder="concept_id (e.g. rc://*/tw/dict/bible/kt/god)" style="flex:1; min-width:180px;" />
+              <input class="tinput" id="newSourceTerm" placeholder="source term" style="flex:1; min-width:140px;" />
+              <input class="tinput" id="newTargetTerm" placeholder="target term (optional)" style="flex:1; min-width:140px;" />
+              <select class="tselect" id="newStatus" style="max-width:150px;">
+                <option value="preferred">Preferred</option><option value="admitted">Admitted</option><option value="deprecated">Deprecated</option><option value="forbidden">Forbidden</option><option value="do_not_translate">Do not translate</option>
+              </select>
+              <button type="button" class="btn btn-rerun" id="addTermBtn">+ Add term</button>
             </div>
-            <div class="term-row">
-              <div style="display:flex; justify-content:space-between; align-items:baseline;">
-                <strong>grace (mercy-flavored) · <span class="term-status-forbidden">forbidden → use "gracia"</span></strong>
-              </div>
-              <p style="margin:4px 0;">"favor" was a common mistranslation — flagged forbidden with a required replacement.</p>
-              <div style="display:flex; gap:8px;">
-                <button type="button" class="btn btn-ghost btn-sm" data-handle="PATCH /api/translation-memory/terms/:id" data-headers="If-Match" data-bundle="C">Edit</button>
-                <button type="button" class="btn btn-ghost btn-sm" data-handle="DELETE /api/translation-memory/terms/:id" data-bundle="C">Delete</button>
-              </div>
-            </div>
-            <div class="term-row">
-              <div style="display:flex; justify-content:space-between; align-items:baseline;">
-                <strong>Selah · <span class="term-status-do_not_translate">do not translate</span></strong>
-              </div>
-              <div style="display:flex; gap:8px;">
-                <button type="button" class="btn btn-ghost btn-sm" data-handle="PATCH /api/translation-memory/terms/:id" data-headers="If-Match" data-bundle="C">Edit</button>
-                <button type="button" class="btn btn-ghost btn-sm" data-handle="DELETE /api/translation-memory/terms/:id" data-bundle="C">Delete</button>
-              </div>
-            </div>
-            <button type="button" class="btn btn-rerun" style="margin-block-start:10px;" data-handle="POST /api/translation-memory/terms" data-bundle="C">+ Add term</button>
+            <p class="f-help" id="addTermError" style="display:none; color:var(--warn-ink);"></p>
+
+            <div id="termsList"></div>
           </div>
           <div class="panel-foot">
-            <span class="foot-state" id="termsFoot"><span id="termsCount">3</span> terms · <span id="termsCountLive">GET /api/translation-memory/terms/count</span></span>
+            <span class="foot-state" id="termsFoot"><span id="termsCount">0</span> terms</span>
           </div>
         </div>
       </section>
@@ -432,8 +419,8 @@
           </div>
           <div class="panel-body">
             <div class="kv">
-              <dt>Coverage</dt><dd>18 / 42 SupportReference types translated</dd>
-              <dt>Exported as</dt><dd><code>templates.tsv</code> — <span id="templatesTsvCount2">27</span> rows</dd>
+              <dt>Coverage</dt><dd id="templatesCoverage">Loading…</dd>
+              <dt>Units</dt><dd><span id="templatesUnitCount">—</span> template units (<code>GET /api/templates</code>)</dd>
             </div>
           </div>
           <div class="panel-foot">
@@ -447,6 +434,7 @@
     </main>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -478,44 +466,341 @@
     wireCounter("fInstructions", "instructionsCount", 20000);
     wireCounter("fCommonIssues", "commonIssuesCount", 50000);
 
-    // ---- unsaved-reminder chip (drafts persist locally; explicit Save only) ----
-    var dirty = false;
+    function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+    function timeAgo(unixSeconds) {
+      if (!unixSeconds) return "never saved";
+      var mins = Math.round((Date.now() - unixSeconds * 1000) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + " min ago";
+      var hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + " hr" + (hrs === 1 ? "" : "s") + " ago";
+      return Math.round(hrs / 24) + " day(s) ago";
+    }
+
+    // =========================================================
+    // Prefs (Brief + Instructions + Common issues) — one shared
+    // translation_prefs row/version. GET /api/translation-memory/prefs
+    // returns version 0 with all-null fields when never saved (verified
+    // live) — the first PUT MUST send If-Match: 0, not omit it (428
+    // if_match_required otherwise). PUT is admin-only (requireAdmin).
+    // =========================================================
+    var prefsVersion = null; // becomes a number once GET/PUT resolves
+    var dirtyFields = {}; // fieldName -> true while locally edited & unsaved
+    var suppressDirty = false; // true while applyPrefsToForm sets values programmatically
+
+    function fieldEls() {
+      return {
+        audience: document.getElementById("fAudience"),
+        purpose: document.getElementById("fPurpose"),
+        register: document.getElementById("fRegister"),
+        script_notes: document.getElementById("fScript"),
+        instructions_md: document.getElementById("fInstructions"),
+        common_issues_md: document.getElementById("fCommonIssues")
+      };
+    }
+
+    function applyPrefsToForm(prefs, onlyUntouched) {
+      suppressDirty = true;
+      var els = fieldEls();
+      Object.keys(els).forEach(function (key) {
+        if (onlyUntouched && dirtyFields[key]) return; // keep the user's unsaved edit
+        var val = prefs[key];
+        els[key].value = val == null ? (key === "register" ? "default" : "") : val;
+      });
+      els.instructions_md.dispatchEvent(new Event("input"));
+      els.common_issues_md.dispatchEvent(new Event("input"));
+      suppressDirty = false;
+      prefsVersion = prefs.version;
+      var savedText = "Saved " + timeAgo(prefs.updated_at);
+      document.getElementById("briefFoot").textContent = prefs.version === 0 ? "Never saved" : savedText;
+      document.getElementById("instructionsFoot").textContent = prefs.version === 0 ? "Never saved" : savedText;
+    }
+
+    function loadPrefs() {
+      return window.flowApi.get("/api/translation-memory/prefs").then(function (res) {
+        if (res.ok) {
+          applyPrefsToForm(res.data.prefs, false);
+        } else {
+          window.flowShell.toast("Couldn't load preferences — " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    }
+
+    // Track which fields the user has actually edited, for the 409 merge:
+    // only THOSE fields are kept — everything else adopts the server's row.
+    // suppressDirty guards the programmatic value-set in applyPrefsToForm
+    // (load, and post-save/post-conflict refresh) from being misread as a
+    // fresh user edit.
+    fieldEls().audience.addEventListener("input", function () { if (!suppressDirty) dirtyFields.audience = true; });
+    fieldEls().purpose.addEventListener("input", function () { if (!suppressDirty) dirtyFields.purpose = true; });
+    fieldEls().register.addEventListener("change", function () { if (!suppressDirty) dirtyFields.register = true; });
+    fieldEls().script_notes.addEventListener("input", function () { if (!suppressDirty) dirtyFields.script_notes = true; });
+
     window.__markDirty = function () {
-      dirty = true;
+      if (suppressDirty) return;
       document.getElementById("unsavedInstructions").hidden = false;
       document.getElementById("dotInstructions").hidden = false;
     };
-    document.getElementById("saveInstructionsBtn").addEventListener("click", function () {
-      dirty = false;
-      document.getElementById("unsavedInstructions").hidden = true;
-      document.getElementById("dotInstructions").hidden = true;
-      document.getElementById("instructionsFoot").textContent = "Saved just now";
-    });
-    document.getElementById("saveBriefBtn").addEventListener("click", function () {
-      document.getElementById("briefFoot").textContent = "Saved just now";
-    });
+    fieldEls().instructions_md.addEventListener("input", function () { if (!suppressDirty) dirtyFields.instructions_md = true; window.__markDirty(); });
+    fieldEls().common_issues_md.addEventListener("input", function () { if (!suppressDirty) dirtyFields.common_issues_md = true; window.__markDirty(); });
 
-    // ---- 409 merge-prompt demo: fires once, on the first Save click, to show
-    // the "kept my edits" behavior without an actual second editor. ----
-    var conflictShown = false;
-    function maybeShowConflict() {
-      if (conflictShown) return;
-      conflictShown = true;
-      document.getElementById("conflictBox").setAttribute("data-open", "true");
+    // Real PUT — always sends If-Match with the version we last loaded
+    // (0 on a never-saved row), reads only the fields this panel owns.
+    function savePrefs(fields, footEl, onDone) {
+      if (prefsVersion == null) {
+        window.flowShell.toast("Preferences haven't loaded yet — try again in a moment", { nudge: true });
+        return;
+      }
+      var els = fieldEls();
+      var body = {};
+      fields.forEach(function (key) {
+        body[key] = key === "register" ? els[key].value : (els[key].value === "" ? null : els[key].value);
+      });
+      window.flowApi.request("PUT", "/api/translation-memory/prefs", { body: body, ifMatch: prefsVersion }).then(function (res) {
+        if (res.ok) {
+          fields.forEach(function (key) { dirtyFields[key] = false; });
+          applyPrefsToForm(res.data.prefs, true);
+          footEl.textContent = "Saved just now";
+          if (onDone) onDone();
+        } else if (res.status === 409 && res.body && res.body.current) {
+          // Real conflict: someone else's save landed first. Adopt the
+          // server's fresh row for every field EXCEPT the ones this save
+          // just tried to change (those stay as the user's local edit so a
+          // retry doesn't clobber them) — matches prefsConflict.ts intent.
+          prefsVersion = res.body.current.version;
+          applyPrefsToForm(res.body.current, true);
+          document.getElementById("conflictBox").setAttribute("data-open", "true");
+        } else if (res.status === 428) {
+          window.flowShell.toast("Missing If-Match — reload the page and retry", { nudge: true });
+        } else if (res.status === 403) {
+          window.flowShell.toast("Saving preferences is admin-only", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
     }
-    document.getElementById("saveInstructionsBtn").addEventListener("click", maybeShowConflict);
-    document.getElementById("saveBriefBtn").addEventListener("click", maybeShowConflict);
+
+    document.getElementById("saveBriefBtn").addEventListener("click", function () {
+      savePrefs(["audience", "purpose", "register", "script_notes"], document.getElementById("briefFoot"));
+    });
+    document.getElementById("saveInstructionsBtn").addEventListener("click", function () {
+      savePrefs(["instructions_md", "common_issues_md"], document.getElementById("instructionsFoot"), function () {
+        document.getElementById("unsavedInstructions").hidden = true;
+        document.getElementById("dotInstructions").hidden = true;
+      });
+    });
     document.getElementById("conflictKeepBtn").addEventListener("click", function () {
       document.getElementById("conflictBox").setAttribute("data-open", "false");
     });
 
-    // ---- import CSV toggle ----
+    // =========================================================
+    // Terminology — real GET (search/status filter) + POST/PATCH/DELETE.
+    // =========================================================
+    var STATUS_LABEL = { preferred: "preferred", admitted: "admitted", deprecated: "deprecated", forbidden: "forbidden", do_not_translate: "do not translate" };
+    var terms = [];
+
+    function renderTerms() {
+      var list = document.getElementById("termsList");
+      if (!terms.length) {
+        list.innerHTML = '<p class="f-help">No terms yet — add one above.</p>';
+      } else {
+        list.innerHTML = terms.map(function (t) {
+          var statusLine = '<span class="term-status-' + esc(t.status) + '">' + esc(STATUS_LABEL[t.status] || t.status) + (t.status === "forbidden" && t.replacement ? ' → use "' + esc(t.replacement) + '"' : "") + "</span>";
+          return '<div class="term-row" data-term-id="' + t.id + '" data-term-version="' + t.version + '">' +
+            '<div style="display:flex; justify-content:space-between; align-items:baseline;">' +
+            "<strong>" + esc(t.source_term) + " · " + statusLine + "</strong>" +
+            (t.tw_link ? '<span style="font-size:12px; color:var(--ink-2);">' + esc(t.tw_link) + "</span>" : "") +
+            "</div>" +
+            (t.target_term ? '<p style="margin:4px 0;">"' + esc(t.target_term) + '"' + (t.comment ? " — <em>" + esc(t.comment) + "</em>" : "") + "</p>" : (t.comment ? '<p style="margin:4px 0;"><em>' + esc(t.comment) + "</em></p>" : "")) +
+            '<div style="display:flex; gap:8px;">' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-term-delete="' + t.id + '">Delete</button>' +
+            "</div></div>";
+        }).join("");
+      }
+      document.getElementById("termsCount").textContent = terms.length;
+    }
+
+    function loadTerms() {
+      var q = document.getElementById("termSearch").value.trim();
+      var status = document.getElementById("termStatusFilter").value;
+      var query = {};
+      if (q) query.q = q;
+      if (status) query.status = status;
+      return window.flowApi.get("/api/translation-memory/terms", query).then(function (res) {
+        if (res.ok) {
+          terms = res.data.terms || [];
+        } else {
+          window.flowShell.toast("Couldn't load terms — " + res.status + " " + res.kind, { nudge: true });
+          terms = [];
+        }
+        renderTerms();
+      });
+    }
+
+    var searchDebounce = null;
+    document.getElementById("termSearch").addEventListener("input", function () {
+      clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(loadTerms, 300);
+    });
+    document.getElementById("termStatusFilter").addEventListener("change", loadTerms);
+
+    document.getElementById("termsList").addEventListener("click", function (ev) {
+      var delBtn = ev.target.closest("[data-term-delete]");
+      if (!delBtn) return;
+      var id = delBtn.getAttribute("data-term-delete");
+      window.flowApi.del("/api/translation-memory/terms/" + encodeURIComponent(id)).then(function (res) {
+        if (res.ok) { window.flowShell.toast("Term deleted"); loadTerms(); }
+        else window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+      });
+    });
+
+    document.getElementById("addTermBtn").addEventListener("click", function () {
+      var conceptId = document.getElementById("newConceptId").value.trim();
+      var sourceTerm = document.getElementById("newSourceTerm").value.trim();
+      var targetTerm = document.getElementById("newTargetTerm").value.trim();
+      var status = document.getElementById("newStatus").value;
+      var errEl = document.getElementById("addTermError");
+      errEl.style.display = "none";
+      if (!conceptId || !sourceTerm) {
+        errEl.textContent = "concept_id and source term are required.";
+        errEl.style.display = "block";
+        return;
+      }
+      var body = { concept_id: conceptId, source_term: sourceTerm, status: status };
+      if (targetTerm) body.target_term = targetTerm;
+      window.flowApi.post("/api/translation-memory/terms", body).then(function (res) {
+        if (res.ok) {
+          document.getElementById("newConceptId").value = "";
+          document.getElementById("newSourceTerm").value = "";
+          document.getElementById("newTargetTerm").value = "";
+          window.flowShell.toast("Term added");
+          loadTerms();
+        } else if (res.status === 409 && res.body && res.body.error === "duplicate_term") {
+          errEl.textContent = "That exact term already exists.";
+          errEl.style.display = "block";
+        } else {
+          errEl.textContent = "✗ " + res.status + " " + (res.error || res.kind);
+          errEl.style.display = "block";
+        }
+      });
+    });
+
+    // ---- CSV export (real file download, not just a fetch-and-toast) ----
+    document.getElementById("exportCsvBtn").addEventListener("click", function () {
+      window.flowApi.request("GET", "/api/translation-memory/terms/export").then(function (res) {
+        if (!res.ok) { window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true }); return; }
+        // flowApi parses JSON only; re-fetch as text for the CSV body since
+        // this route returns text/csv, not JSON.
+        fetch("/api/translation-memory/terms/export", { credentials: "include", headers: { "X-Workspace": window.localStorage.getItem("bible-editor.workspace") || "default" } })
+          .then(function (r) { return r.text(); })
+          .then(function (text) {
+            var blob = new Blob([text], { type: "text/csv" });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.href = url; a.download = "terminology.csv";
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          });
+      });
+    });
+
+    // ---- CSV import (raw CSV text body, not JSON) ----
     document.getElementById("toggleImportBtn").addEventListener("click", function () {
       var panel = document.getElementById("importPanel");
       panel.hidden = !panel.hidden;
     });
+    function runImport(dryRun) {
+      var text = document.getElementById("importCsvArea").value;
+      var resultEl = document.getElementById("importResult");
+      if (!text.trim()) { resultEl.textContent = "Paste CSV first."; return; }
+      window.flowApi.request("POST", "/api/translation-memory/terms/import", {
+        body: text,
+        headers: { "Content-Type": "text/csv" },
+        query: dryRun ? { dryRun: 1 } : undefined
+      }).then(function (res) {
+        if (res.ok) {
+          var d = res.data || {};
+          resultEl.textContent = (dryRun ? "Dry run: " : "Applied: ") + JSON.stringify(d);
+          if (!dryRun) loadTerms();
+        } else {
+          resultEl.textContent = "✗ " + res.status + " " + (res.error || res.kind);
+        }
+      });
+    }
+    document.getElementById("importDryRunBtn").addEventListener("click", function () { runImport(true); });
+    document.getElementById("importApplyBtn").addEventListener("click", function () { runImport(false); });
 
-    // ---- mode toggle (authoring vs translation, drives .translation-only) ----
+    // =========================================================
+    // Context pack export status + Export now/force.
+    // =========================================================
+    function loadExportStatus() {
+      window.flowApi.get("/api/translation-memory/export-status").then(function (res) {
+        var textEl = document.getElementById("packChipText");
+        var detailEl = document.getElementById("packDetail");
+        if (!res.ok) {
+          textEl.textContent = "Export status unavailable (" + res.status + ")";
+          return;
+        }
+        var d = res.data || {};
+        if (d.sha) {
+          textEl.textContent = "Context pack ready — " + d.sha;
+        } else {
+          // Verified live: {"status":"dry_run",...,"failureReason":"no_service_token"}
+          // in this dev workspace — no committed pack exists yet. Honest, not faked.
+          textEl.textContent = "No context pack exported yet" + (d.status ? " (" + d.status + ")" : "");
+        }
+        var bits = [];
+        if (d.terms != null) bits.push(d.terms + " terms");
+        if (d.examplesTn != null) bits.push(d.examplesTn + " tN examples");
+        if (d.examplesTq != null) bits.push(d.examplesTq + " tQ examples");
+        if (d.failureReason) bits.push("blocked: " + d.failureReason);
+        detailEl.textContent = bits.length ? "Last export snapshot — " + bits.join(", ") + "." : "";
+      });
+    }
+
+    function runExport(shrinkOverride) {
+      var body = shrinkOverride ? { shrinkOverride: true } : {};
+      window.flowApi.post("/api/exports/run", body).then(function (res) {
+        if (res.ok) {
+          window.flowShell.toast("Export queued (" + res.data.id + ")");
+          setTimeout(loadExportStatus, 2000);
+        } else if (res.status === 409) {
+          window.flowShell.toast("An export was just queued this same second — wait a moment and retry", { nudge: true });
+        } else if (res.status === 403) {
+          window.flowShell.toast("Running exports is admin-only", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + (res.error || res.kind), { nudge: true });
+        }
+      });
+    }
+    document.getElementById("exportNowBtn").addEventListener("click", function () { runExport(false); });
+    document.getElementById("exportForceBtn").addEventListener("click", function () { runExport(true); });
+    // "Export (force)" (shrinkOverride) is an admin escape hatch for when the
+    // context-pack shrink guard refused a normal export — surfaced via
+    // double-click on the chip since this preview has no async workflow-
+    // status poll to detect a real shrink refusal automatically.
+    document.getElementById("packChip").addEventListener("dblclick", function () {
+      var btn = document.getElementById("exportForceBtn");
+      btn.style.display = btn.style.display === "none" ? "inline-flex" : "none";
+    });
+
+    // =========================================================
+    // Templates coverage summary — real counts from GET /api/templates.
+    // =========================================================
+    function loadTemplatesSummary() {
+      window.flowApi.get("/api/templates").then(function (res) {
+        if (!res.ok) { document.getElementById("templatesCoverage").textContent = "Unavailable"; return; }
+        var units = res.data.units || [];
+        document.getElementById("templatesUnitCount").textContent = units.length;
+        var bySupportRef = {};
+        units.forEach(function (u) { (bySupportRef[u.support_ref] = bySupportRef[u.support_ref] || []).push(u); });
+        var groups = Object.keys(bySupportRef);
+        var translated = groups.filter(function (g) { return bySupportRef[g].some(function (u) { return u.has_target; }); }).length;
+        document.getElementById("templatesCoverage").textContent = translated + " / " + groups.length + " SupportReference types have a translated unit";
+      });
+    }
+
+    // ---- import CSV toggle / mode toggle (unchanged demo affordances) ----
     var modeToggle = document.getElementById("modeToggle");
     var modeLabel = document.getElementById("modeToggleLabel");
     modeToggle.addEventListener("click", function () {
@@ -525,11 +810,11 @@
       document.body.dataset.mode = checked ? "authoring" : "translation";
     });
 
-    // ---- "Export (force)" only appears when a shrink was refused, per the
-    // shrinkOverride escape hatch (00-code-inventory.md §C.0) ----
-    document.getElementById("packChip").addEventListener("dblclick", function () {
-      var btn = document.getElementById("exportForceBtn");
-      btn.style.display = btn.style.display === "none" ? "inline-flex" : "none";
+    window.flowApi.ready.then(function () {
+      loadPrefs();
+      loadTerms();
+      loadExportStatus();
+      loadTemplatesSummary();
     });
   })();
   </script>

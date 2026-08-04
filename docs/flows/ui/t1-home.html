@@ -189,6 +189,18 @@
 
   /* ---------- account/status cluster ---------- */
   .cluster-item { position: relative; }
+  /* t1-home is the only screen carrying five top-bar controls (status pill,
+     Mode, Theme, More, account). The shared .account-cluster is `flex: none;
+     white-space: nowrap`, so it cannot shrink — at 375px it measured 378px on
+     its own and pushed the page to a 432px scrollWidth, i.e. a horizontal body
+     scroll, which the build rules forbid at any width.
+     Dropping the pill's label (keeping the ● and the whole control tappable,
+     with the same jobs menu behind it) reclaims ~60px and clears the overflow
+     without removing any affordance. */
+  @media (max-width: 560px) {
+    #statusBtnText { display: none; }
+    .topbar-shared .account-cluster { min-width: 0; }
+  }
   .cluster-btn {
     appearance: none;
     border: 1px solid var(--line);
@@ -266,22 +278,13 @@
     <span class="account-cluster">
       <span class="cluster-item">
         <button type="button" class="cluster-btn status-pill" id="statusBtn" aria-haspopup="true" aria-expanded="false" aria-controls="statusMenu">
-          <span aria-hidden="true">●</span> 2 running
+          <span aria-hidden="true">●</span> <span id="statusBtnText">…</span>
         </button>
         <div class="menu" id="statusMenu" role="menu" hidden>
           <p class="menu-head">Pipeline jobs</p>
-          <div class="job-row">
-            <span aria-hidden="true">⏳</span>
-            <span class="job-main"><span class="job-title">Generate ULT+UST</span><span class="job-sub">ZEC 3 · started 6 min ago</span></span>
-            <button type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>
-          </div>
-          <div class="job-row">
-            <span aria-hidden="true">⏳</span>
-            <span class="job-main"><span class="job-title">Translate notes</span><span class="job-sub">ZEC 5 · queued, #2 in line</span></span>
-            <button type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>
-          </div>
+          <div id="jobRows"></div>
           <hr />
-          <button type="button" data-handle="GET /api/pipelines" data-bundle="K">Refresh</button>
+          <button type="button" id="refreshJobsBtn">Refresh</button>
         </div>
       </span>
       <span class="cluster-item">
@@ -356,11 +359,13 @@
 
     <div class="home-head">
       <div class="head-titles">
-        <h1>Good morning, Ana</h1>
-        <p class="sub">Zechariah · English → Spanish (LatAm)</p>
+        <h1 id="greetingHeading">Good morning</h1>
+        <p class="sub" id="bookSub">Loading…</p>
       </div>
-      <span class="chip-pack" title="Feeds AI drafting for this workspace">
-        <span aria-hidden="true">🧠</span> Context pack ready <span class="sha">a1b2c3d</span>
+      <!-- No context-pack/build endpoint is documented for this preview — honest
+           unknown state rather than a fabricated sha (see JS below). -->
+      <span class="chip-pack" title="Feeds AI drafting for this workspace" id="contextPackChip">
+        <span aria-hidden="true">🧠</span> Context pack: unknown
       </span>
       <div class="demo-controls" role="group" aria-label="Demo triggers">
         <span class="demo-label">Demo</span>
@@ -374,63 +379,66 @@
       <section class="queues" aria-label="Work queues" role="list">
         <a class="qcard" role="listitem" href="t3-scripture.html">
           <p class="q-eyebrow"><span class="dot"></span>Scripture text</p>
-          <h2>Zechariah</h2>
-          <p class="q-count">142 of 187 verses done</p>
-          <div class="q-bar"><i style="width:76%"></i></div>
+          <h2 id="scriptureBookName">Loading…</h2>
+          <p class="q-count" id="scriptureCount">Loading…</p>
+          <div class="q-bar"><i id="scriptureBar" style="width:0%"></i></div>
           <p class="q-desc">ULT → GLT (literal) and UST → GST (simplified), verse by verse.</p>
-          <p class="q-foot"><span>3 chapters remaining</span><span class="q-arrow">Open →</span></p>
+          <p class="q-foot"><span id="scriptureFoot"></span><span class="q-arrow">Open →</span></p>
         </a>
 
         <a class="qcard" role="listitem" href="t2-review.html#notes">
           <p class="q-eyebrow"><span class="dot"></span>Notes &amp; questions</p>
           <h2>Translation notes</h2>
-          <p class="q-count">40 of 64 approved</p>
-          <div class="q-bar"><i class="ok" style="width:63%"></i></div>
+          <p class="q-count" id="notesCount">Loading…</p>
+          <div class="q-bar"><i class="ok" id="notesBar" style="width:0%"></i></div>
           <p class="q-desc">AI-drafted translation notes, one card at a time.</p>
-          <p class="q-foot"><span>24 left</span><span class="q-arrow">Open →</span></p>
+          <p class="q-foot"><span id="notesFoot"></span><span class="q-arrow">Open →</span></p>
         </a>
 
         <a class="qcard" role="listitem" href="t2-review.html#questions">
           <p class="q-eyebrow"><span class="dot"></span>Notes &amp; questions</p>
           <h2>Questions</h2>
-          <p class="q-count">18 of 36 approved</p>
-          <div class="q-bar"><i class="ok" style="width:50%"></i></div>
+          <p class="q-count" id="questionsCount">Loading…</p>
+          <div class="q-bar"><i class="ok" id="questionsBar" style="width:0%"></i></div>
           <p class="q-desc">AI-drafted translation questions, one card at a time.</p>
-          <p class="q-foot"><span>18 left</span><span class="q-arrow">Open →</span></p>
+          <p class="q-foot"><span id="questionsFoot"></span><span class="q-arrow">Open →</span></p>
         </a>
 
         <a class="qcard" role="listitem" href="t4-align.html">
           <p class="q-eyebrow"><span class="dot"></span>Word alignment</p>
           <h2>Alignment</h2>
-          <p class="q-count">12 unaligned words</p>
-          <div class="q-bar"><i class="warn" style="width:31%"></i></div>
+          <!-- No alignment-progress endpoint is documented for this preview —
+               honest unknown state rather than a fabricated count. -->
+          <p class="q-count">Not available in this preview</p>
+          <div class="q-bar"><i style="width:0%"></i></div>
           <p class="q-desc">Link target words to the Hebrew/Greek source, verse by verse.</p>
-          <p class="q-foot"><span>ZEC 1–2</span><span class="q-arrow">Open →</span></p>
+          <p class="q-foot"><span></span><span class="q-arrow">Open →</span></p>
         </a>
 
         <a class="qcard" role="listitem" href="t5-articles.html">
           <p class="q-eyebrow"><span class="dot"></span>tW / tA articles</p>
           <h2>Articles</h2>
-          <p class="q-count">9 of 15 approved</p>
-          <div class="q-bar"><i style="width:60%"></i></div>
+          <!-- No articles-progress endpoint is documented for this preview —
+               honest unknown state rather than a fabricated count. -->
+          <p class="q-count">Not available in this preview</p>
+          <div class="q-bar"><i style="width:0%"></i></div>
           <p class="q-desc">Key-term and translation-academy articles referenced from this book.</p>
-          <p class="q-foot"><span>6 left</span><span class="q-arrow">Open →</span></p>
+          <p class="q-foot"><span></span><span class="q-arrow">Open →</span></p>
         </a>
       </section>
 
       <aside class="recent" aria-label="Recent activity">
         <h2>Recent activity</h2>
-        <ul>
-          <li>Sarah approved 12 notes in ZEC 2.<span class="r-time">18 min ago</span></li>
-          <li>AI generate applied to ZEC 3.<span class="r-time">1 hour ago</span></li>
-          <li>You approved GLT + GST for ZEC 1:8.<span class="r-time">Yesterday</span></li>
-          <li>Context pack refreshed (a1b2c3d).<span class="r-time">Yesterday</span></li>
-          <li>Diego re-sourced tW article “faith” from English.<span class="r-time">2 days ago</span></li>
+        <!-- No activity/audit-log endpoint is documented for this preview —
+             honest empty state rather than fabricated entries (see JS below). -->
+        <ul id="recentList">
+          <li>Recent activity isn't wired to a real endpoint in this preview.</li>
         </ul>
       </aside>
     </div>
   </main>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -473,6 +481,97 @@
       if (!dismiss) return;
       var target = document.querySelector('[data-banner="' + dismiss.getAttribute("data-dismiss") + '"]');
       if (target) target.hidden = true;
+    });
+
+    // ---- real data ----------------------------------------------------------
+    var BOOK = "ZEC";
+    var CHAPTER = 1;
+    function el(id) { return document.getElementById(id); }
+
+    function loadGreeting() {
+      return window.flowApi.ready.then(function (me) {
+        var name = me && me.username ? me.username : "there";
+        el("greetingHeading").textContent = "Good morning, " + name;
+      });
+    }
+
+    // Book-wide totals (per-chapter tn/tq/twl/verses) from the book summary,
+    // plus chapter 1's real rows for an approved-count and a scripture
+    // "done" count — the API doesn't expose a book-wide "done"/"approved"
+    // rollup, so those two numbers are chapter-1-scoped and labeled as such.
+    function loadQueues() {
+      return Promise.all([
+        window.flowApi.get("/api/chapters/" + BOOK),
+        window.flowApi.chapter(BOOK, CHAPTER),
+      ]).then(function (results) {
+        var bookResult = results[0], chapterResult = results[1];
+        if (!bookResult.ok || !chapterResult.ok) {
+          el("scriptureCount").textContent = "Could not load";
+          el("notesCount").textContent = "Could not load";
+          el("questionsCount").textContent = "Could not load";
+          window.flowShell.toast("Could not load " + BOOK + " data (" + (bookResult.kind || chapterResult.kind) + ")", { nudge: true });
+          return;
+        }
+        var chapters = bookResult.data.chapters || [];
+        var totalVerses = chapters.reduce(function (s, c) { return s + (c.verses || 0); }, 0);
+        var totalTn = chapters.reduce(function (s, c) { return s + (c.tn || 0); }, 0);
+        var totalTq = chapters.reduce(function (s, c) { return s + (c.tq || 0); }, 0);
+
+        el("scriptureBookName").textContent = "Zechariah";
+        var statuses = chapterResult.data.verseStatuses || [];
+        var doneInCh1 = statuses.filter(function (s) { return s.verse > 0 && s.done; }).length;
+        var versesCh1 = (chapters.filter(function (c) { return c.chapter === CHAPTER; })[0] || {}).verses || 0;
+        el("scriptureCount").textContent = doneInCh1 + " of " + versesCh1 + " verses done in chapter " + CHAPTER;
+        el("scriptureBar").style.width = versesCh1 ? Math.round((doneInCh1 / versesCh1) * 100) + "%" : "0%";
+        el("scriptureFoot").textContent = chapters.length + " chapters, " + totalVerses + " verses total";
+
+        var tn = chapterResult.data.tn || [];
+        var tq = chapterResult.data.tq || [];
+        var tnApproved = tn.filter(function (r) { return r.translation_state === "validated"; }).length;
+        var tqApproved = tq.filter(function (r) { return r.translation_state === "validated"; }).length;
+        el("notesCount").textContent = tnApproved + " of " + tn.length + " approved in chapter " + CHAPTER;
+        el("notesBar").style.width = tn.length ? Math.round((tnApproved / tn.length) * 100) + "%" : "0%";
+        el("notesFoot").textContent = totalTn + " notes across " + chapters.length + " chapters";
+        el("questionsCount").textContent = tqApproved + " of " + tq.length + " approved in chapter " + CHAPTER;
+        el("questionsBar").style.width = tq.length ? Math.round((tqApproved / tq.length) * 100) + "%" : "0%";
+        el("questionsFoot").textContent = totalTq + " questions across " + chapters.length + " chapters";
+
+        el("bookSub").textContent = "Zechariah · " + (window.flowApi.me && window.flowApi.me.workspace ? window.flowApi.me.workspace + " workspace" : "workspace unknown");
+      });
+    }
+
+    function renderJobs(data) {
+      var jobs = (data && data.jobs) || [];
+      el("statusBtnText").textContent = jobs.length + (jobs.length === 1 ? " running" : " running");
+      var rows = el("jobRows");
+      if (!jobs.length) {
+        rows.innerHTML = '<p class="menu-note">No pipeline jobs running in this workspace.</p>';
+        return;
+      }
+      rows.innerHTML = jobs.map(function (j) {
+        return '<div class="job-row"><span aria-hidden="true">⏳</span>' +
+          '<span class="job-main"><span class="job-title">' + (j.type || "Job") + '</span><span class="job-sub">' + (j.book || "") + (j.chapter ? " " + j.chapter : "") + " · " + (j.stage || j.status || "") + '</span></span>' +
+          '<button type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-param-jobId="' + j.id + '" data-bundle="D">Cancel</button></div>';
+      }).join("");
+    }
+    function loadJobs() {
+      return window.flowApi.get("/api/pipelines").then(function (result) {
+        if (!result.ok) { el("statusBtnText").textContent = "unknown"; return; }
+        renderJobs(result.data);
+      });
+    }
+    el("refreshJobsBtn").addEventListener("click", loadJobs);
+    document.addEventListener("flow:handled", function (ev) {
+      if (ev.detail && ev.detail.path && ev.detail.path.indexOf("/api/pipelines/") === 0 && ev.detail.result && ev.detail.result.ok) {
+        loadJobs();
+      }
+    });
+
+    window.flowShell.setContext({ book: BOOK, chapter: CHAPTER });
+    window.flowApi.ready.then(function () {
+      loadGreeting();
+      loadQueues();
+      loadJobs();
     });
   })();
   </script>

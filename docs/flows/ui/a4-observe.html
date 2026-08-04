@@ -137,7 +137,10 @@
         </div>
         <div class="panel-foot">
           <span class="spacer"></span>
-          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/health" data-bundle="K">Check now</button>
+          <!-- data-handle-manual: loadHealth() below performs the real call and
+               renders it. Without this the shell would ALSO dispatch the handle,
+               producing two GET /api/health requests per click. -->
+          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/health" data-handle-manual data-bundle="K">Check now</button>
         </div>
       </section>
 
@@ -147,10 +150,12 @@
           <p class="panel-sub">The trust indicator every AI draft is pinned against.</p>
         </div>
         <div class="panel-body">
-          <dl class="kv">
-            <dt>Status</dt><dd><span class="chip-pack">Context pack ready <span class="sha">sha 8f2a1c9</span></span></dd>
-            <dt>Exported at</dt><dd>2026-08-03 05:32 UTC</dd>
-            <dt>templates.tsv rows</dt><dd>146</dd>
+          <dl class="kv" id="packKv">
+            <dt>Status</dt><dd id="packStatusDd">—</dd>
+            <dt>Completed at</dt><dd id="packCompletedDd">—</dd>
+            <dt>Terms</dt><dd id="packTermsDd">—</dd>
+            <dt>Content files</dt><dd id="packFilesDd">—</dd>
+            <dt>Owner</dt><dd id="packOwnerDd">—</dd>
           </dl>
         </div>
         <div class="panel-foot">
@@ -178,14 +183,21 @@
         <p class="panel-sub">Pre-provisioned D1 bindings, claimed on demand when a new org needs a database.</p>
       </div>
       <div class="panel-body">
-        <dl class="kv">
-          <dt>Available slots</dt><dd>3</dd>
-          <dt>Claimed (last 30d)</dt><dd>1</dd>
+        <!-- The API has no "available" count field — we derive it from slots[].status ourselves. -->
+        <dl class="kv" id="poolStats">
+          <dt>Claimed slots</dt><dd id="poolClaimed">—</dd>
+          <dt>Total slots seen</dt><dd id="poolTotal">—</dd>
         </dl>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="dtable">
+            <thead><tr><th>Slug</th><th>Org</th><th>Binding</th><th>Status</th></tr></thead>
+            <tbody id="poolBody"></tbody>
+          </table>
+        </div>
         <div class="ops-actions" style="margin-top:10px;">
-          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/workspaces/pool" data-bundle="K">View pool</button>
-          <button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/workspaces/pool" data-bundle="K">Register a slot</button>
-          <button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/pool/claim" data-bundle="K">Claim for an org</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/workspaces/pool" data-bundle="K">Refresh pool</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="poolRegisterBtn" data-bundle="K" title="Mutates the workspace registry — confirmed before sending">Register a slot…</button>
+          <button class="btn btn-primary btn-sm" type="button" id="poolClaimBtn" data-bundle="K" title="Mutates the workspace registry — confirmed before sending">Claim for an org…</button>
         </div>
       </div>
     </section>
@@ -205,6 +217,7 @@
     </section>
   </main>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -215,55 +228,193 @@
         return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
       });
     }
+    function fmtTime(unixSecondsOrIso) {
+      if (unixSecondsOrIso === null || unixSecondsOrIso === undefined) return "—";
+      var d = typeof unixSecondsOrIso === "number" ? new Date(unixSecondsOrIso * 1000) : new Date(unixSecondsOrIso);
+      if (isNaN(d.getTime())) return "—";
+      return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+    }
 
-    /* health */
+    /* ---------------- health ---------------- */
     var healthValue = document.getElementById("healthValue");
     var healthSub = document.getElementById("healthSub");
     var healthTime = document.getElementById("healthTime");
     var healthBody = document.getElementById("healthBody");
-    function simulateHealth() {
-      healthValue.textContent = "OK";
-      healthSub.textContent = "service reachable";
-      var t = new Date().toLocaleTimeString();
-      healthTime.textContent = t;
-      healthBody.textContent = '{ ok: true, service: "bible-editor-api", time: "' + t + '" }';
+    function loadHealth() {
+      window.flowApi.get("/api/health").then(function (r) {
+        if (r.ok) {
+          healthValue.textContent = "OK";
+          healthSub.textContent = "service reachable";
+        } else {
+          healthValue.textContent = "DOWN";
+          healthSub.textContent = r.kind || ("HTTP " + r.status);
+        }
+        healthTime.textContent = new Date().toLocaleTimeString();
+        healthBody.textContent = JSON.stringify(r.ok ? r.data : { error: r.error });
+      });
     }
-    simulateHealth();
 
-    document.getElementById("packValue").textContent = "Ready";
-    document.getElementById("packSub").textContent = "sha 8f2a1c9 · 05:32 UTC";
-    document.getElementById("jobsValue").textContent = "2 / 1 / 1";
-    document.getElementById("lastExportValue").textContent = "05:32 UTC";
-    document.getElementById("lastExportSub").textContent = "34 book·resource steps, 0 skipped";
+    /* ---------------- context pack ---------------- */
+    function loadPack() {
+      window.flowApi.get("/api/translation-memory/export-status").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("packValue").textContent = "Unknown";
+          document.getElementById("packSub").textContent = "GET failed: " + (r.kind || r.status);
+          document.getElementById("packStatusDd").textContent = "—";
+          document.getElementById("packCompletedDd").textContent = "—";
+          document.getElementById("packTermsDd").textContent = "—";
+          document.getElementById("packFilesDd").textContent = "—";
+          document.getElementById("packOwnerDd").textContent = "—";
+          return;
+        }
+        var d = r.data;
+        var isReady = d.status === "ready" && d.sha;
+        document.getElementById("packValue").textContent = isReady ? "Ready" : (d.status || "unknown");
+        document.getElementById("packSub").textContent = isReady
+          ? ("sha " + d.sha + " · " + fmtTime(d.completedAt))
+          : (d.failureReason ? ("no pack exported — " + d.failureReason) : "no pack exported");
+        document.getElementById("packStatusDd").innerHTML = isReady
+          ? '<span class="chip-pack">Context pack ready <span class="sha">sha ' + esc(d.sha) + '</span></span>'
+          : '<span class="chip chip-needs">' + esc(d.status || "unknown") + (d.failureReason ? " — " + esc(d.failureReason) : "") + "</span>";
+        document.getElementById("packCompletedDd").textContent = fmtTime(d.completedAt);
+        document.getElementById("packTermsDd").textContent = (d.terms !== undefined ? d.terms : "—") +
+          " (tN examples " + (d.examplesTn !== undefined ? d.examplesTn : "—") + ", tQ examples " + (d.examplesTq !== undefined ? d.examplesTq : "—") + ")";
+        document.getElementById("packFilesDd").textContent = (d.contentFiles !== undefined ? d.contentFiles : "—") +
+          (d.totalBytes !== undefined ? " (" + d.totalBytes + " bytes)" : "");
+        document.getElementById("packOwnerDd").textContent = d.owner || "—";
+      });
+    }
 
-    /* export runs */
-    var RUNS = [
-      { label: "Nightly — 2026-08-03 05:30 UTC", state: "ok", steps: [1,1,1,1,1,1,0,1,1,1], note: "34/34 book·resource steps committed. Freshness gate + shrink guard both passed." },
-      { label: "Manual — context-only, 2026-08-02 14:12 UTC", state: "ok", steps: [1,1,1], note: "Context pack rebuilt after Terminology import." },
-      { label: "Nightly — 2026-08-02 05:30 UTC", state: "warn", steps: [1,1,0,1,1,1,1,1,1,1], note: "twl_PSA shrink guard refused a render (would have deleted 41% of rows) — needs Export (force) after review." }
-    ];
-    document.getElementById("exportRuns").innerHTML = RUNS.map(function (r) {
-      var dots = r.steps.map(function (s) { return '<span class="sm-dot ' + (s ? "ok" : "warn") + '"></span>'; }).join("");
-      return '<div class="run-row"><div class="rr-main">' + esc(r.label) + ' <span class="chip ' + (r.state === "ok" ? "chip-approved" : "chip-needs") + '">' + (r.state === "ok" ? "committed" : "needs attention") + '</span>' +
-        '<div class="step-mini" title="Per-book×resource steps">' + dots + "</div>" +
-        '<div class="rr-sub">' + esc(r.note) + "</div></div>" +
+    /* ---------------- pipeline jobs ---------------- */
+    function loadJobs() {
+      window.flowApi.get("/api/pipelines").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("jobsValue").textContent = "—";
+          document.getElementById("jobsBody").innerHTML = '<tr><td colspan="6">Failed to load: ' + esc(r.kind || r.status) + "</td></tr>";
+          return;
+        }
+        var jobs = r.data.jobs || [];
+        var running = jobs.filter(function (j) { return j.state === "running"; }).length;
+        var queued = jobs.filter(function (j) { return j.state === "queued"; }).length + (r.data.queue && r.data.queue.queuedCount ? 0 : 0);
+        var failed = jobs.filter(function (j) { return j.state === "failed"; }).length;
+        document.getElementById("jobsValue").textContent = running + " / " + queued + " / " + failed;
+        if (!jobs.length) {
+          document.getElementById("jobsBody").innerHTML = '<tr><td colspan="6">No pipeline jobs — queue is empty (activeJob: ' + esc(String(r.data.queue && r.data.queue.activeJob)) + ", queuedCount: " + esc(String(r.data.queue && r.data.queue.queuedCount)) + ")</td></tr>";
+          return;
+        }
+        document.getElementById("jobsBody").innerHTML = jobs.map(function (j) {
+          var ref = (j.book || "—") + (j.chapter !== undefined ? " " + j.chapter : "");
+          var state = j.state || "—";
+          var chip = state === "running" ? "chip-edited" : state === "failed" ? "chip-needs" : state === "done" ? "chip-approved" : "chip-draft";
+          var cancel = state === "queued" ? '<button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-param-jobid="' + esc(j.jobId || j.id || "") + '" data-bundle="D">Cancel</button>' : "";
+          return "<tr><td>" + esc(ref) + "</td><td>" + esc(j.pipelineType || j.type || "—") + '</td><td><span class="chip ' + chip + '">' + esc(state) + "</span></td><td>" + esc(j.username || j.requestedBy || "—") + '</td><td class="num">' + (j.rows !== undefined ? j.rows : "—") + "</td><td>" + cancel + "</td></tr>";
+        }).join("");
+      });
+    }
+
+    /* ---------------- export runs ---------------- */
+    function exportRunRow(r) {
+      var hasError = !!r.error;
+      var label = esc(r.book) + " · " + esc(r.resource) + " — " + fmtTime(r.committed_at);
+      var noteBits = [];
+      noteBits.push((r.rows_exported !== undefined ? r.rows_exported : "?") + " rows exported");
+      noteBits.push("branch " + esc(r.branch || "—"));
+      if (r.error) noteBits.push("error: " + esc(r.error));
+      if (r.pr_number) noteBits.push("PR #" + r.pr_number);
+      if (r.pr_error) noteBits.push("PR error: " + esc(r.pr_error));
+      return '<div class="run-row" data-param-id="' + esc(r.id) + '"><div class="rr-main">' + label +
+        ' <span class="chip ' + (hasError ? "chip-needs" : "chip-approved") + '">' + (hasError ? "needs attention" : "committed") + "</span>" +
+        '<div class="rr-sub">' + noteBits.join(" · ") + "</div></div>" +
         '<button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/exports/instance/:id" data-bundle="K">Details</button>' +
       "</div>";
-    }).join("");
+    }
+    function loadExports() {
+      window.flowApi.get("/api/exports").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("exportRuns").innerHTML = '<p class="f-help">Failed to load export runs: ' + esc(r.kind || r.status) + "</p>";
+          document.getElementById("lastExportValue").textContent = "—";
+          document.getElementById("lastExportSub").textContent = "load failed";
+          return;
+        }
+        var snaps = r.data.snapshots || [];
+        if (!snaps.length) {
+          document.getElementById("exportRuns").innerHTML = '<p class="f-help">No export runs recorded yet.</p>';
+          document.getElementById("lastExportValue").textContent = "none";
+          document.getElementById("lastExportSub").textContent = "—";
+          return;
+        }
+        document.getElementById("exportRuns").innerHTML = snaps.map(exportRunRow).join("");
+        var latest = snaps[0];
+        document.getElementById("lastExportValue").textContent = fmtTime(latest.committed_at);
+        document.getElementById("lastExportSub").textContent = esc(latest.book) + "·" + esc(latest.resource) + (latest.error ? " — " + esc(latest.error) : " — " + latest.rows_exported + " rows");
+      });
+    }
+    // Clicking "Run export now" / "Export (force)" or "Details" triggers a real
+    // network call via _shell.js; refresh the list afterward so state stays honest.
+    document.getElementById("exportRuns").parentElement.parentElement.addEventListener("flow:handled", function (e) {
+      if (!e.detail || !e.detail.method) return;
+      if (/\/api\/exports\/run/.test(e.detail.path)) {
+        if (e.detail.result && e.detail.result.status === 409) {
+          window.flowShell.toast("409 — an export instance for this second already exists (workflow_create_failed)", { nudge: true });
+        }
+        loadExports();
+      }
+    });
 
-    /* pipeline jobs */
-    var JOBS = [
-      { ref: "TIT 2", type: "generate", state: "running", who: "you", rows: "—" },
-      { ref: "ZEC 6", type: "notes", state: "queued (#1)", who: "jorge.p", rows: "—" },
-      { ref: "RUT 1", type: "translate", state: "failed — interrupted", who: "you", rows: 12 },
-      { ref: "TIT 1", type: "tqs", state: "done", who: "maria_traductora", rows: 24 }
-    ];
-    document.getElementById("jobsBody").innerHTML = JOBS.map(function (j) {
-      var chip = j.state.indexOf("running") === 0 ? "chip-edited" : j.state.indexOf("failed") === 0 ? "chip-needs" : j.state.indexOf("done") === 0 ? "chip-approved" : "chip-draft";
-      var cancel = j.state.indexOf("queued") === 0 && j.who === "you"
-        ? '<button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-bundle="D">Cancel</button>' : "";
-      return "<tr><td>" + esc(j.ref) + "</td><td>" + esc(j.type) + '</td><td><span class="chip ' + chip + '">' + esc(j.state) + "</span></td><td>" + esc(j.who) + '</td><td class="num">' + j.rows + "</td><td>" + cancel + "</td></tr>";
-    }).join("");
+    /* ---------------- spare workspace pool ---------------- */
+    function poolRow(s) {
+      return "<tr><td>" + esc(s.slug) + "</td><td>" + esc(s.org || "—") + "</td><td>" + esc(s.binding) + '</td><td><span class="chip ' + (s.status === "claimed" ? "chip-approved" : "chip-draft") + '">' + esc(s.status) + (s.bindingLive === false ? " (binding not live)" : "") + "</span></td></tr>";
+    }
+    function loadPool() {
+      window.flowApi.get("/api/workspaces/pool").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("poolClaimed").textContent = "—";
+          document.getElementById("poolTotal").textContent = "—";
+          document.getElementById("poolBody").innerHTML = '<tr><td colspan="4">Failed to load: ' + esc(r.kind || r.status) + "</td></tr>";
+          return;
+        }
+        var slots = r.data.slots || [];
+        document.getElementById("poolClaimed").textContent = (r.data.counts && r.data.counts.claimed !== undefined) ? r.data.counts.claimed : slots.filter(function (s) { return s.status === "claimed"; }).length;
+        document.getElementById("poolTotal").textContent = slots.length;
+        document.getElementById("poolBody").innerHTML = slots.length ? slots.map(poolRow).join("") : '<tr><td colspan="4">No slots registered.</td></tr>';
+      });
+    }
+    document.getElementById("poolRegisterBtn").addEventListener("click", function () {
+      var binding = window.prompt("D1 binding name to register (e.g. DB_SPARE1):");
+      if (!binding) return;
+      if (!window.confirm("Register pool slot with binding \"" + binding + "\"? This mutates the local workspace registry.")) return;
+      window.flowApi.post("/api/workspaces/pool", { binding: binding }).then(function (r) {
+        window.flowShell.toast(r.ok ? "✓ registered slot" : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "K" });
+        loadPool();
+      });
+    });
+    document.getElementById("poolClaimBtn").addEventListener("click", function () {
+      var slots = null;
+      var org = window.prompt("Org to claim a slot for:");
+      if (!org) return;
+      var label = window.prompt("Label for this workspace:", org);
+      if (!label) return;
+      if (!window.confirm("Claim a spare slot for org \"" + org + "\" (label \"" + label + "\")? This mutates the local workspace registry.")) return;
+      window.flowApi.post("/api/workspaces/pool/claim", { org: org, label: label }).then(function (r) {
+        window.flowShell.toast(r.ok ? "✓ claimed slot" : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "K" });
+        loadPool();
+      });
+    });
+
+    function loadAll() {
+      loadHealth();
+      loadPack();
+      loadJobs();
+      loadExports();
+      loadPool();
+    }
+    if (window.flowApi && window.flowApi.ready) {
+      window.flowApi.ready.then(loadAll);
+    } else {
+      loadAll();
+    }
+    // "Check now" button re-runs the health tile after its own real GET fires.
+    document.querySelector('[data-handle="GET /api/health"]').addEventListener("flow:handled", function () { loadHealth(); });
 
     /* workflow stages preview (future card) */
     var STAGES = ["Draft", "Peer check", "Source check", "Align", "Translate resources", "Harmonize", "Final validation", "Publish"];

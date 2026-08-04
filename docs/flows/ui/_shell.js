@@ -3,12 +3,19 @@
    Vanilla JS, no dependencies. Do not modify per-screen — extend
    with a local <script> in the screen itself.
 
+   Requires _api.js to be loaded first (window.flowApi).
+
    Responsibilities:
-   - Intercept every click on [data-handle]: never call the network,
-     show a toast naming the handle it would call instead.
+   - Intercept every click on [data-handle]:
+       - "local:name"      -> dispatch DOM CustomEvent "flow:local", no network.
+       - "TODO:no-backend" -> nudge toast, no network (kept from the static mock).
+       - "METHOD /api/..." -> resolve :params from context, build headers,
+                              make the real call via flowApi, toast the
+                              outcome, dispatch "flow:handled".
    - data-theme toggle helper.
    - data-mode ("authoring" | "translation") preview toggle.
    - window.flowShell.toast(text, opts) for screens' own local state.
+   - window.flowShell.context / setContext(obj) — page-level param source.
    ============================================================ */
 
 (function () {
@@ -79,22 +86,221 @@
     return { dismiss: dismiss };
   }
 
+  // ---- page-level context (screens set this) ----------------------------
+  var context = {};
+  function setContext(obj) {
+    for (var k in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, k)) context[k] = obj[k];
+    }
+  }
+
+  // ---- :param resolution --------------------------------------------------
+  function resolveParam(name, el) {
+    var attr = "data-param-" + name;
+    var host = el.closest ? el.closest("[" + attr + "]") : null;
+    if (host) return host.getAttribute(attr);
+    if (Object.prototype.hasOwnProperty.call(context, name) && context[name] !== undefined && context[name] !== null) {
+      return context[name];
+    }
+    return undefined;
+  }
+
+  function resolvePath(path, el) {
+    var missing = null;
+    var resolved = path.replace(/:([a-zA-Z_]+)/g, function (whole, name) {
+      if (missing) return whole;
+      var v = resolveParam(name, el);
+      if (v === undefined) {
+        missing = name;
+        return whole;
+      }
+      return encodeURIComponent(v);
+    });
+    if (missing) return { error: missing };
+    return { path: resolved };
+  }
+
+  // ---- body resolution ------------------------------------------------------
+  function resolveBody(el) {
+    var raw = el.getAttribute("data-body");
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        return undefined;
+      }
+    }
+    var fromSel = el.getAttribute("data-body-from");
+    if (fromSel) {
+      var target = document.querySelector(fromSel);
+      var field = el.getAttribute("data-body-field") || "value";
+      if (target) {
+        var body = {};
+        body[field] = target.value;
+        return body;
+      }
+    }
+    return undefined;
+  }
+
+  // ---- header resolution ------------------------------------------------------
+  function resolveHeaders(el, headersSpec) {
+    var out = {};
+    if (!headersSpec) return out;
+    if (headersSpec.indexOf("If-Match") !== -1) {
+      var versionAttr = el.closest ? el.closest("[data-version]") : null;
+      var version;
+      if (versionAttr) {
+        version = versionAttr.getAttribute("data-version");
+      } else {
+        var keyHost = el.closest ? el.closest("[data-version-key]") : null;
+        var key = keyHost ? keyHost.getAttribute("data-version-key") : null;
+        if (key && window.flowApi) version = window.flowApi.getVersion(key);
+      }
+      if (version !== undefined && version !== null) out.ifMatch = version;
+    }
+    if (headersSpec.indexOf("X-Source-Generation") !== -1) {
+      var sgHost = el.closest ? el.closest("[data-source-generation]") : null;
+      var sg = sgHost ? sgHost.getAttribute("data-source-generation") : undefined;
+      if (sg === undefined || sg === null) {
+        sg = context.sourceGeneration !== undefined ? context.sourceGeneration : 1;
+      }
+      out.sourceGeneration = sg;
+    }
+    return out;
+  }
+
+  function fireHandled(el, detail) {
+    var ev;
+    try {
+      ev = new CustomEvent("flow:handled", { bubbles: true, detail: detail });
+    } catch (e) {
+      ev = document.createEvent("CustomEvent");
+      ev.initCustomEvent("flow:handled", true, false, detail);
+    }
+    el.dispatchEvent(ev);
+  }
+
+  function fireLocal(el, detail) {
+    var ev;
+    try {
+      ev = new CustomEvent("flow:local", { bubbles: true, detail: detail });
+    } catch (e) {
+      ev = document.createEvent("CustomEvent");
+      ev.initCustomEvent("flow:local", true, false, detail);
+    }
+    el.dispatchEvent(ev);
+  }
+
   function handleClickTarget(el) {
     var handle = el.getAttribute("data-handle");
     if (!handle) return;
 
-    var headers = el.getAttribute("data-headers");
+    var headersSpec = el.getAttribute("data-headers");
     var bundle = el.getAttribute("data-bundle");
-    var isTodo = handle.indexOf("TODO:") === 0;
 
-    var text = isTodo ? "no backend yet" : "→ " + handle;
-    toast(text, { headers: headers, bundle: bundle, nudge: isTodo });
+    // local: — no network, just a DOM event screens can listen for.
+    if (handle.indexOf("local:") === 0) {
+      var name = handle.slice("local:".length);
+      toast("→ " + handle, { headers: headersSpec, bundle: bundle });
+      fireLocal(el, { name: name, el: el });
+      return;
+    }
+
+    // TODO:no-backend — keep the original nudge behavior, no network.
+    if (handle.indexOf("TODO:") === 0) {
+      toast("no backend yet", { headers: headersSpec, bundle: bundle, nudge: true });
+      return;
+    }
+
+    // Screens that want to handle the network call themselves.
+    if (el.hasAttribute("data-handle-manual")) {
+      fireHandled(el, { handle: handle, method: null, path: null, result: null });
+      return;
+    }
+
+    // "METHOD /api/path"
+    var spaceIdx = handle.indexOf(" ");
+    if (spaceIdx === -1) {
+      toast("malformed handle: " + handle, { nudge: true });
+      return;
+    }
+    var method = handle.slice(0, spaceIdx).toUpperCase();
+    var rawPath = handle.slice(spaceIdx + 1).trim();
+
+    var resolvedPath = resolvePath(rawPath, el);
+    if (resolvedPath.error) {
+      toast("missing param :" + resolvedPath.error, { headers: headersSpec, bundle: bundle, nudge: true });
+      return;
+    }
+    var path = resolvedPath.path;
+
+    // Row writes require ?book=<book>.
+    if (/\/api\/rows\//.test(path) && method !== "GET") {
+      var bookVal = resolveParam("book", el);
+      if (bookVal === undefined) {
+        toast("missing param :book (required for /api/rows/*)", { headers: headersSpec, bundle: bundle, nudge: true });
+        return;
+      }
+      path += (path.indexOf("?") === -1 ? "?" : "&") + "book=" + encodeURIComponent(bookVal);
+    }
+
+    var reqHeaders = resolveHeaders(el, headersSpec);
+    var body = resolveBody(el);
+    if (body === undefined && (method === "POST" || method === "PATCH")) {
+      body = {};
+    }
+
+    if (!window.flowApi) {
+      toast("flowApi not loaded — is _api.js included before _shell.js?", { nudge: true });
+      return;
+    }
+
+    window.flowApi
+      .request(method, path, {
+        body: body,
+        ifMatch: reqHeaders.ifMatch,
+        sourceGeneration: reqHeaders.sourceGeneration,
+      })
+      .then(function (result) {
+        if (result.ok) {
+          toast("✓ " + result.status + " " + method + " " + rawPath, {
+            headers: headersSpec,
+            bundle: bundle,
+          });
+        } else {
+          toast("✗ " + result.status + " " + result.kind, {
+            headers: headersSpec,
+            bundle: bundle,
+            nudge: true,
+          });
+        }
+        fireHandled(el, { handle: handle, method: method, path: path, result: result });
+      });
+  }
+
+  // Controls whose DEFAULT ACTION is the state change itself. Calling
+  // preventDefault() on these cancels the native toggle, so the box the user
+  // just clicked springs back while the request goes out — the UI and the
+  // server end up disagreeing. Only suppress the default for controls whose
+  // default is navigation or form submission.
+  function defaultIsTheStateChange(el) {
+    var tag = el.tagName;
+    if (tag === "SELECT" || tag === "TEXTAREA") return true;
+    if (tag !== "INPUT") return false;
+    var type = (el.getAttribute("type") || "text").toLowerCase();
+    return type === "checkbox" || type === "radio" || type === "range" || type === "file";
   }
 
   document.addEventListener("click", function (ev) {
     var el = ev.target.closest ? ev.target.closest("[data-handle]") : null;
     if (!el) return;
-    ev.preventDefault();
+    // The clicked node matters, not just the [data-handle] host: a checkbox
+    // nested inside a handle-bearing <label> must keep its native toggle.
+    var clicked = ev.target && ev.target.nodeType === 1 ? ev.target : el;
+    if (!defaultIsTheStateChange(clicked) && !defaultIsTheStateChange(el)) {
+      ev.preventDefault();
+    }
     handleClickTarget(el);
   });
 
@@ -113,5 +319,5 @@
     body.dataset.mode = body.dataset.mode === "translation" ? "authoring" : "translation";
   });
 
-  window.flowShell = { toast: toast };
+  window.flowShell = { toast: toast, context: context, setContext: setContext };
 })();

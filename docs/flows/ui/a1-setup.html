@@ -136,6 +136,7 @@
     </div>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -159,10 +160,22 @@
     var state = {
       step: 1,
       completed: {},
-      org: "Alianza Bíblica Hispanoamericana",
-      resourceLanguage: "Español (LatAm)",
+      // org/resourceLanguage/defaultUpstreamOrg seeded from the real
+      // GET /api/project-config + GET /api/workspaces on load (loadRealConfig()).
+      // Everything below the seed line is WIZARD-LOCAL PREVIEW STATE: the real
+      // project-config API is preset+overrides shaped, not itemized per
+      // resource/lane, so there is no backend endpoint that reads or writes an
+      // individual resource's "leave blank / custom source" choice or a single
+      // lane's target repo. Only Step 4 (preset switch), the mode toggle, and
+      // the org-search/verify-source/inferred-config calls are wired to real
+      // endpoints — the rest stays a design preview, called out inline below.
+      org: "—",
+      currentPreset: null,
+      presets: [],
+      resourceLanguage: "",
       defaultUpstreamOrg: "unfoldingWord",
-      detectFailed: false,
+      inferred: null,        // last GET /api/orgs/:org/inferred-config result
+      inferredError: null,
       resources: {
         glt: { enabled: true,  choice: "blank", url: "", verify: "idle" },
         gst: { enabled: true,  choice: "blank", url: "", verify: "idle" },
@@ -170,14 +183,18 @@
         tq:  { enabled: true,  choice: "blank", url: "", verify: "idle" },
         twl: { enabled: true,  choice: "blank", url: "", verify: "idle" },
         tw:  { enabled: false, choice: "blank", url: "", verify: "idle" },
-        ta:  { enabled: false, choice: "custom", url: "https://git.door43.org/BSOJ/es-419_ta", verify: "verified" }
+        ta:  { enabled: false, choice: "blank", url: "", verify: "idle" }
       },
       lanes: {
-        literal:    { targetRepo: "es-419_glt", task: "editing",  upstream: "unfoldingWord", url: "", locked: false },
-        simplified: { targetRepo: "es-419_gst", task: "editing", upstream: "url", url: "https://git.door43.org/BSOJ/es-419_gst", locked: false }
+        literal:    { targetRepo: "", task: "editing",  upstream: "unfoldingWord", url: "", locked: false },
+        simplified: { targetRepo: "", task: "editing", upstream: "unfoldingWord", url: "", locked: false }
       },
       applying: false,
-      applied: false
+      applied: false,
+      applyResult: null,
+      applyError: null,
+      selectedPreset: null,
+      mode: null
     };
 
     var railEl = document.getElementById("rail");
@@ -230,6 +247,22 @@
     }
 
     /* ---------------- Step 1 — org identity ---------------- */
+    function inferredConfigHtml() {
+      if (state.inferredError) {
+        return '<div class="banner banner--lock"><span class="banner-msg">' + esc(state.inferredError) + '</span>' +
+          '<button class="btn btn-warn banner-action" type="button" id="retryDetectBtn">Retry detection</button></div>';
+      }
+      if (!state.inferred) {
+        return '<div class="note-box">Loading org inference from <code>GET /api/orgs/:org/inferred-config</code>…</div>';
+      }
+      var inf = state.inferred;
+      var missing = inf.missing && inf.missing.length ? inf.missing.join(", ") : "none";
+      var warn = (inf.warnings || []).length ? " Warnings: " + inf.warnings.join("; ") + "." : "";
+      return '<div class="note-box">Org inference via <code>GET /api/orgs/' + esc(state.org) + '/inferred-config</code> — manifest ' +
+        (inf.manifestFound ? "found" : "NOT found") + ", missing: " + esc(missing) + "." + esc(warn) +
+        ' <button class="btn btn-ghost btn-sm" type="button" id="retryDetectBtn" style="margin-inline-start:8px;">Re-check</button></div>';
+    }
+
     function renderStep1() {
       return panel({
         title: "Step 1 — Your organization",
@@ -238,28 +271,29 @@
           '<div class="field">' +
             '<label class="f-label" for="orgField">Organization</label>' +
             '<input class="tinput" id="orgField" type="text" value="' + esc(state.org) + '" disabled>' +
-            '<p class="f-help">Read from <code>GET /api/workspaces</code>. Can\'t be changed after setup.</p>' +
+            '<p class="f-help">Read from <code>GET /api/workspaces</code>. Can\'t be changed after setup — a new org needs its own workspace slot (Observe screen\'s Spare workspace pool).</p>' +
           "</div>" +
           '<div class="field">' +
             '<label class="f-label" for="langField">Resource language</label>' +
-            '<input class="tinput" id="langField" type="text" data-bind="resourceLanguage" value="' + esc(state.resourceLanguage) + '">' +
-            '<p class="f-help">Free-text/autocomplete, local only — seeds languageCode/languageName/direction.</p>' +
+            '<input class="tinput" id="langField" type="text" data-bind="resourceLanguage" value="' + esc(state.resourceLanguage) + '" disabled>' +
+            '<!-- Read-only here: languageCode/languageName/direction come from the active PRESET (GET /api/project-config), not a free-text field the API accepts standalone. Changing language means switching preset in Step 4. --> ' +
+            '<p class="f-help">Set by the active preset (Step 4) — not independently editable here.</p>' +
           "</div>" +
-          (state.detectFailed
-            ? '<div class="banner banner--lock"><span class="banner-msg">Couldn\'t auto-detect a starting configuration for this org.</span>' +
-              '<button class="btn btn-warn banner-action" type="button" data-handle="GET /api/orgs/:org/inferred-config" data-bundle="A">Retry detection</button></div>'
-            : '<div class="note-box">Org inference already ran once for this org via <code>GET /api/orgs/:org/inferred-config</code> — draft only, nothing applied yet.' +
-              ' <button class="btn btn-ghost btn-sm" type="button" data-act="simulate-fail" style="margin-inline-start:8px;">Simulate detection failure</button></div>'),
+          inferredConfigHtml(),
         footLeft: "Step 1 of 5",
         footRight: wizNav(1)
       });
     }
 
     /* ---------------- Step 2 — sources ---------------- */
-    function verifyChip(v) {
+    // Enable/disable + blank-vs-custom choice per resource is WIZARD-LOCAL
+    // PREVIEW STATE (see the note on `state` above) — but the "Verify source"
+    // button on a custom URL, and the upstream-org check, are wired to the
+    // real GET /api/orgs/verify-source.
+    function verifyChip(v, key) {
       if (v === "verifying") return '<span class="chip chip-edited">Verifying…</span>';
       if (v === "verified") return '<span class="chip chip-approved">Verified</span>';
-      if (v === "error") return '<span class="chip chip-needs">Unreachable — <button class="btn-ghost" style="text-decoration:underline;background:none;border:none;padding:0;cursor:pointer;color:inherit;" type="button" data-handle="GET /api/orgs/verify-source" data-bundle="A" data-act="verify-retry">Retry</button></span>';
+      if (v === "error") return '<span class="chip chip-needs">Unreachable — <button class="btn-ghost verify-retry-btn" style="text-decoration:underline;background:none;border:none;padding:0;cursor:pointer;color:inherit;" type="button" data-key="' + key + '">Retry</button></span>';
       return "";
     }
 
@@ -277,8 +311,8 @@
               "</div>" +
               (res.choice === "custom"
                 ? '<div class="res-url"><input class="tinput" type="text" placeholder="https://git.door43.org/..." data-bind-url="' + r.key + '" value="' + esc(res.url) + '">' +
-                  '<div class="res-status">' + verifyChip(res.verify) +
-                  ' <button class="btn btn-ghost btn-sm" type="button" data-act="verify" data-key="' + r.key + '" data-handle="GET /api/orgs/verify-source" data-headers="checkBooks=1 for lit/sim" data-bundle="A">Verify source</button></div></div>'
+                  '<div class="res-status">' + verifyChip(res.verify, r.key) +
+                  ' <button class="btn btn-ghost btn-sm verify-btn" type="button" data-key="' + r.key + '">Verify source</button></div></div>'
                 : "")
               : '<p class="f-help">Not pulled — this resource stays empty until a translator authors it.</p>')
           + "</div>" +
@@ -287,12 +321,12 @@
 
       return panel({
         title: "Step 2 — Sources to pull from",
-        sub: 'Both a literal and simplified lane are offered by default — uncheck any resource above you don\'t want, rather than configuring from zero.',
+        sub: 'Both a literal and simplified lane are offered by default — uncheck any resource above you don\'t want, rather than configuring from zero. <!-- Per-resource enable/blank/custom choice is a wizard-local preview: the real project-config API is preset+overrides shaped, with no per-resource endpoint. -->',
         body:
           '<div class="field">' +
             '<label class="f-label" for="upstreamField">Default upstream org</label>' +
-            '<input class="tinput" id="upstreamField" type="text" data-bind="defaultUpstreamOrg" data-handle="GET /api/orgs/:org/inferred-config" data-bundle="A" value="' + esc(state.defaultUpstreamOrg) + '">' +
-            '<p class="f-help"><code>unfoldingWord</code> is auto-verified with no round trip; anything else re-verifies on blur. Resources left "blank" below pull from this org.</p>' +
+            '<input class="tinput" id="upstreamField" type="text" data-bind="defaultUpstreamOrg" value="' + esc(state.defaultUpstreamOrg) + '">' +
+            '<p class="f-help" id="upstreamVerifyNote"><code>unfoldingWord</code> is auto-verified with no round trip; anything else re-verifies on blur via <code>GET /api/orgs/verify-source</code>. Resources left "blank" below pull from this org.</p>' +
           "</div>" +
           '<div class="field">' + rows + "</div>",
         footLeft: RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length + " of " + RESOURCES.length + " resources selected",
@@ -301,6 +335,12 @@
     }
 
     /* ---------------- Step 3 — scripture lanes ---------------- */
+    // Wizard-local preview: real per-lane target/task management lives in
+    // a2-import.html's "Scripture source replacement" panel, wired to the
+    // real scriptureLaneRoutes endpoints. There is no simple single-call
+    // equivalent for "set this lane's target repo" outside that machinery,
+    // so Step 3 stays a design preview except the Verify button below,
+    // which is wired to the real GET /api/orgs/verify-source.
     function laneCard(key, label, placeholder) {
       var lane = state.lanes[key];
       return '<div class="lane-card">' +
@@ -328,7 +368,7 @@
           (lane.upstream === "url"
             ? '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;">' +
                 '<input class="tinput" type="text" placeholder="https://git.door43.org/..." data-bind-lane-url="' + key + '" value="' + esc(lane.url) + '">' +
-                '<button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/orgs/verify-source" data-headers="checkBooks=1" data-bundle="A">Verify</button>' +
+                '<button class="btn btn-ghost btn-sm lane-verify-btn" type="button" data-lane="' + key + '">Verify</button>' +
               "</div>"
             : "") +
         "</div>" +
@@ -346,42 +386,67 @@
     }
 
     /* ---------------- Step 4 — review & apply ---------------- */
+    // Real wiring: a preset selector (from GET /api/project-config's presets
+    // list) + PUT /api/project-config, and the authoring/translation mode
+    // toggle (PATCH /api/project-config/mode). The per-resource/per-lane
+    // review below is still the wizard-local preview described on Step 2/3 —
+    // it does NOT feed the real PUT body, which only takes {preset,
+    // overrides}. Selecting a DIFFERENT preset than the one already active on
+    // a populated database will genuinely 409 project_not_empty (a real
+    // tenancy guard) rather than silently doing nothing.
     function renderStep4() {
       var pullDts = "", orgDts = "";
       RESOURCES.forEach(function (r) {
         var res = state.resources[r.key];
         pullDts += "<dt>" + esc(r.label) + "</dt><dd>" + (res.enabled ? (res.choice === "blank" ? esc(state.defaultUpstreamOrg) + " (default)" : (esc(res.url) || "(no URL set)")) : "Not pulled") + "</dd>";
-        orgDts += "<dt>" + esc(r.label) + "</dt><dd>" + (res.enabled ? "AlianzaBiblica/es-419_" + r.key : "—") + "</dd>";
       });
       [["literal", "Literal lane"], ["simplified", "Simplified lane"]].forEach(function (pair) {
         var lane = state.lanes[pair[0]];
         var upstreamLabel = lane.upstream === "unfoldingWord" ? "unfoldingWord" : lane.upstream === "url" ? (esc(lane.url) || "(no URL set)") : "None — authored locally";
         pullDts += "<dt>" + pair[1] + "</dt><dd>" + upstreamLabel + " (" + lane.task + ")</dd>";
-        orgDts += "<dt>" + pair[1] + "</dt><dd>AlianzaBiblica/" + esc(lane.targetRepo) + "</dd>";
       });
+
+      var presetOptions = state.presets.map(function (p) {
+        return '<option value="' + esc(p.preset) + '"' + (p.preset === state.selectedPreset ? " selected" : "") + '>' +
+          esc(p.preset) + " — " + esc(p.org) + " (" + esc(p.languageName) + ")" + "</option>";
+      }).join("");
 
       var body =
         '<div class="grid-2">' +
-          '<div><p class="f-label">Pull from (sources)</p><dl class="kv">' + pullDts + "</dl></div>" +
-          '<div><p class="f-label">Your org (targets)</p><dl class="kv">' + orgDts + "</dl></div>" +
+          '<div><p class="f-label">Wizard preview (local only, not sent)</p><dl class="kv">' + pullDts + "</dl></div>" +
+          '<div>' +
+            '<p class="f-label">Active preset (real)</p>' +
+            '<select class="tselect" id="presetSelect" style="width:100%;">' + presetOptions + "</select>" +
+            '<p class="f-help">Current: <code>' + esc(state.currentPreset || "—") + '</code>. Switching to a DIFFERENT preset on a database that already has content will 409 — that is a real tenancy guard, not a bug.</p>' +
+            '<div style="margin-top:10px;">' +
+              '<p class="f-label">Project mode</p>' +
+              '<div class="seg" id="modeSeg">' +
+                '<button type="button" data-value="authoring" aria-pressed="' + (state.mode === "authoring") + '">Authoring</button>' +
+                '<button type="button" data-value="translation" aria-pressed="' + (state.mode === "translation") + '">Translation</button>' +
+              "</div>" +
+              '<p class="f-help">Wired to <code>PATCH /api/project-config/mode</code> — real, admin-only, safe on a populated DB.</p>' +
+            "</div>" +
+          "</div>" +
         "</div>" +
-        '<div class="note-box" style="margin-top:14px;">Applying writes sources via <code>PUT /api/project-config</code>, then patches each lane\'s edit/align mode via <code>PATCH /api/project-config/lanes/:lane</code>. Activating a scripture-source <em>replacement</em> later (Preferences → Scripture lanes) is always a separate, explicit Activate step — Apply here never silently swaps live content.</div>';
+        '<div class="note-box" style="margin-top:14px;">Apply below calls the real <code>PUT /api/project-config</code> with the preset selected above. Activating a scripture-source <em>replacement</em> is always a separate, explicit step on the Import screen — Apply here never silently swaps live content.</div>';
 
-      if (state.applyConflict) {
+      if (state.applyError) {
         body += '<div class="banner banner--lock" style="margin-top:12px;"><span class="banner-msg">' +
-          '<code>409 lane_source_change_requires_migration</code> — the simplified lane already has content from a different source.</span>' +
-          '<button class="btn btn-warn banner-action" type="button" data-handle="PATCH /api/project-config/lanes/:lane" data-bundle="A" data-act="revert-lane">Revert simplified to es-419_gst</button></div>';
+          '<code>' + esc(state.applyError.status) + " " + esc(state.applyError.error) + '</code>' +
+          (state.applyError.hint ? " — " + esc(state.applyError.hint) : "") + '</span></div>';
+      }
+      if (state.applyResult) {
+        body += '<div class="note-box" style="margin-top:12px;">✓ Applied — active preset is now <code>' + esc(state.applyResult.preset) + "</code> (org " + esc(state.applyResult.org) + ").</div>";
       }
 
       return panel({
         title: "Step 4 — Review & apply",
         sub: "Confirm what gets pulled from where before it's applied to " + esc(state.org) + ".",
         body: body,
-        footLeft: RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length + " resources + 2 lanes ready to apply",
+        footLeft: RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length + " resources + 2 lanes previewed (local only)",
         footRight:
           '<button class="btn btn-ghost" type="button" data-act="back">' + CHEVL_SVG + " Back</button>" +
-          '<button class="btn btn-ghost btn-sm" type="button" data-act="toggle-conflict">Simulate 409</button>' +
-          '<button class="btn btn-primary" type="button" data-act="apply" data-handle="PUT /api/project-config" data-bundle="A"' + (state.applying ? " disabled" : "") + '>' +
+          '<button class="btn btn-primary" type="button" id="applyBtn"' + (state.applying ? " disabled" : "") + '>' +
           (state.applying ? "Applying…" : "Apply configuration") + "</button>"
       });
     }
@@ -389,6 +454,8 @@
     /* ---------------- Step 5 — done ---------------- */
     function renderStep5() {
       var n = RESOURCES.filter(function (r) { return state.resources[r.key].enabled; }).length;
+      var activePreset = (state.applyResult && state.applyResult.preset) || state.currentPreset;
+      var activeOrg = (state.applyResult && state.applyResult.org) || state.org;
       return panel({
         title: "Step 5 — Configured",
         sub: "",
@@ -396,7 +463,7 @@
           '<div class="done-hero">' +
             '<div class="done-badge">' + DONE_SVG + "</div>" +
             "<h2>You're configured.</h2>" +
-            "<p>" + esc(state.org) + " is pulling " + n + " resources from " + esc(state.defaultUpstreamOrg) + " and running two scripture lanes.</p>" +
+            "<p>" + esc(activeOrg) + " is running preset <code>" + esc(activePreset) + "</code>. (The " + n + "-resource / 2-lane preview above is local-only wizard state — see the notes on Steps 2–3.)</p>" +
             '<div class="done-exits">' +
               '<a class="btn btn-primary" href="a2-import.html">Go to Import ' + CHEVR_SVG + "</a>" +
               '<button class="btn btn-rerun" type="button" data-act="open-ws-dialog">Preview workspace picker</button>' +
@@ -424,7 +491,6 @@
 
       if (act === "back") { state.step -= 1; render(); return; }
       if (act === "continue") { state.completed[state.step] = true; state.step += 1; render(); return; }
-      if (act === "simulate-fail") { state.detectFailed = true; render(); return; }
       if (act === "res-toggle") {
         var res = state.resources[b.dataset.key];
         res.enabled = !res.enabled;
@@ -436,30 +502,66 @@
         render();
         return;
       }
-      if (act === "verify" || act === "verify-retry") {
-        var key = b.dataset.key;
-        var target = key ? state.resources[key] : state.resources.ta;
-        target.verify = "verifying";
-        render();
-        setTimeout(function () { target.verify = Math.random() > 0.25 ? "verified" : "error"; render(); }, 700);
-        return;
-      }
-      if (act === "toggle-conflict") { state.applyConflict = !state.applyConflict; render(); return; }
-      if (act === "revert-lane") { state.applyConflict = false; render(); return; }
-      if (act === "apply") {
-        if (state.applyConflict) return; // handled by revert first
-        state.applying = true;
-        render();
-        setTimeout(function () {
-          state.applying = false;
-          state.applied = true;
-          state.completed[4] = true;
-          state.step = 5;
-          render();
-        }, 900);
-        return;
-      }
       if (act === "open-ws-dialog") { openWsModal(); return; }
+    });
+
+    // Real GET /api/orgs/verify-source for a resource's custom URL.
+    function verifySourceReal(url, onDone) {
+      if (!url) { onDone({ ok: false }); return; }
+      window.flowApi.get("/api/orgs/verify-source", { url: url }).then(function (r) {
+        onDone(r);
+      });
+    }
+
+    hostEl.addEventListener("click", function (e) {
+      var vBtn = e.target.closest(".verify-btn, .verify-retry-btn");
+      if (vBtn) {
+        var key = vBtn.dataset.key;
+        var res = state.resources[key];
+        res.verify = "verifying";
+        render();
+        verifySourceReal(res.url, function (r) {
+          res.verify = r.ok ? "verified" : "error";
+          if (r.ok) window.flowShell.toast("✓ " + r.data.fullName, { bundle: "A" });
+          else window.flowShell.toast("✗ verify-source: " + (r.body && r.body.error ? r.body.error : r.status), { nudge: true, bundle: "A" });
+          render();
+        });
+        return;
+      }
+      var laneVBtn = e.target.closest(".lane-verify-btn");
+      if (laneVBtn) {
+        var laneKey = laneVBtn.dataset.lane;
+        var lane = state.lanes[laneKey];
+        verifySourceReal(lane.url, function (r) {
+          window.flowShell.toast(r.ok ? "✓ " + r.data.fullName : "✗ verify-source: " + (r.body && r.body.error ? r.body.error : r.status), { nudge: !r.ok, bundle: "A" });
+        });
+        return;
+      }
+      var retryDetect = e.target.closest("#retryDetectBtn");
+      if (retryDetect) { loadInferredConfig(); return; }
+      var applyBtn = e.target.closest("#applyBtn");
+      if (applyBtn) {
+        var preset = document.getElementById("presetSelect") ? document.getElementById("presetSelect").value : state.currentPreset;
+        state.selectedPreset = preset;
+        state.applying = true;
+        state.applyError = null;
+        state.applyResult = null;
+        render();
+        window.flowApi.request("PUT", "/api/project-config", { body: { preset: preset } }).then(function (r) {
+          state.applying = false;
+          if (r.ok && r.data && r.data.config) {
+            state.applyResult = { preset: r.data.config.preset, org: r.data.config.org };
+            state.currentPreset = r.data.config.preset;
+            state.org = r.data.config.org;
+            state.completed[4] = true;
+            state.step = 5;
+          } else {
+            state.applyError = { status: r.status, error: (r.body && r.body.error) || r.kind, hint: r.body && r.body.hint };
+          }
+          render();
+        });
+        return;
+      }
     });
 
     hostEl.addEventListener("change", function (e) {
@@ -469,35 +571,138 @@
       if (t.dataset.bindLane) { state.lanes[t.dataset.bindLane][t.dataset.bindField] = t.value; }
       if (t.dataset.bindLaneUrl) { state.lanes[t.dataset.bindLaneUrl].url = t.value; }
     });
-    hostEl.addEventListener("click", function (e) {
-      var seg = e.target.closest("[data-lane-seg]");
-      if (!seg) return;
-      var btn = e.target.closest("button[data-value]");
-      if (!btn) return;
-      state.lanes[seg.dataset.lane][seg.dataset.laneSeg === "task" ? "task" : "upstream"] = btn.dataset.value;
-      render();
-    });
+    // Real: verify the default upstream org (skip the round trip for
+    // unfoldingWord, matching the documented shortcut) on blur.
+    hostEl.addEventListener("blur", function (e) {
+      if (e.target.id !== "upstreamField") return;
+      var org = e.target.value.trim();
+      var note = document.getElementById("upstreamVerifyNote");
+      if (!org || org === "unfoldingWord") { if (note) note.textContent = "unfoldingWord is auto-verified with no round trip. Resources left \"blank\" pull from this org."; return; }
+      if (note) note.textContent = "Checking " + org + " via GET /api/orgs/search…";
+      window.flowApi.get("/api/orgs/search", { q: org }).then(function (r) {
+        if (!note) return;
+        if (r.ok && r.data && r.data.matches && r.data.matches.length) {
+          note.textContent = "✓ found " + r.data.canonical + " on Door43. Resources left \"blank\" pull from this org.";
+        } else {
+          note.textContent = "✗ no exact Door43 org match for \"" + org + "\" (search is exact-match only).";
+        }
+      });
+    }, true);
 
-    /* ---------------- WorkspaceChoiceDialog demo ---------------- */
-    var WORKSPACES = [
-      { slug: "abh-es419", name: "Alianza Bíblica Hispanoamericana", current: true },
-      { slug: "wsib-fr", name: "Wycliffe Société Internationale (fr)", current: false },
-      { slug: "dei-verbum-pt", name: "Dei Verbum PT-BR", current: false }
-    ];
+    function laneCardBind() {
+      hostEl.addEventListener("click", function (e) {
+        var seg = e.target.closest("[data-lane-seg]");
+        if (!seg) return;
+        var btn = e.target.closest("button[data-value]");
+        if (!btn) return;
+        state.lanes[seg.dataset.lane][seg.dataset.laneSeg === "task" ? "task" : "upstream"] = btn.dataset.value;
+        render();
+      });
+      hostEl.addEventListener("click", function (e) {
+        var seg = e.target.closest("#modeSeg");
+        if (!seg) return;
+        var btn = e.target.closest("button[data-value]");
+        if (!btn) return;
+        var newMode = btn.dataset.value;
+        window.flowApi.request("PATCH", "/api/project-config/mode", { body: { mode: newMode } }).then(function (r) {
+          if (r.ok && r.data && r.data.config) {
+            state.mode = r.data.config.mode;
+            window.flowShell.toast("✓ mode set to " + state.mode, { bundle: "A" });
+          } else {
+            window.flowShell.toast("✗ " + (r.body && r.body.error ? r.body.error : r.status), { nudge: true, bundle: "A" });
+          }
+          render();
+        });
+      });
+    }
+    laneCardBind();
+
+    /* ---------------- inferred-config (real) ---------------- */
+    function loadInferredConfig() {
+      if (!state.org || state.org === "—") return;
+      state.inferred = null;
+      state.inferredError = null;
+      if (state.step === 1) render();
+      window.flowApi.get("/api/orgs/" + encodeURIComponent(state.org) + "/inferred-config").then(function (r) {
+        if (r.ok && r.data) {
+          state.inferred = r.data;
+        } else {
+          state.inferredError = "Couldn't reach Door43 for org inference: " + (r.body && r.body.error ? r.body.error : (r.kind || r.status));
+        }
+        if (state.step === 1) render();
+      });
+    }
+
+    /* ---------------- WorkspaceChoiceDialog (real GET /api/workspaces) --- */
+    var WORKSPACES = [];
     var wsModal = document.getElementById("wsModal");
     var wsModalBody = document.getElementById("wsModalBody");
     function openWsModal() {
-      wsModalBody.innerHTML = '<p class="f-help" style="margin:0 0 8px;">Loaded via <code>GET /api/workspaces</code>.</p>' + WORKSPACES.map(function (w) {
-        return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.name) + (w.current ? ' <span class="chip chip-approved">current</span>' : "") + '</p><p class="ws-sub">' + w.slug + '</p></div>' +
-          (w.current ? "" : '<button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch</button>') +
-        "</div>";
-      }).join("");
+      wsModalBody.innerHTML = '<p class="f-help" style="margin:0 0 8px;">Loading via <code>GET /api/workspaces</code>…</p>';
       wsModal.hidden = false;
+      window.flowApi.get("/api/workspaces").then(function (r) {
+        if (!r.ok || !r.data) { wsModalBody.innerHTML = '<p class="f-help">Failed to load: ' + esc(r.kind || r.status) + "</p>"; return; }
+        WORKSPACES = r.data.workspaces || [];
+        var current = r.data.current;
+        wsModalBody.innerHTML = '<p class="f-help" style="margin:0 0 8px;">Loaded via <code>GET /api/workspaces</code>.</p>' + WORKSPACES.map(function (w) {
+          var isCurrent = w.slug === current;
+          return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.label || w.slug) + (isCurrent ? ' <span class="chip chip-approved">current</span>' : "") + '</p><p class="ws-sub">' + esc(w.slug) + '</p></div>' +
+            (isCurrent ? "" : '<button class="btn btn-primary btn-sm ws-switch-btn" type="button" data-slug="' + esc(w.slug) + '">Switch</button>') +
+          "</div>";
+        }).join("");
+      });
     }
     document.getElementById("wsModalClose").addEventListener("click", function () { wsModal.hidden = true; });
-    document.getElementById("wsModal").addEventListener("click", function (e) { if (e.target === wsModal) wsModal.hidden = true; });
+    document.getElementById("wsModal").addEventListener("click", function (e) {
+      if (e.target === wsModal) { wsModal.hidden = true; return; }
+      var sw = e.target.closest(".ws-switch-btn");
+      if (sw) {
+        if (!window.confirm("Switch workspace? This reloads the whole app.")) return;
+        window.flowApi.post("/api/workspaces/" + encodeURIComponent(sw.dataset.slug), {}).then(function (r) {
+          if (r.ok) { window.flowShell.toast("✓ switched — reloading…", { bundle: "A" }); setTimeout(function () { location.reload(); }, 400); }
+          else window.flowShell.toast("✗ " + (r.kind || r.status), { nudge: true, bundle: "A" });
+        });
+      }
+    });
+
+    /* ---------------- bootstrap: real GET /api/workspaces + /api/project-config */
+    function loadRealConfig() {
+      window.flowApi.get("/api/workspaces").then(function (r) {
+        if (r.ok && r.data) {
+          var cur = (r.data.workspaces || []).filter(function (w) { return w.slug === r.data.current; })[0];
+          state.org = cur ? (cur.org || cur.label || cur.slug) : r.data.current;
+        }
+        return window.flowApi.get("/api/project-config");
+      }).then(function (r) {
+        if (r.ok && r.data && r.data.config) {
+          var cfg = r.data.config;
+          state.currentPreset = cfg.preset;
+          state.selectedPreset = cfg.preset;
+          state.resourceLanguage = cfg.languageTitle || cfg.languageName || "";
+          state.defaultUpstreamOrg = (cfg.translationSource && cfg.translationSource.org) || "unfoldingWord";
+          state.mode = cfg.mode || null;
+          state.presets = r.data.presets || [];
+          if (cfg.laneState) {
+            ["literal", "simplified"].forEach(function (k, i) {
+              var laneKey = i === 0 ? "lit" : "sim";
+              var laneCfg = cfg.laneState[laneKey];
+              if (laneCfg && laneCfg.config && laneCfg.config.source) {
+                state.lanes[k].targetRepo = laneCfg.config.source.repo;
+              }
+            });
+          }
+        }
+        render();
+        loadInferredConfig();
+      });
+    }
 
     render();
+    if (window.flowApi && window.flowApi.ready) {
+      window.flowApi.ready.then(loadRealConfig);
+    } else {
+      loadRealConfig();
+    }
   })();
   </script>
 </body>

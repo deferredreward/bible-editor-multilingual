@@ -204,7 +204,7 @@
         <div class="panel-foot">
           <span class="foot-state" id="listFoot">Loaded via <code>GET /api/books</code></span>
           <span class="spacer"></span>
-          <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/books" data-bundle="B">Retry list</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="retryListBtn">Retry list</button>
         </div>
       </section>
 
@@ -214,13 +214,19 @@
     <section class="panel" id="pendingImportsPanel">
       <div class="panel-top">
         <h2>Pending imports</h2>
-        <p class="panel-sub">Shared review queue of AI-pipeline proposals not yet resolved by any translator — not scoped to just you.</p>
+        <p class="panel-sub">Shared review queue of AI-pipeline proposals not yet resolved by any translator. <!-- The real endpoint (GET /api/pending-imports) is scoped to one book+chapter — there is no whole-project aggregate, so this queries the selected book at the chapter below. --></p>
       </div>
-      <div class="panel-body" id="pendingImportsBody"></div>
+      <div class="panel-body">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+          <span class="f-help" id="pendingImportsBookLabel">Book: —</span>
+          <div class="field" style="margin:0;"><label class="f-label" for="pendingChapter">Chapter</label><input class="tinput" id="pendingChapter" type="number" min="0" value="1" style="width:80px;"></div>
+        </div>
+        <div id="pendingImportsBody"></div>
+      </div>
       <div class="panel-foot">
-        <span class="foot-state" id="pendingImportsFoot">Loaded via <code>GET /api/pending-imports</code></span>
+        <span class="foot-state" id="pendingImportsFoot">Loaded via <code>GET /api/pending-imports?book=&amp;chapter=</code></span>
         <span class="spacer"></span>
-        <button class="btn btn-ghost btn-sm" type="button" id="pendingImportsRefreshBtn" data-handle="GET /api/pending-imports" data-bundle="B">Refresh</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="pendingImportsRefreshBtn">Refresh</button>
       </div>
     </section>
 
@@ -230,31 +236,40 @@
         <span class="chip chip-edited">Literal lane</span>
         <p class="panel-sub">Swap the literal lane's upstream source across the whole canon — validate the URL, review which books are affected, work the per-book job to completion, then activate.</p>
       </div>
+      <!-- Wired to the "lit" lane only, matching this panel's "Literal lane" label.
+           Real endpoints: POST validate, GET affected-books, POST replacements
+           (using this project's already-prepared pendingTarget from
+           GET /api/project-config), GET replacements/:jobId, retry-book,
+           waive-book. Activate/back-out/cancel are real too, but activate needs a
+           fencingToken from a separate export-lease flow this preview has no
+           read endpoint for — the Activate button prompts for one rather than
+           fabricating it. -->
       <div class="panel-body">
         <div class="grid-2">
           <div>
-            <div class="kv">
-              <dt>Current source</dt><dd>es-419_glt</dd>
-              <dt>Proposed source</dt><dd>es-419_glt_v2</dd>
+            <div class="kv" id="laneSourceKv">
+              <dt>Current source</dt><dd id="laneCurrentSourceDd">—</dd>
+              <dt>Proposed source</dt><dd id="laneProposedSourceDd">—</dd>
             </div>
             <div class="field" style="margin-top:12px;">
-              <label class="f-label" for="laneNewUrl">New Door43 URL</label>
-              <input class="tinput" id="laneNewUrl" type="text" value="https://git.door43.org/es-419_gl/es-419_glt_v2">
+              <label class="f-label" for="laneNewUrl">New Door43 URL (for Validate)</label>
+              <input class="tinput" id="laneNewUrl" type="text" placeholder="https://git.door43.org/...">
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-              <button class="btn btn-rerun btn-sm" type="button" id="laneValidateBtn" data-handle="POST /api/project-config/lanes/:lane/validate" data-bundle="A">Validate</button>
-              <button class="btn btn-ghost btn-sm" type="button" id="laneAffectedBtn" data-handle="GET /api/project-config/lanes/:lane/affected-books" data-bundle="A">View affected books</button>
+              <button class="btn btn-rerun btn-sm" type="button" id="laneValidateBtn">Validate</button>
+              <button class="btn btn-ghost btn-sm" type="button" id="laneAffectedBtn">View affected books</button>
             </div>
-            <p class="f-help" id="laneValidateResult">Not yet validated this run — the last check found 3 affected books.</p>
+            <p class="f-help" id="laneValidateResult">Not yet validated this run.</p>
           </div>
           <div>
             <p class="f-label">Lifecycle</p>
             <div class="lc-strip" id="laneLifecycle"></div>
             <p class="f-help" id="laneLifecycleNote"></p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-              <button class="btn btn-primary btn-sm" type="button" id="laneStartBtn" data-handle="POST /api/project-config/lanes/:lane/replacements" data-bundle="A">Start replacement</button>
-              <button class="btn btn-approve btn-sm" type="button" id="laneActivateBtn" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/activate" data-bundle="A">Activate</button>
-              <button class="btn btn-warn btn-sm" type="button" id="laneBackOutBtn" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/back-out" data-bundle="A">Back out</button>
+              <button class="btn btn-primary btn-sm" type="button" id="laneStartBtn">Start replacement</button>
+              <button class="btn btn-approve btn-sm" type="button" id="laneActivateBtn">Activate…</button>
+              <button class="btn btn-warn btn-sm" type="button" id="laneBackOutBtn">Back out</button>
+              <button class="btn btn-ghost btn-sm" type="button" id="laneCancelBtn">Cancel</button>
             </div>
           </div>
         </div>
@@ -264,9 +279,9 @@
         </div>
       </div>
       <div class="panel-foot">
-        <span class="foot-state" id="laneFoot"></span>
+        <span class="foot-state" id="laneFoot">No active replacement job loaded.</span>
         <span class="spacer"></span>
-        <button class="btn btn-ghost btn-sm" type="button" id="laneJobStatusBtn" data-handle="GET /api/project-config/lanes/:lane/replacements/:jobId" data-bundle="A">Refresh status</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="laneJobStatusBtn">Refresh status</button>
         <span id="laneNextAction"></span>
       </div>
     </section>
@@ -295,11 +310,12 @@
       </div>
       <div class="modal-foot" style="justify-content:space-between;">
         <button class="btn btn-ghost" type="button" id="repullClose">Cancel</button>
-        <button class="btn btn-primary" type="button" data-handle="POST /api/books/:book/reimport" data-bundle="B" id="repullGo">Import</button>
+        <button class="btn btn-primary" type="button" id="repullGo">Import</button>
       </div>
     </div>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -338,43 +354,51 @@
       ] }
     ];
 
-    var IMPORTED = { TIT: true, RUT: true, JON: true, GEN: true, MAT: true };
-    var LINT = {
-      TIT: { flag: 1, escalate: 0, rows: ["Flag — 2:3 quote run missing an alignment milestone"] },
-      RUT: { flag: 2, escalate: 0, rows: ["Flag — 1:6 unaligned quote run", "Flag — 2:1 unusual paragraph marker"] },
-      JON: { flag: 0, escalate: 1, rows: ["Escalate — footnote integrity mismatch (ULT/UST) in 2:4"] },
-      GEN: { flag: 0, escalate: 0, rows: [] },
-      MAT: { flag: 0, escalate: 0, rows: [] }
-    };
+    // Filled by loadBooks() from the real GET /api/books. Book -> imported_at.
+    var IMPORTED = {};
+    // Per-book lint results, filled lazily by loadLint(). GET /api/books/:book/lint.
+    var LINT = {};
+    // Per-book source overrides, filled by loadSources(). GET /api/books/:book/sources.
+    var SOURCES = {};
 
-    var PENDING_IMPORTS = [
-      { book: "ZEC", chapter: 6, kind: "tn", proposedBy: "Diego", detail: "3 AI-drafted notes awaiting review after a pipeline run" },
-      { book: "HOS", chapter: 2, kind: "tq", proposedBy: "Sarah", detail: "1 AI-drafted question awaiting review" }
-    ];
-
-    function renderPendingImports() {
+    function renderPendingImports(items) {
       var body = document.getElementById("pendingImportsBody");
-      if (!PENDING_IMPORTS.length) {
-        body.innerHTML = '<p class="pending-empty">Nothing pending — the queue is empty.</p>';
+      if (!items || !items.length) {
+        body.innerHTML = '<p class="pending-empty">Nothing pending for this book/chapter.</p>';
         return;
       }
-      body.innerHTML = PENDING_IMPORTS.map(function (p) {
-        return '<div class="pending-row"><div class="pr-main"><strong>' + p.book + " " + p.chapter + '</strong> <span class="chip chip-draft">' + p.kind + '</span>' +
-          '<div class="pr-sub">' + esc(p.detail) + " — proposed by " + esc(p.proposedBy) + '</div></div></div>';
+      body.innerHTML = items.map(function (p) {
+        return '<div class="pending-row"><div class="pr-main"><strong>' + esc(p.book) + " " + p.chapter + '</strong> <span class="chip chip-draft">' + esc(p.kind) + '</span>' +
+          '<div class="pr-sub">verse ' + p.verse + " — proposed by " + esc(p.startedByUsername || "unknown") + " (" + esc(p.pipelineType || "") + ")</div></div></div>";
       }).join("");
     }
+    function loadPendingImports() {
+      var book = state.selected;
+      var chapter = document.getElementById("pendingChapter").value || "1";
+      document.getElementById("pendingImportsBookLabel").textContent = "Book: " + book;
+      window.flowApi.get("/api/pending-imports", { book: book, chapter: chapter }).then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("pendingImportsBody").innerHTML = '<p class="pending-empty">Failed to load: ' + esc(r.kind || r.status) + "</p>";
+          return;
+        }
+        renderPendingImports(r.data.items || []);
+      });
+    }
+    document.getElementById("pendingImportsRefreshBtn").addEventListener("click", loadPendingImports);
+    document.getElementById("pendingChapter").addEventListener("change", loadPendingImports);
 
-    document.getElementById("pendingImportsRefreshBtn").addEventListener("click", function () { renderPendingImports(); });
-
+    // Scripture source replacement — wired to the "lit" lane only (matches this
+    // panel's "Literal lane" chip). jobId/job/books come from real API responses;
+    // nothing here is fabricated, and lifecycle text is derived from the real
+    // scripture_lane_replacement `status` field (reserved|staging|ready|completed),
+    // not simulated locally.
     var laneState = {
-      proposedUrl: "https://git.door43.org/es-419_gl/es-419_glt_v2",
-      jobId: "repl-8841",
-      lifecycle: "staging",
-      books: [
-        { book: "TIT", state: "artifact_ok" },
-        { book: "RUT", state: "retryable_error" },
-        { book: "JON", state: "absent_authorized" }
-      ]
+      lane: "lit",
+      currentSource: null,
+      proposedTarget: null,
+      jobId: null,
+      job: null,
+      books: []
     };
     var LC_STEPS = ["reserved", "staging", "ready", "completed"];
     var LC_NOTE = {
@@ -385,14 +409,10 @@
     };
 
     var state = {
-      selected: "TIT",
+      selected: "GEN",
       advOpen: false,
       intent: {},
-      jobs: [
-        { book: "ZEC", state: "running", detail: "Draft — chapter 6, ~40 min remaining" },
-        { book: "HOS", state: "failed", detail: "502 model_call_failed — retryable" },
-        { book: "MIC", state: "queued", detail: "#2 in line" }
-      ]
+      jobs: []
     };
 
     var bookGroupsEl = document.getElementById("bookGroups");
@@ -477,20 +497,58 @@
       counterLine.textContent = n + "/66 imported";
     }
 
+    // Fetches real lint results for `code` (if not already cached) then
+    // re-renders the detail panel — but only if the user hasn't since selected
+    // a different book, so a slow response can't clobber a newer selection.
+    function loadLint(code) {
+      if (LINT[code]) return;
+      window.flowApi.get("/api/books/" + encodeURIComponent(code) + "/lint").then(function (r) {
+        if (!r.ok || !r.data) return;
+        LINT[code] = {
+          flag: r.data.flagCount,
+          escalate: r.data.escalateCount,
+          rows: (r.data.issues || []).map(function (i) {
+            return (i.bucket === "escalate" ? "Escalate" : "Flag") + " — " + (i.ref || "") + " (" + i.resource + ") " + (i.message || i.reason || "");
+          })
+        };
+        if (state.selected === code) renderDetail();
+      });
+    }
+
     function lintBadgeHtml(code, imported) {
       if (!imported) return "";
-      var lint = LINT[code] || { flag: 0, escalate: 0, rows: [] };
+      var lint = LINT[code];
+      if (!lint) {
+        loadLint(code);
+        return '<span class="chip chip-draft">⚑ Lint …</span>';
+      }
       var total = lint.flag + lint.escalate;
       var rows = lint.rows.length ? lint.rows.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") : "<li>No issues found.</li>";
       return '<span class="lint-wrap">' +
         '<button type="button" class="lint-badge chip ' + (total ? "chip-needs" : "chip-approved") + '" id="lintBadge" ' +
-          'data-handle="GET /api/books/:book/lint" data-bundle="B" aria-haspopup="true" aria-expanded="false" aria-controls="lintPopover">' +
+          'aria-haspopup="true" aria-expanded="false" aria-controls="lintPopover">' +
           "⚑ Lint " + total + "</button>" +
         '<div class="lint-popover" id="lintPopover" role="dialog" aria-label="Lint findings for ' + code + '" hidden>' +
           '<p class="f-label">Lint findings — ' + code + " (" + lint.flag + " flag, " + lint.escalate + " escalate)</p>" +
           '<ul class="lint-list">' + rows + "</ul>" +
         "</div>" +
       "</span>";
+    }
+
+    function overrideRowsHtml(code) {
+      var overrides = SOURCES[code];
+      if (overrides === undefined) {
+        loadSources(code);
+        return '<p class="f-help">Loading current overrides…</p>';
+      }
+      if (!overrides.length) return '<p class="f-help">No source overrides for this book — everything pulls from the project\'s configured default.</p>';
+      return overrides.map(function (o) {
+        var whole = o.chapter_start === 0 && o.chapter_end === 999;
+        var range = whole ? "whole book" : ("chapters " + o.chapter_start + "–" + o.chapter_end);
+        var src = o.kind === "aquifer" ? ("Aquifer (" + esc(o.repo) + ")") : (esc(o.org) + "/" + esc(o.repo));
+        return '<div class="src-row"><span style="flex:1;">' + esc(o.resource) + " " + range + " → <code>" + src + "</code></span>" +
+          '<button class="btn btn-ghost btn-sm ov-remove-btn" type="button" data-resource="' + esc(o.resource) + '" data-start="' + o.chapter_start + '" data-whole="' + whole + '">Remove</button></div>';
+      }).join("");
     }
 
     function renderDetail() {
@@ -500,7 +558,7 @@
 
       var primary;
       if (!imported) {
-        primary = '<button class="btn btn-primary" type="button" data-handle="POST /api/books/:book/import" data-bundle="B" data-headers="120s timeout">Import ' + code + "</button>";
+        primary = '<button class="btn btn-primary" type="button" id="importBtn">Import ' + code + "</button>";
       } else {
         primary = '<a class="btn btn-primary" href="t1-home.html">Open ' + code + '</a>' +
           '<button class="btn btn-rerun" type="button" id="repullBtn">Re-pull…</button>';
@@ -508,10 +566,10 @@
 
       var aiTranslate = "";
       if (imported && document.body.dataset.mode !== "authoring") {
-        aiTranslate = '<button class="btn btn-warn" type="button" data-handle="POST /api/pipelines/start" data-bundle="D" title="Book-level AI Translate loops per-chapter pipeline starts (bundle D action embedded here)">AI Translate whole book</button>';
+        aiTranslate = '<button class="btn btn-warn" type="button" id="aiTranslateBtn" title="Real endpoint — expect 503 pipeline_api_disabled here (no BT_API_TOKEN configured locally)">AI Translate whole book</button>';
       }
 
-      detailHost.innerHTML = '<section class="panel">' +
+      detailHost.innerHTML = '<section class="panel" data-param-book="' + code + '">' +
         '<div class="panel-top book-detail-head">' +
           "<h2>" + code + " — " + esc(NAMES[code]) + "</h2>" +
           '<span class="chip ' + (imported ? "chip-approved" : "chip-draft") + '">' + (imported ? "Imported" : "Not imported") + "</span>" +
@@ -530,17 +588,15 @@
           '<div class="adv-accordion">' +
             '<button type="button" class="adv-toggle" id="advToggle">▸ Advanced — per-book source overrides</button>' +
             '<div class="adv-body' + (state.advOpen ? " open" : "") + '" id="advBody">' +
-              '<div class="src-row"><span style="flex:1;">tN chapters 1–1 → <code>BSOJ/es-419_tn</code></span>' +
-                '<button class="btn btn-ghost btn-sm" type="button" data-handle="PUT /api/books/:book/sources" data-headers="body: clear=true" data-bundle="B">Remove</button></div>' +
-              '<div class="src-row"><span style="flex:1;">tQ — Aquifer (es)</span>' +
-                '<button class="btn btn-ghost btn-sm" type="button" data-handle="PUT /api/books/:book/sources" data-headers="body: clear=true" data-bundle="B">Remove</button></div>' +
-              '<p class="f-help">Read via <span data-handle="GET /api/books/:book/sources" data-bundle="B" style="cursor:pointer;text-decoration:underline;">GET /api/books/:book/sources</span>; write is admin-only.</p>' +
+              '<div id="overrideRows">' + overrideRowsHtml(code) + "</div>" +
+              '<p class="f-help">Read via <code>GET /api/books/:book/sources</code>; write is admin-only.</p>' +
               '<div class="ov-form">' +
-                '<div class="field"><label class="f-label">Source type</label><select class="tselect"><option>DCS</option><option>Aquifer</option></select></div>' +
-                '<div class="field"><label class="f-label">Resource</label><select class="tselect"><option>tN</option><option>tQ</option></select></div>' +
-                '<div class="field"><label class="f-label">From ch.</label><input class="tinput" type="text" placeholder="1"></div>' +
-                '<div class="field"><label class="f-label">To ch.</label><input class="tinput" type="text" placeholder="16"></div>' +
-                '<button class="btn btn-primary" type="button" data-handle="PUT /api/books/:book/sources" data-bundle="B">Add override</button>' +
+                '<div class="field"><label class="f-label">Source type</label><select class="tselect" id="ovType"><option>DCS</option><option>Aquifer</option></select></div>' +
+                '<div class="field"><label class="f-label">Resource</label><select class="tselect" id="ovResource"><option value="tn">tN</option><option value="tq">tQ</option><option value="twl">TWL</option><option value="ult">ULT</option><option value="ust">UST</option></select></div>' +
+                '<div class="field" id="ovUrlField"><label class="f-label">Door43 URL (DCS only)</label><input class="tinput" type="text" id="ovUrl" placeholder="https://git.door43.org/..."></div>' +
+                '<div class="field"><label class="f-label">From ch. (blank = whole book)</label><input class="tinput" type="text" id="ovFrom" placeholder="1"></div>' +
+                '<div class="field"><label class="f-label">To ch.</label><input class="tinput" type="text" id="ovTo" placeholder="16"></div>' +
+                '<button class="btn btn-primary" type="button" id="ovAddBtn">Add override</button>' +
               "</div>" +
             "</div>" +
           "</div>" +
@@ -548,16 +604,41 @@
         '<div class="panel-foot"><span class="foot-state">' + (imported ? "Imported" : "Not yet imported") + "</span><span class=\"spacer\"></span></div>" +
       "</section>" +
       '<section class="panel">' +
-        '<div class="panel-top"><h2>Recent import activity</h2><p class="panel-sub">Book-level AI Translate loops per-chapter pipeline jobs (bundle D); status is read via <code>GET /api/pipelines/:jobId</code>.</p></div>' +
-        '<div class="panel-body">' + state.jobs.map(function (j) {
-          var chip = j.state === "running" ? "chip-edited" : j.state === "failed" ? "chip-needs" : "chip-draft";
-          return '<div class="job-row"><div class="jr-main"><strong>' + j.book + "</strong> <span class=\"chip " + chip + '">' + j.state + '</span><div class="jr-sub">' + esc(j.detail) + "</div></div>" +
-            (j.state === "failed" ? '<button class="btn btn-warn btn-sm" type="button" data-handle="POST /api/books/:book/import" data-bundle="B">Retry</button>' : "") +
-          "</div>";
-        }).join("") + "</div>" +
-        '<div class="panel-foot"><span class="foot-state">Polled every 120s while visible</span><span class="spacer"></span>' +
-          '<button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/pipelines/:jobId" data-bundle="D">Refresh status</button></div>' +
+        '<div class="panel-top"><h2>Recent import activity</h2><p class="panel-sub">Shared pipeline job queue (same data as the Observe screen), filtered to jobs for ' + code + ' where present.</p></div>' +
+        '<div class="panel-body" id="importJobsBody">Loading…</div>' +
+        '<div class="panel-foot"><span class="foot-state">Loaded via <code>GET /api/pipelines</code></span><span class="spacer"></span>' +
+          '<button class="btn btn-ghost btn-sm" type="button" id="importJobsRefreshBtn">Refresh status</button></div>' +
       "</section>";
+      loadPendingImports();
+      loadImportJobs();
+    }
+
+    function loadSources(code) {
+      window.flowApi.get("/api/books/" + encodeURIComponent(code) + "/sources").then(function (r) {
+        SOURCES[code] = (r.ok && r.data) ? (r.data.overrides || []) : [];
+        if (state.selected === code) {
+          var host = document.getElementById("overrideRows");
+          if (host) host.innerHTML = overrideRowsHtml(code);
+        }
+      });
+    }
+
+    function loadImportJobs() {
+      var host = document.getElementById("importJobsBody");
+      if (!host) return;
+      window.flowApi.get("/api/pipelines").then(function (r) {
+        host = document.getElementById("importJobsBody");
+        if (!host) return; // selection changed while in flight
+        if (!r.ok || !r.data) { host.innerHTML = "Failed to load: " + esc(r.kind || r.status); return; }
+        var jobs = r.data.jobs || [];
+        if (!jobs.length) { host.innerHTML = '<p class="f-help">No pipeline jobs — queue is empty.</p>'; return; }
+        host.innerHTML = jobs.map(function (j) {
+          var chip = j.state === "running" ? "chip-edited" : j.state === "failed" ? "chip-needs" : j.state === "done" ? "chip-approved" : "chip-draft";
+          return '<div class="job-row"><div class="jr-main"><strong>' + esc(j.book || "—") + " " + (j.chapter !== undefined ? j.chapter : "") + "</strong> <span class=\"chip " + chip + '">' + esc(j.state) + '</span><div class="jr-sub">' + esc(j.pipelineType || "") + " — " + esc(j.username || j.requestedBy || "") + "</div></div>" +
+            (j.state === "failed" ? '<button class="btn btn-warn btn-sm job-retry-btn" type="button" data-book="' + esc(j.book || "") + '">Retry import</button>' : "") +
+          "</div>";
+        }).join("");
+      });
     }
 
     bookGroupsEl.addEventListener("click", function (e) {
@@ -567,6 +648,21 @@
       renderBookGroups();
       renderDetail();
     });
+
+    function doImport(code, body, onDone) {
+      window.flowShell.toast("→ POST /api/books/" + code + "/import", { bundle: "B" });
+      window.flowApi.post("/api/books/" + encodeURIComponent(code) + "/import", body || {}).then(function (r) {
+        if (r.ok) {
+          window.flowShell.toast("✓ " + code + " imported", { bundle: "B" });
+          loadBooks();
+        } else if (r.status === 409 && r.body && r.body.error === "has_local_edits") {
+          window.flowShell.toast("409 has_local_edits — tN " + r.body.tn + ", tQ " + r.body.tq + ", TWL " + r.body.twl + ", verses " + r.body.verses + ". Re-run with confirmDiscardEdits to proceed.", { nudge: true, bundle: "B" });
+        } else {
+          window.flowShell.toast("✗ " + (r.kind || r.status) + (r.body && r.body.error ? " — " + r.body.error : ""), { nudge: true, bundle: "B" });
+        }
+        if (onDone) onDone(r);
+      });
+    }
 
     detailHost.addEventListener("click", function (e) {
       var seg = e.target.closest("#intentSeg button");
@@ -583,10 +679,86 @@
         else { pop.setAttribute("hidden", ""); lint.setAttribute("aria-expanded", "false"); }
         return;
       }
+      var importBtn = e.target.closest("#importBtn");
+      if (importBtn) { doImport(state.selected, {}); return; }
+      var aiBtn = e.target.closest("#aiTranslateBtn");
+      if (aiBtn) {
+        window.flowApi.post("/api/pipelines/start", { book: state.selected }).then(function (r) {
+          if (r.ok) { window.flowShell.toast("✓ pipeline started", { bundle: "D" }); }
+          else { window.flowShell.toast("✗ " + r.status + " " + (r.body && r.body.error ? r.body.error : r.kind) + (r.status === 503 ? " — AI pipeline not configured locally (no BT_API_TOKEN)" : ""), { nudge: true, bundle: "D" }); }
+        });
+        return;
+      }
+      var ovRemove = e.target.closest(".ov-remove-btn");
+      if (ovRemove) {
+        var code = state.selected;
+        var body = { resource: ovRemove.dataset.resource, clear: true };
+        if (ovRemove.dataset.whole !== "true") body.chapterStart = Number(ovRemove.dataset.start);
+        window.flowApi.request("PUT", "/api/books/" + encodeURIComponent(code) + "/sources", { body: body }).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ override removed" : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "B" });
+          delete SOURCES[code];
+          loadSources(code);
+        });
+        return;
+      }
+      var ovAdd = e.target.closest("#ovAddBtn");
+      if (ovAdd) {
+        var codeA = state.selected;
+        var resource = document.getElementById("ovResource").value;
+        var type = document.getElementById("ovType").value;
+        var from = document.getElementById("ovFrom").value.trim();
+        var to = document.getElementById("ovTo").value.trim();
+        var reqBody = { resource: resource };
+        if (from) { reqBody.chapterStart = Number(from); reqBody.chapterEnd = Number(to || from); }
+        if (type === "Aquifer") {
+          reqBody.kind = "aquifer";
+        } else {
+          var url = document.getElementById("ovUrl").value.trim();
+          if (!url) { window.flowShell.toast("enter a Door43 URL for a DCS override", { nudge: true }); return; }
+          reqBody.url = url;
+        }
+        window.flowApi.request("PUT", "/api/books/" + encodeURIComponent(codeA) + "/sources", { body: reqBody }).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ override added" : "✗ " + (r.kind || r.status) + (r.body && r.body.error ? " — " + r.body.error : ""), { nudge: !r.ok, bundle: "B" });
+          if (r.ok) { delete SOURCES[codeA]; loadSources(codeA); }
+        });
+        return;
+      }
+    });
+
+    document.getElementById("detailHost").addEventListener("click", function (e) {
+      var retryBtn = e.target.closest(".job-retry-btn");
+      if (!retryBtn || !retryBtn.dataset.book) return;
+      doImport(retryBtn.dataset.book, {}, function () { loadImportJobs(); });
+    });
+    document.getElementById("detailHost").addEventListener("click", function (e) {
+      if (e.target.closest("#importJobsRefreshBtn")) loadImportJobs();
     });
 
     document.getElementById("repullClose").addEventListener("click", function () { document.getElementById("repullModal").hidden = true; });
-    document.getElementById("repullGo").addEventListener("click", function () { document.getElementById("repullModal").hidden = true; });
+    document.getElementById("repullGo").addEventListener("click", function () {
+      var code = state.selected;
+      var rangeRaw = document.getElementById("chapterRange").value.trim();
+      var m = rangeRaw.match(/^(\d+)\s*-\s*(\d+)$/) || rangeRaw.match(/^(\d+)$/);
+      if (!m) { window.flowShell.toast("chapter range must look like 1-16 or a single number", { nudge: true }); return; }
+      var start = Number(m[1]);
+      var end = m[2] ? Number(m[2]) : start;
+      if (end < start) { window.flowShell.toast("chapter range end is before start", { nudge: true }); return; }
+      var chapters = [];
+      for (var i = start; i <= end; i++) chapters.push(i);
+      var checks = document.querySelectorAll("#repullModal .resource-check input[type=checkbox]");
+      var codes = ["ult", "ust", "tn", "tq", "twl"];
+      var resources = [];
+      checks.forEach(function (cb, i) { if (cb.checked) resources.push(codes[i]); });
+      if (!resources.length) { window.flowShell.toast("select at least one resource", { nudge: true }); return; }
+      window.flowApi.post("/api/books/" + encodeURIComponent(code) + "/reimport", { chapters: chapters, resources: resources }).then(function (r) {
+        if (r.ok) {
+          window.flowShell.toast("✓ reimport queued for " + code + " ch " + rangeRaw, { bundle: "B" });
+          document.getElementById("repullModal").hidden = true;
+        } else {
+          window.flowShell.toast("✗ " + (r.kind || r.status) + (r.body && r.body.error ? " — " + r.body.error : ""), { nudge: true, bundle: "B" });
+        }
+      });
+    });
 
     var laneLifecycleEl = document.getElementById("laneLifecycle");
     var laneLifecycleNoteEl = document.getElementById("laneLifecycleNote");
@@ -597,88 +769,210 @@
     var laneStartBtnEl = document.getElementById("laneStartBtn");
     var laneValidateResultEl = document.getElementById("laneValidateResult");
 
-    function laneBookChip(bookState) {
-      if (bookState === "artifact_ok") return { cls: "chip-approved", label: "Staged OK" };
-      if (bookState === "retryable_error") return { cls: "chip-needs", label: "Failed — retryable" };
-      if (bookState === "waived") return { cls: "chip-draft", label: "Waived" };
-      return { cls: "chip-draft", label: "Waiting" };
+    function laneBookChip(bookStatus) {
+      if (bookStatus === "artifact_ok") return { cls: "chip-approved", label: "Staged OK" };
+      if (bookStatus === "retryable_error") return { cls: "chip-needs", label: "Failed — retryable" };
+      if (bookStatus === "absent_authorized") return { cls: "chip-draft", label: "Waived" };
+      return { cls: "chip-draft", label: bookStatus || "Waiting" };
+    }
+
+    function laneLifecycleFromStatus(status) {
+      if (LC_STEPS.indexOf(status) !== -1) return status;
+      return status || "reserved"; // failed/cancelled/none — rendered via the raw label below
     }
 
     function renderLaneReplacement() {
-      var curIdx = LC_STEPS.indexOf(laneState.lifecycle);
+      var lifecycle = laneState.job ? laneLifecycleFromStatus(laneState.job.status) : null;
+      var curIdx = lifecycle ? LC_STEPS.indexOf(lifecycle) : -1;
       laneLifecycleEl.innerHTML = LC_STEPS.map(function (s, i) {
-        var st = i < curIdx ? "done" : (i === curIdx ? "current" : "pending");
-        var sep = i > 0 ? '<span class="lc-sep' + (i <= curIdx ? " done" : "") + '"></span>' : "";
+        var st = curIdx < 0 ? "pending" : (i < curIdx ? "done" : (i === curIdx ? "current" : "pending"));
+        var sep = i > 0 ? '<span class="lc-sep' + (curIdx >= 0 && i <= curIdx ? " done" : "") + '"></span>' : "";
         var label = s.charAt(0).toUpperCase() + s.slice(1);
         return sep + '<span class="lc-node" data-state="' + st + '"><span class="lc-dot"></span>' + label + "</span>";
       }).join("");
-      laneLifecycleNoteEl.textContent = LC_NOTE[laneState.lifecycle];
-      laneActivateBtnEl.disabled = laneState.lifecycle !== "ready";
-      laneStartBtnEl.disabled = laneState.lifecycle !== "reserved";
+      laneLifecycleNoteEl.textContent = laneState.job
+        ? (LC_NOTE[lifecycle] || ("Job status: " + laneState.job.status))
+        : "No replacement job loaded for this lane.";
+      laneActivateBtnEl.disabled = !laneState.job || laneState.job.status !== "ready";
+      laneStartBtnEl.disabled = !!laneState.job && ["reserved", "staging", "ready"].indexOf(laneState.job.status) !== -1;
 
-      laneBookRowsEl.innerHTML = laneState.books.map(function (b) {
-        var chip = laneBookChip(b.state);
+      laneBookRowsEl.innerHTML = laneState.books.length ? laneState.books.map(function (b) {
+        var chip = laneBookChip(b.status);
         var actions = "";
-        if (b.state === "retryable_error") {
-          actions += '<button class="btn btn-warn btn-sm" type="button" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/retry-book" data-bundle="A" data-book="' + b.book + '">Retry</button>';
+        if (b.status === "retryable_error") {
+          actions += '<button class="btn btn-warn btn-sm" type="button" data-act="retry-book" data-book="' + esc(b.book) + '">Retry</button>';
         }
-        if (b.state === "retryable_error" || b.state === "absent_authorized") {
-          actions += '<button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/project-config/lanes/:lane/replacements/:jobId/waive-book" data-bundle="A" data-book="' + b.book + '">Waive</button>';
+        if (b.status === "retryable_error" || b.status === "absent_authorized") {
+          actions += '<button class="btn btn-ghost btn-sm" type="button" data-act="waive-book" data-book="' + esc(b.book) + '">Waive</button>';
         }
-        return '<div class="job-row"><div class="jr-main"><strong>' + b.book + '</strong> <span class="chip ' + chip.cls + '">' + chip.label + '</span></div>' + actions + "</div>";
-      }).join("");
+        return '<div class="job-row"><div class="jr-main"><strong>' + esc(b.book) + '</strong> <span class="chip ' + chip.cls + '">' + chip.label + '</span></div>' + actions + "</div>";
+      }).join("") : '<p class="f-help">No replacement job in progress.</p>';
 
-      laneFootEl.textContent = "Replacement is " + laneState.lifecycle + " · job " + laneState.jobId;
-      laneNextActionEl.textContent = laneState.lifecycle === "ready" ? "Activate to switch the source"
-        : laneState.lifecycle === "completed" ? "No pending replacement"
-        : "Resolve remaining books to reach Ready";
+      laneFootEl.textContent = laneState.job
+        ? ("Job " + laneState.job.job_id + " — " + laneState.job.status)
+        : "No active replacement job loaded.";
+      laneNextActionEl.textContent = !laneState.job ? ""
+        : laneState.job.status === "ready" ? "Activate to switch the source"
+        : laneState.job.status === "completed" ? "No pending replacement"
+        : laneState.job.status === "reserved" || laneState.job.status === "staging" ? "Resolve remaining books to reach Ready"
+        : "";
+    }
+
+    // Seed "current source" from the project config already loaded on this page
+    // (see loadProjectConfig()) and load any already-open job for this lane.
+    function loadLaneState() {
+      window.flowApi.get("/api/project-config").then(function (r) {
+        if (!r.ok || !r.data || !r.data.config) return;
+        var laneCfg = r.data.config.laneState && r.data.config.laneState[laneState.lane];
+        if (!laneCfg) return;
+        document.getElementById("laneCurrentSourceDd").textContent = laneCfg.config && laneCfg.config.source
+          ? (laneCfg.config.source.owner + "/" + laneCfg.config.source.repo) : "—";
+        document.getElementById("laneProposedSourceDd").textContent = laneCfg.pendingTarget && laneCfg.pendingTarget.source
+          ? (laneCfg.pendingTarget.source.owner + "/" + laneCfg.pendingTarget.source.repo + " (" + laneCfg.pendingTarget.label + ")") : "none prepared";
+        laneState.proposedTarget = laneCfg.pendingTarget || null;
+        if (laneCfg.replacementJobId) {
+          laneState.jobId = laneCfg.replacementJobId;
+          loadLaneJob();
+        } else {
+          renderLaneReplacement();
+        }
+      });
+    }
+
+    function loadLaneJob() {
+      if (!laneState.jobId) { renderLaneReplacement(); return; }
+      window.flowApi.get("/api/project-config/lanes/" + laneState.lane + "/replacements/" + encodeURIComponent(laneState.jobId)).then(function (r) {
+        if (r.ok && r.data) {
+          laneState.job = r.data.job;
+          laneState.books = r.data.books || [];
+        } else {
+          laneFootEl.textContent = "Failed to load job " + laneState.jobId + ": " + (r.kind || r.status);
+        }
+        renderLaneReplacement();
+      });
     }
 
     document.getElementById("laneReplacementPanel").addEventListener("click", function (e) {
-      var retryBtn = e.target.closest('[data-handle*="/retry-book"]');
+      var retryBtn = e.target.closest('[data-act="retry-book"]');
       if (retryBtn) {
-        var retryRow = laneState.books.filter(function (b) { return b.book === retryBtn.dataset.book; })[0];
-        if (retryRow) { retryRow.state = "artifact_ok"; renderLaneReplacement(); }
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/replacements/" + encodeURIComponent(laneState.jobId) + "/retry-book", { book: retryBtn.dataset.book }).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ retried " + retryBtn.dataset.book : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "A" });
+          loadLaneJob();
+        });
         return;
       }
-      var waiveBtn = e.target.closest('[data-handle*="/waive-book"]');
+      var waiveBtn = e.target.closest('[data-act="waive-book"]');
       if (waiveBtn) {
-        var waiveRow = laneState.books.filter(function (b) { return b.book === waiveBtn.dataset.book; })[0];
-        if (waiveRow) { waiveRow.state = "waived"; renderLaneReplacement(); }
+        if (!window.confirm("Waive " + waiveBtn.dataset.book + "? It will keep its predecessor-generation content instead of the new source.")) return;
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/replacements/" + encodeURIComponent(laneState.jobId) + "/waive-book", { book: waiveBtn.dataset.book, confirm: true }).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ waived " + waiveBtn.dataset.book : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "A" });
+          loadLaneJob();
+        });
         return;
       }
       if (e.target.closest("#laneValidateBtn")) {
-        laneValidateResultEl.textContent = "Validated — 3 books affected (1 unedited, 2 with local edits); staging job " + laneState.jobId + " already in flight.";
+        var url = document.getElementById("laneNewUrl").value.trim();
+        if (!url) { window.flowShell.toast("enter a Door43 URL first", { nudge: true }); return; }
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/validate", { url: url }).then(function (r) {
+          if (r.ok && r.data) {
+            laneValidateResultEl.textContent = "Validated — " + r.data.source.owner + "/" + r.data.source.repo + " would affect " + r.data.impactBooks + " book(s), " + r.data.impactVerses + " verse(s). Current: " + r.data.currentSource.owner + "/" + r.data.currentSource.repo + ".";
+          } else {
+            laneValidateResultEl.textContent = "Validate failed: " + (r.body && r.body.error ? r.body.error : (r.kind || r.status));
+          }
+        });
         return;
       }
-      if (e.target.closest("#laneActivateBtn")) {
-        if (laneState.lifecycle === "ready") { laneState.lifecycle = "completed"; renderLaneReplacement(); }
-        return;
-      }
-      if (e.target.closest("#laneBackOutBtn")) {
-        laneState.lifecycle = "reserved";
-        laneState.books.forEach(function (b) { b.state = "absent_authorized"; });
-        renderLaneReplacement();
+      if (e.target.closest("#laneAffectedBtn")) {
+        window.flowApi.get("/api/project-config/lanes/" + laneState.lane + "/affected-books").then(function (r) {
+          if (r.ok && r.data) {
+            var books = r.data.books || [];
+            laneValidateResultEl.textContent = books.length
+              ? (books.length + " book(s) would be affected: " + books.join(", "))
+              : "No books currently populate this lane.";
+          } else {
+            laneValidateResultEl.textContent = "Failed to load affected books: " + (r.kind || r.status);
+          }
+        });
         return;
       }
       if (e.target.closest("#laneStartBtn")) {
-        if (laneState.lifecycle !== "reserved") return;
-        laneState.lifecycle = "staging";
-        laneState.books.forEach(function (b) { b.state = "artifact_ok"; });
-        renderLaneReplacement();
+        if (!laneState.proposedTarget) { window.flowShell.toast("no pending target config prepared for this lane — nothing to start", { nudge: true }); return; }
+        if (!window.confirm("Start a replacement for the " + laneState.lane + " lane using the prepared \"" + laneState.proposedTarget.label + "\" target? This freezes the lane.")) return;
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/replacements", { config: laneState.proposedTarget, confirm: true }).then(function (r) {
+          if (r.ok && r.data) {
+            window.flowShell.toast("✓ replacement started — job " + r.data.job.job_id, { bundle: "A" });
+            laneState.jobId = r.data.job.job_id;
+            loadLaneJob();
+          } else {
+            window.flowShell.toast("✗ " + (r.body && r.body.error ? r.body.error : (r.kind || r.status)), { nudge: true, bundle: "A" });
+          }
+        });
+        return;
+      }
+      if (e.target.closest("#laneActivateBtn")) {
+        var fencingToken = window.prompt("Fencing token for this export lease (this preview has no read endpoint to fetch it automatically):");
+        if (!fencingToken) return;
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/replacements/" + encodeURIComponent(laneState.jobId) + "/activate", { fencingToken: fencingToken }).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ activated" : "✗ " + (r.body && r.body.error ? r.body.error : (r.kind || r.status)), { nudge: !r.ok, bundle: "A" });
+          loadLaneJob();
+        });
+        return;
+      }
+      if (e.target.closest("#laneBackOutBtn")) {
+        if (!laneState.jobId) { window.flowShell.toast("no job loaded", { nudge: true }); return; }
+        if (!window.confirm("Back out this replacement entirely? This reverts to the prior source.")) return;
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/replacements/" + encodeURIComponent(laneState.jobId) + "/back-out", {}).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ backed out" : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "A" });
+          laneState.jobId = null; laneState.job = null; laneState.books = [];
+          renderLaneReplacement();
+        });
+        return;
+      }
+      if (e.target.closest("#laneCancelBtn")) {
+        if (!laneState.jobId) { window.flowShell.toast("no job loaded", { nudge: true }); return; }
+        if (!window.confirm("Cancel this replacement job?")) return;
+        window.flowApi.post("/api/project-config/lanes/" + laneState.lane + "/replacements/" + encodeURIComponent(laneState.jobId) + "/cancel", {}).then(function (r) {
+          window.flowShell.toast(r.ok ? "✓ cancelled" : "✗ " + (r.kind || r.status), { nudge: !r.ok, bundle: "A" });
+          laneState.jobId = null; laneState.job = null; laneState.books = [];
+          renderLaneReplacement();
+        });
         return;
       }
       if (e.target.closest("#laneJobStatusBtn")) {
-        laneFootEl.textContent = "Replacement is " + laneState.lifecycle + " · job " + laneState.jobId + " (status refreshed)";
+        loadLaneJob();
         return;
       }
     });
 
-    renderBookGroups();
-    renderDetail();
-    updateCounter();
-    renderPendingImports();
-    renderLaneReplacement();
+    function loadBooks() {
+      return window.flowApi.get("/api/books").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("listFoot").innerHTML = '<span class="chip chip-needs">Failed to load: ' + esc(r.kind || r.status) + "</span>";
+          return;
+        }
+        IMPORTED = {};
+        (r.data.books || []).forEach(function (b) { IMPORTED[b.book] = b.imported_at; });
+        if (!IMPORTED[state.selected] && Object.keys(IMPORTED).length) {
+          state.selected = Object.keys(IMPORTED)[0];
+        }
+        document.getElementById("listFoot").innerHTML = "Loaded via <code>GET /api/books</code>";
+        renderBookGroups();
+        renderDetail();
+        updateCounter();
+      });
+    }
+    document.getElementById("retryListBtn").addEventListener("click", loadBooks);
+
+    function loadAll() {
+      loadBooks();
+      renderLaneReplacement();
+      loadLaneState();
+    }
+    if (window.flowApi && window.flowApi.ready) {
+      window.flowApi.ready.then(loadAll);
+    } else {
+      loadAll();
+    }
   })();
   </script>
 </body>

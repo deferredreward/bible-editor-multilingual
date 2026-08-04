@@ -60,10 +60,10 @@
 
     <div class="switcher-row">
       <div class="sw-main">
-        <p class="sw-name">Alianza Bíblica Hispanoamericana <span class="chip chip-approved">current</span></p>
+        <p class="sw-name" id="currentOrgName">Loading…</p>
         <p class="sw-sub">Switching orgs reloads the whole app — one D1 database serves one org.</p>
       </div>
-      <button class="btn btn-ghost btn-sm" type="button" data-handle="GET /api/workspaces" data-bundle="A" id="openSwitcher">Switch organization…</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="openSwitcher">Switch organization…</button>
     </div>
 
     <section class="panel">
@@ -77,7 +77,7 @@
           <div class="field"><label class="f-label" for="addRole">Role</label>
             <select class="tselect" id="addRole"><option value="editor">Editor</option><option value="admin">Admin</option></select>
           </div>
-          <button class="btn btn-primary" type="button" data-handle="PUT /api/admin/users/:username" data-bundle="A">Add</button>
+          <button class="btn btn-primary" type="button" id="addUserBtn">Add</button>
         </div>
       </div>
     </section>
@@ -98,7 +98,7 @@
       <div class="panel-foot">
         <span class="foot-state" id="allowlistFoot">Loaded via <code>GET /api/admin/users</code></span>
         <span class="spacer"></span>
-        <button class="btn btn-ghost btn-sm" type="button" data-handle="POST /api/admin/users/purge-manual" data-bundle="A">Purge manual grants…</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="purgeManualBtn">Purge manual grants…</button>
       </div>
     </section>
 
@@ -136,9 +136,13 @@
         <p>Switching sets the workspace cookie, re-mints the session JWT, and does a full <code>location.reload()</code> — blocked while the outbox has pending ops.</p>
       </div>
       <div class="modal-body">
+        <!-- Filters the CLAIMED workspaces from GET /api/workspaces (local filter, no
+             network call) — switching only works between already-claimed slots, not
+             arbitrary Door43 orgs. Claiming a NEW org's slot lives on the Observe
+             screen's "Spare workspace pool" panel (super-admin only). -->
         <div class="field" style="margin-bottom:10px;">
-          <label class="f-label" for="wsOrgSearch">Search Door43 orgs</label>
-          <input class="tinput" id="wsOrgSearch" type="search" placeholder="Org name…" data-handle="GET /api/orgs/search" data-bundle="A">
+          <label class="f-label" for="wsOrgSearch">Filter workspaces</label>
+          <input class="tinput" id="wsOrgSearch" type="search" placeholder="Name or slug…">
         </div>
         <div id="wsModalBody"></div>
       </div>
@@ -162,6 +166,7 @@
     .ws-row .ws-sub { font-size: 12px; color: var(--ink-2); margin: 0; }
   </style>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
@@ -172,64 +177,205 @@
         return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
       });
     }
+    function fmtTime(unixSeconds) {
+      if (!unixSeconds) return "—";
+      var d = new Date(unixSeconds * 1000);
+      if (isNaN(d.getTime())) return "—";
+      return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+    }
 
-    var ALLOWLIST = [
-      { user: "maria_traductora", role: "admin", addedBy: "dcs_team", source: "Door43 team (Owners)", memberWarning: false },
-      { user: "jorge.p", role: "editor", addedBy: "maria_traductora", source: "manual grant", memberWarning: false },
-      { user: "consultant_liliana", role: "editor", addedBy: "maria_traductora", source: "manual grant", memberWarning: true },
-      { user: "old_contractor", role: "editor", addedBy: "system", source: "manual grant", memberWarning: true }
-    ];
-    var ROSTER = [
-      { user: "maria_traductora", team: "Owners" },
-      { user: "jorge.p", team: "Writers" },
-      { user: "ana.reviewer", team: "Reviewers (not yet added here)" }
-    ];
+    /* ---------------- allowlist (GET /api/admin/users) ---------------- */
+    // rosterLogins is filled by loadRoster() so the allowlist can flag a user who
+    // holds a role here but isn't in the live Door43 roster right now.
+    var rosterLogins = null;
 
-    function renderAllowlist() {
-      document.getElementById("allowlistBody").innerHTML = ALLOWLIST.map(function (r) {
-        return "<tr><td>" + esc(r.user) + (r.memberWarning ? ' <span class="chip chip-needs not-member" title="Not currently a member of the Door43 org">not org member</span>' : "") + "</td>" +
-          '<td><select class="tselect" data-handle="PUT /api/admin/users/:username" data-bundle="A" style="width:auto;">' +
+    function renderAllowlist(users) {
+      if (!users.length) {
+        document.getElementById("allowlistBody").innerHTML = '<tr><td colspan="5">No allowlisted users.</td></tr>';
+        return;
+      }
+      document.getElementById("allowlistBody").innerHTML = users.map(function (r) {
+        var notMember = rosterLogins && !rosterLogins.has(r.username.toLowerCase());
+        return "<tr data-username=\"" + esc(r.username) + "\"><td>" + esc(r.username) +
+          (notMember ? ' <span class="chip chip-needs not-member" title="Not currently a member of the Door43 org">not org member</span>' : "") + "</td>" +
+          '<td><select class="tselect role-select" data-username="' + esc(r.username) + '" style="width:auto;">' +
             '<option value="editor"' + (r.role === "editor" ? " selected" : "") + '>Editor</option>' +
             '<option value="admin"' + (r.role === "admin" ? " selected" : "") + '>Admin</option>' +
           "</select></td>" +
-          "<td>" + esc(r.addedBy) + "</td><td>" + esc(r.source) + "</td>" +
-          '<td><button class="btn btn-ghost btn-sm" type="button" data-handle="DELETE /api/admin/users/:username" data-bundle="A" title="Remove — confirm required">Remove</button></td>' +
+          "<td>" + esc(r.addedBy || "—") + "</td><td>" + esc(r.source === "dcs_team" ? "Door43 team" : "manual grant") + "</td>" +
+          '<td><button class="btn btn-ghost btn-sm remove-btn" type="button" data-username="' + esc(r.username) + '" title="Remove — confirm required">Remove</button></td>' +
         "</tr>";
       }).join("");
     }
 
-    function renderRoster() {
-      document.getElementById("rosterBody").innerHTML = ROSTER.map(function (r) {
-        return "<tr><td>" + esc(r.user) + "</td><td>" + esc(r.team) + "</td></tr>";
-      }).join("");
+    function loadAllowlist() {
+      return window.flowApi.get("/api/admin/users").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("allowlistBody").innerHTML = '<tr><td colspan="5">Failed to load: ' + esc(r.kind || r.status) + "</td></tr>";
+          document.getElementById("allowlistFoot").textContent = "Load failed";
+          return;
+        }
+        renderAllowlist(r.data.users || []);
+        document.getElementById("allowlistFoot").innerHTML = "Loaded via <code>GET /api/admin/users</code> — " + (r.data.users || []).length + " user(s)";
+      });
     }
 
-    renderAllowlist();
-    renderRoster();
+    document.getElementById("allowlistBody").addEventListener("change", function (e) {
+      var sel = e.target.closest(".role-select");
+      if (!sel) return;
+      var username = sel.dataset.username;
+      var newRole = sel.value;
+      window.flowApi.request("PUT", "/api/admin/users/" + encodeURIComponent(username), { body: { role: newRole } }).then(function (r) {
+        if (r.ok) {
+          var msg = "✓ " + username + " is now " + newRole;
+          if (r.data && r.data.wasTeamManaged) msg += " (Door43 team sync will re-take this on next login)";
+          window.flowShell.toast(msg, { bundle: "A" });
+        } else if (r.status === 409 && r.body && r.body.error === "last_admin") {
+          window.flowShell.toast("409 — can't demote the only remaining admin", { nudge: true, bundle: "A" });
+        } else {
+          window.flowShell.toast("✗ " + (r.kind || r.status), { nudge: true, bundle: "A" });
+        }
+        loadAllowlist();
+      });
+    });
 
-    var WORKSPACES = [
-      { slug: "abh-es419", name: "Alianza Bíblica Hispanoamericana", current: true },
-      { slug: "wsib-fr", name: "Wycliffe Société Internationale (fr)", current: false },
-      { slug: "dei-verbum-pt", name: "Dei Verbum PT-BR", current: false }
-    ];
+    document.getElementById("allowlistBody").addEventListener("click", function (e) {
+      var btn = e.target.closest(".remove-btn");
+      if (!btn) return;
+      var username = btn.dataset.username;
+      if (!window.confirm("Remove " + username + " from the allowlist?")) return;
+      window.flowApi.request("DELETE", "/api/admin/users/" + encodeURIComponent(username), {}).then(function (r) {
+        if (r.ok) {
+          window.flowShell.toast("✓ removed " + username, { bundle: "A" });
+        } else if (r.status === 409 && r.body && r.body.error === "last_admin") {
+          window.flowShell.toast("409 — can't remove the only remaining admin", { nudge: true, bundle: "A" });
+        } else {
+          window.flowShell.toast("✗ " + (r.kind || r.status), { nudge: true, bundle: "A" });
+        }
+        loadAllowlist();
+      });
+    });
+
+    document.getElementById("addUserBtn").addEventListener("click", function () {
+      var username = document.getElementById("addUsername").value.trim();
+      var role = document.getElementById("addRole").value;
+      if (!username) { window.flowShell.toast("enter a Door43 username first", { nudge: true }); return; }
+      window.flowApi.request("PUT", "/api/admin/users/" + encodeURIComponent(username), { body: { role: role } }).then(function (r) {
+        if (r.ok) {
+          var msg = "✓ added " + username + " as " + role;
+          if (r.data && r.data.dcsVerified === false) msg += " (unverified — DCS lookup failed, added anyway)";
+          window.flowShell.toast(msg, { bundle: "A" });
+          document.getElementById("addUsername").value = "";
+          loadAllowlist();
+        } else if (r.status === 404 && r.body && r.body.error === "dcs_user_not_found") {
+          window.flowShell.toast("404 — no such Door43 user \"" + username + "\"", { nudge: true, bundle: "A" });
+        } else if (r.status === 400) {
+          window.flowShell.toast("400 — invalid username", { nudge: true, bundle: "A" });
+        } else {
+          window.flowShell.toast("✗ " + (r.kind || r.status), { nudge: true, bundle: "A" });
+        }
+      });
+    });
+
+    document.getElementById("purgeManualBtn").addEventListener("click", function () {
+      if (!window.confirm("Purge every manually-granted role? Door43-team-derived rows are kept.")) return;
+      window.flowApi.post("/api/admin/users/purge-manual", {}).then(function (r) {
+        if (r.ok) {
+          var removed = (r.data && r.data.removed) || [];
+          var kept = (r.data && r.data.kept) || [];
+          window.flowShell.toast("✓ removed " + removed.length + (kept.length ? "; kept " + kept.join(", ") + " (last-admin guard)" : ""), { bundle: "A" });
+          loadAllowlist();
+        } else {
+          window.flowShell.toast("✗ " + (r.kind || r.status), { nudge: true, bundle: "A" });
+        }
+      });
+    });
+
+    /* ---------------- live Door43 roster (GET /api/admin/users/org-members) --- */
+    function loadRoster() {
+      return window.flowApi.get("/api/admin/users/org-members").then(function (r) {
+        if (!r.ok || !r.data) {
+          rosterLogins = new Set();
+          document.getElementById("rosterBody").innerHTML = '<tr><td colspan="2">Failed to load: ' + esc(r.kind || r.status) + "</td></tr>";
+          document.getElementById("rosterFoot").textContent = "Load failed";
+          return;
+        }
+        var members = r.data.members || [];
+        rosterLogins = new Set(members.map(function (m) { return (m.login || "").toLowerCase(); }));
+        if (!members.length) {
+          document.getElementById("rosterBody").innerHTML = '<tr><td colspan="2">No members returned' + (r.data.error ? " (" + esc(r.data.error) + ")" : "") + "</td></tr>";
+        } else {
+          document.getElementById("rosterBody").innerHTML = members.map(function (m) {
+            return "<tr><td>" + esc(m.login) + "</td><td>" + esc(m.teamRole || "—") + "</td></tr>";
+          }).join("");
+        }
+        var foot = "Loaded via <code>GET /api/admin/users/org-members</code>";
+        if (r.data.error) foot += ' — <span class="chip chip-needs">degraded: ' + esc(r.data.error) + "</span>" + (r.data.partial ? " (partial roster)" : "");
+        document.getElementById("rosterFoot").innerHTML = foot;
+      });
+    }
+
+    /* ---------------- workspaces (GET /api/workspaces, POST /api/workspaces/:slug) */
+    var WORKSPACES = [];
+    var currentSlug = null;
+    function loadWorkspaces() {
+      return window.flowApi.get("/api/workspaces").then(function (r) {
+        if (!r.ok || !r.data) {
+          document.getElementById("currentOrgName").textContent = "Failed to load workspace list";
+          return;
+        }
+        WORKSPACES = r.data.workspaces || [];
+        currentSlug = r.data.current;
+        var cur = WORKSPACES.filter(function (w) { return w.slug === currentSlug; })[0];
+        document.getElementById("currentOrgName").innerHTML = (cur ? esc(cur.label || cur.slug) : esc(currentSlug)) + ' <span class="chip chip-approved">current</span>';
+      });
+    }
+
     var wsModal = document.getElementById("wsModal");
     function renderWsList(filterText) {
       var q = (filterText || "").trim().toLowerCase();
-      var rows = !q ? WORKSPACES : WORKSPACES.filter(function (w) { return w.name.toLowerCase().indexOf(q) !== -1 || w.slug.toLowerCase().indexOf(q) !== -1; });
+      var rows = !q ? WORKSPACES : WORKSPACES.filter(function (w) { return (w.label || "").toLowerCase().indexOf(q) !== -1 || w.slug.toLowerCase().indexOf(q) !== -1; });
       document.getElementById("wsModalBody").innerHTML = rows.length ? rows.map(function (w) {
-        return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.name) + (w.current ? ' <span class="chip chip-approved">current</span>' : "") + '</p><p class="ws-sub">' + w.slug + '</p></div>' +
-          (w.current ? "" : '<button class="btn btn-primary btn-sm" type="button" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch</button>') +
+        var isCurrent = w.slug === currentSlug;
+        return '<div class="ws-row"><div class="ws-main"><p class="ws-name">' + esc(w.label || w.slug) + (isCurrent ? ' <span class="chip chip-approved">current</span>' : "") + (w.isFallback ? ' <span class="chip chip-draft">fallback</span>' : "") + '</p><p class="ws-sub">' + esc(w.slug) + " · " + esc(w.org || "") + '</p></div>' +
+          (isCurrent ? "" : '<button class="btn btn-primary btn-sm ws-switch-btn" type="button" data-slug="' + esc(w.slug) + '" data-name="' + esc(w.label || w.slug) + '">Switch</button>') +
         "</div>";
-      }).join("") : '<p class="f-help">No matching orgs found.</p>';
+      }).join("") : '<p class="f-help">No matching workspaces found.</p>';
     }
     document.getElementById("openSwitcher").addEventListener("click", function () {
-      document.getElementById("wsOrgSearch").value = "";
-      renderWsList("");
-      wsModal.hidden = false;
+      loadWorkspaces().then(function () {
+        document.getElementById("wsOrgSearch").value = "";
+        renderWsList("");
+        wsModal.hidden = false;
+      });
     });
     document.getElementById("wsOrgSearch").addEventListener("input", function (e) { renderWsList(e.target.value); });
     document.getElementById("wsModalClose").addEventListener("click", function () { wsModal.hidden = true; });
     wsModal.addEventListener("click", function (e) { if (e.target === wsModal) wsModal.hidden = true; });
+    document.getElementById("wsModalBody").addEventListener("click", function (e) {
+      var btn = e.target.closest(".ws-switch-btn");
+      if (!btn) return;
+      var slug = btn.dataset.slug;
+      if (!window.confirm("Switch to \"" + btn.dataset.name + "\"? This reloads the whole app.")) return;
+      window.flowApi.post("/api/workspaces/" + encodeURIComponent(slug), {}).then(function (r) {
+        if (r.ok) {
+          window.flowShell.toast("✓ switched — reloading…", { bundle: "A" });
+          setTimeout(function () { location.reload(); }, 400);
+        } else {
+          window.flowShell.toast("✗ switch failed: " + (r.kind || r.status), { nudge: true, bundle: "A" });
+        }
+      });
+    });
+
+    function loadAll() {
+      loadWorkspaces();
+      loadRoster().then(loadAllowlist);
+    }
+    if (window.flowApi && window.flowApi.ready) {
+      window.flowApi.ready.then(loadAll);
+    } else {
+      loadAll();
+    }
   })();
   </script>
 </body>

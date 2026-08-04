@@ -237,8 +237,11 @@
           <input class="tinput" id="railSearch" type="text" placeholder="Search templates…" />
         </div>
         <div class="rail-bulk">
-          <button type="button" class="btn btn-rerun" style="width:100%;" id="draftAllBtn" data-handle="POST /api/templates/unit/draft" data-bundle="I">
-            Draft all with AI (<span id="draftAllCount">6</span>)
+          <!-- No bulk draft endpoint exists (api/src/templates.ts only has
+               POST /unit/draft?id=<one>) — "Draft all" here composes real
+               per-unit calls in sequence, not a fabricated bulk request. -->
+          <button type="button" class="btn btn-rerun" style="width:100%;" id="draftAllBtn" data-handle="POST /api/templates/unit/draft" data-bundle="I" data-handle-manual>
+            Draft all with AI (<span id="draftAllCount">0</span>)
           </button>
         </div>
         <div class="rail-list" id="railList" role="list"></div>
@@ -263,16 +266,17 @@
         </div>
 
         <div class="editor-body">
+          <p class="no-role-gate-note" id="aiDisabledNote" hidden>AI not configured for this workspace — Draft with AI is unavailable (an admin needs to set <code>BT_API_TOKEN</code>). Editing and Approve still work normally.</p>
           <div class="collapsed-banner" id="collapsedBanner" hidden>Validated — click to expand and edit</div>
 
           <div id="editorFields">
             <div class="field">
               <label class="f-label">Source (English, read-only)</label>
-              <div class="verse" style="font-family:var(--font-ui); font-size:14px;">This is a metaphor. It means that {TARGET} is spoken of as if it were {SOURCE}. If it would be helpful in your language, you could state the meaning plainly.</div>
+              <div class="verse" id="sourceMd" style="font-family:var(--font-ui); font-size:14px;">Loading…</div>
             </div>
             <div class="field">
               <label class="f-label" for="targetArea">Target (translated template)</label>
-              <textarea class="md-area tmpl-editor-area" id="targetArea" spellcheck="false" oninput="window.__tmplDirty(); window.__tmplAutosize(this);">Esto es una metáfora. Significa que {TARGET} se describe como si fuera {SOURCE}. Si sería útil en su idioma, podría expresar el significado claramente.</textarea>
+              <textarea class="md-area tmpl-editor-area" id="targetArea" spellcheck="false" oninput="window.__tmplDirty(); window.__tmplAutosize(this);"></textarea>
             </div>
           </div>
           <div class="seg" role="group" aria-label="Preview or edit" style="max-width:200px; margin-block-start:10px;">
@@ -282,99 +286,130 @@
         </div>
 
         <div class="editor-foot">
-          <span id="editorFootState">1 unsaved</span>
+          <span id="editorFootState">Loading…</span>
           <span class="spacer"></span>
-          <button type="button" class="btn btn-rerun" data-handle="POST /api/templates/unit/draft" data-bundle="I" id="draftBtn">Draft with AI</button>
-          <button type="button" class="btn btn-primary" data-handle="PATCH /api/templates/unit" data-headers="If-Match" data-bundle="I" id="saveBtn">Save</button>
-          <button type="button" class="btn btn-approve" data-handle="POST /api/templates/unit/validate" data-bundle="I" id="approveBtn">Approve</button>
+          <button type="button" class="btn btn-rerun" data-handle="POST /api/templates/unit/draft" data-headers="If-Match" data-bundle="I" data-handle-manual id="draftBtn">Draft with AI</button>
+          <button type="button" class="btn btn-primary" data-handle="PATCH /api/templates/unit" data-headers="If-Match" data-bundle="I" data-handle-manual id="saveBtn">Save</button>
+          <button type="button" class="btn btn-approve" data-handle="POST /api/templates/unit/validate" data-bundle="I" data-handle-manual id="approveBtn">Approve</button>
         </div>
       </section>
     </div>
   </div>
 
-  <!-- TemplateHistoryDialog (I.3) -->
+  <!-- TemplateHistoryDialog (I.3) — populated for real from
+       GET /api/templates/unit/history?id=<id>. No dedicated restore
+       endpoint exists; "Use vN" loads that version's target_md into the
+       editor (marked unsaved) — an explicit Save PATCH is what actually
+       commits it, same CAS path as any other edit. -->
   <dialog class="history-dialog" id="historyDialog">
     <div class="d-top">
-      <h3 style="margin:0; font-size:15px;">figs-metaphor — history</h3>
-      <span class="seg" role="group" aria-label="Source or target" style="max-width:200px; margin-inline-start:auto;">
-        <button type="button" aria-pressed="false">Source</button>
-        <button type="button" aria-pressed="true">Target</button>
-      </span>
+      <h3 style="margin:0; font-size:15px;" id="historyTitle">— history</h3>
     </div>
-    <div class="d-body">
-      <div class="hist-version">
-        <span>v4 (current) — edited 2 days ago</span>
-        <span class="chip chip-draft">current</span>
-      </div>
-      <div class="hist-version">
-        <span>v3 — AI draft, 6 days ago</span>
-        <button type="button" class="btn btn-ghost btn-sm" data-handle="GET /api/templates/unit/history" data-bundle="I">Use v3</button>
-      </div>
-      <div class="hist-version">
-        <span>v2 — edited 2 weeks ago</span>
-        <button type="button" class="btn btn-ghost btn-sm" data-handle="GET /api/templates/unit/history" data-bundle="I">Use v2</button>
-      </div>
-      <div class="hist-version">
-        <span>v1 — imported from sheet</span>
-        <button type="button" class="btn btn-ghost btn-sm" data-handle="GET /api/templates/unit/history" data-bundle="I">Use v1</button>
-      </div>
-    </div>
+    <div class="d-body" id="historyBody">Loading…</div>
     <div class="d-foot">
       <button type="button" class="btn btn-primary" id="closeHistoryBtn">Close</button>
     </div>
   </dialog>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
     "use strict";
 
-    var TEMPLATES = [
-      { id: "figs-metaphor", group: "Figures of speech", state: "edited", unsaved: true, stale: false },
-      { id: "figs-idiom", group: "Figures of speech", state: "validated", unsaved: false, stale: false },
-      { id: "figs-hyperbole", group: "Figures of speech", state: "ai_draft", unsaved: false, stale: true },
-      { id: "grammar-connect-logic-result", group: "Grammar", state: "validated", unsaved: false, stale: false },
-      { id: "translate-names", group: "Names", state: "ai_draft", unsaved: false, stale: false },
-      { id: "writing-symlanguage", group: "Writing", state: "edited", unsaved: false, stale: false }
-    ];
     var STATE_CHIP_CLASS = { ai_draft: "chip-needs", edited: "chip-edited", validated: "chip-approved" };
     var STATE_LABEL = { ai_draft: "AI draft", edited: "edited", validated: "validated" };
-    var current = TEMPLATES[0].id;
-    var approvedCount = 18, totalCount = 42;
+    function stateOf(t) { return t.translation_state || (t.has_target ? "edited" : null); }
+    function labelOf(t) { var s = stateOf(t); return s ? (STATE_LABEL[s] || s) : "not started"; }
+    function chipClassOf(t) { var s = stateOf(t); return s ? (STATE_CHIP_CLASS[s] || "") : "chip-needs"; }
+
+    var units = []; // real GET /api/templates rows (metadata only — no md)
+    var current = null; // current unit's template_id
+    var currentUnit = null; // full unit from GET /api/templates/unit?id=
+    var currentVersion = null;
+    var unsavedIds = {}; // template_id -> true while a local edit is unsaved
+    var aiDisabled = false; // set true for real on first 503 from /unit/draft
 
     function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+    function timeAgo(unixSeconds) {
+      if (!unixSeconds) return "—";
+      var mins = Math.round((Date.now() - unixSeconds * 1000) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + " min ago";
+      var hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + " hr" + (hrs === 1 ? "" : "s") + " ago";
+      return Math.round(hrs / 24) + " day(s) ago";
+    }
 
     function renderRail() {
       var groups = {};
-      TEMPLATES.forEach(function (t) { (groups[t.group] = groups[t.group] || []).push(t); });
+      units.forEach(function (t) { (groups[t.support_ref] = groups[t.support_ref] || []).push(t); });
+      var groupNames = Object.keys(groups).sort();
       var html = "";
-      Object.keys(groups).forEach(function (g) {
+      groupNames.forEach(function (g) {
         html += '<div class="rail-group-head">' + esc(g) + "</div>";
         groups[g].forEach(function (t) {
-          html += '<button type="button" class="tmpl-row" role="listitem" data-tmpl="' + esc(t.id) + '" aria-current="' + (t.id === current ? "true" : "false") + '">' +
-            (t.stale ? '<span class="t-stale" title="Stale source — English sheet changed since this draft"></span>' : "") +
-            '<span class="t-name">' + esc(t.id) + "</span>" +
-            (t.unsaved ? '<span class="t-dot" title="Unsaved draft"></span>' : "") +
-            '<span class="chip ' + STATE_CHIP_CLASS[t.state] + ' t-state" style="font-size:10px; padding:2px 7px;">' + STATE_LABEL[t.state] + "</span>" +
+          html += '<button type="button" class="tmpl-row" role="listitem" data-tmpl="' + esc(t.template_id) + '" aria-current="' + (t.template_id === current ? "true" : "false") + '">' +
+            (t.stale_source ? '<span class="t-stale" title="Stale source — English sheet changed since this draft"></span>' : "") +
+            '<span class="t-name">' + esc(t.template_id) + "</span>" +
+            (unsavedIds[t.template_id] ? '<span class="t-dot" title="Unsaved edit"></span>' : "") +
+            '<span class="chip ' + chipClassOf(t) + ' t-state" style="font-size:10px; padding:2px 7px;">' + esc(labelOf(t)) + "</span>" +
             "</button>";
         });
       });
       document.getElementById("railList").innerHTML = html;
-      document.getElementById("draftAllCount").textContent = TEMPLATES.filter(function (t) { return t.state !== "validated"; }).length;
+      document.getElementById("draftAllCount").textContent = units.filter(function (t) { return stateOf(t) !== "validated"; }).length;
+      var approved = units.filter(function (t) { return stateOf(t) === "validated"; }).length;
+      document.getElementById("approvedTally").textContent = approved + " of " + units.length;
+    }
+
+    function setAiDisabled(v) {
+      aiDisabled = v;
+      document.getElementById("aiDisabledNote").hidden = !v;
+      document.getElementById("draftBtn").disabled = v;
+      document.getElementById("draftAllBtn").disabled = v;
     }
 
     function loadEditor(id) {
       current = id;
-      var t = TEMPLATES.find(function (x) { return x.id === id; });
+      currentUnit = null;
       document.getElementById("editorTitle").textContent = id;
-      var chip = document.getElementById("editorStateChip");
-      chip.className = "chip " + STATE_CHIP_CLASS[t.state];
-      chip.textContent = STATE_LABEL[t.state];
-      document.getElementById("approvedTally").textContent = approvedCount + " of " + totalCount;
-      document.getElementById("collapsedBanner").hidden = t.state !== "validated";
-      document.getElementById("editorFields").style.display = t.state === "validated" ? "none" : "block";
-      document.getElementById("editorFootState").textContent = t.unsaved ? "1 unsaved" : "Saved";
+      document.getElementById("sourceMd").textContent = "Loading…";
+      document.getElementById("targetArea").value = "";
+      document.getElementById("editorFootState").textContent = "Loading…";
       renderRail();
+      window.flowApi.get("/api/templates/unit", { id: id }).then(function (res) {
+        if (current !== id) return; // user navigated away before this resolved
+        if (!res.ok) {
+          window.flowShell.toast("Couldn't load " + id + " — " + res.status + " " + res.kind, { nudge: true });
+          return;
+        }
+        currentUnit = res.data;
+        currentVersion = currentUnit.version;
+        var state = currentUnit.translation_state;
+        var chip = document.getElementById("editorStateChip");
+        chip.className = "chip " + (state ? (STATE_CHIP_CLASS[state] || "") : "chip-needs");
+        chip.textContent = state ? (STATE_LABEL[state] || state) : "not started";
+        document.getElementById("sourceMd").textContent = currentUnit.source_md || "(no source text)";
+        document.getElementById("targetArea").value = currentUnit.target_md || "";
+        document.getElementById("collapsedBanner").hidden = state !== "validated";
+        document.getElementById("editorFields").style.display = state === "validated" ? "none" : "block";
+        document.getElementById("editorFootState").textContent = unsavedIds[id] ? "1 unsaved" : (currentUnit.updated_at ? "Saved " + timeAgo(currentUnit.updated_at) : "Not saved yet");
+        document.getElementById("approveBtn").disabled = !state; // server 404s validate on a null-state row
+        window.__tmplAutosize(document.getElementById("targetArea"));
+      });
+    }
+
+    function loadUnits() {
+      return window.flowApi.get("/api/templates").then(function (res) {
+        if (res.ok) {
+          units = res.data.units || [];
+        } else {
+          window.flowShell.toast("Couldn't load templates — " + res.status + " " + res.kind, { nudge: true });
+        }
+        renderRail();
+        if (!current && units.length) loadEditor(units[0].template_id);
+      });
     }
 
     document.getElementById("railList").addEventListener("click", function (ev) {
@@ -383,7 +418,6 @@
       loadEditor(row.getAttribute("data-tmpl"));
       if (window.matchMedia("(max-width: 900px)").matches) {
         document.body.dataset.view = "editor";
-        // editor just became visible — re-measure for the non-field-sizing fallback
         window.__tmplAutosize(document.getElementById("targetArea"));
       }
     });
@@ -398,8 +432,7 @@
     });
 
     window.__tmplDirty = function () {
-      var t = TEMPLATES.find(function (x) { return x.id === current; });
-      t.unsaved = true;
+      unsavedIds[current] = true;
       document.getElementById("editorFootState").textContent = "1 unsaved";
       renderRail();
     };
@@ -407,9 +440,6 @@
     // JS fallback for browsers without `field-sizing: content` support —
     // grow the textarea to fit its text on init/input/re-show.
     window.__tmplAutosize = function (el) {
-      // field-sizing:content does this natively — writing an inline height here
-      // would permanently OVERRIDE it (that inline height, measured while the
-      // editor was display:none on mobile, was the tiny-box-with-scrollbar bug).
       if (window.CSS && CSS.supports && CSS.supports("field-sizing", "content")) return;
       if (!el || el.offsetParent === null) return; // hidden: scrollHeight is garbage
       el.style.height = "auto";
@@ -417,23 +447,121 @@
     };
 
     document.getElementById("saveBtn").addEventListener("click", function () {
-      var t = TEMPLATES.find(function (x) { return x.id === current; });
-      t.unsaved = false;
-      if (t.state === "ai_draft") t.state = "edited";
-      document.getElementById("editorFootState").textContent = "Saved just now";
-      loadEditor(current);
+      if (!currentUnit) return;
+      var id = current;
+      var body = { target_md: document.getElementById("targetArea").value };
+      window.flowApi.request("PATCH", "/api/templates/unit", { body: body, ifMatch: currentVersion, query: { id: id } }).then(function (res) {
+        if (res.ok) {
+          delete unsavedIds[id];
+          window.flowShell.toast("Saved " + id);
+          // Refresh the rail's cached state/version for this row too.
+          var row = units.find(function (u) { return u.template_id === id; });
+          if (row) { row.translation_state = res.data.translation_state; row.has_target = res.data.target_md ? 1 : 0; row.version = res.data.version; }
+          if (current === id) loadEditor(id);
+          else renderRail();
+        } else if (res.status === 409 && res.body && res.body.current) {
+          window.flowShell.toast("Someone else saved " + id + " first — reloading the current version", { nudge: true });
+          currentVersion = res.body.current.version;
+          if (current === id) loadEditor(id);
+        } else if (res.status === 428) {
+          window.flowShell.toast("Missing version — reload and retry", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
     });
 
     document.getElementById("approveBtn").addEventListener("click", function () {
-      var t = TEMPLATES.find(function (x) { return x.id === current; });
-      var wasValidated = t.state === "validated";
-      t.state = wasValidated ? "edited" : "validated";
-      approvedCount = TEMPLATES.filter(function (x) { return x.state === "validated"; }).length + (18 - 2); // demo baseline offset
-      loadEditor(current);
+      if (!currentUnit) return;
+      var id = current;
+      var wasValidated = currentUnit.translation_state === "validated";
+      window.flowApi.post("/api/templates/unit/validate", { value: wasValidated ? 0 : 1 }, { query: { id: id } }).then(function (res) {
+        if (res.ok) {
+          var row = units.find(function (u) { return u.template_id === id; });
+          if (row) row.translation_state = res.data.translation_state;
+          window.flowShell.toast(wasValidated ? "Un-approved " + id : "Approved " + id);
+          if (current === id) loadEditor(id);
+        } else if (res.status === 404) {
+          window.flowShell.toast("Nothing to approve yet — add a translation first", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    });
+
+    document.getElementById("draftBtn").addEventListener("click", function () {
+      if (!currentUnit || aiDisabled) return;
+      var id = current;
+      window.flowApi.request("POST", "/api/templates/unit/draft", { ifMatch: currentVersion, query: { id: id } }).then(function (res) {
+        if (res.ok) {
+          window.flowShell.toast("AI draft applied to " + id);
+          if (current === id) loadEditor(id);
+        } else if (res.status === 503) {
+          setAiDisabled(true);
+          window.flowShell.toast("AI not configured for this workspace", { nudge: true });
+        } else if (res.status === 409) {
+          window.flowShell.toast("Version moved on — reloading", { nudge: true });
+          loadEditor(id);
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    });
+
+    // No bulk endpoint — sequential real POSTs, one per unit needing a draft,
+    // stopping as soon as we hit the real 503 disabled response.
+    document.getElementById("draftAllBtn").addEventListener("click", function () {
+      if (aiDisabled) return;
+      var targets = units.filter(function (t) { return stateOf(t) !== "validated"; });
+      if (!targets.length) { window.flowShell.toast("Nothing left to draft"); return; }
+      var done = 0, stopped = false;
+      targets.reduce(function (chain, t) {
+        return chain.then(function () {
+          if (stopped) return;
+          return window.flowApi.request("POST", "/api/templates/unit/draft", { ifMatch: t.version, query: { id: t.template_id } }).then(function (res) {
+            if (res.ok) { done++; }
+            else if (res.status === 503) { setAiDisabled(true); stopped = true; }
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        window.flowShell.toast(done + " of " + targets.length + " drafted" + (stopped ? " — stopped: AI not configured" : ""));
+        loadUnits();
+      });
     });
 
     document.getElementById("historyBtn").addEventListener("click", function () {
+      if (!current) return;
+      var id = current;
+      document.getElementById("historyTitle").textContent = id + " — history";
+      document.getElementById("historyBody").textContent = "Loading…";
       document.getElementById("historyDialog").showModal();
+      window.flowApi.get("/api/templates/unit/history", { id: id }).then(function (res) {
+        if (!res.ok) { document.getElementById("historyBody").textContent = "✗ " + res.status + " " + res.kind; return; }
+        var target = (res.data.target || []).slice().reverse();
+        var html = target.map(function (e) {
+          var isCurrent = e.version === currentVersion;
+          var who = e.user ? (e.user.full_name || e.user.username) : (e.synthetic ? "imported from sheet" : "AI draft");
+          return '<div class="hist-version">' +
+            '<span>v' + e.version + (isCurrent ? " (current)" : "") + " — " + esc(e.action) + ", " + esc(who) + ", " + timeAgo(e.created_at) + '</span>' +
+            (isCurrent ? '<span class="chip chip-draft">current</span>' : '<button type="button" class="btn btn-ghost btn-sm" data-use-version="' + e.version + '">Use this</button>') +
+            "</div>";
+        }).join("") || "<p>No history yet.</p>";
+        document.getElementById("historyBody").innerHTML = html;
+        document.getElementById("historyBody").dataset.entries = JSON.stringify(target);
+      });
+    });
+    document.getElementById("historyBody").addEventListener("click", function (ev) {
+      var btn = ev.target.closest("[data-use-version]");
+      if (!btn) return;
+      var version = parseInt(btn.getAttribute("data-use-version"), 10);
+      var entries = JSON.parse(document.getElementById("historyBody").dataset.entries || "[]");
+      var entry = entries.find(function (e) { return e.version === version; });
+      if (!entry) return;
+      document.getElementById("targetArea").value = (entry.snapshot && entry.snapshot.target_md) || "";
+      window.__tmplDirty();
+      window.__tmplAutosize(document.getElementById("targetArea"));
+      document.getElementById("historyDialog").close();
+      window.flowShell.toast("Loaded v" + version + " into the editor — click Save to commit it");
     });
     document.getElementById("closeHistoryBtn").addEventListener("click", function () {
       document.getElementById("historyDialog").close();
@@ -460,12 +588,10 @@
       });
     });
 
-    renderRail();
-    loadEditor(current);
-    window.__tmplAutosize(document.getElementById("targetArea"));
     if (window.matchMedia("(max-width: 900px)").matches) {
       document.body.dataset.view = "rail";
     }
+    window.flowApi.ready.then(loadUnits);
   })();
   </script>
 </body>

@@ -175,10 +175,10 @@
           <div class="rail-top">
             <input type="search" placeholder="Search articles…" aria-label="Search articles" />
             <span class="rail-tally" id="railTally">9 of 15 approved</span>
-            <button type="button" class="populate-btn" id="populateBtn" data-handle="POST /api/articles/populate" data-bundle="J">Populate from books</button>
+            <button type="button" class="populate-btn" id="populateBtn" data-handle="POST /api/articles/populate" data-handle-manual data-bundle="J">Populate from books</button>
             <div class="add-row">
               <input type="text" id="addIdInput" placeholder="Add by id…" aria-label="Add article by id" />
-              <button type="button" id="addIdBtn" data-handle="POST /api/articles/tw/add" data-bundle="J">Add</button>
+              <button type="button" id="addIdBtn" data-handle="POST /api/articles/tw/add" data-handle-manual data-bundle="J">Add</button>
             </div>
           </div>
           <ul class="article-list" id="articleList" role="list" aria-label="Articles"></ul>
@@ -202,10 +202,14 @@
           <div class="ep-foot">
             <button type="button" class="btn btn-outline" id="translateBtn" data-handle="POST /api/pipelines/start" data-bundle="D">Translate / Re-run AI</button>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-outline" id="saveBtn" data-handle="PATCH /api/articles/:resource/unit" data-headers="If-Match" data-bundle="J">Save</button>
-            <button type="button" class="btn btn-approve" id="approveBtn" data-handle="POST /api/articles/:resource/unit/validate" data-bundle="J">Approve</button>
+            <button type="button" class="btn btn-outline" id="saveBtn" data-handle="PATCH /api/articles/:resource/unit" data-headers="If-Match" data-handle-manual data-bundle="J">Save</button>
+            <button type="button" class="btn btn-approve" id="approveBtn" data-handle="POST /api/articles/:resource/unit/validate" data-handle-manual data-bundle="J">Approve</button>
           </div>
         </article>
+        <div class="editor-panel empty-state" id="emptyStatePanel" hidden>
+          <p><strong>No articles imported in this environment.</strong></p>
+          <p style="font-size:12.5px;">GET /api/articles/tw and GET /api/articles/ta both return an empty <code>units</code> array here — that's the real backend state, not a loading gap. Use "Populate from books" or "Add by id" in the rail to bring in real translationWords/translationAcademy content.</p>
+        </div>
       </section>
     </div>
   </main>
@@ -219,44 +223,37 @@
     </div>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
     "use strict";
     function el(id) { return document.getElementById(id); }
     function toast(t, o) { window.flowShell.toast(t, o); }
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
 
-    var RESOURCES = {
-      tw: {
-        parts: ["body"],
-        items: [
-          {
-            id: "faith", title: "fe (faith)", state: "edited",
-            body: "La **fe** significa confiar y creer en alguien o en algo, especialmente confiar en Dios.\n\nCuando la Biblia habla de tener fe en Dios, quiere decir confiar en que él es quien dice ser y que hará lo que ha prometido.",
-            bodySource: "**Faith** means trusting and believing in someone or something, especially trusting God.\n\nWhen the Bible talks about having faith in God, it means trusting that he is who he says he is and that he will do what he has promised."
-          },
-          { id: "prophet", title: "profeta (prophet)", state: "validated", body: "Un **profeta** es una persona que habla mensajes de parte de Dios a otras personas.", bodySource: "A **prophet** is a person who speaks messages from God to other people." },
-          { id: "grace", title: "gracia (grace)", state: "draft", body: "", bodySource: "**Grace** is help or favor that a person does not deserve, especially help that God gives to people." }
-        ]
-      },
-      ta: {
-        parts: ["title", "subtitle", "body"],
-        items: [
-          {
-            id: "figs-metaphor", title: "Metáfora (Metaphor)", state: "edited",
-            titlePart: "Metáfora", titleSource: "Metaphor",
-            subtitlePart: "Figuras retóricas", subtitleSource: "Figures of Speech",
-            body: "Una **metáfora** es una figura del habla en la que se habla de una cosa como si fuera otra, para mostrar que las dos cosas tienen algo en común.\n\nPor ejemplo, cuando alguien dice \"él es un león en la batalla\", no está diciendo que la persona sea literalmente un león. Está usando la imagen del león para comunicar valentía y fuerza.\n\nAl traducir una metáfora, primero hay que identificar las tres partes",
-            bodySource: "A **metaphor** is a figure of speech in which one thing is spoken of as if it were another, in order to show that the two things have a quality in common.\n\nFor example, when someone says \"he is a lion in battle,\" they are not saying the person is literally a lion. They are using the image of the lion to communicate courage and strength.\n\nWhen translating a metaphor, the translator needs to identify three things: the topic, the image, and the point of comparison."
-          },
-          { id: "translate-names", title: "Cómo traducir nombres (How to Translate Names)", state: "validated", titlePart: "Cómo traducir nombres", titleSource: "How to Translate Names", subtitlePart: "Nombres", subtitleSource: "Names", body: "Los nombres de personas y lugares a menudo necesitan un tratamiento especial al traducir.", bodySource: "Names of people and places often need special treatment when translating." }
-        ]
-      }
-    };
+    var CTX = { book: "ZEC" }; // articles are book-agnostic; book only scopes "Populate from books"
+
+    // "part" -> which field on article_units.part this maps to (see migration
+    // 0039_article_units.sql: one row per markdown FILE, keyed by (resource,path),
+    // grouped by article_id, part in {'body','title','sub-title'}).
+    var PART_ORDER = ["title", "sub-title", "body"];
+    var PART_LABEL = { title: "title", "sub-title": "subtitle", body: "body" };
+
+    // Real state only — no client fixtures. Both GET /api/articles/tw and
+    // GET /api/articles/ta genuinely return {resource, units: []} in this
+    // environment (verified via curl with a dev session cookie), so the list
+    // and editor below render a real empty state rather than invented items.
+    var RESOURCES = { tw: { units: [] }, ta: { units: [] } };
 
     var resource = "ta";
-    var curIdx = 0;
-    var unsaved = false;
+    var curArticleId = null;   // selected article_id (group of part-rows)
+    var curParts = {};         // partName -> full ArticleUnit (source_md, target_md, version, translation_state, path)
+    var unsavedParts = {};     // partName -> true
     var partView = {}; // partName -> "edit" | "preview"
 
     function mdToHtml(text) {
@@ -272,55 +269,105 @@
       ta.style.height = ta.scrollHeight + "px";
     }
 
-    function currentItems() { return RESOURCES[resource].items; }
+    function currentUnits() { return RESOURCES[resource].units; }
+
+    // Group flat unit-metadata rows by article_id (each row is one real
+    // markdown file — 'body', and for tA sometimes 'title'/'sub-title' too).
+    function groupedArticles() {
+      var groups = {}; // article_id -> { units: [...] }
+      currentUnits().forEach(function (u) {
+        if (!groups[u.article_id]) groups[u.article_id] = { units: [] };
+        groups[u.article_id].units.push(u);
+      });
+      return groups;
+    }
+    function stateLabel(state) {
+      return state === "validated" ? "Approved" : state === "edited" || state === "ai_draft" ? "Edited" : "Draft";
+    }
+
+    function loadList() {
+      return window.flowApi.get("/api/articles/" + resource).then(function (res) {
+        if (!res.ok) {
+          toast("Could not load " + resource + " articles: " + res.status + " " + res.error, { bundle: "J" });
+          RESOURCES[resource].units = [];
+          return;
+        }
+        RESOURCES[resource].units = Array.isArray(res.data.units) ? res.data.units : [];
+      }).then(function () {
+        curArticleId = null;
+        curParts = {};
+        renderList();
+        renderEditor();
+      });
+    }
 
     function renderList() {
       var ul = el("articleList");
       ul.innerHTML = "";
-      currentItems().forEach(function (item, i) {
+      var groups = groupedArticles();
+      var ids = Object.keys(groups).sort();
+      ids.forEach(function (articleId) {
+        var group = groups[articleId];
+        var bodyUnit = group.units.filter(function (u) { return u.part === "body"; })[0] || group.units[0];
         var li = document.createElement("li");
         var btn = document.createElement("button");
         btn.type = "button";
-        if (i === curIdx) btn.setAttribute("aria-current", "true");
+        if (articleId === curArticleId) btn.setAttribute("aria-current", "true");
         btn.innerHTML =
-          '<span class="al-main"><span class="al-title">' + item.title + '</span>' +
-          '<span class="al-sub">' + (item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft") + '</span></span>' +
-          (item.unsavedDot ? '<span class="al-dot"></span>' : "");
+          '<span class="al-main"><span class="al-title">' + escapeHtml(articleId) + '</span>' +
+          '<span class="al-sub">' + stateLabel(bodyUnit && bodyUnit.translation_state) + '</span></span>';
         btn.addEventListener("click", function () {
-          curIdx = i;
-          partView = {};
-          el("articlesLayout").setAttribute("data-view", "editor");
-          renderEditor();
+          selectArticle(articleId);
         });
         li.appendChild(btn);
         ul.appendChild(li);
       });
-      var approved = currentItems().filter(function (it) { return it.state === "validated"; }).length;
-      el("railTally").textContent = approved + " of " + currentItems().length + " approved";
+      var approved = currentUnits().filter(function (u) { return u.part === "body" && u.translation_state === "validated"; }).length;
+      var totalArticles = ids.length;
+      el("railTally").textContent = totalArticles
+        ? approved + " of " + totalArticles + " approved"
+        : "No " + resource + " articles imported in this environment";
+    }
+
+    function selectArticle(articleId) {
+      curArticleId = articleId;
+      partView = {};
+      unsavedParts = {};
+      curParts = {};
+      var group = groupedArticles()[articleId];
+      if (!group) { renderEditor(); return; }
+      var fetches = group.units.map(function (u) {
+        return window.flowApi.get("/api/articles/" + resource + "/unit", { path: u.path }).then(function (res) {
+          if (res.ok) curParts[u.part] = res.data;
+        });
+      });
+      Promise.all(fetches).then(function () {
+        el("articlesLayout").setAttribute("data-view", "editor");
+        renderList();
+        renderEditor();
+      });
     }
 
     function renderEditor() {
-      var item = currentItems()[curIdx];
-      var parts = RESOURCES[resource].parts;
-      el("epTitle").textContent = item.title;
-      el("epStateChip").className = "chip " + (item.state === "validated" ? "chip-approved" : item.state === "edited" ? "chip-edited" : "chip-draft");
-      el("epStateChip").textContent = item.state === "validated" ? "Approved" : item.state === "edited" ? "Edited" : "Draft";
+      var partNames = Object.keys(curParts);
+      el("editorPanel").hidden = !curArticleId || !partNames.length;
+      el("emptyStatePanel").hidden = !!curArticleId && !!partNames.length;
+      if (!curArticleId || !partNames.length) return;
 
-      var kindAttr = resource; // tw|ta — used only to relabel the mocked handle path below
-      document.querySelectorAll('[data-handle^="PATCH /api/articles/"]').forEach(function (b) {
-        b.setAttribute("data-handle", "PATCH /api/articles/" + kindAttr + "/unit");
-      });
-      document.querySelectorAll('[data-handle^="POST /api/articles/:resource/unit/validate"]').forEach(function (b) {
-        b.setAttribute("data-handle", "POST /api/articles/" + kindAttr + "/unit/validate");
-      });
-      el("addIdBtn").setAttribute("data-handle", "POST /api/articles/" + kindAttr + "/add");
+      var bodyPart = curParts["body"];
+      el("epTitle").textContent = curArticleId;
+      var state = bodyPart ? bodyPart.translation_state : null;
+      el("epStateChip").className = "chip " + (state === "validated" ? "chip-approved" : state === "edited" || state === "ai_draft" ? "chip-edited" : "chip-draft");
+      el("epStateChip").textContent = stateLabel(state);
 
       var body = el("epBody");
       body.innerHTML = "";
-      parts.forEach(function (partName, partIdx) {
-        var val = partName === "body" ? item.body : (partName === "title" ? item.titlePart : item.subtitlePart) || "";
-        var srcVal = partName === "body" ? item.bodySource : (partName === "title" ? item.titleSource : item.subtitleSource) || "";
-        var isMidEdit = partName === "body"; // the demo's "mid-edit" part
+      partNames.sort(function (a, b) { return PART_ORDER.indexOf(a) - PART_ORDER.indexOf(b); });
+      partNames.forEach(function (partName) {
+        var unit = curParts[partName];
+        var val = unit.target_md || "";
+        var srcVal = unit.source_md || "";
+        var isDirty = !!unsavedParts[partName];
         if (!(partName in partView)) partView[partName] = "edit";
 
         var block = document.createElement("div");
@@ -329,11 +376,11 @@
         var head = document.createElement("div");
         head.className = "part-head";
         head.innerHTML =
-          '<h2>' + partName + '</h2>' +
-          (isMidEdit ? '<span class="part-dirty" title="Unsaved changes in this part" aria-hidden="true"></span>' : '') +
+          '<h2>' + escapeHtml(PART_LABEL[partName] || partName) + '</h2>' +
+          (isDirty ? '<span class="part-dirty" title="Unsaved changes in this part" aria-hidden="true"></span>' : '') +
           '<span class="spacer"></span>' +
-          '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates)">✨ Draft with AI</button>' +
-          '<button type="button" class="preview-toggle" data-part="' + partName + '" aria-pressed="' + (partView[partName] === "preview" ? "true" : "false") + '">' + (partView[partName] === "preview" ? "Edit" : "Preview") + '</button>';
+          '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates) — not wired in this preview">✨ Draft with AI</button>' +
+          '<button type="button" class="preview-toggle" data-part="' + escapeHtml(partName) + '" aria-pressed="' + (partView[partName] === "preview" ? "true" : "false") + '">' + (partView[partName] === "preview" ? "Edit" : "Preview") + '</button>';
         block.appendChild(head);
 
         if (srcVal) {
@@ -349,7 +396,10 @@
         ta.setAttribute("spellcheck", "false");
         ta.setAttribute("aria-label", partName + " draft (target language)");
         ta.hidden = partView[partName] === "preview";
-        ta.addEventListener("input", function () { markUnsaved(); autoSizeTextarea(ta); });
+        ta.addEventListener("input", function () {
+          curParts[partName].target_md = ta.value;
+          markUnsaved(partName);
+        });
         block.appendChild(ta);
 
         var preview = document.createElement("div");
@@ -365,74 +415,120 @@
       body.querySelectorAll(".preview-toggle").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var partName = btn.getAttribute("data-part");
-          // Capture whatever is currently in the textarea so toggling to preview
-          // and back never discards an in-progress edit.
-          var block = btn.closest(".part-block");
-          var liveTa = block ? block.querySelector("textarea.part-area") : null;
-          if (liveTa) {
-            var liveVal = liveTa.value;
-            if (partName === "body") item.body = liveVal;
-            else if (partName === "title") item.titlePart = liveVal;
-            else if (partName === "subtitle") item.subtitlePart = liveVal;
-          }
+          var blockEl = btn.closest(".part-block");
+          var liveTa = blockEl ? blockEl.querySelector("textarea.part-area") : null;
+          if (liveTa) curParts[partName].target_md = liveTa.value;
           var showingPreview = partView[partName] === "preview";
           partView[partName] = showingPreview ? "edit" : "preview";
           renderEditor();
         });
       });
+
+      updateUnsavedChip();
     }
 
-    function markUnsaved() {
-      unsaved = true;
-      el("unsavedChip").hidden = false;
-      el("unsavedText").textContent = "1 unsaved";
+    function markUnsaved(partName) {
+      unsavedParts[partName] = true;
+      updateUnsavedChip();
+    }
+    function updateUnsavedChip() {
+      var n = Object.keys(unsavedParts).length;
+      el("unsavedChip").hidden = n === 0;
+      el("unsavedText").textContent = n + " unsaved";
     }
 
+    // Save — PATCH each dirty part with its own real path + If-Match version.
+    // Real fields only: target_md is the entire body of the PATCH (rows.ts-style
+    // CAS on version). A 409 here means someone else saved this exact part first.
     el("saveBtn").addEventListener("click", function () {
-      unsaved = false;
-      el("unsavedChip").hidden = true;
-      currentItems()[curIdx].state = "edited";
-      renderList();
-      renderEditor();
+      var dirtyNames = Object.keys(unsavedParts);
+      if (!dirtyNames.length) { toast("Nothing to save", { bundle: "J" }); return; }
+      Promise.all(dirtyNames.map(function (partName) {
+        var unit = curParts[partName];
+        return window.flowApi.patch("/api/articles/" + resource + "/unit", { target_md: unit.target_md }, { ifMatch: unit.version, query: { path: unit.path } }).then(function (res) {
+          if (res.ok) {
+            curParts[partName] = res.data;
+            delete unsavedParts[partName];
+            return { ok: true, partName: partName };
+          }
+          if (res.kind === "version_conflict") {
+            toast("“" + partName + "” changed elsewhere first (server now at version " + (res.body && res.body.current && res.body.current.version) + ") — reloading this article.", { bundle: "J" });
+          } else {
+            toast("Save failed for “" + partName + "”: " + res.status + " " + res.error, { bundle: "J" });
+          }
+          return { ok: false, partName: partName };
+        });
+      })).then(function (results) {
+        if (results.some(function (r) { return !r.ok; })) {
+          selectArticle(curArticleId); // reload to pick up server-side truth after a conflict
+        } else {
+          toast("Saved " + results.length + " part" + (results.length === 1 ? "" : "s"), { bundle: "J" });
+          renderList();
+          renderEditor();
+        }
+      });
     });
+
+    // Approve — validate every part that has ever had a translation_state set
+    // (server guards `translation_state IS NOT NULL`; an untouched part can't
+    // be approved, so those are honestly skipped with a note, not force-approved).
     el("approveBtn").addEventListener("click", function () {
-      currentItems()[curIdx].state = "validated";
-      toast("Approved", { bundle: "J" });
-      renderList();
-      renderEditor();
+      var names = Object.keys(curParts);
+      var approvable = names.filter(function (n) { return curParts[n].translation_state != null; });
+      var skipped = names.filter(function (n) { return curParts[n].translation_state == null; });
+      if (!approvable.length) { toast("Nothing to approve — no part has a translation yet", { bundle: "J" }); return; }
+      Promise.all(approvable.map(function (partName) {
+        var unit = curParts[partName];
+        return window.flowApi.post("/api/articles/" + resource + "/unit/validate", { value: 1 }, { query: { path: unit.path } }).then(function (res) {
+          if (res.ok) curParts[partName] = res.data;
+          return res;
+        });
+      })).then(function (results) {
+        var failed = results.filter(function (r) { return !r.ok; });
+        if (failed.length) toast(failed.length + " part(s) failed to approve", { bundle: "J" });
+        else toast("Approved" + (skipped.length ? " (skipped " + skipped.join(", ") + " — no translation yet)" : ""), { bundle: "J" });
+        renderList();
+        renderEditor();
+      });
     });
 
     el("segTw").addEventListener("click", function () {
-      resource = "tw"; curIdx = 0; partView = {};
+      resource = "tw"; partView = {};
       el("segTw").setAttribute("aria-pressed", "true");
       el("segTa").setAttribute("aria-pressed", "false");
-      el("articlesLayout").setAttribute("data-view", "editor");
-      renderList(); renderEditor();
+      el("articlesLayout").setAttribute("data-view", "list");
+      loadList();
     });
     el("segTa").addEventListener("click", function () {
-      resource = "ta"; curIdx = 0; partView = {};
+      resource = "ta"; partView = {};
       el("segTa").setAttribute("aria-pressed", "true");
       el("segTw").setAttribute("aria-pressed", "false");
-      el("articlesLayout").setAttribute("data-view", "editor");
-      renderList(); renderEditor();
+      el("articlesLayout").setAttribute("data-view", "list");
+      loadList();
     });
 
     el("backToListBtn").addEventListener("click", function () { el("articlesLayout").setAttribute("data-view", "list"); });
 
+    // Real POST /api/articles/populate — book-scoped, since this environment
+    // only has ZEC imported. Reports the real processed/remaining/warnings
+    // counts from the response rather than a made-up success message.
+    el("populateBtn").addEventListener("click", function () {
+      window.flowApi.post("/api/articles/populate", { book: CTX.book }).then(function (res) {
+        if (!res.ok) { toast("Populate failed: " + res.status + " " + res.error, { bundle: "J" }); return; }
+        toast("Populate: processed " + res.data.processed + ", remaining " + res.data.remaining + (res.data.warnings && res.data.warnings.length ? ", " + res.data.warnings.length + " warning(s)" : ""), { bundle: "J" });
+        loadList();
+      });
+    });
+
     el("addIdBtn").addEventListener("click", function () {
       var id = el("addIdInput").value.trim();
       if (!id) { toast("Enter an id to add", { bundle: "J" }); return; }
-      var exists = currentItems().some(function (it) { return it.id === id; });
-      if (exists) { toast("400 source_not_found — unknown id (demo: id already present)", { bundle: "J" }); return; }
-      var newItem = { id: id, title: id, state: "draft", body: "" };
-      if (resource === "ta") { newItem.titlePart = id; newItem.subtitlePart = ""; }
-      RESOURCES[resource].items.push(newItem);
-      curIdx = RESOURCES[resource].items.length - 1;
-      el("addIdInput").value = "";
-      el("articlesLayout").setAttribute("data-view", "editor");
-      renderList();
-      renderEditor();
-      toast("Added " + id, { bundle: "J" });
+      window.flowApi.post("/api/articles/" + resource + "/add", { id: id }).then(function (res) {
+        if (!res.ok) { toast("Add failed: " + res.status + " " + res.error, { bundle: "J" }); return; }
+        el("addIdInput").value = "";
+        toast("Added " + id, { bundle: "J" });
+        loadList().then(function () { selectArticle(id); });
+      });
     });
 
     el("historyBtn").addEventListener("click", function () { el("histBackdrop").hidden = false; });
@@ -451,14 +547,13 @@
     wireMenu("accountBtn", "accountMenu");
     document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
 
-    // Default state: land straight in Edit mode on a realistic mid-edit article
-    // (per design feedback — see selected part with the unsaved chip active).
     el("segTw").setAttribute("aria-pressed", "false");
     el("segTa").setAttribute("aria-pressed", "true");
-    el("articlesLayout").setAttribute("data-view", "editor");
-    renderList();
-    renderEditor();
-    markUnsaved();
+    window.flowApi.ready.then(function () {
+      window.flowShell.setContext({ book: CTX.book });
+      el("articlesLayout").setAttribute("data-view", "list");
+      loadList();
+    });
   })();
   </script>
 </body>

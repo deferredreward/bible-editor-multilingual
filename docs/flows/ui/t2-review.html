@@ -335,8 +335,8 @@
         <div class="qp-top">
           <h2>Approve all</h2>
           <div class="approve-all-row">
-            <button type="button" id="approveAllNotes" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve all notes (24)</button>
-            <button type="button" id="approveAllQuestions" data-handle="POST /api/rows/tq/:id/validate" data-bundle="E">Approve all questions (18)</button>
+            <button type="button" id="approveAllNotes" data-bundle="E">Approve all notes</button>
+            <button type="button" id="approveAllQuestions" data-bundle="E">Approve all questions</button>
           </div>
           <div class="add-row-actions" style="margin-top:8px;">
             <button type="button" id="addNoteBtn" data-handle="POST /api/rows/tn" data-bundle="F">+ Note</button>
@@ -359,7 +359,7 @@
         <button type="button" class="cluster-btn verse-btn-mobile" id="openSheetBtn">This verse</button>
         <button type="button" class="cluster-btn authoring-only" id="gridViewBtn" data-handle="local:toggle-grid-view" data-bundle="F" aria-pressed="false">Grid view</button>
         <button type="button" class="cluster-btn" id="historyBtn">History</button>
-        <button type="button" class="cluster-btn" id="demoConflictBtn">Demo: 409 conflict</button>
+        <button type="button" class="cluster-btn" id="demoConflictBtn" title="Deliberately saves with a stale If-Match to trigger a real 409 version_mismatch">Demo: 409 conflict</button>
         <button type="button" class="cluster-btn" id="demoNudgeBtn">Demo: version nudge</button>
       </div>
 
@@ -391,10 +391,10 @@
           <span class="card-label" style="margin:0;"><span class="dot"></span><span id="wcKind">Note</span></span>
           <span class="chip chip-draft" id="wcStateChip">Draft</span>
           <span class="quote-actions" id="noteChromeActions" style="margin-inline-start:auto;">
-            <button type="button" id="moveUpBtn" title="Move up" aria-label="Move up" data-bundle="F" data-headers="If-Match">↑</button>
-            <button type="button" id="moveDownBtn" title="Move down" aria-label="Move down" data-bundle="F" data-headers="If-Match">↓</button>
+            <button type="button" id="moveUpBtn" title="Move up" aria-label="Move up" data-bundle="F">↑</button>
+            <button type="button" id="moveDownBtn" title="Move down" aria-label="Move down" data-bundle="F">↓</button>
             <button type="button" id="insertAfterBtn" title="Insert note after this one" aria-label="Insert note after this one" data-bundle="F">+</button>
-            <button type="button" id="retargetBtn" title="Retarget verse reference" aria-label="Retarget verse reference" data-bundle="F" data-headers="If-Match">⟳</button>
+            <button type="button" id="retargetBtn" title="Retarget verse reference" aria-label="Retarget verse reference" data-bundle="F">⟳</button>
           </span>
         </div>
 
@@ -429,7 +429,7 @@
         <div class="action-row">
           <button type="button" class="btn btn-outline" id="undoBtnDesktop" data-handle="local:undo-note" data-bundle="F">Undo</button>
           <button type="button" class="btn btn-outline" id="saveBtnDesktop" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Save</button>
-          <button type="button" class="btn btn-approve" id="approveBtnDesktop" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve</button>
+          <button type="button" class="btn btn-approve" id="approveBtnDesktop" data-handle="POST /api/rows/tn/:id/validate" data-body='{"value":1}' data-bundle="E">Approve</button>
         </div>
       </article>
     </section>
@@ -445,7 +445,7 @@
   <footer class="actionbar-mobile" id="actionbarMobile">
     <button type="button" class="btn btn-outline" id="undoBtnMobile" data-handle="local:undo-note" data-bundle="F">Undo</button>
     <button type="button" class="btn btn-outline" id="saveBtnMobile" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Save</button>
-    <button type="button" class="btn btn-approve" id="approveBtnMobile" data-handle="POST /api/rows/tn/:id/validate" data-bundle="E">Approve</button>
+    <button type="button" class="btn btn-approve" id="approveBtnMobile" data-handle="POST /api/rows/tn/:id/validate" data-body='{"value":1}' data-bundle="E">Approve</button>
   </footer>
 
   <!-- mobile "This verse" bottom sheet -->
@@ -479,61 +479,52 @@
         <button type="button" class="close-x" id="closeConflictBtn" aria-label="Close">✕</button>
       </div>
       <div class="dlg-body">
-        <p style="margin-top:0;font-size:13.5px;color:var(--ink-2);">Diego saved a change to this note while you were editing. Choose which version to keep — the other is discarded.</p>
+        <!-- Both strings below are filled in by openConflict() from the server's
+             real 409 `current` row. They must not name a person: the 409 body
+             carries updated_by (a numeric user id) and updated_at, but no
+             username, so attributing the edit to a named editor would be
+             invented. -->
+        <p style="margin-top:0;font-size:13.5px;color:var(--ink-2);" id="conflictLede">Another editor saved a change to this note while you were editing. Choose which version to keep — the other is discarded.</p>
         <div class="conflict-cols">
           <div class="conflict-col">
             <h3>Mine</h3>
             <p id="conflictMine"></p>
           </div>
           <div class="conflict-col">
-            <h3>Theirs (v4, Diego, 2 min ago)</h3>
+            <h3 id="conflictTheirsHead">Theirs</h3>
             <p id="conflictTheirs"></p>
           </div>
         </div>
       </div>
       <div class="dlg-foot">
-        <button type="button" class="btn btn-outline" id="keepTheirsBtn" data-handle="local:discard-local-edit" data-bundle="F">Keep theirs</button>
-        <button type="button" class="btn btn-approve" id="keepMineBtn" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Keep mine</button>
+        <button type="button" class="btn btn-outline" id="keepTheirsBtn" data-bundle="F">Keep theirs</button>
+        <button type="button" class="btn btn-approve" id="keepMineBtn" data-bundle="F">Keep mine</button>
       </div>
     </div>
   </div>
 
+  <script src="_api.js"></script>
   <script src="_shell.js"></script>
   <script>
   (function () {
     "use strict";
 
-    // Each tn item's `quote`/`ustQuote` are the gateway-language words that
-    // correspond to its original-language Quote (item.greek — Hebrew here,
-    // field name kept as-is to match the rest of this file). `ult`/`ust` are
-    // that note's own verse text, so the highlighted words below actually
-    // change (both text and position) as the queue advances between verses.
-    var ITEMS = [
-      { kind: "tn", ref: "ZEC 1:1", greek: "בֶּן־בֶּרֶכְיָ֥ה", support: "figs-idiom", quote: "the word of Yahweh came to", en: "This is an idiom meaning <b>Yahweh gave a message</b> to the prophet. Alternate translation: “Yahweh gave this message to”.", draft: "vino la palabra de Yahvé a Zacarías hijo de Berequías, hijo de Iddó, el profeta.", state: "draft", trashed: false,
-        ult: "In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,",
-        ust: "During the eighth month of King Darius's second year as ruler, Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo.",
-        ustQuote: "Yahweh gave this message to" },
-      { kind: "tq", ref: "ZEC 1:1", greek: "", support: "", quote: "", enQ: "When did Yahweh give this message?", draft: "En el octavo mes del segundo año de Darío.", state: "draft",
-        ult: "In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying,",
-        ust: "During the eighth month of King Darius's second year as ruler, Yahweh gave this message to the prophet Zechariah son of Berechiah and grandson of Iddo.",
-        ustQuote: "" },
-      { kind: "tn", ref: "ZEC 1:3", greek: "יְהוָ֥ה צְבָא֖וֹת", support: "figs-explicit", quote: "Yahweh of hosts", en: "Here, <b>hosts</b> refers to the armies of angels that serve Yahweh. See how you translated this in the introduction.", draft: "Yahvé de los ejércitos", state: "edited", trashed: false,
-        ult: "So you must say to them, ‘Yahweh of hosts says this: “Return to me,” declares Yahweh of hosts, “and I will return to you.”’",
-        ust: "So tell the people that the Commander of heaven's armies says, ‘Come back to me, and I will come back to you.’",
-        ustQuote: "the Commander of heaven's armies" },
-      { kind: "tn", ref: "ZEC 1:8", greek: "אִ֗ישׁ רֹכֵב֙ עַל־ס֣וּס אָדֹ֔ם", support: "writing-participants", quote: "a man riding on a red horse", en: "This introduces a new participant — the <b>angel of Yahweh</b>, though his identity is not yet stated here.", draft: "un hombre montado en un caballo rojo", state: "draft", trashed: false,
-        ult: "I looked, and behold, there was a man riding on a red horse, and he stood among the myrtle trees that were in the ravine, and behind him were red, sorrel, and white horses.",
-        ust: "I looked and saw an angel who appeared like a man sitting on a red horse. He was standing among some myrtle trees in a small valley, and behind him were other horses that were red, brown, and white.",
-        ustQuote: "an angel who appeared like a man sitting on a red horse" },
-      { kind: "tq", ref: "ZEC 1:8", greek: "", support: "", quote: "", enQ: "What did Zechariah see standing among the myrtle trees?", draft: "", state: "draft",
-        ult: "I looked, and behold, there was a man riding on a red horse, and he stood among the myrtle trees that were in the ravine, and behind him were red, sorrel, and white horses.",
-        ust: "I looked and saw an angel who appeared like a man sitting on a red horse. He was standing among some myrtle trees in a small valley, and behind him were other horses that were red, brown, and white.",
-        ustQuote: "" }
-    ];
+    var BOOK = (window.flowShell && window.flowShell.context && window.flowShell.context.book) || "ZEC";
+    var CHAPTER = (window.flowShell && window.flowShell.context && window.flowShell.context.chapter) || 1;
+    var chapterData = null; // full GET /api/chapters/:book/:chapter response
+
+    // ITEMS is built from real tn/tq rows (see loadChapter below) — no more
+    // static fixture. `quote` is the row's original-language (Hebrew) Quote —
+    // this is an English-root project, so there is no separate gateway-
+    // language quote field to show; `ustQuote` is set to the same value so
+    // markQuote() below only highlights when it literally occurs in the lane
+    // text (it won't, for Hebrew inside English ULT/UST — that's expected,
+    // not a bug). `ult`/`ust` come from that row's own verse text.
+    var ITEMS = [];
     var cur = 0;
     var unsavedIds = {};
-    var nextRowSeq = 1;
     var activeQueue = "tn"; // "tn" = Notes, "tq" = Questions — the two queues never mix on screen
+    var chapterLocked = false; // set true on a real 409 chapter_locked; see flow:handled below
 
     function queueIndices(kind) {
       var arr = [];
@@ -603,12 +594,12 @@
     }
 
     // Highlight-link: wraps the gateway-language words that correspond to the
-    // active note's original-language Quote. In the real app this mapping
-    // comes from the verse's \zaln alignment data (quote → aligned ULT/UST
-    // words) — the same mechanism the app already uses for quote↔scripture
-    // highlighting elsewhere; here it's a hardcoded per-note phrase since
-    // these are static demo verses. A note with no quote (general notes,
-    // and every tq item here) highlights nothing.
+    // active note's original-language Quote. This project has no separate
+    // gateway-language quote/alignment data (English-root — item.quote IS the
+    // Hebrew Quote), so this only ever matches when the Hebrew literally
+    // appears inside the English ULT/UST plain_text — i.e. essentially never.
+    // That's an honest no-highlight, not a bug: there's no fabricated GL quote
+    // to highlight with.
     function markQuote(text, phrase) {
       text = text || "";
       if (!phrase) return text;
@@ -617,15 +608,23 @@
       return text.slice(0, idx) + "<mark>" + phrase + "</mark>" + text.slice(idx + phrase.length);
     }
 
+    function escapeHtml(s) {
+      return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function ctxHtml(item) {
+      var links = ((chapterData && chapterData.twl) || []).filter(function (w) { return w.verse === item.verse; });
+      var linksHtml = links.length
+        ? "<ul>" + links.map(function (w) {
+            return '<li><span class="tw-target">' + escapeHtml(w.orig_words || "") + '</span><span class="tw-article">' + escapeHtml((w.tw_link || "").replace(/^rc:\/\/\*\/tw\/dict\/bible\//, "")) + "</span></li>";
+          }).join("") + "</ul>"
+        : '<p class="ctx-note" style="margin-top:6px;">No word links recorded for this verse.</p>';
       return (
         '<div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p>' +
-        '<p class="ctx-verse">' + markQuote(item.ult, item.quote) + '</p></div>' +
+        '<p class="ctx-verse">' + (item.ult ? markQuote(item.ult, item.quote) : '<span style="color:var(--ink-2);">No ULT text loaded for this verse.</span>') + '</p></div>' +
         '<div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p>' +
-        '<p class="ctx-verse">' + markQuote(item.ust, item.ustQuote) + '</p></div>' +
-        '<div class="ctx-twl"><p class="lane-tag">Word links (read-only)</p>' +
-        '<ul><li><span class="tw-target">Yahweh</span><span class="tw-article">kt/yahweh</span></li>' +
-        '<li><span class="tw-target">prophet</span><span class="tw-article">kt/prophet</span></li></ul>' +
+        '<p class="ctx-verse">' + (item.ust ? markQuote(item.ust, item.ustQuote) : '<span style="color:var(--ink-2);">No UST text loaded for this verse.</span>') + '</p></div>' +
+        '<div class="ctx-twl"><p class="lane-tag">Word links (read-only)</p>' + linksHtml +
         '<p class="ctx-note">Word links have no approve lifecycle — shown here for reference only.</p></div>'
       );
     }
@@ -634,6 +633,19 @@
       ensureCurInQueue();
       var item = ITEMS[cur];
       renderQueueList();
+      el("approveAllNotes").textContent = "Approve all notes (" + unapprovedCount("tn") + ")";
+      el("approveAllQuestions").textContent = "Approve all questions (" + unapprovedCount("tq") + ")";
+      el("approveAllNotes").disabled = unapprovedCount("tn") === 0;
+      el("approveAllQuestions").disabled = unapprovedCount("tq") === 0;
+      if (!item) {
+        el("wtCount").textContent = "0 of 0";
+        el("workCard").hidden = true;
+        el("ctxBodyDesktop").innerHTML = '<p style="font-size:13px;color:var(--ink-2);">No ' + (activeQueue === "tn" ? "notes" : "questions") + " for this chapter.</p>";
+        el("ctxBodyMobile").innerHTML = el("ctxBodyDesktop").innerHTML;
+        renderQuestionsGrid();
+        return;
+      }
+      el("workCard").hidden = false;
       var remaining = unapprovedCount(activeQueue);
       if (remaining === 0) {
         el("wtCount").textContent = "All " + queueIndices(activeQueue).length + " approved";
@@ -653,27 +665,37 @@
       el("supportRef").textContent = item.support || "";
       el("quoteChip").hidden = item.kind !== "tn";
       el("quoteText").textContent = item.quote || "";
-      el("sourceEn").innerHTML = item.kind === "tn" ? item.en : ("<b>Q:</b> " + item.enQ);
+      el("sourceEn").innerHTML = item.kind === "tn" ? item.en : ("<b>Q:</b> " + escapeHtml(item.enQ || ""));
       el("draftArea").value = item.draft || "";
 
-      var locked = item.locked || item.trashed;
+      var locked = !!chapterLocked || item.trashed;
       el("workCard").classList.toggle("locked", !!locked);
       [el("saveBtnDesktop"), el("saveBtnMobile"), el("approveBtnDesktop"), el("approveBtnMobile"), el("undoBtnDesktop"), el("undoBtnMobile")].forEach(function (b) { b.disabled = !!locked; });
 
       var handleKind = item.kind === "tn" ? "tn" : "tq";
       [el("saveBtnDesktop"), el("saveBtnMobile")].forEach(function (b) { b.setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id"); });
       [el("approveBtnDesktop"), el("approveBtnMobile")].forEach(function (b) { b.setAttribute("data-handle", "POST /api/rows/" + handleKind + "/:id/validate"); });
+      el("deleteChip").setAttribute("data-handle", "DELETE /api/rows/" + handleKind + "/:id");
+
+      // Real id/book/version context for whichever row is on screen — this is
+      // what lets data-handle's :id resolve and If-Match find the right
+      // version (see resolveHeaders / resolveParam in _shell.js).
+      window.flowShell.setContext({ id: item.id, book: item.book || BOOK });
+      [el("workCard"), el("actionbarMobile")].forEach(function (elx) { elx.setAttribute("data-version", String(item.version)); });
 
       // F.1 (tn: soft trash/restore) vs F.3 (tq: hard delete, no trash/restore)
       [el("preserveChip"), el("hintChip"), el("trashChip")].forEach(function (b) { b.hidden = item.kind !== "tn"; });
       el("deleteChip").hidden = item.kind !== "tq";
+      if (item.kind === "tn") {
+        el("preserveChip").setAttribute("aria-pressed", item.preserve ? "true" : "false");
+        el("hintChip").setAttribute("aria-pressed", item.hint ? "true" : "false");
+      }
 
-      // F.1 NoteCard secondary chrome — reorder/insert-after/retarget (tn only, header row)
+      // F.1 NoteCard secondary chrome — reorder/insert-after/retarget (tn only,
+      // header row). These are wired directly to flowApi.request in their own
+      // click listeners below (not via data-handle) since they need multi-row
+      // swaps / user-prompted values the generic dispatcher can't build.
       el("noteChromeActions").hidden = item.kind !== "tn";
-      el("moveUpBtn").setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id");
-      el("moveDownBtn").setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id");
-      el("insertAfterBtn").setAttribute("data-handle", "POST /api/rows/" + handleKind);
-      el("retargetBtn").setAttribute("data-handle", "PATCH /api/rows/" + handleKind + "/:id");
 
       el("ctxBodyDesktop").innerHTML = ctxHtml(item);
       el("ctxBodyMobile").innerHTML = ctxHtml(item);
@@ -685,7 +707,10 @@
       renderQuestionsGrid();
     }
 
-    // F.3 QuestionsTable — dense English-authoring grid, authoring-mode only
+    // F.3 QuestionsTable — dense English-authoring grid, authoring-mode only.
+    // Each row carries its own data-param-id/data-version (NOT the shared page
+    // context) — with real deletes now wired, a shared-context id would let a
+    // click on row 3 silently act on whichever row happened to be "current".
     function renderQuestionsGrid() {
       var tbody = el("questionsGridBody");
       tbody.innerHTML = "";
@@ -693,10 +718,12 @@
         if (it.kind !== "tq") return;
         var tr = document.createElement("tr");
         tr.style.borderBlockEnd = "1px solid var(--line)";
+        tr.setAttribute("data-param-id", it.id);
+        tr.setAttribute("data-version", String(it.version));
         tr.innerHTML =
-          '<td style="padding:4px 8px;"><input type="text" value="' + it.ref + '" style="width:90px; font-size:12px;" data-grid-field="ref" /></td>' +
-          '<td style="padding:4px 8px;"><input type="text" value="' + (it.enQ || "") + '" style="width:100%; font-size:12px;" data-grid-field="enQ" /></td>' +
-          '<td style="padding:4px 8px;"><input type="text" value="' + (it.draft || "") + '" style="width:100%; font-size:12px;" data-grid-field="draft" /></td>' +
+          '<td style="padding:4px 8px;"><input type="text" value="' + escapeAttr(it.ref) + '" style="width:90px; font-size:12px;" data-grid-field="ref" disabled /></td>' +
+          '<td style="padding:4px 8px;"><input type="text" value="' + escapeAttr(it.enQ || "") + '" style="width:100%; font-size:12px;" data-grid-field="enQ" /></td>' +
+          '<td style="padding:4px 8px;"><input type="text" value="' + escapeAttr(it.draft || "") + '" style="width:100%; font-size:12px;" data-grid-field="draft" /></td>' +
           '<td style="padding:4px 8px; white-space:nowrap;">' +
           '<button type="button" data-handle="PATCH /api/rows/tq/:id" data-headers="If-Match" data-bundle="F" title="Save">💾</button>' +
           '<button type="button" data-handle="DELETE /api/rows/tq/:id" data-headers="If-Match" data-bundle="F" title="Delete">🗑</button>' +
@@ -705,6 +732,39 @@
         tbody.appendChild(tr);
       });
     }
+    function escapeAttr(s) {
+      return escapeHtml(s).replace(/"/g, "&quot;");
+    }
+    // Grid save/delete: build data-body from that row's own inputs just
+    // before the click bubbles to _shell.js's dispatcher (target-phase
+    // listener on the button runs first).
+    el("questionsGridBody").addEventListener("click", function (ev) {
+      var btn = ev.target.closest ? ev.target.closest('button[data-handle^="PATCH"]') : null;
+      if (!btn) return;
+      var tr = btn.closest("tr");
+      var q = tr.querySelector('[data-grid-field="enQ"]').value;
+      var r = tr.querySelector('[data-grid-field="draft"]').value;
+      btn.setAttribute("data-body", JSON.stringify({ question: q, response: r }));
+    });
+    document.addEventListener("flow:handled", function (ev) {
+      var tr = ev.target.closest ? ev.target.closest("#questionsGridBody tr") : null;
+      if (!tr) return;
+      var result = ev.detail.result;
+      var idx = ITEMS.findIndex(function (it) { return it.id === tr.getAttribute("data-param-id"); });
+      if (idx === -1) return;
+      if (!result.ok) { toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" }); return; }
+      if (ev.target.getAttribute("data-handle").indexOf("DELETE") === 0) {
+        ITEMS.splice(idx, 1);
+        if (cur >= ITEMS.length) cur = Math.max(0, ITEMS.length - 1);
+        toast("Deleted", { bundle: "F" });
+      } else {
+        ITEMS[idx].enQ = result.data.question;
+        ITEMS[idx].draft = result.data.response;
+        ITEMS[idx].version = result.data.version;
+        toast("Saved", { bundle: "F" });
+      }
+      render();
+    });
 
     el("draftArea").addEventListener("input", function () {
       unsavedIds[cur] = true;
@@ -713,23 +773,24 @@
       el("unsavedText").textContent = n + (n === 1 ? " unsaved" : " unsaved");
     });
 
+    // Save/Approve/Delete dispatch through the shared shell's data-handle
+    // mechanism (see _shell.js) — these listeners run at "target phase"
+    // (attached directly to the clicked button), which fires BEFORE the
+    // event bubbles to document where the shell's real fetch is triggered,
+    // so setting data-body/data-handle here is picked up by that same click.
     function doSave() {
+      var item = ITEMS[cur];
+      if (!item) return;
       if (!unsavedIds[cur]) { toast("Nothing to save", { bundle: "F" }); return; }
-      delete unsavedIds[cur];
-      ITEMS[cur].draft = el("draftArea").value;
-      ITEMS[cur].state = "edited";
-      render();
+      var value = el("draftArea").value;
+      var body = item.kind === "tn" ? { note: value } : { response: value };
+      [el("saveBtnDesktop"), el("saveBtnMobile")].forEach(function (b) { b.setAttribute("data-body", JSON.stringify(body)); });
+      // Real result (200 / 409 version_mismatch / 409 chapter_locked / 428)
+      // is reconciled in the flow:handled listener below — including clearing
+      // unsavedIds[cur] only on actual success.
     }
     function doApprove() {
-      ITEMS[cur].state = "validated";
-      toast("Approved", { bundle: "E" });
-      var next = nextUnapproved(cur, activeQueue);
-      if (next === -1) {
-        toast("Queue complete — nothing left to approve", { bundle: "E" });
-      } else {
-        cur = next;
-      }
-      render();
+      // body ({value:1}) is static — set once in HTML. Reconciled below.
     }
     function doUndo() {
       if (!unsavedIds[cur]) { toast("Nothing to undo", { bundle: "F" }); return; }
@@ -738,12 +799,8 @@
       render();
     }
     function doDelete() {
-      var removedRef = ITEMS[cur].ref;
-      ITEMS.splice(cur, 1);
-      if (ITEMS.length === 0) { toast("Queue empty", { bundle: "F" }); return; }
-      if (cur >= ITEMS.length) cur = ITEMS.length - 1;
-      toast("Deleted " + removedRef, { bundle: "F" });
-      render();
+      // DELETE has no body; If-Match comes from #workCard's data-version.
+      // Reconciled in flow:handled (splice ITEMS only on real 200/204).
     }
     el("saveBtnDesktop").addEventListener("click", doSave);
     el("saveBtnMobile").addEventListener("click", doSave);
@@ -753,49 +810,66 @@
     el("undoBtnMobile").addEventListener("click", doUndo);
     el("deleteChip").addEventListener("click", doDelete);
 
-    el("approveAllNotes").addEventListener("click", function () {
-      ITEMS.forEach(function (it) { if (it.kind === "tn") it.state = "validated"; });
-      toast("Approving all notes…", { bundle: "E" });
-      var next = nextUnapproved(-1, "tn");
-      if (next !== -1) cur = next;
-      render();
-    });
-    el("approveAllQuestions").addEventListener("click", function () {
-      ITEMS.forEach(function (it) { if (it.kind === "tq") it.state = "validated"; });
-      toast("Approving all questions…", { bundle: "E" });
-      var next = nextUnapproved(-1, "tq");
-      if (next !== -1) cur = next;
-      render();
-    });
+    // "Approve all" — real per-row validate calls, sequential (no bulk-validate
+    // endpoint documented), reconciled as each one resolves.
+    function approveAll(kind) {
+      var idxs = queueIndices(kind).filter(function (i) { return ITEMS[i].state !== "validated"; });
+      if (!idxs.length) { toast("Nothing left to approve", { bundle: "E" }); return; }
+      toast("Approving " + idxs.length + " " + (kind === "tn" ? "notes" : "questions") + "…", { bundle: "E" });
+      var chain = Promise.resolve();
+      idxs.forEach(function (i) {
+        chain = chain.then(function () {
+          return window.flowApi.post("/api/rows/" + kind + "/" + ITEMS[i].id + "/validate", { value: 1 }, { query: { book: ITEMS[i].book || BOOK } }).then(function (result) {
+            if (result.ok && result.data) {
+              ITEMS[i].state = result.data.translation_state || "validated";
+              ITEMS[i].version = result.data.version;
+            }
+          });
+        });
+      });
+      chain.then(function () {
+        var next = nextUnapproved(-1, kind);
+        if (next !== -1) cur = next;
+        render();
+      });
+    }
+    el("approveAllNotes").addEventListener("click", function () { approveAll("tn"); });
+    el("approveAllQuestions").addEventListener("click", function () { approveAll("tq"); });
 
-    el("addNoteBtn").addEventListener("click", function () {
-      ITEMS.push({ kind: "tn", ref: "ZEC 1:" + (10 + nextRowSeq), greek: "", support: "", quote: "", en: "New note — support reference and quote pending.", draft: "", state: "draft", trashed: false });
-      nextRowSeq++;
-      cur = ITEMS.length - 1;
-      toast("New note added", { bundle: "F" });
-      render();
-    });
-    el("addQuestionBtn").addEventListener("click", function () {
-      ITEMS.push({ kind: "tq", ref: "ZEC 1:" + (10 + nextRowSeq), greek: "", support: "", quote: "", enQ: "New question — pending.", draft: "", state: "draft" });
-      nextRowSeq++;
-      cur = ITEMS.length - 1;
-      toast("New question added", { bundle: "F" });
-      render();
-    });
+    function addRow(kind) {
+      var verse = (ITEMS[cur] && ITEMS[cur].verse) || 1;
+      var body = kind === "tn"
+        ? { book: BOOK, chapter: CHAPTER, verse: verse, ref_raw: CHAPTER + ":" + verse, note: "" }
+        : { book: BOOK, chapter: CHAPTER, verse: verse, ref_raw: CHAPTER + ":" + verse, question: "" };
+      window.flowApi.post("/api/rows/" + kind, body).then(function (result) {
+        if (!result.ok) { toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" }); return; }
+        ITEMS.push(itemFromRow(kind, result.data));
+        cur = ITEMS.length - 1;
+        toast((kind === "tn" ? "New note" : "New question") + " added", { bundle: "F" });
+        render();
+      });
+    }
+    el("addNoteBtn").addEventListener("click", function () { addRow("tn"); });
+    el("addQuestionBtn").addEventListener("click", function () { addRow("tq"); });
 
     el("demoNudgeBtn").addEventListener("click", function () { el("versionNudge").hidden = false; });
     el("versionRefreshBtn").addEventListener("click", function () { el("versionNudge").hidden = true; toast("Reloading app…", { bundle: "K" }); });
 
+    // Preserve / Hint toggles — element-scoped listener runs before the aria-
+    // pressed value flips (that happens in the *next* listener below, then
+    // shell's document-level dispatch reads whatever data-body we set here).
     document.querySelectorAll(".foot-chip[aria-pressed]").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var pressed = chip.getAttribute("aria-pressed") === "true";
+        chip.setAttribute("data-body", JSON.stringify({ value: pressed ? 0 : 1 }));
+      });
       chip.addEventListener("click", function () {
         var pressed = chip.getAttribute("aria-pressed") === "true";
         chip.setAttribute("aria-pressed", pressed ? "false" : "true");
       });
     });
     el("trashChip").addEventListener("click", function () {
-      ITEMS[cur].trashed = true;
-      toast("Moved to trash", { bundle: "F" });
-      render();
+      // Reconciled in flow:handled — only marked trashed locally on real 200.
     });
 
     // account menu
@@ -817,44 +891,130 @@
     el("closeSheetBtn").addEventListener("click", closeSheet);
     el("sheetBackdrop").addEventListener("click", closeSheet);
 
-    // history dialog
-    function openHist() {
-      var restoreRow = ITEMS[cur].trashed
-        ? '<div class="hist-version"><span class="hv-main">This note is in the trash.</span><button type="button" id="restoreBtn" data-handle="POST /api/rows/tn/:id/restore" data-bundle="F">Restore</button></div>'
-        : "";
-      el("histBody").innerHTML = restoreRow +
-        '<div class="hist-version"><span class="hv-num">v4</span><span class="hv-main">Current draft<span class="hv-meta"> · Ana · 2 min ago</span></span></div>' +
-        '<div class="hist-version"><span class="hv-num">v3</span><span class="hv-main">AI draft (pipeline)<span class="hv-meta"> · 1 hour ago</span></span><button type="button" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Switch to v3</button></div>' +
-        '<div class="hist-version"><span class="hv-num">v1</span><span class="hv-main">Imported from Door43<span class="hv-meta"> · book import</span></span><button type="button" data-handle="PATCH /api/rows/tn/:id" data-headers="If-Match" data-bundle="F">Switch to v1</button></div>';
-      el("histBackdrop").hidden = false;
+    // history dialog — real GET, kind-aware (tn vs tq have separate history
+    // endpoints, same shape as rows.ts's /:kind/:id/history).
+    var histSnapshots = {}; // version -> snapshot, populated when the history dialog loads
+    function renderRowHistoryVersion(v) {
+      var who = v.user ? (v.user.full_name || v.user.username) : "system";
+      var when = v.created_at ? new Date(v.created_at * 1000).toLocaleString() : "";
+      var isCurrent = v.version === (ITEMS[cur] && ITEMS[cur].version);
+      var restoreBtn = isCurrent ? "" :
+        '<button type="button" class="hist-restore-btn" data-restore-version="' + v.version + '">Switch to v' + v.version + '</button>';
+      return '<div class="hist-version"><span class="hv-num">v' + v.version + '</span>' +
+        '<span class="hv-main">' + escapeHtml(v.action || "update") + '<span class="hv-meta"> · ' + escapeHtml(who) + ' · ' + when + '</span></span>' + restoreBtn + '</div>';
     }
     el("historyBtn").addEventListener("click", function () {
-      window.flowShell.toast("→ GET /api/rows/tn/:id/history", { bundle: "F" });
-      openHist();
+      var item = ITEMS[cur];
+      if (!item) return;
+      el("histBody").innerHTML = '<p style="font-size:13px;color:var(--ink-2);">Loading…</p>';
+      var restoreRow = item.trashed
+        ? '<div class="hist-version"><span class="hv-main">This note is in the trash.</span><button type="button" id="restoreBtn" data-handle="POST /api/rows/tn/:id/restore" data-bundle="F">Restore</button></div>'
+        : "";
+      el("histBackdrop").hidden = false;
+      window.flowApi.get("/api/rows/" + item.kind + "/" + item.id + "/history", { book: item.book || BOOK }).then(function (result) {
+        if (result.ok && result.data && Array.isArray(result.data.versions)) {
+          histSnapshots = {};
+          result.data.versions.forEach(function (v) { histSnapshots[v.version] = v.snapshot; });
+          el("histBody").innerHTML = restoreRow + result.data.versions.slice().reverse().map(renderRowHistoryVersion).join("");
+        } else {
+          el("histBody").innerHTML = restoreRow + '<p style="font-size:13px;color:var(--ink-2);">Could not load history (' + (result.kind || "error") + ').</p>';
+        }
+      });
     });
     el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
     el("histCloseBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
     el("histBody").addEventListener("click", function (ev) {
-      var btn = ev.target.closest ? ev.target.closest("#restoreBtn") : null;
-      if (!btn) return;
-      ITEMS[cur].trashed = false;
-      el("histBackdrop").hidden = true;
-      toast("Restored from trash", { bundle: "F" });
-      render();
+      var restoreBtn = ev.target.closest ? ev.target.closest("#restoreBtn") : null;
+      if (restoreBtn) {
+        var item = ITEMS[cur];
+        window.flowApi.post("/api/rows/" + item.kind + "/" + item.id + "/restore", {}, { query: { book: item.book || BOOK } }).then(function (result) {
+          if (!result.ok) { toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" }); return; }
+          item.trashed = false;
+          item.version = result.data.version;
+          el("histBackdrop").hidden = true;
+          toast("Restored from trash", { bundle: "F" });
+          render();
+        });
+        return;
+      }
+      var switchBtn = ev.target.closest ? ev.target.closest(".hist-restore-btn") : null;
+      if (!switchBtn) return;
+      toast("Restoring an older version isn't wired up yet in this preview (no snapshot content in the history payload for tn/tq)", { nudge: true, bundle: "F" });
     });
 
-    // 409 conflict demo
-    el("demoConflictBtn").addEventListener("click", function () {
-      el("conflictMine").textContent = el("draftArea").value || "(your edited draft)";
-      el("conflictTheirs").textContent = "vino la palabra de Yahvé a Zacarías, hijo de Berequías y nieto de Iddó, el profeta, diciendo:";
+    // 409 version_mismatch merge prompt. `pendingConflict` is populated by the
+    // flow:handled listener below when a real Save gets a real 409
+    // version_mismatch — this dialog then resolves it against the server's
+    // actual current row (result.body.current), not fixture text.
+    var pendingConflict = null;
+    // ", 2 min ago" from a unix-seconds timestamp; "" when absent/implausible so
+    // the heading degrades to a bare "Theirs (v6)" rather than showing a lie.
+    function agoSuffix(updatedAt) {
+      if (!updatedAt || typeof updatedAt !== "number") return "";
+      var secs = Math.floor(Date.now() / 1000) - updatedAt;
+      if (secs < 0) return "";
+      if (secs < 60) return ", just now";
+      var mins = Math.floor(secs / 60);
+      if (mins < 60) return ", " + mins + " min ago";
+      var hrs = Math.floor(mins / 60);
+      if (hrs < 24) return ", " + hrs + (hrs === 1 ? " hour ago" : " hours ago");
+      var days = Math.floor(hrs / 24);
+      return ", " + days + (days === 1 ? " day ago" : " days ago");
+    }
+
+    function openConflict(item, mineValue, current) {
+      pendingConflict = { item: item, mineValue: mineValue, currentVersion: current.version };
+      el("conflictTitle").textContent = "Someone else saved this " + (item.kind === "tn" ? "note" : "question") + " first";
+      el("conflictMine").textContent = mineValue || "(your edited draft)";
+      el("conflictTheirs").textContent = (item.kind === "tn" ? current.note : current.response) || "(empty)";
+      // Real version + real age from the server's 409 body. No invented author:
+      // `current` has no username, only a numeric updated_by.
+      el("conflictTheirsHead").textContent = "Theirs (v" + current.version + agoSuffix(current.updated_at) + ")";
       el("conflictBackdrop").hidden = false;
+    }
+    // Genuine trigger: PATCH with a deliberately stale If-Match so the real
+    // server responds with a real 409 version_mismatch, exercising the exact
+    // same path a concurrent-editor collision would.
+    el("demoConflictBtn").addEventListener("click", function () {
+      var item = ITEMS[cur];
+      if (!item) return;
+      var value = el("draftArea").value;
+      var body = item.kind === "tn" ? { note: value } : { response: value };
+      window.flowApi.patch("/api/rows/" + item.kind + "/" + item.id, body, { ifMatch: Math.max(1, item.version - 1), query: { book: item.book || BOOK } }).then(function (result) {
+        if (result.ok) { toast("No conflict — that version wasn't actually stale", { bundle: "F" }); return; }
+        if (result.kind === "version_conflict" && result.body && result.body.current) {
+          openConflict(item, value, result.body.current);
+        } else {
+          toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" });
+        }
+      });
     });
     el("closeConflictBtn").addEventListener("click", function () { el("conflictBackdrop").hidden = true; });
-    el("keepMineBtn").addEventListener("click", function () { el("conflictBackdrop").hidden = true; toast("Kept your version, retried save", { bundle: "F" }); });
+    el("keepMineBtn").addEventListener("click", function () {
+      if (!pendingConflict) { el("conflictBackdrop").hidden = true; return; }
+      var item = pendingConflict.item;
+      var body = item.kind === "tn" ? { note: pendingConflict.mineValue } : { response: pendingConflict.mineValue };
+      window.flowApi.patch("/api/rows/" + item.kind + "/" + item.id, body, { ifMatch: pendingConflict.currentVersion, query: { book: item.book || BOOK } }).then(function (result) {
+        el("conflictBackdrop").hidden = true;
+        if (!result.ok) { toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" }); return; }
+        item.version = result.data.version;
+        item.state = result.data.translation_state || "edited";
+        if (item.kind === "tn") item.en = renderNoteHtml(result.data.note); else item.draft = result.data.response;
+        delete unsavedIds[ITEMS.indexOf(item)];
+        toast("Kept your version, saved", { bundle: "F" });
+        pendingConflict = null;
+        render();
+      });
+    });
     el("keepTheirsBtn").addEventListener("click", function () {
-      el("draftArea").value = el("conflictTheirs").textContent;
-      delete unsavedIds[cur];
+      if (!pendingConflict) { el("conflictBackdrop").hidden = true; return; }
+      var item = pendingConflict.item;
+      item.version = pendingConflict.currentVersion;
+      item.draft = el("conflictTheirs").textContent;
+      delete unsavedIds[ITEMS.indexOf(item)];
+      pendingConflict = null;
       el("conflictBackdrop").hidden = true;
+      toast("Kept their version", { bundle: "F" });
       render();
     });
 
@@ -871,39 +1031,66 @@
       el("gridViewBtn").textContent = showing ? "Card view" : "Grid view";
     });
 
-    // F.1 NoteCard header-row secondary chrome: reorder / insert-after / retarget
+    // F.1 NoteCard header-row secondary chrome: reorder / insert-after /
+    // retarget (tn only). Real endpoints (rows.ts PATCH_SCHEMA.tn accepts
+    // sort_order / verse+ref_raw; POST /api/rows/tn creates). Dispatched
+    // directly via flowApi — not through data-handle — since a true swap
+    // needs two rows' If-Match at once, more than the generic dispatcher builds.
     el("moveUpBtn").addEventListener("click", function () {
       var idxs = queueIndices(ITEMS[cur].kind);
       var pos = idxs.indexOf(cur);
       if (pos <= 0) { toast("Already first", { bundle: "F" }); return; }
-      var otherIdx = idxs[pos - 1];
-      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[otherIdx]; ITEMS[otherIdx] = tmp;
-      cur = otherIdx;
-      toast("Moved up (sort_order updated)", { bundle: "F" });
-      render();
+      swapSortOrder(ITEMS[cur], ITEMS[idxs[pos - 1]], idxs[pos - 1]);
     });
     el("moveDownBtn").addEventListener("click", function () {
       var idxs = queueIndices(ITEMS[cur].kind);
       var pos = idxs.indexOf(cur);
       if (pos === -1 || pos === idxs.length - 1) { toast("Already last", { bundle: "F" }); return; }
-      var otherIdx = idxs[pos + 1];
-      var tmp = ITEMS[cur]; ITEMS[cur] = ITEMS[otherIdx]; ITEMS[otherIdx] = tmp;
-      cur = otherIdx;
-      toast("Moved down (sort_order updated)", { bundle: "F" });
-      render();
+      swapSortOrder(ITEMS[cur], ITEMS[idxs[pos + 1]], idxs[pos + 1]);
     });
+    function swapSortOrder(a, b, bTargetCur) {
+      var aBody = { sort_order: b.sort_order };
+      var bBody = { sort_order: a.sort_order };
+      Promise.all([
+        window.flowApi.patch("/api/rows/tn/" + a.id, aBody, { ifMatch: a.version, query: { book: a.book || BOOK } }),
+        window.flowApi.patch("/api/rows/tn/" + b.id, bBody, { ifMatch: b.version, query: { book: b.book || BOOK } }),
+      ]).then(function (results) {
+        var failed = results.filter(function (r) { return !r.ok; });
+        if (failed.length) { toast("✗ " + failed[0].status + " " + failed[0].kind, { nudge: true, bundle: "F" }); return; }
+        a.sort_order = results[0].data.sort_order; a.version = results[0].data.version;
+        b.sort_order = results[1].data.sort_order; b.version = results[1].data.version;
+        // Keep the two ITEMS entries in the same relative order as sort_order.
+        ITEMS.sort(function (x, y) { return (x.sort_order || 0) - (y.sort_order || 0); });
+        cur = ITEMS.indexOf(a);
+        toast("Moved (sort_order swapped)", { bundle: "F" });
+        render();
+      });
+    }
     el("insertAfterBtn").addEventListener("click", function () {
-      ITEMS.splice(cur + 1, 0, { kind: "tn", ref: ITEMS[cur].ref, greek: "", support: "", quote: "", en: "New note — support reference and quote pending.", draft: "", state: "draft", trashed: false });
-      cur++;
-      toast("Note inserted after current", { bundle: "F" });
-      render();
+      var item = ITEMS[cur];
+      var body = { book: item.book || BOOK, chapter: item.chapter, verse: item.verse, ref_raw: item.chapter + ":" + item.verse, note: "", sort_order: (item.sort_order || 0) + 1 };
+      window.flowApi.post("/api/rows/tn", body).then(function (result) {
+        if (!result.ok) { toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" }); return; }
+        ITEMS.splice(cur + 1, 0, itemFromRow("tn", result.data));
+        cur++;
+        toast("Note inserted after current", { bundle: "F" });
+        render();
+      });
     });
     el("retargetBtn").addEventListener("click", function () {
-      var next = window.prompt("Retarget to verse reference (e.g. ZEC 1:9)", ITEMS[cur].ref);
+      var item = ITEMS[cur];
+      var next = window.prompt("Retarget to verse number within this chapter (e.g. 9)", String(item.verse));
       if (!next) return;
-      ITEMS[cur].ref = next;
-      toast("Retargeted to " + next, { bundle: "F" });
-      render();
+      var verse = parseInt(next, 10);
+      if (!Number.isFinite(verse) || verse < 0) { toast("Enter a verse number", { nudge: true, bundle: "F" }); return; }
+      window.flowApi.patch("/api/rows/tn/" + item.id, { verse: verse, ref_raw: item.chapter + ":" + verse }, { ifMatch: item.version, query: { book: item.book || BOOK } }).then(function (result) {
+        if (!result.ok) { toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" }); return; }
+        item.verse = result.data.verse;
+        item.version = result.data.version;
+        item.ref = refForRow(result.data);
+        toast("Retargeted to " + item.ref, { bundle: "F" });
+        render();
+      });
     });
 
     // Notes/Questions segmented control — the two are separate queues (separate
@@ -955,9 +1142,147 @@
       }, { passive: true });
     })();
 
-    // Deep-link: t2-review.html#notes / #questions selects the matching segment.
-    var initialHash = (window.location.hash || "").replace("#", "").toLowerCase();
-    selectQueue(initialHash === "questions" ? "tq" : "tn");
+    // ---- real data: build ITEMS from GET /api/chapters/:book/:chapter ------
+    function renderNoteHtml(md) {
+      if (!md) return "";
+      var esc = escapeHtml(md);
+      esc = esc.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+      esc = esc.replace(/\n/g, "<br>");
+      return esc;
+    }
+    function refForRow(row) {
+      return row.verse === 0 ? (BOOK + " " + row.chapter + " intro") : (BOOK + " " + row.chapter + ":" + row.verse);
+    }
+    function itemFromRow(kind, row) {
+      var verseText = function (bv) {
+        return chapterData && chapterData.verses && chapterData.verses[bv] ? (chapterData.verses[bv][String(row.verse)] || {}).plain_text : undefined;
+      };
+      return {
+        kind: kind,
+        id: row.id,
+        book: row.book,
+        chapter: row.chapter,
+        verse: row.verse,
+        version: row.version,
+        sort_order: row.sort_order,
+        ref: refForRow(row),
+        greek: row.quote || "",
+        support: row.support_reference || "",
+        quote: row.quote || "",
+        ustQuote: row.quote || "",
+        en: kind === "tn" ? renderNoteHtml(row.note) : "",
+        enQ: kind === "tq" ? (row.question || "") : "",
+        draft: kind === "tq" ? (row.response || "") : "",
+        state: row.translation_state || "draft",
+        trashed: !!row.trashed_at,
+        preserve: !!row.preserve,
+        hint: !!row.hint,
+        ult: verseText("ULT"),
+        ust: verseText("UST"),
+      };
+    }
+
+    function loadChapter() {
+      return window.flowApi.chapter(BOOK, CHAPTER).then(function (result) {
+        if (!result.ok) {
+          toast("Could not load " + BOOK + " " + CHAPTER + " (" + result.kind + ")", { nudge: true, bundle: "F" });
+          return;
+        }
+        chapterData = result.data;
+        ITEMS = (chapterData.tn || []).map(function (r) { return itemFromRow("tn", r); })
+          .concat((chapterData.tq || []).map(function (r) { return itemFromRow("tq", r); }));
+        ITEMS.sort(function (a, b) { return (a.verse - b.verse) || ((a.sort_order || 0) - (b.sort_order || 0)); });
+        // Deep-link: t2-review.html#notes / #questions selects the matching segment.
+        var initialHash = (window.location.hash || "").replace("#", "").toLowerCase();
+        selectQueue(initialHash === "questions" ? "tq" : "tn");
+      });
+    }
+    window.flowApi.ready.then(loadChapter);
+
+    // ---- reconcile real API responses fired via data-handle (see _shell.js) ----
+    document.addEventListener("flow:handled", function (ev) {
+      var result = ev.detail && ev.detail.result;
+      if (!result) return;
+      var item = ITEMS[cur];
+
+      if (ev.target === el("saveBtnDesktop") || ev.target === el("saveBtnMobile")) {
+        if (!item) return;
+        if (result.ok && result.data) {
+          delete unsavedIds[cur];
+          item.version = result.data.version;
+          item.state = result.data.translation_state || "edited";
+          if (item.kind === "tn") item.en = renderNoteHtml(result.data.note); else item.draft = result.data.response;
+          toast("Saved", { bundle: "F" });
+          render();
+        } else if (result.kind === "version_conflict" && result.body && result.body.current) {
+          openConflict(item, el("draftArea").value, result.body.current);
+        } else if (result.kind === "chapter_locked") {
+          chapterLocked = true;
+          document.querySelector('[data-banner="lock"]').hidden = false;
+          render();
+        } else if (result.kind === "precondition_required") {
+          toast("Client bug: missing precondition (If-Match) — this save was not sent to the server", { nudge: true, bundle: "F" });
+        }
+        return;
+      }
+
+      if (ev.target === el("approveBtnDesktop") || ev.target === el("approveBtnMobile")) {
+        if (!item) return;
+        if (result.ok && result.data) {
+          item.state = result.data.translation_state || "validated";
+          item.version = result.data.version;
+          toast("Approved", { bundle: "E" });
+          var next = nextUnapproved(cur, activeQueue);
+          if (next === -1) toast("Queue complete — nothing left to approve", { bundle: "E" });
+          else cur = next;
+          render();
+        }
+        // 404 (row never touched by the translate pipeline, so
+        // translation_state is NULL — see rows.ts's setTnTranslationState
+        // guard) already gets the shell's generic "✗ 404 not_found" toast.
+        return;
+      }
+
+      if (ev.target === el("deleteChip")) {
+        if (!item) return;
+        if (result.ok) {
+          var removedRef = item.ref;
+          ITEMS.splice(cur, 1);
+          if (cur >= ITEMS.length) cur = Math.max(0, ITEMS.length - 1);
+          toast("Deleted " + removedRef, { bundle: "F" });
+          render();
+        }
+        return;
+      }
+
+      if (ev.target === el("trashChip")) {
+        if (!item) return;
+        if (result.ok && result.data) {
+          item.trashed = true;
+          item.version = result.data.version;
+          toast("Moved to trash", { bundle: "F" });
+          render();
+        }
+        return;
+      }
+
+      if (ev.target === el("preserveChip") || ev.target === el("hintChip")) {
+        if (!item) return;
+        if (result.ok && result.data) {
+          item.preserve = !!result.data.preserve;
+          item.hint = !!result.data.hint;
+          item.version = result.data.version;
+          render();
+        } else {
+          // revert the optimistic aria-pressed flip from the per-chip listener
+          var chip = ev.target;
+          var pressed = chip.getAttribute("aria-pressed") === "true";
+          chip.setAttribute("aria-pressed", pressed ? "false" : "true");
+          toast("✗ " + result.status + " " + result.kind, { nudge: true, bundle: "F" });
+        }
+        return;
+      }
+    });
   })();
   </script>
 </body>
