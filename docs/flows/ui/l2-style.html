@@ -214,8 +214,8 @@
         </span>
         <span class="assisted-toggle">
           <label for="modeToggle">Project mode</label>
-          <button type="button" class="switch" id="modeToggle" role="switch" aria-checked="true" data-handle="PATCH /api/project-config/mode" data-bundle="C" aria-label="Authoring vs translation mode"></button>
-          <span id="modeToggleLabel">translation</span>
+          <button type="button" class="switch" id="modeToggle" role="switch" aria-checked="false" disabled data-handle="PATCH /api/project-config/mode" data-handle-manual data-bundle="C" aria-label="Authoring vs translation mode"></button>
+          <span id="modeToggleLabel">Loading…</span>
         </span>
         <button type="button" class="btn btn-primary" id="exportNowBtn" style="min-height:34px; padding:0 12px;" data-handle="POST /api/exports/run" data-bundle="C" data-handle-manual>Export now</button>
         <button type="button" class="btn btn-warn" id="exportForceBtn" style="min-height:34px; padding:0 12px; display:none;" data-handle="POST /api/exports/run" data-bundle="C" data-handle-manual>Export (force)</button>
@@ -359,29 +359,19 @@
         <div class="panel">
           <div class="panel-top">
             <h2>Examples</h2>
-            <span class="chip chip-approved" id="feedingChip">feeding AI</span>
-            <p class="panel-sub">Validated source→target pairs the AI learns from — the same rows a translator Approved in the review queue. Revoke drops one from the next export.</p>
+            <p class="panel-sub">Validated tN/tQ rows the AI learns from — the same rows a translator Approved in the review queue. Revoke sends the row back to "edited" so it's excluded from the next export. Note: <code>GET /api/translation-memory/examples</code> returns only the target-language row today (no paired English source text — a known gap, not this screen's fault).</p>
           </div>
           <div class="panel-body">
             <div class="seg" role="group" aria-label="Resource" style="max-width:260px; margin-block-end:12px;">
-              <button type="button" aria-pressed="true">Notes</button>
-              <button type="button" aria-pressed="false">Questions</button>
+              <button type="button" aria-pressed="true" data-ex-resource="tn">Notes</button>
+              <button type="button" aria-pressed="false" data-ex-resource="tq">Questions</button>
             </div>
-            <div class="example-card">
-              <div class="ex-source">EN — "The word translated 'righteousness' here means..."</div>
-              <div class="ex-target">ES — "La palabra traducida como 'justicia' aquí significa..."</div>
-              <button type="button" class="btn btn-ghost btn-sm" style="margin-block-start:6px;" data-handle="POST /api/rows/tn/:id/validate" data-bundle="C">Revoke</button>
-            </div>
-            <div class="example-card">
-              <div class="ex-source">EN — "This is a rhetorical question expecting..."</div>
-              <div class="ex-target">ES — "Esta es una pregunta retórica que espera..."</div>
-              <button type="button" class="btn btn-ghost btn-sm" style="margin-block-start:6px;" data-handle="POST /api/rows/tn/:id/validate" data-bundle="C">Revoke</button>
-            </div>
+            <div id="examplesList"></div>
           </div>
           <div class="panel-foot">
-            <span class="foot-state">142 validated examples feeding the pack</span>
+            <span class="foot-state" id="examplesFoot">Loading…</span>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost" data-handle="GET /api/translation-memory/examples" data-bundle="C">Search</button>
+            <button type="button" class="btn btn-ghost" id="examplesRefreshBtn">Refresh</button>
           </div>
         </div>
       </section>
@@ -800,14 +790,105 @@
       });
     }
 
-    // ---- import CSV toggle / mode toggle (unchanged demo affordances) ----
+    // =========================================================
+    // Project mode toggle — real GET /api/project-config on load,
+    // real PATCH /api/project-config/mode on click. The toggle is disabled
+    // until the real mode has loaded, and only flips after a successful
+    // PATCH response — a 403/failure leaves it showing the server's actual
+    // mode, not the opposite of it.
+    // =========================================================
     var modeToggle = document.getElementById("modeToggle");
     var modeLabel = document.getElementById("modeToggleLabel");
+
+    function applyMode(mode) {
+      modeToggle.setAttribute("aria-checked", mode === "translation" ? "true" : "false");
+      modeLabel.textContent = mode;
+      document.body.dataset.mode = mode;
+    }
+
+    function loadProjectMode() {
+      return window.flowApi.get("/api/project-config").then(function (res) {
+        if (res.ok && res.data && res.data.config && res.data.config.mode) {
+          applyMode(res.data.config.mode);
+          modeToggle.disabled = false;
+        } else {
+          modeLabel.textContent = "unavailable";
+          modeToggle.disabled = true;
+          window.flowShell.toast("Couldn't load project mode — " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    }
+
     modeToggle.addEventListener("click", function () {
-      var checked = modeToggle.getAttribute("aria-checked") === "true";
-      modeToggle.setAttribute("aria-checked", checked ? "false" : "true");
-      modeLabel.textContent = checked ? "authoring" : "translation";
-      document.body.dataset.mode = checked ? "authoring" : "translation";
+      if (modeToggle.disabled) return;
+      var current = modeToggle.getAttribute("aria-checked") === "true" ? "translation" : "authoring";
+      var next = current === "translation" ? "authoring" : "translation";
+      modeToggle.disabled = true;
+      window.flowApi.request("PATCH", "/api/project-config/mode", { body: { mode: next } }).then(function (res) {
+        modeToggle.disabled = false;
+        if (res.ok && res.data && res.data.config) {
+          applyMode(res.data.config.mode);
+          window.flowShell.toast("✓ Mode set to " + res.data.config.mode, { bundle: "C" });
+        } else if (res.status === 403) {
+          window.flowShell.toast("Changing project mode is admin-only", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind + " — mode unchanged", { nudge: true, bundle: "C" });
+        }
+      });
+    });
+
+    // =========================================================
+    // Examples — real GET /api/translation-memory/examples. The API
+    // returns only the target-language row (quote/note or quote/response) —
+    // no paired English source, so cards show one language honestly rather
+    // than inventing an EN/target pair. Revoke uses the row's real id + book
+    // so it can never fire as a param-less request.
+    // =========================================================
+    var currentExResource = "tn";
+
+    function renderExamples(list, resource) {
+      var container = document.getElementById("examplesList");
+      if (!list.length) {
+        container.innerHTML = '<p class="f-help">No validated ' + (resource === "tn" ? "notes" : "questions") + " yet.</p>";
+        return;
+      }
+      container.innerHTML = list.map(function (ex) {
+        var body = resource === "tn" ? ex.note : ex.response;
+        var revokeBody = esc(JSON.stringify({ value: 0 }));
+        return '<div class="example-card">' +
+          '<div class="ex-source">' + esc(ex.book) + " " + esc(ex.ref_raw) + (ex.support_reference ? " · " + esc(ex.support_reference) : "") + "</div>" +
+          '<div class="ex-target">"' + esc(ex.quote || "") + '" — ' + esc(body || "") + "</div>" +
+          '<button type="button" class="btn btn-ghost btn-sm" style="margin-block-start:6px;" data-handle="POST /api/rows/' + resource + '/:id/validate" data-body="' + revokeBody + '" data-param-id="' + esc(ex.id) + '" data-param-book="' + esc(ex.book) + '" data-bundle="C">Revoke</button>' +
+          "</div>";
+      }).join("");
+    }
+
+    function loadExamples() {
+      var footEl = document.getElementById("examplesFoot");
+      footEl.textContent = "Loading…";
+      return window.flowApi.get("/api/translation-memory/examples", { resource: currentExResource, limit: 50 }).then(function (res) {
+        if (res.ok) {
+          var list = (res.data && res.data.examples) || [];
+          renderExamples(list, currentExResource);
+          footEl.textContent = list.length + " validated " + (currentExResource === "tn" ? "note" : "question") + (list.length === 1 ? "" : "s") + " shown (max 50)";
+        } else {
+          document.getElementById("examplesList").innerHTML = '<p class="f-help">Couldn\'t load examples — ' + esc(res.status + " " + res.kind) + "</p>";
+          footEl.textContent = "Unavailable";
+        }
+      });
+    }
+
+    document.querySelectorAll("[data-ex-resource]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll("[data-ex-resource]").forEach(function (b) { b.setAttribute("aria-pressed", b === btn ? "true" : "false"); });
+        currentExResource = btn.getAttribute("data-ex-resource");
+        loadExamples();
+      });
+    });
+    document.getElementById("examplesRefreshBtn").addEventListener("click", loadExamples);
+    document.getElementById("examplesList").addEventListener("flow:handled", function (ev) {
+      var detail = ev.detail;
+      if (detail && detail.result && detail.result.ok) loadExamples();
     });
 
     window.flowApi.ready.then(function () {
@@ -815,6 +896,8 @@
       loadTerms();
       loadExportStatus();
       loadTemplatesSummary();
+      loadProjectMode();
+      loadExamples();
     });
   })();
   </script>

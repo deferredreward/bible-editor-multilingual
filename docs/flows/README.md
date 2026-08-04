@@ -190,12 +190,18 @@ sign-in step.
 
 | Screen | State in this environment |
 |---|---|
-| `t1`, `t2`, `t3`, `t6` | **Fully real** — real Zechariah notes, questions, verses and word links; real saves, approvals, version conflicts |
+| `t1`, `t2`, `t6` | **Fully real** — real Zechariah notes, questions and word links; real saves and real version conflicts |
+| `t3` | Real UHB/ULT/UST panes, verse status and lane checks. **Verse *save* is disabled** — the preview cannot rebuild the word-alignment tree, and saving would erase the verse's alignment (findings §4.8) |
 | `l2`, `l3`, `a3`, `a4` | **Real** — preferences, 194 real note templates, the user allowlist, health/jobs/exports |
-| `t5` | Real endpoint, **genuinely empty** — no articles are imported locally |
-| `t4` | Real words and lexicon calls; alignment *save* is disabled on purpose (see findings §4) |
+| `t5` | Real endpoint; effectively empty — one tW article (`kt/god`) was imported through the real endpoint during the drive, no tA articles |
+| `t4` | Real words and lexicon calls; alignment *save* is disabled on purpose (findings §4.8) |
 | `l1`, `a2` | Real job list; **AI pipelines return 503** because `BT_API_TOKEN` is absent — this is the spec's "AI not configured" state, exercised for real |
 | `a1` | Local config steps are real; org lookup needs live Door43 and degrades honestly offline |
+
+**Approve is not exercisable here.** `POST /api/rows/{tn,tq}/:id/validate` returns
+`404` for every row in this seed: the server requires `translation_state` to be
+non-NULL, and nothing has been through the AI pipeline. Correct API behaviour,
+simply unreachable without a pipeline run.
 
 The local lexicon table is empty, so `GET /api/lexicon/:strong` returns 404
 everywhere; `scripts/import-lexicon.mjs` would populate it.

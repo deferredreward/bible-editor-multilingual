@@ -160,12 +160,17 @@
       if (version !== undefined && version !== null) out.ifMatch = version;
     }
     if (headersSpec.indexOf("X-Source-Generation") !== -1) {
+      // X-Source-Generation exists so the client can PROVE which generation it
+      // loaded the verse under (api/src/verses.ts:283). Defaulting to a literal
+      // 1 would manufacture that proof — and on any deployment whose active
+      // generation happens to be 1 the gate would silently pass for a client
+      // that never read the row. So: use a real value if the screen supplied
+      // one, otherwise send nothing and let the server answer 428
+      // source_generation_required. Failing closed is the point of the header.
       var sgHost = el.closest ? el.closest("[data-source-generation]") : null;
       var sg = sgHost ? sgHost.getAttribute("data-source-generation") : undefined;
-      if (sg === undefined || sg === null) {
-        sg = context.sourceGeneration !== undefined ? context.sourceGeneration : 1;
-      }
-      out.sourceGeneration = sg;
+      if (sg === undefined || sg === null) sg = context.sourceGeneration;
+      if (sg !== undefined && sg !== null && sg !== "") out.sourceGeneration = sg;
     }
     return out;
   }

@@ -49,6 +49,7 @@
   .lane-block.locked .target-box { border-color: var(--line); background: var(--skip-soft); pointer-events: none; }
   .lane-foot { display: flex; align-items: center; gap: 8px; margin-block-start: 8px; }
   .lane-foot .spacer { margin-inline-start: auto; }
+  .save-disabled-note { font-size: 12px; color: var(--ink-2); margin: 8px 0 0; }
 
   .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   .btn-primary { background: var(--inspire); color: #06293B; }
@@ -130,7 +131,7 @@
       <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
       <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
-          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">…</span> <span id="accountName">…</span>
         </button>
         <div class="menu" id="accountMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
@@ -211,9 +212,14 @@
         <div class="lane-foot">
           <button type="button" class="btn btn-outline" id="litUndoBtn">Undo</button>
           <span class="spacer"></span>
-          <button type="button" class="btn btn-primary" id="litSaveBtn"
-            data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save</button>
+          <!-- Save is disabled in this preview (not wired to any data-handle): a
+               plain-text round-trip here would replace the verse's real \zaln
+               alignment tree with a single flattened text node, destroying every
+               word alignment on the verse. See t4-align.html's saveBtn for the
+               same reasoning applied to the alignment editor. -->
+          <button type="button" class="btn btn-primary" id="litSaveBtn" disabled>Save</button>
         </div>
+        <p class="save-disabled-note">Saving is disabled in this preview: it cannot rebuild the word-alignment tree, and saving would erase this verse's alignment.</p>
       </section>
 
       <section class="lane-block" id="simLane" data-param-bibleVersion="UST" data-version-key="verse-UST" data-source-generation="1">
@@ -234,9 +240,10 @@
         <div class="lane-foot">
           <button type="button" class="btn btn-outline" id="simUndoBtn">Undo</button>
           <span class="spacer"></span>
-          <button type="button" class="btn btn-primary" id="simSaveBtn"
-            data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save</button>
+          <!-- Save is disabled here for the same reason as the ULT lane above. -->
+          <button type="button" class="btn btn-primary" id="simSaveBtn" disabled>Save</button>
         </div>
+        <p class="save-disabled-note">Saving is disabled in this preview: it cannot rebuild the word-alignment tree, and saving would erase this verse's alignment.</p>
       </section>
     </div>
   </main>
@@ -271,7 +278,7 @@
       <div class="dlg-top"><h2 id="frTitle">Find &amp; Replace</h2><button type="button" class="close-x" id="closeFrBtn" aria-label="Close">✕</button></div>
       <div class="dlg-body">
         <div class="fr-row">
-          <input type="text" id="frFind" placeholder="Find…" aria-label="Find" value="Yahvé" />
+          <input type="text" id="frFind" placeholder="Find…" aria-label="Find" />
           <input type="text" id="frReplace" placeholder="Replace with…" aria-label="Replace with" />
         </div>
         <div class="fr-toggles" role="group" aria-label="Search options">
@@ -285,15 +292,21 @@
         </div>
         <div class="fr-nav">
           <button type="button" class="iconbtn" id="frPrevBtn" aria-label="Previous match" style="width:28px;height:28px;">‹</button>
-          <span id="frMatchInfo">Match 1 of 4 (this chapter)</span>
+          <span id="frMatchInfo">No search yet</span>
           <button type="button" class="iconbtn" id="frNextBtn" aria-label="Next match" style="width:28px;height:28px;">›</button>
           <button type="button" class="cluster-btn" id="frLoadBookBtn">Load full book for search</button>
         </div>
         <p class="fr-summary" id="frSummary" hidden></p>
-        <p class="fr-note">Translation-note bodies use this same overlay (TN scope) but never touch id/support_reference, and block a would-empty-the-note replace.</p>
+        <!-- This is a REAL client-side scan over the ULT/UST verse text already
+             loaded for this chapter (GET /api/chapters/:book/:chapter) — there is
+             no search/replace endpoint in this API. Match counts above/below are
+             therefore real, not a fixture. Applying a replacement is NOT wired to
+             any endpoint (see the disabled buttons below) so this preview cannot
+             pretend to have written anything back. -->
+        <p class="fr-note">Scan only, in this preview: match counts are real (scanned from the ULT/UST text already loaded for this chapter), but there is no search/replace endpoint in this API, so applying a replacement is disabled below. Translation-note bodies aren't loaded on this screen, so the "Translation notes" scope can't be scanned here.</p>
       </div>
       <div class="dlg-foot">
-        <button type="button" class="btn btn-outline" id="frReplaceBtn" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Replace</button>
+        <button type="button" class="btn btn-outline" id="frReplaceBtn" disabled title="Applying a replacement isn't available in this preview — no search/replace endpoint exists in this API.">Replace</button>
         <button type="button" class="btn btn-primary" id="frReplaceAllBtn">Replace all…</button>
       </div>
     </div>
@@ -304,11 +317,11 @@
     <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="frConfirmTitle">
       <div class="dlg-top"><h2 id="frConfirmTitle">Replace all — confirm</h2><button type="button" class="close-x" id="closeFrConfirmBtn" aria-label="Close">✕</button></div>
       <div class="dlg-body">
-        <p style="margin-top:0;font-size:13.5px;">This will replace <b>4 matches</b> across <b>3 verses</b> in the selected scope. Read-only/frozen versions (UHB/UGNT) are skipped automatically and counted in the summary. There is no bulk undo — restore individual verses via Verse history if needed.</p>
+        <p style="margin-top:0;font-size:13.5px;" id="frConfirmBody"></p>
       </div>
       <div class="dlg-foot">
         <button type="button" class="btn btn-outline" id="closeFrConfirmBtn2">Cancel</button>
-        <button type="button" class="btn btn-primary" id="frConfirmDoBtn" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Replace all 4 matches</button>
+        <button type="button" class="btn btn-primary" id="frConfirmDoBtn" disabled title="Applying a replacement isn't available in this preview — no search/replace endpoint exists in this API.">Replace all</button>
       </div>
     </div>
   </div>
@@ -320,6 +333,21 @@
     "use strict";
     function el(id) { return document.getElementById(id); }
     function toast(t, o) { window.flowShell.toast(t, o); }
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    // Real signed-in identity — window.flowApi.me only carries {username, role}
+    // (no full name), so show the username as-is with role as a hint. Neutral
+    // placeholder ("…") until flowApi.ready resolves.
+    window.flowApi.ready.then(function (me) {
+      var name = me && me.username ? me.username : "unknown";
+      var initials = name.slice(0, 2).toUpperCase();
+      el("accountAvatar").textContent = initials;
+      el("accountName").textContent = name + (me && me.role ? " (" + me.role + ")" : "");
+    });
 
     // account + layout menus
     function wireMenu(btnId, menuId) {
@@ -387,7 +415,7 @@
         // affix marker (e.g. "b:H2320" = the prefixed preposition ב). Strip it
         // for the lexicon lookup key.
         var strong = (w.strong || "").replace(/^[a-z]:/, "");
-        return '<span class="lex-wrap"><button type="button" class="lex-word" data-strong="' + strong + '" data-handle="GET /api/lexicon/:strong" data-param-strong="' + strong + '" data-bundle="K" aria-haspopup="true" aria-expanded="false" aria-controls="lexPop' + i + '">' + w.text + '</button>' +
+        return '<span class="lex-wrap"><button type="button" class="lex-word" data-strong="' + escapeHtml(strong) + '" data-handle="GET /api/lexicon/:strong" data-param-strong="' + escapeHtml(strong) + '" data-bundle="K" aria-haspopup="true" aria-expanded="false" aria-controls="lexPop' + i + '">' + escapeHtml(w.text) + '</button>' +
           '<div class="lex-popover" id="lexPop' + i + '" role="dialog" hidden></div></span>';
       }).join("");
     }
@@ -402,7 +430,7 @@
       var pop = word.parentElement.querySelector(".lex-popover");
       var willOpen = pop.hasAttribute("hidden");
       if (!willOpen) { pop.hidden = true; word.setAttribute("aria-expanded", "false"); return; }
-      pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p><p class="lex-gloss">Loading…</p>';
+      pop.innerHTML = '<p class="lex-strong">' + escapeHtml(word.dataset.strong) + '</p><p class="lex-gloss">Loading…</p>';
       pop.classList.remove("flip");
       pop.hidden = false;
       word.setAttribute("aria-expanded", "true");
@@ -452,7 +480,7 @@
         restoreBtn = '<button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G" data-body=\'' + body.replace(/'/g, "&#39;") + '\'>Restore v' + v.version + '</button>';
       }
       return '<div class="hist-version"><span class="hv-num">v' + v.version + '</span>' +
-        '<span class="hv-main">' + (v.current ? "Current" : v.action) + '<span class="hv-meta"> · ' + who + ' · ' + when + '</span></span>' + restoreBtn + '</div>';
+        '<span class="hv-main">' + escapeHtml(v.current ? "Current" : v.action) + '<span class="hv-meta"> · ' + escapeHtml(who) + ' · ' + escapeHtml(when) + '</span></span>' + restoreBtn + '</div>';
     }
 
     // chapter board dialog
@@ -471,11 +499,9 @@
           var checked = !!checksByKey[v + ":" + lane];
           // data-handle stays a stable, greppable registry key (matches the
           // rest of this file's convention); data-handle-manual tells
-          // _shell.js NOT to auto-dispatch it, because _shell.js's document
-          // click listener unconditionally calls ev.preventDefault() on any
-          // [data-handle] element — which cancels a real checkbox's native
-          // checked-toggle. We dispatch the real PATCH ourselves below instead,
-          // so the box actually flips.
+          // _shell.js NOT to auto-dispatch it — we dispatch the real PATCH
+          // ourselves below instead, so we control exactly when/how the
+          // request fires relative to the checkbox's native toggle.
           cells += '<td><input type="checkbox" ' + (checked ? "checked" : "") +
             ' data-handle="PATCH /api/chapters/:book/:chapter/:verse/lanes/:lane" data-handle-manual data-param-lane="' + lane + '" data-param-verse="' + v + '" data-bundle="K" aria-label="' + lane + ' check for verse ' + v + '" /></td>';
         });
@@ -501,13 +527,10 @@
       var verse = cb.getAttribute("data-param-verse");
       // At this point in the dispatch, cb.checked already reflects the NEW
       // (post-click) state — the browser flips it before running click
-      // listeners. _shell.js's own listener (registered before ours, so it
-      // runs first) calls preventDefault() on any [data-handle] element,
-      // which queues the native "canceled activation" revert; that revert
-      // only actually applies once the whole synchronous dispatch finishes,
-      // so we restore the intended value on a macrotask after it.
+      // listeners, and _shell.js does not call preventDefault() on checkbox
+      // elements (see defaultIsTheStateChange in _shell.js), so the native
+      // toggle stands as-is; no revert-and-restore dance is needed here.
       var next = cb.checked;
-      setTimeout(function () { cb.checked = next; }, 0);
       window.flowApi.request("PATCH", "/api/chapters/" + BOOK + "/" + CHAPTER + "/" + verse + "/lanes/" + lane, { body: { checked: next } }).then(function (result) {
         if (!result.ok) {
           cb.checked = !next;
@@ -541,28 +564,12 @@
       ta.addEventListener("input", function () { autoGrow(ta); });
     });
 
-    // Save buttons have no static data-body (the textarea's value changes on
-    // every edit), so build it just before _shell.js's dispatcher reads it —
-    // same capture-phase trick as doneSwitch/board checkboxes above. This is a
-    // plain-text round-trip only (single text node) — there is no alignment
-    // editor in this preview, so \zaln milestones are not reconstructed here.
-    document.addEventListener("click", function (ev) {
-      var btn = ev.target.closest ? ev.target.closest("#litSaveBtn, #simSaveBtn") : null;
-      if (!btn) return;
-      var isLit = btn.id === "litSaveBtn";
-      var value = el(isLit ? "litTarget" : "simTarget").value;
-      btn.setAttribute("data-body", JSON.stringify({
-        content: { verseObjects: [{ type: "text", text: value }] },
-        plain_text: value,
-        alignment_intent: "text_edit",
-      }));
-    }, true);
-
     // Renders one lane (lit=ULT, sim=UST) from real chapter data: the read-only
     // Hebrew source line, the editable target box, the state chip, and the
-    // version/generation the Save button's If-Match / X-Source-Generation
-    // headers read from (via data-version-key / data-source-generation on the
-    // lane-block — see _shell.js resolveHeaders).
+    // version/generation tracked via data-version-key / data-source-generation
+    // on the lane-block (see _shell.js resolveHeaders) — kept up to date here
+    // for other screens (e.g. t4-align's real Save) that read this shared
+    // state, even though this screen's own Save button is disabled.
     function renderLane(prefix, bibleVersion) {
       var row = verseRow(bibleVersion, curVerse);
       var uhb = verseRow("UHB", curVerse);
@@ -647,33 +654,9 @@
         return;
       }
 
-      if (ev.target === el("litSaveBtn") || ev.target === el("simSaveBtn")) {
-        var prefix = ev.target === el("litSaveBtn") ? "lit" : "sim";
-        var bv = prefix === "lit" ? "ULT" : "UST";
-        var chip = el(prefix + "StateChip");
-        var lane = el(prefix === "lit" ? "litLane" : "simLane");
-        if (result.ok) {
-          chip.className = "chip chip-edited";
-          chip.textContent = "Edited";
-          lane.classList.remove("locked");
-          if (result.data && typeof result.data.version === "number") {
-            window.flowApi.setVersion(prefix === "lit" ? "verse-ULT" : "verse-UST", result.data.version);
-          }
-        } else if (result.body && result.body.error === "lane_replacement_required") {
-          // Real environment finding: this workspace has the lit/sim lane mid
-          // BSOJ replacement (textReadOnly) — text edits are rejected 409 no
-          // matter what the client sends. Reflect that honestly instead of
-          // pretending the save worked.
-          lane.classList.add("locked");
-          var label = "";
-          try {
-            var pending = result.body.detail && result.body.detail.pendingTarget;
-            label = pending ? (JSON.parse(pending).label || "") : "";
-          } catch (e) { /* ignore */ }
-          toast(bv + " text is locked pending replacement" + (label ? " (" + label + ")" : ""), { nudge: true, bundle: "G" });
-        }
-        return;
-      }
+      // Note: litSaveBtn/simSaveBtn carry no data-handle (see the disabled
+      // Save buttons above) — they can never fire a flow:handled event, so
+      // there is no reconciliation branch for them here.
 
       if (ev.target === el("historyBtn")) {
         if (result.ok && result.data && Array.isArray(result.data.versions)) {
@@ -695,52 +678,127 @@
         if (!pop || pop.hidden) return;
         if (result.ok && result.data) {
           var entry = result.data;
-          pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p>' +
-            '<p class="lex-gloss">' + (entry.gloss || entry.definition || "(no gloss)") + '</p>' +
-            '<p class="lex-def">' + (entry.def || entry.definition || "") + '</p>';
+          pop.innerHTML = '<p class="lex-strong">' + escapeHtml(word.dataset.strong) + '</p>' +
+            '<p class="lex-gloss">' + escapeHtml(entry.gloss || entry.definition || "(no gloss)") + '</p>' +
+            '<p class="lex-def">' + escapeHtml(entry.def || entry.definition || "") + '</p>';
         } else {
           // The local lexicon table is empty in this preview — an honest empty
           // state, not a fabricated gloss.
-          pop.innerHTML = '<p class="lex-strong">' + word.dataset.strong + '</p><p class="lex-gloss">No lexicon entry loaded for this Strong’s number.</p>';
+          pop.innerHTML = '<p class="lex-strong">' + escapeHtml(word.dataset.strong) + '</p><p class="lex-gloss">No lexicon entry loaded for this Strong’s number.</p>';
         }
         var rect = pop.getBoundingClientRect();
         pop.classList.toggle("flip", rect.right > window.innerWidth - 8);
       }
     });
 
-    // Export / Copy (client-side, read-only, no PATCH)
+    // Export / Copy — both are read-only client-side operations (no PATCH).
+    // Export narrates what it actually does (assembling from already-loaded
+    // GETs); Copy performs a real navigator.clipboard.writeText and reports
+    // the real outcome instead of an unconditional success toast.
     el("exportUsfmBtn").addEventListener("click", function () { toast("Assembling USFM from read-only GETs (client-side export, no write)", { bundle: "G" }); });
-    el("copyChapterBtn").addEventListener("click", function () { toast("Chapter copied to clipboard", { bundle: "G" }); });
+    el("copyChapterBtn").addEventListener("click", function () {
+      var lines = [];
+      var rows = chapterData && chapterData.verses && chapterData.verses.ULT;
+      if (rows) {
+        verseNums.forEach(function (v) {
+          var row = rows[String(v)];
+          if (row && row.plain_text) lines.push(v + ". " + row.plain_text);
+        });
+      }
+      var text = lines.join("\n");
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        toast("Clipboard API not available in this browser — nothing copied", { nudge: true, bundle: "G" });
+        return;
+      }
+      navigator.clipboard.writeText(text).then(function () {
+        toast("Chapter copied to clipboard (" + lines.length + " verses, ULT)", { bundle: "G" });
+      }, function () {
+        toast("Copy to clipboard failed", { nudge: true, bundle: "G" });
+      });
+    });
 
-    // Find/Replace overlay — the backend has no full-text search endpoint, so
-    // match-finding stays local/demo (matches shown are illustrative, not a
-    // real scan of this chapter). The Replace / Replace-all buttons keep their
-    // real data-handle wiring for header/flow-completeness, but with no verse
-    // in scope they'll surface "missing param" rather than silently succeeding.
-    var frMatches = ["Yahvé", "Yahvé", "Yahvé", "Yahvé"];
+    // Find/Replace overlay — there is no search/replace endpoint in this API.
+    // The SCAN below is real: it counts actual matches in the ULT/UST verse
+    // text already loaded for this chapter (GET /api/chapters/:book/:chapter).
+    // Applying a replacement is NOT implemented (Replace / Replace all are
+    // disabled in the markup) — this preview only ever reports what it can
+    // honestly compute client-side, never a fabricated "success".
+    var frMatches = []; // [{ bibleVersion, verse }]
     var frIdx = 0;
-    function frUpdateMatchInfo() { el("frMatchInfo").textContent = "Match " + (frIdx + 1) + " of " + frMatches.length + " (this chapter)"; }
+
+    function buildRegex(query, useRegex, caseSensitive) {
+      var source = useRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(source, caseSensitive ? "g" : "gi");
+    }
+
+    // Real scan over the chapter data already in memory. Only ULT/UST are
+    // scanned — those are the editable Bible-lane versions loaded on this
+    // screen; UHB is read-only source and Translation-note bodies aren't
+    // loaded here at all, so the "Translation notes" scope can't be scanned.
+    function scanMatches() {
+      frMatches = [];
+      var query = el("frFind").value;
+      if (!query || !el("frScopeBible").checked || !chapterData) return;
+      var re;
+      try {
+        re = buildRegex(query, el("frRegex").checked, el("frCase").checked);
+      } catch (e) {
+        return;
+      }
+      ["ULT", "UST"].forEach(function (bv) {
+        var rows = chapterData.verses && chapterData.verses[bv];
+        if (!rows) return;
+        Object.keys(rows).forEach(function (vn) {
+          var text = rows[vn].plain_text || "";
+          var count = (text.match(re) || []).length;
+          for (var i = 0; i < count; i++) frMatches.push({ bibleVersion: bv, verse: Number(vn) });
+        });
+      });
+    }
+
+    function frUpdateMatchInfo() {
+      scanMatches();
+      frIdx = 0;
+      if (!el("frFind").value) {
+        el("frMatchInfo").textContent = "No search yet";
+      } else if (!el("frScopeBible").checked) {
+        el("frMatchInfo").textContent = "Translation-note bodies aren't loaded in this preview — nothing scanned";
+      } else if (!frMatches.length) {
+        el("frMatchInfo").textContent = "No matches (this chapter, ULT/UST)";
+      } else {
+        el("frMatchInfo").textContent = "Match " + (frIdx + 1) + " of " + frMatches.length + " (this chapter, ULT/UST)";
+      }
+    }
     el("findReplaceBtn").addEventListener("click", function () { frUpdateMatchInfo(); el("frSummary").hidden = true; el("frBackdrop").hidden = false; });
     el("closeFrBtn").addEventListener("click", function () { el("frBackdrop").hidden = true; });
-    el("frPrevBtn").addEventListener("click", function () { frIdx = (frIdx - 1 + frMatches.length) % frMatches.length; frUpdateMatchInfo(); });
-    el("frNextBtn").addEventListener("click", function () { frIdx = (frIdx + 1) % frMatches.length; frUpdateMatchInfo(); });
-    el("frLoadBookBtn").addEventListener("click", function () { toast("Loading full book for search (book mode)", { bundle: "G" }); });
-    el("frReplaceBtn").addEventListener("click", function () {
-      if (!el("frScopeBible").checked && !el("frScopeTn").checked) { toast("Select at least one scope", { bundle: "G" }); return; }
-      el("frSummary").hidden = false;
-      el("frSummary").textContent = "Replaced match " + (frIdx + 1) + " of " + frMatches.length + ".";
+    el("frFind").addEventListener("input", frUpdateMatchInfo);
+    el("frRegex").addEventListener("change", frUpdateMatchInfo);
+    el("frCase").addEventListener("change", frUpdateMatchInfo);
+    el("frScopeBible").addEventListener("change", frUpdateMatchInfo);
+    el("frScopeTn").addEventListener("change", frUpdateMatchInfo);
+    el("frPrevBtn").addEventListener("click", function () {
+      if (!frMatches.length) return;
+      frIdx = (frIdx - 1 + frMatches.length) % frMatches.length;
+      el("frMatchInfo").textContent = "Match " + (frIdx + 1) + " of " + frMatches.length + " (this chapter, ULT/UST)";
     });
+    el("frNextBtn").addEventListener("click", function () {
+      if (!frMatches.length) return;
+      frIdx = (frIdx + 1) % frMatches.length;
+      el("frMatchInfo").textContent = "Match " + (frIdx + 1) + " of " + frMatches.length + " (this chapter, ULT/UST)";
+    });
+    el("frLoadBookBtn").addEventListener("click", function () { toast("Loading full book for search (book mode)", { bundle: "G" }); });
     el("frReplaceAllBtn").addEventListener("click", function () {
       if (!el("frScopeBible").checked && !el("frScopeTn").checked) { toast("Select at least one scope", { bundle: "G" }); return; }
+      scanMatches();
+      var verseCount = {};
+      frMatches.forEach(function (m) { verseCount[m.bibleVersion + ":" + m.verse] = true; });
+      el("frConfirmBody").textContent = frMatches.length
+        ? "Found " + frMatches.length + " match(es) across " + Object.keys(verseCount).length + " verse(s) (ULT/UST, this chapter). Applying a replacement isn't available in this preview — there is no search/replace endpoint in this API."
+        : "No matches found for the current search in the loaded scope. Applying a replacement isn't available in this preview — there is no search/replace endpoint in this API.";
       el("frConfirmBackdrop").hidden = false;
     });
     el("closeFrConfirmBtn").addEventListener("click", function () { el("frConfirmBackdrop").hidden = true; });
     el("closeFrConfirmBtn2").addEventListener("click", function () { el("frConfirmBackdrop").hidden = true; });
-    el("frConfirmDoBtn").addEventListener("click", function () {
-      el("frConfirmBackdrop").hidden = true;
-      el("frSummary").hidden = false;
-      el("frSummary").textContent = "Replaced 4 of 4 matches across 3 verses. 0 skipped (read-only/frozen).";
-    });
   })();
   </script>
 </body>

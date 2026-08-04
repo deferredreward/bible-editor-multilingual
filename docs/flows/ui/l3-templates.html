@@ -255,9 +255,9 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
           </button>
           <div style="flex:1; min-width:0;">
-            <h2 style="margin:0; font-size:16px;" id="editorTitle">figs-metaphor</h2>
-            <span class="chip chip-edited" id="editorStateChip">edited</span>
-            <span class="approved-tally"><span id="approvedTally">18 of 42</span> approved</span>
+            <h2 style="margin:0; font-size:16px;" id="editorTitle">Loading…</h2>
+            <span class="chip chip-edited" id="editorStateChip" hidden></span>
+            <span class="approved-tally"><span id="approvedTally">— of —</span> approved</span>
           </div>
           <button type="button" class="btn btn-ghost" id="historyBtn" title="Version history">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
@@ -370,20 +370,45 @@
       document.getElementById("draftAllBtn").disabled = v;
     }
 
+    // Explicit empty/error state — shown when there are no templates, or the
+    // list fetch failed, so the hard-coded placeholder markup ("figs-metaphor",
+    // "edited", "18 of 42") never survives on screen as if it were real data.
+    function showEmptyEditor(message) {
+      current = null;
+      currentUnit = null;
+      document.getElementById("editorTitle").textContent = "No template available";
+      document.getElementById("editorStateChip").hidden = true;
+      document.getElementById("sourceMd").textContent = "—";
+      document.getElementById("targetArea").value = "";
+      document.getElementById("editorFields").style.display = "none";
+      document.getElementById("collapsedBanner").hidden = true;
+      document.getElementById("editorFootState").textContent = message;
+      document.getElementById("draftBtn").disabled = true;
+      document.getElementById("saveBtn").disabled = true;
+      document.getElementById("approveBtn").disabled = true;
+    }
+
     function loadEditor(id) {
       current = id;
       currentUnit = null;
       document.getElementById("editorTitle").textContent = id;
+      document.getElementById("editorStateChip").hidden = true;
       document.getElementById("sourceMd").textContent = "Loading…";
       document.getElementById("targetArea").value = "";
+      document.getElementById("editorFields").style.display = "block";
       document.getElementById("editorFootState").textContent = "Loading…";
+      document.getElementById("saveBtn").disabled = false;
+      document.getElementById("draftBtn").disabled = aiDisabled;
       renderRail();
       window.flowApi.get("/api/templates/unit", { id: id }).then(function (res) {
         if (current !== id) return; // user navigated away before this resolved
         if (!res.ok) {
           window.flowShell.toast("Couldn't load " + id + " — " + res.status + " " + res.kind, { nudge: true });
+          document.getElementById("sourceMd").textContent = "Couldn't load this template — " + res.status + " " + res.kind;
+          document.getElementById("editorFootState").textContent = "Unavailable";
           return;
         }
+        document.getElementById("editorStateChip").hidden = false;
         currentUnit = res.data;
         currentVersion = currentUnit.version;
         var state = currentUnit.translation_state;
@@ -404,11 +429,18 @@
       return window.flowApi.get("/api/templates").then(function (res) {
         if (res.ok) {
           units = res.data.units || [];
+          renderRail();
+          if (units.length) {
+            if (!current) loadEditor(units[0].template_id);
+          } else {
+            showEmptyEditor("No templates found for this workspace.");
+          }
         } else {
+          units = [];
+          renderRail();
           window.flowShell.toast("Couldn't load templates — " + res.status + " " + res.kind, { nudge: true });
+          showEmptyEditor("Couldn't load templates — " + res.status + " " + res.kind);
         }
-        renderRail();
-        if (!current && units.length) loadEditor(units[0].template_id);
       });
     }
 

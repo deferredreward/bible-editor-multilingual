@@ -33,6 +33,7 @@
     min-width: 220px; padding: 6px; z-index: 50;
   }
   .menu[hidden] { display: none; }
+  .menu .menu-head { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); padding: 7px 9px 4px; margin: 0; }
   .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
   .menu button:hover { background: var(--card-2); }
   .menu .menu-note { font-size: 11.5px; color: var(--ink-2); padding: 0 9px 6px; margin: 0; }
@@ -292,9 +293,10 @@
       <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
       <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
-          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">…</span> <span id="accountName">…</span>
         </button>
         <div class="menu" id="accountMenu" role="menu" hidden>
+          <p class="menu-head" id="accountMenuHead">…</p>
           <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
           <p class="menu-note">Switching organization reloads the app.</p>
           <hr />
@@ -317,7 +319,10 @@
   <div class="banners" id="banners">
     <div class="banner banner--lock" data-banner="lock" hidden>
       <span aria-hidden="true">🔒</span>
-      <span class="banner-msg">AI notes run in progress for ZEC 5 — started 4 min ago. This chapter's questions are locked; notes stay editable.</span>
+      <!-- Filled in from the real 409 chapter_locked body (jobId/pipelineType/
+           startedAt) by the flow:handled listener below — never a fixture
+           scope or a fabricated elapsed time. -->
+      <span class="banner-msg" id="lockBannerMsg"></span>
       <button type="button" class="banner-action" data-handle="POST /api/rows/tn/:id/keep" data-bundle="E">Mark notes to keep</button>
     </div>
   </div>
@@ -351,15 +356,18 @@
       <div class="work-toolbar">
         <span class="wt-count" id="wtCount">1 of 42</span>
         <span class="unsaved-chip" id="unsavedChip" hidden><span aria-hidden="true">●</span> <span id="unsavedText">1 unsaved</span></span>
+        <!-- Demo-only: no real "new app version" check exists in this preview.
+             The "Demo:" prefix carries onto the chip itself so it can't be
+             mistaken for a real trigger once shown. -->
         <span class="nudge-chip" id="versionNudge" hidden>
-          <span aria-hidden="true">⬆️</span> New version available
+          <span aria-hidden="true">⬆️</span> Demo: new version available
           <button type="button" id="versionRefreshBtn" data-handle="local:reload-app" data-bundle="K">Refresh</button>
         </span>
         <span class="spacer"></span>
         <button type="button" class="cluster-btn verse-btn-mobile" id="openSheetBtn">This verse</button>
         <button type="button" class="cluster-btn authoring-only" id="gridViewBtn" data-handle="local:toggle-grid-view" data-bundle="F" aria-pressed="false">Grid view</button>
         <button type="button" class="cluster-btn" id="historyBtn">History</button>
-        <button type="button" class="cluster-btn" id="demoConflictBtn" title="Deliberately saves with a stale If-Match to trigger a real 409 version_mismatch">Demo: 409 conflict</button>
+        <button type="button" class="cluster-btn" id="demoConflictBtn" title="Deliberately sends an If-Match that can never match (version+1) to trigger a real 409 version_mismatch without saving">Demo: 409 conflict</button>
         <button type="button" class="cluster-btn" id="demoNudgeBtn">Demo: version nudge</button>
       </div>
 
@@ -551,6 +559,16 @@
 
     function el(id) { return document.getElementById(id); }
     function toast(t, o) { window.flowShell.toast(t, o); }
+
+    // Real identity from GET /api/auth/me — no invented full name (the API
+    // only returns username + role), and no invented role either (this menu
+    // used to say "editor" even when the real session was "admin").
+    function renderAccount(me) {
+      var initials = me && me.username ? me.username.slice(0, 2).toUpperCase() : "…";
+      el("accountAvatar").textContent = initials;
+      el("accountName").textContent = (me && me.username) || "…";
+      el("accountMenuHead").textContent = me ? (me.username + " · " + (me.role || "unknown role")) : "…";
+    }
 
     // card-to-card nav (mobile arrows + swipe) — moves within the active
     // queue's card order, independent of approve/skip-approved logic above.
@@ -962,6 +980,20 @@
       return ", " + days + (days === 1 ? " day ago" : " days ago");
     }
 
+    // Real chapter_locked 409 body -> banner text. `pipelineType` is one of
+    // api/src/pipelines.ts's PIPELINE_TYPES; scope is the book/chapter this
+    // request was actually for (the same book/chapter the lock check itself
+    // was queried against, see api/src/chapterLock.ts), not a fixture.
+    // Degrades to a generic label / no elapsed-time clause when a field is
+    // missing, rather than inventing one.
+    var PIPELINE_LABELS = { generate: "AI generate", notes: "AI notes", tqs: "AI questions", translate: "AI translate" };
+    function lockBannerText(book, chapter, body) {
+      var label = (body && PIPELINE_LABELS[body.pipelineType]) || "An AI";
+      var scope = (book || BOOK) + " " + (chapter || CHAPTER);
+      var when = body && typeof body.startedAt === "number" ? agoSuffix(body.startedAt) : "";
+      return label + " run in progress for " + scope + when + ". This chapter is locked until it completes.";
+    }
+
     function openConflict(item, mineValue, current) {
       pendingConflict = { item: item, mineValue: mineValue, currentVersion: current.version };
       el("conflictTitle").textContent = "Someone else saved this " + (item.kind === "tn" ? "note" : "question") + " first";
@@ -972,15 +1004,18 @@
       el("conflictTheirsHead").textContent = "Theirs (v" + current.version + agoSuffix(current.updated_at) + ")";
       el("conflictBackdrop").hidden = false;
     }
-    // Genuine trigger: PATCH with a deliberately stale If-Match so the real
-    // server responds with a real 409 version_mismatch, exercising the exact
-    // same path a concurrent-editor collision would.
+    // Genuine trigger: PATCH with an If-Match one *ahead* of the row's real
+    // version. version+1 can never equal whatever the server actually has
+    // stored (versions only move forward from wherever the row is now), so
+    // this reliably 409s on a freshly-seeded row (version 1) instead of the
+    // old `version - 1` floor-clamped to 1, which equalled the real version
+    // on a fresh row and silently saved instead of conflicting.
     el("demoConflictBtn").addEventListener("click", function () {
       var item = ITEMS[cur];
       if (!item) return;
       var value = el("draftArea").value;
       var body = item.kind === "tn" ? { note: value } : { response: value };
-      window.flowApi.patch("/api/rows/" + item.kind + "/" + item.id, body, { ifMatch: Math.max(1, item.version - 1), query: { book: item.book || BOOK } }).then(function (result) {
+      window.flowApi.patch("/api/rows/" + item.kind + "/" + item.id, body, { ifMatch: item.version + 1, query: { book: item.book || BOOK } }).then(function (result) {
         if (result.ok) { toast("No conflict — that version wasn't actually stale", { bundle: "F" }); return; }
         if (result.kind === "version_conflict" && result.body && result.body.current) {
           openConflict(item, value, result.body.current);
@@ -1197,7 +1232,10 @@
         selectQueue(initialHash === "questions" ? "tq" : "tn");
       });
     }
-    window.flowApi.ready.then(loadChapter);
+    window.flowApi.ready.then(function (me) {
+      renderAccount(me);
+      return loadChapter();
+    });
 
     // ---- reconcile real API responses fired via data-handle (see _shell.js) ----
     document.addEventListener("flow:handled", function (ev) {
@@ -1218,6 +1256,7 @@
           openConflict(item, el("draftArea").value, result.body.current);
         } else if (result.kind === "chapter_locked") {
           chapterLocked = true;
+          el("lockBannerMsg").textContent = lockBannerText(item.book || BOOK, item.chapter || CHAPTER, result.body);
           document.querySelector('[data-banner="lock"]').hidden = false;
           render();
         } else if (result.kind === "precondition_required") {

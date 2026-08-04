@@ -177,8 +177,13 @@
     <div class="hub-head">
       <p class="eyebrow">Adaptive UI flows</p>
       <h1>13 screens · 3 roles · 3 form factors</h1>
-      <p class="sub">Click a screen to open it. Nothing here calls the network — every
-        actionable control shows a toast naming the handle it would call (see <code>docs/flows/02-architecture.md</code>).</p>
+      <p class="sub">Click a screen to open it. Each screen is wired to the real backend —
+        this hub itself loads <code>_api.js</code>, which mints a dev session on load — so actionable
+        controls make real requests and show a toast with the real result, or degrade to an
+        honest unreachable/disabled state when no backend is running. See
+        <a href="README.md#running-the-functional-preview">"Running the functional preview"</a>
+        in <code>docs/flows/README.md</code> to start one, and <code>docs/flows/02-architecture.md</code>
+        for the handle/bundle conventions.</p>
     </div>
 
     <div class="hub-layout">

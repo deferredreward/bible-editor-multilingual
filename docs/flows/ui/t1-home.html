@@ -312,10 +312,10 @@
       </span>
       <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
-          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">…</span> <span id="accountName">…</span>
         </button>
         <div class="menu" id="accountMenu" role="menu" hidden>
-          <p class="menu-head">Ana Ruiz · editor</p>
+          <p class="menu-head" id="accountMenuHead">…</p>
           <button type="button" role="menuitem" data-handle="PATCH /api/project-config/mode" data-bundle="C">Switch to authoring mode</button>
           <button type="button" role="menuitem" id="orgSwitchItem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
           <p class="menu-note">Switching organization reloads the app.</p>
@@ -488,11 +488,29 @@
     var CHAPTER = 1;
     function el(id) { return document.getElementById(id); }
 
+    function timeGreeting() {
+      var h = new Date().getHours();
+      if (h < 5) return "Good night";
+      if (h < 12) return "Good morning";
+      if (h < 18) return "Good afternoon";
+      return "Good evening";
+    }
+
     function loadGreeting() {
       return window.flowApi.ready.then(function (me) {
         var name = me && me.username ? me.username : "there";
-        el("greetingHeading").textContent = "Good morning, " + name;
+        el("greetingHeading").textContent = timeGreeting() + ", " + name;
       });
+    }
+
+    // Real identity from GET /api/auth/me — no invented full name (the API
+    // only returns username + role), and no invented role either (the account
+    // menu used to say "editor" even when the real session was "admin").
+    function renderAccount(me) {
+      var initials = me && me.username ? me.username.slice(0, 2).toUpperCase() : "…";
+      el("accountAvatar").textContent = initials;
+      el("accountName").textContent = (me && me.username) || "…";
+      el("accountMenuHead").textContent = me ? (me.username + " · " + (me.role || "unknown role")) : "…";
     }
 
     // Book-wide totals (per-chapter tn/tq/twl/verses) from the book summary,
@@ -517,7 +535,10 @@
         var totalTn = chapters.reduce(function (s, c) { return s + (c.tn || 0); }, 0);
         var totalTq = chapters.reduce(function (s, c) { return s + (c.tq || 0); }, 0);
 
-        el("scriptureBookName").textContent = "Zechariah";
+        // No book-title endpoint exists in this preview (GET /api/chapters/:book
+        // only echoes the book code) — show the real code rather than a
+        // fabricated full name.
+        el("scriptureBookName").textContent = bookResult.data.book || BOOK;
         var statuses = chapterResult.data.verseStatuses || [];
         var doneInCh1 = statuses.filter(function (s) { return s.verse > 0 && s.done; }).length;
         var versesCh1 = (chapters.filter(function (c) { return c.chapter === CHAPTER; })[0] || {}).verses || 0;
@@ -536,7 +557,7 @@
         el("questionsBar").style.width = tq.length ? Math.round((tqApproved / tq.length) * 100) + "%" : "0%";
         el("questionsFoot").textContent = totalTq + " questions across " + chapters.length + " chapters";
 
-        el("bookSub").textContent = "Zechariah · " + (window.flowApi.me && window.flowApi.me.workspace ? window.flowApi.me.workspace + " workspace" : "workspace unknown");
+        el("bookSub").textContent = (bookResult.data.book || BOOK) + " · " + (window.flowApi.me && window.flowApi.me.workspace ? window.flowApi.me.workspace + " workspace" : "workspace unknown");
       });
     }
 
@@ -568,7 +589,8 @@
     });
 
     window.flowShell.setContext({ book: BOOK, chapter: CHAPTER });
-    window.flowApi.ready.then(function () {
+    window.flowApi.ready.then(function (me) {
+      renderAccount(me);
       loadGreeting();
       loadQueues();
       loadJobs();

@@ -232,6 +232,8 @@
   .reading-line.locked { opacity: 0.6; pointer-events: none; }
   .rl-actions { display: flex; gap: 6px; margin-block-end: 10px; }
   .rl-actions button { appearance: none; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+  .rl-actions button[disabled] { opacity: 0.5; cursor: default; }
+  .cluster-btn[disabled] { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body data-mode="translation" data-align-mode="tap">
@@ -244,7 +246,10 @@
       <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
       <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
-          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+          <!-- Populated from the real window.flowApi.me ({username, role}) once
+               window.flowApi.ready resolves — see the script below. Neutral
+               placeholder until then; never a fabricated name. -->
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">··</span> <span id="accountName">…</span>
         </button>
         <div class="menu" id="accountMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
@@ -261,6 +266,7 @@
     <a href="t3-scripture.html">Scripture</a>
     <a href="t4-align.html" aria-current="page">Align</a>
     <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html">Words</a>
     <a href="index.html">Hub ↗</a>
   </nav>
 
@@ -372,9 +378,11 @@
   <div class="dlg-backdrop" id="sbsBackdrop" hidden>
     <div class="dlg-full" role="dialog" aria-modal="true" aria-labelledby="sbsTitle">
       <div class="dlg-top">
-        <button type="button" class="iconbtn" id="sbsPrevBtn" aria-label="Previous verse" style="width:28px;height:28px;">‹</button>
+        <!-- sbsPrevBtn/sbsNextBtn removed: wiring cross-verse nav here would need to
+             re-derive the whole align screen's state (drag cards, tap state,
+             suggestions) for the new verse, which is out of scope for this dialog —
+             a dead control was worse than no control. Use the main verse nav instead. -->
         <h2 id="sbsTitle">ZEC 1:8 — ULT + UST side-by-side</h2>
-        <button type="button" class="iconbtn" id="sbsNextBtn" aria-label="Next verse" style="width:28px;height:28px;">›</button>
         <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:5px;">
           <input type="checkbox" id="hebrewInfoToggle" /> Hebrew info
         </label>
@@ -386,22 +394,30 @@
           <div class="sbs-col">
             <h3>ULT → GLT</h3>
             <div class="rl-actions">
-              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" id="sbsSaveLitBtn" disabled
+                data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
               <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
             </div>
-            <div class="reading-line" contenteditable="true" id="litReadingLine">En el mes octavo, en el segundo año de Darío…</div>
+            <!-- Populated from the real ULT plain_text for CTX.verse by renderSbs()
+                 below, or an honest unavailable message when the ULT lane is
+                 quarantined — never fixture text. -->
+            <div class="reading-line" contenteditable="true" id="litReadingLine"></div>
             <p style="font-size:12px;color:var(--ink-2);margin:0 0 8px;">Alignment canvas (ULT) — same card grid as the main view, omitted here for brevity.</p>
           </div>
           <div class="sbs-col">
             <h3>UST → GST</h3>
             <div class="rl-actions">
-              <button type="button" data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" id="sbsSaveSimBtn" disabled
+                data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
               <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
             </div>
-            <div class="reading-line locked" id="simReadingLine" title="Locked while the UST alignment panel has unsaved drags">Durante la noche tuve una visión…</div>
+            <!-- Populated from the real UST plain_text for CTX.verse by renderSbs()
+                 below, or an honest unavailable message — never fixture text. -->
+            <div class="reading-line locked" id="simReadingLine"></div>
             <p style="font-size:12px;color:var(--ink-2);margin:0 0 8px;">Reading-line text is locked while this side's alignment has unsaved drags.</p>
           </div>
         </div>
+        <p class="canvas-note" id="sbsSaveDisabledNote">Save line is disabled in this preview for the same reason as the main Align view: it cannot faithfully reconstruct a valid USFM <code>\zaln-s/\zaln-e</code> verseObjects tree from reading-line text, so saving would erase alignment.</p>
       </div>
     </div>
   </div>
@@ -422,6 +438,9 @@
     var CTX = { book: "ZEC", chapter: 1, verse: 8 };
     var chapterData = null;
     var ultAvailable = false;
+    var ultPlainText = null;
+    var ustAvailable = false;
+    var ustPlainText = null;
     var SOURCE_WORDS = []; // real UHB word list [{i,t,strong,occurrence}]
 
     // Real ULT \zaln alignment, flattened the same way as t6-words.html:
@@ -529,6 +548,12 @@
         SOURCE_WORDS = extractSourceWords(uhb);
         var ult = chapterData.verses && chapterData.verses.ULT && chapterData.verses.ULT[CTX.verse];
         ultAvailable = !!ult;
+        ultPlainText = ult ? (ult.plain_text || "") : null;
+        var ust = chapterData.verses && chapterData.verses.UST && chapterData.verses.UST[CTX.verse];
+        ustAvailable = !!ust;
+        ustPlainText = ust ? (ust.plain_text || "") : null;
+        updateSbsGate();
+        renderSbs();
         if (!ultAvailable) {
           // Verified live against this environment: chapters.ts omits a lane
           // entirely once scripture_lane_state.replacement_required = 1 (checked
@@ -557,6 +582,29 @@
       el("refPanel").innerHTML = '<p class="ref-panel-note">Same reason — no ULT alignment data to show.</p>';
     }
 
+    // Side-by-side dialog stays reachable only when there is real ULT content
+    // to show — opening it while ULT is quarantined would contradict the
+    // "nothing real to align" message shown on the main view.
+    function updateSbsGate() {
+      var btn = el("sbsBtn");
+      btn.disabled = !ultAvailable;
+      btn.title = ultAvailable ? "" : "ULT verse content is unavailable in this environment right now (lane quarantined) — nothing to show side-by-side.";
+    }
+
+    // Populates the side-by-side dialog from the real ULT/UST plain_text for
+    // CTX.verse (or an honest unavailable message per lane) — called whenever
+    // that data is (re)loaded, so the dialog is correct whether or not it is
+    // currently open.
+    function renderSbs() {
+      el("sbsTitle").textContent = CTX.book + " " + CTX.chapter + ":" + CTX.verse + " — ULT + UST side-by-side";
+      el("litReadingLine").textContent = ultAvailable
+        ? (ultPlainText || "(no ULT text for this verse)")
+        : "ULT verse content is unavailable in this environment right now (lane quarantined) — nothing real to show.";
+      el("simReadingLine").textContent = ustAvailable
+        ? (ustPlainText || "(no UST text for this verse)")
+        : "UST verse content is unavailable in this environment right now — nothing real to show.";
+    }
+
     function wireMenu(btnId, menuId) {
       var btn = el(btnId), menu = el(menuId);
       btn.addEventListener("click", function (ev) {
@@ -569,6 +617,16 @@
     wireMenu("accountBtn", "accountMenu");
     document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
 
+    // Real identity from window.flowApi.me ({userId, username, role}) once
+    // window.flowApi.ready resolves. The API returns only username + role —
+    // never a full name, so the label is the username as-is.
+    window.flowApi.ready.then(function (me) {
+      if (!me || !me.username) return;
+      el("accountAvatar").textContent = me.username.slice(0, 2).toUpperCase();
+      el("accountName").textContent = me.username;
+      if (me.role) el("accountBtn").title = "Role: " + me.role;
+    });
+
     ["colorsToggle", "hoverLinkToggle", "unalignedOnlyToggle"].forEach(function (id) {
       el(id).addEventListener("click", function () {
         var p = el(id).getAttribute("aria-pressed") === "true";
@@ -576,7 +634,10 @@
       });
     });
 
-    el("sbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = false; });
+    el("sbsBtn").addEventListener("click", function () {
+      if (el("sbsBtn").disabled) return;
+      el("sbsBackdrop").hidden = false;
+    });
     el("closeSbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = true; });
 
     /* =========================================================

@@ -257,7 +257,7 @@
         <p class="panel-sub" style="margin:0;">Bulk-draft a chapter's ULT/UST, translation notes, or translation questions. A run locks the chapter for editing while it's in progress.</p>
       </div>
       <span class="spacer"></span>
-      <button type="button" class="status-pill" id="statusPill">2 pipelines running</button>
+      <button type="button" class="status-pill" id="statusPill">Loading…</button>
     </div>
 
     <div class="banner-stack" id="bannerStack">
@@ -273,7 +273,7 @@
            is not real-time; observed lag is 5–8 minutes via the */5 poll cron. -->
       <div class="banner banner--ready" id="readyBanner" hidden>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
-        <span class="banner-msg">New AI drafts are ready for <strong>ZEC 6</strong>. Save your work, then refresh.</span>
+        <span class="banner-msg">New AI drafts are ready for <strong id="readyScope">ZEC 6</strong>. Save your work, then refresh.</span>
         <button type="button" class="btn btn-ghost banner-action" data-handle="local:refetch-chapter" data-bundle="K">Refresh</button>
       </div>
     </div>
@@ -282,7 +282,7 @@
       <div class="field">
         <label class="f-label" for="pickBook">Book</label>
         <select class="tselect" id="pickBook">
-          <option>ZEC</option><option>TIT</option><option>RUT</option><option>JON</option>
+          <option value="">Loading…</option>
         </select>
       </div>
       <div class="field">
@@ -383,7 +383,7 @@
         </div>
       </div>
       <div class="panel-foot">
-        <span class="foot-state" id="jobsFoot">3 jobs — 1 needs attention</span>
+        <span class="foot-state" id="jobsFoot">Loading…</span>
         <span class="spacer"></span>
         <button type="button" class="btn btn-ghost" data-handle="GET /api/pipelines" data-bundle="D">Refresh</button>
         <button type="button" class="btn btn-ghost" id="dismissAllBtn">Dismiss all</button>
@@ -593,9 +593,25 @@
       if (book && chapter) {
         window.flowApi.get("/api/pending-imports", { book: book, chapter: chapter }).then(function (res) {
           var readyBanner = document.getElementById("readyBanner");
+          document.getElementById("readyScope").textContent = scope;
           readyBanner.hidden = !(res.ok && res.data && res.data.items && res.data.items.length);
         });
       }
+    }
+
+    // Real book list — GET /api/books returns only books actually imported
+    // into this workspace (no hard-coded guess at what's available here).
+    function loadBooks() {
+      return window.flowApi.get("/api/books").then(function (res) {
+        var select = document.getElementById("pickBook");
+        var books = (res.ok && res.data && res.data.books) || [];
+        if (!books.length) {
+          select.innerHTML = '<option value="">No books imported</option>';
+          return;
+        }
+        select.innerHTML = books.map(function (b) { return "<option>" + esc(b.book) + "</option>"; }).join("");
+        updateBanners();
+      });
     }
 
     function loadJobs() {
@@ -813,6 +829,7 @@
     window.flowApi.ready.then(function () {
       checkAiAvailability();
       loadJobs();
+      loadBooks();
     });
   })();
   </script>

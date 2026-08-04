@@ -211,7 +211,10 @@
       <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
       <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
-          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+          <!-- Populated from the real window.flowApi.me ({username, role}) once
+               window.flowApi.ready resolves — see the script below. Neutral
+               placeholder until then; never a fabricated name. -->
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">··</span> <span id="accountName">…</span>
         </button>
         <div class="menu" id="accountMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
@@ -310,16 +313,12 @@
                 <input type="text" class="article-input" id="detailArticle" list="catalogList" aria-label="translationWords article id" data-handle="GET /api/catalogs" data-handle-manual data-bundle="F" />
                 <a href="t5-articles.html" class="read-article-link" id="readArticleLink">Read article →</a>
               </div>
-              <datalist id="catalogList">
-                <option value="kt/man"></option>
-                <option value="kt/prophet"></option>
-                <option value="kt/yahweh"></option>
-                <option value="other/horse"></option>
-                <option value="other/red"></option>
-                <option value="other/ride"></option>
-                <option value="kt/lord"></option>
-              </datalist>
+              <!-- Populated from the real GET /api/catalogs response by
+                   populateArticleDatalist() below; left empty until then —
+                   no baked-in fixture options. -->
+              <datalist id="catalogList"></datalist>
               <p class="gloss-caption" id="detailGloss"></p>
+              <p class="gloss-caption" id="catalogListStatus" style="font-style:italic;"></p>
             </div>
             <div class="field">
               <span class="field-label">In target (ULT)</span>
@@ -360,7 +359,7 @@
   <div class="sheet" id="linksSheet" hidden role="dialog" aria-modal="true" aria-labelledby="linksSheetTitle">
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="sheet-head">
-      <h2 id="linksSheetTitle">Word links — ZEC 1:8</h2>
+      <h2 id="linksSheetTitle">Word links</h2>
       <button type="button" class="close-x" id="closeLinksSheetBtn" aria-label="Close">✕</button>
     </div>
     <div class="sheet-body" id="linksSheetBody"></div>
@@ -374,11 +373,10 @@
       <h2 id="verseSheetTitle">This verse — read-only context</h2>
       <button type="button" class="close-x" id="closeVerseSheetBtn" aria-label="Close">✕</button>
     </div>
-    <div class="sheet-body">
-      <div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p>
-        <p class="ctx-verse">In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah son of Berechiah son of Iddo, the prophet, saying, "I saw in the night, and behold, <mark>a man riding on a red horse</mark>, and he was standing among the myrtle trees that were in the ravine."</p></div>
-      <div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p>
-        <p class="ctx-verse">During the night I had a vision. I saw a man sitting on a red horse standing among some myrtle trees in a small valley.</p></div>
+    <div class="sheet-body" id="verseSheetBody">
+      <!-- Populated from the real ULT/UST plain_text for CTX.verse by
+           renderVerseSheet() below, or an honest unavailable message per lane
+           — no client-side fixture data on this screen (see comment above). -->
     </div>
   </div>
 
@@ -407,7 +405,10 @@
     var SOURCE_WORDS = [];   // [{i, t, strong, occurrence}] parsed from the real UHB verse content
     var ultAvailable = false;
     var ultPlainText = null;
+    var ustAvailable = false;
+    var ustPlainText = null;
     var targetWordList = { words: [], groups: [] }; // real ULT \zaln alignment, flattened (see extractTargetWordList)
+    var verseNums = []; // sorted verse numbers > 0 present in this chapter (for prev/next nav)
 
     var cur = 0;
     var unsaved = {};
@@ -525,6 +526,58 @@
 
     function refRawFor() { return CTX.chapter + ":" + CTX.verse; }
 
+    // Derives every per-verse piece of state (SOURCE_WORDS, ULT/UST
+    // availability + plain text, target word list, twl LINKS) from the
+    // already-loaded chapterData for the current CTX.verse. Used both on
+    // initial load and by goVerse() below, which changes CTX.verse without
+    // refetching the (already in-hand) chapter.
+    function deriveForVerse() {
+      var uhb = chapterData.verses && chapterData.verses.UHB && chapterData.verses.UHB[CTX.verse];
+      SOURCE_WORDS = extractSourceWords(uhb);
+
+      var ult = chapterData.verses && chapterData.verses.ULT && chapterData.verses.ULT[CTX.verse];
+      ultAvailable = !!ult;
+      if (ult) {
+        ultPlainText = ult.plain_text || "";
+        targetWordList = extractTargetWordList(ult);
+      } else {
+        // Verified against this environment's live chapters.ts: a lane with
+        // scripture_lane_state.replacement_required = 1 is omitted from
+        // `verses` entirely (chapters.ts "Filter by active generation per
+        // lane; replacement_required lanes are omitted"). Confirmed via
+        // `wrangler d1 execute ... SELECT ... FROM scripture_lane_state`
+        // showing lit.replacement_required = 1 on this deployment. This is a
+        // real, current backend state — not a fixture gap — so every
+        // ULT-dependent feature below degrades honestly instead of guessing.
+        ultPlainText = null;
+        targetWordList = { words: [], groups: [] };
+      }
+
+      var ust = chapterData.verses && chapterData.verses.UST && chapterData.verses.UST[CTX.verse];
+      ustAvailable = !!ust;
+      ustPlainText = ust ? (ust.plain_text || "") : null;
+
+      LINKS = (chapterData.twl || [])
+        .filter(function (r) { return r.verse === CTX.verse; })
+        .sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); })
+        .map(function (r) {
+          return { id: r.id, quote: r.orig_words || "", occurrence: r.occurrence || 1, article: twLinkToId(r.tw_link), ref_raw: r.ref_raw, tags: r.tags, version: r.version };
+        });
+      cur = 0;
+    }
+
+    function fetchSuggestions() {
+      return window.flowApi.get("/api/twl-suggestions/" + CTX.book + "/" + CTX.chapter + "/" + CTX.verse).then(function (res) {
+        SUGGESTIONS = (res && res.ok && res.data && Array.isArray(res.data.suggestions)) ? res.data.suggestions : [];
+      });
+    }
+
+    function renderRefBig() {
+      var ref = CTX.book + " " + CTX.chapter + ":" + CTX.verse;
+      el("refBig").textContent = ref;
+      el("linksSheetTitle").textContent = "Word links — " + ref;
+    }
+
     // ---------- load real data ----------
     function loadReal() {
       return window.flowApi.ready.then(function () {
@@ -536,53 +589,77 @@
           return;
         }
         chapterData = res.data;
-        var uhb = chapterData.verses && chapterData.verses.UHB && chapterData.verses.UHB[CTX.verse];
-        SOURCE_WORDS = extractSourceWords(uhb);
-
-        var ult = chapterData.verses && chapterData.verses.ULT && chapterData.verses.ULT[CTX.verse];
-        ultAvailable = !!ult;
-        if (ult) {
-          ultPlainText = ult.plain_text || "";
-          targetWordList = extractTargetWordList(ult);
-        } else {
-          // Verified against this environment's live chapters.ts: a lane with
-          // scripture_lane_state.replacement_required = 1 is omitted from
-          // `verses` entirely (chapters.ts "Filter by active generation per
-          // lane; replacement_required lanes are omitted"). Confirmed via
-          // `wrangler d1 execute ... SELECT ... FROM scripture_lane_state`
-          // showing lit.replacement_required = 1 on this deployment. This is a
-          // real, current backend state — not a fixture gap — so every
-          // ULT-dependent feature below degrades honestly instead of guessing.
-          ultPlainText = null;
-          targetWordList = { words: [], groups: [] };
-        }
-
-        LINKS = (chapterData.twl || [])
-          .filter(function (r) { return r.verse === CTX.verse; })
-          .sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); })
-          .map(function (r) {
-            return { id: r.id, quote: r.orig_words || "", occurrence: r.occurrence || 1, article: twLinkToId(r.tw_link), ref_raw: r.ref_raw, tags: r.tags, version: r.version };
-          });
-        cur = 0;
+        // Verse-nav range: same "sorted verse numbers present in this chapter"
+        // approach as t3-scripture.html's goVerse — UHB is present even when a
+        // target lane is quarantined, so it anchors the real range.
+        var refVerses = (chapterData.verses && (chapterData.verses.UHB || chapterData.verses.ULT)) || {};
+        verseNums = Object.keys(refVerses)
+          .map(Number)
+          .filter(function (n) { return n > 0; })
+          .sort(function (a, b) { return a - b; });
+        if (verseNums.length && verseNums.indexOf(CTX.verse) === -1) CTX.verse = verseNums[0];
+        deriveForVerse();
       }).then(function () {
-        return window.flowApi.get("/api/twl-suggestions/" + CTX.book + "/" + CTX.chapter + "/" + CTX.verse);
-      }).then(function (res) {
-        SUGGESTIONS = (res && res.ok && res.data && Array.isArray(res.data.suggestions)) ? res.data.suggestions : [];
+        return fetchSuggestions();
       }).then(function () {
         renderOlStrip();
         populateArticleDatalist();
+        renderRefBig();
         render();
+      });
+    }
+
+    // Re-derives and re-renders the whole verse-scoped view for CTX.verse
+    // using the chapter data already in hand (no refetch) — real navigation,
+    // not a "local nav" toast over an unchanged verse.
+    function goVerse(delta) {
+      if (!verseNums.length) { toast("No verse range loaded yet", { bundle: "F" }); return; }
+      var idx = verseNums.indexOf(CTX.verse);
+      if (idx === -1) idx = 0;
+      idx = Math.max(0, Math.min(verseNums.length - 1, idx + delta));
+      if (verseNums[idx] === CTX.verse) return;
+      CTX.verse = verseNums[idx];
+      window.flowShell.setContext({ book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, bibleVersion: "ULT" });
+      deriveForVerse();
+      fetchSuggestions().then(function () {
+        renderOlStrip();
+        renderRefBig();
+        render();
+        if (!el("verseSheet").hidden) renderVerseSheet();
       });
     }
 
     function populateArticleDatalist() {
       window.flowApi.get("/api/catalogs").then(function (res) {
-        if (!res.ok || !res.data || !Array.isArray(res.data.twLinks)) return;
         var dl = el("catalogList");
+        var status = el("catalogListStatus");
+        if (!res.ok || !res.data || !Array.isArray(res.data.twLinks)) {
+          dl.innerHTML = "";
+          status.textContent = "Could not load the tW catalog (" + res.status + " " + (res.error || "unknown") + ") — no autocomplete options available.";
+          return;
+        }
+        status.textContent = res.data.twLinks.length ? "" : "The tW catalog is empty in this environment — no autocomplete options available.";
         dl.innerHTML = res.data.twLinks.map(function (link) {
           return '<option value="' + escapeHtml(twLinkToId(link)) + '"></option>';
         }).join("");
       });
+    }
+
+    // Populates the mobile "This verse" context sheet from the real ULT/UST
+    // plain_text for CTX.verse, or an honest unavailable message per lane —
+    // there is no client-side fixture data on this screen.
+    function renderVerseSheet() {
+      el("verseSheetBody").innerHTML =
+        '<div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p><p class="ctx-verse">' +
+        (ultAvailable
+          ? escapeHtml(ultPlainText || "(no ULT text for this verse)")
+          : '<em>ULT verse content is unavailable in this environment right now (lane quarantined) — nothing real to show.</em>') +
+        '</p></div>' +
+        '<div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p><p class="ctx-verse">' +
+        (ustAvailable
+          ? escapeHtml(ustPlainText || "(no UST text for this verse)")
+          : '<em>UST verse content is unavailable in this environment right now — nothing real to show.</em>') +
+        '</p></div>';
     }
 
     function tally() {
@@ -971,12 +1048,12 @@
     el("closeLinksSheetBtn").addEventListener("click", function () { el("linksSheetBackdrop").hidden = true; el("linksSheet").hidden = true; });
     el("linksSheetBackdrop").addEventListener("click", function () { el("linksSheetBackdrop").hidden = true; el("linksSheet").hidden = true; });
 
-    el("openVerseSheetBtn").addEventListener("click", function () { el("verseSheetBackdrop").hidden = false; el("verseSheet").hidden = false; });
+    el("openVerseSheetBtn").addEventListener("click", function () { renderVerseSheet(); el("verseSheetBackdrop").hidden = false; el("verseSheet").hidden = false; });
     el("closeVerseSheetBtn").addEventListener("click", function () { el("verseSheetBackdrop").hidden = true; el("verseSheet").hidden = true; });
     el("verseSheetBackdrop").addEventListener("click", function () { el("verseSheetBackdrop").hidden = true; el("verseSheet").hidden = true; });
 
-    el("prevVerseBtn").addEventListener("click", function () { toast("Loading previous verse (local nav)", { bundle: "F" }); });
-    el("nextVerseBtn").addEventListener("click", function () { toast("Loading next verse (local nav)", { bundle: "F" }); });
+    el("prevVerseBtn").addEventListener("click", function () { goVerse(-1); });
+    el("nextVerseBtn").addEventListener("click", function () { goVerse(1); });
 
     // K.4 original-language reference — tap a source word for a lexicon
     // popover. Real GET /api/lexicon/:strong per word's real Strong's number
@@ -1051,6 +1128,16 @@
         var unlinkedN = (res.data.unlinked || []).length, deletedN = (res.data.deleted || []).length;
         toast("Deny-lists loaded — " + unlinkedN + " unlinked, " + deletedN + " deleted for " + CTX.book + " (filtering by these is not yet wired into this preview's rendering)", { bundle: "D" });
       });
+    });
+
+    // Real identity from window.flowApi.me ({userId, username, role}) once
+    // window.flowApi.ready resolves. The API returns only username + role —
+    // never a full name, so the label is the username as-is.
+    window.flowApi.ready.then(function (me) {
+      if (!me || !me.username) return;
+      el("accountAvatar").textContent = me.username.slice(0, 2).toUpperCase();
+      el("accountName").textContent = me.username;
+      if (me.role) el("accountBtn").title = "Role: " + me.role;
     });
 
     // account menu

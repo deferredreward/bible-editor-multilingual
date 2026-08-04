@@ -115,7 +115,9 @@
       if (typeof derr === "string" && /_disabled$/.test(derr)) return "feature_disabled";
     }
     if (status >= 500) return "server_error";
-    return "conflict";
+    // Catch-all must not be "conflict": 405/413/415/422/429 are not conflicts,
+    // and a rate limit reading as a merge conflict would be actively wrong.
+    return "error";
   }
 
   // ---- refresh coalescing -----------------------------------------------
@@ -273,6 +275,29 @@
                   adoptWorkspace(body.expected)
                 ) {
                   return doFetch(true);
+                }
+                // csrf_mismatch is recoverable, not fatal: the be_csrf cookie
+                // expired or was cleared while the session itself is still
+                // valid. A refresh re-mints it, so the retry reads a fresh
+                // value. Mirrors web/src/sync/api.ts's 403 branch — without
+                // this, every write hard-fails and screens render an expired
+                // cookie as a permissions problem.
+                if (
+                  res.status === 403 &&
+                  body &&
+                  body.error === "csrf_mismatch" &&
+                  !retriedAfterRefresh
+                ) {
+                  return refreshAuthOnce().then(function (refreshed) {
+                    if (refreshed) return doFetch(true);
+                    return {
+                      ok: false,
+                      status: res.status,
+                      error: body.error,
+                      body: body,
+                      kind: classify(res.status, body),
+                    };
+                  });
                 }
                 return {
                   ok: false,

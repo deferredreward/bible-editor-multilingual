@@ -22,6 +22,7 @@
   .cluster-btn:hover { border-color: var(--inspire); }
   .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
   .menu[hidden] { display: none; }
+  .menu .menu-head { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); padding: 7px 9px 4px; margin: 0; }
   .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
   .menu button:hover { background: var(--card-2); }
 
@@ -139,9 +140,10 @@
       <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
       <span class="cluster-item">
         <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
-          <span class="avatar" style="width:20px;height:20px;font-size:10px;">AR</span> Ana
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">…</span> <span id="accountName">…</span>
         </button>
         <div class="menu" id="accountMenu" role="menu" hidden>
+          <p class="menu-head" id="accountMenuHead">…</p>
           <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
           <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
           <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
@@ -230,6 +232,16 @@
     "use strict";
     function el(id) { return document.getElementById(id); }
     function toast(t, o) { window.flowShell.toast(t, o); }
+
+    // Real identity from GET /api/auth/me — no invented full name (the API
+    // only returns username + role), and no invented role either (this menu
+    // used to say "editor" even when the real session was "admin").
+    function renderAccount(me) {
+      var initials = me && me.username ? me.username.slice(0, 2).toUpperCase() : "…";
+      el("accountAvatar").textContent = initials;
+      el("accountName").textContent = (me && me.username) || "…";
+      el("accountMenuHead").textContent = me ? (me.username + " · " + (me.role || "unknown role")) : "…";
+    }
     function escapeHtml(str) {
       return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
         return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
@@ -379,7 +391,7 @@
           '<h2>' + escapeHtml(PART_LABEL[partName] || partName) + '</h2>' +
           (isDirty ? '<span class="part-dirty" title="Unsaved changes in this part" aria-hidden="true"></span>' : '') +
           '<span class="spacer"></span>' +
-          '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates) — not wired in this preview">✨ Draft with AI</button>' +
+          '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates) — real request; returns 503 if AI is not configured in this environment">✨ Draft with AI</button>' +
           '<button type="button" class="preview-toggle" data-part="' + escapeHtml(partName) + '" aria-pressed="' + (partView[partName] === "preview" ? "true" : "false") + '">' + (partView[partName] === "preview" ? "Edit" : "Preview") + '</button>';
         block.appendChild(head);
 
@@ -549,7 +561,8 @@
 
     el("segTw").setAttribute("aria-pressed", "false");
     el("segTa").setAttribute("aria-pressed", "true");
-    window.flowApi.ready.then(function () {
+    window.flowApi.ready.then(function (me) {
+      renderAccount(me);
       window.flowShell.setContext({ book: CTX.book });
       el("articlesLayout").setAttribute("data-view", "list");
       loadList();

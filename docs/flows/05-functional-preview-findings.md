@@ -67,8 +67,15 @@ echo the CSRF cookie into an `X-CSRF-Token` header, and every request must carry
 An audit of every `data-handle` in the 13 screens against the route table in
 `api/src/**` produced a genuinely good result for the design branch:
 
-> **All 85 distinct `METHOD /api/path` handles resolve to a real, registered
+> **Every distinct `METHOD /api/path` handle resolves to a real, registered
 > route.** Zero invented paths, zero wrong methods, zero missing endpoints.
+
+The count moved during this work and is worth stating precisely rather than
+quoting a stale number. The *pre-wiring* tree carried **85** distinct API
+handles; wiring the screens replaced many of them with direct `flowApi` calls,
+so the tree now carries **55**. An independent review caught an earlier draft of
+this document quoting 85 after the commit that reduced it — the substance held,
+the number did not.
 
 That is the design branch's rule — *"handles must be copied from the registry, never
 invented"* — holding up under verification.
@@ -409,7 +416,7 @@ request, no double-fire.
 
 | Screen | Verified behaviour |
 |---|---|
-| `t1-home` | Real book/chapter counts from `GET /api/chapters/ZEC` (15 chapters, 653 tn / 133 tq); real pipeline pill; honest "unknown" for the context-pack chip |
+| `t1-home` | Real book/chapter counts from `GET /api/chapters/ZEC` (653 tn / 134 tq book-wide); real pipeline pill; honest "unknown" for the context-pack chip. Note the API returns **15** chapter entries for a 14-chapter book — it includes a chapter-0 front-matter row, so a naive "15 chapters" label reads as wrong |
 | `t2-review` | 59 real notes + real questions for ZEC 1; real Save (200), real stale-Save (409 + merge), real Delete, real Preserve, real reorder |
 | `t3-scripture` | Real UHB/ULT/UST panes (verified rendering ZEC 1:8 in all three); real verse-done + lane checkboxes (200); real verse save |
 | `t4-align` | Real words from UHB/ULT; real `align/suggest` (genuinely empty here); **save deliberately disabled** — see 4.8 |
@@ -666,5 +673,125 @@ issue, not a one-off: the shared account cluster cannot shrink
 overflows. `t1-home` was simply the first to cross the line. Related to 4.4 — the
 cluster's CSS is duplicated per screen, so there is no single place to fix its
 narrow-width behaviour.
+
+---
+
+## 5. What two independent reviews found that the drive did not
+
+This section exists because the answer is uncomfortable and useful.
+
+The browser drive in §3 verified **layout, console cleanliness, and network
+behaviour** across 42 probes. It never systematically asked the one question that
+mattered most: **"is this value on screen actually real?"** Two independent cold
+reviews asked it, and found a great deal that 42 green probes had walked straight
+past. Every finding below was confirmed and fixed.
+
+### 5.1 The one that mattered: `t3-scripture` Save destroyed word alignment
+
+The verse Save built its body as:
+
+```js
+content: { verseObjects: [{ type: "text", text: value }] }
+```
+
+That is whole-verse flattening — the real tree of nested `\zaln` alignment
+milestones and `\w` word nodes replaced by a single text node. Every alignment on
+the verse, gone.
+
+**The server could not stop it.** `guardBlocksSave` (`api/src/alignmentDelta.ts`)
+only blocks when `unexpectedLosses.length > 0`, and losses are computed only for
+words that *survive* the edit. When the "after" side contains zero `\w` nodes,
+every word short-circuits and **total annihilation reports as zero losses**.
+
+It had already happened. The reviewer found the receipt in the running database's
+own audit trail: `edit_log` id 1458, `row_key ZEC/1/8/ULT`, `prev_version 1 →
+new_version 2`, payload `verseObjects` = one text node, server-recorded delta
+`{"beforeAligned":38,"afterAligned":0,"unexpectedLosses":[]}`. **38 aligned words
+→ 0, accepted with a 200.**
+
+Two things make this worth dwelling on:
+
+1. **§3.3 of this very document reported that write as a success** ("Verse write,
+   both headers → 200, v1 → v2"). The drive's own probe passed the *real* verse
+   tree back to the server, so it never exercised the payload the button actually
+   sends. A green test can be green for the wrong reason.
+2. **It contradicted our own stated reasoning.** §4.8 disabled `t4-align`'s save
+   precisely because "writing a plausible-but-wrong tree would be the single most
+   harmful thing this preview could do" — while `t3` was doing exactly that.
+
+**Fixed:** the flattening body construction is removed entirely and both verse
+Save buttons are `disabled` with a visible reason, matching `t4`.
+
+**Escalated for the real app:** `analyzeAlignmentDelta`'s empty-after hole is not
+a preview bug. *Any* edit path that empties the word set escapes the guard. Worth
+checking whether it is reachable from the production editor.
+
+### 5.2 Fabricated content presented as real
+
+| What | Where | Fixed by |
+|---|---|---|
+| Signed-in user "Ana Ruiz · editor" (real session is `dev`/`admin` — the **role** was wrong too) | 6 translator screens | driving the cluster from `flowApi.me` |
+| "Replaced 4 of 4 matches across 3 verses" with **no network call at all** | `t3` find/replace | a real client-side scan; Apply disabled (no such endpoint exists) |
+| Hard-coded Spanish scripture, plus two **live** Save buttons firing `PATCH {}` | `t4` side-by-side | real ULT/UST text; saves disabled; dialog gated when ULT is unavailable |
+| Mock ULT/UST verse text with a fabricated alignment highlight | `t6` mobile sheet | real verse text per lane |
+| An entire "Examples" section, incl. "142 validated examples feeding the pack" | `l2` | real `GET /api/translation-memory/examples`, honest empty state |
+| Invented template `figs-metaphor` shown in state `edited` whenever the load failed | `l3` | explicit empty/error state |
+| "New AI drafts ready for **ZEC 6**" on a real trigger, never rewritten | `l1` | text built from the real book/chapter |
+| "AI notes run in progress for **ZEC 5** — started **4 min ago**" on a genuine 409 | `t2` lock banner | built from the real `chapter_locked` payload |
+| Baked tW catalog options surviving a failed fetch | `t6` datalist | removed; honest failure state |
+| Hard-coded 4-book picker (3 not imported) | `l1` | real `GET /api/books` |
+| "Chapter copied to clipboard" with no clipboard call | `t3` | real `navigator.clipboard`, honest failure |
+| Hub still claiming "Nothing here calls the network" | `index` | rewritten |
+
+### 5.3 "Demo: 409 conflict" was silently saving
+
+`t2`'s conflict trigger used `ifMatch: Math.max(1, item.version - 1)`. On a fresh
+seed **every row is at version 1**, so `Math.max(1, 0) = 1` — the *current*
+version. The PATCH therefore **succeeded and committed the textarea contents**,
+on a button labelled "Demo".
+
+The §4.7 verification was real, but it ran against a row that had reached v6
+through earlier testing — which is exactly why it looked correct. Now sends
+`version + 1`, which can never match; verified to 409 with the row's version and
+content unchanged.
+
+### 5.4 Defects in the preview's own API layer
+
+- **Missing `csrf_mismatch` recovery.** `web/src/sync/api.ts` treats a
+  `403 csrf_mismatch` as recoverable (refresh re-mints `be_csrf`, retry once).
+  `_api.js` classified it as plain `forbidden`, so an expired CSRF cookie would
+  hard-fail every write and render as a permissions problem. Now mirrored.
+- **Fabricated `X-Source-Generation`.** The shell defaulted the header to a
+  literal `1`. That header exists so a client can *prove* which generation it
+  loaded; defaulting manufactures the proof, and on any deployment whose active
+  generation is 1 the gate would silently pass for a client that never read the
+  row. Now omitted when unknown, so the server answers `428` — failing closed is
+  the entire point of the header.
+- **`classify()` catch-all was `"conflict"`**, so a `429` rate limit would read as
+  a merge conflict. Now `"error"`.
+
+### 5.5 Confirmed correct under review
+
+Stated because a review that only lists faults is not a useful record. Verified by
+the reviewer against the API source: header discipline (including `If-Match: 0`
+surviving, which the first prefs write depends on); exact 409 classification
+against the server's literals; `428` classified *before* the 409 branch and
+branched on separately by consuming screens; the 401 retry bounded at one; the
+`workspace_mismatch` retry bounded by the same flag (max depth 2, with
+`adoptWorkspace` short-circuiting the retry rather than arming it); CSRF sent on
+writes only and correctly omitted for the exempt auth paths; no HTTP status
+causing a throw; **no blur-save or autosave anywhere**; and **no side-effectful
+call on any screen's load path**.
+
+### 5.6 Final verification after the fixes
+
+The full sweep was re-run, with an added regression scan for every fabricated
+literal listed in 5.2:
+
+| Width | Result |
+|---|---|
+| 375 | 14/14 — no h-scroll, no JS errors, no fabricated literals |
+| 768 | 14/14 |
+| 1280 | 14/14 |
 
 *(End of design findings.)*
