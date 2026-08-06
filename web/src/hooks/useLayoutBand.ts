@@ -4,10 +4,6 @@ import type { LayoutBand } from "../lib/layoutBands";
 
 export interface UseLayoutBandResult {
   band: LayoutBand;
-  isPhone: boolean;
-  isTablet: boolean;
-  isDesktop: boolean;
-  isWide: boolean;
 }
 
 // The reactive, SSR-safe read of the current layout band. Built on MUI's
@@ -23,18 +19,8 @@ export function useLayoutBand(): UseLayoutBandResult {
   // "desktop" band: at or above the md breakpoint, which is deliberately
   // reused as the desktop boundary (900px) — see theme.ts's comment.
   const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
-  // >= 820px, independent of the phone/tablet/desktop band — used by callers
-  // that want a finer-grained "is there enough width for one more thing"
-  // signal within the tablet band.
-  const isWide = useMediaQuery(theme.breakpoints.up("wide"));
 
   const band: LayoutBand = isPhone ? "phone" : isDesktop ? "desktop" : "tablet";
 
-  return {
-    band,
-    isPhone: band === "phone",
-    isTablet: band === "tablet",
-    isDesktop: band === "desktop",
-    isWide,
-  };
+  return { band };
 }

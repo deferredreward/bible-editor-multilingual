@@ -2,13 +2,13 @@
 // is what makes it unit-testable without a browser (see layoutBands.test.mjs).
 //
 // The project has three real layout bands: phone (<560), tablet (560-899),
-// desktop (>=900). These mirror theme.ts's `tablet` / `md` breakpoint keys
-// (kept in sync manually — theme.ts is the MUI-facing copy, this module is the
-// DOM-free copy consumed by pure code and tests).
+// desktop (>=900). theme.ts imports BAND_PX from here and uses it for its
+// `tablet` / `md` breakpoint values, so there is exactly one source of truth
+// for the thresholds — see theme.ts's comment.
 
 export type LayoutBand = "phone" | "tablet" | "desktop";
 
-export const BAND_PX = { tablet: 560, wide: 820, desktop: 900 } as const;
+export const BAND_PX = { tablet: 560, desktop: 900 } as const;
 
 export function bandForWidth(width: number): LayoutBand {
   if (width < BAND_PX.tablet) return "phone";
@@ -48,29 +48,15 @@ export function resolveBandHidden(
   } else if (max === 1) {
     keepIndexes = [focusedIndex];
   } else {
-    // max === 2 on tablet today, but written generically: keep the focused
-    // region plus its following siblings, wrapping to preceding siblings when
-    // there aren't enough following ones (e.g. focus is last).
-    keepIndexes = [focusedIndex];
-    let next = focusedIndex + 1;
-    let prev = focusedIndex - 1;
-    while (keepIndexes.length < max && (next < regionIds.length || prev >= 0)) {
-      if (next < regionIds.length) {
-        keepIndexes.push(next);
-        next++;
-      } else if (prev >= 0) {
-        keepIndexes.push(prev);
-        prev--;
-      }
-    }
+    // max === 2 is the only case that reaches here (maxVisibleRegions never
+    // returns anything else besides 1 and Infinity, and Infinity took the
+    // `band === "desktop"` return above) — keep the focused region plus its
+    // following sibling, or its preceding sibling when focus is last.
+    const next = focusedIndex + 1;
+    keepIndexes =
+      next < regionIds.length ? [focusedIndex, next] : [focusedIndex, focusedIndex - 1];
   }
 
   const keep = new Set(keepIndexes);
-  // Safety valve: never hide every region. If the computation somehow kept
-  // none (shouldn't happen given the guards above, but this is the backstop
-  // mirrored from layoutTree.resolveHidden's blank-workspace guard), keep the
-  // first region.
-  if (keep.size === 0) keep.add(0);
-
   return regionIds.filter((_, i) => !keep.has(i));
 }

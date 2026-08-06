@@ -604,10 +604,27 @@ export function Shell({
   // band-hidden ids agree with what's actually on screen; recomputed here
   // (rather than reusing the `effRoot` computed later) because this must live
   // above the `if (!data)` early return, same reason as `layoutOverride`.
-  const bandHiddenRegionIds = useMemo(() => {
+  //
+  // CRITICAL: resolveBandHidden is fed ONLY the OPEN regions (`openRegionIds`
+  // below), never every region in the tree. Feeding it every region ignores
+  // which ones the user already closed, and the union of user-closed ids and
+  // band-hidden-over-ALL-regions ids can cover every region that exists —
+  // renderNode's `visible.length === 0` guard then returns null and the whole
+  // workspace goes blank. It also means the band wastes a visible slot on a
+  // region that's already closed, and the switcher can point a tab at one.
+  // `openRegionIds` is also what the switcher's tab strip uses (via
+  // `bandRegions` below) — closed regions are restored through the separate
+  // closed-region reopen strip, not the switcher.
+  const { openRegionIds, bandHiddenRegionIds } = useMemo(() => {
     const rootForBand = effectiveRoot(activeLayout, layoutOverride);
-    const regionIds = collectRegions(rootForBand).map((r) => r.id);
-    return resolveBandHidden(regionIds, band, focusedRegionId);
+    const resolvedHidden = resolveHidden(rootForBand, layoutOverride?.hidden);
+    const openIds = collectRegions(rootForBand)
+      .map((r) => r.id)
+      .filter((id) => !resolvedHidden[id]);
+    return {
+      openRegionIds: openIds,
+      bandHiddenRegionIds: resolveBandHidden(openIds, band, focusedRegionId),
+    };
   }, [activeLayout, layoutOverride, band, focusedRegionId]);
 
   // Toast state shared between the pipeline trigger menu and the status bar.
@@ -1836,6 +1853,16 @@ export function Shell({
     }
   }, []);
 
+  // Tapping a band-switcher tab unmounts the outgoing region exactly like
+  // setRegionHidden's close does (see its dirty-gate comment further down): an
+  // alignment panel's unsaved drags live only in component state and never
+  // reach the outbox, so switching the switcher's focus without this gate
+  // would silently drop them the same way an ungated close would.
+  const focusRegionWithGate = useCallback(
+    (id: string) => runWithDirtyGate(() => setFocusedRegionId(id)),
+    [runWithDirtyGate],
+  );
+
   const requestSelectVerse = useCallback(
     (v: number) => {
       runWithDirtyGate(() => {
@@ -2480,7 +2507,18 @@ export function Shell({
   // only mount in the data branch, so runWithDirtyGate would soft-lock.
   if (!data) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          // 100vh includes mobile browsers' retractable URL bar, so the
+          // status bar ends up under browser chrome. 100dvh (dynamic
+          // viewport height) excludes it; the plain 100vh above is the
+          // fallback for browsers that don't support dvh yet.
+          height: "100vh",
+          "@supports (height: 100dvh)": { height: "100dvh" },
+        }}
+      >
         <TopBar
           book={book}
           chapter={chapter}
@@ -3264,6 +3302,10 @@ export function Shell({
       }))
     : [];
 
+  // One id -> region lookup, built once, instead of re-walking the whole tree
+  // per id (collectRegions(effRoot).find(...) inside a .map was O(regions^2)).
+  const regionById = new Map(collectRegions(effRoot).map((r) => [r.id, r]));
+
   // Band-hidden regions, labeled the same way as `closedRegions` so
   // WorkspaceLayout's switcher can show a human name. This is the VIEWPORT
   // constraint (computed in the hook zone above from the same effective
@@ -3272,18 +3314,20 @@ export function Shell({
   // `hidden` override: shrinking the window must never permanently narrow
   // what comes back when the user widens it again.
   const bandHiddenRegions = bandHiddenRegionIds
-    .map((id) => collectRegions(effRoot).find((r) => r.id === id))
+    .map((id) => regionById.get(id))
     .filter((r): r is PanelRegion => !!r)
     .map((r) => ({ id: r.id, label: regionLabel(r) }));
 
-  // EVERY region in tree order, for the band switcher's tab strip. The switcher
-  // needs the full set, not just the hidden ones: a strip that lists only what
-  // is currently hidden is a tablist in which no tab is ever the current one,
-  // so it tells the user where they can go but never where they are.
-  const bandRegions = collectRegions(effRoot).map((r) => ({
-    id: r.id,
-    label: regionLabel(r),
-  }));
+  // The OPEN regions (not user-closed), in tree order, for the band switcher's
+  // tab strip. Deliberately `openRegionIds` (computed in the hook zone above)
+  // rather than every region in the tree — see the CRITICAL comment there:
+  // the switcher must never list a region the user has closed, since that
+  // region is band-hidden by construction (resolveBandHidden was fed only
+  // open ids) and a tab pointing at it would show nothing when tapped.
+  const bandRegions = openRegionIds
+    .map((id) => regionById.get(id))
+    .filter((r): r is PanelRegion => !!r)
+    .map((r) => ({ id: r.id, label: regionLabel(r) }));
 
   // Fresh out of the store for the same reason currentSizes is: setLayoutHidden
   // replaces the record wholesale, so seeding it from this render's closure could
@@ -3681,7 +3725,19 @@ export function Shell({
   };
 
   return (
-    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <Box
+      sx={{
+        // 100vh includes mobile browsers' retractable URL bar, so the status/
+        // sync bar ends up under browser chrome. 100dvh (dynamic viewport
+        // height) excludes it; the plain 100vh above is the fallback for
+        // browsers that don't support dvh yet.
+        height: "100vh",
+        "@supports (height: 100dvh)": { height: "100dvh" },
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
       <TopBar
         book={book}
         chapter={chapter}
@@ -3775,7 +3831,8 @@ export function Shell({
         bandRegions={bandRegions}
         bandHiddenRegions={bandHiddenRegions}
         focusedRegionId={focusedRegionId}
-        onFocusRegion={setFocusedRegionId}
+        onFocusRegion={focusRegionWithGate}
+        switcherLabel={t("layout.regionSwitcher")}
         railNode={
           <>
             <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">

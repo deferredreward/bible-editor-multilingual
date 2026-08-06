@@ -334,7 +334,14 @@ export function App() {
 
   if (auth.kind === "loading") {
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ height: "100vh" }} spacing={2}>
+      // 100dvh with a 100vh fallback — see the height comment on the main Shell
+      // Box further down; plain 100vh sits under mobile browsers' URL bar.
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ height: "100vh", "@supports (height: 100dvh)": { height: "100dvh" } }}
+        spacing={2}
+      >
         <CircularProgress />
         <Typography variant="body2" color="text.secondary">signing in…</Typography>
       </Stack>
@@ -351,7 +358,12 @@ export function App() {
       setAuth({ kind: "loading" });
     };
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ height: "100vh" }} spacing={2}>
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ height: "100vh", "@supports (height: 100dvh)": { height: "100dvh" } }}
+        spacing={2}
+      >
         <Typography variant="h6">
           {wasSignedOut ? "You're signed out" : "Sign in to continue"}
         </Typography>
@@ -373,7 +385,12 @@ export function App() {
   }
   if (auth.kind === "denied") {
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ height: "100vh", px: 4 }} spacing={2}>
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ height: "100vh", "@supports (height: 100dvh)": { height: "100dvh" }, px: 4 }}
+        spacing={2}
+      >
         <Typography variant="h6">Not authorized</Typography>
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 480 }}>
           {auth.username
@@ -436,7 +453,16 @@ export function App() {
   const isViewer = auth.kind === "ready" && auth.role === "viewer";
 
   return (
-    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+    <Box
+      sx={{
+        // 100dvh with a 100vh fallback — plain 100vh includes mobile browsers'
+        // retractable URL bar, so the bottom of the app sits under it.
+        height: "100vh",
+        "@supports (height: 100dvh)": { height: "100dvh" },
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <LocalizationInspector />
       {alerts.length > 0 && (
         // Float the alert stack so it doesn't push Shell down — the outer

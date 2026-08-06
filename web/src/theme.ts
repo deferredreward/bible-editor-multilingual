@@ -1,13 +1,13 @@
 import { createContext } from "react";
 import { createTheme, type Theme, type ThemeOptions } from "@mui/material/styles";
+import { BAND_PX } from "./lib/layoutBands";
 
-// Register the two custom breakpoint keys with MUI's types. The default five
+// Register the custom breakpoint key with MUI's types. The default five
 // (xs/sm/md/lg/xl) stay implicitly available — BreakpointOverrides only ADDS
 // keys, it does not replace the default set.
 declare module "@mui/material/styles" {
   interface BreakpointOverrides {
     tablet: true;
-    wide: true;
   }
 }
 
@@ -75,22 +75,24 @@ export type ThemeMode = "light" | "dark";
 // three real layout bands — phone (<560), tablet (560-899), desktop (>=900) —
 // but MUI's five default keys (xs/sm/md/lg/xl) are preserved here at their
 // EXACT default values so the ~7 files already using object-form `{xs, md}`
-// sx shorthand keep working unchanged. Two extra keys are inserted between the
-// defaults: `tablet: 560` is the phone/tablet boundary; `wide: 820` is an
-// intra-tablet threshold matching the container-width constant TopBar already
-// uses (a tablet viewport wide enough to show a bit more chrome before hitting
-// the desktop band). `md: 900` doubles as the desktop boundary, so no
-// duplicate-valued key is needed for "desktop". Keys must stay in ascending
-// value order — MUI derives `breakpoints.keys` from insertion order, and any
-// array-form responsive `sx` (e.g. `sx={{ p: [1, 2, 3] }}`) maps positionally
-// onto that key order. A repo-wide grep found none in web/src (only object-form
-// `{xs, md}` usage, which is unaffected by inserting keys) — see the Step 0
-// pre-check in the PR/commit that added this.
+// sx shorthand keep working unchanged. One extra key is inserted between the
+// defaults: `tablet` is the phone/tablet boundary. `md` doubles as the desktop
+// boundary, so no duplicate-valued key is needed for "desktop". Both values
+// come from `layoutBands.ts`'s `BAND_PX` — the one place the thresholds are
+// defined — rather than being repeated here, so this file and the actual band
+// resolution in `useLayoutBand` can never drift apart. Keys must stay in
+// ascending value order — MUI's `createBreakpoints` runs `sortBreakpointsValues`
+// and derives `breakpoints.keys` from ascending VALUE, not insertion order, but
+// any array-form responsive `sx` (e.g. `sx={{ p: [1, 2, 3] }}`) still maps
+// positionally onto that sorted key order, so an out-of-order insertion here
+// would silently repoint those. A repo-wide grep found none in web/src (only
+// object-form `{xs, md}` usage, which is unaffected by inserting keys) — see
+// the Step 0 pre-check in the PR/commit that added this.
 //
 // Defined ONCE and spread into both `lightTheme` and `darkTheme` below so the
 // two themes can never drift apart on breakpoint values.
 const breakpoints = {
-  values: { xs: 0, tablet: 560, sm: 600, wide: 820, md: 900, lg: 1200, xl: 1536 },
+  values: { xs: 0, tablet: BAND_PX.tablet, sm: 600, md: BAND_PX.desktop, lg: 1200, xl: 1536 },
 };
 
 const lightTheme = createTheme({

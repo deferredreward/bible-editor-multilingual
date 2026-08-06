@@ -28,28 +28,38 @@ const SWITCHER_MIN_TARGET_PX = 44;
 // below is in-flow: an overlay strip previously swallowed drag grips and drop
 // bands (see the comment further down where that strip is rendered).
 //
-// It lists EVERY region and marks the current one, rather than listing only what
-// the band has hidden. Two reasons. A strip of just-the-hidden regions is a
-// tablist in which no tab is ever selected, so it can say where you may go but
-// never where you are; and its contents reshuffle on every tap, since the region
-// you just left becomes the only thing listed.
+// It lists EVERY (open) region and marks the current one, rather than listing
+// only what the band has hidden. Two reasons. A strip of just-the-hidden
+// regions is a tablist in which no tab is ever selected, so it can say where
+// you may go but never where you are; and its contents reshuffle on every tap,
+// since the region you just left becomes the only thing listed.
 //
 // `selectedId` is the FOCUSED region, not "every visible region". On tablet two
 // regions are on screen but only one was chosen — the neighbour is along for the
 // ride because the band's window is two wide, so marking both selected would
 // overstate the user's intent.
+//
+// NOT a real ARIA tablist: there's no matching `tabpanel`, no roving tabindex,
+// and no arrow-key handling, so claiming `role="tablist"`/`role="tab"` would
+// promise keyboard behaviour (Left/Right arrow) that isn't implemented and a
+// screen reader user would hit a dead end on. `role="group"` + `aria-pressed`
+// describes what's actually here — a labeled group of toggle buttons — and
+// native <button> keeps Tab/Enter/Space working for free.
 function RegionSwitcher({
   regions,
   selectedId,
   onFocusRegion,
+  ariaLabel,
 }: {
   regions: { id: string; label: string }[];
   selectedId: string | null;
   onFocusRegion: (regionId: string) => void;
+  ariaLabel: string;
 }) {
   return (
     <Box
-      role="tablist"
+      role="group"
+      aria-label={ariaLabel}
       // Test handle, matching the `data-be-closed-strip` convention below: the
       // page has other MUI tablists (the resource column's tabs), so a probe
       // needs a way to name THIS one.
@@ -58,20 +68,26 @@ function RegionSwitcher({
         display: "flex",
         flexShrink: 0,
         width: "100%",
-        borderBlockEnd: "1px solid",
-        borderColor: "divider",
         bgcolor: "grey.50",
       }}
     >
       {regions.map((r) => {
         const selected = r.id === selectedId;
+        // A region's label is the concatenation of its panel titles, so a
+        // multi-panel region reads "translationNotes, translationWords,
+        // translationQuestions" — unreadable once truncated to one line in a
+        // ~187px phone-width slot. Show the first part plus a count of the
+        // rest ("translationNotes +2"); the full label still reaches
+        // assistive tech via aria-label below.
+        const parts = r.label.split(", ");
+        const shortLabel = parts.length > 1 ? `${parts[0]} +${parts.length - 1}` : r.label;
         return (
           <Button
             key={r.id}
-            role="tab"
-            aria-selected={selected}
-            // The visible label is truncated to one line (see below), so the
-            // full region name has to reach assistive tech some other way.
+            aria-pressed={selected}
+            // The visible label is truncated to one line (and, for multi-part
+            // labels, shortened to "first +N") so the full region name has to
+            // reach assistive tech some other way.
             aria-label={r.label}
             onClick={() => onFocusRegion(r.id)}
             sx={{
@@ -83,20 +99,22 @@ function RegionSwitcher({
               textTransform: "none",
               // Weight plus an inline-end-agnostic underline: the selected tab
               // has to survive a forced-colors / high-contrast mode where a
-              // background tint alone is dropped.
+              // background tint alone is dropped. This is the strip's ONLY
+              // border — the container itself has none — so the selected
+              // indicator lands directly on the divider line under the strip
+              // instead of a second border stacking on top of it.
               fontWeight: selected ? 600 : 400,
               color: selected ? "primary.main" : "text.secondary",
               bgcolor: selected ? "action.selected" : "transparent",
               borderBlockEnd: "2px solid",
-              borderColor: selected ? "primary.main" : "transparent",
+              borderColor: selected ? "primary.main" : "divider",
             }}
           >
-            {/* One line, ellipsised. A region's label is the concatenation of
-                its panel titles, so a multi-panel region reads
-                "translationNotes, translationWords, translationQuestions" —
-                which wrapped to three lines and made the strip 82px tall on a
-                375px phone, eating a tenth of the screen. The strip has to stay
-                chrome, not content. */}
+            {/* One line, ellipsised — the backstop for a single long part that
+                the "first +N" shortening above doesn't apply to. Wrapping to
+                three lines made the strip 82px tall at phone width, eating a
+                tenth of the screen; the strip has to stay chrome, not
+                content. */}
             <Box
               component="span"
               sx={{
@@ -106,7 +124,7 @@ function RegionSwitcher({
                 textOverflow: "ellipsis",
               }}
             >
-              {r.label}
+              {shortLabel}
             </Box>
           </Button>
         );
@@ -153,15 +171,21 @@ interface WorkspaceLayoutProps {
   // user's own intent, persisted to layoutStore): shrinking the window must
   // never permanently narrow what the user sees again after widening it.
   bandHiddenRegions: { id: string; label: string }[];
-  // EVERY region in tree order, for the switcher's tab strip. Distinct from
-  // `bandHiddenRegions` on purpose: the strip marks the current region, which
-  // it can only do if it knows about the visible ones too.
+  // Every OPEN region (not user-closed) in tree order, for the switcher's tab
+  // strip. Distinct from `bandHiddenRegions` on purpose: the strip marks the
+  // current region, which it can only do if it knows about the visible ones
+  // too. Deliberately excludes user-closed regions — see Shell's CRITICAL
+  // comment on `openRegionIds`: a tab pointing at a closed region would be a
+  // dead end, since resolveBandHidden was never fed that id in the first
+  // place and closing it is a completely separate action (the reopen strip).
   bandRegions: { id: string; label: string }[];
   // Which region the switcher keeps in view alongside its window neighbour
   // (tablet) or shows alone (phone). Null means "no explicit focus" — the
   // band-hiding logic then keeps the first region(s) in tree order.
   focusedRegionId: string | null;
   onFocusRegion: (regionId: string) => void;
+  // Accessible name for the switcher's group (Shell owns i18n).
+  switcherLabel: string;
 }
 
 const DIVIDER_PX = 8;
@@ -213,6 +237,7 @@ export function WorkspaceLayout({
   bandRegions,
   focusedRegionId,
   onFocusRegion,
+  switcherLabel,
 }: WorkspaceLayoutProps) {
   // The switcher only earns its place when the current band is actually
   // hiding something — desktop (and a spec with few enough regions) never
@@ -257,11 +282,21 @@ export function WorkspaceLayout({
   const handleLayoutChanged = useCallback(
     (layout: Layout, meta: LayoutChangedMeta) => {
       if (!meta.isUserInteraction) return;
+      // A band hiding a sibling from a 3+-child split leaves the survivors in
+      // their own Group, whose reported layout renormalizes to sum to 1 for
+      // JUST the survivors (same renormalization the render-time comment
+      // above the closed-region case describes). Persisting that here would
+      // silently rewrite the user's full-width desktop proportions from a
+      // resize-constrained view — a viewport constraint must never be able to
+      // overwrite the arrangement the user built at full width. Once the band
+      // stops hiding anything the Group reports the real, full sibling set
+      // again and resizes persist normally.
+      if (bandHiddenRegions.length > 0) return;
       const patch: Record<string, number> = {};
       for (const [id, pct] of Object.entries(layout)) patch[id] = pct / 100;
       onSizesChange(patch);
     },
-    [onSizesChange],
+    [onSizesChange, bandHiddenRegions],
   );
 
   // ── Classic: byte-identical to the Phase-2 flexbox arrangement. Kept as a
@@ -281,7 +316,14 @@ export function WorkspaceLayout({
     const showResources = !isPhone || focusedIsResources;
     return (
       <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-        {showRegionSwitcher && <RegionSwitcher regions={bandRegions} selectedId={switcherSelectedId} onFocusRegion={onFocusRegion} />}
+        {showRegionSwitcher && (
+          <RegionSwitcher
+            regions={bandRegions}
+            selectedId={switcherSelectedId}
+            onFocusRegion={onFocusRegion}
+            ariaLabel={switcherLabel}
+          />
+        )}
         <Box ref={splitContainerRef} sx={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
           {!railCollapsed && (
             <Box sx={{ width: railWidth, flexShrink: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -436,7 +478,14 @@ export function WorkspaceLayout({
 
   return (
     <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      {showRegionSwitcher && <RegionSwitcher regions={bandRegions} selectedId={switcherSelectedId} onFocusRegion={onFocusRegion} />}
+      {showRegionSwitcher && (
+        <RegionSwitcher
+          regions={bandRegions}
+          selectedId={switcherSelectedId}
+          onFocusRegion={onFocusRegion}
+          ariaLabel={switcherLabel}
+        />
+      )}
       <Box sx={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
         {spec.rail.visible && !railCollapsed && (
           <Box sx={{ width: railWidth, flexShrink: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>

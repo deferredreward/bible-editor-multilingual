@@ -72,7 +72,14 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, State> 
     if (!error) return this.props.children;
     const chunk = isChunkLoadError(error);
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ height: "100vh", px: 4 }} spacing={2}>
+      // 100dvh with a 100vh fallback — plain 100vh sits under mobile browsers'
+      // retractable URL bar (see Shell.tsx's height comment).
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ height: "100vh", "@supports (height: 100dvh)": { height: "100dvh" }, px: 4 }}
+        spacing={2}
+      >
         <Typography variant="h6">{chunk ? "Update needed" : "Something went wrong"}</Typography>
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 480 }}>
           {chunk

@@ -91,4 +91,10 @@ metrics via CDP and fires **no** `resize` and **no** `matchMedia` change events.
 behaviour looks broken when it isn't — it only updates after a reload. Use the
 chrome-devtools MCP `resize_page` instead: it resizes the real window and does
 fire both events. Its narrow floor is ~500px, which is still inside the phone
-band (<560), so the phone band is testable but 375 exactly is not.
+band (<560), so the phone band's static layout is testable there, but a LIVE
+transition through exactly 375px (resize-in-progress, not reload-at-width) is
+not — a code comment in `WorkspaceLayout.tsx` documents an 82px measurement
+taken at 375px separately, via a different browser surface's static layout,
+not through a live resize in this harness. The two are not in tension: one is
+"what does 375px look like", the other is "what happens while shrinking down
+to it live" — this harness only answers the second, and only down to ~500px.
