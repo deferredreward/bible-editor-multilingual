@@ -1,6 +1,16 @@
 import { createContext } from "react";
 import { createTheme, type Theme, type ThemeOptions } from "@mui/material/styles";
 
+// Register the two custom breakpoint keys with MUI's types. The default five
+// (xs/sm/md/lg/xl) stay implicitly available — BreakpointOverrides only ADDS
+// keys, it does not replace the default set.
+declare module "@mui/material/styles" {
+  interface BreakpointOverrides {
+    tablet: true;
+    wide: true;
+  }
+}
+
 // Scrollbar overrides apply globally via CssBaseline. We pick a thumb that
 // contrasts with the page background but stays subtle. Firefox uses the
 // standard `scrollbar-color` shorthand; Chromium/Safari need the webkit
@@ -61,7 +71,30 @@ function scrollbarComponents(track: string, thumb: string, thumbHover: string): 
 
 export type ThemeMode = "light" | "dark";
 
+// Responsive-layout breakpoints (adaptive workspace bands). The project has
+// three real layout bands — phone (<560), tablet (560-899), desktop (>=900) —
+// but MUI's five default keys (xs/sm/md/lg/xl) are preserved here at their
+// EXACT default values so the ~7 files already using object-form `{xs, md}`
+// sx shorthand keep working unchanged. Two extra keys are inserted between the
+// defaults: `tablet: 560` is the phone/tablet boundary; `wide: 820` is an
+// intra-tablet threshold matching the container-width constant TopBar already
+// uses (a tablet viewport wide enough to show a bit more chrome before hitting
+// the desktop band). `md: 900` doubles as the desktop boundary, so no
+// duplicate-valued key is needed for "desktop". Keys must stay in ascending
+// value order — MUI derives `breakpoints.keys` from insertion order, and any
+// array-form responsive `sx` (e.g. `sx={{ p: [1, 2, 3] }}`) maps positionally
+// onto that key order. A repo-wide grep found none in web/src (only object-form
+// `{xs, md}` usage, which is unaffected by inserting keys) — see the Step 0
+// pre-check in the PR/commit that added this.
+//
+// Defined ONCE and spread into both `lightTheme` and `darkTheme` below so the
+// two themes can never drift apart on breakpoint values.
+const breakpoints = {
+  values: { xs: 0, tablet: 560, sm: 600, wide: 820, md: 900, lg: 1200, xl: 1536 },
+};
+
 const lightTheme = createTheme({
+  breakpoints,
   palette: {
     mode: "light",
     primary: {
@@ -130,6 +163,7 @@ const lightTheme = createTheme({
 });
 
 const darkTheme = createTheme({
+  breakpoints,
   palette: {
     mode: "dark",
     primary: {

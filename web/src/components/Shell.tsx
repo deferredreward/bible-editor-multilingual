@@ -24,6 +24,7 @@ import { useLexicon } from "../hooks/useLexicon";
 import { useAiDrafts } from "../hooks/useAiDrafts";
 import { useTwlFilters } from "../hooks/useTwlFilters";
 import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
+import { useLayoutBand } from "../hooks/useLayoutBand";
 import { outbox } from "../sync/outbox";
 import { api, CHECK_LANES } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion, LaneReplacementEvent } from "../sync/api";
@@ -84,6 +85,7 @@ import {
   resolveHidden,
   type DropTarget,
 } from "../lib/layoutTree";
+import { resolveBandHidden } from "../lib/layoutBands";
 import {
   loadLayoutStore,
   mergeOverride,
@@ -458,9 +460,28 @@ export function Shell({
       return next;
     });
   }, []);
+  // Layout band (phone / tablet / desktop), driven by the theme's breakpoints
+  // (see theme.ts). This is the responsive-layout foundation: below desktop
+  // width, the workspace shows fewer regions at once instead of squeezing
+  // everything into unusable slivers — see the bandHiddenRegionIds useMemo
+  // below and WorkspaceLayout's region switcher.
+  const { band } = useLayoutBand();
+  // Which region the user is currently focused on for band-driven hiding.
+  // Render-time only — never persisted. Persisting this would mean shrinking
+  // the window could permanently narrow what's visible after resizing back up;
+  // it is a viewport constraint, not the user's own arrangement (that's
+  // `closedRegions` / layoutStore, a completely separate concept — see the
+  // CRITICAL note where bandHiddenRegionIds is passed to WorkspaceLayout).
+  const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null);
   // Rail width tracks the visible lane count (verse column + ~25px per lane),
   // floored so the "Board" button label stays readable. 0 when collapsed.
-  const railWidth = railCollapsed ? 0 : Math.max(96, 48 + enabledLanes.length * 25);
+  // On the phone band the rail is force-collapsed — there's no room for it
+  // alongside a single full-width region — driven through this same
+  // `effectiveRailCollapsed` value (rather than special-casing width) because
+  // the Classic divider drag math in WorkspaceLayout depends on `railWidth`
+  // being consistent with what's actually rendered.
+  const effectiveRailCollapsed = railCollapsed || band === "phone";
+  const railWidth = effectiveRailCollapsed ? 0 : Math.max(96, 48 + enabledLanes.length * 25);
   const [alignerTarget, setAlignerTarget] = useState<AlignerTarget | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>("resources");
   const [alignmentDirty, setAlignmentDirty] = useState(false);
@@ -564,6 +585,18 @@ export function Shell({
     () => loadLayoutStore().overrides[activeLayout.id],
     [activeLayout.id, layoutRev],
   );
+
+  // Band-driven region hiding (render-time overlay ONLY — see the CRITICAL
+  // note at the WorkspaceLayout call site). Uses the same effective tree the
+  // rest of the layout machinery resolves further down (effectiveRoot), so
+  // band-hidden ids agree with what's actually on screen; recomputed here
+  // (rather than reusing the `effRoot` computed later) because this must live
+  // above the `if (!data)` early return, same reason as `layoutOverride`.
+  const bandHiddenRegionIds = useMemo(() => {
+    const rootForBand = effectiveRoot(activeLayout, layoutOverride);
+    const regionIds = collectRegions(rootForBand).map((r) => r.id);
+    return resolveBandHidden(regionIds, band, focusedRegionId);
+  }, [activeLayout, layoutOverride, band, focusedRegionId]);
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -3219,6 +3252,27 @@ export function Shell({
       }))
     : [];
 
+  // Band-hidden regions, labeled the same way as `closedRegions` so
+  // WorkspaceLayout's switcher can show a human name. This is the VIEWPORT
+  // constraint (computed in the hook zone above from the same effective
+  // tree) — it is a completely separate concept from `closedRegions` (the
+  // USER's own intent) and must never be merged into layoutStore or the
+  // `hidden` override: shrinking the window must never permanently narrow
+  // what comes back when the user widens it again.
+  const bandHiddenRegions = bandHiddenRegionIds
+    .map((id) => collectRegions(effRoot).find((r) => r.id === id))
+    .filter((r): r is PanelRegion => !!r)
+    .map((r) => ({ id: r.id, label: regionLabel(r) }));
+
+  // EVERY region in tree order, for the band switcher's tab strip. The switcher
+  // needs the full set, not just the hidden ones: a strip that lists only what
+  // is currently hidden is a tablist in which no tab is ever the current one,
+  // so it tells the user where they can go but never where they are.
+  const bandRegions = collectRegions(effRoot).map((r) => ({
+    id: r.id,
+    label: regionLabel(r),
+  }));
+
   // Fresh out of the store for the same reason currentSizes is: setLayoutHidden
   // replaces the record wholesale, so seeding it from this render's closure could
   // erase a change made since.
@@ -3698,10 +3752,15 @@ export function Shell({
         closedRegions={closedRegions}
         onRestoreRegion={(id) => setRegionHidden(id, false)}
         restoreLabel={(label) => t("layout.restoreRegion", { name: label })}
-        railCollapsed={railCollapsed}
+        railCollapsed={effectiveRailCollapsed}
         railWidth={railWidth}
         effectiveSplit={effectiveSplit}
         onSplitRatioChange={setSplitRatio}
+        band={band}
+        bandRegions={bandRegions}
+        bandHiddenRegions={bandHiddenRegions}
+        focusedRegionId={focusedRegionId}
+        onFocusRegion={setFocusedRegionId}
         railNode={
           <>
             <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">
