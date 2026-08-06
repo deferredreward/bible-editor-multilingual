@@ -475,12 +475,24 @@ export function Shell({
   const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null);
   // Rail width tracks the visible lane count (verse column + ~25px per lane),
   // floored so the "Board" button label stays readable. 0 when collapsed.
-  // On the phone band the rail is force-collapsed — there's no room for it
-  // alongside a single full-width region — driven through this same
-  // `effectiveRailCollapsed` value (rather than special-casing width) because
-  // the Classic divider drag math in WorkspaceLayout depends on `railWidth`
-  // being consistent with what's actually rendered.
-  const effectiveRailCollapsed = railCollapsed || band === "phone";
+  // Below desktop width the rail is force-collapsed, giving its ~100px back to
+  // the text. Driven through this single `effectiveRailCollapsed` value (rather
+  // than special-casing width) because the Classic divider drag math in
+  // WorkspaceLayout depends on `railWidth` agreeing with what's actually
+  // rendered.
+  //
+  // This is also what makes the TABLET band distinct for Classic. Classic has
+  // only two regions, so the region cap (2 at tablet) never hides anything
+  // there and a 768px window would otherwise render identically to 1400px.
+  // Dropping the rail is the smallest change that makes tablet meaningfully
+  // narrower, and the rail — a verse-number list — is the least useful thing on
+  // a narrow screen: the TopBar's chapter/verse pickers and "go to ref" box
+  // still cover navigation.
+  //
+  // The TopBar's rail toggle is SUPPRESSED in these bands (see the
+  // `onToggleRail` prop at its call site) rather than left visible: a control
+  // that can't win against a forced value is a dead control.
+  const effectiveRailCollapsed = railCollapsed || band !== "desktop";
   const railWidth = effectiveRailCollapsed ? 0 : Math.max(96, 48 + enabledLanes.length * 25);
   const [alignerTarget, setAlignerTarget] = useState<AlignerTarget | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>("resources");
@@ -3700,8 +3712,11 @@ export function Shell({
         onOpenExportMenu={(anchorEl) => exportUsfmRef.current?.openMenu(anchorEl)}
         username={meUsername}
         onLogout={onLogout}
-        railCollapsed={railCollapsed}
-        onToggleRail={toggleRail}
+        railCollapsed={effectiveRailCollapsed}
+        // Omitted below desktop width, which makes TopBar drop the control
+        // entirely — the rail is force-collapsed there, so a toggle would do
+        // nothing. Restored the moment the window is wide enough to honour it.
+        onToggleRail={band === "desktop" ? toggleRail : undefined}
         layouts={builtinLayouts}
         userLayouts={userLayouts}
         activeLayoutId={activeLayout.id}
