@@ -34,8 +34,15 @@ than stacking them in panels. Nothing in the app does this.
 ## PR sequence
 
 1. **Responsive foundation** — DONE, this branch, verified in-browser.
-2. Mobile/tablet navigation pattern (fixes the nav dead-end below 700px that all
-   four Admin screens have: they hide their only nav with nothing replacing it).
+2. Mobile/tablet navigation pattern. Scope, in priority order:
+   - **Restore the two rail-only capabilities lost below 900px** (regressions from
+     PR #152's rail collapse, both confirmed by grep to have exactly one call
+     site each, both inside `railNode`): the **ChapterBoard** (`setBoardOpen`,
+     the chapter check-off overview) and **lane visibility**
+     (`toggleLaneVisible` — `enabledLanes` persists, so hiding a lane at desktop
+     is currently a ONE-WAY door on a phone: nothing anywhere brings it back).
+   - The nav dead-end below 700px that all four Admin screens have: they hide
+     their only nav with nothing replacing it.
 3. Book-package coherence view, read paths.
 4. Book-package write paths incl. verse text via `smartEditVerse`.
 5. t1 translator home queue dispatcher.

@@ -618,14 +618,33 @@ export function Shell({
   const { openRegionIds, bandHiddenRegionIds } = useMemo(() => {
     const rootForBand = effectiveRoot(activeLayout, layoutOverride);
     const resolvedHidden = resolveHidden(rootForBand, layoutOverride?.hidden);
-    const openIds = collectRegions(rootForBand)
-      .map((r) => r.id)
-      .filter((id) => !resolvedHidden[id]);
+    const openRegions = collectRegions(rootForBand).filter((r) => !resolvedHidden[r.id]);
+    const openIds = openRegions.map((r) => r.id);
+    // PIN the region holding a dirty aligner. Narrowing the window is the ONE
+    // unmount trigger that cannot be gated: every other path that unmounts a
+    // region (setRegionHidden, selectLayout, handleSetPanelMode, and the
+    // switcher's focusRegionWithGate) runs runWithDirtyGate first, but a resize
+    // is not an action we can interpose a prompt on. Unsaved aligner drags live
+    // in component state only — they never reach the outbox or the drafts store
+    // — so letting the band unmount that region would discard them silently,
+    // and this responsive work is what made a resize able to unmount anything
+    // at all. resolveBandHidden always keeps the focused region, so pinning is
+    // just overriding the focus. Tapping another tab still works: that path
+    // goes through the dirty gate, which clears the dirty state and releases
+    // the pin. Persisting the drags is the real fix and is tracked separately.
+    const pinnedId =
+      panelMode === "alignment" && alignmentDirty
+        ? (openRegions.find((r) =>
+            r.panels.some((p) =>
+              (RESOURCE_PANEL_TYPES as readonly string[]).includes(p.type),
+            ),
+          )?.id ?? null)
+        : null;
     return {
       openRegionIds: openIds,
-      bandHiddenRegionIds: resolveBandHidden(openIds, band, focusedRegionId),
+      bandHiddenRegionIds: resolveBandHidden(openIds, band, pinnedId ?? focusedRegionId),
     };
-  }, [activeLayout, layoutOverride, band, focusedRegionId]);
+  }, [activeLayout, layoutOverride, band, focusedRegionId, panelMode, alignmentDirty]);
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.

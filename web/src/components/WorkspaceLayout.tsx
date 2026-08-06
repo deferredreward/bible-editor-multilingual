@@ -248,8 +248,18 @@ export function WorkspaceLayout({
   // is exactly what resolveBandHidden keeps when focus is null, so the mark
   // always names a region actually on screen.
   const bandHiddenIds = new Set(bandHiddenRegions.map((r) => r.id));
+  // Fall back whenever the focused id isn't among the regions on offer, not just
+  // when it's null. A region can be closed or deleted (dock its last panel
+  // elsewhere and normalizeTree removes it) while it is still the focused id —
+  // `??` alone would then leave a non-null id matching no button, so nothing
+  // would read as current and the strip would land in exactly the
+  // no-button-is-ever-selected state the comment above says it exists to avoid.
+  const focusedIsOnOffer =
+    focusedRegionId !== null && bandRegions.some((r) => r.id === focusedRegionId);
   const switcherSelectedId =
-    focusedRegionId ?? bandRegions.find((r) => !bandHiddenIds.has(r.id))?.id ?? null;
+    (focusedIsOnOffer ? focusedRegionId : null) ??
+    bandRegions.find((r) => !bandHiddenIds.has(r.id))?.id ??
+    null;
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   useEffect(() => () => { document.body.style.cursor = ""; document.body.style.userSelect = ""; }, []);
