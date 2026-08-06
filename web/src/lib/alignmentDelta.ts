@@ -107,6 +107,31 @@ export function analyzeAlignmentDelta(beforeContent: unknown, afterContent: unkn
     before.length === after.length && before.every((w, i) => w.text === after[i]?.text);
   const unexpectedLosses: AlignmentLoss[] = [];
 
+  // ── Total wipe: the MAXIMUM loss case, not a zero-loss case ────────────────
+  // Both paths below only ever report words that SURVIVE the edit, so a write
+  // that empties the aligned-word set entirely used to report ZERO losses and
+  // sail past guardBlocksSave:
+  //   • `wordSequenceUnchanged` is false (the lengths differ), so the exact-
+  //     position path is skipped; and
+  //   • the LCS path `continue`s on `links[i] < 0`, and with nothing to link to
+  //     EVERY before-word is unlinked — 38 annihilated words, 0 reported.
+  // That was not theoretical. A whole-verse-flattening save
+  // (`content: { verseObjects: [{ type: "text", text: value }] }`) destroyed 38
+  // aligned words on ZEC 1:8 ULT and the API answered 200 — receipt: dev
+  // `edit_log` id 1458, `row_key ZEC/1/8/ULT`, v1 → v2, server-recorded delta
+  // `{"beforeAligned":38,"afterAligned":0,"unexpectedLosses":[]}`.
+  // Report every previously-aligned word as `lost` so (a) guardBlocksSave fires,
+  // and (b) `lostAlignedWords` can name them in the aligner's unalign confirm —
+  // a total unalign used to warn about nothing. `alignment_edit` stays exempt:
+  // unaligning everything from the aligner panel is legitimate.
+  if (beforeAligned > 0 && afterAligned === 0) {
+    for (let i = 0; i < before.length; i++) {
+      if (!before[i].sourceKey) continue;
+      unexpectedLosses.push({ index: i, text: before[i].text, reason: "lost" });
+    }
+    return { beforeAligned, afterAligned, wordSequenceUnchanged, unexpectedLosses };
+  }
+
   if (wordSequenceUnchanged) {
     for (let i = 0; i < before.length; i++) {
       if (!before[i].sourceKey) continue;
