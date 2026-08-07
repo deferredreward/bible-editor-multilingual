@@ -68,7 +68,7 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 import type { VerseDto } from "../../sync/api";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { versionLabel } from "../../lib/versionLabels";
-import { buildVerseIndex, noteCoveredVerses } from "../../lib/verseRange";
+import { buildVerseIndex, noteOverlapsRange } from "../../lib/verseRange";
 
 export interface VerseScreenProps extends FlowScreenContext {
   book: string;
@@ -81,6 +81,49 @@ type Mode = "read" | "audit";
 function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
+}
+
+// The distinct rows of one lane's expanded index that overlap [start, end], in
+// verse order. `buildVerseIndex` maps every verse a row covers to the SAME DTO
+// reference, so identity de-duplication is exact — a `\v 15-16` row appears
+// once, not twice.
+function rowsOverlapping(
+  index: Record<number, VerseDto>,
+  start: number,
+  end: number,
+): VerseDto[] {
+  const out: VerseDto[] = [];
+  for (let v = start; v <= end; v++) {
+    const dto = index[v];
+    if (dto && !out.includes(dto)) out.push(dto);
+  }
+  return out;
+}
+
+// One lane's verseObjects for a whole verse span, concatenated in verse order —
+// the same join `concatSourceRange` performs for the aligner (see
+// web/src/lib/verseRange.ts), done here over the EXPANDED index so a lane whose
+// row starts before the span edge still resolves. Returns null when the lane
+// has no content at all over the span, which is what makes `buildLane` report
+// the lane as absent rather than empty.
+function spanVerseObjects(
+  index: Record<number, VerseDto>,
+  start: number,
+  end: number,
+): unknown[] | null {
+  const rows = rowsOverlapping(index, start, end);
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return verseObjectsOf(rows[0]);
+  const combined: unknown[] = [];
+  for (const row of rows) {
+    const vo = verseObjectsOf(row);
+    if (!vo) continue;
+    // Same light separator concatSourceRange uses, so consecutive verses do
+    // not run together visually.
+    if (combined.length > 0) combined.push({ type: "text", text: " " });
+    combined.push(...vo);
+  }
+  return combined.length > 0 ? combined : null;
 }
 
 function activeGroupIds(lane: LaneModel, positions: Set<number>): Set<string> {
@@ -121,22 +164,57 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
   const litIndex = useMemo(() => buildVerseIndex(data?.verses?.ULT), [data]);
   const simIndex = useMemo(() => buildVerseIndex(data?.verses?.UST), [data]);
 
-  const sourceVO = useMemo(() => verseObjectsOf(sourceIndex[verse]), [sourceIndex, verse]);
+  // A bridged row (`\v 15-16`) covers MORE than the routed verse, and the join
+  // this whole screen rests on only holds when both sides describe the SAME
+  // stretch of text: matching a two-verse English row against one verse of
+  // Hebrew mis-counts every `x-occurrence` and invents "not rendered" holes.
+  // So the screen widens to the span the rows actually cover — start at the
+  // routed verse and grow until no lane's row crosses an edge. AlignScreen
+  // does the same thing for its one target lane (buildSlice +
+  // concatSourceRange); here three lanes can each bridge differently, so the
+  // span is their union. The guard bounds the loop; two passes suffice in
+  // practice.
+  const span = useMemo(() => {
+    let start = verse;
+    let end = verse;
+    for (let guard = 0; guard < 8; guard++) {
+      let s = start;
+      let e = end;
+      for (const index of [sourceIndex, litIndex, simIndex]) {
+        for (const dto of rowsOverlapping(index, start, end)) {
+          s = Math.min(s, dto.verse);
+          e = Math.max(e, dto.verse_end ?? dto.verse);
+        }
+      }
+      if (s === start && e === end) break;
+      start = s;
+      end = e;
+    }
+    return { start, end };
+  }, [sourceIndex, litIndex, simIndex, verse]);
+  const bridged = span.end > span.start;
+
+  const sourceVO = useMemo(
+    () => spanVerseObjects(sourceIndex, span.start, span.end),
+    [sourceIndex, span],
+  );
   const words = useMemo(() => collectOriginalWords(sourceVO), [sourceVO]);
 
   const lit = useMemo(
-    () => buildLane("ULT", verseObjectsOf(litIndex[verse]), sourceVO, words),
-    [litIndex, verse, sourceVO, words],
+    () => buildLane("ULT", spanVerseObjects(litIndex, span.start, span.end), sourceVO, words),
+    [litIndex, span, sourceVO, words],
   );
   const sim = useMemo(
-    () => buildLane("UST", verseObjectsOf(simIndex[verse]), sourceVO, words),
-    [simIndex, verse, sourceVO, words],
+    () => buildLane("UST", spanVerseObjects(simIndex, span.start, span.end), sourceVO, words),
+    [simIndex, span, sourceVO, words],
   );
 
   const resources = useMemo(() => {
     if (!data) return [] as ResourceItem[];
+    // The words on screen are the whole span's, so the helps that belong with
+    // them are every note/link/question touching any verse in the span.
     const here = (row: { verse: number; ref_raw?: string | null }) =>
-      noteCoveredVerses(row).includes(verse);
+      noteOverlapsRange(row, span.start, span.end);
     return buildResources(
       data.tn.filter((r) => here(r) && !r.trashed_at),
       data.twl.filter(here),
@@ -144,7 +222,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       sourceVO,
       words,
     );
-  }, [data, verse, sourceVO, words]);
+  }, [data, span, sourceVO, words]);
 
   const flags = useMemo(
     () => coherence(words, lit, sim, resources),
@@ -168,16 +246,19 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       .sort((a, b) => a - b);
   }, [data, sourceLane]);
 
+  // Step off the SPAN, not the routed verse: on a bridged 15-16 row, "next"
+  // from 15 must reach 17, not 16 — 16 renders the identical span.
   const go = useCallback(
     (delta: number) => {
       if (verseNums.length === 0) return;
-      const i = verseNums.indexOf(verse);
-      const from = i >= 0 ? i : 0;
-      const next = Math.max(0, Math.min(verseNums.length - 1, from + delta));
-      if (verseNums[next] === verse) return;
-      location.hash = `#/verse/${book}/${chapter}/${verseNums[next]}`;
+      const next =
+        delta < 0
+          ? [...verseNums].reverse().find((n) => n < span.start)
+          : verseNums.find((n) => n > span.end);
+      if (next == null) return;
+      location.hash = `#/verse/${book}/${chapter}/${next}`;
     },
-    [verseNums, verse, book, chapter],
+    [verseNums, span, book, chapter],
   );
 
   // ← / → step verses, r / a switch mode, Esc clears — the mockup's keys.
@@ -246,7 +327,8 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
   );
 
   // --- states ---------------------------------------------------------------
-  const refLabel = `${book} ${chapter}:${verse}`;
+  // "ZEC 1:15-16" when a row bridges — the label must name what is on screen.
+  const refLabel = `${book} ${chapter}:${bridged ? `${span.start}-${span.end}` : verse}`;
 
   const header = (
     <Box
@@ -267,7 +349,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
         title="Previous verse (←)"
         size="small"
         onClick={() => go(-1)}
-        disabled={verseNums.length === 0 || verse <= verseNums[0]}
+        disabled={verseNums.length === 0 || span.start <= verseNums[0]}
         sx={{ minInlineSize: 32, minBlockSize: 32 }}
       >
         <ChevronLeftIcon fontSize="small" />
@@ -283,7 +365,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
         title="Next verse (→)"
         size="small"
         onClick={() => go(1)}
-        disabled={verseNums.length === 0 || verse >= verseNums[verseNums.length - 1]}
+        disabled={verseNums.length === 0 || span.end >= verseNums[verseNums.length - 1]}
         sx={{ minInlineSize: 32, minBlockSize: 32 }}
       >
         <ChevronRightIcon fontSize="small" />
@@ -396,6 +478,14 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
           paddingBlockEnd: 5,
         }}
       >
+        {bridged && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            One of these texts bridges verses {span.start}&ndash;{span.end} in a single row, so this
+            screen covers the whole span at once. The original words below are verses {span.start}
+            &ndash;{span.end} joined — the stretch the bridged row is actually aligned to — and the
+            observations compare like with like.
+          </Alert>
+        )}
         {words.length === 0 && (
           <Alert severity="info" sx={{ mb: 2 }}>
             No {originalLabel} text is loaded for {refLabel} in this workspace, so nothing can be

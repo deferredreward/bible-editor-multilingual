@@ -65,6 +65,7 @@ import {
   type PanelSlot,
   type ReadingLineHandle,
 } from "../SideBySideAligner";
+import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { useChapter } from "../../hooks/useChapter";
 import { useLexicon } from "../../hooks/useLexicon";
 import { useProjectConfig } from "../../hooks/useProjectConfig";
@@ -308,7 +309,20 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
   const dualRightRef = useRef<AlignmentPanelHandle | null>(null);
   const dualLeftReadingRef = useRef<ReadingLineHandle | null>(null);
   const dualRightReadingRef = useRef<ReadingLineHandle | null>(null);
-  const noopDirty = useCallback(() => {}, []);
+  // Unsaved work inside the side-by-side dialog: alignment drags in either
+  // panel, and reading-text edits in either ReadingLine. Both live only in
+  // memory/DOM until an explicit save, so closing or re-targeting the dialog
+  // without a gate discards them silently. Mirrors Shell.tsx (2101-2144).
+  const [dualLeftDirty, setDualLeftDirty] = useState(false);
+  const [dualRightDirty, setDualRightDirty] = useState(false);
+  const [dualLeftReadingDirty, setDualLeftReadingDirty] = useState(false);
+  const [dualRightReadingDirty, setDualRightReadingDirty] = useState(false);
+  const [pendingDualAction, setPendingDualAction] = useState<{ run: () => void } | null>(null);
+  const dualDirty =
+    dualLeftDirty || dualRightDirty || dualLeftReadingDirty || dualRightReadingDirty;
+  // Full-page unloads (reload / tab close / external nav) bypass the in-app
+  // gate below, so they get the browser's own confirm while work is unsaved.
+  useUnsavedGuard(dualDirty);
 
   // Reactive lock banner. An alignment save ships through the outbox, so its
   // 409 `chapter_locked` arrives as an outbox result, not a throw here. The
@@ -478,9 +492,9 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       posOffset: offsetFor(slice.rangeStart),
       onSave: saveFor(TARGET, slice.targetVerse),
       onConfirmUnalign: confirmUnalignFor(slice.targetVerse, TARGET),
-      onDirtyChange: noopDirty,
+      onDirtyChange: setDualLeftDirty,
       panelRef: dualLeftRef,
-      onReadingDirtyChange: noopDirty,
+      onReadingDirtyChange: setDualLeftReadingDirty,
       readingRef: dualLeftReadingRef,
     };
     const right: PanelSlot = {
@@ -491,9 +505,9 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       posOffset: offsetFor(ustSlice.rangeStart),
       onSave: saveFor(SECOND, ustSlice.targetVerse),
       onConfirmUnalign: confirmUnalignFor(ustSlice.targetVerse, SECOND),
-      onDirtyChange: noopDirty,
+      onDirtyChange: setDualRightDirty,
       panelRef: dualRightRef,
-      onReadingDirtyChange: noopDirty,
+      onReadingDirtyChange: setDualRightReadingDirty,
       readingRef: dualRightReadingRef,
     };
     const labelVerse = slice.targetVerse ?? ustSlice.targetVerse;
@@ -504,7 +518,7 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       left,
       right,
     };
-  }, [data, slice, ustSlice, sourceLane, book, chapter, verse, enqueueAlignment, confirmUnalignFor, noopDirty]);
+  }, [data, slice, ustSlice, sourceLane, book, chapter, verse, enqueueAlignment, confirmUnalignFor]);
 
   // ── verse navigation (stays on this screen; the route drives `verse`) ─────
   const verseNums = useMemo(() => {
@@ -520,6 +534,46 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
   const goVerse = (n: number | null) => {
     if (n == null) return;
     location.hash = `#/align/${book}/${chapter}/${n}`;
+  };
+
+  // ── the side-by-side unsaved gate (ported from Shell.tsx 2126-2178) ───────
+  // Anything that leaves or re-targets the dual aligner asks first when either
+  // panel holds unsaved drags or reading-text edits.
+  const requestDualAction = (run: () => void) => {
+    if (dualDirty) setPendingDualAction({ run });
+    else run();
+  };
+  const requestCloseDual = () => requestDualAction(() => setSbsOpen(false));
+  const dualNavTo = (n: number | null) => requestDualAction(() => goVerse(n));
+  const resolveDualAction = (choice: "save" | "discard") => {
+    const action = pendingDualAction;
+    setPendingDualAction(null);
+    // Only touch the dirty side(s): save() enqueues a PATCH unconditionally, so
+    // calling it on a clean panel bumps that row's version for nothing (and can
+    // 409 against a concurrent editor).
+    if (choice === "discard") {
+      if (dualLeftDirty) dualLeftRef.current?.discard();
+      if (dualRightDirty) dualRightRef.current?.discard();
+      if (dualLeftReadingDirty) dualLeftReadingRef.current?.discard();
+      if (dualRightReadingDirty) dualRightReadingRef.current?.discard();
+      action?.run();
+      return;
+    }
+    // Reading-line edits are plain text — synchronous, no unalign confirm.
+    if (dualLeftReadingDirty) dualLeftReadingRef.current?.save();
+    if (dualRightReadingDirty) dualRightReadingRef.current?.save();
+    // Each alignment panel may defer behind the unalign confirm, so CHAIN them:
+    // the close/nav runs only once both have actually committed, and at most one
+    // confirm is ever open (the right panel's opens after the left resolves, so
+    // a second setPendingLoss can't clobber the first pending commit). A cancel
+    // anywhere in the chain stops the close entirely.
+    const finish = () => action?.run();
+    const saveRight = () => {
+      if (dualRightDirty && dualRightRef.current) dualRightRef.current.save(finish);
+      else finish();
+    };
+    if (dualLeftDirty && dualLeftRef.current) dualLeftRef.current.save(saveRight);
+    else saveRight();
   };
 
   const dirty = mode === "drag" ? dragDirty : tapDirty;
@@ -837,7 +891,7 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       {dualProps && (
         <SideBySideAligner
           open={sbsOpen}
-          onClose={() => setSbsOpen(false)}
+          onClose={requestCloseDual}
           book={book}
           chapter={chapter}
           verseNum={verse}
@@ -849,10 +903,36 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
           left={dualProps.left}
           right={dualProps.right}
           onSaveReading={handleSaveReading}
-          onPrevVerse={prevVerse != null ? () => goVerse(prevVerse) : undefined}
-          onNextVerse={nextVerse != null ? () => goVerse(nextVerse) : undefined}
+          onPrevVerse={prevVerse != null ? () => dualNavTo(prevVerse) : undefined}
+          onNextVerse={nextVerse != null ? () => dualNavTo(nextVerse) : undefined}
         />
       )}
+
+      {/* save-or-discard gate for the side-by-side dialog */}
+      <Dialog open={pendingDualAction !== null} onClose={() => setPendingDualAction(null)}>
+        <DialogTitle>Unsaved changes</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The side-by-side aligner has unsaved work — alignment changes, verse text, or both.
+            Save it before leaving, or discard it.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingDualAction(null)} sx={{ minHeight: 44 }}>
+            Cancel
+          </Button>
+          <Button color="error" onClick={() => resolveDualAction("discard")} sx={{ minHeight: 44 }}>
+            Discard
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => resolveDualAction("save")}
+            sx={{ minHeight: 44 }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* unalign confirm — the same gate Shell puts in front of the aligner */}
       <Dialog open={pendingLoss !== null} onClose={() => setPendingLoss(null)}>

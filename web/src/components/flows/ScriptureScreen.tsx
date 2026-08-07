@@ -323,7 +323,10 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
     (bibleVersion: string, plain: string) => {
       const base = rowAt(bibleVersion, verse);
       if (!base) return;
-      const key = verseKey(book, chapter, verse, bibleVersion);
+      // Key on the CANONICAL row verse, matching the PATCH target and the
+      // outbox's own clear (drafts.ts clears by op.target.verse). Keying on the
+      // displayed verse of a `\v 6-9` row would strand the draft forever.
+      const key = verseKey(book, chapter, base.verse, bibleVersion);
       const oldEditable = extractEditableText(base.content);
       // No-op guard: a save with no real change must not bump the version. Also
       // clear the stranded keystroke draft, or the "unsaved" reminder lingers
@@ -377,7 +380,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       if (!base) return;
       const newPlainText = plainText ?? extractPlainText(content);
       if (!enqueueVerseSafely(base, bibleVersion, content, newPlainText, "alignment_edit")) return;
-      void drafts.clear(verseKey(book, chapter, verse, bibleVersion));
+      void drafts.clear(verseKey(book, chapter, base.verse, bibleVersion));
       applyLocalVerse({ ...base, plain_text: newPlainText, content } as VerseDto);
     },
     [rowAt, verse, book, chapter, applyLocalVerse, enqueueVerseSafely],

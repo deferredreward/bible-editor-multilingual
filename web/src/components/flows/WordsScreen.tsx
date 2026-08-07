@@ -57,13 +57,21 @@ import { useTwlFilters } from "../../hooks/useTwlFilters";
 import { useLexicon } from "../../hooks/useLexicon";
 import { onOutboxResult, outbox } from "../../sync/outbox";
 import { drafts, rowKey } from "../../sync/drafts";
-import { api, ApiError, type ChapterLockedBody, type TwlRow, type TwlSuggestion } from "../../sync/api";
+import {
+  api,
+  ApiError,
+  type ChapterLockedBody,
+  type TwlRow,
+  type TwlSuggestion,
+  type VerseDto,
+} from "../../sync/api";
 import { canonicalTwlOrder } from "../../lib/twlCanonicalOrder";
 import { resolveSpanToSource } from "../../lib/twlResolve";
 import { buildQuoteFromSelection, collectTargetTokens, selectionFromQuote } from "../../lib/quoteBuilder";
 import type { HighlightKey } from "../../lib/highlight";
 import { nfc } from "../../lib/hebrew";
 import { isHebrewBook } from "../../lib/sourceSearch";
+import { buildVerseIndex, formatVerseLabel, isRangeRow } from "../../lib/verseRange";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 import { QuoteBuilderPopper } from "../QuoteBuilderPopper";
 import { TwlSuggestions } from "../TwlSuggestions";
@@ -105,17 +113,12 @@ function sameForm(a: LinkForm, b: LinkForm): boolean {
 
 const EMPTY_FORM: LinkForm = { quote: "", occurrence: "1", article: "" };
 
-// Non-null verseObjects array for a lane's verse, or null when the lane has no
-// content for it (a lane pending replacement is omitted from the payload).
-function verseObjectsOf(
-  verses: Record<string, Record<number, { content: unknown }>> | undefined,
-  bibleVersion: string,
-  verse: number,
-): unknown[] | null {
-  const content = verses?.[bibleVersion]?.[verse]?.content as
-    | { verseObjects?: unknown[] }
-    | null
-    | undefined;
+// Non-null verseObjects array for a resolved verse row, or null when the lane
+// has no content for it (a lane pending replacement is omitted from the
+// payload). Callers pass a row resolved through `buildVerseIndex`, never a raw
+// `verses[bv][n]` lookup — see the `verseIndexes` memo below.
+function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
+  const content = dto?.content as { verseObjects?: unknown[] } | null | undefined;
   const vo = content?.verseObjects;
   return Array.isArray(vo) ? vo : null;
 }
@@ -165,14 +168,29 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   const sourceIsHebrew = isHebrewBook(book);
   const sourceLane = sourceIsHebrew ? "UHB" : "UGNT";
 
-  const uhbVo = useMemo(
-    () => verseObjectsOf(data?.verses, sourceLane, verse),
-    [data, sourceLane, verse],
-  );
-  const ultVo = useMemo(() => verseObjectsOf(data?.verses, "ULT", verse), [data, verse]);
-  const ustVo = useMemo(() => verseObjectsOf(data?.verses, "UST", verse), [data, verse]);
-  const ultPlain = data?.verses?.ULT?.[verse]?.plain_text ?? null;
-  const ustPlain = data?.verses?.UST?.[verse]?.plain_text ?? null;
+  // Every per-verse row read on this screen goes through buildVerseIndex. A
+  // bridged row (`\v 15-16`) is keyed by verse_start only, so a raw
+  // `verses[bv][16]` lookup returns nothing — which made this screen claim "No
+  // ULT text exists for this verse" and permanently disable "+ Add link" on a
+  // verse whose text is right there in the payload. Same fix ScriptureScreen
+  // carries; see web/src/lib/verseRange.ts.
+  const verseIndexes = useMemo<Record<string, Record<number, VerseDto>>>(() => {
+    const out: Record<string, Record<number, VerseDto>> = {};
+    for (const bv of Object.keys(data?.verses ?? {})) {
+      out[bv] = buildVerseIndex(data?.verses?.[bv]);
+    }
+    return out;
+  }, [data]);
+
+  const uhbRow = verseIndexes[sourceLane]?.[verse] ?? null;
+  const ultRow = verseIndexes.ULT?.[verse] ?? null;
+  const ustRow = verseIndexes.UST?.[verse] ?? null;
+
+  const uhbVo = useMemo(() => verseObjectsOf(uhbRow), [uhbRow]);
+  const ultVo = useMemo(() => verseObjectsOf(ultRow), [ultRow]);
+  const ustVo = useMemo(() => verseObjectsOf(ustRow), [ustRow]);
+  const ultPlain = ultRow?.plain_text ?? null;
+  const ustPlain = ustRow?.plain_text ?? null;
 
   const sourceWords = useMemo(() => collectSourceWords(uhbVo), [uhbVo]);
   const strongs = useMemo(
@@ -700,6 +718,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             sx={{ fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "text.secondary" }}
           >
             In target (ULT)
+            {ultRow && isRangeRow(ultRow) ? ` · verses ${formatVerseLabel(ultRow)}` : ""}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, overflowWrap: "anywhere" }}>
             {targetContext(form.quote)}
@@ -978,6 +997,14 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             label={sourceIsHebrew ? "Hebrew" : "Greek"}
             lexicon={lexicon}
           />
+
+          {uhbRow && isRangeRow(uhbRow) && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              The original text bridges verses {formatVerseLabel(uhbRow)} in one row, so the words
+              above span all of them. A link you build here is still filed under{" "}
+              {chapter}:{verse}.
+            </Alert>
+          )}
 
           <Box
             sx={{

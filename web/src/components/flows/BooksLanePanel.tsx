@@ -166,6 +166,7 @@ export function BooksLanePanel() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [ack, setAck] = useState(false);
   const [affectedBooks, setAffectedBooks] = useState<string[] | null>(null);
+  const [affectedBooksError, setAffectedBooksError] = useState<string | null>(null);
   const [bookStats, setBookStats] = useState<Record<string, { verses: number; edited: number }>>({});
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
 
@@ -253,6 +254,7 @@ export function BooksLanePanel() {
     if (!pendingTarget) return;
     setAck(false);
     setAffectedBooks(null);
+    setAffectedBooksError(null);
     setConfirmOpen(true);
     try {
       const res = await api.laneAffectedBooks(LANE);
@@ -261,8 +263,12 @@ export function BooksLanePanel() {
       // Same smart default as the Setup wizard: replace unedited books, keep
       // books that already carry translator work.
       setSelectedBooks(new Set(defaultReplaceSelection(res.books, res.stats)));
-    } catch {
-      setAffectedBooks([]);
+    } catch (e) {
+      // Fail CLOSED: a failed lookup must never be read as "this lane is
+      // empty." Leave affectedBooks null (Start stays disabled via the
+      // `affectedBooks == null` check below) and surface a retryable error
+      // instead of an empty-list claim.
+      setAffectedBooksError(errorText(e));
       setBookStats({});
       setSelectedBooks(new Set());
     }
@@ -274,9 +280,12 @@ export function BooksLanePanel() {
     setBusy("start");
     setError(null);
     try {
-      const all = affectedBooks.length > 0 && affectedBooks.every((b) => selectedBooks.has(b));
-      const replaceBooks =
-        affectedBooks.length === 0 || all ? undefined : affectedBooks.filter((b) => selectedBooks.has(b));
+      // Always send an explicit selection — never `undefined`, which the
+      // server (and api.ts's own truthiness check) reads as "replace every
+      // book in the lane." An explicit array, even [], serializes and is
+      // honored as the exact selection (a full selection is equivalent to
+      // "replace all"; see planReplacementBooks in scriptureLane.ts).
+      const replaceBooks = affectedBooks.filter((b) => selectedBooks.has(b));
       await api.laneStartReplacement(LANE, pendingTarget, true, replaceBooks);
       await refreshProjectConfig().catch(() => {});
     } catch (e) {
@@ -371,6 +380,11 @@ export function BooksLanePanel() {
 
   const status = job?.job.status ?? null;
   const books: LaneReplacementBook[] = job?.books ?? [];
+  // `mode` ('staged' | 'carry_forward') is on the wire (server SELECT *) but
+  // not yet declared on the shared LaneReplacementBook type — widen locally
+  // rather than touch web/src/sync/api.ts for this fix.
+  const bookMode = (b: LaneReplacementBook): "staged" | "carry_forward" | undefined =>
+    (b as LaneReplacementBook & { mode?: "staged" | "carry_forward" }).mode;
   const source = pendingTarget?.source ?? null;
   const currentSource = laneState?.config.source ?? null;
 
@@ -596,14 +610,24 @@ export function BooksLanePanel() {
                           </Button>
                         )}
                         {(retryable || b.status === "absent_authorized") && (
-                          <Button
-                            size="small"
-                            sx={{ minHeight: 36 }}
-                            disabled={busyBook === b.book}
-                            onClick={() => void waiveBook(b.book)}
+                          <Tooltip
+                            title={
+                              bookMode(b) === "carry_forward"
+                                ? "Carry-forward books can't be waived — the server always rejects it. Retry instead."
+                                : ""
+                            }
                           >
-                            Waive
-                          </Button>
+                            <span>
+                              <Button
+                                size="small"
+                                sx={{ minHeight: 36 }}
+                                disabled={busyBook === b.book || bookMode(b) === "carry_forward"}
+                                onClick={() => void waiveBook(b.book)}
+                              >
+                                Waive
+                              </Button>
+                            </span>
+                          </Tooltip>
                         )}
                       </ListRow>
                     );
@@ -654,7 +678,17 @@ export function BooksLanePanel() {
             Selected books have their text and alignment re-staged from the new source. Unselected
             books are carried forward unchanged.
           </Alert>
-          {affectedBooks == null ? (
+          {affectedBooksError ? (
+            <>
+              <Alert severity="error" variant="outlined" sx={{ mb: 1 }}>
+                Couldn't load the affected book list: {affectedBooksError}. Starting a replacement is
+                disabled until this succeeds — retry rather than assume no books are affected.
+              </Alert>
+              <Button size="small" onClick={() => void openConfirm()}>
+                Retry
+              </Button>
+            </>
+          ) : affectedBooks == null ? (
             <Stack direction="row" spacing={1} alignItems="center">
               <CircularProgress size={16} />
               <Typography variant="body2">Loading the affected book list…</Typography>

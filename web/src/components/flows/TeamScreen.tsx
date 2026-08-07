@@ -170,6 +170,13 @@ export default function TeamScreen({ role }: TeamScreenProps) {
   // incomplete-roster cases from a genuinely complete roster before flagging
   // any allowlist row as "not org member".
   const rosterDegraded = !!orgMembers?.error || !!orgMembers?.partial || !!orgMembers?.truncated;
+  // No org configured (adminUserRoutes.ts org-members returns {org: null,
+  // members: [], truncated: false} with no error/partial flags in that case) —
+  // an empty roster here has no positive org identity behind it, so it is not
+  // usable evidence either. Without this, rosterDegraded stays false against
+  // the empty set and EVERY allowlisted user gets falsely flagged "not org
+  // member" on an unconfigured workspace.
+  const rosterUsable = !!orgMembers && !!orgMembers.org && !rosterDegraded;
 
   const handleAdd = async () => {
     const username = newUsername.trim();
@@ -386,7 +393,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
               </Box>
               <Box component="tbody">
                 {users.map((u) => {
-                  const notMember = rosterLogins && !rosterDegraded && !rosterLogins.has(u.username.toLowerCase());
+                  const notMember = rosterUsable && rosterLogins && !rosterLogins.has(u.username.toLowerCase());
                   return (
                     <Box component="tr" key={u.username}>
                       <Box component="td" sx={{ py: 1, px: 1.5, borderBlockEnd: 1, borderColor: "divider" }}>
@@ -455,6 +462,13 @@ export default function TeamScreen({ role }: TeamScreenProps) {
           <CircularProgress size={22} />
         ) : (
           <>
+            {!orgMembers.org && (
+              <Alert severity="info" sx={{ mb: 1.5 }}>
+                No Door43 org is configured for this workspace yet, so there is no roster to reconcile
+                against — the empty list below is not evidence that any allowlisted user is missing from
+                an org.
+              </Alert>
+            )}
             {rosterDegraded && (
               <Alert severity="warning" sx={{ mb: 1.5 }}>
                 Door43 roster read failed ({orgMembers.error}) — the table below may be empty or incomplete;

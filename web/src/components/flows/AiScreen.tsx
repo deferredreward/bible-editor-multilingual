@@ -136,6 +136,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
   const [pendingCount, setPendingCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null);
 
   // Real book list — GET /api/books returns only books actually imported into
   // this workspace. Defaults to the user's last book once loaded, if it's one
@@ -268,8 +269,18 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
   }
 
   async function handleCancel(job: PipelineJob) {
-    const res = await pipelineStore.cancel(job.job_id);
-    if (!res.ok) setNotice("Couldn't cancel — it already started running.");
+    if (cancelling) return; // no double-submit while a cancel is in flight
+    setCancelling(job.job_id);
+    try {
+      const res = await pipelineStore.cancel(job.job_id);
+      if (!res.ok) setNotice("Couldn't cancel — it already started running.");
+    } catch {
+      // pipelineStore.cancel only handles 409 itself; 403/404/5xx/network
+      // rethrow and must not become an unhandled rejection with a silent no-op.
+      setNotice("Couldn't cancel — try again");
+    } finally {
+      setCancelling(null);
+    }
   }
 
   function handleDismiss(job: PipelineJob) {
@@ -466,6 +477,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
                     me={me}
                     aiDisabled={aiDisabled}
                     retrying={retrying === job.job_id}
+                    cancelling={cancelling === job.job_id}
                     onRetry={() => void handleRetry(job)}
                     onCancel={() => void handleCancel(job)}
                     onDismiss={() => handleDismiss(job)}
@@ -483,6 +495,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
                 me={me}
                 aiDisabled={aiDisabled}
                 retrying={retrying === job.job_id}
+                cancelling={cancelling === job.job_id}
                 onRetry={() => void handleRetry(job)}
                 onCancel={() => void handleCancel(job)}
                 onDismiss={() => handleDismiss(job)}
@@ -556,6 +569,7 @@ interface JobRowProps {
   me: FlowScreenContext["me"];
   aiDisabled: boolean;
   retrying: boolean;
+  cancelling: boolean;
   onRetry: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -570,7 +584,7 @@ function requestedByLabel(job: PipelineJob, me: FlowScreenContext["me"]): string
   return `requested by ${job.started_by_username || "someone else"}`;
 }
 
-function JobRow({ job, me, aiDisabled, retrying, onRetry, onCancel, onDismiss }: JobRowProps) {
+function JobRow({ job, me, aiDisabled, retrying, cancelling, onRetry, onCancel, onDismiss }: JobRowProps) {
   const mine = isMine(job, me);
   return (
     <TableRow hover>
@@ -618,6 +632,7 @@ function JobRow({ job, me, aiDisabled, retrying, onRetry, onCancel, onDismiss }:
           mine={mine}
           aiDisabled={aiDisabled}
           retrying={retrying}
+          cancelling={cancelling}
           onRetry={onRetry}
           onCancel={onCancel}
           onDismiss={onDismiss}
@@ -632,6 +647,7 @@ function JobRowActions({
   mine,
   aiDisabled,
   retrying,
+  cancelling,
   onRetry,
   onCancel,
   onDismiss,
@@ -640,6 +656,7 @@ function JobRowActions({
   mine: boolean;
   aiDisabled: boolean;
   retrying: boolean;
+  cancelling: boolean;
   onRetry: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -647,7 +664,12 @@ function JobRowActions({
   return (
     <Stack direction="row" spacing={0.75} flexWrap="wrap">
       {job.state === "queued" && mine && (
-        <Button size="small" onClick={onCancel}>
+        <Button
+          size="small"
+          onClick={onCancel}
+          disabled={cancelling}
+          startIcon={cancelling ? <CircularProgress size={12} /> : undefined}
+        >
           Cancel
         </Button>
       )}
@@ -687,7 +709,7 @@ function JobRowActions({
   );
 }
 
-function JobCard({ job, me, aiDisabled, retrying, onRetry, onCancel, onDismiss }: JobRowProps) {
+function JobCard({ job, me, aiDisabled, retrying, cancelling, onRetry, onCancel, onDismiss }: JobRowProps) {
   const mine = isMine(job, me);
   return (
     <Box sx={{ p: 1.75 }}>
@@ -719,6 +741,7 @@ function JobCard({ job, me, aiDisabled, retrying, onRetry, onCancel, onDismiss }
           mine={mine}
           aiDisabled={aiDisabled}
           retrying={retrying}
+          cancelling={cancelling}
           onRetry={onRetry}
           onCancel={onCancel}
           onDismiss={onDismiss}

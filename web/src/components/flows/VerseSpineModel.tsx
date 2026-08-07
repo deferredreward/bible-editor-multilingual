@@ -116,17 +116,27 @@ function foldConsonants(s: string): string {
   return s.normalize("NFC").replace(/[\p{Mn}\s־⁠‍-]/gu, "");
 }
 
-function nthOrFirst(keys: string[], want: string, occurrence: number): number {
+// The Nth key equal to `want`, or -1. FAILS CLOSED: when the verse holds fewer
+// than `occurrence` matches, there is no honest answer, so this reports none
+// rather than returning the first match. Two reasons that matters here — a
+// wrong position paints the wrong word and invents a "not rendered" hole
+// somewhere else, and (because each tier in makePositionResolver returns on any
+// hit >= 0) a consolation first-match SHORT-CIRCUITS the Strong's and
+// consonant-skeleton tiers that might have resolved it correctly.
+//
+// Safe to tighten because `occurrence` comes from the TARGET's `\zaln-s`
+// milestone, which is always stamped: measured 0 of 3227 `zaln-s` spans in
+// docs/samples/en_ult_38-ZEC.usfm and 0 of 2281 in en_ust_38-ZEC.usfm missing
+// `x-occurrence`.
+function nthAt(keys: string[], want: string, occurrence: number): number {
   if (!want) return -1;
   let seen = 0;
-  let first = -1;
   for (let i = 0; i < keys.length; i++) {
     if (keys[i] !== want) continue;
     seen += 1;
-    if (first < 0) first = i;
     if (seen === occurrence) return i;
   }
-  return first;
+  return -1;
 }
 
 /**
@@ -148,15 +158,15 @@ export function makePositionResolver(words: OriginalWord[]): (s: SourceWord) => 
   return (s: SourceWord) => {
     const occ = Math.max(1, parseInt(s.occurrence, 10) || 1);
     if (s.content) {
-      const hit = nthOrFirst(exact, matchNorm(s.content), occ);
+      const hit = nthAt(exact, matchNorm(s.content), occ);
       if (hit >= 0) return hit;
     }
     if (s.strong) {
-      const hit = nthOrFirst(strongs, s.strong, occ);
+      const hit = nthAt(strongs, s.strong, occ);
       if (hit >= 0) return hit;
     }
     if (s.content) {
-      const hit = nthOrFirst(folds, foldConsonants(s.content), occ);
+      const hit = nthAt(folds, foldConsonants(s.content), occ);
       if (hit >= 0) return hit;
     }
     return -1;
@@ -339,9 +349,16 @@ function firstBit(text: string | null | undefined, limit = 110): string {
  * `matchSourceTokens` is the app's canonical quote resolver (gap markers,
  * occurrence selection, NFC/joiner tolerance) but it returns tokens, not
  * indices — so we map its result back through `(matchNorm(text), occurrence)`,
- * the same identity the source words carry. Two identical surface forms that
- * BOTH lack an `x-occurrence` attribute would collide onto the first; UHB/UGNT
- * stamps the attribute, so that shape is not expected in real data.
+ * the same identity the source words carry.
+ *
+ * KNOWN LIMITATION, measured not assumed: UHB `\w` tokens do NOT carry
+ * `x-occurrence` — 3400 of 3400 in docs/samples/hbo_uhb_38-ZEC.usfm and 18487
+ * of 18487 in hbo_uhb_23-ISA.usfm have no such attribute (an earlier version of
+ * this comment claimed the opposite). Both sides of the join default to 1
+ * identically, so nothing mis-fires, but a verse repeating the same pointed
+ * form collapses every repeat onto the FIRST position: a quote on the second
+ * occurrence underlines the first. It never invents an anchor that does not
+ * exist, and it is confined to this read-only screen's highlighting.
  */
 export function anchorPositions(
   sourceVerseObjects: unknown[] | null,

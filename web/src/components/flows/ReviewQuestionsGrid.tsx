@@ -10,7 +10,6 @@
 // with real deletes wired, a shared page-level "current row" id would let a
 // click on row 3 act on whichever row happened to be selected.
 
-import { useState } from "react";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
@@ -21,6 +20,16 @@ import type { TqRow } from "../../sync/api";
 export interface ReviewQuestionsGridProps {
   rows: TqRow[];
   refFor: (row: TqRow) => string;
+  /**
+   * Unsaved cell edits, keyed by row id. Owned by ReviewQueue, NOT by this
+   * component: these are persisted to the drafts store under the same key the
+   * card editor uses for the selected row (rowKey("tq", book, id)), so one
+   * owner has to reconcile the two before writing. Only the cells the user
+   * actually touched appear here; every other cell renders straight from the
+   * row so a peer's change isn't masked by a stale local copy.
+   */
+  edits: Record<string, { question?: string; response?: string }>;
+  onEditCell: (id: string, field: "question" | "response", value: string) => void;
   onSaveRow: (row: TqRow, patch: { question: string; response: string }) => void;
   onDeleteRow: (row: TqRow) => void;
   /** True while an AI pipeline holds the chapter — tq writes and deletes are both locked. */
@@ -32,20 +41,14 @@ const cellSx = { paddingBlock: 0.5, paddingInline: 1, verticalAlign: "top" } as 
 export function ReviewQuestionsGrid({
   rows,
   refFor,
+  edits,
+  onEditCell,
   onSaveRow,
   onDeleteRow,
   locked,
 }: ReviewQuestionsGridProps) {
-  // Only the cells the user actually touched are tracked; everything else
-  // renders straight from the row so a peer's change isn't masked by a stale
-  // local copy.
-  const [edits, setEdits] = useState<Record<string, { question?: string; response?: string }>>({});
-
   const valueOf = (row: TqRow, field: "question" | "response") =>
     edits[row.id]?.[field] ?? row[field] ?? "";
-
-  const setEdit = (id: string, field: "question" | "response", value: string) =>
-    setEdits((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
 
   return (
     <Box
@@ -103,7 +106,7 @@ export function ReviewQuestionsGrid({
                     size="small"
                     variant="standard"
                     value={valueOf(row, "question")}
-                    onChange={(e) => setEdit(row.id, "question", e.target.value)}
+                    onChange={(e) => onEditCell(row.id, "question", e.target.value)}
                     inputProps={{ "aria-label": `Question for ${refFor(row)}` }}
                   />
                 </Box>
@@ -113,7 +116,7 @@ export function ReviewQuestionsGrid({
                     size="small"
                     variant="standard"
                     value={valueOf(row, "response")}
-                    onChange={(e) => setEdit(row.id, "response", e.target.value)}
+                    onChange={(e) => onEditCell(row.id, "response", e.target.value)}
                     inputProps={{ "aria-label": `Response for ${refFor(row)}` }}
                   />
                 </Box>
@@ -130,17 +133,15 @@ export function ReviewQuestionsGrid({
                         size="small"
                         aria-label={`Save ${refFor(row)}`}
                         disabled={locked || !dirty}
-                        onClick={() => {
+                        onClick={() =>
+                          // No local reset here: the owner applies the patch to
+                          // its row copy, which makes this entry clean, and it
+                          // then drops the entry and clears the draft.
                           onSaveRow(row, {
                             question: valueOf(row, "question"),
                             response: valueOf(row, "response"),
-                          });
-                          setEdits((prev) => {
-                            const next = { ...prev };
-                            delete next[row.id];
-                            return next;
-                          });
-                        }}
+                          })
+                        }
                       >
                         💾
                       </IconButton>

@@ -85,23 +85,48 @@ export function ScriptureLane({
   const baselineRef = useRef(editableBaseline);
   baselineRef.current = editableBaseline;
 
-  const draftKey = base ? verseKey(book, chapter, verse, bibleVersion) : null;
+  // The draft key is the ROW's verse, never the displayed one: a `\v 6-9` range
+  // row opened at verse 7 PATCHes v=6, and the outbox clears drafts by the op's
+  // target verse. Keying the draft on 7 would leave it uncleared after a
+  // successful save — a permanent false "N unsaved", plus a stale draft that
+  // could later rehydrate over newer text. DocColumn.tsx:260 makes the same
+  // choice (it passes dto.verse for both the PATCH and the draft).
+  const rowVerse = base?.verse ?? verse;
+  const draftKey = base ? verseKey(book, chapter, rowVerse, bibleVersion) : null;
+
+  // "This lane holds unsaved typing." `hasDraft` is async state from the draft
+  // subscription; `dirtyRef` is its synchronous mirror, set on the keystroke
+  // itself so a re-render in the window before the subscription lands can't
+  // resync over an in-progress edit. Same pair, same reason, as DocColumn.tsx
+  // (439-483).
+  const [hasDraft, setHasDraft] = useState(false);
+  const dirtyRef = useRef(false);
+  useEffect(() => {
+    if (!draftKey) {
+      setHasDraft(false);
+      dirtyRef.current = false;
+      return;
+    }
+    return drafts.subscribe((all) => {
+      const rec = all.find((d) => d.key === draftKey && !d.quarantined);
+      setHasDraft(!!rec);
+      dirtyRef.current = !!rec;
+    });
+  }, [draftKey]);
 
   // Seed ONCE per draft key: the server value, then any persisted draft
   // (unsaved typing from this browser) on top.
   //
-  // `editableBaseline` is deliberately NOT a dependency. Keying on it meant any
-  // later change to server content — a peer's WebSocket update, our own save
-  // round-trip — re-seeded the textarea mid-typing, moving the caret and
-  // replacing what the translator had just typed. DocColumn.tsx (452-483) is
-  // the deliberate correct pattern and makes the same choice: hydrate once, and
-  // never live-replace the editor from server content. New server content is
-  // still honoured — it flows into `dirty` below, which diffs against the live
-  // `editableBaseline` prop.
+  // `editableBaseline` is deliberately NOT a dependency here. Keying the SEED on
+  // it meant any later change to server content re-seeded the textarea
+  // mid-typing, moving the caret and replacing what the translator had just
+  // typed. New server content is instead adopted by the resync effect below,
+  // which only fires when the lane is clean.
   useEffect(() => {
     const key = draftKey ?? "none";
     if (hydratedKeyRef.current === key) return;
     hydratedKeyRef.current = key;
+    dirtyRef.current = false;
     setValue(baselineRef.current);
     if (!draftKey) return;
     let cancelled = false;
@@ -115,6 +140,18 @@ export function ScriptureLane({
     };
   }, [draftKey]);
 
+  // Adopt new SERVER content when the lane is clean — DocColumn's resync
+  // (452-483, guarded at 568: `if (hasDraft || dirtyRef.current) return`).
+  // Hydrate-once alone was not enough: a Verse-history restore or a
+  // find/replace updates the verse row but left the box holding pre-restore
+  // text, and the next Save diffed the new baseline against that stale text and
+  // reverted the restore. While the lane IS dirty the user's text stands and
+  // the "Unsaved" chip below shows the divergence.
+  useEffect(() => {
+    if (hasDraft || dirtyRef.current) return;
+    setValue(editableBaseline);
+  }, [editableBaseline, hasDraft]);
+
   const dirty = normalizeEditable(value) !== editableBaseline;
 
   // Every keystroke goes to the IndexedDB drafts store so unsaved typing
@@ -123,20 +160,25 @@ export function ScriptureLane({
     setValue(next);
     if (!draftKey || !base) return;
     if (normalizeEditable(next) === editableBaseline) {
+      dirtyRef.current = false;
       void drafts.clear(draftKey);
       return;
     }
+    // Synchronous, before the async draft write: the resync effect above must
+    // never adopt a new baseline over typing that hasn't reached IndexedDB yet.
+    dirtyRef.current = true;
     void drafts.set(draftKey, { plainText: next }, base.version, {
       kind: "verse",
       book,
       chapter,
-      verse,
+      verse: rowVerse,
       bibleVersion,
     });
   }
 
   function handleUndo() {
     setValue(editableBaseline);
+    dirtyRef.current = false;
     if (draftKey) void drafts.clear(draftKey);
   }
 

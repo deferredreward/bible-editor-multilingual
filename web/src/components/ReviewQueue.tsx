@@ -67,6 +67,7 @@ import { useLayoutBand } from "../hooks/useLayoutBand";
 import { useLexicon } from "../hooks/useLexicon";
 import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { useProjectConfig } from "../hooks/useProjectConfig";
+import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox, onOutboxResult, type OutboxOp } from "../sync/outbox";
 import { drafts, rowKey, type DraftRecord } from "../sync/drafts";
 import { buildVerseIndex } from "../lib/verseRange";
@@ -199,6 +200,18 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(true);
   const [gridView, setGridView] = useState(false);
+  // Unsaved grid cell edits live HERE rather than inside ReviewQuestionsGrid:
+  // the selected tq row's response is edited by both the grid cell and the
+  // card's Draft box, and both persist under the same drafts key
+  // (rowKey("tq", book, id)). Two independent copies would each write that key
+  // and erase the other's typing.
+  const [gridEdits, setGridEdits] = useState<
+    Record<string, { question?: string; response?: string }>
+  >({});
+  const gridHydratedRef = useRef<string | null>(null);
+  // Last draft payload written per grid row, so a re-run that changed nothing
+  // doesn't re-hit IndexedDB.
+  const gridDraftWrittenRef = useRef<Record<string, string>>({});
   const [suggesting, setSuggesting] = useState(false);
   const [templateAnchor, setTemplateAnchor] = useState<HTMLElement | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
@@ -277,31 +290,185 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
 
   const hasDiff = draftValue !== baselineRef.current;
 
+  // The grid can hold an unsaved `question` for the selected row under the very
+  // same drafts key. Read it here so a card keystroke rewrites the record WITH
+  // it instead of replacing it and dropping the question the user typed.
+  const selectedGridQuestion =
+    activeKind === "tq" && selectedRow ? gridEdits[selectedRow.id]?.question : undefined;
+
   // Stash every keystroke to the drafts store (explicit-Save-only: this never
   // triggers a network write on its own). Cleared automatically by drafts.ts
   // once the outbox confirms a save.
   useEffect(() => {
     if (!selectedRow) return;
     const key = rowKey(activeKind, book, selectedRow.id);
+    const patch: Record<string, string> = {};
+    const baseline: Record<string, string> = {};
     if (draftValue !== baselineRef.current) {
-      void drafts.set(
-        key,
-        { patch: { [fieldName]: draftValue }, baseline: { [fieldName]: baselineRef.current } },
-        selectedRow.version,
-        {
-          kind: "row",
-          rowKind: activeKind,
-          id: selectedRow.id,
-          book,
-          chapter: selectedRow.chapter,
-          verse: selectedRow.verse,
-        },
-      );
+      patch[fieldName] = draftValue;
+      baseline[fieldName] = baselineRef.current;
+    }
+    if (activeKind === "tq" && typeof selectedGridQuestion === "string") {
+      const rowQuestion = (selectedRow as TqRow).question ?? "";
+      if (selectedGridQuestion !== rowQuestion) {
+        patch.question = selectedGridQuestion;
+        baseline.question = rowQuestion;
+      }
+    }
+    if (Object.keys(patch).length > 0) {
+      void drafts.set(key, { patch, baseline }, selectedRow.version, {
+        kind: "row",
+        rowKind: activeKind,
+        id: selectedRow.id,
+        book,
+        chapter: selectedRow.chapter,
+        verse: selectedRow.verse,
+      });
     } else {
       void drafts.clear(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftValue, selectedRow?.id, selectedRow?.version, activeKind, book]);
+  }, [draftValue, selectedRow?.id, selectedRow?.version, activeKind, book, selectedGridQuestion]);
+
+  // ── grid cell drafts ──────────────────────────────────────────────────────
+  // Restore cell edits a previous session left in IndexedDB. Once per chapter;
+  // the write effect below owns the store from then on.
+  useEffect(() => {
+    const hydrationKey = `${book}:${chapter}`;
+    if (gridHydratedRef.current === hydrationKey) return;
+    // Chapter changed — the old chapter's edits are already persisted and must
+    // not leak into this one's rows.
+    if (gridHydratedRef.current !== null) setGridEdits({});
+    gridHydratedRef.current = hydrationKey;
+    gridDraftWrittenRef.current = {};
+    let cancelled = false;
+    void drafts.list().then((all) => {
+      if (cancelled || gridHydratedRef.current !== hydrationKey) return;
+      const seeded: Record<string, { question?: string; response?: string }> = {};
+      for (const rec of all) {
+        if (rec.quarantined) continue;
+        const m = rec.meta;
+        if (m.kind !== "row" || m.rowKind !== "tq") continue;
+        if (m.book !== book || m.chapter !== chapter) continue;
+        const patch = (rec.payload as { patch?: Record<string, unknown> } | undefined)?.patch;
+        const entry: { question?: string; response?: string } = {};
+        // Stored verbatim — the value in `patch` is exactly what a Save would
+        // send, so it goes back into the cell as-is (no unescaping: the grid
+        // works in the row's own raw domain).
+        if (typeof patch?.question === "string") entry.question = patch.question;
+        if (typeof patch?.response === "string") entry.response = patch.response;
+        if (entry.question !== undefined || entry.response !== undefined) seeded[m.id] = entry;
+      }
+      // Anything typed while the read was in flight wins.
+      if (Object.keys(seeded).length > 0) setGridEdits((prev) => ({ ...seeded, ...prev }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [book, chapter]);
+
+  const tqRows = data?.tq;
+  // Persist every cell edit, and drop entries that match the server row again —
+  // a stale equal-to-server entry would mask a peer's later change. The
+  // selected row is skipped: the card effect above owns that key and writes
+  // both fields for it.
+  useEffect(() => {
+    if (!tqRows) return;
+    const ids = Object.keys(gridEdits);
+    if (ids.length === 0) return;
+    const settled: string[] = [];
+    for (const id of ids) {
+      const row = tqRows.find((r) => r.id === id);
+      // Row is gone from the chapter (deleted by us or a peer). Forget the
+      // entry; leave any persisted draft alone rather than destroying text.
+      if (!row) {
+        settled.push(id);
+        continue;
+      }
+      const entry = gridEdits[id];
+      const patch: Record<string, string> = {};
+      const baseline: Record<string, string> = {};
+      for (const field of ["question", "response"] as const) {
+        const value = entry[field];
+        if (typeof value === "string" && value !== (row[field] ?? "")) {
+          patch[field] = value;
+          baseline[field] = row[field] ?? "";
+        }
+      }
+      // The card effect owns the selected row's key, and the mirror effect
+      // below owns its entry — leave both alone here. (Pruning it would fight
+      // the mirror: one deletes the entry, the other puts it straight back.)
+      const isSelected = activeKind === "tq" && selectedId === id;
+      if (isSelected) continue;
+      if (Object.keys(patch).length === 0) {
+        settled.push(id);
+        delete gridDraftWrittenRef.current[id];
+        void drafts.clear(rowKey("tq", book, id));
+        continue;
+      }
+      // This effect re-runs on every card keystroke too (the mirror below
+      // touches the map). Skip the IndexedDB write when nothing about this
+      // row's draft changed.
+      const signature = `${row.version}:${JSON.stringify(patch)}`;
+      if (gridDraftWrittenRef.current[id] === signature) continue;
+      gridDraftWrittenRef.current[id] = signature;
+      void drafts.set(rowKey("tq", book, id), { patch, baseline }, row.version, {
+        kind: "row",
+        rowKind: "tq",
+        id,
+        book,
+        chapter: row.chapter,
+        verse: row.verse,
+      });
+    }
+    if (settled.length > 0) {
+      setGridEdits((prev) => {
+        const next = { ...prev };
+        for (const id of settled) delete next[id];
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
+    }
+  }, [gridEdits, tqRows, activeKind, selectedId, book]);
+
+  // The grid cell and the card's Draft box are two views of one value for the
+  // selected row's response, so a card keystroke has to show up in the cell.
+  const handleGridEdit = useCallback(
+    (id: string, field: "question" | "response", value: string) => {
+      if (field === "response" && activeKind === "tq" && id === selectedId) setDraftValue(value);
+      setGridEdits((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+    },
+    [activeKind, selectedId],
+  );
+
+  // …and the reverse: mirror the card's text back into the edit map. Without
+  // this, switching to Notes (or to another row) hands the key to the effect
+  // above, which would rewrite it from the map alone and drop the response the
+  // user typed in the card box.
+  // It also keeps the selected row's entry honest, since the effect that prunes
+  // clean entries skips this row: a mirrored response is retracted once the
+  // card is back on the server value, and a question that matches the row again
+  // (just saved) is dropped so it can't mask a peer's later change.
+  useEffect(() => {
+    if (activeKind !== "tq" || !selectedRow) return;
+    const id = selectedRow.id;
+    const rowQuestion = (selectedRow as TqRow).question ?? "";
+    setGridEdits((prev) => {
+      const cur = prev[id];
+      const entry: { question?: string; response?: string } = {};
+      if (typeof cur?.question === "string" && cur.question !== rowQuestion) {
+        entry.question = cur.question;
+      }
+      if (hasDiff) entry.response = draftValue;
+      const same =
+        (cur?.question ?? undefined) === entry.question &&
+        (cur?.response ?? undefined) === entry.response;
+      if (same) return prev;
+      const next = { ...prev };
+      if (entry.question === undefined && entry.response === undefined) delete next[id];
+      else next[id] = entry;
+      return next;
+    });
+  }, [activeKind, selectedRow, hasDiff, draftValue]);
 
   // ── "N unsaved" across the whole queue ────────────────────────────────────
   useEffect(() => drafts.subscribe(setDraftRecords), []);
@@ -317,6 +484,23 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       ),
     [draftRecords, book, chapter],
   );
+
+  // Reload / tab-close guard. Drafts already persist, but a translator who
+  // reloads past them still has to notice and re-save; and the card's editor
+  // text is React state until its debounce-free draft write lands, so the
+  // in-memory dirt has to be part of the signal too.
+  const gridDirty = useMemo(() => {
+    if (!tqRows) return false;
+    return tqRows.some((row) => {
+      const entry = gridEdits[row.id];
+      if (!entry) return false;
+      return (
+        (typeof entry.question === "string" && entry.question !== (row.question ?? "")) ||
+        (typeof entry.response === "string" && entry.response !== (row.response ?? ""))
+      );
+    });
+  }, [gridEdits, tqRows]);
+  useUnsavedGuard(hasDiff || gridDirty);
 
   function goToFirstUnsaved() {
     const first = chapterDrafts[0];
@@ -342,6 +526,16 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
           return;
         }
         if (result.kind === "conflict") {
+          // A 409 is NOT automatically a question for the user. The outbox
+          // auto-heals the healable ones — a sort_order-only patch, or one
+          // whose fields the peer never touched — by re-arming the op as
+          // "pending" (outbox.ts:1029-1036), yet it still notifies listeners
+          // with kind "conflict" (outbox.ts:1103). Prompting on that would
+          // offer "Keep theirs" for an op that is still queued and about to
+          // succeed; taking it would drop a live edit (and, for the two-op
+          // sort_order swap, half the swap). The op's settled status is the
+          // real signal — same test SyncStatusBar.tsx:114 uses.
+          if (op.status !== "conflict") return;
           // All the 409 gives us is the version. Open the prompt immediately so
           // the user isn't left wondering why Save went quiet, then re-read the
           // row to fill in what "theirs" actually says.
@@ -902,7 +1096,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     );
   }
 
-  const unapprovedNotes = data.tn.filter((r) => r.translation_state !== "validated").length;
+  // Same filter handleApproveAll uses — trashed notes are skipped there, so
+  // counting them here would put a number on the button that the click can
+  // never reach ("Approve all notes (1)" doing nothing). tq has no trashed_at,
+  // so the questions count needs no equivalent guard.
+  const unapprovedNotes = data.tn.filter(
+    (r) => r.translation_state !== "validated" && r.trashed_at == null,
+  ).length;
   const unapprovedQuestions = data.tq.filter((r) => r.translation_state !== "validated").length;
   const rowState = selectedRow ? stateLabel(selectedRow.translation_state) : "draft";
   const isTrashed = activeKind === "tn" && selectedRow ? (selectedRow as TnRow).trashed_at != null : false;
@@ -916,6 +1116,11 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       : null;
 
   const showGrid = isAuthoringMode && activeKind === "tq" && gridView;
+  // Card keystrokes are the selected row's response; show them in its cell.
+  const gridEditsView =
+    activeKind === "tq" && selectedRow && hasDiff
+      ? { ...gridEdits, [selectedRow.id]: { ...gridEdits[selectedRow.id], response: draftValue } }
+      : gridEdits;
   const contextBody = (
     <ReviewContextPanel ultText={ultText} ustText={ustText} twl={verseTwl} sourceDir={sourceDir} />
   );
@@ -1096,12 +1301,19 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                 rows={rows as TqRow[]}
                 refFor={(r) => refFor(book, r)}
                 locked={locked}
+                edits={gridEditsView}
+                onEditCell={handleGridEdit}
                 onSaveRow={(row, patch) => {
                   applyLocalRowPatch("tq", row.id, patch as Partial<TnRow & TqRow>);
                   void outbox.enqueueRow("tq", row.id, row.version, patch, {
                     book,
                     baseline: { question: row.question ?? "", response: row.response ?? "" },
                   });
+                  // Saving the selected row from the grid also saves what the
+                  // card's Draft box holds (they are one value) — move its
+                  // baseline too, or the card stays "dirty" and re-writes the
+                  // draft the store is about to clear.
+                  if (selectedRow?.id === row.id) baselineRef.current = patch.response;
                 }}
                 onDeleteRow={(row) => void handleDeleteQuestion(row)}
               />
