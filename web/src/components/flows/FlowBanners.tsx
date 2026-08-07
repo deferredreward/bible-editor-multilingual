@@ -24,9 +24,16 @@ const PIPELINE_LABELS: Record<string, string> = {
 
 // "3 min ago" style suffix, or null when the timestamp is absent/unparseable —
 // in which case the banner simply omits the clause instead of guessing.
-function relativeTime(startedAt: string | null): string | null {
-  if (!startedAt) return null;
-  const then = Date.parse(startedAt);
+//
+// The real `chapter_locked` 409 body sends `startedAt` as UNIX SECONDS, not an
+// ISO string — see api/src/chapterLock.ts's ChapterLockedError (`startedAt:
+// number`, filled from pipeline_jobs.created_at) and the mirrored
+// ChapterLockedBody in web/src/sync/api.ts. A string is still accepted for any
+// caller that has already formatted one.
+function relativeTime(startedAt: string | number | null): string | null {
+  if (startedAt == null || startedAt === "") return null;
+  const then =
+    typeof startedAt === "number" ? startedAt * 1000 : Date.parse(startedAt);
   if (Number.isNaN(then)) return null;
   const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (secs < 60) return "less than a minute ago";
@@ -96,8 +103,11 @@ function BannerShell({ tone, icon, message, action }: BannerShellProps) {
 export interface LockBannerProps {
   /** From the real 409 `chapter_locked` body. Null degrades to a generic label. */
   pipelineType: string | null;
-  /** ISO timestamp from the same body. Null omits the elapsed-time clause. */
-  startedAt: string | null;
+  /**
+   * Unix SECONDS from the same body (api/src/chapterLock.ts sends a number).
+   * An ISO string is also accepted. Null omits the elapsed-time clause.
+   */
+  startedAt: string | number | null;
   onMarkKeep?: () => void;
 }
 
