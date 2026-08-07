@@ -213,11 +213,17 @@ export function exportTsvShrinkRefused(renderedRows: number, masterRows: number)
 // `analyzeAlignmentDelta` — per verse, so the export net and `guardBlocksSave`
 // agree on what "collateral loss" means.
 //
-// REFUSE if any word present in BOTH master and render (matched by surface +
-// occurrence via the LCS path) HAD a \zaln source and is now fully bare
-// (`reason === "lost"`) — the flatten / collateral-loss signature — REGARDLESS
-// of whether the verse's plain text also changed (that's the whole point). A
-// re-pointed source on an otherwise-unchanged word (`reason === "changed_source"`)
+// REFUSE on any `reason === "lost"` the analyzer reports. That covers two
+// distinct shapes, and it is worth keeping them apart when reading an alert:
+//   • COLLATERAL LOSS — a word present in BOTH master and render (matched by
+//     surface + occurrence via the LCS path) HAD a \zaln source and is now fully
+//     bare. Fires REGARDLESS of whether the verse's plain text also changed —
+//     that's the whole point, and the 1CH 4:21 signature.
+//   • TOTAL WIPE — the verse had aligned words on master and has NONE in the
+//     render. Here the offending words need NOT appear in the render at all;
+//     the analyzer's total-wipe branch reports every previously-aligned word,
+//     because with no survivors it cannot tell an edited word from a casualty.
+// A re-pointed source on an otherwise-unchanged word (`reason === "changed_source"`)
 // is the signature of a LEGITIMATE aligner-panel re-alignment, so it is NOT
 // blocked (blocking it would over-correct, the inverse error); it's only logged.
 //
@@ -226,6 +232,13 @@ export function exportTsvShrinkRefused(renderedRows: number, masterRows: number)
 // while a false negative ships silent alignment loss to master. So this backstop
 // errs toward flagging `lost`. Returns the list of offending verse refs
 // (empty = safe to commit).
+//
+// Operational note, true of BOTH shapes: a refusal skips the whole book ×
+// resource export and repeats nightly until the verse is re-aligned or the
+// alert is adjudicated. A translator who takes the editor's "Save anyway" hatch
+// to rewrite a verse wholesale therefore parks that book's export until someone
+// acts. That property predates the total-wipe branch (partial de-alignment
+// already behaved this way); the branch widens which saves can trigger it.
 interface VerseAlignStat {
   alignedWords: number;
   verseObjects: unknown[];
@@ -296,11 +309,14 @@ export interface AlignmentShrinkResult {
 // change, not collateral loss), run `analyzeAlignmentDelta(masterVos,
 // renderedVos)` — the SAME analyzer the interactive write-time guard
 // (guardBlocksSave) uses — and REFUSE (refused=true) if any unexpected loss has
-// `reason === "lost"`: a word matched in both by surface + occurrence that HAD a
-// \zaln source on master and is now fully bare in the render. That is the
-// flatten / collateral-loss signature, and it fires REGARDLESS of whether the
-// verse's plain text also changed (the incident verses were genuine text edits
-// PLUS collateral loss — the old plain-text exemption skipped exactly them).
+// `reason === "lost"`. Two shapes qualify: a word matched in both by surface +
+// occurrence that HAD a \zaln source on master and is now fully bare in the
+// render (collateral loss), OR a verse that had aligned words on master and has
+// NONE in the render, where the analyzer reports every previously-aligned word
+// whether or not it still appears (total wipe). Either fires REGARDLESS of
+// whether the verse's plain text also changed — the incident verses were genuine
+// text edits PLUS collateral loss, and the old plain-text exemption skipped
+// exactly them.
 //
 // `reason === "changed_source"` (a re-pointed source on an unchanged word) is
 // the signature of a LEGITIMATE aligner-panel re-alignment, so it is NOT a

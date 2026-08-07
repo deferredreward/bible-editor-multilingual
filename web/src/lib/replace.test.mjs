@@ -2016,12 +2016,39 @@ function countAligned(content) {
     "guard ALSO blocks the empty tree — the schema is not the only line of defence",
   );
 
-  // (d) Negative control: an ordinary edit that keeps its words must stay
-  // saveable. If this fails, the wipe branch is over-blocking real edits.
-  const ordinary = smartEditVerse(verse, old, "Hello world!");
+  // (d) Boundary control. A punctuation-only edit is NOT a real control here —
+  // it stays on the preserve tier with both words still aligned, so it never
+  // approaches the wipe branch and would pass no matter what the branch did.
+  // Change ONE of the two aligned words instead: one aligned word survives, so
+  // afterAligned is 1, the wipe predicate is false, and the edit must still save
+  // via the ordinary LCS path. This is the assertion that fails if the predicate
+  // is ever loosened from "no aligned words survive" toward "some were lost".
+  const oneWord = smartEditVerse(verse, old, "Hello earth.");
+  const oneWordDelta = analyzeAlignmentDelta(verse, oneWord.content);
+  assert(oneWordDelta.afterAligned === 1, "editing one of two aligned words leaves one aligned");
   assert(
-    !guardBlocksSave(analyzeAlignmentDelta(verse, ordinary.content), "text_edit"),
-    "an ordinary punctuation edit still saves cleanly",
+    !guardBlocksSave(oneWordDelta, "text_edit"),
+    "editing ONE aligned word still saves cleanly — the wipe branch did not widen",
+  );
+
+  // (e) Pins the KNOWN COST of the predicate, so it is a decision on record
+  // rather than a surprise. `afterAligned === 0` is broader than the flatten
+  // that motivated it: rewording EVERY aligned word also ends with zero
+  // alignment, so it is now refused even though nothing collateral was harmed.
+  // That is deliberate — with no survivors the analyzer cannot tell the edited
+  // word from a casualty (see the wipe branch comment). Recorded here because
+  // the two intents diverge sharply: text_edit gets the "Save anyway" confirm,
+  // find_replace has no override and simply skips the verse.
+  const rewrite = smartEditVerse(verse, old, "Greetings earth.");
+  const rewriteDelta = analyzeAlignmentDelta(verse, rewrite.content);
+  assert(rewriteDelta.afterAligned === 0, "rewording every aligned word leaves none aligned");
+  assert(
+    guardBlocksSave(rewriteDelta, "text_edit"),
+    "COST: a full reword is refused for text_edit (recoverable via Save anyway)",
+  );
+  assert(
+    guardBlocksSave(rewriteDelta, "find_replace"),
+    "COST: a full reword is refused for find_replace, which has NO override",
   );
 }
 
