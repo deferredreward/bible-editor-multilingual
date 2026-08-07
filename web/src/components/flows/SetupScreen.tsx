@@ -43,9 +43,9 @@ export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) 
     <Box sx={{ pb: 6 }}>
       <FlowNav
         current="setup"
-        book={me?.lastBook}
-        chapter={me?.lastChapter}
-        verse={me?.lastVerse}
+        book={me?.lastBook ?? undefined}
+        chapter={me?.lastChapter ?? undefined}
+        verse={me?.lastVerse ?? undefined}
         role={role}
       />
 
