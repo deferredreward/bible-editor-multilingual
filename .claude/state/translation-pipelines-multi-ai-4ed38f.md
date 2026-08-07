@@ -2,7 +2,7 @@
 
 **Goal:** translate pipelines (tn/tq/tw/ta) runnable through Gemini / OpenAI / Grok / Claude API with per-org BYO API keys; admin-only "AI service" preference section with write-only encrypted key storage.
 
-**Status: code-complete, PR open.** All three commits (storage+crypto+routes, dispatch wiring, admin UI section) landed on this branch. Model catalog verified against current provider docs (Anthropic/OpenAI/Gemini/xAI) — no corrections needed. Typecheck clean; `aiKeyCrypto`/`aiProvider` unit tests (32 assertions) pass. PR: (fill in number/URL once `gh pr create` returns).
+**Status: code-complete, PR open.** All three commits (storage+crypto+routes, dispatch wiring, admin UI section) landed on this branch. Model catalog verified against current provider docs (Anthropic/OpenAI/Gemini/xAI) — no corrections needed. Typecheck clean; `aiKeyCrypto`/`aiProvider` unit tests (32 assertions) pass. PR: https://github.com/deferredreward/bible-editor-multilingual/pull/156
 
 **Remaining human gates before this can ship:**
 1. **Deploy order** — the companion bp-assistant branch `feat/translate-multi-provider` (local-only in `C:/GH/bp-bot/bp-assistant/.claude/worktrees/translate-multi-provider`, remote `unfoldingWord/bp-assistant`, not yet pushed/PR'd) must deploy **before** this ships. Its `OptionsSchema` is `.strict()` — if this editor's new `provider`/`model`/`apiKey` fields hit the bot before it recognizes them, every translate dispatch 400s.
