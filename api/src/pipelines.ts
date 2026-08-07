@@ -22,6 +22,8 @@ import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
 import { getProjectConfig } from "./projectConfig.ts";
 import { buildTranslateOptions } from "./translateOptions.ts";
+import { getAiProviderConfig, resolveDispatchAi, scrubSecret } from "./aiProvider.ts";
+import { decryptApiKey } from "./aiKeyCrypto.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents";
@@ -587,7 +589,7 @@ export async function dispatchNext(env: Env): Promise<void> {
       : undefined;
   const isArticleJob =
     job.pipeline_type === "translate" && (optResourceType === "tw" || optResourceType === "ta");
-  const upstreamBody = {
+  const upstreamBody: Record<string, unknown> = {
     pipelineType: job.pipeline_type,
     ...(isArticleJob
       ? {}
@@ -596,6 +598,30 @@ export async function dispatchNext(env: Env): Promise<void> {
     sessionKey: job.session_key,
     ...(options ? { options } : {}),
   };
+
+  // Per-org AI provider config (migration 0065): translate jobs only. Read
+  // fresh at every dispatch — never cached — so an admin's config change
+  // applies to jobs that were already queued. A BYO provider that can't be
+  // decrypted must fail the job, never silently fall back to the shared
+  // subscription (billing correctness).
+  let aiApiKey: string | undefined; // plaintext lives ONLY in this function scope
+  if (job.pipeline_type === "translate") {
+    const row = await getAiProviderConfig(env.DB);
+    const ai = resolveDispatchAi(row, env.AI_KEY_WRAPPING_KEY);
+    if (ai.kind === "error") {
+      await fail("sdk_error", `ai_provider_unavailable: ${ai.reason}`);
+      return;
+    }
+    if (ai.kind === "configured") {
+      try {
+        aiApiKey = await decryptApiKey(env.AI_KEY_WRAPPING_KEY!, ai.ciphertext, ai.iv);
+      } catch {
+        await fail("sdk_error", "ai_provider_key_decrypt_failed");
+        return;
+      }
+      Object.assign(upstreamBody, { provider: ai.provider, model: ai.model, apiKey: aiApiKey });
+    }
+  }
 
   let upstream: Response;
   try {
@@ -613,8 +639,9 @@ export async function dispatchNext(env: Env): Promise<void> {
   }
 
   const text = await upstream.text();
+  const scrubbed = aiApiKey ? scrubSecret(text, aiApiKey) : text;
   if (!upstream.ok) {
-    await fail("sdk_error", `upstream ${upstream.status}: ${text.slice(0, 200)}`);
+    await fail("sdk_error", `upstream ${upstream.status}: ${scrubbed.slice(0, 200)}`);
     return;
   }
   let parsed: { jobId?: string } | null = null;
@@ -624,7 +651,7 @@ export async function dispatchNext(env: Env): Promise<void> {
     /* fall through to malformed handling */
   }
   if (!parsed || typeof parsed.jobId !== "string") {
-    await fail("missing_output", `upstream missing jobId: ${text.slice(0, 200)}`);
+    await fail("missing_output", `upstream missing jobId: ${scrubbed.slice(0, 200)}`);
     return;
   }
 

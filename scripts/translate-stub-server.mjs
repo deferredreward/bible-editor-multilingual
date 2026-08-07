@@ -183,6 +183,15 @@ const server = http.createServer(async (req, res) => {
         `[stub] start ${resource} ${scopeLabel} → ${options.targetOrg}/${options.targetLang}` +
           ` src=${options.sourceRef} ctx=${options.contextRef} delivery=${options.delivery}`,
       );
+      // Per-org AI provider dispatch (bible-editor migration 0065): log
+      // provider/model plainly so injection is observable locally, but the
+      // key itself only ever as a masked last-4 hint — never the value.
+      if (body.provider || body.model) {
+        console.log(`[stub] ${jobId} provider=${body.provider ?? "(default)"} model=${body.model ?? "(none)"}`);
+      }
+      if (body.apiKey) {
+        console.log(`[stub] ${jobId} apiKey=**** ${String(body.apiKey).slice(-4)}`);
+      }
       const job = {
         book: body.book,
         startChapter,
