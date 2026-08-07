@@ -48,7 +48,8 @@ type Location =
   | { view: "books" }
   | { view: "team" }
   | { view: "observe" }
-  | { view: "verse"; book: string; chapter: number; verse: number };
+  | { view: "verse"; book: string; chapter: number; verse: number }
+  | { view: "notes"; book: string; chapter: number };
 
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
@@ -65,6 +66,7 @@ const BooksScreen = lazy(() => import("./components/flows/BooksScreen"));
 const TeamScreen = lazy(() => import("./components/flows/TeamScreen"));
 const ObserveScreen = lazy(() => import("./components/flows/ObserveScreen"));
 const VerseScreen = lazy(() => import("./components/flows/VerseScreen"));
+const TranslateNotesScreen = lazy(() => import("./components/flows/TranslateNotesScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -115,6 +117,10 @@ function parseHash(): Location {
   const rv = location.hash.match(/^#\/review\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
+  }
+  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  if (nt) {
+    return { view: "notes", book: nt[1].toUpperCase(), chapter: nt[2] ? parseInt(nt[2], 10) : 1 };
   }
   // Flow screens (docs/flows port). Parameterless routes are single reserved
   // tokens; none collide with 3-letter USFM book codes in the catch-all below.
@@ -651,6 +657,7 @@ export function App() {
           loc.view === "books" ||
           loc.view === "team" ||
           loc.view === "observe" ||
+          loc.view === "notes" ||
           loc.view === "verse" ? (
           <Suspense
             fallback={
@@ -683,6 +690,8 @@ export function App() {
               <TeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "notes" ? (
+              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : (
               <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
             )}
