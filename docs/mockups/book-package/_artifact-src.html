@@ -1,0 +1,1312 @@
+<meta charset="utf-8" />
+<title>Book package preview — one verse, is it coherent?</title>
+
+<style>
+/*__PKG_CSS__*/
+
+/* ---------------------------------------------------------------- artifact shell
+ *
+ * One page, three views, one control to move between them. The token system, the
+ * three-block light/dark pattern and the type roles are carried over from the
+ * project's own docs/mockups/desktop-first/_design.css — this is a proposal inside
+ * an existing visual system, not a new one.
+ */
+.shell { min-height: 100dvh; display: flex; flex-direction: column; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 11px 20px;
+  border-block-end: 1px solid var(--line);
+  background: var(--card);
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 10;
+}
+.brand { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.brand .mark {
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ocean);
+  white-space: nowrap;
+}
+:root[data-theme="dark"] .brand .mark { color: var(--cultivate); }
+@media (prefers-color-scheme: dark) { .brand .mark { color: var(--cultivate); } }
+:root[data-theme="light"] .brand .mark { color: var(--ocean); }
+.brand .sep { color: var(--line); }
+.brand .what { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.topbar .spacer { flex: 1; }
+
+.framing {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 20px;
+  border-block-end: 1px solid var(--line);
+  background: var(--card-2);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.framing b { color: var(--ink); font-weight: 600; }
+.framing .jump {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  color: var(--inspire-deep);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:root[data-theme="dark"] .framing .jump { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .framing .jump { color: var(--inspire); } }
+:root[data-theme="light"] .framing .jump { color: var(--inspire-deep); }
+
+.stepbar { display: flex; align-items: center; gap: 7px; }
+.stepbar .vref {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 86px;
+}
+.stepbar select {
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.viewport { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------- narrow */
+.narrow-note { display: none; padding: 34px 22px; max-width: 62ch; }
+.narrow-note h2 { font-size: 16px; margin: 0 0 10px; }
+.narrow-note p { font-size: 14px; line-height: 1.6; color: var(--ink-2); margin: 0 0 10px; }
+@media (max-width: 999px) {
+  .wide-only { display: none !important; }
+  .narrow-note { display: block; }
+}
+
+/* ---------------------------------------------------------------- verse view */
+.modebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 20px;
+  border-block-end: 1px solid var(--line);
+  background: var(--card);
+}
+.modebar .why { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.modebar .spacer { flex: 1; }
+.flagrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.flag {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--skip-soft);
+  color: var(--ink-2);
+}
+.flag.ok { background: var(--ok-soft); color: var(--ok-ink); cursor: default; }
+.flag.attention { background: var(--warn-soft); color: var(--warn-ink); }
+.flag.note { background: var(--hl); color: var(--inspire-deep); }
+:root[data-theme="dark"] .flag.note { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .flag.note { color: var(--inspire); } }
+:root[data-theme="light"] .flag.note { color: var(--inspire-deep); }
+
+.vgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) min(440px, 34vw);
+  flex: 1;
+  min-height: 0;
+}
+.col-text { overflow: auto; padding: 16px 20px 40px; min-width: 0; }
+.col-detail {
+  overflow: auto;
+  border-inline-start: 1px solid var(--line);
+  background: var(--card);
+  padding: 16px 18px 40px;
+  min-width: 0;
+}
+
+.tblock { margin: 0 0 22px; }
+.tblock .label { margin: 0 0 6px; }
+.heb-line {
+  font-family: var(--font-hebrew);
+  font-size: 25px;
+  line-height: 2.05;
+  direction: rtl;
+  text-align: start;
+  unicode-bidi: isolate;
+  margin: 0 0 20px;
+}
+.hw { border-radius: 4px; padding: 0 2px; cursor: pointer; }
+.hw:hover { background: var(--card-2); }
+.hw.on { background: var(--hl); box-shadow: inset 0 -2px 0 var(--inspire); }
+.hw.marked { box-shadow: inset 0 -2px 0 var(--cultivate); }
+.hw.hole { background: var(--warn-soft); }
+.prose {
+  font-family: var(--font-scripture);
+  font-size: 17px;
+  line-height: 1.62;
+  margin: 0 0 20px;
+}
+.pg { cursor: pointer; border-radius: 3px; }
+.pg:hover { background: var(--card-2); }
+.pg.on { background: var(--hl); box-shadow: inset 0 -2px 0 var(--inspire); }
+.pg.supplied { color: var(--ink-2); }
+
+.spine-wrap { overflow-x: auto; }
+.spine { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 720px; }
+.spine th {
+  text-align: start;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 6px 10px;
+  border-block-end: 1px solid var(--line);
+  position: sticky;
+  inset-block-start: 0;
+  background: var(--ground);
+}
+.spine td { padding: 7px 10px; border-block-end: 1px solid var(--line); vertical-align: baseline; }
+.spine tr { cursor: pointer; }
+.spine tr:hover td { background: var(--card-2); }
+.spine tr[aria-selected="true"] td { background: var(--hl); }
+.spine .c-heb {
+  font-family: var(--font-hebrew);
+  font-size: 19px;
+  line-height: 1.7;
+  direction: rtl;
+  text-align: start;
+  unicode-bidi: isolate;
+  width: 24%;
+}
+.spine .c-lit { width: 30%; font-family: var(--font-scripture); font-size: 15px; }
+.spine .c-sim { width: 34%; font-family: var(--font-scripture); font-size: 15px; color: var(--ink-2); }
+.spine .c-mark { width: 12%; text-align: end; white-space: nowrap; }
+.hole {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.cont { font-size: 11px; color: var(--ink-2); font-style: italic; }
+.m-dot {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-inline-start: 4px;
+  background: var(--hl);
+  color: var(--inspire-deep);
+}
+.m-dot.term { background: rgba(112, 201, 204, 0.28); color: var(--ok-ink); }
+:root[data-theme="dark"] .m-dot:not(.term) { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .m-dot:not(.term) { color: var(--inspire); } }
+:root[data-theme="light"] .m-dot:not(.term) { color: var(--inspire-deep); }
+
+.reslist { margin: 24px 0 0; }
+.reslist .label { margin: 0 0 6px; }
+.rrow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  text-align: start;
+  appearance: none;
+  border: 0;
+  border-block-end: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13.5px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+.rrow:hover { background: var(--card-2); }
+.rrow[aria-current="true"] { background: var(--hl); }
+.rrow .tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  min-width: 46px;
+}
+.rrow .body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrow .side { font-size: 11.5px; color: var(--ink-2); }
+.rrow .qheb {
+  font-family: var(--font-hebrew);
+  font-size: 15px;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+
+.d-empty { font-size: 13px; color: var(--ink-2); padding: 30px 2px; line-height: 1.6; }
+.d-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.d-sec { margin: 0 0 18px; }
+.d-sec .label { margin: 0 0 5px; }
+.d-heb {
+  font-family: var(--font-hebrew);
+  font-size: 22px;
+  line-height: 1.8;
+  direction: rtl;
+  text-align: start;
+  unicode-bidi: isolate;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.d-quote {
+  font-family: var(--font-scripture);
+  font-size: 15.5px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.alt {
+  font-family: var(--font-scripture);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.wgrid { display: grid; gap: 8px; }
+.wcard {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--card-2);
+}
+.wcard .wtop { display: flex; align-items: baseline; gap: 10px; justify-content: space-between; }
+.wcard .wheb {
+  font-family: var(--font-hebrew);
+  font-size: 21px;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+.wcard .wlem {
+  font-family: var(--font-hebrew);
+  font-size: 15px;
+  color: var(--ink-2);
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+.wcard .wmorph { font-size: 12px; color: var(--ink-2); margin: 3px 0 0; }
+.wcard .wpron { font-size: 12px; margin: 3px 0 0; }
+.wcard .wstrong { font-size: 11px; }
+
+.article { font-size: 13.5px; line-height: 1.6; }
+.article h3, .article h4, .article h5, .article h6 {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 14px 0 4px;
+}
+.article p { margin: 0 0 8px; }
+.article ul { margin: 0 0 8px; padding-inline-start: 18px; }
+.article li { margin: 0 0 3px; }
+.article blockquote {
+  margin: 0 0 8px;
+  padding: 2px 0 2px 10px;
+  border-inline-start: 2px solid var(--line);
+  color: var(--ink-2);
+  font-family: var(--font-scripture);
+}
+.article blockquote p { margin: 0 0 4px; }
+.kvs { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; margin: 0; }
+.kvs dt { color: var(--ink-2); }
+.kvs dd { margin: 0; }
+
+/* ---------------------------------------------------------------- focus view */
+.sheet-scroll { overflow: auto; flex: 1; min-height: 0; }
+.sheet { max-width: 82ch; margin: 0 auto; padding: 22px 24px 70px; }
+.verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  margin: 0 0 24px;
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+.verdict.attention { background: var(--warn-soft); color: var(--warn-ink); }
+.verdict .heb {
+  font-family: var(--font-hebrew);
+  font-size: 17px;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+.stack { margin: 0 0 26px; }
+.stack .label { margin: 0 0 5px; }
+hr.rule { border: 0; border-block-start: 1px solid var(--line); margin: 26px 0; }
+.note { margin: 0 0 20px; padding: 0 0 0 12px; border-inline-start: 2px solid var(--line); }
+.note.flagged { border-inline-start-color: var(--warn); }
+.note-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 6px; }
+.note-q {
+  font-family: var(--font-hebrew);
+  font-size: 19px;
+  direction: rtl;
+  unicode-bidi: isolate;
+  margin: 0 0 6px;
+}
+.note-q.eng { font-family: var(--font-scripture); font-size: 15.5px; direction: ltr; }
+.note-body { font-size: 14.5px; line-height: 1.6; }
+.rendered {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: 13px;
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+}
+.rendered dt {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding-block-start: 2px;
+}
+.rendered dd { margin: 0; font-family: var(--font-scripture); font-size: 14.5px; }
+.rendered dd.none { font-family: var(--font-ui); font-size: 12.5px; color: var(--warn-ink); font-weight: 600; }
+details.fold { margin: 8px 0 0; }
+details.fold summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 3px 0;
+}
+details.fold summary:hover { color: var(--ink); }
+details.fold[open] summary { margin-block-end: 6px; }
+.terms { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.termchip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+}
+.termchip:hover { border-color: var(--inspire); }
+.termchip[aria-expanded="true"] { background: var(--hl); border-color: var(--inspire); }
+.termchip .th {
+  font-family: var(--font-hebrew);
+  font-size: 15px;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+.termchip .tk { color: var(--ink-2); }
+.termbody {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  background: var(--card);
+}
+.qa { margin: 0 0 12px; }
+.qa-q { margin: 0; font-size: 14.5px; font-weight: 600; }
+.qa-a { margin: 3px 0 0; font-size: 14.5px; color: var(--ink-2); font-family: var(--font-scripture); }
+.navhint { text-align: center; font-size: 12px; color: var(--ink-2); margin: 30px 0 0; }
+
+/* ---------------------------------------------------------------- notes view */
+.about { max-width: 90ch; margin: 0 auto; padding: 24px 24px 70px; }
+.about h2 { font-size: 15px; margin: 28px 0 8px; letter-spacing: -0.01em; }
+.about h2:first-of-type { margin-block-start: 4px; }
+.about p, .about li { font-size: 14px; line-height: 1.62; }
+.about p { margin: 0 0 10px; }
+.about ul { margin: 0 0 12px; padding-inline-start: 20px; }
+.about li { margin: 0 0 6px; }
+.about code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.lede { font-size: 15.5px; line-height: 1.6; }
+.pull {
+  border-inline-start: 3px solid var(--inspire);
+  padding: 2px 0 2px 13px;
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+.demo {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 13px 15px;
+  margin: 0 0 14px;
+}
+.demo dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; }
+.demo dt {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding-block-start: 4px;
+}
+.demo dd { margin: 0; font-family: var(--font-scripture); font-size: 15px; }
+.demo dd.heb {
+  font-family: var(--font-hebrew);
+  font-size: 19px;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+.demo dd.plain { font-family: var(--font-ui); font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
+.tblwrap { overflow-x: auto; margin: 0 0 14px; }
+table.small { border-collapse: collapse; font-size: 13px; width: 100%; min-width: 520px; }
+table.small th, table.small td {
+  text-align: start;
+  padding: 7px 14px 7px 0;
+  border-block-end: 1px solid var(--line);
+  vertical-align: top;
+}
+table.small th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-2);
+}
+table.small td.n { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; padding-inline-end: 0; }
+.aside-box {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card-2);
+  padding: 13px 15px;
+  margin: 0 0 14px;
+}
+.aside-box p { margin: 0; }
+.heb-inline { font-family: var(--font-hebrew); font-size: 17px; direction: rtl; unicode-bidi: isolate; }
+</style>
+
+<div class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">unfoldingWord</span>
+      <span class="sep">·</span>
+      <span class="what">Book package preview — design exploration</span>
+    </div>
+    <span class="spacer"></span>
+    <div class="stepbar" id="stepbar">
+      <button class="iconbtn" id="prev" aria-label="Previous verse" title="Previous verse (left arrow)">&lsaquo;</button>
+      <span class="vref" id="vref">&hellip;</span>
+      <button class="iconbtn" id="next" aria-label="Next verse" title="Next verse (right arrow)">&rsaquo;</button>
+      <select id="pick" aria-label="Go to verse"></select>
+    </div>
+    <div class="seg" id="view" role="group" aria-label="View">
+      <button type="button" data-view="verse" aria-pressed="true">Verse</button>
+      <button type="button" data-view="focus" aria-pressed="false">Focus</button>
+      <button type="button" data-view="about" aria-pressed="false">Notes</button>
+    </div>
+    <button class="iconbtn" data-action="toggle-theme" aria-label="Switch light or dark" title="Switch light or dark">&#9680;</button>
+  </header>
+
+  <div class="framing">
+    <span><b>Real Zechariah 1</b> — original text, both renderings, notes, word links, questions and articles, all from the actual unfoldingWord sources.</span>
+    <span><b>Nothing is wired to a backend</b> and nothing saves.</span>
+    <button type="button" class="jump" data-goto="about">Read the design notes</button>
+  </div>
+
+  <div class="narrow-note">
+    <h2>This one needs a wider window</h2>
+    <p>
+      Judging a verse means holding the original, both translations and the notes in view at
+      the same time. Below about 1000px something has to be hidden, and hiding any of it
+      defeats the purpose — so the screen says so instead of quietly degrading.
+    </p>
+    <p>
+      Open this on a laptop or desktop, or widen the window. The phone equivalent of this
+      screen is a different design: a queue of one note at a time, not a verse in full.
+    </p>
+  </div>
+
+  <div class="viewport wide-only" id="viewport"></div>
+</div>
+
+<script>
+/*__VERSE_DATA__*/
+</script>
+<script>
+/*__VLIB__*/
+</script>
+<script>
+(function () {
+  "use strict";
+
+  var L = window.VL;
+  var V = L.V;
+  var esc = L.esc;
+  function el(id) { return document.getElementById(id); }
+
+  var state = { view: "verse", ref: L.refs[0], mode: "read", sel: null, open: {} };
+
+  // ------------------------------------------------------------ shared bits
+
+  function firstBit(text, max) {
+    var s = String(text || "").replace(/\\n/g, " ").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+    var lim = max || 110;
+    return s.length > lim ? s.slice(0, lim).replace(/\s+\S*$/, "") + "…" : s;
+  }
+
+  function rowByKey(k) {
+    var v = L.decorate(state.ref);
+    var all = v.tn.concat(v.twl).concat(v.tq);
+    for (var i = 0; i < all.length; i++) if (all[i].k === k) return all[i];
+    return null;
+  }
+
+  function markedWords(v) {
+    var m = {};
+    v.tn.forEach(function (r) { r.words.forEach(function (i) { m[i] = true; }); });
+    v.twl.forEach(function (r) { r.words.forEach(function (i) { m[i] = true; }); });
+    return m;
+  }
+
+  function attentionWords(v) {
+    var units = {};
+    L.coherence(state.ref).forEach(function (c) {
+      if (c.level === "attention" && c.units) c.units.forEach(function (n) { units[n] = true; });
+    });
+    var w = {};
+    Object.keys(units).forEach(function (n) {
+      v.units[n].words.forEach(function (i) { w[i] = true; });
+    });
+    return w;
+  }
+
+  function articleBlock(a, kind) {
+    if (!a) return '<p class="d-empty">No ' + kind + " article is available for this reference.</p>";
+    return (
+      '<div class="d-sec"><p class="label">' + esc(kind) + " · " + esc(a.title) + "</p>" +
+      (a.sub ? '<p class="d-empty" style="padding:0 0 8px">' + esc(a.sub) + "</p>" : "") +
+      '<div class="article">' + L.md(a.body) + "</div></div>"
+    );
+  }
+
+  // ------------------------------------------------------------ verse view
+
+  function activeSpans() {
+    var v = L.decorate(state.ref);
+    var units = {}, ult = {}, ust = {}, words = {};
+    var s = state.sel;
+    if (!s) return { units: units, ult: ult, ust: ust, words: words };
+
+    if (s.kind === "unit") {
+      var u = v.units[s.n];
+      if (u) {
+        units[u.n] = true;
+        u.ult.forEach(function (g) { ult[g] = true; });
+        u.ust.forEach(function (g) { ust[g] = true; });
+        u.words.forEach(function (i) { words[i] = true; });
+      }
+    } else if (s.kind === "tn" || s.kind === "twl") {
+      var row = rowByKey(s.k);
+      if (row) {
+        row.spans.units.forEach(function (n) { units[n] = true; });
+        row.spans.ult.forEach(function (g) { ult[g] = true; });
+        row.spans.ust.forEach(function (g) { ust[g] = true; });
+        row.words.forEach(function (i) { words[i] = true; });
+      }
+    }
+    return { units: units, ult: ult, ust: ust, words: words };
+  }
+
+  function readBlock(spans) {
+    var v = L.decorate(state.ref);
+    return (
+      '<div class="tblock">' +
+      '<p class="label">Original · UHB</p>' +
+      '<div class="heb-line" dir="rtl" id="hebline">' +
+      L.hebrewHtml(state.ref, { units: spans.units, marked: markedWords(v) }) +
+      "</div>" +
+      '<p class="label">Literal · ULT</p>' +
+      '<div class="prose" id="ultline">' + L.proseHtml(state.ref, "ult", { groups: spans.ult }) + "</div>" +
+      '<p class="label">Simplified · UST</p>' +
+      '<div class="prose" id="ustline">' + L.proseHtml(state.ref, "ust", { groups: spans.ust }) + "</div>" +
+      "</div>"
+    );
+  }
+
+  function auditBlock(spans) {
+    var rows = L.unitRows(state.ref);
+    var v = L.decorate(state.ref);
+    var prevUlt = null, prevUst = null;
+
+    var body = rows
+      .map(function (r) {
+        var ultCell = r.ult
+          ? (r.ult === prevUlt ? '<span class="cont">↑ same phrase</span>' : esc(r.ult))
+          : '<span class="hole">not rendered</span>';
+        var ustCell = r.ust
+          ? (r.ust === prevUst ? '<span class="cont">↑ same phrase</span>' : esc(r.ust))
+          : '<span class="hole">not rendered</span>';
+        prevUlt = r.ult; prevUst = r.ust;
+
+        var marks =
+          r.notes.map(function (n) {
+            return '<span class="m-dot" title="' + esc(n.article || "note") + '">N</span>';
+          }).join("") +
+          r.terms.map(function (t) {
+            return '<span class="m-dot term" title="' + esc(t.key) + '">W</span>';
+          }).join("");
+
+        return (
+          '<tr data-unit="' + r.unit.n + '" aria-selected="' + (spans.units[r.unit.n] ? "true" : "false") + '">' +
+          '<td class="c-heb" dir="rtl">' + esc(r.heb) + "</td>" +
+          '<td class="c-lit">' + ultCell + "</td>" +
+          '<td class="c-sim">' + ustCell + "</td>" +
+          '<td class="c-mark">' + marks + "</td></tr>"
+        );
+      })
+      .join("");
+
+    var sup = v.unalignedUlt.filter(function (t) { return /[A-Za-z]/.test(t); });
+    var supU = v.unalignedUst.filter(function (t) { return /[A-Za-z]/.test(t); });
+    var supplied = "";
+    if (sup.length || supU.length) {
+      supplied =
+        '<p class="why" style="margin:10px 2px 0;font-size:12.5px;color:var(--ink-2)">' +
+        "Supplied, with no original word behind it — " +
+        (sup.length ? "literal: " + esc(sup.join(" · ")) : "") +
+        (sup.length && supU.length ? " · " : "") +
+        (supU.length ? "simplified: " + esc(supU.join(" · ")) : "") +
+        "</p>";
+    }
+
+    return (
+      '<div class="spine-wrap"><table class="spine" id="spine"><thead><tr>' +
+      "<th>Original</th><th>Literal · ULT</th><th>Simplified · UST</th><th></th>" +
+      "</tr></thead><tbody>" + body + "</tbody></table></div>" + supplied
+    );
+  }
+
+  function resourceList() {
+    var v = L.decorate(state.ref);
+    var s = state.sel;
+    var cur = s && s.k ? s.k : null;
+
+    function row(r, tag, bodyHtml, side) {
+      return (
+        '<button type="button" class="rrow" data-key="' + r.k + '"' +
+        ' aria-current="' + (cur === r.k ? "true" : "false") + '">' +
+        '<span class="tag">' + tag + "</span>" +
+        '<span class="body">' + bodyHtml + "</span>" +
+        '<span class="side">' + esc(side || "") + "</span></button>"
+      );
+    }
+
+    var h = "";
+    if (v.tn.length) {
+      h += '<div class="reslist"><p class="label">Notes · ' + v.tn.length + "</p>";
+      h += v.tn.map(function (r) {
+        return row(
+          r,
+          r.article ? esc(r.article.replace(/^(figs|writing|grammar|translate)-/, "")) : "note",
+          (r.quote ? '<span class="qheb" dir="rtl">' + esc(r.quote.replace(/&/g, " … ")) + "</span> " : "") +
+            '<span style="color:var(--ink-2)">' + esc(firstBit(r.note)) + "</span>",
+          r.words.length ? "" : "quote not anchored"
+        );
+      }).join("");
+      h += "</div>";
+    }
+    if (v.twl.length) {
+      h += '<div class="reslist"><p class="label">Word links · ' + v.twl.length + "</p>";
+      h += v.twl.map(function (r) {
+        return row(
+          r,
+          esc(r.key.split("/")[0]),
+          '<span class="qheb" dir="rtl">' + esc(r.orig) + '</span> <span style="color:var(--ink-2)">' +
+            esc(r.key.split("/")[1]) + "</span>",
+          r.tags || ""
+        );
+      }).join("");
+      h += "</div>";
+    }
+    if (v.tq.length) {
+      h += '<div class="reslist"><p class="label">Questions · ' + v.tq.length + "</p>";
+      h += v.tq.map(function (r) { return row(r, "q", esc(r.q), ""); }).join("");
+      h += "</div>";
+    }
+    return h;
+  }
+
+  function wordCard(w) {
+    return (
+      '<div class="wcard"><div class="wtop">' +
+      '<span class="wheb" dir="rtl">' + esc(w.w) + "</span>" +
+      '<span class="wlem" dir="rtl">' + esc(w.lemma) + "</span></div>" +
+      '<p class="wmorph">' + esc(L.morphText(w)) + "</p>" +
+      (w.pron
+        ? '<p class="wpron">attached pronoun: <b>' + esc(w.pron.gloss) +
+          '</b> <span style="color:var(--ink-2)">(' + esc(w.pron.parse) + ")</span></p>"
+        : "") +
+      '<p class="wmorph wstrong mono">' + esc(w.strong) + " · " + esc(w.morph) + "</p></div>"
+    );
+  }
+
+  function detailPane() {
+    var v = L.decorate(state.ref);
+    var s = state.sel;
+    if (!s) {
+      return (
+        '<p class="d-empty">Select a word, a row, a note or a word link.<br><br>' +
+        "Everything is anchored to the original words, so a selection anywhere lights up the " +
+        "same place in all three texts.</p>"
+      );
+    }
+
+    if (s.kind === "unit") {
+      var u = v.units[s.n];
+      if (!u) return '<p class="d-empty">Nothing selected.</p>';
+      var words = u.words.map(function (i) { return v.words[i]; });
+      var notes = v.tn.filter(function (r) { return r.spans.units.indexOf(u.n) >= 0; });
+      var terms = v.twl.filter(function (r) { return r.spans.units.indexOf(u.n) >= 0; });
+      return (
+        '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+        '<span class="chip">original word' + (words.length > 1 ? "s" : "") + "</span></div>" +
+        '<div class="d-sec"><p class="label">Morphology · from UHB</p><div class="wgrid">' +
+        words.map(wordCard).join("") + "</div></div>" +
+        '<div class="d-sec"><p class="label">Literal · ULT</p><div class="d-quote">' +
+        (u.ultText ? esc(u.ultText) : '<span class="hole">not rendered</span>') + "</div></div>" +
+        '<div class="d-sec"><p class="label">Simplified · UST</p><div class="d-quote">' +
+        (u.ustText ? esc(u.ustText) : '<span class="hole">not rendered</span>') + "</div></div>" +
+        (notes.length || terms.length
+          ? '<div class="d-sec"><p class="label">Attached here</p>' +
+            notes.map(function (r) {
+              return '<button type="button" class="rrow" data-key="' + r.k + '"><span class="tag">' +
+                esc(r.article || "note") + '</span><span class="body">' + esc(firstBit(r.note)) +
+                '</span><span class="side"></span></button>';
+            }).join("") +
+            terms.map(function (r) {
+              return '<button type="button" class="rrow" data-key="' + r.k + '"><span class="tag">' +
+                esc(r.key.split("/")[0]) + '</span><span class="body">' + esc(r.key.split("/")[1]) +
+                '</span><span class="side"></span></button>';
+            }).join("") + "</div>"
+          : '<p class="d-empty">No note or word link attaches to this word.</p>')
+      );
+    }
+
+    var row = rowByKey(s.k);
+    if (!row) return '<p class="d-empty">Nothing selected.</p>';
+
+    if (s.kind === "tq") {
+      return (
+        '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+        '<span class="chip">question</span></div>' +
+        '<div class="d-sec"><p class="label">Question</p><div class="d-quote">' + esc(row.q) + "</div></div>" +
+        '<div class="d-sec"><p class="label">Expected answer</p><div class="d-quote">' + esc(row.a) + "</div></div>" +
+        '<p class="d-empty">A question that cannot be answered from the two renderings above is ' +
+        "the clearest sign that something in this verse does not line up.</p>"
+      );
+    }
+
+    if (s.kind === "twl") {
+      return (
+        '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+        '<span class="chip chip-info mono">' + esc(row.key) + "</span>" +
+        (row.tags ? '<span class="chip">' + esc(row.tags) + "</span>" : "") + "</div>" +
+        '<div class="d-sec"><p class="label">Linked from</p><div class="d-heb" dir="rtl">' +
+        esc(row.orig) + "</div></div>" +
+        '<div class="d-sec"><dl class="kvs">' +
+        "<dt>occurrence</dt><dd>" + esc(row.occ) + "</dd>" +
+        '<dt>id</dt><dd class="mono">' + esc(row.id) + "</dd>" +
+        '<dt>link</dt><dd class="mono">' + esc(row.link) + "</dd></dl></div>" +
+        articleBlock(L.articleFor(row), "translationWords")
+      );
+    }
+
+    var anchored = row.words.length;
+    return (
+      '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+      (row.article ? '<span class="chip chip-info mono">' + esc(row.article) + "</span>" : "") +
+      '<span class="chip ' + (anchored ? "chip-ok" : "chip-warn") + '">' +
+      (anchored ? "quote anchored" : "quote not found") + "</span>" +
+      (row.tags ? '<span class="chip chip-warn">' + esc(row.tags) + "</span>" : "") + "</div>" +
+      (row.quote
+        ? '<div class="d-sec"><p class="label">Quote</p><div class="d-heb" dir="rtl">' +
+          esc(row.quote.replace(/&/g, " … ")) + "</div></div>"
+        : "") +
+      '<div class="d-sec"><p class="label">Note</p><div class="article">' + L.note(row.note) + "</div></div>" +
+      articleBlock(L.articleFor(row), "translationAcademy")
+    );
+  }
+
+  function flagsHtml() {
+    return L.coherence(state.ref)
+      .map(function (c, i) {
+        return (
+          '<button type="button" class="flag ' + c.level + '" data-flag="' + i + '"' +
+          ' title="' + esc(c.detail) + '">' +
+          esc(c.level === "ok" ? "✓ " + c.label : c.label) +
+          (c.units && c.units.length ? " · " + c.units.length : "") + "</button>"
+        );
+      })
+      .join("");
+  }
+
+  function verseView() {
+    var spans = activeSpans();
+    return (
+      '<div class="modebar">' +
+      '<div class="seg" id="mode" role="group" aria-label="Mode">' +
+      '<button type="button" data-mode="read" aria-pressed="' + (state.mode === "read") + '">Read</button>' +
+      '<button type="button" data-mode="audit" aria-pressed="' + (state.mode === "audit") + '">Audit</button>' +
+      "</div>" +
+      '<p class="why">' +
+      (state.mode === "read"
+        ? "Read the verse three ways. Click any word to see what the other texts do with it."
+        : "One row per original word: what the literal text made of it, and what the simplified text made of it.") +
+      "</p><span class=\"spacer\"></span>" +
+      '<div class="flagrow">' + flagsHtml() + "</div></div>" +
+      '<div class="vgrid">' +
+      '<section class="col-text" id="text">' +
+      (state.mode === "read" ? readBlock(spans) : auditBlock(spans)) +
+      resourceList() +
+      "</section>" +
+      '<aside class="col-detail" id="detail">' + detailPane() + "</aside>" +
+      "</div>"
+    );
+  }
+
+  // ------------------------------------------------------------ focus view
+
+  function verdictHtml() {
+    var checks = L.coherence(state.ref);
+    var v = L.decorate(state.ref);
+    var attention = checks.filter(function (c) { return c.level === "attention"; });
+    var dropped = checks.filter(function (c) {
+      return c.id === "ust-function" || c.id === "ult-function";
+    });
+    var droppedNote = dropped.length
+      ? " Function words dropped without comment: " +
+        dropped.map(function (c) {
+          return c.units.map(function (n) {
+            return '<span class="heb">' + esc(L.hebOf(v, v.units[n])) + "</span>";
+          }).join(", ");
+        }).join("; ") + "."
+      : "";
+    var quoted = v.tn.filter(function (r) { return r.quote; }).length;
+
+    if (!attention.length) {
+      return (
+        '<p class="verdict"><span aria-hidden="true">✓</span><span>Every content word in the ' +
+        "original is rendered by both texts, and all " + quoted +
+        " note quotes anchor to the text. Nothing here needs reconciling." + droppedNote + "</span></p>"
+      );
+    }
+    var bits = attention.map(function (c) {
+      if (c.id === "ust-holes" || c.id === "ult-holes") {
+        var which = c.id === "ust-holes" ? "simplified" : "literal";
+        return "the " + which + " text does not render " +
+          c.units.map(function (n) {
+            return '<span class="heb">' + esc(L.hebOf(v, v.units[n])) + "</span>";
+          }).join(", ");
+      }
+      return c.label.toLowerCase() + " — " + esc(c.detail);
+    });
+    return (
+      '<p class="verdict attention"><span aria-hidden="true">!</span><span>Worth a look: ' +
+      bits.join("; ") + ". <b>This may still be correct</b> — a simplified text can carry a " +
+      "word's sense without a matching word. The point is that you decide, rather than not " +
+      "noticing." + droppedNote + "</span></p>"
+    );
+  }
+
+  function focusView() {
+    var v = L.decorate(state.ref);
+    var marked = markedWords(v);
+    var holes = attentionWords(v);
+
+    var hebrew = v.words.map(function (w) {
+      var cls = "hw";
+      if (marked[w.i]) cls += " marked";
+      if (holes[w.i]) cls += " hole";
+      return '<span class="' + cls + '" title="' + esc(w.lemma + "  ·  " + L.morphText(w)) + '">' +
+        esc(w.w) + "</span>" + (w.after ? esc(w.after) : "");
+    }).join(" ");
+
+    var notes = v.tn.length
+      ? '<div class="stack"><p class="label">Notes · ' + v.tn.length + "</p>" +
+        v.tn.map(function (r) {
+          var a = L.articleFor(r);
+          var unresolved = r.quote && !r.words.length;
+          var ult = r.spans.ult.map(function (g) { return v.ult[g].e; }).join("").trim();
+          var ust = r.spans.ust.map(function (g) { return v.ust[g].e; }).join("").trim();
+          var isHeb = /[֐-׿]/.test(r.quote || "");
+          return (
+            '<div class="note' + (unresolved || r.tags ? " flagged" : "") + '">' +
+            '<div class="note-top">' +
+            (r.article
+              ? '<span class="chip chip-info mono">' + esc(r.article) + "</span>"
+              : '<span class="chip">no article</span>') +
+            (unresolved ? '<span class="chip chip-warn">quote not found in the original</span>' : "") +
+            (r.tags ? '<span class="chip chip-warn">' + esc(r.tags) + "</span>" : "") +
+            "</div>" +
+            (r.quote
+              ? '<p class="note-q' + (isHeb ? "" : " eng") + '" dir="' + (isHeb ? "rtl" : "ltr") + '">' +
+                esc(r.quote.replace(/&/g, " … ")) + "</p>"
+              : "") +
+            '<div class="note-body">' + L.note(r.note) + "</div>" +
+            '<dl class="rendered">' +
+            "<dt>Literal</dt><dd" + (ult ? ">" + esc(ult) : ' class="none">not rendered') + "</dd>" +
+            "<dt>Simplified</dt><dd" + (ust ? ">" + esc(ust) : ' class="none">not rendered') + "</dd>" +
+            "</dl>" +
+            (a
+              ? '<details class="fold"' + (state.open[r.k] ? " open" : "") + ' data-keep="' + r.k + '">' +
+                "<summary>" + esc(a.title) + (a.sub ? " — " + esc(a.sub) : "") + "</summary>" +
+                '<div class="article">' + L.md(a.body) + "</div></details>"
+              : "") +
+            "</div>"
+          );
+        }).join("") + "</div>"
+      : "";
+
+    var termChips = v.twl.map(function (r) {
+      return '<button type="button" class="termchip" data-fold="' + r.k + '" aria-expanded="' +
+        (!!state.open[r.k]) + '"><span class="th" dir="rtl">' + esc(r.orig) +
+        '</span><span class="tk">' + esc(r.key) + "</span></button>";
+    }).join("");
+    var termBodies = v.twl.filter(function (r) { return state.open[r.k]; }).map(function (r) {
+      var a = L.articleFor(r);
+      return '<div class="termbody"><p class="label">' + (a ? esc(a.title) : esc(r.key)) +
+        " · translationWords</p>" +
+        (a ? '<div class="article">' + L.md(a.body) + "</div>"
+           : '<p class="d-empty">Article not available in this fixture.</p>') + "</div>";
+    }).join("");
+
+    var terms = v.twl.length
+      ? '<div class="stack"><p class="label">Key terms linked here · ' + v.twl.length + "</p>" +
+        '<div class="terms">' + termChips + "</div>" + termBodies + "</div>"
+      : "";
+
+    var qs = v.tq.length
+      ? '<hr class="rule"><div class="stack"><p class="label">Questions · ' + v.tq.length + "</p>" +
+        v.tq.map(function (q) {
+          return '<div class="qa"><p class="qa-q">' + esc(q.q) + '</p><p class="qa-a">' + esc(q.a) + "</p></div>";
+        }).join("") + "</div>"
+      : "";
+
+    return (
+      '<div class="sheet-scroll" id="sheetScroll"><div class="sheet" id="sheet">' +
+      verdictHtml() +
+      '<div class="stack"><p class="label">Original · UHB</p>' +
+      '<div class="heb-line" dir="rtl">' + hebrew + "</div>" +
+      '<p class="label">Literal · ULT</p><div class="prose">' +
+      L.proseHtml(state.ref, "ult", {}) + "</div>" +
+      '<p class="label">Simplified · UST</p><div class="prose">' +
+      L.proseHtml(state.ref, "ust", {}) + "</div></div>" +
+      '<hr class="rule">' + notes + '<hr class="rule">' + terms + qs +
+      '<p class="navhint">Left and right arrow keys step verses · ' +
+      (L.refs.indexOf(state.ref) + 1) + " of " + L.refs.length + "</p></div></div>"
+    );
+  }
+
+  // ------------------------------------------------------------ notes view
+
+  function aboutView() {
+    var words = 0, tn = 0, twl = 0, tq = 0;
+    L.refs.forEach(function (r) {
+      var v = V.verses[r];
+      words += v.words.length; tn += v.tn.length; twl += v.twl.length; tq += v.tq.length;
+    });
+    var cov = V.meta.coverage;
+    var milestones = cov.joinTiers.exact + cov.joinTiers.strong + cov.joinTiers.skeleton +
+      cov.joinTiers.weak + cov.joinTiers.none;
+
+    var attn = 0;
+    L.refs.forEach(function (r) {
+      if (L.coherence(r).some(function (c) { return c.level === "attention"; })) attn++;
+    });
+
+    var v1 = L.decorate("1:1");
+    var demoNote = v1.tn.filter(function (r) { return r.article === "figs-idiom"; })[0] || v1.tn[0];
+    var demoUlt = demoNote.spans.ult.map(function (g) { return v1.ult[g].e; }).join("").trim();
+    var demoUst = demoNote.spans.ust.map(function (g) { return v1.ust[g].e; }).join("").trim();
+    var demoHeb = demoNote.words.map(function (i) { return v1.words[i].w; }).join(" ");
+
+    var provRows = [
+      ["Original text, lemma, morphology", "<code>hbo_uhb_38-ZEC.usfm</code>, decoded by the editor's own <code>morph.ts</code>", words + " of " + words + " words"],
+      ["Literal rendering and its alignment", "<code>en_ult_38-ZEC.usfm</code>", cov.ultMapped + " groups mapped"],
+      ["Simplified rendering and its alignment", "<code>en_ust_38-ZEC.usfm</code>", cov.ustMapped + " groups mapped"],
+      ["Notes", "<code>en_tn_tn_ZEC.tsv</code>", cov.tnAnchored + " of " + cov.tnAnchored + " quotes anchored"],
+      ["Word links", "<code>en_twl_twl_ZEC.tsv</code>", cov.twlAnchored + " of " + cov.twlAnchored + " anchored"],
+      ["Questions", "<code>en_tq_tq_ZEC.tsv</code>", tq + " rows"],
+      ["translationAcademy prose", "<code>en_ta</code>", Object.keys(V.ta).length + " articles, " + cov.taMissing.length + " missing"],
+      ["translationWords prose", "<code>en_tw</code>", Object.keys(V.tw).length + " articles, " + cov.twMissing.length + " missing"]
+    ].map(function (r) {
+      return "<tr><td>" + r[0] + "</td><td>" + r[1] + '</td><td class="n">' + r[2] + "</td></tr>";
+    }).join("");
+
+    return (
+      '<div class="sheet-scroll"><div class="about">' +
+
+      '<p class="pull">“Interfaces should not contain information that is irrelevant or rarely ' +
+      "needed. Every extra unit of information competes with the relevant units and diminishes " +
+      "their relative visibility.” — Nielsen Norman Group, <i>Aesthetic and Minimalist Design</i></p>" +
+
+      '<p class="lede">Two screens for the person doing the checking — a translator, editor or ' +
+      "exegete — rather than for someone tracking progress. Open one verse, see all of it, and " +
+      "judge whether it hangs together.</p>" +
+
+      "<h2>The idea: anchor everything to the original word</h2>" +
+      "<p>Today's preview stacks each resource in its own box and leaves the reader to correlate " +
+      "them by eye. But the literal and the simplified texts are each <i>already aligned</i> to the " +
+      "same original words. Joining them on that alignment — rather than showing them side by " +
+      "side — turns “is this coherent?” from something you reconstruct into something " +
+      "you can simply look at.</p>" +
+
+      "<p>The first verse of Zechariah shows it. A note calls " +
+      '<span class="heb-inline">' + esc(demoHeb) + "</span> an idiom. Selecting that note shows what " +
+      "each translation did with <i>those exact words</i>:</p>" +
+
+      '<div class="demo"><dl>' +
+      '<dt>Original</dt><dd class="heb" dir="rtl">' + esc(demoHeb) + "</dd>" +
+      "<dt>Literal</dt><dd>" + esc(demoUlt) + "</dd>" +
+      "<dt>Simplified</dt><dd>" + esc(demoUst) + "</dd>" +
+      '<dt>Note says</dt><dd class="plain">' + esc(firstBit(demoNote.note, 190)) + "</dd>" +
+      "</dl></div>" +
+
+      "<p>The literal text keeps the idiom; the simplified text replaces it with a plain statement " +
+      "and moves the speaker to the front. Both are reasonable, and now the difference is visible " +
+      "without anyone cross-referencing by hand.</p>" +
+
+      "<h2>What we took out</h2>" +
+      "<p>Counting only what sits permanently on screen: the current preview gives each of its six " +
+      "panels its own drag handle, minimise, save, link, hide and overflow menu — roughly thirty " +
+      "controls competing with the text. This has none of them. Also gone: panel headers and tabs, " +
+      "progress strips, done and all toggles, approve-all and new buttons, translation-mode chips, " +
+      "and per-row save and delete. This is a reading and checking surface, so editing chrome does " +
+      "not belong on it.</p>" +
+      "<p>Rearranging panels is gone too. There is one control per screen and it names a task " +
+      "— <i>Read</i> or <i>Audit</i> — not a panel. What stays is what the task needs: the " +
+      "original with its morphology, both renderings, the notes with their articles, the term links " +
+      "with theirs, and the questions.</p>" +
+
+      "<h2>Flags are observations, and they stay quiet</h2>" +
+      "<p>A word the simplified text never renders is worth seeing. But an unrendered preposition or " +
+      "object marker is completely normal, and flagging it would be exactly the noise the heuristic " +
+      "warns against. So gaps are separated using the real morphology: only a missing <i>content</i> " +
+      "word raises the amber line, and function words get a quiet mention. Across Zechariah 1 that " +
+      "is <b>" + attn + " of " + L.refs.length + " verses</b> raising anything at all.</p>" +
+      '<div class="aside-box"><p><b>Nothing here is a verdict.</b> These screens never say a verse ' +
+      "is wrong. They show where the three texts diverge and leave the judgement to the person " +
+      "reading, who knows things the alignment does not.</p></div>" +
+
+      "<h2>Everything on screen is real</h2>" +
+      "<p>Zechariah 1 — " + L.refs.length + " verses, " + words + " original words, " + tn +
+      " notes, " + twl + " word links, " + tq + " questions, and " +
+      (Object.keys(V.ta).length + Object.keys(V.tw).length) +
+      " genuine translationAcademy and translationWords articles. No placeholder text anywhere: " +
+      "if a value could not be derived, the screen says so instead of inventing one.</p>" +
+      '<div class="tblwrap"><table class="small"><thead><tr><th>What</th><th>Source</th>' +
+      '<th class="n">Coverage</th></tr></thead><tbody>' + provRows + "</tbody></table></div>" +
+      "<p>Morphology is decoded by the Bible editor's own decoder rather than a second " +
+      "implementation, so the grammar shown here is the grammar the editor already shows.</p>" +
+
+      "<h2>One thing the data taught us</h2>" +
+      "<p>Joining two translations on their alignment sounds trivial. It is not. Alignment " +
+      "occurrence numbers count occurrences of the <b>exact pointed form</b>, not of the " +
+      "consonants. In Zechariah 1:3 the three instances of " +
+      '<span class="heb-inline">צבאות</span> carry three different ' +
+      "accentuations and are each “occurrence 1”, while the two identically pointed " +
+      '<span class="heb-inline">יְהוָה֓</span> are occurrences 1 ' +
+      "and 2. Matching on consonants alone — the obvious first attempt, and what this did at " +
+      "first — silently welded distinct words together and produced a verse reading " +
+      "“sayssays … of Armies of Armies of Armies”. Matching on the exact form fixed " +
+      "it: of " + milestones + " alignment points in this chapter, " + cov.joinTiers.exact +
+      " now match exactly, " + cov.joinTiers.strong + " by Strong's number, " + cov.joinTiers.weak +
+      " by consonants alone, and " + cov.joinTiers.none + " not at all.</p>" +
+      "<p>It is worth knowing before anyone builds this for real.</p>" +
+
+      "<h2>Where this stands</h2>" +
+      "<ul>" +
+      "<li><b>A mockup, not a build.</b> Nothing is connected to the editor and nothing saves.</li>" +
+      "<li><b>Zechariah 1 only</b> — 21 verses, enough to try the idea without shipping a " +
+      "whole Bible inside a web page.</li>" +
+      "<li><b>Desktop only, on purpose.</b> Below about 1000px it says so rather than hiding " +
+      "something that matters. A phone version of this job is a different design.</li>" +
+      "<li><b>Articles are a snapshot</b> taken when this page was built, not a live lookup.</li>" +
+      "<li><b>Open questions we would like your view on:</b> is <i>Audit</i> mode useful enough to " +
+      "keep, or does the reading view carry it? Should the checker be able to arrange panels at " +
+      "all, or is one task-named control the right trade? And is the amber line drawn in the right " +
+      "place — too eager, or not eager enough?</li>" +
+      "</ul>" +
+
+      "</div></div>"
+    );
+  }
+
+  // ------------------------------------------------------------ render
+
+  function render() {
+    el("vref").textContent = V.meta.book + " " + state.ref;
+    el("stepbar").style.display = state.view === "about" ? "none" : "";
+
+    Array.prototype.forEach.call(el("view").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", b.dataset.view === state.view ? "true" : "false");
+    });
+
+    el("viewport").innerHTML =
+      state.view === "verse" ? verseView() : state.view === "focus" ? focusView() : aboutView();
+  }
+
+  // ------------------------------------------------------------ events
+
+  function go(delta) {
+    var i = L.refs.indexOf(state.ref);
+    var n = Math.max(0, Math.min(L.refs.length - 1, i + delta));
+    if (n === i) return;
+    state.ref = L.refs[n];
+    state.sel = null;
+    state.open = {};
+    el("pick").value = state.ref;
+    render();
+  }
+
+  el("prev").addEventListener("click", function () { go(-1); });
+  el("next").addEventListener("click", function () { go(1); });
+
+  el("pick").innerHTML = L.refs.map(function (r) {
+    return '<option value="' + r + '">' + V.meta.book + " " + r + "</option>";
+  }).join("");
+  el("pick").addEventListener("change", function (e) {
+    state.ref = e.target.value;
+    state.sel = null;
+    state.open = {};
+    render();
+  });
+
+  el("view").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-view]");
+    if (!b) return;
+    state.view = b.dataset.view;
+    render();
+  });
+
+  document.addEventListener("click", function (e) {
+    var jump = e.target.closest("[data-goto]");
+    if (jump) { state.view = jump.dataset.goto; render(); return; }
+
+    var m = e.target.closest("button[data-mode]");
+    if (m) { state.mode = m.dataset.mode; render(); return; }
+
+    var fold = e.target.closest("[data-fold]");
+    if (fold) {
+      var fk = fold.dataset.fold;
+      state.open[fk] = !state.open[fk];
+      render();
+      return;
+    }
+
+    var res = e.target.closest("[data-key]");
+    if (res) {
+      var k = res.dataset.key;
+      state.sel = { kind: k.replace(/\d+$/, ""), k: k };
+      render();
+      return;
+    }
+
+    var unit = e.target.closest("[data-unit]");
+    if (unit) { state.sel = { kind: "unit", n: parseInt(unit.dataset.unit, 10) }; render(); return; }
+
+    var pg = e.target.closest("[data-group]");
+    if (pg && pg.parentNode && pg.parentNode.id) {
+      var v = L.decorate(state.ref);
+      var gid = parseInt(pg.dataset.group, 10);
+      var inUlt = pg.parentNode.id === "ultline";
+      if (pg.parentNode.id === "ultline" || pg.parentNode.id === "ustline") {
+        var hit = v.units.filter(function (u) {
+          return (inUlt ? u.ult : u.ust).indexOf(gid) >= 0;
+        })[0];
+        state.sel = hit ? { kind: "unit", n: hit.n } : null;
+        render();
+      }
+      return;
+    }
+
+    var flag = e.target.closest("[data-flag]");
+    if (flag) {
+      var c = L.coherence(state.ref)[parseInt(flag.dataset.flag, 10)];
+      if (c && c.units && c.units.length) {
+        state.mode = "audit";
+        state.sel = { kind: "unit", n: c.units[0] };
+        render();
+        var rowEl = document.querySelector('#spine tr[aria-selected="true"]');
+        if (rowEl) rowEl.scrollIntoView({ block: "center" });
+      }
+    }
+  });
+
+  // <details> owns its open state; mirror it so re-rendering does not close it.
+  document.addEventListener("toggle", function (e) {
+    var d = e.target.closest && e.target.closest("details[data-keep]");
+    if (d) state.open[d.dataset.keep] = d.open;
+  }, true);
+
+  document.querySelector('[data-action="toggle-theme"]').addEventListener("click", function () {
+    var root = document.documentElement;
+    var now = root.dataset.theme ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    root.dataset.theme = now === "dark" ? "light" : "dark";
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if (state.view === "about") return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    else if (e.key === "Escape") { state.sel = null; render(); }
+    else if (state.view === "verse" && (e.key === "a" || e.key === "r")) {
+      state.mode = e.key === "a" ? "audit" : "read";
+      render();
+    }
+  });
+
+  el("pick").value = state.ref;
+  render();
+})();
+</script>

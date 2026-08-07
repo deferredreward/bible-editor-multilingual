@@ -1,0 +1,519 @@
+/* Book package view — shared tokens and components.
+ *
+ * Token names, values and the three-block theming pattern are carried over from
+ * docs/mockups/desktop-first/_design.css so these pages sit inside the existing
+ * visual system. Only what these two screens actually use is included — the
+ * stylesheet is held to the same minimalist standard as the screens.
+ *
+ * Logical properties only (margin-inline / inset-inline / text-align: start),
+ * never left/right, per the RTL lesson. Hebrew runs inline inside LTR prose.
+ */
+
+:root {
+  /* brand — never re-themed */
+  --inspire: #31ade3;
+  --inspire-deep: #1b84b8;
+  --ocean: #014263;
+  --cultivate: #70c9cc;
+  --kindle: #e59d33;
+
+  --ground: #edf3f6;
+  --card: #ffffff;
+  --card-2: #f3f8fa;
+  --ink: #1b2a32;
+  --ink-2: #5b7280;
+  --line: #d8e3e9;
+  --hl: rgba(49, 173, 227, 0.18);
+  --ok: #2e9e8f;
+  --ok-ink: #14655b;
+  --ok-soft: #ddf2ee;
+  --warn: #e59d33;
+  --warn-ink: #8a5a0f;
+  --warn-soft: #fbeeda;
+  --skip: #647984;
+  --skip-soft: #e3eaee;
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-scripture: "Iowan Old Style", Charter, "Palatino Linotype", Georgia,
+    Cambria, serif;
+  --font-hebrew: "SBL Hebrew", "Ezra SIL", "Times New Roman", "Segoe UI Historic",
+    serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0b1b23;
+    --card: #13272f;
+    --card-2: #0f2129;
+    --ink: #e3edf2;
+    --ink-2: #90a6b1;
+    --line: #23404b;
+    --hl: rgba(49, 173, 227, 0.26);
+    --ok: #4bb8a9;
+    --ok-ink: #9adfd5;
+    --ok-soft: rgba(46, 158, 143, 0.2);
+    --warn: #e8a94e;
+    --warn-ink: #f1ce9a;
+    --warn-soft: rgba(229, 157, 51, 0.18);
+    --skip: #8fa5b0;
+    --skip-soft: rgba(100, 121, 132, 0.25);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0b1b23;
+  --card: #13272f;
+  --card-2: #0f2129;
+  --ink: #e3edf2;
+  --ink-2: #90a6b1;
+  --line: #23404b;
+  --hl: rgba(49, 173, 227, 0.26);
+  --ok: #4bb8a9;
+  --ok-ink: #9adfd5;
+  --ok-soft: rgba(46, 158, 143, 0.2);
+  --warn: #e8a94e;
+  --warn-ink: #f1ce9a;
+  --warn-soft: rgba(229, 157, 51, 0.18);
+  --skip: #8fa5b0;
+  --skip-soft: rgba(100, 121, 132, 0.25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --ground: #edf3f6;
+  --card: #ffffff;
+  --card-2: #f3f8fa;
+  --ink: #1b2a32;
+  --ink-2: #5b7280;
+  --line: #d8e3e9;
+  --hl: rgba(49, 173, 227, 0.18);
+  --ok: #2e9e8f;
+  --ok-ink: #14655b;
+  --ok-soft: #ddf2ee;
+  --warn: #e59d33;
+  --warn-ink: #8a5a0f;
+  --warn-soft: #fbeeda;
+  --skip: #647984;
+  --skip-soft: #e3eaee;
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--inspire);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  inset-inline-start: -9999px;
+}
+.skip-link:focus {
+  inset-inline-start: 8px;
+  inset-block-start: 8px;
+  z-index: 20;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- head bar */
+
+.pkghead {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-block-end: 1px solid var(--line);
+  background: var(--card);
+}
+.pkghead h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.pkghead .sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.pkghead .spacer {
+  flex: 1;
+}
+.pkghead nav {
+  display: flex;
+  gap: 4px;
+}
+.pkghead nav a {
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--ink-2);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.pkghead nav a:hover {
+  background: var(--card-2);
+  color: var(--ink);
+}
+.pkghead nav a[aria-current="page"] {
+  background: var(--hl);
+  color: var(--inspire-deep);
+}
+:root[data-theme="dark"] .pkghead nav a[aria-current="page"] {
+  color: var(--inspire);
+}
+@media (prefers-color-scheme: dark) {
+  .pkghead nav a[aria-current="page"] {
+    color: var(--inspire);
+  }
+}
+:root[data-theme="light"] .pkghead nav a[aria-current="page"] {
+  color: var(--inspire-deep);
+}
+
+/* ---------------------------------------------------------------- controls */
+
+.seg {
+  display: inline-flex;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 2px;
+  gap: 2px;
+}
+.seg button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(1, 66, 99, 0.15);
+}
+
+.iconbtn {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--ink-2);
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+  font-size: 13px;
+}
+.iconbtn:hover {
+  color: var(--ink);
+  background: var(--card-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--skip-soft);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.chip-ok {
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+.chip-warn {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+.chip-info {
+  background: var(--hl);
+  color: var(--inspire-deep);
+}
+:root[data-theme="dark"] .chip-info {
+  color: var(--inspire);
+}
+@media (prefers-color-scheme: dark) {
+  .chip-info {
+    color: var(--inspire);
+  }
+}
+:root[data-theme="light"] .chip-info {
+  color: var(--inspire-deep);
+}
+
+/* Maturity vocabulary carried over from admin-progress.html: a mockup that
+   shows something not yet built says so, inline. */
+.tier {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------- panels */
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-block-end: 1px solid var(--line);
+}
+.panel-top h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.panel-top .spacer {
+  flex: 1;
+}
+.panel-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  border-block-start: 1px solid var(--line);
+  background: var(--card-2);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.dtable th {
+  position: sticky;
+  inset-block-start: 0;
+  background: var(--card);
+  text-align: start;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 8px 12px;
+  border-block-end: 1px solid var(--line);
+  z-index: 2;
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 7px 12px;
+  border-block-end: 1px solid var(--line);
+  vertical-align: middle;
+}
+.dtable .num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.dtable tbody tr.selectable {
+  cursor: pointer;
+}
+.dtable tbody tr.selectable:hover {
+  background: var(--card-2);
+}
+.dtable tbody tr[aria-selected="true"] {
+  background: var(--hl);
+}
+.dtable tr:last-child td {
+  border-block-end: 0;
+}
+
+/* ---------------------------------------------------------------- bars */
+
+.bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--skip-soft);
+  overflow: hidden;
+  display: flex;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--inspire);
+}
+.bar > i.ok {
+  background: var(--ok);
+}
+.bar > i.warn {
+  background: var(--warn);
+}
+.bar > i.quiet {
+  background: var(--skip);
+  opacity: 0.45;
+}
+
+/* ---------------------------------------------------------------- prose */
+
+.verse {
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.heb {
+  font-family: var(--font-hebrew);
+  font-size: 19px;
+  line-height: 1.9;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+mark {
+  background: var(--hl);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  box-shadow: inset 0 -2px 0 var(--inspire);
+}
+
+.note-body {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.note-body b,
+.note-body strong {
+  color: var(--ocean);
+  font-weight: 700;
+}
+:root[data-theme="dark"] .note-body b,
+:root[data-theme="dark"] .note-body strong {
+  color: var(--cultivate);
+}
+@media (prefers-color-scheme: dark) {
+  .note-body b,
+  .note-body strong {
+    color: var(--cultivate);
+  }
+}
+:root[data-theme="light"] .note-body b,
+:root[data-theme="light"] .note-body strong {
+  color: var(--ocean);
+}
+
+.ref {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ocean);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:root[data-theme="dark"] .ref {
+  color: var(--cultivate);
+}
+@media (prefers-color-scheme: dark) {
+  .ref {
+    color: var(--cultivate);
+  }
+}
+:root[data-theme="light"] .ref {
+  color: var(--ocean);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- honesty */
+
+/* Provenance note. Every screen states where its numbers come from. */
+.provenance {
+  margin: 0;
+  padding: 10px 20px 28px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 92ch;
+}
+.provenance code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.provenance b {
+  color: var(--ink);
+}
+
+/* Desktop is a hard requirement here: a book package is too much data to
+   compress honestly. Say so rather than degrading silently. */
+.too-narrow {
+  display: none;
+  padding: 40px 20px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+@media (max-width: 1099px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .too-narrow {
+    display: block;
+  }
+}

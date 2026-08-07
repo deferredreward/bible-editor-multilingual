@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Book package · Sweep — the book, cut sideways</title>
+<link rel="stylesheet" href="_pkg.css" />
+<style>
+  /* Three panes. Which of them exist is the only layout decision, and it is made
+     by choosing a task, not by arranging furniture. */
+  .sweep {
+    display: grid;
+    gap: 12px;
+    padding: 12px 16px 16px;
+    height: calc(100dvh - 52px - 46px);
+    min-height: 520px;
+    align-items: stretch;
+  }
+  .sweep[data-layout="scan"] { grid-template-columns: 264px minmax(0, 1fr); }
+  .sweep[data-layout="study"] { grid-template-columns: 264px minmax(0, 1fr) 460px; }
+  .sweep[data-layout="read"] { grid-template-columns: 264px 320px minmax(0, 1fr); }
+  .sweep[data-layout="scan"] .pane-context { display: none; }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .pane-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-block-end: 1px solid var(--line);
+    flex: none;
+  }
+  .pane-head h2 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .pane-head .spacer { flex: 1; }
+  .pane-head .n {
+    font-size: 11.5px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .pane-scroll {
+    overflow: auto;
+    min-height: 0;
+    flex: 1;
+  }
+  .pane-foot {
+    flex: none;
+    padding: 8px 12px;
+    border-block-start: 1px solid var(--line);
+    background: var(--card-2);
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+
+  /* ------------------------------------------------------------- rail */
+  .filter {
+    margin: 8px 10px;
+    flex: none;
+  }
+  .filter input {
+    width: 100%;
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 9px;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+  .filter input:focus {
+    outline: none;
+    border-color: var(--inspire);
+    box-shadow: 0 0 0 3px var(--hl);
+  }
+  .dimlist { padding: 0 6px 8px; }
+  .dimrow {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 8px;
+    align-items: baseline;
+    width: 100%;
+    text-align: start;
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .dimrow:hover { background: var(--card-2); }
+  .dimrow[aria-current="true"] { background: var(--hl); }
+  .dimrow .name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dimrow .c {
+    font-size: 12px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .dimrow .spread {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 1px;
+    height: 4px;
+  }
+  .dimrow .spread i {
+    flex: 1;
+    border-radius: 1px;
+    background: var(--skip-soft);
+  }
+  .dimrow .spread i.on { background: var(--inspire); }
+  .dimrow .spread i.hot { background: var(--ocean); }
+  :root[data-theme="dark"] .dimrow .spread i.hot { background: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .dimrow .spread i.hot { background: var(--cultivate); } }
+  :root[data-theme="light"] .dimrow .spread i.hot { background: var(--ocean); }
+
+  /* ------------------------------------------------------------- list */
+  .hits { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .hits td {
+    padding: 6px 10px;
+    border-block-end: 1px solid var(--line);
+    vertical-align: baseline;
+  }
+  .hits tr { cursor: pointer; }
+  .hits tr:hover { background: var(--card-2); }
+  .hits tr[aria-selected="true"] { background: var(--hl); }
+  .hits .r { width: 52px; }
+  .hits .q {
+    width: 34%;
+    font-family: var(--font-scripture);
+  }
+  .hits .q.heb {
+    font-family: var(--font-hebrew);
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  .hits .g { color: var(--ink-2); }
+  .hits .s { width: 26px; text-align: end; }
+  .dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+  }
+  .dot.warn { background: var(--warn); }
+  .dot.none { background: var(--skip); opacity: 0.6; }
+
+  /* Scan mode is for throughput: one row per line, chrome squeezed, text left
+     readable. Padding and line-height shrink; font size does not. */
+  .sweep[data-layout="scan"] .hits td {
+    padding: 3px 10px;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sweep[data-layout="scan"] .hits .q { max-width: 0; width: 34%; }
+  .sweep[data-layout="scan"] .hits .g { max-width: 0; width: 58%; }
+  .sweep[data-layout="scan"] .hits .q.heb { font-size: 15px; line-height: 1.5; }
+
+  /* ------------------------------------------------------------- context */
+  .ctx { padding: 14px; }
+  .ctx-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 0 10px;
+  }
+  .ctx section { margin: 0 0 16px; }
+  .ctx .label { margin: 0 0 5px; }
+  .ctx .verse {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+  .ctx .hebline {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    text-align: start;
+  }
+  .ctx .empty {
+    font-size: 13px;
+    color: var(--ink-2);
+    padding: 24px 4px;
+  }
+  .qa {
+    border-inline-start: 2px solid var(--line);
+    padding: 0 0 0 10px;
+    margin: 0 0 8px;
+  }
+  .qa-q { margin: 0; font-size: 13.5px; font-weight: 600; }
+  .qa-a { margin: 2px 0 0; font-size: 13.5px; color: var(--ink-2); }
+
+  .kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 12px;
+    font-size: 12.5px;
+    margin: 0;
+  }
+  .kv dt { color: var(--ink-2); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  .topbar2 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px 0;
+  }
+  .topbar2 .why { font-size: 12.5px; color: var(--ink-2); margin: 0; }
+  .topbar2 .spacer { flex: 1; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="pkghead" id="head">
+  <h1>Zechariah <span style="font-weight:400;color:var(--ink-2)">— cross-cut sweep</span></h1>
+  <p class="sub" id="headline">…</p>
+  <span class="spacer"></span>
+  <nav aria-label="Screens"></nav>
+  <button class="iconbtn" data-action="toggle-theme" aria-label="Toggle light / dark" title="Toggle light / dark">◐</button>
+</header>
+
+<div class="too-narrow">
+  <strong>This screen is desktop-only by design.</strong> Reviewing 79 notes against one
+  article means holding the list, the note and the verse in view at once. There is no
+  honest way to do that on a phone.
+</div>
+
+<div class="desktop-only">
+  <div class="topbar2">
+    <div class="seg" id="dim" role="group" aria-label="Cut the book by">
+      <button type="button" data-dim="article" aria-pressed="true">By article</button>
+      <button type="button" data-dim="term" aria-pressed="false">By term</button>
+      <button type="button" data-dim="check" aria-pressed="false">By problem</button>
+    </div>
+    <p class="why" id="dim-why">…</p>
+    <span class="spacer"></span>
+    <p class="why">j / k to step rows</p>
+    <div class="seg" id="layout" role="group" aria-label="Layout">
+      <button type="button" data-layout="scan" aria-pressed="false">Scan</button>
+      <button type="button" data-layout="study" aria-pressed="true">Study</button>
+      <button type="button" data-layout="read" aria-pressed="false">Read</button>
+    </div>
+  </div>
+
+  <main id="main" class="sweep" data-layout="study">
+    <section class="pane pane-rail">
+      <div class="pane-head">
+        <h2 id="rail-title">…</h2>
+        <span class="spacer"></span>
+        <span class="n" id="rail-n"></span>
+      </div>
+      <div class="filter"><input id="filter" type="search" placeholder="Filter…" aria-label="Filter list" /></div>
+      <div class="pane-scroll"><div class="dimlist" id="dimlist"></div></div>
+      <div class="pane-foot" id="rail-foot"></div>
+    </section>
+
+    <section class="pane pane-list">
+      <div class="pane-head">
+        <h2 id="list-title">…</h2>
+        <span class="spacer"></span>
+        <span class="n" id="list-n"></span>
+      </div>
+      <div class="pane-scroll" id="list-scroll">
+        <table class="hits"><tbody id="hits"></tbody></table>
+      </div>
+      <div class="pane-foot" id="list-foot"></div>
+    </section>
+
+    <section class="pane pane-context">
+      <div class="pane-head">
+        <h2 id="ctx-title">Context</h2>
+        <span class="spacer"></span>
+        <span class="n" id="ctx-n"></span>
+      </div>
+      <div class="pane-scroll"><div class="ctx" id="ctx"></div></div>
+      <div class="pane-foot" id="ctx-foot"></div>
+    </section>
+  </main>
+
+  <p class="provenance" id="prov"></p>
+</div>
+
+<script src="_zec.js"></script>
+<script src="_pkg.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var P = window.PKG;
+  var T = P.totals;
+  var esc = P.esc;
+  function el(id) { return document.getElementById(id); }
+
+  var state = { dim: "article", key: null, row: 0, layout: "study", filter: "" };
+
+  // ------------------------------------------------------- problem buckets
+  //
+  // Computed, not stored. Each bucket is a real predicate over the real rows.
+  var BUCKETS = [
+    {
+      id: "none", name: "Quote not found in ULT",
+      hint: "The Quote cannot be located in the ULT at all — either the text was revised after the note was written, or the quote is wrong.",
+      rows: P.notes.filter(function (r) { return r.loc === "none"; }),
+    },
+    {
+      id: "normalized", name: "Wording has drifted",
+      hint: "Found only after normalising punctuation and case, so the note and the ULT no longer agree exactly.",
+      rows: P.notes.filter(function (r) { return r.loc === "normalized"; }),
+    },
+    {
+      id: "partial", name: "Partly located",
+      hint: "Some words of the quote resolve against the ULT alignment and some do not.",
+      rows: P.notes.filter(function (r) { return r.loc === "partial"; }),
+    },
+    {
+      id: "noarticle", name: "No translationAcademy article",
+      hint: "A note with no SupportReference gives the translator no method to read up on.",
+      rows: P.notes.filter(function (r) { return !r.intro && !r.article; }),
+    },
+    {
+      id: "adapted", name: "Adapted — needs verifying",
+      hint: "Tagged at-fit in the source TSV: the note was machine-adapted and a human has not confirmed it.",
+      rows: P.notes.filter(function (r) { return /at-fit/.test(r.tags || ""); }),
+    },
+    {
+      id: "flagged", name: "Flagged in source",
+      hint: "Carries an ISSUE tag in the source TSV itself.",
+      rows: P.notes.filter(function (r) { return /ISSUE/.test(r.tags || ""); }),
+    },
+  ];
+
+  var DIMS = {
+    article: {
+      railTitle: "translationAcademy",
+      why: "One method at a time: read every note in the book that claims the same article.",
+      listTitle: function (k) { return k ? k : "Pick an article"; },
+      items: function () {
+        return P.articles.map(function (a) {
+          return { id: a.id, name: a.id, count: a.count, chapters: a.chapters, rows: a.rows };
+        });
+      },
+      railFoot: P.articles.length + " articles referenced by " + (T.tn - T.noArticle - T.tnIntro) + " notes",
+      listFoot: "Consistency question: does every note here apply the method the same way?",
+    },
+    term: {
+      railTitle: "translationWords",
+      why: "One key term at a time: every place the book links it, and every original form behind it.",
+      listTitle: function (k) { return k ? k : "Pick a term"; },
+      items: function () {
+        return P.terms.map(function (t) {
+          return {
+            id: t.id, name: t.cat + "/" + t.id, count: t.count, chapters: t.chapters,
+            rows: t.rows, formCount: t.formCount, cat: t.cat, link: t.link,
+          };
+        });
+      },
+      railFoot: P.terms.length + " terms across " + T.twl + " word links",
+      listFoot: "Consistency question: is the same term linked from the same kind of word each time?",
+    },
+    check: {
+      railTitle: "Problems",
+      why: "The package's own defects, computed from the data — this is the triage queue.",
+      listTitle: function (k) {
+        var b = bucket(k);
+        return b ? b.name : "Pick a problem";
+      },
+      items: function () {
+        return BUCKETS.map(function (b) {
+          var ch = {};
+          b.rows.forEach(function (r) { ch[r.ch] = (ch[r.ch] || 0) + 1; });
+          return { id: b.id, name: b.name, count: b.rows.length, chapters: ch, rows: b.rows, hint: b.hint };
+        });
+      },
+      railFoot: "All six buckets are computed at load, none are stored statuses",
+      listFoot: "",
+    },
+  };
+
+  function bucket(id) {
+    for (var i = 0; i < BUCKETS.length; i++) if (BUCKETS[i].id === id) return BUCKETS[i];
+    return null;
+  }
+
+  function items() {
+    var all = DIMS[state.dim].items();
+    if (!state.filter) return all;
+    var f = state.filter.toLowerCase();
+    return all.filter(function (x) { return x.name.toLowerCase().indexOf(f) >= 0; });
+  }
+
+  function current() {
+    var all = DIMS[state.dim].items();
+    for (var i = 0; i < all.length; i++) if (all[i].id === state.key) return all[i];
+    return null;
+  }
+
+  // ------------------------------------------------------------- rendering
+
+  function spreadHtml(chapters) {
+    var max = 0;
+    Object.keys(chapters).forEach(function (k) { max = Math.max(max, chapters[k]); });
+    var h = '<span class="spread" aria-hidden="true">';
+    for (var c = 1; c <= 14; c++) {
+      var n = chapters[c] || 0;
+      h += '<i class="' + (n ? (n >= max * 0.66 ? "hot" : "on") : "") + '"></i>';
+    }
+    return h + "</span>";
+  }
+
+  function renderRail() {
+    var d = DIMS[state.dim];
+    var list = items();
+    el("rail-title").textContent = d.railTitle;
+    el("rail-n").textContent = list.length + (state.filter ? " of " + d.items().length : "");
+    el("rail-foot").textContent = d.railFoot;
+    el("dimlist").innerHTML = list
+      .map(function (x) {
+        return (
+          '<button type="button" class="dimrow" data-key="' + esc(x.id) + '"' +
+          ' aria-current="' + (x.id === state.key ? "true" : "false") + '">' +
+          '<span class="name">' + esc(x.name) + "</span>" +
+          '<span class="c">' + x.count + "</span>" +
+          spreadHtml(x.chapters) +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  function statusDot(r) {
+    if (r.kind !== "tn") return "";
+    if (!r.quote) return '<span class="dot none" title="no quote"></span>';
+    if (r.loc === "located") return '<span class="dot" title="quote resolves in the ULT"></span>';
+    if (r.loc === "none") return '<span class="dot none" title="quote not found in the ULT"></span>';
+    return '<span class="dot warn" title="quote only partly resolves"></span>';
+  }
+
+  function rowsFor(item) {
+    if (!item) return [];
+    return item.rows.slice().sort(function (a, b) {
+      return a.ch - b.ch || a.verse - b.verse;
+    });
+  }
+
+  function renderList() {
+    var item = current();
+    var rows = rowsFor(item);
+    el("list-title").textContent = DIMS[state.dim].listTitle(state.key);
+    el("list-n").textContent = item ? rows.length + " in " + Object.keys(item.chapters).length + " chapters" : "";
+    el("list-foot").textContent = item && item.hint ? item.hint : DIMS[state.dim].listFoot;
+
+    if (!item) {
+      el("hits").innerHTML = '<tr><td class="g" style="padding:24px 12px">Choose from the list on the left.</td></tr>';
+      return;
+    }
+
+    el("hits").innerHTML = rows
+      .map(function (r, i) {
+        var quote = "";
+        var gloss = "";
+        if (r.kind === "tn") {
+          quote = r.quote
+            ? '<td class="q' + (r.qlang === "heb" ? " heb" : "") + '">' + esc(r.quote.replace(/&/g, " … ")) + "</td>"
+            : '<td class="q g">— chapter note —</td>';
+          gloss = '<td class="g">' + esc(P.firstSentence(r.note, 150)) + "</td>";
+        } else {
+          quote = '<td class="q heb">' + esc(r.words) + "</td>";
+          gloss = '<td class="g">' + esc(r.term) + " · occurrence " + esc(r.occ) +
+            (r.tags ? " · " + esc(r.tags) : "") + "</td>";
+        }
+        return (
+          '<tr data-i="' + i + '" aria-selected="' + (i === state.row ? "true" : "false") + '">' +
+          '<td class="r"><span class="ref">' + esc(r.ref) + "</span></td>" +
+          quote + gloss +
+          '<td class="s">' + statusDot(r) + "</td></tr>"
+        );
+      })
+      .join("");
+  }
+
+  function renderContext() {
+    var item = current();
+    var rows = rowsFor(item);
+    var r = rows[state.row];
+    var ctx = el("ctx");
+
+    if (!r) {
+      ctx.innerHTML = '<p class="empty">Nothing selected.</p>';
+      el("ctx-n").textContent = "";
+      el("ctx-foot").textContent = "";
+      return;
+    }
+
+    el("ctx-n").textContent = state.row + 1 + " of " + rows.length;
+
+    var quote = r.kind === "tn" ? r.quote : r.words;
+    var res = P.locate(r.ref, quote);
+    var vhtml = P.verseHtml(r.ref, quote);
+
+    var statusChip = "";
+    if (!quote) statusChip = '<span class="chip">chapter note</span>';
+    else if (res.status === "located") statusChip = '<span class="chip chip-ok">quote resolves in ULT</span>';
+    else if (res.status === "partial") statusChip = '<span class="chip chip-warn">partly resolves</span>';
+    else if (res.status === "normalized") statusChip = '<span class="chip chip-warn">ULT wording has drifted</span>';
+    else statusChip = '<span class="chip chip-warn">not found in ULT</span>';
+
+    var h = '<div class="ctx-top"><span class="ref">' + esc(P.meta.book + " " + r.ref) + "</span>" +
+      (r.kind === "tn" && r.article ? '<span class="chip chip-info mono">' + esc(r.article) + "</span>" : "") +
+      (r.kind === "twl" ? '<span class="chip chip-info mono">' + esc(r.cat + "/" + r.term) + "</span>" : "") +
+      statusChip +
+      (r.tags ? '<span class="chip chip-warn">' + esc(r.tags) + "</span>" : "") +
+      "</div>";
+
+    if (quote && P.isHebrew(quote)) {
+      h += '<section><p class="label">Quote — original</p><div class="hebline">' +
+        P.hebrewHtml(r.ref, quote) + "</div></section>";
+    }
+
+    h += '<section><p class="label">ULT' +
+      (res.status === "located" || res.status === "partial" ? " — quote highlighted from the alignment" : "") +
+      '</p><div class="verse verse-box"><span class="verse">' + vhtml + "</span></div></section>";
+
+    if (r.kind === "tn") {
+      h += '<section><p class="label">Note</p><div class="note-body">' + P.renderNote(r.note) + "</div></section>";
+    }
+
+    // The rest of the package at this location. A tQ that contradicts the note is
+    // exactly the kind of incoherence this screen is for, so it belongs here — but
+    // only when one actually exists at this reference.
+    var qs = P.questionsAt(r.ref);
+    if (qs.length) {
+      h += '<section><p class="label">Questions on this verse — ' + qs.length + "</p>";
+      qs.forEach(function (q) {
+        h += '<div class="qa"><p class="qa-q">' + esc(q.q) + '</p><p class="qa-a">' + esc(q.a) + "</p></div>";
+      });
+      h += "</section>";
+    }
+
+    h += '<section><p class="label">Row</p><dl class="kv">' +
+      "<dt>id</dt><dd class=\"mono\">" + esc(r.id) + "</dd>" +
+      "<dt>reference</dt><dd>" + esc(r.ref) + "</dd>" +
+      (r.kind === "tn"
+        ? "<dt>support reference</dt><dd class=\"mono\">" + esc(r.sr || "—") + "</dd>" +
+          "<dt>occurrence</dt><dd>" + esc(r.occ || "—") + "</dd>" +
+          "<dt>quote language</dt><dd>" + (r.qlang === "heb" ? "Hebrew" : r.qlang === "eng" ? "English" : "—") + "</dd>"
+        : "<dt>tW link</dt><dd class=\"mono\">" + esc(r.link) + "</dd>" +
+          "<dt>occurrence</dt><dd>" + esc(r.occ || "—") + "</dd>") +
+      "</dl></section>";
+
+    ctx.innerHTML = h;
+
+    el("ctx-foot").textContent =
+      res.status === "located"
+        ? "Highlight comes from the ULT's own \\zaln-s x-content, not a text search."
+        : res.status === "none"
+        ? "No highlight shown, because the quote could not be located. This mockup will not guess."
+        : "Highlight is partial — only the words that actually resolved are marked.";
+  }
+
+  function render() {
+    el("headline").textContent =
+      T.tn + " notes · " + T.twl + " word links · " + T.articles + " articles · " + T.terms + " terms";
+    el("dim-why").textContent = DIMS[state.dim].why;
+    el("main").dataset.layout = state.layout;
+    renderRail();
+    renderList();
+    renderContext();
+
+    el("prov").innerHTML =
+      "<b>Why cut the book this way.</b> Verse-by-verse is the wrong axis for a coherence check. " +
+      "The same method is applied " + P.articles[0].count + " times in this book (<code>" + esc(P.articles[0].id) +
+      "</code>) and the same term is linked " + P.terms[0].count + " times (<code>" + esc(P.terms[0].cat + "/" + P.terms[0].id) +
+      "</code>). Reading those together is the only way to notice that they disagree, and no chapter-scoped screen can do it." +
+      "<br><br><b>Where the data comes from.</b> The real fixtures in <code>docs/samples/</code> — " + T.tn + " tN rows, " +
+      T.twl + " tWL rows and the ULT with its " + T.alignedSegments + " alignment milestones. " +
+      "The quote highlight is a genuine resolution against <code>x-content</code> on the ULT's <code>\\zaln-s</code> markers: " +
+      T.located + " of " + T.quoted + " quotes resolve, and the " + T.unlocatable +
+      " that do not are shown as unresolved rather than faked." +
+      "<br><br><b>What is not here.</b> No editing, no approve, no assignment — those need a backend and this page has none. " +
+      "Every control on screen only changes what you are looking at.";
+  }
+
+  // ------------------------------------------------------------- events
+
+  function selectFirst() {
+    var all = items();
+    state.key = all.length ? all[0].id : null;
+    state.row = 0;
+  }
+
+  el("dim").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-dim]");
+    if (!b) return;
+    state.dim = b.dataset.dim;
+    state.filter = "";
+    el("filter").value = "";
+    Array.prototype.forEach.call(el("dim").querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    });
+    selectFirst();
+    render();
+  });
+
+  el("layout").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-layout]");
+    if (!b) return;
+    state.layout = b.dataset.layout;
+    Array.prototype.forEach.call(el("layout").querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    });
+    render();
+  });
+
+  el("dimlist").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-key]");
+    if (!b) return;
+    state.key = b.dataset.key;
+    state.row = 0;
+    render();
+    el("list-scroll").scrollTop = 0;
+  });
+
+  el("hits").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-i]");
+    if (!tr) return;
+    state.row = parseInt(tr.dataset.i, 10);
+    render();
+  });
+
+  el("filter").addEventListener("input", function (e) {
+    state.filter = e.target.value;
+    renderRail();
+  });
+
+  function step(delta) {
+    var rows = rowsFor(current());
+    if (!rows.length) return;
+    state.row = Math.max(0, Math.min(rows.length - 1, state.row + delta));
+    render();
+    var sel = el("hits").querySelector('tr[aria-selected="true"]');
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT") {
+      if (e.key === "Escape") e.target.blur();
+      return;
+    }
+    if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); step(1); }
+    else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+    else if (e.key === "/") { e.preventDefault(); el("filter").focus(); }
+  });
+
+  P.mountHead(el("head"), "sweep.html");
+  selectFirst();
+  render();
+})();
+</script>
+</body>
+</html>

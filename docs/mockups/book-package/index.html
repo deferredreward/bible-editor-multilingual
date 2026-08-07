@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>About — one verse, is it coherent?</title>
+<link rel="stylesheet" href="_pkg.css" />
+<style>
+  .about { padding: 20px; max-width: 90ch; }
+  .about h2 { font-size: 15px; margin: 26px 0 8px; letter-spacing: -0.01em; }
+  .about h2:first-of-type { margin-block-start: 6px; }
+  .about p, .about li { font-size: 14px; line-height: 1.6; }
+  .about p { margin: 0 0 10px; }
+  .about ul { margin: 0 0 12px; padding-inline-start: 20px; }
+  .about li { margin: 0 0 5px; }
+  .about code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 4px;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+    margin: 14px 0 6px;
+  }
+  .cards a {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
+  }
+  .cards a:hover { border-color: var(--inspire); }
+  .cards h3 { margin: 0 0 4px; font-size: 14px; }
+  .cards p { margin: 0; font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+  .quote {
+    border-inline-start: 3px solid var(--inspire);
+    padding: 2px 0 2px 12px;
+    margin: 0 0 12px;
+    color: var(--ink-2);
+    font-size: 13.5px;
+  }
+  table.small { border-collapse: collapse; font-size: 13px; margin: 0 0 14px; width: 100%; }
+  table.small th, table.small td {
+    text-align: start;
+    padding: 6px 12px 6px 0;
+    border-block-end: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.small th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-2);
+  }
+  table.small td.n { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .heb { font-family: var(--font-hebrew); font-size: 17px; direction: rtl; unicode-bidi: isolate; }
+  .demo {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    margin: 0 0 14px;
+  }
+  .demo dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13.5px; }
+  .demo dt {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding-block-start: 3px;
+  }
+  .demo dd { margin: 0; font-family: var(--font-scripture); font-size: 14.5px; }
+  .demo dd.none { font-family: var(--font-ui); font-size: 12.5px; color: var(--warn-ink); font-weight: 600; }
+  .aside {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--card-2);
+    padding: 12px 14px;
+    margin: 0 0 12px;
+  }
+  .aside p:last-child { margin: 0; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="pkghead" id="head">
+  <h1>One verse <span style="font-weight:400;color:var(--ink-2)">— is it coherent?</span></h1>
+  <span class="spacer"></span>
+  <nav aria-label="Screens"></nav>
+  <button class="iconbtn" data-action="toggle-theme" aria-label="Toggle light / dark" title="Toggle light / dark">◐</button>
+</header>
+
+<main id="main" class="about">
+  <p class="quote">
+    “Interfaces should not contain information that is irrelevant or rarely needed. Every
+    extra unit of information competes with the relevant units and diminishes their
+    relative visibility.” — Nielsen Norman Group, <i>Aesthetic and Minimalist Design</i>
+  </p>
+
+  <p>
+    Two screens for the <b>editor / exegete</b>, not for a project manager: open one verse,
+    see all of it, and judge whether it hangs together. Loaded with real Zechariah 1 —
+    <b id="t-verses"></b> verses, <b id="t-words"></b> original words,
+    <b id="t-tn"></b> notes, <b id="t-twl"></b> word links, <b id="t-tq"></b> questions,
+    and <b id="t-arts"></b> real translationAcademy and translationWords articles.
+  </p>
+
+  <div class="cards">
+    <a href="verse.html">
+      <h3>Verse — investigate</h3>
+      <p>Original, literal and simplified, plus one detail area. Click any word in any text
+        and the same place lights up in all three. <b>Read</b> for sense; <b>Audit</b> for a
+        row-per-word comparison.</p>
+    </a>
+    <a href="focus.html">
+      <h3>Focus — decide and move on</h3>
+      <p>One column, top to bottom: a computed opening line, the three texts, then each note
+        with what both translations actually did with its words. Arrow keys step verses.</p>
+    </a>
+  </div>
+
+  <h2>The idea: anchor everything to the original word</h2>
+  <p>
+    Both legacy screens stack resources in boxes and leave the reader to correlate them by
+    eye. But the literal and the simplified texts are each <i>already aligned</i> to the same
+    original words. Joining them on that alignment — rather than merely showing them side by
+    side — turns "is this coherent?" from a judgement you reconstruct into a lookup.
+  </p>
+  <p>
+    The clearest example is the first verse. A note calls
+    <span class="heb">הָיָה דְבַר־יְהוָה אֶל־זְכַרְיָה</span> an idiom. Selecting it shows what
+    each translation did with <i>those exact words</i>:
+  </p>
+  <div class="demo" id="demo"></div>
+  <p>
+    That is the exegete's question answered directly: the literal text keeps the idiom, the
+    simplified text replaces it with a plain statement and moves the speaker to the front.
+    Nothing had to be counted or cross-referenced by hand.
+  </p>
+
+  <h2>What was removed</h2>
+  <p>
+    Counting only what is permanently on screen, per resource, in the two screens these
+    replace:
+  </p>
+  <ul>
+    <li><b>Per-panel toolbars.</b> gatewayEdit gives every one of its six panels its own
+      drag handle, minimise, save, link, hide and kebab. That is roughly thirty controls
+      competing with the text. Here there are none.</li>
+    <li><b>Panel headers and tabs.</b> No "translationNotes" bar above the notes — a heading
+      and a count is enough.</li>
+    <li><b>Progress strips, <i>done/all</i> toggles, APPROVE ALL, NEW, translation-mode
+      chips, per-row save and delete.</b> All editing and workflow chrome: this is a reading
+      and checking surface, so none of it belongs.</li>
+    <li><b>Resizable, rearrangeable regions.</b> Manipulating the layout was the thing you
+      called hard to manipulate. There is one control per screen and it names a task
+      (<i>Read</i> / <i>Audit</i>), not a panel.</li>
+  </ul>
+  <p>
+    What is kept is what the task needs: the original with its morphology, both renderings,
+    the notes with their real articles, the term links with theirs, and the questions.
+  </p>
+
+  <h2>Flags are observations, and stay quiet on purpose</h2>
+  <p>
+    A word the simplified text does not render is worth seeing — but an unrendered
+    preposition or object marker is normal, and flagging it would be exactly the noise the
+    heuristic warns against. So holes are split by real morphology: only a missing
+    <i>content</i> word raises the amber line; function words get a quiet mention.
+    Across Zechariah 1 that is <b id="t-attn"></b> of <b id="t-total"></b> verses raising
+    anything at all.
+  </p>
+  <div class="aside">
+    <p><b>Nothing here is a verdict.</b> The screens do not say a verse is wrong; they say
+    where the three texts diverge, and leave the call to the person reading. A simplified
+    text can carry a word's sense without a matching word.</p>
+  </div>
+
+  <h2>Everything on screen is real</h2>
+  <table class="small">
+    <thead><tr><th>What</th><th>Where it comes from</th><th class="n">Coverage</th></tr></thead>
+    <tbody id="prov-table"></tbody>
+  </table>
+  <p>
+    Regenerate the data with:
+  </p>
+  <p><code>node --experimental-strip-types --no-warnings docs/mockups/book-package/_extract-verse.mjs</code></p>
+
+  <h2>One thing the data taught us</h2>
+  <p id="lesson"></p>
+
+  <h2>Also here: the first attempt</h2>
+  <p>
+    <a href="ledger.html">Ledger</a> and <a href="sweep.html">Sweep</a> were built first and
+    answer a different question — <i>where is the work across a whole book, and is the
+    package internally consistent?</i> They are project-manager instruments, not exegete
+    ones, and are kept because that job is real too. Among other things they show that
+    Zechariah's notes quote Hebrew in chapters 1–5 and 13 but English in chapters 6–12 and
+    14, and that 15 note quotes no longer match the literal text at all.
+  </p>
+
+  <h2>Status and limits</h2>
+  <ul>
+    <li><b>Mockups.</b> No backend, nothing writes, nothing saves.</li>
+    <li><b>Zechariah 1 only</b> — 21 verses, so the fixture stays a sensible size. The
+      extractor takes a chapter constant.</li>
+    <li><b>Desktop only, deliberately.</b> Both screens say so below 1100px instead of
+      hiding something that matters.</li>
+    <li><b>Article prose is read from local <code>en_ta</code> / <code>en_tw</code>
+      checkouts</b> at build time. It is real unfoldingWord text, but it is a snapshot, not
+      a live fetch.</li>
+    <li><b>Verified by driving the pages</b>, not by eye — see the README for exactly what
+      was and was not checked.</li>
+  </ul>
+</main>
+
+<script src="_verse.js"></script>
+<script src="_vlib.js"></script>
+<script>
+(function () {
+  "use strict";
+  var L = window.VL, V = L.V;
+  var esc = L.esc;
+  function el(id) { return document.getElementById(id); }
+
+  var words = 0, tn = 0, twl = 0, tq = 0;
+  L.refs.forEach(function (r) {
+    var v = V.verses[r];
+    words += v.words.length;
+    tn += v.tn.length;
+    twl += v.twl.length;
+    tq += v.tq.length;
+  });
+
+  el("t-verses").textContent = L.refs.length;
+  el("t-words").textContent = words;
+  el("t-tn").textContent = tn;
+  el("t-twl").textContent = twl;
+  el("t-tq").textContent = tq;
+  el("t-arts").textContent = Object.keys(V.ta).length + Object.keys(V.tw).length;
+
+  // The worked example is pulled from the data, not transcribed.
+  (function () {
+    var v = L.decorate("1:1");
+    var note = v.tn.filter(function (r) { return r.article === "figs-idiom"; })[0] || v.tn[0];
+    var ult = note.spans.ult.map(function (g) { return v.ult[g].e; }).join("").trim();
+    var ust = note.spans.ust.map(function (g) { return v.ust[g].e; }).join("").trim();
+    var heb = note.words.map(function (i) { return v.words[i].w; }).join(" ");
+    el("demo").innerHTML =
+      "<dl>" +
+      "<dt>Original</dt><dd class=\"heb\" dir=\"rtl\">" + esc(heb) + "</dd>" +
+      "<dt>Literal</dt><dd" + (ult ? ">" + esc(ult) : ' class="none">not rendered') + "</dd>" +
+      "<dt>Simplified</dt><dd" + (ust ? ">" + esc(ust) : ' class="none">not rendered') + "</dd>" +
+      "<dt>Note says</dt><dd style=\"font-family:var(--font-ui);font-size:13.5px\">" +
+      esc(firstBit(note.note)) + "</dd>" +
+      "</dl>";
+  })();
+
+  function firstBit(t) {
+    var s = String(t || "").replace(/\\n/g, " ").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+    var cut = s.indexOf(". ");
+    return cut > 30 && cut < 190 ? s.slice(0, cut + 1) : s.slice(0, 190);
+  }
+
+  var attn = 0;
+  L.refs.forEach(function (r) {
+    if (L.coherence(r).some(function (c) { return c.level === "attention"; })) attn++;
+  });
+  el("t-attn").textContent = attn;
+  el("t-total").textContent = L.refs.length;
+
+  var cov = V.meta.coverage;
+  var milestones =
+    cov.joinTiers.exact + cov.joinTiers.strong + cov.joinTiers.skeleton +
+    cov.joinTiers.weak + cov.joinTiers.none;
+
+  el("prov-table").innerHTML = [
+    ["Original text, lemma, morphology", "<code>hbo_uhb_38-ZEC.usfm</code>, decoded by the product's own <code>web/src/lib/morph.ts</code>", words + " / " + words + " words decoded"],
+    ["Literal rendering + alignment", "<code>en_ult_38-ZEC.usfm</code>", cov.ultMapped + " groups mapped"],
+    ["Simplified rendering + alignment", "<code>en_ust_38-ZEC.usfm</code>", cov.ustMapped + " groups mapped"],
+    ["Notes", "<code>en_tn_tn_ZEC.tsv</code>", cov.tnAnchored + " / " + cov.tnAnchored + " quotes anchored"],
+    ["Word links", "<code>en_twl_twl_ZEC.tsv</code>", cov.twlAnchored + " / " + cov.twlAnchored + " anchored"],
+    ["Questions", "<code>en_tq_tq_ZEC.tsv</code>", tq + " rows"],
+    ["translationAcademy prose", "local <code>en_ta</code> checkout", Object.keys(V.ta).length + " articles, " + cov.taMissing.length + " missing"],
+    ["translationWords prose", "local <code>en_tw</code> checkout", Object.keys(V.tw).length + " articles, " + cov.twMissing.length + " missing"],
+  ]
+    .map(function (r) {
+      return "<tr><td>" + r[0] + "</td><td>" + r[1] + '</td><td class="n">' + r[2] + "</td></tr>";
+    })
+    .join("");
+
+  el("lesson").innerHTML =
+    "Joining two translations on their alignment sounds trivial and is not. Alignment " +
+    "<code>x-occurrence</code> counts occurrences of the <b>exact pointed form</b>, not of the " +
+    "consonantal skeleton. In Zechariah 1:3 the three instances of <span class=\"heb\">צבאות</span> " +
+    "carry three different accentuations and are each “occurrence 1”, while the two identically " +
+    "pointed <span class=\"heb\">יְהוָ֣ה</span> are occurrences 1 and 2. Keying on a stripped " +
+    "skeleton — the obvious first attempt, and what this mockup did at first — silently welded " +
+    "distinct words together and produced a verse reading “sayssays … of Armies of Armies of " +
+    "Armies”. Keying on the exact form fixed it: of " + milestones + " milestones in this chapter, " +
+    cov.joinTiers.exact + " now match exactly, " + cov.joinTiers.strong + " on Strong's number, " +
+    cov.joinTiers.weak + " on consonants alone and " + cov.joinTiers.none + " not at all.";
+
+  L.mountHead(el("head"), "index.html");
+})();
+</script>
+</body>
+</html>
