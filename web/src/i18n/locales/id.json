@@ -607,7 +607,31 @@
       "terminology": "Terminologi",
       "examples": "Contoh",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "Layanan AI"
+    },
+    "aiService": {
+      "title": "Layanan AI",
+      "intro": "Pilih AI mana yang akan menyusun bantuan terjemahan organisasi ini: langganan bersama unfoldingWord, atau penyedia Anda sendiri dengan kunci API Anda sendiri. Penting: setelah kunci disimpan di sini, kunci tidak dapat dilihat lagi — hanya dapat diganti atau dihapus.",
+      "providerLabel": "Penyedia",
+      "provider": {
+        "default": "Default (langganan uW)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "Model",
+      "apiKey": "Kunci API",
+      "apiKeyHelper": "Disimpan terenkripsi dan tidak akan ditampilkan lagi — hanya dapat diganti atau dihapus.",
+      "configured": "Dikonfigurasi •••• {{hint}}",
+      "replace": "Ganti",
+      "clear": "Hapus",
+      "clearConfirmTitle": "Hapus kunci API?",
+      "clearConfirmBody": "Ini akan menghapus kunci yang tersimpan dan mengalihkan organisasi ini kembali ke penyedia default (langganan uW).",
+      "clearConfirmConfirm": "Hapus kunci",
+      "encryptionUnavailable": "Membawa kunci AI sendiri belum diaktifkan pada deployment ini — admin perlu mengatur secret AI_KEY_WRAPPING_KEY.",
+      "loadFailed": "Tidak dapat memuat pengaturan layanan AI."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

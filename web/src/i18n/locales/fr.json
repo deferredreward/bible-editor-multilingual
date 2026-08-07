@@ -635,7 +635,31 @@
       "terminology": "Terminologie",
       "examples": "Exemples",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "Service d'IA"
+    },
+    "aiService": {
+      "title": "Service d'IA",
+      "intro": "Choisissez quelle IA rédige l'aide à la traduction de cette organisation : l'abonnement partagé unfoldingWord, ou votre propre fournisseur avec votre propre clé API. Important : une fois la clé enregistrée ici, elle ne peut plus être consultée, seulement remplacée ou effacée.",
+      "providerLabel": "Fournisseur",
+      "provider": {
+        "default": "Par défaut (abonnement uW)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "Modèle",
+      "apiKey": "Clé API",
+      "apiKeyHelper": "Stockée chiffrée et jamais réaffichée — seulement remplaçable ou effaçable.",
+      "configured": "Configurée •••• {{hint}}",
+      "replace": "Remplacer",
+      "clear": "Effacer",
+      "clearConfirmTitle": "Effacer la clé API ?",
+      "clearConfirmBody": "Cela supprime la clé enregistrée et fait revenir cette organisation au fournisseur par défaut (abonnement uW).",
+      "clearConfirmConfirm": "Effacer la clé",
+      "encryptionUnavailable": "Apporter votre propre clé d'IA n'est pas encore activé sur ce déploiement — un administrateur doit configurer le secret AI_KEY_WRAPPING_KEY.",
+      "loadFailed": "Impossible de charger les paramètres du service d'IA."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
