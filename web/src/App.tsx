@@ -5,6 +5,7 @@ import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TopBar } from "./components/TopBar";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
+import { ReviewQueue } from "./components/ReviewQueue";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { LocalizationInspector } from "./components/LocalizationInspector";
 import { useBook } from "./hooks/useBook";
@@ -33,7 +34,8 @@ type Location =
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
   | { view: "templates"; templateId: string | null }
   | { view: "import"; book: string | null; chapter: number | null; verse: number | null }
-  | { view: "preferences"; section: PrefsSection };
+  | { view: "preferences"; section: PrefsSection }
+  | { view: "review"; book: string; chapter: number };
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -80,6 +82,10 @@ function parseHash(): Location {
       chapter: im[2] ? parseInt(im[2], 10) : null,
       verse: im[3] ? parseInt(im[3], 10) : null,
     };
+  }
+  const rv = location.hash.match(/^#\/review\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  if (rv) {
+    return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
   if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
@@ -577,6 +583,8 @@ export function App() {
             }}
             onOpenBook={(b, chapter, verse) => navigate(b, chapter ?? 1, verse ?? undefined)}
           />
+        ) : loc.view === "review" ? (
+          <ReviewQueue book={loc.book} chapter={loc.chapter} onNavigate={navigate} />
         ) : (
           <Shell
             key={loc.book}
