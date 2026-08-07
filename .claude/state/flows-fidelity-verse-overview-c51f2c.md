@@ -15,12 +15,21 @@ dark-mode/band QA per screen, save round-trips on every screen (t2 review save
 was verified in the predecessor session; t3/t4 save paths are transcriptions of
 Shell's, read-verified only), the 409/If-Match:0 paths on l2.
 
+**Review record:** two independent cold reviews ran before the PR settled
+(Codex was out of credits; Claude stand-ins per the fallback). Round 1: 30
+findings → fixed in 0e70399. Round 2 (merge-blockers): 9 findings → fixed in
+715880b, verified ALL_FIXED with no new regressions. Lane wording was fixed in
+round 1 and verified accurate against bsoj's real laneState (lit lane genuinely
+mid-replacement).
+
 **Follow-ups (deliberate, not forgotten):**
-- Empty-target-lane wording on t3/t4/t6 says "awaiting replacement" for lanes
-  that are simply untranslated; VerseScreen's wording ("not drafted yet — normal
-  in a translation-mode workspace") is the model. One small pass.
 - `api.ts` lacks `getRow(kind,id,book)`; the t2 conflict re-read fetches the
   whole chapter as a workaround.
+- VerseScreen highlight join collapses repeated identical pointed forms onto
+  the first occurrence (UHB stamps no x-occurrence — measured 0/3400 in ZEC);
+  documented in-code, read-only impact only.
+- AlignmentPanel has no readOnly prop, so a viewer can still drag locally on
+  the canvas (gets an honest view-only notice on Save instead of false success).
 - `AlignSourceModel.tsx` copies four module-private AlignmentPanel helpers —
   extract into a shared lib.
 - i18n sweep: every flow screen ships English literals with `// TODO(i18n)`.
