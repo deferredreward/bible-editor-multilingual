@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
@@ -35,7 +35,36 @@ type Location =
   | { view: "templates"; templateId: string | null }
   | { view: "import"; book: string | null; chapter: number | null; verse: number | null }
   | { view: "preferences"; section: PrefsSection }
-  | { view: "review"; book: string; chapter: number };
+  | { view: "review"; book: string; chapter: number }
+  | { view: "home" }
+  | { view: "scripture"; book: string; chapter: number; verse: number }
+  | { view: "align"; book: string; chapter: number; verse: number }
+  | { view: "flowArticles" }
+  | { view: "words"; book: string; chapter: number; verse: number }
+  | { view: "ai" }
+  | { view: "style" }
+  | { view: "curate"; templateId: string | null }
+  | { view: "setup" }
+  | { view: "books" }
+  | { view: "team" }
+  | { view: "observe" }
+  | { view: "verse"; book: string; chapter: number; verse: number };
+
+// Flow screens (docs/flows port) are lazy so their weight isn't paid on the
+// classic editor routes. Stubs today; replaced screen-by-screen in this stack.
+const HomeScreen = lazy(() => import("./components/flows/HomeScreen"));
+const ScriptureScreen = lazy(() => import("./components/flows/ScriptureScreen"));
+const AlignScreen = lazy(() => import("./components/flows/AlignScreen"));
+const ArticlesScreen = lazy(() => import("./components/flows/ArticlesScreen"));
+const WordsScreen = lazy(() => import("./components/flows/WordsScreen"));
+const AiScreen = lazy(() => import("./components/flows/AiScreen"));
+const StyleScreen = lazy(() => import("./components/flows/StyleScreen"));
+const CurateScreen = lazy(() => import("./components/flows/CurateScreen"));
+const SetupScreen = lazy(() => import("./components/flows/SetupScreen"));
+const BooksScreen = lazy(() => import("./components/flows/BooksScreen"));
+const TeamScreen = lazy(() => import("./components/flows/TeamScreen"));
+const ObserveScreen = lazy(() => import("./components/flows/ObserveScreen"));
+const VerseScreen = lazy(() => import("./components/flows/VerseScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -86,6 +115,29 @@ function parseHash(): Location {
   const rv = location.hash.match(/^#\/review\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
+  }
+  // Flow screens (docs/flows port). Parameterless routes are single reserved
+  // tokens; none collide with 3-letter USFM book codes in the catch-all below.
+  if (/^#\/home$/.test(location.hash)) return { view: "home" };
+  if (/^#\/articles$/.test(location.hash)) return { view: "flowArticles" };
+  if (/^#\/ai$/.test(location.hash)) return { view: "ai" };
+  if (/^#\/style$/.test(location.hash)) return { view: "style" };
+  if (/^#\/setup$/.test(location.hash)) return { view: "setup" };
+  if (/^#\/books$/.test(location.hash)) return { view: "books" };
+  if (/^#\/team$/.test(location.hash)) return { view: "team" };
+  if (/^#\/observe$/.test(location.hash)) return { view: "observe" };
+  const cu = location.hash.match(/^#\/curate(?:\/(.+))?$/);
+  if (cu) {
+    return { view: "curate", templateId: decodeURIComponent(cu[1] ?? "") || null };
+  }
+  const fv = location.hash.match(/^#\/(scripture|align|words|verse)\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
+  if (fv) {
+    return {
+      view: fv[1] as "scripture" | "align" | "words" | "verse",
+      book: fv[2].toUpperCase(),
+      chapter: fv[3] ? parseInt(fv[3], 10) : 1,
+      verse: fv[4] ? parseInt(fv[4], 10) : 1,
+    };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
   if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
@@ -585,6 +637,54 @@ export function App() {
           />
         ) : loc.view === "review" ? (
           <ReviewQueue book={loc.book} chapter={loc.chapter} onNavigate={navigate} />
+        ) : loc.view === "home" ||
+          loc.view === "scripture" ||
+          loc.view === "align" ||
+          loc.view === "flowArticles" ||
+          loc.view === "words" ||
+          loc.view === "ai" ||
+          loc.view === "style" ||
+          loc.view === "curate" ||
+          loc.view === "setup" ||
+          loc.view === "books" ||
+          loc.view === "team" ||
+          loc.view === "observe" ||
+          loc.view === "verse" ? (
+          <Suspense
+            fallback={
+              <Stack alignItems="center" justifyContent="center" sx={{ height: "100%" }}>
+                <CircularProgress />
+              </Stack>
+            }
+          >
+            {loc.view === "home" ? (
+              <HomeScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "scripture" ? (
+              <ScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+            ) : loc.view === "align" ? (
+              <AlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+            ) : loc.view === "flowArticles" ? (
+              <ArticlesScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "words" ? (
+              <WordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+            ) : loc.view === "ai" ? (
+              <AiScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "style" ? (
+              <StyleScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "curate" ? (
+              <CurateScreen role={auth.role} me={auth.me} onNavigate={navigate} templateId={loc.templateId} />
+            ) : loc.view === "setup" ? (
+              <SetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "books" ? (
+              <BooksScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "team" ? (
+              <TeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "observe" ? (
+              <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : (
+              <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+            )}
+          </Suspense>
         ) : (
           <Shell
             key={loc.book}
