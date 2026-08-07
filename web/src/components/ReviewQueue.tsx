@@ -99,6 +99,38 @@ function unescapeNewlines(text: string | null | undefined): string {
   return (text ?? "").replace(/\\n/g, "\n");
 }
 
+// Human labels for the row fields this screen can patch. Anything unmapped
+// falls back to the raw column name rather than being silently prettified into
+// something that might not match what the API actually changed.
+const FIELD_LABELS: Record<string, string> = {
+  note: "Note",
+  question: "Question",
+  response: "Answer",
+  quote: "Quote",
+  occurrence: "Occurrence",
+  verse: "Verse",
+  ref_raw: "Reference",
+  sort_order: "Order",
+};
+
+function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
+// "quote", "quote and occurrence" — names what conflicted, nothing more.
+function joinFieldLabels(labels: string[]): string {
+  if (labels.length === 0) return "queued";
+  if (labels.length === 1) return labels[0];
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+}
+
+// Render any patch/row value as display text. Absent stays "" so the dialog can
+// show an explicit "(empty)" rather than a blank box.
+function displayFieldValue(value: unknown): string {
+  if (value == null) return "";
+  return typeof value === "string" ? unescapeNewlines(value) : String(value);
+}
+
 function refFor(book: string, row: QueueRow): string {
   return row.verse === 0 ? `${book} ${row.chapter} intro` : `${book} ${row.chapter}:${row.verse}`;
 }
@@ -362,6 +394,10 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
           const rowKind = op.target.rowKind as RowKindTQ;
           const id = op.target.id;
           const patch = op.patch;
+          // Carry the original op's baseline through the retry — dropping it
+          // would disable the 409 auto-heal tier (sync/rowConflict.ts) on the
+          // re-sent write.
+          const baseline = op.baseline;
           const retryKey = `${rowKind}:${id}`;
           if (retried428Ref.current.has(retryKey)) {
             say("A save was rejected twice for a missing precondition — it was not retried again.", "warning");
@@ -374,7 +410,10 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               const list: QueueRow[] = rowKind === "tn" ? fresh.tn : fresh.tq;
               const row = list.find((r) => r.id === id);
               if (!row) return;
-              await outbox.enqueueRow(rowKind, id, row.version, patch, { book });
+              await outbox.enqueueRow(rowKind, id, row.version, patch, {
+                book,
+                ...(baseline !== undefined ? { baseline } : {}),
+              });
               await refetch();
             } catch {
               say("A save was rejected for a missing precondition and could not be retried.", "warning");
@@ -476,7 +515,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   async function handleApproveAll(kind: RowKindTQ) {
     if (!data || approveAllProgress) return;
     const source: QueueRow[] = kind === "tn" ? data.tn : data.tq;
-    const list = source.filter((r) => r.translation_state !== "validated");
+    // Trashed notes are excluded on purpose: validating one would promote a row
+    // the editor has already thrown away into the nightly context-repo export's
+    // few-shot set (api/src/rows.ts:943). tq has no trashed_at, so the guard is
+    // a no-op there.
+    const list = source.filter(
+      (r) => r.translation_state !== "validated" && (r as TnRow).trashed_at == null,
+    );
     setApproveAllError(null);
     if (list.length === 0) return;
     setApproveAllProgress({ done: 0, total: list.length });
@@ -598,8 +643,16 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     // on them rather than raising a merge prompt (see outbox.ts).
     applyLocalRowPatch("tn", selectedRow.id, { sort_order: b } as Partial<TnRow & TqRow>);
     applyLocalRowPatch("tn", other.id, { sort_order: a } as Partial<TnRow & TqRow>);
-    await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, { sort_order: b }, { book });
-    await outbox.enqueueRow("tn", other.id, other.version, { sort_order: a }, { book });
+    // baseline = each row's pre-swap sort_order, so a 409 raised by an unrelated
+    // field can auto-heal (sync/rowConflict.ts) instead of prompting.
+    await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, { sort_order: b }, {
+      book,
+      baseline: { sort_order: a },
+    });
+    await outbox.enqueueRow("tn", other.id, other.version, { sort_order: a }, {
+      book,
+      baseline: { sort_order: b },
+    });
     say("Moved — sort order swapped.");
   }
 
@@ -633,8 +686,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     setRetargetOpen(false);
     const ref_raw = verse === 0 ? `${chapter}:intro` : `${chapter}:${verse}`;
     const patch = { verse, ref_raw };
+    const baseline = { verse: selectedRow.verse, ref_raw: selectedRow.ref_raw };
     applyLocalRowPatch("tn", selectedRow.id, patch as Partial<TnRow & TqRow>);
-    await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, patch, { book });
+    await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, patch, { book, baseline });
     say(`Retargeted to ${book} ${chapter}:${verse}.`);
   }
 
@@ -707,9 +761,11 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       say("No source words selected — the quote was left unchanged.", "warning");
       return;
     }
+    const row = selectedRow as TnRow;
     const patch = { quote: built.quote, occurrence: built.occurrence };
+    const baseline = { quote: row.quote, occurrence: row.occurrence };
     applyLocalRowPatch("tn", selectedRow.id, patch as Partial<TnRow & TqRow>);
-    await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, patch, { book });
+    await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, patch, { book, baseline });
     say("Quote rebuilt from the source words.");
   }
 
@@ -732,17 +788,38 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   // "Mine" comes from our own outbox op. "Theirs" comes from the RE-READ row
   // (conflictRow) — never from the 409 body, which carries only version +
   // deleted_at.
+  //
+  // A row 409 can arrive for ANY patch this screen enqueues, not just the note
+  // text: {quote, occurrence}, {verse, ref_raw} and {sort_order} all go through
+  // the same outbox. So the conflicted fields are read off the op's own patch
+  // rather than assumed to be note/response.
   const conflictTarget = conflict && conflict.op.target.kind === "row" ? conflict.op.target : null;
-  const conflictField = conflictTarget?.rowKind === "tq" ? "response" : "note";
-  const conflictMine =
-    conflict && typeof conflict.op.patch[conflictField] === "string"
-      ? unescapeNewlines(conflict.op.patch[conflictField] as string)
-      : "";
+  const conflictTextField = conflictTarget?.rowKind === "tq" ? "response" : "note";
+  const conflictKeys = conflict ? Object.keys(conflict.op.patch) : [];
+  // "Textual" = the note/response text is the ONLY thing that conflicted. Only
+  // then is the big two-column text compare (and resetting the editor) honest.
+  const isTextConflict =
+    conflictKeys.length === 1 && conflictKeys[0] === conflictTextField;
   const conflictTheirs: string | null = conflictRow
     ? unescapeNewlines(
-        conflictField === "response" ? (conflictRow as TqRow).response : (conflictRow as TnRow).note,
+        conflictTextField === "response"
+          ? (conflictRow as TqRow).response
+          : (conflictRow as TnRow).note,
       )
     : null;
+  const conflictFields = conflict
+    ? conflictKeys.map((field) => {
+        const theirsRaw = conflictRow
+          ? (conflictRow as unknown as Record<string, unknown>)[field]
+          : undefined;
+        return {
+          field,
+          label: fieldLabel(field),
+          mine: displayFieldValue(conflict.op.patch[field]),
+          theirs: conflictRow ? displayFieldValue(theirsRaw) : null,
+        };
+      })
+    : [];
   // Prefer the re-read row's version: if a third write landed between the 409
   // and our read, resolving against the older number would just 409 again.
   const conflictVersion = conflictRow?.version ?? conflict?.serverVersion ?? null;
@@ -771,18 +848,28 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     if (!conflict || !conflictRow) return;
     const op = conflict.op;
     const theirsText = conflictTheirs ?? "";
+    const textual = isTextConflict;
     await outbox.drop(op.id);
     if (op.target.kind === "row") {
       const kind = op.target.rowKind === "tq" ? "tq" : "tn";
       applyLocalRowReplacement(kind, conflictRow);
-      void drafts.clear(rowKey(op.target.rowKind, book, op.target.id));
-      if (selectedRow?.id === op.target.id && activeKind === kind) {
-        baselineRef.current = theirsText;
-        setDraftValue(theirsText);
+      // The drafts store and the editor state belong to the note/response text
+      // ONLY. Clearing them for a quote / retarget / reorder conflict would
+      // throw away unsaved typing that had nothing to do with the conflict.
+      if (textual) {
+        void drafts.clear(rowKey(op.target.rowKind, book, op.target.id));
+        if (selectedRow?.id === op.target.id && activeKind === kind) {
+          baselineRef.current = theirsText;
+          setDraftValue(theirsText);
+        }
       }
     }
     closeConflict();
-    say("Kept their version — your edit was discarded.");
+    say(
+      textual
+        ? "Kept their version — your edit was discarded."
+        : `Discarded your ${joinFieldLabels(conflictFields.map((f) => f.label.toLowerCase()))} change — the row now shows the server's values. Anything unsaved in the draft box was left alone.`,
+    );
   }
 
   function goCard(delta: number) {
@@ -1330,9 +1417,10 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
 
       <ReviewConflictDialog
         open={conflict !== null}
-        kind={conflictField === "response" ? "tq" : "tn"}
-        mineText={conflictMine}
-        theirsText={conflictTheirs}
+        kind={conflictTextField === "response" ? "tq" : "tn"}
+        fields={conflictFields}
+        textual={isTextConflict}
+        theirsLoaded={conflictRow !== null}
         theirsVersion={conflictVersion}
         // From the re-read row. The 409 body has no updated_at at all.
         theirsUpdatedAt={conflictRow?.updated_at ?? null}

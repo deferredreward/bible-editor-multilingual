@@ -171,6 +171,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
       setPipelinesUnavailable(true);
       return;
     }
+    setPipelinesUnavailable(false);
     let cancelled = false;
     api
       .pipelineList()
@@ -193,6 +194,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
       setContextPackUnavailable(true);
       return;
     }
+    setContextPackUnavailable(false);
     let cancelled = false;
     api
       .getContextExportStatus()
@@ -265,10 +267,18 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
         {alerts.map((a) => (
           <Alert key={a.id} severity={a.severity} onClose={() => handleDismissAlert(a.id)}>
             {a.message}
-            {a.linkUrl && (
+            {/* Scheme check: linkUrl is server-authored, but React doesn't
+                block javascript: hrefs — only render a link for https. */}
+            {a.linkUrl && /^https:\/\//.test(a.linkUrl) && (
               <>
                 {" "}
-                <Box component="a" href={a.linkUrl} sx={{ color: "inherit", fontWeight: 700 }}>
+                <Box
+                  component="a"
+                  href={a.linkUrl}
+                  target="_blank"
+                  rel="noopener"
+                  sx={{ color: "inherit", fontWeight: 700 }}
+                >
                   View
                 </Box>
               </>
@@ -276,12 +286,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
           </Alert>
         ))}
         {lockingJob && (
-          <LockBanner
-            pipelineType={lockingJob.pipeline_type}
-            startedAt={
-              lockingJob.updated_at ? new Date(lockingJob.updated_at * 1000).toISOString() : null
-            }
-          />
+          <LockBanner pipelineType={lockingJob.pipeline_type} startedAt={lockingJob.created_at} />
         )}
         {readyJobs.length > 0 && (
           <ReadyBanner

@@ -52,6 +52,7 @@ import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectConfig";
 import { useArticles } from "../../hooks/useArticles";
+import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../../sync/api";
 import { drafts as draftStore, articleKey, type DraftRecord } from "../../sync/drafts";
 import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
@@ -90,6 +91,10 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
 
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
+  // Same role gate ScriptureScreen uses: a viewer JWT can't write, so every
+  // mutating control is disabled and the reason is stated rather than left to
+  // a 403 at click time.
+  const canEdit = role !== "viewer";
 
   const [resource, setResource] = useState<Resource>("ta");
   const { units, loading, refetch } = useArticles(isTranslation ? resource : null);
@@ -142,6 +147,10 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
     }
     return ids;
   }, [draftList, resource]);
+  // Warn before a reload / tab close while article typing is unsaved — same
+  // wiring as ArticleWorkspace.tsx and CurateScreen.tsx. The hook reads the
+  // drafts store itself; the local signal covers the write-commit window.
+  useUnsavedGuard(dirtyArticleIds.size > 0);
 
   function selectArticle(id: string) {
     setArticleId(id);
@@ -256,6 +265,13 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
         </Typography>
       </Stack>
 
+      {!canEdit && (
+        <Alert severity="info" sx={{ mx: 2, mb: 1 }}>
+          You have view-only access to this project, so the article editors are read-only — saving,
+          AI translation and approval are disabled.
+        </Alert>
+      )}
+
       <Box
         sx={{
           flex: 1,
@@ -292,7 +308,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
               <Button
                 size="small"
                 variant="text"
-                disabled={busy}
+                disabled={busy || !canEdit}
                 onClick={handlePopulate}
                 sx={{
                   justifyContent: "flex-start",
@@ -314,7 +330,12 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                   placeholder="Add by id…"
                   inputProps={{ "aria-label": "Add article by id", style: { fontSize: 12.5 } }}
                 />
-                <Button size="small" variant="outlined" disabled={busy || !addId.trim()} onClick={handleAdd}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy || !addId.trim() || !canEdit}
+                  onClick={handleAdd}
+                >
                   Add
                 </Button>
               </Stack>
@@ -416,6 +437,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                   paths={selectedPaths}
                   direction={cfg?.direction ?? "ltr"}
                   languageTitle={cfg?.languageTitle ?? ""}
+                  canEdit={canEdit}
                   onServerChange={refetch}
                 />
               )}
@@ -457,13 +479,22 @@ interface EditorProps {
   paths: string[];
   direction: "ltr" | "rtl";
   languageTitle: string;
+  canEdit: boolean;
   onServerChange: () => void;
 }
 
 // Split-screen part editor — mirrors ArticleWorkspace's ArticleEditor: source
 // (English, read-only) alongside an editable target draft per part, wired to
 // the same drafts store and PATCH/validate/translate machinery.
-function ArticleEditorPanel({ resource, articleId, paths, direction, languageTitle, onServerChange }: EditorProps) {
+function ArticleEditorPanel({
+  resource,
+  articleId,
+  paths,
+  direction,
+  languageTitle,
+  canEdit,
+  onServerChange,
+}: EditorProps) {
   const pathsKey = useMemo(() => [...paths].sort().join("|"), [paths]);
 
   const [parts, setParts] = useState<ArticleUnit[] | null>(null);
@@ -598,16 +629,43 @@ function ArticleEditorPanel({ resource, articleId, paths, direction, languageTit
     );
     let conflicted = false;
     let otherErr: string | null = null;
-    for (const r of results) {
-      if (r.status === "fulfilled") applyServerUnit(r.value);
-      else if (r.reason instanceof ApiError && r.reason.status === 409) conflicted = true;
-      else otherErr = r.reason instanceof Error ? r.reason.message : String(r.reason);
+    for (const [i, r] of results.entries()) {
+      if (r.status === "fulfilled") {
+        applyServerUnit(r.value);
+        continue;
+      }
+      if (r.reason instanceof ApiError && r.reason.status === 409) {
+        conflicted = true;
+        // Rebase like CurateEditor's save does: adopt the server's fresh row
+        // (409 body carries `current`, see api/src/articles.ts) purely to fix
+        // the version, and leave the user's draft text on screen. Without
+        // this the stale part.version makes every retry 409 again.
+        const fresh = (r.reason.body as { current?: ArticleUnit } | undefined)?.current;
+        const part = dirty[i];
+        if (fresh && part) {
+          setParts((prev) => (prev ? prev.map((p) => (p.path === fresh.path ? fresh : p)) : prev));
+          // Re-stamp the persisted draft's expectedVersion so a reload doesn't
+          // keep flagging it stale against a version we've already adopted.
+          persistDraft(fresh, draftsByPath[part.path] ?? "");
+        }
+        continue;
+      }
+      otherErr = r.reason instanceof Error ? r.reason.message : String(r.reason);
     }
     if (conflicted) setConflict(true);
     if (otherErr) setErrorMsg(otherErr);
     setSaving(false);
     onServerChange();
-  }, [parts, anyDirty, isDirtyPart, resource, draftsByPath, applyServerUnit, onServerChange]);
+  }, [
+    parts,
+    anyDirty,
+    isDirtyPart,
+    resource,
+    draftsByPath,
+    applyServerUnit,
+    persistDraft,
+    onServerChange,
+  ]);
 
   const handleValidate = useCallback(
     async (value: boolean) => {
@@ -768,6 +826,7 @@ function ArticleEditorPanel({ resource, articleId, paths, direction, languageTit
                     variant="outlined"
                     aria-label={`${part.part} draft (target language)`}
                     inputProps={{
+                      readOnly: !canEdit,
                       dir: direction,
                       style: {
                         fontSize: 15,
@@ -792,7 +851,7 @@ function ArticleEditorPanel({ resource, articleId, paths, direction, languageTit
           <Button
             size="small"
             variant="outlined"
-            disabled={translating}
+            disabled={translating || !canEdit}
             startIcon={
               translating ? <CircularProgress size={14} /> : <AutoAwesomeIcon sx={{ fontSize: "18px !important" }} />
             }
@@ -806,7 +865,7 @@ function ArticleEditorPanel({ resource, articleId, paths, direction, languageTit
           size="small"
           variant="outlined"
           startIcon={saving ? <CircularProgress size={14} /> : <SaveIcon sx={{ fontSize: "18px !important" }} />}
-          disabled={!anyDirty || saving}
+          disabled={!anyDirty || saving || !canEdit}
           onClick={handleSave}
         >
           Save
@@ -817,14 +876,20 @@ function ArticleEditorPanel({ resource, articleId, paths, direction, languageTit
             variant="contained"
             color="success"
             startIcon={<CheckIcon sx={{ fontSize: "18px !important" }} />}
-            disabled={anyDirty}
+            disabled={anyDirty || !canEdit}
             onClick={() => handleValidate(true)}
           >
             Approve
           </Button>
         )}
         {isValidated && (
-          <Button size="small" variant="text" color="warning" disabled={anyDirty} onClick={() => handleValidate(false)}>
+          <Button
+            size="small"
+            variant="text"
+            color="warning"
+            disabled={anyDirty || !canEdit}
+            onClick={() => handleValidate(false)}
+          >
             Unapprove
           </Button>
         )}
@@ -846,7 +911,8 @@ function ArticleEditorPanel({ resource, articleId, paths, direction, languageTit
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         <Alert severity="warning" onClose={() => setConflict(false)}>
-          Someone else saved a part of this article first — reload to see the latest.
+          Someone else saved a part of this article first. Everything you typed is still here — we only
+          picked up their version number, so pressing Save again will go through.
         </Alert>
       </Snackbar>
       <Snackbar

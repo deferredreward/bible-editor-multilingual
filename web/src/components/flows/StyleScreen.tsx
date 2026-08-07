@@ -70,6 +70,7 @@ import {
   useTranslationPrefs,
 } from "../../hooks/useTranslationMemory";
 import { currentPrefsFromConflict } from "../../sync/prefsConflict";
+import { getWorkspaceSlug } from "../../sync/workspace";
 
 export interface StyleScreenProps extends FlowScreenContext {}
 
@@ -379,6 +380,10 @@ function PackStatusBar({ role }: { role: "admin" | "editor" | "viewer" }) {
 
   const runExport = async (shrinkOverride: boolean) => {
     setBusy(true);
+    // Clear any earlier 403 verdict before asking again — a role change (or a
+    // workspace switch) can make this allowed, and a latched flag would keep
+    // claiming the status isn't visible forever.
+    setForbidden(false);
     try {
       const res = await api.runContextExport(shrinkOverride ? { shrinkOverride: true } : undefined);
       setMsg(`Export queued (${res.id})`);
@@ -412,8 +417,10 @@ function PackStatusBar({ role }: { role: "admin" | "editor" | "viewer" }) {
     }
   };
 
+  // Two-way, not latching: the hook clears `error` at the start of every fetch,
+  // so a later successful read must also clear this flag.
   useEffect(() => {
-    if (error instanceof ApiError && error.status === 403) setForbidden(true);
+    setForbidden(error instanceof ApiError && error.status === 403);
   }, [error]);
 
   let chipText: string;
@@ -551,6 +558,38 @@ async function savePrefs(
   }
 }
 
+/**
+ * Lost-update guard, shared by the two sections that write the one prefs row.
+ *
+ * Seeding a draft exactly once protects typing, but it also freezes the draft
+ * against the row as it looked at load time. When a sibling save (or another
+ * admin's) replaces the shared row, an untouched section is left holding old
+ * values that now read as "dirty" — and its Save would push them back over the
+ * newer ones with a fresh If-Match, silently reverting real work. So on every
+ * fresh row we re-seed the sections that are NOT dirty, and only flag the ones
+ * that are, so their Save is a knowing overwrite rather than an accident.
+ */
+type BriefFields = Pick<TranslationPrefs, "audience" | "purpose" | "register" | "script_notes">;
+function briefEqual(a: BriefFields, b: BriefFields): boolean {
+  return (
+    a.audience === b.audience &&
+    a.purpose === b.purpose &&
+    a.register === b.register &&
+    a.script_notes === b.script_notes
+  );
+}
+
+// Shown by a section whose draft is dirty AND whose fields moved on the server
+// underneath it.
+function ServerChangedNotice({ what }: { what: string }) {
+  return (
+    <Alert severity="warning" sx={{ mb: 2 }}>
+      {what} changed on the server since you started editing. Your text is kept as-is — saving now will
+      overwrite that change.
+    </Alert>
+  );
+}
+
 const SAVE_MESSAGES: Record<string, string> = {
   saved: "Saved",
   conflict: "Someone else saved first — your edits are kept; press Save again",
@@ -574,14 +613,40 @@ function BriefSection({
 }) {
   const { prefs, loading, error } = prefsState;
   const [draft, setDraft] = useState<TranslationPrefs | null>(null);
+  // The row this draft was seeded from — comparing against it (not the live
+  // row) is what tells "the user typed here" apart from "someone else saved".
+  const [seed, setSeed] = useState<TranslationPrefs | null>(null);
+  const [serverChanged, setServerChanged] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Seed ONCE. A sibling section's save also refreshes `prefs`; re-seeding on
-  // every change would wipe whatever is being typed here.
+  // Seed on first load; afterwards re-seed only while this section is clean.
+  // Typing here is never overwritten — see briefEqual's comment for why a
+  // seed-once-forever rule loses other people's saves.
   useEffect(() => {
-    if (prefs) setDraft((d) => d ?? prefs);
-  }, [prefs]);
+    if (!prefs) return;
+    if (!draft || !seed) {
+      setDraft(prefs);
+      setSeed(prefs);
+      setServerChanged(false);
+      return;
+    }
+    if (briefEqual(draft, prefs)) {
+      // In sync — our own save landed, or the two happen to match.
+      if (!briefEqual(seed, prefs)) setSeed(prefs);
+      setServerChanged(false);
+      return;
+    }
+    if (briefEqual(seed, prefs)) return; // dirty, server unchanged: leave it alone
+    if (briefEqual(draft, seed)) {
+      // Not dirty and the server moved — adopt the fresh values.
+      setDraft(prefs);
+      setSeed(prefs);
+      setServerChanged(false);
+      return;
+    }
+    setServerChanged(true); // dirty AND changed underneath: warn, keep the edits
+  }, [prefs, draft, seed]);
 
   const isDirty =
     !!draft &&
@@ -616,6 +681,7 @@ function BriefSection({
       id="brief"
       title="Brief"
       intro="The who / why / register of this language's translation — read once by the AI on every run, not per-verse detail."
+      headerExtra={serverChanged ? <FlowStatusChip kind="warn" label="Changed on the server" /> : undefined}
       footState={
         loading && !draft
           ? "Loading…"
@@ -641,6 +707,7 @@ function BriefSection({
         </Tooltip>
       }
     >
+      {serverChanged && <ServerChangedNotice what="The brief" />}
       {error && !draft ? (
         <Alert severity="error">Couldn't load preferences from the server.</Alert>
       ) : !draft ? (
@@ -715,17 +782,47 @@ function InstructionsSection({
   const { prefs, loading, error } = prefsState;
   const [instructions, setInstructions] = useState<string | null>(null);
   const [commonIssues, setCommonIssues] = useState<string | null>(null);
+  const [seed, setSeed] = useState<{ instructions: string; commonIssues: string } | null>(null);
+  const [serverChanged, setServerChanged] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Seed once, and only after prefs actually loaded — coalescing a null prefs
-  // into "" on mount would render an empty editor and let a Save silently null
-  // the stored text.
+  // Seed only after prefs actually loaded — coalescing a null prefs into "" on
+  // mount would render an empty editor and let a Save silently null the stored
+  // text. Afterwards re-seed only while this section is clean; typing here is
+  // never overwritten (see briefEqual's comment for the lost-update this
+  // prevents).
   useEffect(() => {
     if (!prefs) return;
-    setInstructions((v) => v ?? (prefs.instructions_md ?? ""));
-    setCommonIssues((v) => v ?? (prefs.common_issues_md ?? ""));
-  }, [prefs]);
+    const server = {
+      instructions: prefs.instructions_md ?? "",
+      commonIssues: prefs.common_issues_md ?? "",
+    };
+    const adopt = () => {
+      setInstructions(server.instructions);
+      setCommonIssues(server.commonIssues);
+      setSeed(server);
+      setServerChanged(false);
+    };
+    if (instructions === null || commonIssues === null || !seed) {
+      adopt();
+      return;
+    }
+    const seedMatchesServer =
+      seed.instructions === server.instructions && seed.commonIssues === server.commonIssues;
+    if (instructions === server.instructions && commonIssues === server.commonIssues) {
+      // In sync — our own save landed, or the two happen to match.
+      if (!seedMatchesServer) setSeed(server);
+      setServerChanged(false);
+      return;
+    }
+    if (seedMatchesServer) return; // dirty, server unchanged: leave it alone
+    if (instructions === seed.instructions && commonIssues === seed.commonIssues) {
+      adopt(); // not dirty and the server moved
+      return;
+    }
+    setServerChanged(true); // dirty AND changed underneath: warn, keep the edits
+  }, [prefs, instructions, commonIssues, seed]);
 
   const isDirty =
     !!prefs &&
@@ -754,7 +851,12 @@ function InstructionsSection({
       id="instructions"
       title="Instructions"
       intro="Standing guidance injected into every AI draft prompt. Keep it terse and durable — per-segment nuance belongs in Examples, not here."
-      headerExtra={isDirty ? <FlowStatusChip kind="warn" label="Unsaved" /> : undefined}
+      headerExtra={
+        <>
+          {isDirty && <FlowStatusChip kind="warn" label="Unsaved" />}
+          {serverChanged && <FlowStatusChip kind="warn" label="Changed on the server" />}
+        </>
+      }
       footState={
         loading && instructions === null
           ? "Loading…"
@@ -782,6 +884,7 @@ function InstructionsSection({
         </Tooltip>
       }
     >
+      {serverChanged && <ServerChangedNotice what="Instructions / common issues" />}
       {error && instructions === null ? (
         <Alert severity="error">Couldn't load preferences from the server.</Alert>
       ) : instructions === null || commonIssues === null ? (
@@ -840,15 +943,39 @@ function TerminologySection({ direction, canEdit }: { direction: "ltr" | "rtl"; 
     return () => clearTimeout(h);
   }, [query]);
 
-  // Plain anchor download: the export route returns text/csv, not JSON, so it
-  // is fetched by the browser rather than through the JSON client.
-  const onExport = () => {
-    const a = document.createElement("a");
-    a.href = api.termsExportPath();
-    a.download = "terminology.csv";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  // The export route returns text/csv, not JSON, so it can't go through the
+  // JSON client — but it still has to be workspace-scoped like every other
+  // call. A bare <a download> sends no X-Workspace header, so the server would
+  // resolve it against whatever the be_ws cookie happens to say and could hand
+  // back another org's termbase. Fetch it with the same header + credentials
+  // request() stamps on, then download the blob.
+  const [exporting, setExporting] = useState(false);
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(api.termsExportPath(), {
+        credentials: "include",
+        headers: { "X-Workspace": getWorkspaceSlug() },
+      });
+      if (!res.ok) {
+        setMsg(res.status === 403 ? "Exporting terms is not allowed for your role" : "Couldn't export the termbase");
+        return;
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "terminology.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoke on the next tick — some browsers abort a download whose blob URL
+      // is revoked in the same task as the click.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      setMsg("Couldn't export the termbase");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -868,7 +995,7 @@ function TerminologySection({ direction, canEdit }: { direction: "ltr" | "rtl"; 
           <Button size="small" startIcon={<UploadIcon />} onClick={() => setImportOpen((v) => !v)}>
             {importOpen ? "Close import" : "Import CSV"}
           </Button>
-          <Button size="small" startIcon={<DownloadIcon />} onClick={onExport}>
+          <Button size="small" startIcon={<DownloadIcon />} disabled={exporting} onClick={() => void onExport()}>
             Export CSV
           </Button>
         </Stack>

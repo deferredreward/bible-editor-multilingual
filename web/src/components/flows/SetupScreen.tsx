@@ -34,9 +34,10 @@ import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 export interface SetupScreenProps extends FlowScreenContext {}
 
 export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) {
-  // Mirrors the mockup's step-5 "Preview workspace picker" button — reusing
-  // the real dialog (already wired to GET /api/workspaces + the real switch
-  // flow) rather than a fabricated preview list.
+  // Where the mockup showed a step-5 "Preview workspace picker", this opens the
+  // real WorkspaceChoiceDialog (GET /api/workspaces + the real switch flow) —
+  // there is no preview mode, so picking an org actually switches the active
+  // workspace and reloads. The button and its caption say so.
   const [wsPickerOpen, setWsPickerOpen] = useState(false);
 
   return (
@@ -100,8 +101,12 @@ export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) 
 
             <Box sx={{ mt: 2 }}>
               <Button variant="text" size="small" onClick={() => setWsPickerOpen(true)}>
-                Preview workspace picker
+                Switch workspace…
               </Button>
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+                This is the real picker, not a preview: choosing an organization switches the active
+                workspace and reloads the app.
+              </Typography>
             </Box>
             {wsPickerOpen && <WorkspaceChoiceDialog onClose={() => setWsPickerOpen(false)} />}
           </>

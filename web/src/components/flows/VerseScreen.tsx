@@ -186,7 +186,11 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // MUI Select renders its trigger as a div[role="combobox"] (not a real
+      // <select>) and its open popper as role="listbox"/"option" — neither is
+      // caught by the tag check above.
+      if (el?.closest('[role="combobox"], [role="listbox"], [role="option"]')) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         go(-1);

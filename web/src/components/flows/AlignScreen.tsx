@@ -170,6 +170,12 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
   const { status, data, applyLocalVerse } = useChapter(book, chapter);
   const projectConfig = useProjectConfig();
 
+  // Viewers must not be able to start a save. Below the UI, alignmentDrafts.set
+  // early-returns and outbox.enqueueVerse no-ops for a viewer, so an ungated
+  // screen applies the change locally, clears the draft, and looks saved while
+  // the work is silently dropped. Same gate ScriptureScreen uses.
+  const canEdit = role === "admin" || role === "editor";
+
   const sourceLane = isHebrewBook(book) ? "UHB" : "UGNT";
   const sourceRtl = sourceLane === "UHB";
   const targetRtl = versionIsRtl(projectConfig, TARGET);
@@ -324,6 +330,10 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
   // bypass the guard.
   const enqueueAlignment = useCallback(
     (row: VerseDto, bibleVersion: string, content: unknown, plain: string, expectedVersion: number) => {
+      if (!canEdit) {
+        setNotice("You have view-only access to this project — alignment changes can't be saved.");
+        return;
+      }
       const delta = analyzeAlignmentDelta(row.content, content);
       if (guardBlocksSave(delta, "alignment_edit")) {
         setNotice("Save blocked: this change would de-align words it didn't touch.");
@@ -340,7 +350,7 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       );
       applyLocalVerse({ ...row, content, plain_text: plain } as VerseDto);
     },
-    [book, chapter, applyLocalVerse],
+    [book, chapter, applyLocalVerse, canEdit],
   );
 
   const confirmUnalignFor = useCallback(
@@ -365,6 +375,10 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
   // own writers — the same two the drag panel calls — so the \zaln tree is
   // rebuilt by the tested code path, never assembled here.
   const handleTapSave = useCallback(() => {
+    if (!canEdit) {
+      setNotice("You have view-only access to this project — alignment changes can't be saved.");
+      return;
+    }
     if (!tapState || !targetVerse) return;
     const content = { verseObjects: serializeAlignment(tapState) };
     const plain = alignmentPlainText(tapState);
@@ -378,7 +392,7 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       return;
     }
     commit();
-  }, [tapState, targetVerse, enqueueAlignment, draftKey, book, chapter]);
+  }, [canEdit, tapState, targetVerse, enqueueAlignment, draftKey, book, chapter]);
 
   const handleTapReset = useCallback(() => {
     setTapState(computedInitial);
@@ -397,6 +411,10 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
   // text_edit confirm when the engine can't keep every word aligned.
   const handleSaveReading = useCallback(
     (bibleVersion: string, plain: string, base: VerseDto) => {
+      if (!canEdit) {
+        setNotice("You have view-only access to this project — verse text can't be saved.");
+        return;
+      }
       // Same baseline the reading line itself renders from, so the no-op guard
       // compares like with like.
       const oldEditable = extractEditableText(base.content);
@@ -429,7 +447,7 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
       }
       enqueueText("text_edit");
     },
-    [book, chapter, applyLocalVerse],
+    [book, chapter, applyLocalVerse, canEdit],
   );
 
   const dualProps = useMemo(() => {
@@ -577,6 +595,10 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
 
   const noTarget = !targetVerse;
   const noSource = !sourceVerse;
+  // ULT is the "lit" lane in ProjectConfig.laneState. `pendingTarget`
+  // (pending_target_json) is the signal that actually drives the verse 409
+  // gate — the only evidence this screen has that a replacement is underway.
+  const targetLanePending = Boolean(projectConfig?.laneState?.lit?.pendingTarget);
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
@@ -600,10 +622,22 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
           </Box>
         )}
 
+        {!canEdit && (
+          <Alert severity="info" sx={{ marginBlockEnd: 2 }}>
+            You have view-only access to this project, so alignment is read-only here — pairings
+            can be inspected but not changed or saved.
+          </Alert>
+        )}
+
         {noTarget || noSource ? (
           <Alert severity="info" sx={{ marginBlockEnd: 2 }}>
             {noTarget
-              ? `There is no ${targetLabel} content for ${book} ${chapter}:${verse} in this workspace — a lane awaiting replacement is omitted from the chapter payload entirely. There is nothing real to align until it is imported.`
+              ? // Only a real pending signal earns replacement wording. Absent
+                // that, an empty target lane is simply undrafted — which is the
+                // normal state of a translation-mode workspace.
+                targetLanePending
+                ? `${targetLabel} is awaiting a source replacement — a lane in that state is omitted from the chapter payload entirely, so there is nothing to align until the replacement lands.`
+                : `No ${targetLabel} text exists for ${book} ${chapter}:${verse} in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet — there is nothing to align until it is drafted.`
               : `There is no ${sourceLane} source text for ${book} ${chapter}:${verse}, so alignment can't be anchored to original-language words.`}
           </Alert>
         ) : (
@@ -757,8 +791,15 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
             ) : tapState ? (
               <>
                 <AlignTapView
+                  // Fresh mount per verse: the view's own local state (the
+                  // selection, and the skipped-suggestion set whose ids are
+                  // groupId+text and therefore per-verse-parse) must not carry
+                  // across a verse change. Mirrors the dismissedGhosts reset
+                  // this screen does above.
+                  key={`tap:${chapter}:${verse}`}
                   state={tapState}
                   onChange={setTapState}
+                  canEdit={canEdit}
                   sourceIndexMap={sourceIndexMap}
                   sourceRtl={sourceRtl}
                   targetRtl={targetRtl}
@@ -776,7 +817,7 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
                   <Button
                     variant="contained"
                     onClick={handleTapSave}
-                    disabled={!tapDirty}
+                    disabled={!tapDirty || !canEdit}
                     sx={{ minHeight: 44, fontWeight: 700 }}
                   >
                     Save alignment

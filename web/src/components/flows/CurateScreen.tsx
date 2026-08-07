@@ -135,12 +135,22 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
       ),
     [units, dirtyIds],
   );
+  // The open editor holds its own copy of the unit, fetched once and keyed by
+  // templateId — which doesn't change when a bulk run rewrites that unit
+  // server-side. Bumping this key after a run that included the open unit
+  // remounts the editor so it refetches: without it the editor keeps a stale
+  // version (next Save 409s) and an Approve would publish text never shown.
+  const [editorReload, setEditorReload] = useState(0);
   const handleDraftAll = useCallback(async () => {
     if (bulkRunning || draftableUnits.length === 0 || aiDisabled) return;
+    const targeted = new Set(draftableUnits.map((u) => u.template_id));
     const result = await draftAll(draftableUnits);
     if (result.reason === "disabled") setAiDisabled(true);
     refetch();
-  }, [bulkRunning, draftableUnits, draftAll, refetch, aiDisabled]);
+    // draftableUnits excludes units with unsaved typing, so a remount here can
+    // never discard a draft the user is holding.
+    if (templateId && targeted.has(templateId)) setEditorReload((k) => k + 1);
+  }, [bulkRunning, draftableUnits, draftAll, refetch, aiDisabled, templateId]);
   const bulkMessage = useMemo(() => {
     if (!bulkResult) return null;
     const { drafted, failed, reason, lastErrorCode } = bulkResult;
@@ -349,7 +359,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
           <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             {templateId ? (
               <CurateEditor
-                key={templateId}
+                key={`${templateId}#${editorReload}`}
                 templateId={templateId}
                 direction={cfg?.direction ?? "ltr"}
                 approvedTally={approvedTally}

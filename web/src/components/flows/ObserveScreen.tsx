@@ -93,7 +93,16 @@ async function observeFetch<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     /* no/invalid JSON body — status alone is enough to classify */
   }
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`, body);
+  if (!res.ok) {
+    // NOTE: a 401 here does not raise the global re-auth banner. sync/api.ts's
+    // emitAuthError() (used by request()'s own 401 path — see App.tsx's
+    // onAuthError subscription) is a module-private function, not exported,
+    // so this standalone fetch client can't call it without restructuring
+    // api.ts's auth-error plumbing. Left as an honest gap rather than doing
+    // that restructuring here — a 401 on this screen still renders as an
+    // explicit error, it just doesn't also raise the global banner.
+    throw new ApiError(res.status, `HTTP ${res.status}`, body);
+  }
   return body as T;
 }
 
@@ -751,11 +760,11 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
                 <TableBody>
                   {jobs.map((j) => {
                     const stateChip = JOB_STATE_CHIP[j.state];
-                    // started_by_username is only populated for OTHER users' jobs
-                    // (api/src's list route); a queued row with no username is
-                    // inferred to be the caller's own, matching "cancel only
-                    // works on your own still-queued jobs".
-                    const isOwnQueued = j.state === "queued" && !j.started_by_username;
+                    // Ownership is decided from j.user_id vs. the caller's own
+                    // identity — not from started_by_username, which is only
+                    // populated for OTHER users' jobs (api/src's list route)
+                    // and is absent (not necessarily "mine") on some rows.
+                    const isOwnQueued = j.state === "queued" && me != null && j.user_id === me.userId;
                     return (
                       <TableRow key={j.job_id}>
                         <TableCell>

@@ -55,6 +55,7 @@ function buildGroups(book: string, chapter: number, verse: number, role: FlowRol
         { id: "home", label: "Home", href: "#/home" },
         { id: "review", label: "Review", href: `#/review/${book}/${chapter}` },
         { id: "scripture", label: "Scripture", href: `#/scripture/${book}/${chapter}/${verse}` },
+        { id: "verse", label: "Verse", href: `#/verse/${book}/${chapter}/${verse}` },
         { id: "align", label: "Align", href: `#/align/${book}/${chapter}/${verse}` },
         { id: "articles", label: "Articles", href: "#/articles" },
         { id: "words", label: "Words", href: `#/words/${book}/${chapter}/${verse}` },

@@ -77,21 +77,32 @@ export function ScriptureLane({
 }: ScriptureLaneProps) {
   const [value, setValue] = useState(editableBaseline);
   const boxRef = useRef<HTMLTextAreaElement | null>(null);
-  // Identity of what the editor currently holds. A change means "different
-  // verse/lane/server content" and re-seeds the box; a ref (not state) so
-  // setting it can't re-run the hydration effect and cancel its own read.
+  // Which draft key the box currently holds. A change means "different
+  // verse/lane" and re-seeds the box; a ref (not state) so setting it can't
+  // re-run the hydration effect and cancel its own read.
   const hydratedKeyRef = useRef<string | null>(null);
+  // Latest server baseline, readable inside the effect WITHOUT being a dep.
+  const baselineRef = useRef(editableBaseline);
+  baselineRef.current = editableBaseline;
 
   const draftKey = base ? verseKey(book, chapter, verse, bibleVersion) : null;
 
-  // Seed from the server value, then overlay any persisted draft (unsaved
-  // typing from this browser). Same explicit-Save-only shape as the rest of the
-  // app: nothing here writes to the server.
+  // Seed ONCE per draft key: the server value, then any persisted draft
+  // (unsaved typing from this browser) on top.
+  //
+  // `editableBaseline` is deliberately NOT a dependency. Keying on it meant any
+  // later change to server content — a peer's WebSocket update, our own save
+  // round-trip — re-seeded the textarea mid-typing, moving the caret and
+  // replacing what the translator had just typed. DocColumn.tsx (452-483) is
+  // the deliberate correct pattern and makes the same choice: hydrate once, and
+  // never live-replace the editor from server content. New server content is
+  // still honoured — it flows into `dirty` below, which diffs against the live
+  // `editableBaseline` prop.
   useEffect(() => {
-    const key = `${draftKey ?? "none"}|${editableBaseline}`;
+    const key = draftKey ?? "none";
     if (hydratedKeyRef.current === key) return;
     hydratedKeyRef.current = key;
-    setValue(editableBaseline);
+    setValue(baselineRef.current);
     if (!draftKey) return;
     let cancelled = false;
     void drafts.get(draftKey).then((rec) => {
@@ -102,7 +113,7 @@ export function ScriptureLane({
     return () => {
       cancelled = true;
     };
-  }, [draftKey, editableBaseline]);
+  }, [draftKey]);
 
   const dirty = normalizeEditable(value) !== editableBaseline;
 

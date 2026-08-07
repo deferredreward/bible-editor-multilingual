@@ -164,10 +164,12 @@ export default function TeamScreen({ role }: TeamScreenProps) {
   }, [isAdmin, loadAllowlist, loadRoster]);
 
   const rosterLogins = orgMembers ? new Set(orgMembers.members.map((m) => m.login.toLowerCase())) : null;
-  // A degraded-but-200 roster (body.error set, e.g. "dcs_401_public_only") must
-  // not be read as "this org has no members" — distinguish it from a genuinely
-  // empty roster before flagging any allowlist row as "not org member".
-  const rosterDegraded = !!orgMembers?.error && !orgMembers.partial;
+  // A degraded-but-200 roster (body.error set, e.g. "dcs_401_public_only"),
+  // a public-members fallback (partial), or a page-capped roster (truncated)
+  // must not be read as "this org has no members" — distinguish all of these
+  // incomplete-roster cases from a genuinely complete roster before flagging
+  // any allowlist row as "not org member".
+  const rosterDegraded = !!orgMembers?.error || !!orgMembers?.partial || !!orgMembers?.truncated;
 
   const handleAdd = async () => {
     const username = newUsername.trim();

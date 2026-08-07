@@ -34,14 +34,16 @@ export function BooksPendingPanel({ book }: { book: string }) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setStatus("loading");
     setError(null);
     try {
-      const res = await api.getPendingImports(book, chapter);
+      const res = await api.getPendingImports(book, chapter, signal);
+      if (signal?.aborted) return;
       setItems(res.items);
       setStatus("loaded");
     } catch (e) {
+      if (signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
       setItems(null);
       setError(errorText(e));
       setStatus("error");
@@ -49,7 +51,14 @@ export function BooksPendingPanel({ book }: { book: string }) {
   }, [book, chapter]);
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void load(controller.signal);
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [load]);
 
   return (

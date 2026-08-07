@@ -130,11 +130,13 @@ function parseHash(): Location {
   if (cu) {
     return { view: "curate", templateId: decodeURIComponent(cu[1] ?? "") || null };
   }
-  const fv = location.hash.match(/^#\/(scripture|align|words|verse)\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
+  const fv = location.hash.match(
+    /^#\/(scripture|align|words|verse)(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/,
+  );
   if (fv) {
     return {
       view: fv[1] as "scripture" | "align" | "words" | "verse",
-      book: fv[2].toUpperCase(),
+      book: fv[2] ? fv[2].toUpperCase() : DEFAULT_BOOK,
       chapter: fv[3] ? parseInt(fv[3], 10) : 1,
       verse: fv[4] ? parseInt(fv[4], 10) : 1,
     };

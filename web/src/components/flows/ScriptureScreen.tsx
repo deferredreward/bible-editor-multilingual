@@ -95,7 +95,7 @@ import {
 } from "../../lib/laneChecks";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { versionIsRtl, versionLabel } from "../../lib/versionLabels";
-import { noteCoveredVerses } from "../../lib/verseRange";
+import { buildVerseIndex, noteCoveredVerses } from "../../lib/verseRange";
 
 export interface ScriptureScreenProps extends FlowScreenContext {
   book: string;
@@ -149,9 +149,13 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
   const [savingLane, setSavingLane] = useState<string | null>(null);
   const [boardOpen, setBoardOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
-  const [history, setHistory] = useState<{ bibleVersion: string; currentVersion: number } | null>(
-    null,
-  );
+  const [history, setHistory] = useState<{
+    bibleVersion: string;
+    // The CANONICAL row verse, not the displayed one: history for verse 7 of a
+    // `\v 6-9` range row lives on the row at v=6.
+    verseNum: number;
+    currentVersion: number;
+  } | null>(null);
   const [visibleLanes, setVisibleLanes] = useState<Record<TargetLane, boolean>>({
     ULT: true,
     UST: true,
@@ -177,7 +181,24 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
   const sourceLane = sourceIsHebrew ? "UHB" : "UGNT";
   const sourceLabel = versionLabel(projectConfig, sourceLane);
 
-  const sourceDto = data?.verses?.[sourceLane]?.[verse] ?? null;
+  // Every per-verse row read on this screen goes through buildVerseIndex. A
+  // range row (`\v 6-9`) is keyed by verse_start only, so a raw
+  // `verses[bv][7]` lookup returns nothing and verses 7-9 become invisible and
+  // uneditable here while AlignScreen (which indexes) shows them. See
+  // web/src/lib/verseRange.ts — "all renderers go through this module".
+  const verseIndexes = useMemo<Record<string, Record<number, VerseDto>>>(() => {
+    const out: Record<string, Record<number, VerseDto>> = {};
+    for (const bv of Object.keys(data?.verses ?? {})) {
+      out[bv] = buildVerseIndex(data?.verses?.[bv]);
+    }
+    return out;
+  }, [data]);
+  const rowAt = useCallback(
+    (bibleVersion: string, v: number): VerseDto | null => verseIndexes[bibleVersion]?.[v] ?? null,
+    [verseIndexes],
+  );
+
+  const sourceDto = rowAt(sourceLane, verse);
   const sourceWords = useMemo(() => collectSourceWords(verseObjectsOf(sourceDto)), [sourceDto]);
   const strongs = useMemo(
     () => sourceWords.map((w) => w.strong).filter((s) => s.length > 0),
@@ -257,13 +278,15 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
         const lost = delta.unexpectedLosses.map((l) => l.text);
         if (intent === "text_edit") {
           setPendingLoss({
-            ref: `${book} ${chapter}:${verse} ${bibleVersion}`,
+            ref: `${book} ${chapter}:${base.verse} ${bibleVersion}`,
             lostWords: lost,
             commit: () => {
               void outbox.enqueueVerse(
                 book,
                 chapter,
-                verse,
+                // The CANONICAL row verse. For a `\v 6-9` row opened at verse 7
+                // the PATCH must target v=6 — that is the row that exists.
+                base.verse,
                 bibleVersion,
                 base.version,
                 { content, plain_text: plainText, alignment_intent: "alignment_edit" },
@@ -276,7 +299,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
         }
         const sample = lost.slice(0, 3).join(", ");
         setNotice(
-          `Can't preserve alignment on ${book} ${chapter}:${verse} ${bibleVersion} — not saved${
+          `Can't preserve alignment on ${book} ${chapter}:${base.verse} ${bibleVersion} — not saved${
             sample ? ` (affected: ${sample})` : ""
           }.`,
         );
@@ -285,7 +308,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       void outbox.enqueueVerse(
         book,
         chapter,
-        verse,
+        base.verse,
         bibleVersion,
         base.version,
         { content, plain_text: plainText, alignment_intent: intent },
@@ -293,12 +316,12 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       );
       return true;
     },
-    [book, chapter, verse],
+    [book, chapter],
   );
 
   const handleSaveLane = useCallback(
     (bibleVersion: string, plain: string) => {
-      const base = data?.verses?.[bibleVersion]?.[verse];
+      const base = rowAt(bibleVersion, verse);
       if (!base) return;
       const key = verseKey(book, chapter, verse, bibleVersion);
       const oldEditable = extractEditableText(base.content);
@@ -321,7 +344,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       );
       if (after - before > 0) {
         setNotice(
-          `${after - before} word(s) in ${book} ${chapter}:${verse} ${bibleVersion} are now unaligned — re-align them on the Align screen.`,
+          `${after - before} word(s) in ${book} ${chapter}:${base.verse} ${bibleVersion} are now unaligned — re-align them on the Align screen.`,
         );
       }
       const newPlainText = extractPlainText(result.content);
@@ -342,7 +365,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       if (!enqueued) return;
       applyLocal();
     },
-    [data, verse, book, chapter, applyLocalVerse, enqueueVerseSafely],
+    [rowAt, verse, book, chapter, applyLocalVerse, enqueueVerseSafely],
   );
 
   // Restore from the history dialog: the stored tree is re-saved verbatim
@@ -350,14 +373,14 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
   // pass, because there is no text diff, just a deliberate full-tree swap.
   const handleRestore = useCallback(
     (bibleVersion: string, content: unknown, plainText: string | null) => {
-      const base = data?.verses?.[bibleVersion]?.[verse];
+      const base = rowAt(bibleVersion, verse);
       if (!base) return;
       const newPlainText = plainText ?? extractPlainText(content);
       if (!enqueueVerseSafely(base, bibleVersion, content, newPlainText, "alignment_edit")) return;
       void drafts.clear(verseKey(book, chapter, verse, bibleVersion));
       applyLocalVerse({ ...base, plain_text: newPlainText, content } as VerseDto);
     },
-    [data, verse, book, chapter, applyLocalVerse, enqueueVerseSafely],
+    [rowAt, verse, book, chapter, applyLocalVerse, enqueueVerseSafely],
   );
 
   // --- verse done toggle ---------------------------------------------------
@@ -389,7 +412,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
 
   const tiles = useMemo<VerseTile[]>(() => {
     if (!data) return [];
-    const sourceByVerse = data.verses[sourceLane] ?? {};
+    const sourceByVerse = verseIndexes[sourceLane] ?? {};
     const buildLanes = (v: number): VerseTileLane[] =>
       CHECK_LANES.map((lane) => {
         const applicable = laneApplicable(lane, versesWithTn.has(v), versesWithTq.has(v));
@@ -403,12 +426,12 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
     return verseNums.map((v) => {
       const srcVo = verseObjectsOf(sourceByVerse[v]);
       const unaligned = TARGET_LANES.some((bv) => {
-        const vo = verseObjectsOf(data.verses[bv]?.[v]);
+        const vo = verseObjectsOf(verseIndexes[bv]?.[v]);
         return vo ? verseHasUnalignedWork(vo, srcVo) : false;
       });
       return { verse: v, has: unaligned, lanes: buildLanes(v) };
     });
-  }, [data, verseNums, sourceLane, versesWithTn, versesWithTq, laneIndex, meUserId, t]);
+  }, [data, verseIndexes, verseNums, sourceLane, versesWithTn, versesWithTq, laneIndex, meUserId, t]);
 
   function toggleCheckLane(v: number, lane: CheckLane) {
     if (meUserId == null || !canEditRole) return;
@@ -448,11 +471,11 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
   // Cost: the dialog re-fetches on open, so a successful path issues the GET
   // twice. History opens are rare; naming the lane state is worth one request.
   async function openHistory(bibleVersion: string) {
-    const base = data?.verses?.[bibleVersion]?.[verse];
+    const base = rowAt(bibleVersion, verse);
     if (!base) return;
     try {
-      await api.getVerseHistory(book, chapter, verse, bibleVersion);
-      setHistory({ bibleVersion, currentVersion: base.version });
+      await api.getVerseHistory(book, chapter, base.verse, bibleVersion);
+      setHistory({ bibleVersion, verseNum: base.verse, currentVersion: base.version });
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         const code = (e.body as { error?: string } | null)?.error;
@@ -500,9 +523,21 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
     const pendingFromConfig = Boolean(laneState?.pendingTarget);
     // Shape B: a 409 seen on a verse-scoped call or an outbox save.
     const pendingFromServer = Boolean(laneReplacement[bv]);
-    const pending = pendingFromConfig || pendingFromServer || laneOmitted;
+    // Only these two are EVIDENCE of a replacement. `laneOmitted` on its own is
+    // not: in a translation-mode workspace an undrafted target lane is simply
+    // absent, and calling that "awaiting replacement" is a guess dressed as a
+    // fact. It still disables editing (there is nothing to edit) — it just no
+    // longer claims a cause it can't see.
+    const pendingReplacement = pendingFromConfig || pendingFromServer;
+    const pending = pendingReplacement || laneOmitted;
     const textReadOnly = Boolean(laneState?.config.textReadOnly);
-    return { laneState, rows, laneOmitted, pending, textReadOnly };
+    return {
+      index: verseIndexes[bv],
+      laneOmitted,
+      pendingReplacement,
+      pending,
+      textReadOnly,
+    };
   }
 
   // --- render --------------------------------------------------------------
@@ -690,22 +725,28 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           >
             {shownLanes.map((bv) => {
               const info = laneInfo(bv);
-              const base = info.rows?.[verse] ?? null;
+              const base = info.index?.[verse] ?? null;
               const editable = base ? extractEditableText(base.content) : "";
               const laneDisplay = versionLabel(projectConfig, bv);
+              // Plain absence is NOT evidence of a replacement — say what is
+              // actually known. Only `pendingReplacement` (projectConfig
+              // pendingTarget, or an observed 409) earns replacement wording.
+              const notDraftedYet = `No ${laneDisplay} text exists for this verse in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet.`;
               let disabledReason: string | null = null;
-              if (info.pending) {
+              if (info.pendingReplacement) {
                 disabledReason = `${laneDisplay} is awaiting a source replacement. The chapter read omits a lane in this state and verse reads answer 409 lane_replacement_required, so editing is off until the replacement lands.`;
               } else if (info.textReadOnly) {
                 disabledReason = `${laneDisplay} is configured text-read-only in this project — alignment may still be editable on the Align screen.`;
               } else if (!canEditRole) {
                 disabledReason = "View-only access.";
               } else if (!base) {
-                disabledReason = `No ${laneDisplay} row exists for this verse.`;
+                // When the whole lane is missing the info alert below already
+                // says this; don't print it twice.
+                disabledReason = info.laneOmitted ? null : notDraftedYet;
               }
               return (
                 <Box key={bv}>
-                  {info.pending && (
+                  {info.pendingReplacement && (
                     <Alert severity="warning" sx={{ mb: 1 }}>
                       {laneDisplay} lane pending replacement
                       {laneReplacement[bv] ? ` (server said: ${laneReplacement[bv]})` : ""}
@@ -713,6 +754,11 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
                         ? " — the chapter payload contains no rows for this lane"
                         : ""}
                       .
+                    </Alert>
+                  )}
+                  {info.laneOmitted && !info.pendingReplacement && (
+                    <Alert severity="info" sx={{ mb: 1 }}>
+                      {notDraftedYet}
                     </Alert>
                   )}
                   <ScriptureLane
@@ -794,7 +840,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           open
           book={book}
           chapter={chapter}
-          verseNum={verse}
+          verseNum={history.verseNum}
           bibleVersion={history.bibleVersion}
           currentVersion={history.currentVersion}
           onClose={() => setHistory(null)}
@@ -848,7 +894,17 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           applyLocalVerse({ ...base, plain_text: newPlainText, content: newContent } as VerseDto);
         }}
         onReplaceNote={(row: TnRow, newNote: string) => {
-          void outbox.enqueueRow("tn", row.id, row.version, { note: newNote }, { book });
+          // `baseline` is the pre-edit value of every patched field. Without it
+          // a later 409 can't tell a spurious conflict (the server changed a
+          // different field, or already holds our value) from a real one, and
+          // rowConflict.ts can't auto-heal — Shell always passes it.
+          void outbox.enqueueRow(
+            "tn",
+            row.id,
+            row.version,
+            { note: newNote },
+            { book, baseline: { note: row.note } },
+          );
         }}
         onScrollToMatch={(match) => {
           if (match && match.verse !== verse) {

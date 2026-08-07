@@ -46,6 +46,13 @@ const NO_SELECTION: Selection = { side: null, ids: [] };
 export interface AlignTapViewProps {
   state: AlignmentState;
   onChange: (next: AlignmentState) => void;
+  /**
+   * False for viewers. Below this component alignmentDrafts.set early-returns
+   * and outbox.enqueueVerse no-ops for a viewer, so an ungated view would apply
+   * pairings locally and look saved while the work is silently dropped. Every
+   * mutation funnels through `commit`, which refuses when this is false.
+   */
+  canEdit: boolean;
   /** From buildSourceIndexMap(sourceVerse) — card ordering + fused-card identity. */
   sourceIndexMap: Map<string, number>;
   /** Source script direction: Hebrew RTL, Greek LTR. Never a blanket UI flip. */
@@ -60,6 +67,7 @@ export interface AlignTapViewProps {
 export function AlignTapView({
   state,
   onChange,
+  canEdit,
   sourceIndexMap,
   sourceRtl,
   targetRtl,
@@ -69,7 +77,10 @@ export function AlignTapView({
   const theme = useTheme();
   const [selection, setSelection] = useState<Selection>(NO_SELECTION);
   // Suggestions the user stepped past this session. Skipping only hides the
-  // card; it never edits the verse.
+  // card; it never edits the verse. Ghost ids are groupId+text and so are only
+  // meaningful for the current verse's parse — AlignScreen therefore mounts
+  // this component with a per-verse `key`, which discards this set (and the
+  // selection) on every verse change.
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
 
   const cards = useMemo(
@@ -102,7 +113,14 @@ export function AlignTapView({
     return m;
   }, [cards]);
 
+  // The single choke point for every state-changing action here (attach,
+  // unalign, combine, split, accept-suggestion). A viewer's edit is refused at
+  // this one place rather than applied locally and quietly lost on save.
   function commit(next: AlignmentState) {
+    if (!canEdit) {
+      setSelection(NO_SELECTION);
+      return;
+    }
     if (next !== state) onChange(next);
     setSelection(NO_SELECTION);
   }
@@ -254,6 +272,7 @@ export function AlignTapView({
             <Button
               variant="contained"
               onClick={() => handleAcceptSuggestion(current)}
+              disabled={!canEdit}
               sx={{ flex: 1, minHeight: 44, fontWeight: 700 }}
             >
               ✓ Accept
@@ -429,7 +448,7 @@ export function AlignTapView({
                   )}
                 </Box>
 
-                {card.source.length > 1 && (
+                {card.source.length > 1 && canEdit && (
                   <Button
                     size="small"
                     onClick={() => handleSplit(card.id)}
@@ -513,21 +532,29 @@ export function AlignTapView({
           <Typography variant="caption" sx={{ color: "text.secondary" }}>
             {selection.ids.length} {selection.side} word
             {selection.ids.length > 1 ? "s" : ""} selected —{" "}
-            {selection.side === "target"
-              ? "tap a source card to attach"
-              : "tap a target word to attach"}
+            {!canEdit
+              ? "view-only access, so pairings can't be changed"
+              : selection.side === "target"
+                ? "tap a source card to attach"
+                : "tap a target word to attach"}
           </Typography>
           <Box sx={{ flex: 1 }} />
           {selection.side === "target" && (
             <Button
               onClick={handleUnalign}
+              disabled={!canEdit}
               sx={{ minHeight: 44, bgcolor: warn.soft, color: warn.ink, fontWeight: 700 }}
             >
               Unalign
             </Button>
           )}
           {selection.side === "source" && selection.ids.length >= 2 && (
-            <Button variant="outlined" onClick={handleCombine} sx={{ minHeight: 44, fontWeight: 700 }}>
+            <Button
+              variant="outlined"
+              onClick={handleCombine}
+              disabled={!canEdit}
+              sx={{ minHeight: 44, fontWeight: 700 }}
+            >
               ⧉ Combine
             </Button>
           )}

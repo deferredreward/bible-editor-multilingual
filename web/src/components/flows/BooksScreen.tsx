@@ -612,8 +612,11 @@ export default function BooksScreen({ role, onNavigate }: BooksScreenProps) {
   }, [setStatus]);
 
   useEffect(() => {
+    // Non-admins hit the role gate below and never see this data — skip the
+    // fetch entirely rather than firing a request whose result is discarded.
+    if (role !== "admin") return;
     void refetchBooks();
-  }, [refetchBooks]);
+  }, [refetchBooks, role]);
 
   const importedSet = useMemo(() => new Set(books.map((b) => b.book)), [books]);
   const query = search.trim();

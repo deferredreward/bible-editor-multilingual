@@ -52,6 +52,7 @@ import type { FlowScreenContext } from "./types";
 
 import { useChapter } from "../../hooks/useChapter";
 import { useCatalogs } from "../../hooks/useCatalogs";
+import { useProjectConfig } from "../../hooks/useProjectConfig";
 import { useTwlFilters } from "../../hooks/useTwlFilters";
 import { useLexicon } from "../../hooks/useLexicon";
 import { onOutboxResult, outbox } from "../../sync/outbox";
@@ -134,6 +135,13 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   );
   const catalogs = useCatalogs();
   const twlFilters = useTwlFilters(book);
+  const projectConfig = useProjectConfig();
+
+  // Viewers must not be able to start a write. The outbox no-ops for a viewer,
+  // so an ungated Save applies the patch locally, moves the baseline and says
+  // "queued for save" while nothing ever leaves the browser. Same gate
+  // ScriptureScreen uses.
+  const canEdit = role === "admin" || role === "editor";
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<LinkForm>(EMPTY_FORM);
@@ -319,6 +327,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   }
 
   async function handleSave() {
+    if (!canEdit) {
+      setNotice("You have view-only access to this project — word links can't be saved.");
+      return;
+    }
     if (!selectedRow || !dirty || busy) return;
     setBusy(true);
     try {
@@ -352,6 +364,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   }
 
   async function handleDelete() {
+    if (!canEdit) {
+      setNotice("You have view-only access to this project — word links can't be deleted.");
+      return;
+    }
     if (!selectedRow || busy) return;
     setBusy(true);
     try {
@@ -390,6 +406,11 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
 
   async function handleQuoteCommit() {
     if (!qb) return;
+    if (!canEdit) {
+      setQb(null);
+      setNotice("You have view-only access to this project — word links can't be changed.");
+      return;
+    }
     const built = buildQuoteFromSelection(uhbVo, qbKeys);
     if (!built) return;
     if (qb.mode === "edit") {
@@ -458,6 +479,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
 
   const handleAddSuggestion = useCallback(
     async (s: TwlSuggestion, chosenArticleId: string) => {
+      if (!canEdit) {
+        setNotice("You have view-only access to this project — word links can't be added.");
+        return;
+      }
       const resolved = suggestionQuote(s);
       if (!resolved || !resolved.orig_words) {
         setNotice(
@@ -489,7 +514,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     // nextSortOrder / reportError close over state that changes each render;
     // recreating the callback per render is cheaper than memoizing them all.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [suggestionQuote, book, chapter, verse, applyLocalRowInsert, links],
+    [canEdit, suggestionQuote, book, chapter, verse, applyLocalRowInsert, links],
   );
 
   // --- render helpers ----------------------------------------------------
@@ -504,12 +529,24 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     textAlign: "start" as const,
   };
 
+  // ULT is the "lit" lane in ProjectConfig.laneState. `pendingTarget` is the
+  // only evidence this screen has that a replacement is actually underway;
+  // without it, an empty ULT lane is simply undrafted, and saying "awaiting
+  // replacement" would be a guess.
+  const ultLanePending = Boolean(projectConfig?.laneState?.lit?.pendingTarget);
+
   function targetContext(quote: string) {
     if (!ultVo) {
-      return (
+      return ultLanePending ? (
         <em>
-          ULT verse content isn&rsquo;t available for this verse in this environment (the lane is
-          omitted while it awaits replacement). Nothing is shown here rather than guessing.
+          ULT verse content isn&rsquo;t available for this verse: the lane is omitted from the
+          chapter payload while it awaits a source replacement. Nothing is shown here rather than
+          guessing.
+        </em>
+      ) : (
+        <em>
+          No ULT text exists for this verse in this workspace. That is normal in a
+          translation-mode workspace whose target lanes have not been drafted yet.
         </em>
       );
     }
@@ -675,10 +712,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             <Button variant="outlined" disabled={!dirty || busy} onClick={handleUndo} sx={{ flex: 1, minHeight: 44 }}>
               Undo
             </Button>
-            <Button variant="contained" disabled={!dirty || busy} onClick={handleSave} sx={{ flex: 1, minHeight: 44 }}>
+            <Button variant="contained" disabled={!canEdit || !dirty || busy} onClick={handleSave} sx={{ flex: 1, minHeight: 44 }}>
               {busy ? "Working…" : "Save"}
             </Button>
-            <Button color="warning" variant="outlined" disabled={busy} onClick={handleDelete} sx={{ flex: 1, minHeight: 44 }}>
+            <Button color="warning" variant="outlined" disabled={!canEdit || busy} onClick={handleDelete} sx={{ flex: 1, minHeight: 44 }}>
               Delete
             </Button>
           </Stack>
@@ -714,7 +751,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
           size="small"
           sx={{ minHeight: 44, borderRadius: 999, fontWeight: 700 }}
           onClick={(e) => openQuoteBuilder("add", e.currentTarget)}
-          disabled={busy || !uhbVo}
+          disabled={!canEdit || busy || !uhbVo}
         >
           + Add link
         </Button>
@@ -928,6 +965,13 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             </Box>
           )}
 
+          {!canEdit && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              You have view-only access to this project, so word links are read-only — they can be
+              inspected but not added, edited or deleted.
+            </Alert>
+          )}
+
           <WordsLexiconStrip
             words={sourceWords}
             rtl={sourceIsHebrew}
@@ -958,10 +1002,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
           <Button variant="outlined" disabled={!dirty || busy} onClick={handleUndo}>
             Undo
           </Button>
-          <Button variant="contained" disabled={!dirty || busy} onClick={handleSave}>
+          <Button variant="contained" disabled={!canEdit || !dirty || busy} onClick={handleSave}>
             {busy ? "Working…" : "Save"}
           </Button>
-          <Button color="warning" variant="outlined" disabled={busy} onClick={handleDelete}>
+          <Button color="warning" variant="outlined" disabled={!canEdit || busy} onClick={handleDelete}>
             Delete
           </Button>
         </FlowActionBar>

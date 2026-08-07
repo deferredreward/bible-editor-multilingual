@@ -171,6 +171,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       setJobsUnavailable(true);
       return;
     }
+    setJobsUnavailable(false);
     return pipelineStore.subscribe(setJobs);
   }, [role]);
 
@@ -203,17 +204,22 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       setPendingCount(0);
       return;
     }
+    const controller = new AbortController();
     let cancelled = false;
-    api
-      .getPendingImports(pickedBook, pickedChapter)
-      .then((res) => {
-        if (!cancelled) setPendingCount(res.items.length);
-      })
-      .catch(() => {
-        if (!cancelled) setPendingCount(0);
-      });
+    const timer = setTimeout(() => {
+      api
+        .getPendingImports(pickedBook, pickedChapter, controller.signal)
+        .then((res) => {
+          if (!cancelled) setPendingCount(res.items.length);
+        })
+        .catch(() => {
+          if (!cancelled) setPendingCount(0);
+        });
+    }, 400);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
     };
   }, [pickedBook, pickedChapter, role]);
 
@@ -647,12 +653,20 @@ function JobRowActions({
       )}
       {job.state === "failed" && mine && (
         <>
-          <Tooltip title={aiDisabled ? "AI not configured" : ""}>
+          <Tooltip
+            title={
+              aiDisabled
+                ? "AI not configured"
+                : job.pipeline_type === "translate"
+                  ? "Can't retry a translate run — the job row doesn't record which resource type (ULT/UST) it drafted"
+                  : ""
+            }
+          >
             <span>
               <Button
                 size="small"
                 onClick={onRetry}
-                disabled={aiDisabled || retrying}
+                disabled={aiDisabled || retrying || job.pipeline_type === "translate"}
                 startIcon={retrying ? <CircularProgress size={12} /> : undefined}
               >
                 Retry

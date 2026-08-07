@@ -20,7 +20,7 @@
 // setupWizard helpers (defaultReplaceSelection / jobActionable /
 // describeBookError) instead.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Box,
@@ -186,9 +186,8 @@ export function BooksLanePanel() {
   // Poll while a job is live so per-book staging and readiness stay current.
   // Stops on a terminal status and refreshes the shared project config (which
   // clears replacementJobId, so the poll can't re-arm).
-  const cancelledRef = useRef(false);
   useEffect(() => {
-    cancelledRef.current = false;
+    let cancelled = false;
     if (!jobId) {
       setJob(null);
       return;
@@ -197,7 +196,7 @@ export function BooksLanePanel() {
     const poll = async () => {
       try {
         const res = await api.laneGetJob(LANE, jobId);
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         setJob(res);
         setJobError(null);
         const s = res.job.status;
@@ -208,11 +207,11 @@ export function BooksLanePanel() {
       } catch {
         /* transient — keep polling */
       }
-      if (!cancelledRef.current) timer = setTimeout(poll, 3000);
+      if (!cancelled) timer = setTimeout(poll, 3000);
     };
     void poll();
     return () => {
-      cancelledRef.current = true;
+      cancelled = true;
       if (timer) clearTimeout(timer);
     };
   }, [jobId]);
@@ -720,14 +719,28 @@ export function BooksLanePanel() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="warning"
-            disabled={!ack || affectedBooks == null}
-            onClick={() => void confirmStart()}
+          <Tooltip
+            title={
+              affectedBooks != null && affectedBooks.length > 0 && selectedBooks.size === 0
+                ? "Select at least one book to replace."
+                : ""
+            }
           >
-            Start replacement
-          </Button>
+            <span>
+              <Button
+                variant="contained"
+                color="warning"
+                disabled={
+                  !ack ||
+                  affectedBooks == null ||
+                  (affectedBooks.length > 0 && selectedBooks.size === 0)
+                }
+                onClick={() => void confirmStart()}
+              >
+                Start replacement
+              </Button>
+            </span>
+          </Tooltip>
         </DialogActions>
       </Dialog>
     </Panel>
