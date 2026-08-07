@@ -58,8 +58,8 @@ function stateChipColor(state: "draft" | "edited" | "validated"): "default" | "p
 
 export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const theme = useTheme();
-  const isDesktop = useMediaQuery(theme.breakpoints.up("lg")); // >=900: rail + work + context
-  const isTabletUp = useMediaQuery(theme.breakpoints.up("sm")); // >=560: rail + work
+  const isDesktop = useMediaQuery(theme.breakpoints.up("md")); // >=900: rail + work + context
+  const isTabletUp = useMediaQuery(theme.breakpoints.up("tablet")); // >=560: rail + work
 
   const { status, data, applyLocalRowPatch, applyLocalRowReplacement } = useChapter(book, chapter);
 
