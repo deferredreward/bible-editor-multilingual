@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Focus — one verse, top to bottom</title>
+<link rel="stylesheet" href="_pkg.css" />
+<style>
+  /* A single column, read top to bottom, then move on. No panes, no tabs, no
+     toolbars. Articles are present but folded away, because the exegete only
+     needs them when a note is unclear. */
+  .stepbar { display: flex; align-items: center; gap: 8px; }
+  .stepbar .vref {
+    font-size: 17px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 92px;
+  }
+  .stepbar select {
+    font: inherit;
+    font-size: 13px;
+    padding: 3px 6px;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+
+  .sheet {
+    max-width: 82ch;
+    margin: 0 auto;
+    padding: 22px 24px 80px;
+  }
+
+  /* The verdict line. One sentence, computed, at the top — so the exegete knows
+     before reading whether anything needs attention. */
+  .verdict {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    margin: 0 0 24px;
+    background: var(--ok-soft);
+    color: var(--ok-ink);
+  }
+  .verdict.attention { background: var(--warn-soft); color: var(--warn-ink); }
+  .verdict b { font-weight: 700; }
+  .verdict .heb {
+    font-family: var(--font-hebrew);
+    font-size: 17px;
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+
+  .stack { margin: 0 0 26px; }
+  .stack .label { margin: 0 0 5px; }
+  .heb-line {
+    font-family: var(--font-hebrew);
+    font-size: 26px;
+    line-height: 2.05;
+    direction: rtl;
+    text-align: start;
+    unicode-bidi: isolate;
+    margin: 0 0 20px;
+  }
+  .hw { border-radius: 4px; padding: 0 2px; }
+  .hw.marked { box-shadow: inset 0 -2px 0 var(--cultivate); }
+  .hw.hole { background: var(--warn-soft); }
+  .prose {
+    font-family: var(--font-scripture);
+    font-size: 17.5px;
+    line-height: 1.65;
+    margin: 0 0 18px;
+  }
+  .prose .supplied { color: var(--ink-2); }
+
+  hr.rule {
+    border: 0;
+    border-block-start: 1px solid var(--line);
+    margin: 26px 0;
+  }
+
+  /* Notes: the substance. Quote, note, and the article one click away. */
+  .note {
+    margin: 0 0 20px;
+    padding: 0 0 0 12px;
+    border-inline-start: 2px solid var(--line);
+  }
+  .note.flagged { border-inline-start-color: var(--warn); }
+  .note-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 0 6px;
+  }
+  .note-q {
+    font-family: var(--font-hebrew);
+    font-size: 19px;
+    direction: rtl;
+    unicode-bidi: isolate;
+    margin: 0 0 6px;
+  }
+  .note-q.eng { font-family: var(--font-scripture); font-size: 15.5px; direction: ltr; }
+  .note-body { font-size: 14.5px; line-height: 1.6; }
+  .alt {
+    font-family: var(--font-scripture);
+    background: var(--ok-soft);
+    color: var(--ok-ink);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  .rendered {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    font-size: 13px;
+    margin: 8px 0 0;
+    padding: 7px 10px;
+    background: var(--card-2);
+    border-radius: var(--radius-sm);
+  }
+  .rendered dt {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding-block-start: 2px;
+  }
+  .rendered dd { margin: 0; font-family: var(--font-scripture); font-size: 14.5px; }
+  .rendered dd.none { font-family: var(--font-ui); font-size: 12.5px; color: var(--warn-ink); }
+
+  details.fold { margin: 8px 0 0; }
+  details.fold summary {
+    cursor: pointer;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 3px 0;
+  }
+  details.fold summary:hover { color: var(--ink); }
+  details.fold[open] summary { margin-block-end: 6px; }
+  .article { font-size: 13.5px; line-height: 1.6; }
+  .article h3, .article h4, .article h5, .article h6 {
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 13px 0 4px;
+  }
+  .article p { margin: 0 0 8px; }
+  .article ul { margin: 0 0 8px; padding-inline-start: 18px; }
+  .article li { margin: 0 0 3px; }
+  .article blockquote {
+    margin: 0 0 8px;
+    padding: 2px 0 2px 10px;
+    border-inline-start: 2px solid var(--line);
+    color: var(--ink-2);
+    font-family: var(--font-scripture);
+  }
+  .article blockquote p { margin: 0 0 4px; }
+
+  /* Word links: a quiet row of chips, each folding open to the real article. */
+  .terms { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .termchip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 12.5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    cursor: pointer;
+  }
+  .termchip:hover { border-color: var(--inspire); }
+  .termchip[aria-expanded="true"] { background: var(--hl); border-color: var(--inspire); }
+  .termchip .th {
+    font-family: var(--font-hebrew);
+    font-size: 15px;
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+  .termchip .tk { color: var(--ink-2); }
+  .termbody {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin: 0 0 14px;
+    background: var(--card);
+  }
+
+  .qa { margin: 0 0 12px; }
+  .qa-q { margin: 0; font-size: 14.5px; font-weight: 600; }
+  .qa-a { margin: 3px 0 0; font-size: 14.5px; color: var(--ink-2); font-family: var(--font-scripture); }
+
+  .navhint {
+    text-align: center;
+    font-size: 12px;
+    color: var(--ink-2);
+    margin: 30px 0 0;
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="pkghead" id="head">
+  <div class="stepbar">
+    <button class="iconbtn" id="prev" aria-label="Previous verse" title="Previous verse (←)">‹</button>
+    <span class="vref" id="vref">…</span>
+    <button class="iconbtn" id="next" aria-label="Next verse" title="Next verse (→)">›</button>
+    <select id="pick" aria-label="Go to verse"></select>
+  </div>
+  <span class="spacer"></span>
+  <nav aria-label="Screens"></nav>
+  <button class="iconbtn" data-action="toggle-theme" aria-label="Toggle light / dark" title="Toggle light / dark">◐</button>
+</header>
+
+<div class="too-narrow">
+  <strong>Desktop only, on purpose.</strong> The original, both renderings and the notes
+  have to be readable in one pass. Below 1100px something has to be hidden.
+</div>
+
+<main id="main" class="desktop-only">
+  <div class="sheet" id="sheet"></div>
+  <p class="provenance" id="prov"></p>
+</main>
+
+<script src="_verse.js"></script>
+<script src="_vlib.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var L = window.VL;
+  var V = L.V;
+  var esc = L.esc;
+  function el(id) { return document.getElementById(id); }
+
+  var state = { ref: L.refs[0], open: {} };
+
+  // ------------------------------------------------------------ verdict
+
+  // One computed sentence. Not a score and not a pass/fail — the exegete decides.
+  function verdictHtml() {
+    var checks = L.coherence(state.ref);
+    var attention = checks.filter(function (c) { return c.level === "attention"; });
+    var v = L.decorate(state.ref);
+
+    var dropped = checks.filter(function (c) {
+      return c.id === "ust-function" || c.id === "ult-function";
+    });
+    var droppedNote = dropped.length
+      ? " Function words dropped without comment: " +
+        dropped
+          .map(function (c) {
+            return c.units
+              .map(function (n) { return '<span class="heb">' + esc(L.hebOf(v, v.units[n])) + "</span>"; })
+              .join(", ");
+          })
+          .join("; ") + "."
+      : "";
+
+    if (!attention.length) {
+      return (
+        '<p class="verdict"><span aria-hidden="true">✓</span><span>Every content word in the original is ' +
+        "rendered by both texts, and all " + v.tn.filter(function (r) { return r.quote; }).length +
+        " note quotes anchor to the text. Nothing here needs reconciling." + droppedNote + "</span></p>"
+      );
+    }
+
+    var bits = attention.map(function (c) {
+      if (c.id === "ust-holes" || c.id === "ult-holes") {
+        var which = c.id === "ust-holes" ? "simplified" : "literal";
+        var words = c.units
+          .map(function (n) { return '<span class="heb">' + esc(L.hebOf(v, v.units[n])) + "</span>"; })
+          .join(", ");
+        return "the " + which + " text does not render " + words;
+      }
+      return c.label.toLowerCase() + " — " + esc(c.detail);
+    });
+
+    return (
+      '<p class="verdict attention"><span aria-hidden="true">!</span><span>Worth a look: ' +
+      bits.join("; ") + ". <b>This may still be correct</b> — a simplified text can carry a word's " +
+      "sense without a matching word. The point is that you decide, rather than not noticing." +
+      droppedNote + "</span></p>"
+    );
+  }
+
+  // ------------------------------------------------------------ render
+
+  function renderTerms(v) {
+    if (!v.twl.length) return "";
+    var chips = v.twl
+      .map(function (r) {
+        var on = !!state.open[r.k];
+        return (
+          '<button type="button" class="termchip" data-fold="' + r.k + '" aria-expanded="' + on + '">' +
+          '<span class="th" dir="rtl">' + esc(r.orig) + "</span>" +
+          '<span class="tk">' + esc(r.key) + "</span></button>"
+        );
+      })
+      .join("");
+
+    var bodies = v.twl
+      .filter(function (r) { return state.open[r.k]; })
+      .map(function (r) {
+        var a = L.articleFor(r);
+        return (
+          '<div class="termbody"><p class="label">' +
+          (a ? esc(a.title) : esc(r.key)) + " · translationWords</p>" +
+          (a
+            ? '<div class="article">' + L.md(a.body) + "</div>"
+            : '<p class="why">Article not available in this fixture.</p>') +
+          "</div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="stack"><p class="label">Key terms linked here · ' + v.twl.length + "</p>" +
+      '<div class="terms">' + chips + "</div>" + bodies + "</div>"
+    );
+  }
+
+  function renderNotes(v) {
+    if (!v.tn.length) return "";
+    return (
+      '<div class="stack"><p class="label">Notes · ' + v.tn.length + "</p>" +
+      v.tn
+        .map(function (r) {
+          var a = L.articleFor(r);
+          var unresolved = r.quote && !r.words.length;
+          // What each rendering actually did with the words this note is about —
+          // the note's claim, checked against both texts.
+          var ult = r.spans.ult.map(function (g) { return v.ult[g].e; }).join("").trim();
+          var ust = r.spans.ust.map(function (g) { return v.ust[g].e; }).join("").trim();
+          return (
+            '<div class="note' + (unresolved || r.tags ? " flagged" : "") + '">' +
+            '<div class="note-top">' +
+            (r.article ? '<span class="chip chip-info mono">' + esc(r.article) + "</span>" : '<span class="chip">no article</span>') +
+            (unresolved ? '<span class="chip chip-warn">quote not found in the original</span>' : "") +
+            (r.tags ? '<span class="chip chip-warn">' + esc(r.tags) + "</span>" : "") +
+            "</div>" +
+            (r.quote
+              ? '<p class="note-q' + (L.V.verses[state.ref] && /[֐-׿]/.test(r.quote) ? "" : " eng") + '" dir="' +
+                (/[֐-׿]/.test(r.quote) ? "rtl" : "ltr") + '">' + esc(r.quote.replace(/&/g, " … ")) + "</p>"
+              : "") +
+            '<div class="note-body">' + L.note(r.note) + "</div>" +
+            '<dl class="rendered">' +
+            "<dt>Literal</dt><dd" + (ult ? ">" + esc(ult) : ' class="none">not rendered') + "</dd>" +
+            "<dt>Simplified</dt><dd" + (ust ? ">" + esc(ust) : ' class="none">not rendered') + "</dd>" +
+            "</dl>" +
+            (a
+              ? '<details class="fold"' + (state.open[r.k] ? " open" : "") + ' data-keep="' + r.k + '">' +
+                "<summary>" + esc(a.title) + (a.sub ? " — " + esc(a.sub) : "") + "</summary>" +
+                '<div class="article">' + L.md(a.body) + "</div></details>"
+              : "") +
+            "</div>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function render() {
+    var v = L.decorate(state.ref);
+    el("vref").textContent = V.meta.book + " " + state.ref;
+
+    var holeUnits = {};
+    L.coherence(state.ref).forEach(function (c) {
+      if (c.level === "attention" && c.units) c.units.forEach(function (n) { holeUnits[n] = true; });
+    });
+    var holeWords = {};
+    Object.keys(holeUnits).forEach(function (n) {
+      v.units[n].words.forEach(function (i) { holeWords[i] = true; });
+    });
+
+    var marked = {};
+    v.tn.forEach(function (r) { r.words.forEach(function (i) { marked[i] = true; }); });
+    v.twl.forEach(function (r) { r.words.forEach(function (i) { marked[i] = true; }); });
+
+    var hebrew = v.words
+      .map(function (w) {
+        var cls = "hw";
+        if (marked[w.i]) cls += " marked";
+        if (holeWords[w.i]) cls += " hole";
+        return (
+          '<span class="' + cls + '" title="' + esc(w.lemma + "  ·  " + L.morphText(w)) + '">' +
+          esc(w.w) + "</span>" + (w.after ? esc(w.after) : "")
+        );
+      })
+      .join(" ");
+
+    el("sheet").innerHTML =
+      verdictHtml() +
+      '<div class="stack"><p class="label">Original · UHB</p>' +
+      '<div class="heb-line" dir="rtl">' + hebrew + "</div>" +
+      '<p class="label">Literal · ULT</p><div class="prose">' +
+      L.proseHtml(state.ref, "ult", {}) + "</div>" +
+      '<p class="label">Simplified · UST</p><div class="prose">' +
+      L.proseHtml(state.ref, "ust", {}) + "</div></div>" +
+      '<hr class="rule">' +
+      renderNotes(v) +
+      '<hr class="rule">' +
+      renderTerms(v) +
+      (v.tq.length
+        ? '<hr class="rule"><div class="stack"><p class="label">Questions · ' + v.tq.length + "</p>" +
+          v.tq
+            .map(function (q) {
+              return '<div class="qa"><p class="qa-q">' + esc(q.q) + '</p><p class="qa-a">' + esc(q.a) + "</p></div>";
+            })
+            .join("") +
+          "</div>"
+        : "") +
+      '<p class="navhint">← previous verse · next verse → · ' +
+      (L.refs.indexOf(state.ref) + 1) + " of " + L.refs.length + "</p>";
+
+    el("prov").innerHTML =
+      "<b>Everything here is real.</b> Original text and morphology from <code>hbo_uhb_38-ZEC.usfm</code>; " +
+      "both renderings and their word alignment from <code>en_ult_38-ZEC.usfm</code> and " +
+      "<code>en_ust_38-ZEC.usfm</code>; notes, links and questions from the ZEC TSVs. " +
+      "translationAcademy and translationWords prose is the real article text from the <code>en_ta</code> and " +
+      "<code>en_tw</code> repositories. Morphology is decoded by the product's own " +
+      "<code>web/src/lib/morph.ts</code>." +
+      "<br><br><b>The one derived thing</b> is the line at the top and the “Literal / Simplified” pair under " +
+      "each note: both come from joining the two translations on the original words they are aligned to. " +
+      "That join is what lets a note's claim be checked against what each text actually did. It is an " +
+      "observation, never a verdict — a simplified text may drop a word for good reason.";
+  }
+
+  // ------------------------------------------------------------ events
+
+  function go(delta) {
+    var i = L.refs.indexOf(state.ref);
+    var n = Math.max(0, Math.min(L.refs.length - 1, i + delta));
+    if (n === i) return;
+    state.ref = L.refs[n];
+    state.open = {};
+    el("pick").value = state.ref;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  el("prev").addEventListener("click", function () { go(-1); });
+  el("next").addEventListener("click", function () { go(1); });
+
+  el("pick").innerHTML = L.refs
+    .map(function (r) { return '<option value="' + r + '">' + V.meta.book + " " + r + "</option>"; })
+    .join("");
+  el("pick").addEventListener("change", function (e) {
+    state.ref = e.target.value;
+    state.open = {};
+    render();
+  });
+
+  el("sheet").addEventListener("click", function (e) {
+    var chip = e.target.closest("[data-fold]");
+    if (!chip) return;
+    var k = chip.dataset.fold;
+    state.open[k] = !state.open[k];
+    render();
+  });
+
+  // <details> keeps its own open state; mirror it so a re-render does not close it.
+  el("sheet").addEventListener("toggle", function (e) {
+    var d = e.target.closest("details[data-keep]");
+    if (d) state.open[d.dataset.keep] = d.open;
+  }, true);
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+  });
+
+  L.mountHead(el("head"), "focus.html");
+  el("pick").value = state.ref;
+  render();
+})();
+</script>
+</body>
+</html>
