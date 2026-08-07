@@ -626,7 +626,7 @@
     },
     "aiService": {
       "title": "AI सेवा",
-      "intro": "यो संस्थाको अनुवाद सहायता कुन AI ले तयार गर्ने छान्नुहोस्: साझा unfoldingWord सदस्यता, वा तपाईंको आफ्नै API कुञ्जीसहितको आफ्नै प्रदायक। महत्त्वपूर्ण: यहाँ कुञ्जी सुरक्षित गरेपछि यो फेरि हेर्न सकिँदैन, केवल बदल्न वा मेटाउन सकिन्छ।",
+      "intro": "यो संस्थाको अनुवाद पाइपलाइन कार्यहरू (नोट्स, प्रश्न, शब्द र लेखहरूको अनुवाद) कुन AI ले चलाउने छान्नुहोस्: साझा unfoldingWord सदस्यता, वा तपाईंको आफ्नै API कुञ्जीसहितको आफ्नै प्रदायक। अन्य AI सुविधाहरू, जस्तै नोट सिर्जना र द्रुत ड्राफ्ट, यो सेटिङको बावजुद सधैं साझा unfoldingWord सदस्यता प्रयोग गर्छन्। महत्त्वपूर्ण: यहाँ कुञ्जी सुरक्षित गरेपछि यो फेरि हेर्न सकिँदैन, केवल बदल्न वा मेटाउन सकिन्छ।",
       "providerLabel": "प्रदायक",
       "provider": {
         "default": "पूर्वनिर्धारित (uW सदस्यता)",
@@ -645,7 +645,8 @@
       "clearConfirmBody": "यसले सुरक्षित कुञ्जी हटाउँछ र यो संस्थालाई पूर्वनिर्धारित प्रदायक (uW सदस्यता) मा फर्काउँछ।",
       "clearConfirmConfirm": "कुञ्जी मेटाउनुहोस्",
       "encryptionUnavailable": "आफ्नै AI कुञ्जी ल्याउने सुविधा यो डिप्लोइमेन्टमा अझै सक्षम छैन — एक प्रशासकले AI_KEY_WRAPPING_KEY सीक्रेट सेट गर्नुपर्छ।",
-      "loadFailed": "AI सेवा सेटिङहरू लोड गर्न सकिएन।"
+      "loadFailed": "AI सेवा सेटिङहरू लोड गर्न सकिएन।",
+      "conflictReloaded": "अरू कसैले यो कन्फिगरेसन परिवर्तन गरेको छ — पुनः लोड गरिएको छ; फेरि सुरक्षित गर्नुअघि समीक्षा गर्नुहोस्।"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

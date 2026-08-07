@@ -1,4 +1,4 @@
-// AES-256-GCM wrap/unwrap for the per-org AI provider API key (migration 0065).
+// AES-256-GCM wrap/unwrap for the per-org AI provider API key (migration 0066).
 // The only encryption-at-rest surface in this codebase: everything else in D1
 // is plaintext by design, an org's API key can't be.
 //
@@ -60,6 +60,10 @@ function importWrappingKey(secret: string): Promise<CryptoKey> {
     return Promise.reject(new Error("ai key wrapping secret is not 32 base64-decoded bytes"));
   }
   const p = crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+  // Never leave a rejected promise cached — a transient importKey failure would
+  // otherwise poison every future call with this secret, even after whatever
+  // caused it (e.g. a momentary WebCrypto hiccup) has passed.
+  p.catch(() => keyCache.delete(secret));
   keyCache.set(secret, p);
   return p;
 }

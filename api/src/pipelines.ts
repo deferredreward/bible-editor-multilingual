@@ -599,12 +599,13 @@ export async function dispatchNext(env: Env): Promise<void> {
     ...(options ? { options } : {}),
   };
 
-  // Per-org AI provider config (migration 0065): translate jobs only. Read
+  // Per-org AI provider config (migration 0066): translate jobs only. Read
   // fresh at every dispatch — never cached — so an admin's config change
   // applies to jobs that were already queued. A BYO provider that can't be
   // decrypted must fail the job, never silently fall back to the shared
   // subscription (billing correctness).
   let aiApiKey: string | undefined; // plaintext lives ONLY in this function scope
+  let aiProvider: string | undefined;
   if (job.pipeline_type === "translate") {
     const row = await getAiProviderConfig(env.DB);
     const ai = resolveDispatchAi(row, env.AI_KEY_WRAPPING_KEY);
@@ -619,6 +620,7 @@ export async function dispatchNext(env: Env): Promise<void> {
         await fail("sdk_error", "ai_provider_key_decrypt_failed");
         return;
       }
+      aiProvider = ai.provider;
       Object.assign(upstreamBody, { provider: ai.provider, model: ai.model, apiKey: aiApiKey });
     }
   }
@@ -644,7 +646,7 @@ export async function dispatchNext(env: Env): Promise<void> {
     await fail("sdk_error", `upstream ${upstream.status}: ${scrubbed.slice(0, 200)}`);
     return;
   }
-  let parsed: { jobId?: string } | null = null;
+  let parsed: { jobId?: string; provider?: string } | null = null;
   try {
     parsed = JSON.parse(text);
   } catch {
@@ -652,6 +654,18 @@ export async function dispatchNext(env: Env): Promise<void> {
   }
   if (!parsed || typeof parsed.jobId !== "string") {
     await fail("missing_output", `upstream missing jobId: ${scrubbed.slice(0, 200)}`);
+    return;
+  }
+
+  // A provider was injected but the upstream bot didn't echo it back — the
+  // bot predates provider support and silently ran the job on its own
+  // default (billing correctness: never let a BYO-configured org's job run
+  // unaccounted for on the shared subscription).
+  if (aiApiKey !== undefined && parsed.provider !== aiProvider) {
+    await fail(
+      "sdk_error",
+      "ai_provider_not_acknowledged: upstream bot lacks provider support (deploy bp-assistant first)",
+    );
     return;
   }
 

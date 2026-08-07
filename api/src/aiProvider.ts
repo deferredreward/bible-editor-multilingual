@@ -1,4 +1,4 @@
-// Per-organization AI provider config (migration 0065): which model drafts this
+// Per-organization AI provider config (migration 0066): which model drafts this
 // org's AI output, and this org's own API key when they bring one instead of
 // riding the shared unfoldingWord subscription.
 //
@@ -60,7 +60,7 @@ export async function getAiProviderConfig(db: D1Database): Promise<AiProviderRow
     return (await db.prepare(SELECT_ROW).first<AiProviderRow>()) ?? null;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/no such table: ai_provider_config/i.test(msg)) {
+    if (/no such table/i.test(msg)) {
       console.warn("ai_provider_config missing (workspace not migrated); using the shared provider");
       return null;
     }
@@ -75,12 +75,13 @@ export async function getAiProviderConfig(db: D1Database): Promise<AiProviderRow
 //   configured — decrypt `ciphertext`/`iv` and call `provider` with `model`
 export type DispatchAi =
   | { kind: "none" }
-  | { kind: "error"; reason: "ai_key_encryption_unavailable" | "api_key_missing" }
+  | { kind: "error"; reason: "ai_key_encryption_unavailable" | "api_key_missing" | "model_missing" }
   | { kind: "configured"; provider: string; model: string | null; ciphertext: string; iv: string };
 
 export function resolveDispatchAi(row: AiProviderRow | null, wrappingKeySecret: string | undefined): DispatchAi {
   if (!row || row.provider === "default") return { kind: "none" };
   if (!row.key_ciphertext || !row.key_iv) return { kind: "error", reason: "api_key_missing" };
+  if (!row.model) return { kind: "error", reason: "model_missing" };
   if (!wrappingKeyAvailable(wrappingKeySecret)) return { kind: "error", reason: "ai_key_encryption_unavailable" };
   return {
     kind: "configured",

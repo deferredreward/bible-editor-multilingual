@@ -640,7 +640,7 @@
     },
     "aiService": {
       "title": "Servicio de IA",
-      "intro": "Elige qué IA redacta la ayuda de traducción de esta organización: la suscripción compartida de unfoldingWord, o tu propio proveedor con tu propia clave de API. Importante: una vez que guardas una clave aquí, no se puede volver a ver, solo reemplazar o borrar.",
+      "intro": "Elige qué IA ejecuta las tareas del pipeline de traducción de esta organización (traducción de notas, preguntas, palabras y artículos): la suscripción compartida de unfoldingWord, o tu propio proveedor con tu propia clave de API. Otras funciones de IA, como la generación de notas y los borradores rápidos, siempre usan la suscripción compartida de unfoldingWord independientemente de esta configuración. Importante: una vez que guardas una clave aquí, no se puede volver a ver, solo reemplazar o borrar.",
       "providerLabel": "Proveedor",
       "provider": {
         "default": "Predeterminado (suscripción de uW)",
@@ -659,7 +659,8 @@
       "clearConfirmBody": "Esto elimina la clave guardada y cambia esta organización de vuelta al proveedor predeterminado (suscripción de uW).",
       "clearConfirmConfirm": "Borrar clave",
       "encryptionUnavailable": "Traer tu propia clave de IA aún no está habilitado en este despliegue — un administrador debe configurar el secreto AI_KEY_WRAPPING_KEY.",
-      "loadFailed": "No se pudo cargar la configuración del servicio de IA."
+      "loadFailed": "No se pudo cargar la configuración del servicio de IA.",
+      "conflictReloaded": "Otra persona cambió esta configuración — se ha recargado; revísala antes de guardar de nuevo."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

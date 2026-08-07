@@ -626,7 +626,7 @@
     },
     "aiService": {
       "title": "سرویس هوش مصنوعی",
-      "intro": "انتخاب کنید کدام هوش مصنوعی پیش‌نویس کمک ترجمه این سازمان را بنویسد: اشتراک مشترک unfoldingWord، یا ارائه‌دهنده خودتان با کلید API خودتان. مهم: پس از ذخیره کلید در اینجا، دیگر نمی‌توان آن را دید — فقط می‌توان جایگزین یا حذف کرد.",
+      "intro": "انتخاب کنید کدام هوش مصنوعی وظایف خط تولید ترجمه این سازمان (ترجمه یادداشت‌ها، پرسش‌ها، کلمات و مقالات) را اجرا کند: اشتراک مشترک unfoldingWord، یا ارائه‌دهنده خودتان با کلید API خودتان. سایر قابلیت‌های هوش مصنوعی، مانند تولید یادداشت و پیش‌نویس سریع، صرف‌نظر از این تنظیم همچنان از اشتراک مشترک unfoldingWord استفاده می‌کنند. مهم: پس از ذخیره کلید در اینجا، دیگر نمی‌توان آن را دید — فقط می‌توان جایگزین یا حذف کرد.",
       "providerLabel": "ارائه‌دهنده",
       "provider": {
         "default": "پیش‌فرض (اشتراک uW)",
@@ -645,7 +645,8 @@
       "clearConfirmBody": "این کار کلید ذخیره‌شده را حذف می‌کند و این سازمان را به ارائه‌دهنده پیش‌فرض (اشتراک uW) برمی‌گرداند.",
       "clearConfirmConfirm": "حذف کلید",
       "encryptionUnavailable": "آوردن کلید هوش مصنوعی خودتان هنوز در این استقرار فعال نشده است — یک مدیر باید مقدار محرمانه AI_KEY_WRAPPING_KEY را تنظیم کند.",
-      "loadFailed": "بارگذاری تنظیمات سرویس هوش مصنوعی ممکن نشد."
+      "loadFailed": "بارگذاری تنظیمات سرویس هوش مصنوعی ممکن نشد.",
+      "conflictReloaded": "شخص دیگری این پیکربندی را تغییر داده است — دوباره بارگذاری شد؛ پیش از ذخیره دوباره بررسی کنید."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

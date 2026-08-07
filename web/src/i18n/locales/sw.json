@@ -626,7 +626,7 @@
     },
     "aiService": {
       "title": "Huduma ya AI",
-      "intro": "Chagua AI itakayoandaa usaidizi wa tafsiri wa shirika hili: usajili wa pamoja wa unfoldingWord, au mtoa huduma wako mwenyewe ukiwa na ufunguo wako wa API. Muhimu: baada ya kuhifadhi ufunguo hapa, hauwezi kuonekana tena — unaweza tu kubadilishwa au kufutwa.",
+      "intro": "Chagua AI itakayoendesha michakato ya bomba la tafsiri ya shirika hili (kutafsiri madondoo, maswali, maneno, na makala): usajili wa pamoja wa unfoldingWord, au mtoa huduma wako mwenyewe ukiwa na ufunguo wako wa API. Vipengele vingine vya AI, kama uundaji wa madondoo na rasimu za haraka, hutumia usajili wa pamoja wa unfoldingWord kila wakati bila kujali mpangilio huu. Muhimu: baada ya kuhifadhi ufunguo hapa, hauwezi kuonekana tena — unaweza tu kubadilishwa au kufutwa.",
       "providerLabel": "Mtoa huduma",
       "provider": {
         "default": "Chaguo-msingi (usajili wa uW)",
@@ -645,7 +645,8 @@
       "clearConfirmBody": "Hii itaondoa ufunguo uliohifadhiwa na kurejesha shirika hili kwenye mtoa huduma wa chaguo-msingi (usajili wa uW).",
       "clearConfirmConfirm": "Futa ufunguo",
       "encryptionUnavailable": "Kuleta ufunguo wako wa AI bado hakujawezeshwa kwenye mfumo huu — msimamizi anahitaji kuweka siri ya AI_KEY_WRAPPING_KEY.",
-      "loadFailed": "Imeshindwa kupakia mipangilio ya huduma ya AI."
+      "loadFailed": "Imeshindwa kupakia mipangilio ya huduma ya AI.",
+      "conflictReloaded": "Mtu mwingine amebadilisha mpangilio huu — umepakiwa upya; kagua kabla ya kuhifadhi tena."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

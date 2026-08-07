@@ -627,7 +627,7 @@
     },
     "aiService": {
       "title": "AI सेवा",
-      "intro": "चुनें कि इस संगठन के अनुवाद सहायता का मसौदा कौन सी AI बनाएगी: साझा unfoldingWord सदस्यता, या आपका अपना API कुंजी वाला अपना प्रदाता। महत्वपूर्ण: यहाँ कुंजी सहेजने के बाद उसे फिर से नहीं देखा जा सकता, केवल बदला या मिटाया जा सकता है।",
+      "intro": "चुनें कि इस संगठन के अनुवाद पाइपलाइन रन (नोट्स, प्रश्नों, शब्दों और लेखों का अनुवाद) कौन सी AI चलाएगी: साझा unfoldingWord सदस्यता, या आपका अपना API कुंजी वाला अपना प्रदाता। अन्य AI सुविधाएँ, जैसे नोट जनरेशन और त्वरित मसौदे, इस सेटिंग की परवाह किए बिना हमेशा साझा unfoldingWord सदस्यता का उपयोग करती हैं। महत्वपूर्ण: यहाँ कुंजी सहेजने के बाद उसे फिर से नहीं देखा जा सकता, केवल बदला या मिटाया जा सकता है।",
       "providerLabel": "प्रदाता",
       "provider": {
         "default": "डिफ़ॉल्ट (uW सदस्यता)",
@@ -646,7 +646,8 @@
       "clearConfirmBody": "इससे संग्रहित कुंजी हटेगी और यह संगठन डिफ़ॉल्ट प्रदाता (uW सदस्यता) पर वापस चला जाएगा।",
       "clearConfirmConfirm": "कुंजी मिटाएं",
       "encryptionUnavailable": "अपनी स्वयं की AI कुंजी लाना इस डिप्लॉयमेंट पर अभी सक्षम नहीं है — किसी व्यवस्थापक को AI_KEY_WRAPPING_KEY सीक्रेट सेट करना होगा।",
-      "loadFailed": "AI सेवा सेटिंग्स लोड नहीं हो सकीं।"
+      "loadFailed": "AI सेवा सेटिंग्स लोड नहीं हो सकीं।",
+      "conflictReloaded": "किसी और ने यह कॉन्फ़िगरेशन बदल दिया है — इसे फिर से लोड कर दिया गया है; फिर से सहेजने से पहले जाँच लें।"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

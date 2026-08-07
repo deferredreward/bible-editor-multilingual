@@ -106,8 +106,11 @@ export function AiServiceSection() {
   const hasStoredKeyForDraft = settings.configured && settings.provider === draftProvider;
   const canEditKey = draftProvider !== "default";
   const showKeyField = canEditKey && (!hasStoredKeyForDraft || replacing);
-  const keyRequired = canEditKey && !hasStoredKeyForDraft && apiKey.trim() === "";
-  const formDisabled = !encryptionAvailable;
+  const keyRequired = showKeyField && apiKey.trim() === "";
+  // Only the key field and Replace need the wrapping secret — an org that
+  // lost it must still be able to switch providers/models or revert to
+  // Default (Clear, and Save-with-default) without it.
+  const keyActionsDisabled = !encryptionAvailable;
 
   const handleProviderChange = (next: string) => {
     setDraftProvider(next);
@@ -115,6 +118,8 @@ export function AiServiceSection() {
     setApiKey("");
     if (next === "default") {
       setDraftModel("");
+    } else if (next === settings.provider && settings.model) {
+      setDraftModel(settings.model);
     } else {
       const models = catalog.models[next] ?? [];
       setDraftModel(models[0] ?? "");
@@ -124,8 +129,14 @@ export function AiServiceSection() {
   const applyConflictOrError = (e: unknown) => {
     if (e instanceof ApiError && e.status === 409) {
       const current = currentFromConflict(e.body);
-      if (current) setSettings(current);
-      save.setMsg(t("preferences.conflictKeptEdits"));
+      if (current) {
+        setSettings(current);
+        setDraftProvider(current.provider);
+        setDraftModel(current.model ?? "");
+        setApiKey("");
+        setReplacing(false);
+      }
+      save.setMsg(t("preferences.aiService.conflictReloaded"));
     } else if (e instanceof ApiError && e.status === 403) {
       save.setMsg(t("preferences.saveForbidden"));
     } else if (e instanceof ApiError && e.status === 503) {
@@ -176,7 +187,7 @@ export function AiServiceSection() {
     }
   };
 
-  const saveDisabled = save.saving || formDisabled || (canEditKey && keyRequired);
+  const saveDisabled = save.saving || (!encryptionAvailable && draftProvider !== "default") || keyRequired;
 
   return (
     <Box component="section" aria-labelledby="ai-service-heading">
@@ -200,7 +211,6 @@ export function AiServiceSection() {
           label={t("preferences.aiService.providerLabel")}
           value={draftProvider}
           onChange={(e) => handleProviderChange(e.target.value)}
-          disabled={formDisabled}
         >
           {PROVIDER_ORDER.map((p) => (
             <MenuItem key={p} value={p}>
@@ -216,7 +226,6 @@ export function AiServiceSection() {
             label={t("preferences.aiService.model")}
             value={draftModel}
             onChange={(e) => setDraftModel(e.target.value)}
-            disabled={formDisabled}
           >
             {modelsForProvider.map((m) => (
               <MenuItem key={m} value={m}>
@@ -231,7 +240,7 @@ export function AiServiceSection() {
             <Typography variant="body2">
               {t("preferences.aiService.configured", { hint: settings.keyHint ?? "" })}
             </Typography>
-            <Button size="small" onClick={() => setReplacing(true)} disabled={formDisabled}>
+            <Button size="small" onClick={() => setReplacing(true)} disabled={keyActionsDisabled}>
               {t("preferences.aiService.replace")}
             </Button>
             <Button
@@ -239,7 +248,6 @@ export function AiServiceSection() {
               color="warning"
               startIcon={<DeleteOutlineIcon />}
               onClick={() => setClearOpen(true)}
-              disabled={formDisabled}
             >
               {t("preferences.aiService.clear")}
             </Button>
@@ -247,16 +255,30 @@ export function AiServiceSection() {
         )}
 
         {showKeyField && (
-          <TextField
-            type="password"
-            autoComplete="new-password"
-            size="small"
-            label={t("preferences.aiService.apiKey")}
-            helperText={t("preferences.aiService.apiKeyHelper")}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            disabled={formDisabled}
-          />
+          <Stack direction="row" spacing={1} alignItems="flex-start">
+            <TextField
+              type="password"
+              autoComplete="new-password"
+              size="small"
+              label={t("preferences.aiService.apiKey")}
+              helperText={t("preferences.aiService.apiKeyHelper")}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              disabled={keyActionsDisabled}
+              fullWidth
+            />
+            {replacing && (
+              <Button
+                size="small"
+                onClick={() => {
+                  setReplacing(false);
+                  setApiKey("");
+                }}
+              >
+                {t("common.cancel")}
+              </Button>
+            )}
+          </Stack>
         )}
 
         <Box>

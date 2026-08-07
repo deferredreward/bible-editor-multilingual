@@ -1,5 +1,5 @@
 // Unit tests for aiProvider.ts — the per-org AI provider config API (migration
-// 0065). Harness mirrors adminUsers.test.mjs: a real Hono app wired the way the
+// 0066). Harness mirrors adminUsers.test.mjs: a real Hono app wired the way the
 // real app wires it (attachAuth + requireCsrf), jose-signed JWT cookies per
 // role, and a REAL node:sqlite database behind a D1-shaped adapter. Real SQLite
 // matters here for the same reason it does there — the If-Match CAS is an
@@ -34,7 +34,7 @@ const PLAINTEXT_KEY = "sk-ant-api03-notarealkey-000000wxyz";
 
 // ── D1 adapter over node:sqlite (same shape as adminUsers.test.mjs) ──────────
 
-// Inlined 0065_ai_provider.sql. Kept in sync by hand: a drift here shows up as
+// Inlined 0066_ai_provider.sql. Kept in sync by hand: a drift here shows up as
 // a failing CAS or NOT NULL assertion below, not as a silent pass.
 function freshDb({ withTable = true } = {}) {
   const db = new DatabaseSync(":memory:");
@@ -513,6 +513,17 @@ await t("resolveDispatchAi: BYO configured but unusable → error, never a silen
   assert.deepEqual(resolveDispatchAi(row({ key_iv: null }), WRAPPING_KEY), {
     kind: "error",
     reason: "api_key_missing",
+  });
+});
+
+await t("resolveDispatchAi: BYO configured with no model → error, never dispatch with a null model", () => {
+  assert.deepEqual(resolveDispatchAi(row({ model: null }), WRAPPING_KEY), {
+    kind: "error",
+    reason: "model_missing",
+  });
+  assert.deepEqual(resolveDispatchAi(row({ model: "" }), WRAPPING_KEY), {
+    kind: "error",
+    reason: "model_missing",
   });
 });
 

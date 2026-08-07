@@ -1,5 +1,5 @@
 // Unit tests for aiKeyCrypto.ts — the AES-256-GCM wrap/unwrap used to keep a
-// per-org AI provider API key out of D1 in plaintext (migration 0065).
+// per-org AI provider API key out of D1 in plaintext (migration 0066).
 // The module takes the secret as a STRING rather than Env precisely so this
 // runs in plain node against the same crypto.subtle the Worker uses.
 //

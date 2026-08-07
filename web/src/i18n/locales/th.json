@@ -612,7 +612,7 @@
     },
     "aiService": {
       "title": "บริการ AI",
-      "intro": "เลือกว่า AI ตัวใดจะร่างความช่วยเหลือด้านการแปลให้องค์กรนี้ — การสมัครสมาชิกร่วมของ unfoldingWord หรือผู้ให้บริการของคุณเองพร้อมคีย์ API ของคุณเอง สำคัญ: หลังจากบันทึกคีย์ที่นี่แล้ว จะไม่สามารถดูได้อีก ทำได้เพียงแทนที่หรือลบเท่านั้น",
+      "intro": "เลือกว่า AI ตัวใดจะรันขั้นตอนไปป์ไลน์การแปลขององค์กรนี้ (การแปลบันทึกย่อ คำถาม คำศัพท์ และบทความ) — การสมัครสมาชิกร่วมของ unfoldingWord หรือผู้ให้บริการของคุณเองพร้อมคีย์ API ของคุณเอง ฟีเจอร์ AI อื่น ๆ เช่น การสร้างบันทึกย่อและร่างด่วน จะใช้การสมัครสมาชิกร่วมของ unfoldingWord เสมอไม่ว่าการตั้งค่านี้จะเป็นอย่างไร สำคัญ: หลังจากบันทึกคีย์ที่นี่แล้ว จะไม่สามารถดูได้อีก ทำได้เพียงแทนที่หรือลบเท่านั้น",
       "providerLabel": "ผู้ให้บริการ",
       "provider": {
         "default": "ค่าเริ่มต้น (การสมัครสมาชิก uW)",
@@ -631,7 +631,8 @@
       "clearConfirmBody": "การทำเช่นนี้จะลบคีย์ที่บันทึกไว้และเปลี่ยนองค์กรนี้กลับไปใช้ผู้ให้บริการเริ่มต้น (การสมัครสมาชิก uW)",
       "clearConfirmConfirm": "ลบคีย์",
       "encryptionUnavailable": "การใช้คีย์ AI ของคุณเองยังไม่เปิดใช้งานบนการติดตั้งนี้ — ผู้ดูแลระบบต้องตั้งค่า secret AI_KEY_WRAPPING_KEY",
-      "loadFailed": "ไม่สามารถโหลดการตั้งค่าบริการ AI ได้"
+      "loadFailed": "ไม่สามารถโหลดการตั้งค่าบริการ AI ได้",
+      "conflictReloaded": "มีคนอื่นเปลี่ยนการตั้งค่านี้ — ได้โหลดใหม่แล้ว โปรดตรวจสอบก่อนบันทึกอีกครั้ง"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

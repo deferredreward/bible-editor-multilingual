@@ -626,7 +626,7 @@
     },
     "aiService": {
       "title": "AI সেবা",
-      "intro": "এই সংস্থার অনুবাদ সহায়তা কোন AI তৈরি করবে বেছে নিন: শেয়ার্ড unfoldingWord সাবস্ক্রিপশন, বা আপনার নিজস্ব API কী দিয়ে আপনার নিজের প্রদানকারী। গুরুত্বপূর্ণ: এখানে একটি কী সংরক্ষণ করার পর তা আর দেখা যাবে না, শুধু প্রতিস্থাপন বা মুছে ফেলা যাবে।",
+      "intro": "এই সংস্থার অনুবাদ পাইপলাইন কাজ (নোট, প্রশ্ন, শব্দ এবং প্রবন্ধ অনুবাদ) কোন AI চালাবে বেছে নিন: শেয়ার্ড unfoldingWord সাবস্ক্রিপশন, বা আপনার নিজস্ব API কী দিয়ে আপনার নিজের প্রদানকারী। অন্যান্য AI ফিচার, যেমন নোট তৈরি এবং কুইক ড্রাফট, এই সেটিং নির্বিশেষে সবসময় শেয়ার্ড unfoldingWord সাবস্ক্রিপশন ব্যবহার করে। গুরুত্বপূর্ণ: এখানে একটি কী সংরক্ষণ করার পর তা আর দেখা যাবে না, শুধু প্রতিস্থাপন বা মুছে ফেলা যাবে।",
       "providerLabel": "প্রদানকারী",
       "provider": {
         "default": "ডিফল্ট (uW সাবস্ক্রিপশন)",
@@ -645,7 +645,8 @@
       "clearConfirmBody": "এটি সংরক্ষিত কী মুছে দেবে এবং এই সংস্থাকে ডিফল্ট প্রদানকারীতে (uW সাবস্ক্রিপশন) ফিরিয়ে দেবে।",
       "clearConfirmConfirm": "কী মুছুন",
       "encryptionUnavailable": "নিজের AI কী আনা এই ডিপ্লয়মেন্টে এখনও চালু নেই — একজন অ্যাডমিনকে AI_KEY_WRAPPING_KEY সিক্রেট সেট করতে হবে।",
-      "loadFailed": "AI সেবার সেটিংস লোড করা যায়নি।"
+      "loadFailed": "AI সেবার সেটিংস লোড করা যায়নি।",
+      "conflictReloaded": "অন্য কেউ এই কনফিগারেশন পরিবর্তন করেছে — পুনরায় লোড করা হয়েছে; আবার সংরক্ষণ করার আগে পর্যালোচনা করুন।"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
