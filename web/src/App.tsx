@@ -50,7 +50,10 @@ type Location =
   | { view: "observe" }
   | { view: "verse"; book: string; chapter: number; verse: number }
   | { view: "notes"; book: string; chapter: number }
-  | { view: "questions"; book: string; chapter: number };
+  | { view: "questions"; book: string; chapter: number }
+  | { view: "package"; book: string }
+  | { view: "translateWords"; book: string }
+  | { view: "translateScripture"; book: string; chapter: number };
 
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
@@ -69,6 +72,9 @@ const ObserveScreen = lazy(() => import("./components/flows/ObserveScreen"));
 const VerseScreen = lazy(() => import("./components/flows/VerseScreen"));
 const TranslateNotesScreen = lazy(() => import("./components/flows/TranslateNotesScreen"));
 const TranslateQuestionsScreen = lazy(() => import("./components/flows/TranslateQuestionsScreen"));
+const TranslateScriptureScreen = lazy(() => import("./components/flows/TranslateScriptureScreen"));
+const TranslateWordsScreen = lazy(() => import("./components/flows/TranslateWordsScreen"));
+const PackageHubScreen = lazy(() => import("./components/flows/PackageHubScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -141,6 +147,26 @@ function parseHash(): Location {
   const cu = location.hash.match(/^#\/curate(?:\/(.+))?$/);
   if (cu) {
     return { view: "curate", templateId: decodeURIComponent(cu[1] ?? "") || null };
+  }
+  // Titus-redesign routes. These deliberately claim the short arities of
+  // #/scripture and #/words ahead of the fv catch-all below: the 1–2 segment
+  // forms open the new translate screens, while the 3-segment (verse-level)
+  // forms still open the old flows screens until those are retired.
+  const pk = location.hash.match(/^#\/package\/([A-Za-z0-9]+)$/);
+  if (pk) {
+    return { view: "package", book: pk[1].toUpperCase() };
+  }
+  const wb = location.hash.match(/^#\/words\/([A-Za-z0-9]+)$/);
+  if (wb) {
+    return { view: "translateWords", book: wb[1].toUpperCase() };
+  }
+  const ts = location.hash.match(/^#\/scripture\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  if (ts) {
+    return {
+      view: "translateScripture",
+      book: ts[1].toUpperCase(),
+      chapter: ts[2] ? parseInt(ts[2], 10) : 1,
+    };
   }
   const fv = location.hash.match(
     /^#\/(scripture|align|words|verse)(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/,
@@ -665,6 +691,9 @@ export function App() {
           loc.view === "observe" ||
           loc.view === "notes" ||
           loc.view === "questions" ||
+          loc.view === "package" ||
+          loc.view === "translateWords" ||
+          loc.view === "translateScripture" ||
           loc.view === "verse" ? (
           <Suspense
             fallback={
@@ -701,6 +730,12 @@ export function App() {
               <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : loc.view === "questions" ? (
               <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+            ) : loc.view === "package" ? (
+              <PackageHubScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
+            ) : loc.view === "translateWords" ? (
+              <TranslateWordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
+            ) : loc.view === "translateScripture" ? (
+              <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : (
               <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
             )}
