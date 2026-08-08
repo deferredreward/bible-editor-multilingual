@@ -22,19 +22,19 @@
 //   * NO "Not needed" verb, unlike the notes screen. Questions are meant to get
 //     CHANGED, not dropped — the goal is full coverage, so a question the
 //     translator dislikes is fixed by editing the target text and then approving
-//     it. There are exactly two verbs: Redo and Approve. (This is also the only
+//     it. There is exactly one verb: Approve. (This is also the only
 //     honest option in the API: tq has POST /rows/tq/:id/validate
 //     (api/src/rows.ts:1174) but NO trash/restore — those are tn-only
 //     (rows.ts:1220, :1233) — and TqRow has no `trashed_at` field at all
 //     (web/src/sync/api.ts:59-82). There is nothing a skip could write.)
 //
-//   * "Redo" is disabled. There is no synchronous tq drafting endpoint (no
-//     tq-quick analogue of api.tnQuick). Questions ARE re-draftable, but only by
-//     starting a chapter-scoped `translate` pipeline job
-//     (Shell.tsx:973-997 — pipelineStore.start with
-//     { pipelineType: "translate", translate: { resourceType: "tq", rowIds } }),
-//     which is asynchronous and needs polling this screen does not drive. The
-//     button stays visible and disabled with the honest reason stated on screen.
+//   * NO "Redo" button (hidden per Benjamin, 2026-08-07 — it shipped disabled,
+//     and a permanently disabled verb earns no screen space). There is no
+//     synchronous tq drafting endpoint (no tq-quick analogue of api.tnQuick);
+//     questions ARE re-draftable, but only via an async chapter-scoped
+//     `translate` pipeline job (Shell.tsx — pipelineStore.start with
+//     { pipelineType: "translate", translate: { resourceType: "tq", rowIds } }).
+//     If users ask for per-question redo, bring the button back wired to that.
 //
 //   * Chapter lock: unlike tn, tq PATCH is NOT lock-exempt (api/src/rows.ts:597
 //     — the carve-out covers tn only), so a save during an AI run comes back 409
@@ -60,7 +60,6 @@ import { useTheme } from "@mui/material/styles";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
-import RefreshIcon from "@mui/icons-material/Refresh";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
@@ -927,12 +926,6 @@ export default function TranslateQuestionsScreen({
               <QaPair field="response" sourceText={sourceQuestion?.response ?? null} />
             </Box>
 
-            {/* The one honest limit of this screen, stated where the verbs are. */}
-            <Typography variant="caption" color="text.secondary" component="p" sx={{ paddingInline: 0.25 }}>
-              &quot;Redo&quot; is off here — re-drafting questions with AI runs as a whole-chapter job
-              this screen doesn&apos;t start. Edit the text directly instead, then approve it.
-            </Typography>
-
             {/* previous / next */}
             <Stack direction="row" justifyContent="space-between" spacing={1.25}>
               <Button
@@ -956,7 +949,7 @@ export default function TranslateQuestionsScreen({
         )}
       </Box>
 
-      {/* fixed action bar — the three verbs, at every width */}
+      {/* fixed action bar — the one verb, at every width */}
       {!done && total > 0 && row && (
         <Box
           component="footer"
@@ -982,31 +975,11 @@ export default function TranslateQuestionsScreen({
             }}
           >
             <Button
-              variant="outlined"
-              // Permanently disabled: there is no tq drafting endpoint to call.
-              // See the header comment — the only AI path for questions is an
-              // async chapter pipeline this screen does not drive.
-              disabled
-              title="AI re-drafting for questions runs as a whole-chapter job, which this screen doesn't start."
-              startIcon={<RefreshIcon />}
-              sx={{
-                flex: 1,
-                minHeight: 50,
-                borderRadius: "12px",
-                fontWeight: 700,
-                color: ACCENT,
-                borderColor: INSPIRE,
-                borderWidth: "1.5px",
-              }}
-            >
-              Redo
-            </Button>
-            <Button
               disabled={busy}
               onClick={() => void handleApprove()}
               startIcon={<CheckIcon />}
               sx={{
-                flex: 1.4,
+                flex: 1,
                 minHeight: 50,
                 borderRadius: "12px",
                 fontWeight: 700,
