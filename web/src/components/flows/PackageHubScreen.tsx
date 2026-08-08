@@ -87,18 +87,27 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
 
   const [open, setOpen] = useState<ExpandableSurface | null>(null);
 
+  // BookSummary includes a chapter-0 entry for book front matter (intro tn
+  // rows, 0 verses — verified against GET /api/chapters/ZEC: ids 0–14 for a
+  // 14-chapter book). The hub shows real chapters only: intro rows are not
+  // reachable through the chapter-scoped translate screens, so counting them
+  // here would advertise work this screen can't open.
+  const realChapters = useMemo(
+    () => (summary?.chapters ?? []).filter((c) => c.chapter >= 1),
+    [summary],
+  );
+
   const totals = useMemo(() => {
-    const chapters = summary?.chapters ?? [];
     let verses = 0;
     let tn = 0;
     let tq = 0;
-    for (const c of chapters) {
+    for (const c of realChapters) {
       verses += c.verses;
       tn += c.tn;
       tq += c.tq;
     }
-    return { chapters: chapters.length, verses, tn, tq };
-  }, [summary]);
+    return { chapters: realChapters.length, verses, tn, tq };
+  }, [realChapters]);
 
   const name = bookName(book);
   const sub = translationMode
@@ -202,7 +211,7 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
   }) {
     return (
       <Stack spacing={0.75} sx={{ paddingInlineStart: 2, paddingBlockStart: 0.75 }}>
-        {(summary?.chapters ?? []).map((c) => {
+        {realChapters.map((c) => {
           const n = countOf(c);
           const empty = n === 0;
           return (
