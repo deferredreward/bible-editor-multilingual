@@ -13,9 +13,24 @@ primary; no authoring chrome (no preserve/hint/TCM/SH/reorder/ids); notes
 Redo · Approve); nav = book-package hub + back-chevrons (FlowNav pill bar dies);
 admin = desk-rail; one-screen-first calibration workflow.
 
-**Built + Benjamin-approved:** #/notes/{book}/{chapter} (TranslateNotesScreen).
-**Built, awaiting his markup:** #/questions/{book}/{chapter}
-(TranslateQuestionsScreen; translateShared.tsx holds waitForOp).
+**Built + Benjamin-approved:** #/notes/{book}/{chapter} (TranslateNotesScreen);
+#/questions/{book}/{chapter} (approved 2026-08-07 with one change: Redo hidden,
+Approve is the one verb — 60cea3d; per-question redo returns only if users ask,
+wired to the async translate pipeline). Notes keeps "Not needed"; bulk
+per-language note-kind exclusion is issue #158 (parked).
+**Built 2026-08-07 fan-out, awaiting his markup:** #/words/{book}
+(TranslateWordsScreen — Approve/Save/async Redo real, "Needs work" hidden: no
+such article state), #/scripture/{book}/{ch} (TranslateScriptureScreen —
+smartEditVerse-safe saves, Redraft hidden: async pipeline only),
+#/package/{book} (PackageHubScreen — synthesized, no dedicated artifact; counts
+from BookSummary only, chapter-0 front matter excluded). Routes: 1–2-segment
+#/scripture and 2-segment #/words now open the new screens; 3-segment forms
+still open the old flows screens. FlowNav still renders on old screens only;
+retire it when book-open affordances point at #/package/{book}.
+**Verified in browser (this dev DB):** hub counts real; scripture lanes
+faithfully mirror old screen (AVD/NAV text-read-only, empty targets); words
+list real but ALL articles unpopulated here, so the words detail/edit view has
+never been exercised — populate one tw source (Articles workspace) to test it.
 
 **Local dev environment gotchas (this worktree):**
 - bsoj lane state in LOCAL D1 was aligned to the preset's desired configs
