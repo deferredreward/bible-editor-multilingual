@@ -98,6 +98,20 @@
 //   * RTL: logical properties only. The desk grid's column order follows the
 //     document direction by itself, and chevrons follow theme.direction
 //     (scaleX flip).
+//
+// ── 2026-08-10 paging affordances (Benjamin, later the same day) ─────────────
+//
+//   * Prev/Next at the TOP too: compact icon-only chevrons in the topbar next
+//     to "Verse N of M" (both widths). Same cursor, same disabled logic as the
+//     bottom pair (goPrev/goNext are the single shared guards), plus disabled
+//     on the done view — where the bottom pair doesn't render at all.
+//   * Swipe navigation (useSwipeNav) spread on the verse content container —
+//     a decisively-horizontal touch swipe pages the queue, reading-order aware
+//     (rtl = the target-language direction). The hook itself ignores touches
+//     that START in a textarea/input, which covers the two lane editors; the
+//     source-text block additionally carries [data-no-swipe] so selecting
+//     original-language text can't page. Disabled on the done view — its verbs
+//     are Continue/Review, not paging.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -125,6 +139,7 @@ import CheckIcon from "@mui/icons-material/Check";
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
 import { waitForOp } from "./translateShared";
+import { useSwipeNav } from "./useSwipeNav";
 import type { FlowScreenContext } from "./types";
 
 import { useBook } from "../../hooks/useBook";
@@ -443,6 +458,30 @@ export default function TranslateScriptureScreen({
     },
     [queueVerses, statuses, reviewing, cursor, nextUnstatused],
   );
+
+  // One cursor, three controls: the bottom Prev/Next buttons, the topbar
+  // chevrons, and swipe all drive these two guards. The guards mirror the
+  // buttons' disabled logic exactly, so swipe (which has no `disabled`
+  // attribute) can never do anything a button couldn't.
+  function goPrev() {
+    if (busy || cursor === 0) return;
+    setCursor((c) => Math.max(0, c - 1));
+  }
+  function goNext() {
+    if (busy) return;
+    if (cursor < total - 1) setCursor((c) => c + 1);
+    else if (statusedCount >= total && total > 0) setView("done");
+  }
+  // Horizontal touch swipe pages the queue. rtl is the TARGET-language
+  // direction (the content being paged), not the UI chrome's. The hook
+  // ignores touches starting in the lane textareas; disabled on the done
+  // view, whose verbs are Continue/Review, not paging.
+  const swipe = useSwipeNav({
+    onPrev: goPrev,
+    onNext: goNext,
+    enabled: view !== "done",
+    rtl: versionIsRtl(projectConfig, "ULT"),
+  });
 
   // ── writes ───────────────────────────────────────────────────────────────
   // One lane's save, the exact ScriptureScreen.handleSaveLane path. Returns
@@ -836,6 +875,9 @@ export default function TranslateScriptureScreen({
   const actionBar = (
     <Box
       component="footer"
+      // Guard the verbs from the swipe surface: a horizontal drag that
+      // starts on Save/Approve must never page the queue.
+      data-no-swipe
       sx={
         wide
           ? {
@@ -962,6 +1004,29 @@ export default function TranslateScriptureScreen({
             >
               {done ? `${total} of ${total}` : `Verse ${Math.min(cursor + 1, total)} of ${total}`}
             </Typography>
+            {/* compact prev/next — the same cursor and disabled logic as the
+                bottom buttons (goPrev/goNext), also disabled on the done view
+                where the bottom pair doesn't render. */}
+            <Stack direction="row" spacing={0.75} sx={{ flex: "none" }}>
+              <IconButton
+                aria-label="Previous verse"
+                size="small"
+                disabled={done || busy || cursor === 0}
+                onClick={goPrev}
+                sx={{ bgcolor: skip.soft, width: 30, height: 30, flex: "none" }}
+              >
+                <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
+              </IconButton>
+              <IconButton
+                aria-label="Next verse"
+                size="small"
+                disabled={done || busy || (cursor >= total - 1 && statusedCount < total)}
+                onClick={goNext}
+                sx={{ bgcolor: skip.soft, width: 30, height: 30, flex: "none" }}
+              >
+                <ChevronRightIcon fontSize="small" sx={chevronFlip} />
+              </IconButton>
+            </Stack>
           </Stack>
           <Box
             sx={{ height: 4, borderRadius: "2px", bgcolor: skip.soft, mt: 1.25, overflow: "hidden" }}
@@ -1038,6 +1103,11 @@ export default function TranslateScriptureScreen({
           }
         >
           <Box
+            // Swipe left/right pages the verse queue — this Box is the verse
+            // content container at BOTH widths (phone centred column and md+
+            // detail-pane body). The hook ignores touches that start in the
+            // lane textareas, and it no-ops on the done view (enabled: false).
+            {...swipe}
             sx={
               wide
                 ? {
@@ -1156,6 +1226,9 @@ export default function TranslateScriptureScreen({
                     {book} {chapter}:{verseNum}
                   </Typography>
                   <Box
+                    // Long-press text selection on the original-language line
+                    // involves a horizontal drag — never let it page the queue.
+                    data-no-swipe
                     sx={{
                       bgcolor: "action.hover",
                       borderRadius: "9px",
@@ -1231,7 +1304,7 @@ export default function TranslateScriptureScreen({
                   <Button
                     startIcon={<ChevronLeftIcon sx={chevronFlip} />}
                     disabled={cursor === 0 || busy}
-                    onClick={() => setCursor((c) => Math.max(0, c - 1))}
+                    onClick={goPrev}
                     sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                   >
                     Previous
@@ -1239,10 +1312,7 @@ export default function TranslateScriptureScreen({
                   <Button
                     endIcon={<ChevronRightIcon sx={chevronFlip} />}
                     disabled={busy || (cursor >= total - 1 && statusedCount < total)}
-                    onClick={() => {
-                      if (cursor < total - 1) setCursor((c) => c + 1);
-                      else setView("done");
-                    }}
+                    onClick={goNext}
                     sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                   >
                     Next
