@@ -20,6 +20,7 @@ import { orgRoutes } from "./orgRoutes";
 import { adminUsers } from "./adminUserRoutes";
 import { articles } from "./articles";
 import { translationMemory } from "./translationMemory";
+import { aiProvider } from "./aiProvider";
 import { l10n } from "./l10n";
 import { books } from "./bookImport";
 import { populateReferencedArticles } from "./articlePopulate";
@@ -72,6 +73,13 @@ export interface Env {
   // Shared service token for the uw-bt-bot AI endpoint. Set via
   // `wrangler secret put BT_API_TOKEN`. Absence disables /api/tn-quick.
   BT_API_TOKEN?: string;
+  // Base64 of exactly 32 random bytes, wrapping the per-org AI provider API
+  // keys held in ai_provider_config (migration 0065; api/src/aiKeyCrypto.ts).
+  // Set via `wrangler secret put AI_KEY_WRAPPING_KEY`. Absence means an org
+  // can't store its own key (503 on write, encryptionAvailable:false on read);
+  // the shared BT_API_TOKEN path is unaffected. Rotating it orphans every
+  // stored key — see aiKeyCrypto.ts.
+  AI_KEY_WRAPPING_KEY?: string;
   // Override the bot URL (defaults to https://uw-bt-bot.fly.dev/api/tn-quick
   // when unset). Useful for staging / local bot dev.
   TN_QUICK_URL?: string;
@@ -280,6 +288,7 @@ app.route("/api/admin/users", adminUsers);
 app.route("/api/articles", articles);
 app.route("/api/templates", templates);
 app.route("/api/translation-memory", translationMemory);
+app.route("/api/ai-provider", aiProvider);
 app.route("/api/l10n", l10n);
 
 // WebSocket upgrade into the ChapterRoom DO. WS handshakes are normal HTTP

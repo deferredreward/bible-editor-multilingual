@@ -133,6 +133,11 @@ npx wrangler secret put DCS_SERVICE_TOKEN --env production
 # "AI generation unavailable." Obtain from the bot-platform team or reuse the
 # value from api/.dev.vars.
 npx wrangler secret put BT_API_TOKEN --env production
+
+# Wraps org-supplied BYO AI provider API keys before they hit D1 (aiKeyCrypto.ts).
+# Base64-encoded 32 random bytes; generate with: openssl rand -base64 32
+# Without it, the "bring your own AI provider" option stays disabled.
+openssl rand -base64 32 | npx wrangler secret put AI_KEY_WRAPPING_KEY --env production
 ```
 
 ### 4. Lock down the public-facing vars

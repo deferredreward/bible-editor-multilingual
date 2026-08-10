@@ -75,6 +75,7 @@ import { defaultReplaceSelection } from "../lib/setupWizard";
 import { SetupWizard } from "./SetupWizard";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { UserManagementSection } from "./UserManagementSection";
+import { AiServiceSection } from "./AiServiceSection";
 import { UiLanguageControl } from "./TopBar";
 import { UI_LANGUAGES, dirForLang } from "../i18n";
 import {
@@ -135,15 +136,17 @@ export type Section =
   | "examples"
   | "setup"
   | "localization"
-  | "users";
+  | "users"
+  | "aiService";
 // Memory sections shown in the rail when a translation project + memory are
-// available. "setup", "localization", and "users" are admin-only and gated
-// separately (they must show regardless of project type / memory), so they
-// aren't listed.
+// available. "setup", "localization", "users", and "aiService" are admin-only
+// and gated separately (they must show regardless of project type / memory),
+// so they aren't listed.
 export const SECTIONS: Section[] = ["brief", "instructions", "commonIssues", "terminology", "examples"];
 // Every routable section (memory + the admin-only setup wizard, localization
-// editor, and user management) — used for hash-route validation in App.tsx.
-export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup", "localization", "users"];
+// editor, user management, and AI service config) — used for hash-route
+// validation in App.tsx.
+export const ALL_SECTIONS: Section[] = [...SECTIONS, "setup", "localization", "users", "aiService"];
 
 // Term-status → semantic palette (design §10). Not the violet AI identity —
 // status is not an AI-draft state.
@@ -314,6 +317,25 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
               </Typography>
             </Box>
           )}
+          {role === "admin" && (
+            <Box
+              onClick={() => onNavigate("aiService")}
+              sx={{
+                px: 1.5,
+                py: 0.9,
+                cursor: "pointer",
+                borderInlineStart: "3px solid",
+                borderColor: section === "aiService" ? "primary.main" : "transparent",
+                bgcolor:
+                  section === "aiService" ? (theme) => alpha(theme.palette.primary.main, 0.08) : "transparent",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: section === "aiService" ? 700 : 400 }}>
+                {t("preferences.section.aiService")}
+              </Typography>
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -336,6 +358,8 @@ export function PreferencesWorkspace({ onNavigate, onBack, section, role }: Prop
             <LocalizationSection />
           ) : section === "users" && role === "admin" ? (
             <UserManagementSection />
+          ) : section === "aiService" && role === "admin" ? (
+            <AiServiceSection />
           ) : cfg === null ? null : !isTranslation ? (
             <Alert severity="info" variant="outlined">
               {t("preferences.glOnly")}

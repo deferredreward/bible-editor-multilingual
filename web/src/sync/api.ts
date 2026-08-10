@@ -1092,6 +1092,29 @@ export type TranslationPrefsInput = {
   // context export exists — there is no client-settable gate any more.
 };
 
+// ── Org-wide AI provider config (migration 0065; api/src/aiProvider.ts) ──
+export interface AiProviderCatalog {
+  providers: readonly string[];
+  models: Record<string, readonly string[]>;
+}
+export interface AiProviderSettings {
+  provider: string;
+  model: string | null;
+  // A BYO key is stored and in force for `provider`. Never true for 'default'.
+  configured: boolean;
+  // Last 4 chars of the stored key, for "Configured •••• {{hint}}" display.
+  // The plaintext key never leaves the server after the PUT that set it.
+  keyHint: string | null;
+  version: number;
+  // False when AI_KEY_WRAPPING_KEY isn't set on this deployment — BYO keys
+  // can't be encrypted, so key entry must be disabled.
+  encryptionAvailable: boolean;
+  catalog: AiProviderCatalog;
+}
+export type AiProviderInput =
+  | { provider: "default" }
+  | { provider: string; model: string; apiKey?: string };
+
 export interface ContextExportStatus {
   status: string;
   sha: string | null;
@@ -1979,6 +2002,20 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
       body: JSON.stringify(patch),
+    }),
+
+  // ── Org-wide AI provider config (migration 0065) ──
+  getAiProvider: () => request<AiProviderSettings>(`/api/ai-provider`),
+  putAiProvider: (expectedVersion: number, body: AiProviderInput) =>
+    request<AiProviderSettings>(`/api/ai-provider`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+      body: JSON.stringify(body),
+    }),
+  clearAiProvider: (expectedVersion: number) =>
+    request<AiProviderSettings>(`/api/ai-provider`, {
+      method: "DELETE",
+      headers: { "If-Match": String(expectedVersion) },
     }),
   getContextExportStatus: () =>
     request<ContextExportStatus>(`/api/translation-memory/export-status`),

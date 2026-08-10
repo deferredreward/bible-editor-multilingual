@@ -157,7 +157,33 @@
       "terminology": "المصطلحات",
       "examples": "الأمثلة",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "خدمة الذكاء الاصطناعي"
+    },
+    "aiService": {
+      "title": "خدمة الذكاء الاصطناعي",
+      "intro": "اختر الذكاء الاصطناعي الذي يشغّل مهام خط أنابيب الترجمة لهذه المؤسسة (ترجمة الملاحظات والأسئلة والكلمات والمقالات): اشتراك unfoldingWord المشترك، أو مزودك الخاص بمفتاح API خاص بك. تستمر ميزات الذكاء الاصطناعي الأخرى، مثل إنشاء الملاحظات والمسودات السريعة، في استخدام اشتراك unfoldingWord المشترك بصرف النظر عن هذا الإعداد. مهم: بعد حفظ المفتاح هنا لا يمكن عرضه مرة أخرى، فقط استبداله أو حذفه.",
+      "providerLabel": "المزوّد",
+      "provider": {
+        "default": "الافتراضي (اشتراك uW)",
+        "claude": "Claude (واجهة برمجية)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "النموذج",
+      "apiKey": "مفتاح API",
+      "apiKeyHelper": "يُخزَّن مشفَّرًا ولا يُعرض مرة أخرى — يمكن فقط استبداله أو حذفه.",
+      "configured": "مُهيَّأ •••• {{hint}}",
+      "replace": "استبدال",
+      "clear": "حذف",
+      "clearConfirmTitle": "حذف مفتاح API؟",
+      "clearConfirmBody": "سيؤدي هذا إلى إزالة المفتاح المحفوظ وإعادة هذه المؤسسة إلى المزوّد الافتراضي (اشتراك uW).",
+      "clearConfirmConfirm": "حذف المفتاح",
+      "encryptionUnavailable": "إحضار مفتاح الذكاء الاصطناعي الخاص بك غير مُفعَّل بعد في هذا النشر — يحتاج المسؤول إلى تعيين السر AI_KEY_WRAPPING_KEY.",
+      "notMigrated": "قاعدة بيانات هذه المنظمة متأخرة في الترحيلات — يحتاج المسؤول إلى تطبيق ترحيل مزوّد الذكاء الاصطناعي قبل حفظ أي مفتاح.",
+      "loadFailed": "تعذر تحميل إعدادات خدمة الذكاء الاصطناعي.",
+      "conflictReloaded": "قام شخص آخر بتغيير هذا التكوين — تمت إعادة تحميله؛ راجعه قبل الحفظ مرة أخرى."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",

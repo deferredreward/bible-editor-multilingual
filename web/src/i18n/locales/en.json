@@ -299,7 +299,33 @@
       "terminology": "Terminology",
       "examples": "Examples",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "AI service"
+    },
+    "aiService": {
+      "title": "AI service",
+      "intro": "Choose which AI runs this org's translation pipeline jobs (translating notes, questions, words, and articles) — the shared unfoldingWord subscription, or your own provider with your own API key. Other AI features, like note generation and quick drafts, always use the shared unfoldingWord subscription regardless of this setting. Important: once you save a key here it cannot be viewed again, only replaced or cleared.",
+      "providerLabel": "Provider",
+      "provider": {
+        "default": "Default (uW subscription)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "Model",
+      "apiKey": "API key",
+      "apiKeyHelper": "Stored encrypted and never shown again — only replaced or cleared.",
+      "configured": "Configured •••• {{hint}}",
+      "replace": "Replace",
+      "clear": "Clear",
+      "clearConfirmTitle": "Clear the API key?",
+      "clearConfirmBody": "This removes the stored key and switches this org back to the default (uW subscription) provider.",
+      "clearConfirmConfirm": "Clear key",
+      "encryptionUnavailable": "Bringing your own AI key isn't enabled on this deployment yet — an admin needs to set the AI_KEY_WRAPPING_KEY secret.",
+      "notMigrated": "This organization's database is behind on migrations — an admin needs to apply the AI provider migration before a key can be saved.",
+      "loadFailed": "Could not load the AI service settings.",
+      "conflictReloaded": "Someone else changed this configuration — reloaded; review before saving again."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
