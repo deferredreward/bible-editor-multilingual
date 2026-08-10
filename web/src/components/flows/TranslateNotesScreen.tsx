@@ -27,6 +27,20 @@
 // (pinned there by margin-block-start:auto when the content is short).
 // Logical properties only; the grid column order itself flips under RTL.
 //
+// ── 2026-08-10 markup round (Benjamin) ──────────────────────────────────────
+//
+// * List rows preview the TARGET note — the live draft for the open card,
+//   else the row's saved target text, else the English source note's first
+//   line — NEVER the original-language quote (Hebrew in a one-line preview
+//   reads as noise on OT books). Markdown chrome (#, **) is stripped so
+//   intro rows stop reading as "# Zechariah 1 General Notes".
+// * Prev/Next also live in the topbar as compact icon chevrons (both
+//   widths), sharing the card stack's cursor and disabled logic, flipped
+//   under RTL per the scripture screen's scaleX pattern.
+// * A horizontal touch-swipe on the card stack (phone column and the wide
+//   detail pane scroller) pages the same cursor via useSwipeNav — disabled
+//   on the done view, direction-mapped to the TARGET language's direction.
+//
 // Data + save machinery is the proven plumbing, unchanged:
 //   * rows + verses            → useChapter
 //   * English source note      → useSourceNotes (published en_tn TSV, keyed by
@@ -71,6 +85,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
 import { unescapeNewlines, waitForOp } from "./translateShared";
+import { useSwipeNav } from "./useSwipeNav";
 import type { FlowScreenContext } from "./types";
 
 import { useBook } from "../../hooks/useBook";
@@ -130,6 +145,9 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   // md+ (>=900px, the words screen's breakpoint): master-detail side by side
   // instead of the phone's single centred column (2026-08-10, header).
   const wide = useMediaQuery(theme.breakpoints.up("md"));
+  // Directional chevrons follow the UI direction (TranslateScriptureScreen's
+  // pattern) — MUI does not flip icons under RTL by itself.
+  const chevronFlip = theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined;
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
@@ -381,6 +399,22 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     },
     [queueIds, statuses, reviewing, cursor, nextUnstatused],
   );
+
+  // Free navigation — one cursor, four drivers: the card stack's Prev/Next,
+  // the topbar chevrons, list-row clicks (md+), and touch swipes.
+  const goPrev = useCallback(() => setCursor((c) => Math.max(0, c - 1)), []);
+  const goNext = useCallback(() => setCursor((c) => Math.min(total - 1, c + 1)), [total]);
+
+  // Swipe pages in the TARGET language's reading order (the content being
+  // paged), not the UI chrome's — the words screen derives direction the same
+  // way. Disabled on the done view: there is no card there to page.
+  const targetRtl = projectConfig?.direction === "rtl";
+  const swipe = useSwipeNav({
+    onPrev: goPrev,
+    onNext: goNext,
+    enabled: view === "cards" && total > 0,
+    rtl: targetRtl,
+  });
 
   // ── writes ───────────────────────────────────────────────────────────────
   // Save-then-validate, in that order and awaited: /validate does not carry a
@@ -906,7 +940,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               <Button
                 startIcon={<ChevronLeftIcon />}
                 disabled={cursor === 0}
-                onClick={() => setCursor((c) => Math.max(0, c - 1))}
+                onClick={goPrev}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
                 Previous
@@ -914,7 +948,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               <Button
                 endIcon={<ChevronRightIcon />}
                 disabled={cursor >= total - 1}
-                onClick={() => setCursor((c) => Math.min(total - 1, c + 1))}
+                onClick={goNext}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
                 Next
@@ -924,6 +958,14 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
         )}
     </>
   );
+
+  // List preview: first non-empty line, with markdown chrome stripped (leading
+  // #s, ** pairs) so intro notes don't read "# Zechariah 1 General Notes".
+  const previewLine = (raw: string): string =>
+    (raw.split("\n").find((l) => l.trim()) ?? "")
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/\*\*/g, "")
+      .trim();
 
   // One list-pane row (md+ only): verse ref · one-line preview · status chip.
   // Selecting a row moves the SAME cursor the phone's Prev/Next drives.
@@ -948,6 +990,14 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             ? { kind: "edited", label: "Edited" }
             : { kind: "draft", label: "Draft" };
     const isSelected = !done && idx === cursor;
+    // Preview the TARGET text — what the translator wrote (their live draft
+    // for the open card, else the row's saved note), falling back to the
+    // English source note. NEVER the quote: Hebrew/Greek in a one-line
+    // preview reads as noise (2026-08-10 markup round).
+    const targetText = id === currentId ? draftValue : unescapeNewlines(r.note);
+    const sourceNote = sourceNotes.get(id)?.note;
+    const preview =
+      previewLine(targetText) || (sourceNote ? previewLine(unescapeNewlines(sourceNote)) : "");
     return (
       <Box
         key={id}
@@ -984,7 +1034,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             dir="auto"
             sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
           >
-            {r.quote || unescapeNewlines(r.note) || "Nothing drafted yet"}
+            {preview || "Nothing drafted yet"}
           </Typography>
         </Box>
         <FlowStatusChip kind={rowChip.kind} label={rowChip.label} />
@@ -1001,6 +1051,9 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     !done && total > 0 && row ? (
         <Box
           component="footer"
+          // Guard the verbs from the swipe surface: a horizontal drag that
+          // starts on Approve / Not needed / Redo must never page the queue.
+          data-no-swipe
           sx={
             wide
               ? {
@@ -1149,6 +1202,27 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             >
               {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
             </Typography>
+            {/* compact prev/next — same cursor and disabled logic as the card
+                stack's Prev/Next; chevrons flip under RTL (the scripture
+                screen's scaleX pattern). 2026-08-10 markup round. */}
+            <IconButton
+              size="small"
+              aria-label="Previous note"
+              disabled={done || cursor === 0}
+              onClick={goPrev}
+              sx={{ flex: "none" }}
+            >
+              <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
+            </IconButton>
+            <IconButton
+              size="small"
+              aria-label="Next note"
+              disabled={done || cursor >= total - 1}
+              onClick={goNext}
+              sx={{ flex: "none" }}
+            >
+              <ChevronRightIcon fontSize="small" sx={chevronFlip} />
+            </IconButton>
           </Stack>
           <Box
             sx={{
@@ -1224,6 +1298,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             }}
           >
             <Box
+              {...swipe}
               sx={{
                 height: "100%",
                 minHeight: 0,
@@ -1252,6 +1327,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
         </Box>
       ) : (
         <Box
+          {...swipe}
           sx={{
             maxWidth: COLUMN_PX,
             mx: "auto",
