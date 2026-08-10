@@ -57,6 +57,16 @@
 // done view's embedded row list is hidden at md+ — the list pane already shows
 // it). Logical properties only — the grid order itself flips under RTL.
 //
+// ── 2026-08-10 nav additions (Benjamin) ──────────────────────────────────────
+//
+// Prev/Next lives at the top AND the bottom: compact icon-only chevrons sit in
+// the topbar beside the "N of M" count (both widths), driving the SAME cursor
+// as the bottom Previous/Next buttons with the same disabled logic. The card
+// stack is also swipeable (useSwipeNav) — the handlers are spread on the phone
+// column and the md+ detail pane; swipe direction follows the TARGET language's
+// reading direction (the content being paged), and the hook itself ignores
+// touches that start in inputs, textareas, or [data-no-swipe].
+//
 // 409 handling is deliberately minimal, as on the notes screen: a banner saying
 // another editor changed the row, with a reload affordance.
 
@@ -81,6 +91,7 @@ import CheckIcon from "@mui/icons-material/Check";
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
 import { unescapeNewlines, waitForOp } from "./translateShared";
+import { useSwipeNav } from "./useSwipeNav";
 import type { FlowScreenContext } from "./types";
 
 import { useBook } from "../../hooks/useBook";
@@ -129,10 +140,17 @@ export default function TranslateQuestionsScreen({
   // md+ (>=900px, the words screen's breakpoint): master-detail side by side
   // instead of the phone's single centred column.
   const wide = useMediaQuery(theme.breakpoints.up("md"));
+  // Chevron glyphs don't flip with CSS direction on their own — mirror them
+  // under RTL so "previous"/"next" keep pointing the right way (the scripture
+  // screen's chevronFlip pattern).
+  const chevronFlip = theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined;
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
   const targetLabel = projectConfig?.languageName || "Target";
+  // Reading direction of the TARGET text — what swipe paging follows (the
+  // content being paged, not the UI chrome; ScriptureColumn's targetRtl idiom).
+  const targetRtl = projectConfig?.direction === "rtl";
   const litLabel = projectConfig?.litLabel || "ULT";
   const simLabel = projectConfig?.simLabel || "UST";
   const sourceLangLabel = (
@@ -350,6 +368,16 @@ export default function TranslateQuestionsScreen({
     },
     [queueIds, statuses, reviewing, cursor, nextUnstatused],
   );
+
+  // Swipe anywhere on the card stack to page between questions — the same
+  // cursor and clamping the Prev/Next buttons use. The hook ignores touches
+  // that start in inputs/textareas/[data-no-swipe], so editing is unaffected.
+  const swipeNav = useSwipeNav({
+    onPrev: () => setCursor((c) => Math.max(0, c - 1)),
+    onNext: () => setCursor((c) => Math.min(total - 1, c + 1)),
+    enabled: view === "cards" && total > 1,
+    rtl: targetRtl,
+  });
 
   // ── writes ───────────────────────────────────────────────────────────────
   // Save-then-validate, in that order and awaited: /validate does not carry a
@@ -727,6 +755,9 @@ export default function TranslateQuestionsScreen({
     !done && total > 0 && row ? (
       <Box
         component="footer"
+        // Guard the verbs from the swipe surface: a horizontal drag that
+        // starts on Approve must never page the queue.
+        data-no-swipe
         sx={
           pane
             ? {
@@ -1078,6 +1109,26 @@ export default function TranslateQuestionsScreen({
             >
               {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
             </Typography>
+            {/* compact prev/next — the same cursor and disabled logic as the
+                bottom Previous/Next buttons */}
+            <Stack direction="row" spacing={0.25} sx={{ flex: "none" }}>
+              <IconButton
+                aria-label="Previous question"
+                size="small"
+                disabled={done || cursor === 0}
+                onClick={() => setCursor((c) => Math.max(0, c - 1))}
+              >
+                <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
+              </IconButton>
+              <IconButton
+                aria-label="Next question"
+                size="small"
+                disabled={done || cursor >= total - 1}
+                onClick={() => setCursor((c) => Math.min(total - 1, c + 1))}
+              >
+                <ChevronRightIcon fontSize="small" sx={chevronFlip} />
+              </IconButton>
+            </Stack>
           </Stack>
           <Box
             sx={{
@@ -1151,6 +1202,7 @@ export default function TranslateQuestionsScreen({
             {/* flex column so the action bar's margin-block-start:auto pins
                 it to the pane's bottom even when the content is short */}
             <Box
+              {...swipeNav}
               sx={{
                 height: "100%",
                 minHeight: 0,
@@ -1179,6 +1231,7 @@ export default function TranslateQuestionsScreen({
         </Box>
       ) : (
         <Box
+          {...swipeNav}
           sx={{
             maxWidth: COLUMN_PX,
             mx: "auto",
