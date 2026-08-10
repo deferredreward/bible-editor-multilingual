@@ -34,13 +34,20 @@
 //
 // ── What this screen adds over AlignScreen ─────────────────────────────────
 //   * Sibling-screen chrome: back-chevron topbar, title/sub, "Verse N of M",
-//     thin progress bar (TranslateWordsScreen.tsx:799-855).
+//     thin progress bar (TranslateWordsScreen.tsx:799-855). The count carries
+//     compact icon-only prev/next chevrons on both widths (Benjamin
+//     2026-08-10: screens with prev/next get controls at top and bottom) —
+//     same goVerse hash rewrite and same disabled logic as the detail
+//     header's pair.
 //   * md+ (>=900): 1180px desk, verse-list pane minmax(340px,380px) +
 //     panel-chromed detail pane (TranslateWordsScreen.tsx:857-930). Phone
 //     (<900): one centred column with Prev/Next (notes-screen pattern). The
 //     phone column is 720px, wider than the notes screens' 480 — the drag
 //     canvas and tap cards are width-hungry, and 480 would squeeze them for
-//     no design reason.
+//     no design reason. The phone column closes with a bottom Previous/Next
+//     row (TranslateScriptureScreen's phone footer pattern), so a top AND a
+//     bottom affordance exist on phone: topbar chevrons up top, buttons at
+//     the end of the column.
 //   * Lane picker: BOTH lanes are alignable — AlignScreen fixes single mode
 //     to ULT (AlignScreen.tsx:98) but aligns ULT and UST in its dual dialog,
 //     through the same enqueueAlignment(bibleVersion) path — so single mode
@@ -71,11 +78,23 @@
 //   * `me` / `onNavigate` from FlowScreenContext are accepted but unused,
 //     same as AlignScreen.tsx:164-166: verse movement stays on this screen
 //     by moving the hash.
+//   * NO swipe navigation — deliberate exception to the 2026-08-10 "prev/next
+//     screens also get swipe" direction. Every content surface here is a
+//     gesture surface: the drag canvas is HTML5-draggable words edge to edge,
+//     and tap mode is wall-to-wall tap targets where a horizontal drag is
+//     indistinguishable from the start of an alignment gesture. The shared
+//     ./useSwipeNav hook (what the sibling queue screens use) guards
+//     [draggable]/[data-no-swipe] starts, which here would exempt nearly the
+//     whole column — leaving a swipe that "sometimes works", worse than none.
+//     If a safe gesture area is ever found (e.g. the topbar strip alone),
+//     wire it through ./useSwipeNav rather than a bespoke handler.
 //
 // RTL: logical properties only; scripture-direction handling is whatever the
 // aligner components already do (AlignTapView takes sourceRtl/targetRtl from
 // the same isHebrewBook/versionIsRtl derivations AlignScreen uses; the list
-// snippet sets a dir attribute, never a CSS direction flip).
+// snippet sets a dir attribute, never a CSS direction flip). Directional
+// chevrons mirror under RTL via scaleX(-1), the TranslateScriptureScreen.tsx
+// chevronFlip convention.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -244,6 +263,9 @@ export default function TranslateAlignScreen({
   const isTabletUp = useMediaQuery(theme.breakpoints.up("tablet")); // >=560
   const isDesktop = useMediaQuery(theme.breakpoints.up("md")); // >=900
   const wide = isDesktop; // md+ master-detail, the sibling screens' breakpoint
+  // Chevron glyphs don't flip with CSS direction on their own — mirror them
+  // under RTL (TranslateScriptureScreen.tsx chevronFlip convention).
+  const chevronFlip = theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined;
 
   const { status, data, applyLocalVerse } = useChapter(book, chapter);
   const projectConfig = useProjectConfig();
@@ -760,7 +782,7 @@ export default function TranslateAlignScreen({
             }}
             sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
           >
-            <ChevronLeftIcon fontSize="small" />
+            <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
           </IconButton>
           <Box sx={{ minWidth: 0 }}>
             <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
@@ -771,6 +793,17 @@ export default function TranslateAlignScreen({
             </Typography>
           </Box>
           <Box sx={{ flex: 1 }} />
+          {/* compact prev/next flanking the count (top-and-bottom controls,
+              Benjamin 2026-08-10) — same goVerse hash rewrite and disabled
+              logic as the detail header's pair */}
+          <IconButton
+            aria-label="Previous verse"
+            onClick={() => goVerse(prevVerse)}
+            disabled={prevVerse == null}
+            sx={{ width: 34, height: 34, flex: "none" }}
+          >
+            <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
+          </IconButton>
           <Box sx={{ textAlign: "end" }}>
             <Typography
               variant="body2"
@@ -792,6 +825,14 @@ export default function TranslateAlignScreen({
               {alignedCount} of {totalVerses || 0} fully aligned
             </Typography>
           </Box>
+          <IconButton
+            aria-label="Next verse"
+            onClick={() => goVerse(nextVerse)}
+            disabled={nextVerse == null}
+            sx={{ width: 34, height: 34, flex: "none" }}
+          >
+            <ChevronRightIcon fontSize="small" sx={chevronFlip} />
+          </IconButton>
         </Stack>
         {/* thin progress bar: fully-aligned verses over all verses — the
             honest signal (see file header); position alone would carry no
@@ -932,7 +973,7 @@ export default function TranslateAlignScreen({
         disabled={prevVerse == null}
         sx={{ width: 34, height: 34, flex: "none" }}
       >
-        <ChevronLeftIcon fontSize="small" />
+        <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
       </IconButton>
       <Typography
         component="h2"
@@ -946,7 +987,7 @@ export default function TranslateAlignScreen({
         disabled={nextVerse == null}
         sx={{ width: 34, height: 34, flex: "none" }}
       >
-        <ChevronRightIcon fontSize="small" />
+        <ChevronRightIcon fontSize="small" sx={chevronFlip} />
       </IconButton>
       <Box sx={{ flex: 1 }} />
       {/* lane picker — single mode aligns one lane at a time; dual always
@@ -1223,7 +1264,9 @@ export default function TranslateAlignScreen({
         </Box>
       ) : (
         /* phone/tablet: one centred column; Prev/Next lives in the detail
-           header (notes-screen queue pattern) */
+           header (notes-screen queue pattern) AND in a bottom row, so both a
+           top and a bottom affordance exist on phone (Benjamin 2026-08-10;
+           TranslateScriptureScreen's phone footer pattern) */
         <Box
           sx={{
             maxWidth: COLUMN_PX,
@@ -1237,6 +1280,24 @@ export default function TranslateAlignScreen({
         >
           {detailHeader}
           {detailBody}
+          <Stack direction="row" justifyContent="space-between" spacing={1.25}>
+            <Button
+              startIcon={<ChevronLeftIcon sx={chevronFlip} />}
+              disabled={prevVerse == null}
+              onClick={() => goVerse(prevVerse)}
+              sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+            >
+              Previous
+            </Button>
+            <Button
+              endIcon={<ChevronRightIcon sx={chevronFlip} />}
+              disabled={nextVerse == null}
+              onClick={() => goVerse(nextVerse)}
+              sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+            >
+              Next
+            </Button>
+          </Stack>
         </Box>
       )}
 
