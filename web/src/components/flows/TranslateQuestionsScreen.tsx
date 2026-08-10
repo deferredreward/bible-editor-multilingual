@@ -4,7 +4,8 @@
 // TranslateQuestionsScreen — the translationQuestions queue, built to the
 // approved "Translate Questions — Titus 1" mockup and following the patterns
 // TranslateNotesScreen established (drafts store, save-then-validate, frozen
-// queue, edited-as-chip, one centred column at every width).
+// queue, edited-as-chip; one centred column on phones — see the 2026-08-10
+// responsive block below for md+).
 //
 // What differs from the notes screen, and why:
 //
@@ -41,6 +42,21 @@
 //     locked and is dropped rather than overwritten. /validate IS lock-exempt
 //     (rows.ts:1173). The banner therefore says something real here.
 //
+// ── 2026-08-10 responsive layouts (Benjamin) ─────────────────────────────────
+//
+// Phone (<900px) is unchanged: one centred column, viewport-fixed Approve bar.
+// At md+ (900px — the same breakpoint TranslateWordsScreen and ArticlesScreen
+// use) the screen becomes master-detail after the desk-class primitives in
+// docs/mockups/desktop-first/_design.css (.desk / .panel): an 1180px centred
+// grid with a scrollable list pane (340-380px — the question queue as rows:
+// verse ref, question preview, status chip) on the inline-start side and a
+// panel-chromed detail pane holding the current card stack, with the Approve
+// bar sticky at the pane's bottom instead of fixed to the viewport. Selecting
+// a list row moves the SAME cursor the phone Prev/Next buttons drive; from the
+// done view it also re-enters review mode, like the done list's own rows (the
+// done view's embedded row list is hidden at md+ — the list pane already shows
+// it). Logical properties only — the grid order itself flips under RTL.
+//
 // 409 handling is deliberately minimal, as on the notes screen: a banner saying
 // another editor changed the row, with a reload affordance.
 
@@ -56,7 +72,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
@@ -109,6 +126,9 @@ export default function TranslateQuestionsScreen({
   // .ref in the mockup: Ocean in light, Cultivate in dark.
   const REF_COLOR = dark ? "#70C9CC" : "#014263";
   const { ok, skip } = theme.palette.flows;
+  // md+ (>=900px, the words screen's breakpoint): master-detail side by side
+  // instead of the phone's single centred column.
+  const wide = useMediaQuery(theme.breakpoints.up("md"));
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
@@ -634,86 +654,137 @@ export default function TranslateQuestionsScreen({
     );
   }
 
-  return (
-    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
-      {/* topbar */}
+  // md+ list pane: one row per question — verse ref, question preview, the
+  // row's status chip (the same chipFor the card uses). Selecting a row moves
+  // the SAME cursor the phone Prev/Next buttons drive; from the done view it
+  // also re-enters review mode, exactly like the done list's own rows.
+  const queueRow = (id: string, i: number) => {
+    const r = rowById.get(id) ?? null;
+    const c = chipFor(id, r, id === currentId ? hasDiff : false);
+    const isSelected = !done && id === currentId;
+    return (
       <Box
+        key={id}
+        component="button"
+        type="button"
+        aria-current={isSelected ? "true" : undefined}
+        onClick={() => {
+          if (done) {
+            setReviewing(true);
+            setView("cards");
+          }
+          setCursor(i);
+        }}
         sx={{
-          position: "sticky",
-          insetBlockStart: 0,
-          zIndex: 20,
-          bgcolor: "background.paper",
-          borderBlockEnd: "1px solid",
-          borderColor: "divider",
+          ...cardSx,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          width: "100%",
+          cursor: "pointer",
+          font: "inherit",
+          color: "inherit",
+          paddingBlock: 1.25,
+          ...(isSelected
+            ? { borderColor: INSPIRE, bgcolor: alpha(INSPIRE, dark ? 0.12 : 0.06) }
+            : {}),
+          "&:hover": { borderColor: INSPIRE },
         }}
       >
-        <Box sx={{ maxWidth: COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
-          <Stack direction="row" alignItems="center" spacing={1.25}>
-            <IconButton
-              aria-label={`Leave ${book} ${chapter} questions`}
-              onClick={() => {
-                location.hash = "#/home";
-              }}
-              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
-            >
-              <ChevronLeftIcon fontSize="small" />
-            </IconButton>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                Translation Questions
-              </Typography>
-              <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
-                {sub}
-              </Typography>
-            </Box>
-            <Box sx={{ flex: 1 }} />
-            <Typography
-              variant="body2"
-              sx={{
-                fontWeight: 600,
-                color: "text.secondary",
-                fontVariantNumeric: "tabular-nums",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
-            </Typography>
-          </Stack>
-          <Box
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
+            {r
+              ? r.verse === 0
+                ? `${book} ${chapter} intro`
+                : `${book} ${chapter}:${r.verse}`
+              : id}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {unescapeNewlines(r?.question) || "—"}
+          </Typography>
+        </Box>
+        <FlowStatusChip kind={c.kind} label={c.label} />
+        <ChevronRightIcon
+          fontSize="small"
+          sx={{
+            color: "text.secondary",
+            flex: "none",
+            transform: theme.direction === "rtl" ? "scaleX(-1)" : "none",
+          }}
+        />
+      </Box>
+    );
+  };
+
+  // The one verb. Phone: fixed to the viewport bottom, as before. md+ pane:
+  // sticky at the detail pane's bottom, pinned there by margin-block-start:auto
+  // when the content is short — the words screen's pane pattern.
+  const actionBar = (pane: boolean) =>
+    !done && total > 0 && row ? (
+      <Box
+        component="footer"
+        sx={
+          pane
+            ? {
+                position: "sticky",
+                insetBlockEnd: 0,
+                zIndex: 10,
+                marginBlockStart: "auto",
+                bgcolor: "background.paper",
+                borderBlockStart: "1px solid",
+                borderColor: "divider",
+              }
+            : {
+                position: "fixed",
+                insetBlockEnd: 0,
+                insetInline: 0,
+                zIndex: theme.zIndex.appBar,
+                bgcolor: "background.paper",
+                borderBlockStart: "1px solid",
+                borderColor: "divider",
+              }
+        }
+      >
+        <Stack
+          direction="row"
+          spacing={1.25}
+          sx={{
+            maxWidth: pane ? "none" : COLUMN_PX,
+            mx: "auto",
+            paddingInline: pane ? 2.5 : 2,
+            paddingBlockStart: 1.5,
+            paddingBlockEnd: pane ? 1.5 : "calc(12px + env(safe-area-inset-bottom))",
+          }}
+        >
+          <Button
+            disabled={busy}
+            onClick={() => void handleApprove()}
+            startIcon={<CheckIcon />}
             sx={{
-              height: 4,
-              borderRadius: "2px",
-              bgcolor: skip.soft,
-              mt: 1.25,
-              overflow: "hidden",
+              flex: 1,
+              minHeight: 50,
+              borderRadius: "12px",
+              fontWeight: 700,
+              bgcolor: ok.main,
+              color: "#fff",
+              "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
             }}
           >
-            <Box
-              sx={{
-                height: "100%",
-                borderRadius: "2px",
-                bgcolor: INSPIRE,
-                transition: "width 0.35s ease",
-                width: total === 0 ? "0%" : `${(statusedCount / total) * 100}%`,
-              }}
-            />
-          </Box>
-        </Box>
+            Approve
+          </Button>
+        </Stack>
       </Box>
+    ) : null;
 
-      <Box
-        sx={{
-          maxWidth: COLUMN_PX,
-          mx: "auto",
-          paddingInline: 2,
-          paddingBlockStart: 2,
-          // room for the fixed action bar
-          paddingBlockEnd: done ? 4 : 15,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.5,
-        }}
-      >
+  // The card stack (banners + the current card / done view) is identical at
+  // every width — only its container differs (phone: the centred column;
+  // md+: the panel-chromed detail pane).
+  const columnBody = (
+    <>
         {chapterLock && (
           // Unlike notes, tq PATCH is NOT lock-exempt: saves are refused with a
           // 409 while a run holds the chapter. Approve still lands.
@@ -801,6 +872,8 @@ export default function TranslateQuestionsScreen({
               ))}
             </Stack>
 
+            {/* md+: the list pane already shows exactly these rows */}
+            {!wide && (
             <Stack spacing={1.25}>
               {queueIds.map((id, i) => {
                 const r = rowById.get(id) ?? null;
@@ -843,6 +916,7 @@ export default function TranslateQuestionsScreen({
                 );
               })}
             </Stack>
+            )}
 
             <Stack spacing={1} sx={{ mt: 0.5 }}>
               <Button
@@ -947,52 +1021,181 @@ export default function TranslateQuestionsScreen({
             </Stack>
           </>
         )}
-      </Box>
+    </>
+  );
 
-      {/* fixed action bar — the one verb, at every width */}
-      {!done && total > 0 && row && (
-        <Box
-          component="footer"
-          sx={{
-            position: "fixed",
-            insetBlockEnd: 0,
-            insetInline: 0,
-            zIndex: theme.zIndex.appBar,
-            bgcolor: "background.paper",
-            borderBlockStart: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Stack
-            direction="row"
-            spacing={1.25}
-            sx={{
-              maxWidth: COLUMN_PX,
-              mx: "auto",
-              paddingInline: 2,
-              paddingBlockStart: 1.5,
-              paddingBlockEnd: "calc(12px + env(safe-area-inset-bottom))",
-            }}
-          >
-            <Button
-              disabled={busy}
-              onClick={() => void handleApprove()}
-              startIcon={<CheckIcon />}
+  return (
+    <Box
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        textAlign: "start",
+        ...(wide
+          ? { display: "flex", flexDirection: "column", overflow: "hidden" }
+          : { overflowY: "auto" }),
+      }}
+    >
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
+      <Box
+        sx={{
+          position: "sticky",
+          insetBlockStart: 0,
+          zIndex: 20,
+          flex: "none",
+          bgcolor: "background.paper",
+          borderBlockEnd: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+          <Stack direction="row" alignItems="center" spacing={1.25}>
+            <IconButton
+              aria-label={`Leave ${book} ${chapter} questions`}
+              onClick={() => {
+                location.hash = "#/home";
+              }}
+              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+            >
+              <ChevronLeftIcon fontSize="small" />
+            </IconButton>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
+                Translation Questions
+              </Typography>
+              <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+                {sub}
+              </Typography>
+            </Box>
+            <Box sx={{ flex: 1 }} />
+            <Typography
+              variant="body2"
               sx={{
-                flex: 1,
-                minHeight: 50,
-                borderRadius: "12px",
-                fontWeight: 700,
-                bgcolor: ok.main,
-                color: "#fff",
-                "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
+                fontWeight: 600,
+                color: "text.secondary",
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
               }}
             >
-              Approve
-            </Button>
+              {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
+            </Typography>
           </Stack>
+          <Box
+            sx={{
+              height: 4,
+              borderRadius: "2px",
+              bgcolor: skip.soft,
+              mt: 1.25,
+              overflow: "hidden",
+            }}
+          >
+            <Box
+              sx={{
+                height: "100%",
+                borderRadius: "2px",
+                bgcolor: INSPIRE,
+                transition: "width 0.35s ease",
+                width: total === 0 ? "0%" : `${(statusedCount / total) * 100}%`,
+              }}
+            />
+          </Box>
+        </Box>
+      </Box>
+
+      {wide ? (
+        /* desk (the words screen's md+ pattern, after the desk-class
+           primitives in docs/mockups/desktop-first/_design.css): 1180px
+           centred grid — the question queue as a scrollable list pane on the
+           inline-start side, a panel-chromed detail pane holding the current
+           card stack. Grid column order follows the document direction, so
+           this is RTL-safe as-is. */
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            maxWidth: 1180,
+            mx: "auto",
+            display: "grid",
+            gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",
+            gap: 2.5,
+            paddingInline: 2,
+            paddingBlockStart: 1.5,
+            paddingBlockEnd: 2,
+          }}
+        >
+          {/* list pane */}
+          <Box
+            sx={{
+              minHeight: 0,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 1.25,
+              paddingInline: 0.25,
+              paddingBlockEnd: 2,
+            }}
+          >
+            {queueIds.map(queueRow)}
+          </Box>
+          {/* detail pane */}
+          <Box
+            sx={{
+              minHeight: 0,
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "14px",
+              overflow: "hidden",
+            }}
+          >
+            {/* flex column so the action bar's margin-block-start:auto pins
+                it to the pane's bottom even when the content is short */}
+            <Box
+              sx={{
+                height: "100%",
+                minHeight: 0,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <Box
+                sx={{
+                  flex: "none",
+                  paddingInline: 2.5,
+                  paddingBlockStart: 2,
+                  // the action bar is in-flow below, so only a small gap
+                  paddingBlockEnd: 2,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1.5,
+                }}
+              >
+                {columnBody}
+              </Box>
+              {actionBar(true)}
+            </Box>
+          </Box>
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            maxWidth: COLUMN_PX,
+            mx: "auto",
+            paddingInline: 2,
+            paddingBlockStart: 2,
+            // room for the viewport-fixed action bar
+            paddingBlockEnd: done ? 4 : 15,
+            display: "flex",
+            flexDirection: "column",
+            gap: 1.5,
+          }}
+        >
+          {columnBody}
         </Box>
       )}
+
+      {!wide && actionBar(false)}
 
       <Snackbar
         open={toast !== null}
@@ -1000,7 +1203,7 @@ export default function TranslateQuestionsScreen({
         autoHideDuration={1400}
         onClose={() => setToast(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-        sx={{ bottom: 96 }}
+        sx={{ bottom: wide ? 24 : 96 }}
       />
     </Box>
   );
