@@ -12,9 +12,20 @@
 // debug row ids, no quote builder, no history dialog. Those belong to the
 // authoring surfaces (ReviewQueue, NoteCard), not to a translator's screen.
 //
-// Layout is deliberately one centred column at every width (the mockup's phone
-// shell, given generous ground on desktop). That simplicity IS the design —
-// do not add rails or side panels here.
+// ── 2026-08-10 responsive layouts (Benjamin) ────────────────────────────────
+//
+// Below md (900px) nothing changed: one centred column (the mockup's phone
+// shell) with the viewport-fixed action bar — that simplicity IS the phone
+// design. At md+ the screen becomes master-detail after TranslateWordsScreen's
+// precedent (the desk-class primitives in docs/mockups/desktop-first/
+// _design.css): a scrollable list pane (340-380px) showing the note queue as
+// rows (verse ref · quote-or-note preview · status chip) on the inline-start
+// side, and a panel-chromed detail pane holding the same card stack, both
+// inside a 1180px centred desk. Selecting a row moves the SAME queue cursor
+// the phone's Prev/Next drives — one cursor, two representations — and the
+// action bar goes sticky at the pane's bottom instead of viewport-fixed
+// (pinned there by margin-block-start:auto when the content is short).
+// Logical properties only; the grid column order itself flips under RTL.
 //
 // Data + save machinery is the proven plumbing, unchanged:
 //   * rows + verses            → useChapter
@@ -50,7 +61,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
@@ -115,6 +127,9 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   // .ref in the mockup: Ocean in light, Cultivate in dark.
   const REF_COLOR = dark ? "#70C9CC" : "#014263";
   const { ok, skip } = theme.palette.flows;
+  // md+ (>=900px, the words screen's breakpoint): master-detail side by side
+  // instead of the phone's single centred column (2026-08-10, header).
+  const wide = useMediaQuery(theme.breakpoints.up("md"));
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
@@ -613,86 +628,10 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     );
   }
 
-  return (
-    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
-      {/* topbar */}
-      <Box
-        sx={{
-          position: "sticky",
-          insetBlockStart: 0,
-          zIndex: 20,
-          bgcolor: "background.paper",
-          borderBlockEnd: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Box sx={{ maxWidth: COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
-          <Stack direction="row" alignItems="center" spacing={1.25}>
-            <IconButton
-              aria-label={`Leave ${book} ${chapter} notes`}
-              onClick={() => {
-                location.hash = "#/home";
-              }}
-              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
-            >
-              <ChevronLeftIcon fontSize="small" />
-            </IconButton>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                Translation Notes
-              </Typography>
-              <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
-                {sub}
-              </Typography>
-            </Box>
-            <Box sx={{ flex: 1 }} />
-            <Typography
-              variant="body2"
-              sx={{
-                fontWeight: 600,
-                color: "text.secondary",
-                fontVariantNumeric: "tabular-nums",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
-            </Typography>
-          </Stack>
-          <Box
-            sx={{
-              height: 4,
-              borderRadius: "2px",
-              bgcolor: skip.soft,
-              mt: 1.25,
-              overflow: "hidden",
-            }}
-          >
-            <Box
-              sx={{
-                height: "100%",
-                borderRadius: "2px",
-                bgcolor: INSPIRE,
-                transition: "width 0.35s ease",
-                width: total === 0 ? "0%" : `${(statusedCount / total) * 100}%`,
-              }}
-            />
-          </Box>
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          maxWidth: COLUMN_PX,
-          mx: "auto",
-          paddingInline: 2,
-          paddingBlockStart: 2,
-          // room for the fixed action bar
-          paddingBlockEnd: done ? 4 : 15,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.5,
-        }}
-      >
+  // Everything inside the reading column — identical at every width; only the
+  // container differs (phone: the centred column; md+: the detail pane).
+  const detailBody = (
+    <>
         {chapterLock && (
           // Informational only: tn PATCH is lock-exempt and /validate + /trash
           // have no lock check, so nothing on this screen is blocked.
@@ -983,31 +922,116 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             </Stack>
           </>
         )}
-      </Box>
+    </>
+  );
 
-      {/* fixed action bar — the three verbs, at every width */}
-      {!done && total > 0 && row && (
+  // One list-pane row (md+ only): verse ref · one-line preview · status chip.
+  // Selecting a row moves the SAME cursor the phone's Prev/Next drives.
+  const listRow = (id: string, idx: number) => {
+    const r = rowById.get(id);
+    if (!r) {
+      return (
+        <Box key={id} sx={{ ...cardSx, opacity: 0.72, paddingBlock: 1.25 }}>
+          <Typography variant="body2" color="text.secondary">
+            This note is no longer in the chapter.
+          </Typography>
+        </Box>
+      );
+    }
+    const st = statuses[id];
+    const rowChip: { kind: FlowStatusKind; label: string } =
+      st === "approved"
+        ? { kind: "approved", label: "Approved" }
+        : st === "skipped"
+          ? { kind: "skip", label: "Not needed" }
+          : (id === currentId && hasDiff) || r.translation_state === "edited"
+            ? { kind: "edited", label: "Edited" }
+            : { kind: "draft", label: "Draft" };
+    const isSelected = !done && idx === cursor;
+    return (
+      <Box
+        key={id}
+        component="button"
+        type="button"
+        aria-current={isSelected ? "true" : undefined}
+        onClick={() => {
+          setCursor(idx);
+          setView("cards");
+        }}
+        sx={{
+          ...cardSx,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          width: "100%",
+          cursor: "pointer",
+          font: "inherit",
+          color: "inherit",
+          paddingBlock: 1.25,
+          ...(isSelected
+            ? { borderColor: INSPIRE, bgcolor: alpha(INSPIRE, dark ? 0.12 : 0.06) }
+            : {}),
+          "&:hover": { borderColor: INSPIRE },
+        }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
+            {r.verse === 0 ? `${r.chapter} intro` : `${r.chapter}:${r.verse}`}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            dir="auto"
+            sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {r.quote || unescapeNewlines(r.note) || "Nothing drafted yet"}
+          </Typography>
+        </Box>
+        <FlowStatusChip kind={rowChip.kind} label={rowChip.label} />
+        <ChevronRightIcon fontSize="small" sx={{ color: "text.secondary", flex: "none" }} />
+      </Box>
+    );
+  };
+
+  // Action bar — the three verbs. Phone: fixed to the viewport bottom; md+:
+  // anchored inside the detail pane (sticky at its bottom, pinned there by
+  // margin-block-start:auto when the content is short — the words screen's
+  // pane pattern).
+  const actionBar =
+    !done && total > 0 && row ? (
         <Box
           component="footer"
-          sx={{
-            position: "fixed",
-            insetBlockEnd: 0,
-            insetInline: 0,
-            zIndex: theme.zIndex.appBar,
-            bgcolor: "background.paper",
-            borderBlockStart: "1px solid",
-            borderColor: "divider",
-          }}
+          sx={
+            wide
+              ? {
+                  position: "sticky",
+                  insetBlockEnd: 0,
+                  zIndex: 10,
+                  marginBlockStart: "auto",
+                  bgcolor: "background.paper",
+                  borderBlockStart: "1px solid",
+                  borderColor: "divider",
+                }
+              : {
+                  position: "fixed",
+                  insetBlockEnd: 0,
+                  insetInline: 0,
+                  zIndex: theme.zIndex.appBar,
+                  bgcolor: "background.paper",
+                  borderBlockStart: "1px solid",
+                  borderColor: "divider",
+                }
+          }
         >
           <Stack
             direction="row"
             spacing={1.25}
             sx={{
-              maxWidth: COLUMN_PX,
+              maxWidth: wide ? "none" : COLUMN_PX,
               mx: "auto",
-              paddingInline: 2,
+              paddingInline: wide ? 2.5 : 2,
               paddingBlockStart: 1.5,
-              paddingBlockEnd: "calc(12px + env(safe-area-inset-bottom))",
+              paddingBlockEnd: wide ? 1.5 : "calc(12px + env(safe-area-inset-bottom))",
             }}
           >
             <Button
@@ -1069,7 +1093,181 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             </Button>
           </Stack>
         </Box>
+    ) : null;
+
+  return (
+    <Box
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        textAlign: "start",
+        ...(wide
+          ? { display: "flex", flexDirection: "column", overflow: "hidden" }
+          : { overflowY: "auto" }),
+      }}
+    >
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
+      <Box
+        sx={{
+          position: "sticky",
+          insetBlockStart: 0,
+          zIndex: 20,
+          flex: "none",
+          bgcolor: "background.paper",
+          borderBlockEnd: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+          <Stack direction="row" alignItems="center" spacing={1.25}>
+            <IconButton
+              aria-label={`Leave ${book} ${chapter} notes`}
+              onClick={() => {
+                location.hash = "#/home";
+              }}
+              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+            >
+              <ChevronLeftIcon fontSize="small" />
+            </IconButton>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
+                Translation Notes
+              </Typography>
+              <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+                {sub}
+              </Typography>
+            </Box>
+            <Box sx={{ flex: 1 }} />
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 600,
+                color: "text.secondary",
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
+            </Typography>
+          </Stack>
+          <Box
+            sx={{
+              height: 4,
+              borderRadius: "2px",
+              bgcolor: skip.soft,
+              mt: 1.25,
+              overflow: "hidden",
+            }}
+          >
+            <Box
+              sx={{
+                height: "100%",
+                borderRadius: "2px",
+                bgcolor: INSPIRE,
+                transition: "width 0.35s ease",
+                width: total === 0 ? "0%" : `${(statusedCount / total) * 100}%`,
+              }}
+            />
+          </Box>
+        </Box>
+      </Box>
+
+      {wide ? (
+        /* desk (the words screen's md+ pattern): 1180px centred grid — the
+           note queue as a scrollable list pane on the inline-start side, the
+           card stack in a panel-chromed detail pane. Grid column order follows
+           the document direction, so this is RTL-safe as-is. */
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            maxWidth: 1180,
+            mx: "auto",
+            display: "grid",
+            gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",
+            gap: 2.5,
+            paddingInline: 2,
+            paddingBlockStart: 1.5,
+            paddingBlockEnd: 2,
+          }}
+        >
+          {/* list pane */}
+          <Box
+            sx={{
+              minHeight: 0,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 1.25,
+              paddingInline: 0.25,
+              paddingBlockEnd: 2,
+            }}
+          >
+            {total === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
+                No translation notes in {book} {chapter}.
+              </Typography>
+            ) : (
+              queueIds.map(listRow)
+            )}
+          </Box>
+          {/* detail pane */}
+          <Box
+            sx={{
+              minHeight: 0,
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "14px",
+              overflow: "hidden",
+            }}
+          >
+            <Box
+              sx={{
+                height: "100%",
+                minHeight: 0,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <Box
+                sx={{
+                  width: "100%",
+                  flex: "none",
+                  paddingInline: 2.5,
+                  paddingBlockStart: 2,
+                  paddingBlockEnd: 2,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1.5,
+                }}
+              >
+                {detailBody}
+              </Box>
+              {actionBar}
+            </Box>
+          </Box>
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            maxWidth: COLUMN_PX,
+            mx: "auto",
+            paddingInline: 2,
+            paddingBlockStart: 2,
+            // room for the fixed action bar
+            paddingBlockEnd: done ? 4 : 15,
+            display: "flex",
+            flexDirection: "column",
+            gap: 1.5,
+          }}
+        >
+          {detailBody}
+        </Box>
       )}
+      {!wide && actionBar}
 
       <Snackbar
         open={toast !== null}
