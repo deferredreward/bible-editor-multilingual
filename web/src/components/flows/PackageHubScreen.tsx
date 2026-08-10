@@ -4,9 +4,36 @@
 // PackageHubScreen — the book-package navigation hub at #/package/{book}.
 // This screen REPLACES the FlowNav pill bar: it is where a translator lands
 // after picking a book, and the "Back to {book} package" chevron on every
-// work screen points here. It renders no FlowNav, no tabs, no pills — one
-// centred column of tappable rows, in the visual language TranslateNotesScreen
-// calibrated (same COLUMN_PX, topbar, card tokens, back chevron).
+// work screen points here. It renders no FlowNav, no tabs, no pills — tappable
+// surface rows in the visual language TranslateNotesScreen calibrated (same
+// COLUMN_PX, topbar, card tokens, back chevron).
+//
+// ── 2026-08-10 responsive layouts + Alignment surface (Benjamin) ────────────
+//
+//   * Phone (<900px): unchanged — one centred COLUMN_PX column of stacked rows.
+//   * md+ (>=900px, the same breakpoint TranslateWordsScreen/ArticlesScreen
+//     use): the hub is navigation, not master-detail, so instead of a
+//     list/detail desk the SAME surface cards flow into a responsive grid —
+//     the design system's grid-3 idiom (docs/mockups/desktop-first/_design.css
+//     .grid-3): repeat(auto-fit, minmax(320px, 1fr)) inside a 1180px centred
+//     container. Section headers span the full grid width; each surface card
+//     keeps its tallies and expands its chapter list inline inside its own
+//     grid cell (alignItems start, so an open card never stretches its row
+//     siblings; at md+ a long chapter list scrolls within the cell instead of
+//     growing unbounded). No new chrome beyond that. Desktop >=1200px follows
+//     the same rule — auto-fit adds columns as the 1180px desk allows.
+//   * New Alignment surface, chapter-scoped like notes/questions, linking to
+//     #/alignment/{book}/{ch} — TranslateAlignScreen's route contract (built
+//     in a sibling 2026-08-10 slice; the hash is dead until that route lands
+//     in App.tsx parseHash). It clones the Scripture surface's pattern
+//     exactly: inline chapter expansion, a chapter with 0 verses disabled.
+//     Chapter rows show the BookSummary verses count — alignment is
+//     verse-scoped work and NO alignment-specific progress count exists on
+//     any endpoint, so none is invented; the surface sub-line is descriptive
+//     only.
+//   * RTL: logical properties only (paddingInline / insetBlockStart /
+//     marginBlockStart / textAlign start), and grid column order follows the
+//     document direction, so the md+ layout flips for free.
 //
 // What it shows, and the evidence for every number:
 //
@@ -33,14 +60,15 @@
 //     labelling an occurrence count as if it tallied that list would mislead,
 //     and fetching two article lists just for a tally isn't worth it.
 //
-// Chapter selection: Scripture, Notes and Questions are chapter-scoped
-// (#/scripture/{book}/{ch}, #/notes/{book}/{ch}, #/questions/{book}/{ch} —
-// App.tsx parseHash:123-155), so tapping one of those rows expands an inline
-// chapter list (one open at a time); tapping a chapter navigates. Words &
-// Articles is book-scoped (#/words/{book}) and navigates directly — the two
-// groups are labelled so the asymmetry reads as intentional. A chapter with
-// zero notes/questions renders disabled with an honest "No notes" sub rather
-// than linking to an empty queue.
+// Chapter selection: Scripture, Notes, Questions and Alignment are
+// chapter-scoped (#/scripture/{book}/{ch}, #/notes/{book}/{ch},
+// #/questions/{book}/{ch} — App.tsx parseHash:123-155 — plus
+// #/alignment/{book}/{ch} per the route contract above), so tapping one of
+// those rows expands an inline chapter list (one open at a time); tapping a
+// chapter navigates. Words & Articles is book-scoped (#/words/{book}) and
+// navigates directly — the two groups are labelled so the asymmetry reads as
+// intentional. A chapter with zero notes/questions/verses renders disabled
+// with an honest "No notes" sub rather than linking to an empty queue.
 //
 // Back chevron → #/home (mirrors TranslateNotesScreen:632-638). Data comes
 // from the same one-column plumbing: useBook for the summary, useProjectConfig
@@ -57,6 +85,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 
@@ -72,12 +101,14 @@ export interface PackageHubScreenProps extends FlowScreenContext {
 // Same one-column reading measure as TranslateNotesScreen (its line 98).
 const COLUMN_PX = 480;
 
-// The three chapter-scoped surfaces expand in place; words navigates directly.
-type ExpandableSurface = "scripture" | "notes" | "questions";
+// The four chapter-scoped surfaces expand in place; words navigates directly.
+type ExpandableSurface = "scripture" | "notes" | "questions" | "alignment";
 
 export default function PackageHubScreen({ book }: PackageHubScreenProps) {
   const theme = useTheme();
   const { skip } = theme.palette.flows;
+  // md+ (>=900px): the surface cards flow into the grid-3 desk (file header).
+  const wide = useMediaQuery(theme.breakpoints.up("md"));
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
@@ -131,6 +162,17 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
     gap: 1,
     marginBlockStart: 1.25,
     marginInline: 0.25,
+    // At md+ the container is a grid — headers span every column.
+    ...(wide ? { gridColumn: "1 / -1" } : {}),
+  };
+
+  // One grid cell at md+ (a surface row plus its inline chapter list); at
+  // phone widths the wrapper is inert — same stacking, same 1.25 gap.
+  const cellSx = {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 1.25,
+    minWidth: 0,
   };
 
   const sectionTitleSx = {
@@ -210,7 +252,16 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
     href: (chapter: number) => string;
   }) {
     return (
-      <Stack spacing={0.75} sx={{ paddingInlineStart: 2, paddingBlockStart: 0.75 }}>
+      <Stack
+        spacing={0.75}
+        sx={{
+          paddingInlineStart: 2,
+          paddingBlockStart: 0.75,
+          // At md+ the list lives inside one grid cell — a long book scrolls
+          // within the cell instead of growing it unbounded.
+          ...(wide ? { maxHeight: 420, overflowY: "auto" } : {}),
+        }}
+      >
         {realChapters.map((c) => {
           const n = countOf(c);
           const empty = n === 0;
@@ -269,7 +320,7 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label={`Leave ${name} package`}
@@ -310,22 +361,34 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
 
       <Box
         sx={{
-          maxWidth: COLUMN_PX,
+          maxWidth: wide ? 1180 : COLUMN_PX,
           mx: "auto",
           paddingInline: 2,
-          paddingBlockStart: 1,
+          paddingBlockStart: wide ? 1.5 : 1,
           paddingBlockEnd: 4,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.25,
+          ...(wide
+            ? {
+                // grid-3 idiom (_design.css): panel cards, as many columns as
+                // the 1180px desk fits. alignItems start keeps an expanded
+                // card from stretching its row siblings.
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                gap: 2,
+                alignItems: "start",
+              }
+            : { display: "flex", flexDirection: "column", gap: 1.25 }),
         }}
       >
         {summaryStatus === "error" ? (
-          <Alert severity="error" sx={{ mt: 1 }}>
+          <Alert severity="error" sx={{ mt: 1, ...(wide ? { gridColumn: "1 / -1" } : {}) }}>
             Could not load {name}.
           </Alert>
         ) : summaryStatus !== "ready" ? (
-          <Stack alignItems="center" justifyContent="center" sx={{ paddingBlock: 8 }}>
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            sx={{ paddingBlock: 8, ...(wide ? { gridColumn: "1 / -1" } : {}) }}
+          >
             <CircularProgress />
           </Stack>
         ) : (
@@ -336,52 +399,78 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
               </Typography>
             </Box>
 
-            <SurfaceRow
-              title="Scripture"
-              subText={`${totals.chapters} ${totals.chapters === 1 ? "chapter" : "chapters"} · ${totals.verses} verses`}
-              expandable
-              expanded={open === "scripture"}
-              onClick={() => toggle("scripture")}
-            />
-            {open === "scripture" && (
-              <ChapterList
-                countOf={(c) => c.verses}
-                unit="verses"
-                href={(ch) => `#/scripture/${book}/${ch}`}
+            <Box sx={cellSx}>
+              <SurfaceRow
+                title="Scripture"
+                subText={`${totals.chapters} ${totals.chapters === 1 ? "chapter" : "chapters"} · ${totals.verses} verses`}
+                expandable
+                expanded={open === "scripture"}
+                onClick={() => toggle("scripture")}
               />
-            )}
+              {open === "scripture" && (
+                <ChapterList
+                  countOf={(c) => c.verses}
+                  unit="verses"
+                  href={(ch) => `#/scripture/${book}/${ch}`}
+                />
+              )}
+            </Box>
 
-            <SurfaceRow
-              title="Notes"
-              subText={totals.tn === 0 ? `No notes in ${name}` : `${totals.tn} notes`}
-              expandable
-              expanded={open === "notes"}
-              disabled={totals.tn === 0}
-              onClick={() => toggle("notes")}
-            />
-            {open === "notes" && (
-              <ChapterList
-                countOf={(c) => c.tn}
-                unit="notes"
-                href={(ch) => `#/notes/${book}/${ch}`}
+            <Box sx={cellSx}>
+              <SurfaceRow
+                title="Notes"
+                subText={totals.tn === 0 ? `No notes in ${name}` : `${totals.tn} notes`}
+                expandable
+                expanded={open === "notes"}
+                disabled={totals.tn === 0}
+                onClick={() => toggle("notes")}
               />
-            )}
+              {open === "notes" && (
+                <ChapterList
+                  countOf={(c) => c.tn}
+                  unit="notes"
+                  href={(ch) => `#/notes/${book}/${ch}`}
+                />
+              )}
+            </Box>
 
-            <SurfaceRow
-              title="Questions"
-              subText={totals.tq === 0 ? `No questions in ${name}` : `${totals.tq} questions`}
-              expandable
-              expanded={open === "questions"}
-              disabled={totals.tq === 0}
-              onClick={() => toggle("questions")}
-            />
-            {open === "questions" && (
-              <ChapterList
-                countOf={(c) => c.tq}
-                unit="questions"
-                href={(ch) => `#/questions/${book}/${ch}`}
+            <Box sx={cellSx}>
+              <SurfaceRow
+                title="Questions"
+                subText={totals.tq === 0 ? `No questions in ${name}` : `${totals.tq} questions`}
+                expandable
+                expanded={open === "questions"}
+                disabled={totals.tq === 0}
+                onClick={() => toggle("questions")}
               />
-            )}
+              {open === "questions" && (
+                <ChapterList
+                  countOf={(c) => c.tq}
+                  unit="questions"
+                  href={(ch) => `#/questions/${book}/${ch}`}
+                />
+              )}
+            </Box>
+
+            {/* Verse counts, not alignment progress — no alignment-specific
+                count exists on any endpoint (file header), so the sub stays
+                descriptive and chapter rows reuse BookSummary.verses. */}
+            <Box sx={cellSx}>
+              <SurfaceRow
+                title="Alignment"
+                subText="Connect translated words to the source text"
+                expandable
+                expanded={open === "alignment"}
+                onClick={() => toggle("alignment")}
+              />
+              {open === "alignment" && (
+                <ChapterList
+                  countOf={(c) => c.verses}
+                  unit="verses"
+                  href={(ch) => `#/alignment/${book}/${ch}`}
+                />
+              )}
+            </Box>
 
             <Box sx={sectionHeadSx}>
               <Typography component="h2" sx={sectionTitleSx}>
@@ -389,13 +478,15 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
               </Typography>
             </Box>
 
-            <SurfaceRow
-              title="Words & Articles"
-              subText="Key terms and academy articles"
-              onClick={() => {
-                location.hash = `#/words/${book}`;
-              }}
-            />
+            <Box sx={cellSx}>
+              <SurfaceRow
+                title="Words & Articles"
+                subText="Key terms and academy articles"
+                onClick={() => {
+                  location.hash = `#/words/${book}`;
+                }}
+              />
+            </Box>
           </>
         )}
       </Box>
