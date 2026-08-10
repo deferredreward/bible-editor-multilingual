@@ -70,21 +70,15 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} نوٹس · {{words}} الفاظ · {{questions}} سوالات",
     "readingTextSize": "پڑھنے کے متن کا حجم",
-    "readingTextSizeTooltip": "پڑھنے کے متن کا حجم",
-    "adjustReadingTextSize": "پڑھنے کے متن کا حجم ایڈجسٹ کریں",
     "decreaseReadingTextSize": "پڑھنے کے متن کا حجم کم کریں",
     "increaseReadingTextSize": "پڑھنے کے متن کا حجم بڑھائیں",
-    "smaller": "چھوٹا",
-    "larger": "بڑا",
-    "resetTo100": "100% پر ری سیٹ کریں",
     "switchToLight": "روشن موڈ پر جائیں",
     "switchToDark": "تاریک موڈ پر جائیں",
     "toggleColorMode": "رنگ موڈ تبدیل کریں",
     "uiLanguage": "انٹرفیس زبان",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     }
   },
   "translation": {
@@ -228,9 +222,7 @@
     "discardConfirmBody": "یہ ترامیم کبھی سرور تک نہیں پہنچیں۔ رد کرنے سے یہ اس آلے سے مستقل طور پر حذف ہو جاتی ہیں — انہیں بحال نہیں کیا جا سکتا۔",
     "cancel": "منسوخ کریں",
     "updateAvailableTooltip": "ایک نیا ورژن تعینات کیا گیا ہے۔ دوبارہ لوڈ کر کے تازہ ترین اصلاحات حاصل کرنے کے لیے کلک کریں۔",
-    "updateAvailable": "ایپ اپ ڈیٹ دستیاب ہے — ریفریش کریں",
-    "buildSha": "بلڈ {{commit}}",
-    "onLatestVersion": "آپ اپنے لوڈ کردہ تازہ ترین ورژن پر ہیں۔"
+    "updateAvailable": "ایپ اپ ڈیٹ دستیاب ہے — ریفریش کریں"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -572,8 +564,6 @@
     "attrPeople_other": "{{count}} لوگ"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "یہ آیت Logos میں کھولیں",
     "autoFollow": "خودکار پیروی",
     "autoFollowTooltip": "Logos میں فعال آیت کی خودکار پیروی کریں (ہر تبدیلی پر فوکس چھین لیتا ہے)",
@@ -833,7 +823,6 @@
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -851,24 +840,6 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
-    "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneTitle": "You're all set"
   }
 }
