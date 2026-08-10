@@ -12,6 +12,7 @@
  * sees real source text rather than a bare key.
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,7 +42,9 @@ function basesOf(flat, knownPluralBases) {
       if (!bySuffix.has(b)) bySuffix.set(b, new Set());
       bySuffix.get(b).add(m[1]);
     }
-    pluralBases = new Set([...bySuffix].filter(([, s]) => s.size >= 2).map(([b]) => b));
+    // Must match check-i18n.mjs / i18n-apply.mjs: a real en plural family ships
+    // both `_one` and `_other`.
+    pluralBases = new Set([...bySuffix].filter(([, s]) => s.has("one") && s.has("other")).map(([b]) => b));
   }
   const bases = new Set();
   const cats = new Map();
@@ -66,7 +69,9 @@ if (!locale) {
   console.error("usage: node scripts/i18n-extract-missing.mjs <locale> [outFile]");
   process.exit(2);
 }
-const outFile = process.argv[3] || join(LOCALES_DIR, `..`, `${locale}.missing.json`);
+// Default OUTSIDE the repo. The previous default wrote into web/src/i18n/,
+// which is shipped source and isn't gitignored — easy to commit by accident.
+const outFile = process.argv[3] || join(tmpdir(), `${locale}.missing.json`);
 
 const enFlat = flatten(JSON.parse(readFileSync(join(LOCALES_DIR, "en.json"), "utf8")));
 const en = basesOf(enFlat);

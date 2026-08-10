@@ -15,7 +15,7 @@
     "build:api": "npm --workspace api run build",
     "build:web": "npm --workspace web run build",
     "check:i18n": "node scripts/check-i18n.mjs",
-  "typecheck": "npm-run-all --parallel typecheck:api typecheck:web",
+    "typecheck": "npm-run-all --parallel typecheck:api typecheck:web",
     "typecheck:api": "npm --workspace api run typecheck",
     "typecheck:web": "npm --workspace web run typecheck",
     "deploy": "npm-run-all build:web deploy:api",

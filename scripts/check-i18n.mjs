@@ -15,11 +15,11 @@
  * `foo_few` / `foo_many`. Any of those satisfies the base key `foo`.
  *
  * en.json is the single authority on what is plural: a base is plural iff en
- * provides >=2 distinct CLDR suffixes for it (en always ships _one + _other for
- * a real plural). Locales collapse their suffixed keys against en's plural-base
+ * provides BOTH `_one` and `_other` — exactly the two categories CLDR defines
+ * for English. Locales collapse their suffixed keys against en's plural-base
  * set, never their own — so a locale that ships only `_other` (id/th) still
- * satisfies the base, and a lone key that merely ends in a plural word (e.g. a
- * future "phase_one") is never misread as a plural.
+ * satisfies the base, and ordinary keys that merely end in plural words (e.g.
+ * "step_one" beside "step_two") are never misread as one plural base.
  *
  * Also runs a code -> en ORPHAN scan: every `ns.key` literal referenced in the
  * web/src TS/TSX (whether via t("...") or a const map) must exist in en.json,
@@ -32,11 +32,18 @@
  * string into all 13 languages is not a reasonable ask of every PR. So
  * web/src/i18n/coverage.json splits locales into two tiers:
  *
- *   gated    — must be complete. Any missing key or plural category FAILS, and
- *              so does any value left byte-identical to English (key presence
- *              alone would let a copy of en.json pass as "complete"). Keys whose
- *              English form is correct in that language — symbols, brand names,
- *              resource codes — are allow-listed in coverage.json.
+ *   gated    — must be complete, and its VALUES are checked, not just its keys.
+ *              Fails on: a missing key or plural category; a value that isn't a
+ *              non-empty string (null/number/array/""/"   " all used to pass as
+ *              "present" and render nothing); a value still equal to English
+ *              (compared trimmed — a trailing space used to defeat it); and a
+ *              translation that drops an interpolation placeholder. Plural
+ *              variants en doesn't carry (Arabic _zero/_two/_few/_many) are
+ *              value-checked against en's _other, because i18n-extract-missing
+ *              seeds those categories WITH English text — so an untranslated
+ *              extract->apply round trip would otherwise pass silently.
+ *              Keys whose English form is correct in that language — symbols,
+ *              brand names, resource codes — are allow-listed in coverage.json.
  *              These are the languages we actually ship to a client.
  *   baseline — every other locale. coverage.json records what it currently HAS
  *              translated; losing any of that FAILS. Adding a new en string
@@ -69,6 +76,25 @@ const UPDATE_BASELINE = process.argv.includes("--update-baseline");
 
 const PLURAL_SUFFIXES = ["zero", "one", "two", "few", "many", "other"];
 const PLURAL_RE = new RegExp(`_(${PLURAL_SUFFIXES.join("|")})$`);
+const PLACEHOLDER_RE = /\{\{\s*[A-Za-z0-9_]+\s*\}\}/g;
+
+/** en plural families missing `_one` or `_other` — reported, never fatal. */
+const enPluralWarnings = [];
+
+/**
+ * Is a locale value the same text as English, ignoring surrounding whitespace?
+ *
+ * Byte-equality alone was trivially defeated: a single trailing space on an
+ * otherwise-English value passed the "not still English" check.
+ */
+function sameText(a, b) {
+  return typeof a === "string" && typeof b === "string" && a.trim() === b.trim();
+}
+
+/** Placeholders a string interpolates, as a sorted list (duplicates collapsed). */
+function placeholders(s) {
+  return [...new Set((String(s).match(PLACEHOLDER_RE) || []).map((p) => p.replace(/\s+/g, "")))].sort();
+}
 
 /** Flatten a nested translation object to a map of dotted-key -> string. */
 function flatten(obj, prefix = "", out = new Map()) {
@@ -102,9 +128,25 @@ function analyze(flat, knownPluralBases) {
       if (!bySuffixBase.has(base)) bySuffixBase.set(base, new Set());
       bySuffixBase.get(base).add(m[1]);
     }
+    // A real en plural family ships BOTH `_one` and `_other` — those are exactly
+    // the two categories CLDR defines for English. Requiring both (rather than
+    // "any 2 suffixes") stops two ordinary keys that happen to end in plural
+    // words from being misread as one plural base: `setup.step_one` +
+    // `setup.step_two` is a plausible wizard naming, and under the old rule it
+    // invented a `setup.step` plural base and demanded `_few`/`_many`/... of
+    // every gated locale — an unfixable false failure.
     pluralBases = new Set();
     for (const [base, suffixes] of bySuffixBase) {
-      if (suffixes.size >= 2) pluralBases.add(base);
+      if (suffixes.has("one") && suffixes.has("other")) pluralBases.add(base);
+    }
+    // A partial family is an en authoring bug: i18next asks Intl.PluralRules for
+    // a category, and if en never defined `_other` there is nothing to fall back
+    // to. Warn rather than fail — the key may just be named unluckily.
+    for (const [base, suffixes] of bySuffixBase) {
+      if (pluralBases.has(base)) continue;
+      if (suffixes.has("one") !== suffixes.has("other")) {
+        enPluralWarnings.push(`${base} [has ${[...suffixes].sort().join(", ")}]`);
+      }
     }
   }
 
@@ -127,7 +169,21 @@ function analyze(flat, knownPluralBases) {
 }
 
 function load(file) {
-  return JSON.parse(readFileSync(join(LOCALES_DIR, file), "utf8"));
+  const path = join(LOCALES_DIR, file);
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (e) {
+    console.error(`✗ ${file} — cannot be read: ${e.message}`);
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    // A raw JSON.parse stack trace in CI is a poor error for a trailing comma.
+    console.error(`✗ ${file} — is not valid JSON: ${e.message}`);
+    process.exit(1);
+  }
 }
 
 /** Render a coverage id for humans: `a.b` stays, `a.b#few` becomes `a.b [few]`. */
@@ -149,6 +205,10 @@ const localeFiles = readdirSync(LOCALES_DIR)
   .sort();
 
 let failed = false;
+// `hardFailed` excludes baseline-tier regressions, which --update-baseline is
+// meant to forgive. A gated failure, a stale key, or a code orphan is never
+// forgiven by rewriting the baseline.
+let hardFailed = false;
 const nextBaseline = {};
 console.log(`i18n check — source ${SOURCE} (${en.bases.size} base keys, ${en.pluralBases.size} plural)`);
 console.log(`gated locales (must be complete): ${[...gated].sort().join(", ") || "(none)"}\n`);
@@ -202,26 +262,74 @@ for (const file of localeFiles) {
     // listed in coverage.json's sameAsEnglish allow-list.
     const locFlatRaw = flatten(load(file));
     const untranslated = [];
+    const badValues = [];
+    const placeholderLoss = [];
     for (const [k, v] of locFlatRaw) {
-      if (typeof v !== "string" || !enFlat.has(k)) continue;
-      if (enFlat.get(k) !== v) continue;
-      if (sameAsEnglishOk.has(k)) continue;
-      untranslated.push(k);
+      // Every value in a gated locale must be usable text. A null, a number, an
+      // array, an empty string or a whitespace-only string all used to satisfy
+      // "the key is present" and render as nothing (or as a bare number) in the
+      // UI while CI reported the locale complete.
+      if (typeof v !== "string" || !v.trim()) {
+        badValues.push(`${k} = ${JSON.stringify(v)}`);
+        continue;
+      }
+
+      // The English text to compare against. For a plural variant en does not
+      // carry (Arabic's _zero/_two/_few/_many), fall back to en's _other/_one
+      // for that base — otherwise those categories were never value-checked at
+      // all, and i18n-extract-missing.mjs seeds them WITH English source text,
+      // so an untranslated extract→apply round trip passed the gate silently.
+      let enText = enFlat.get(k);
+      if (enText === undefined) {
+        const m = k.match(PLURAL_RE);
+        const base = m ? k.slice(0, -(m[1].length + 1)) : null;
+        if (base && en.pluralBases.has(base)) {
+          enText = enFlat.get(`${base}_other`) ?? enFlat.get(`${base}_one`);
+        }
+      }
+      if (enText === undefined) continue; // stale key; reported separately
+
+      if (!sameAsEnglishOk.has(k) && sameText(enText, v)) {
+        untranslated.push(k);
+        continue;
+      }
+
+      // A translation that drops {{count}} or {{book}} renders a sentence with a
+      // hole in it. Arabic legitimately omits {{count}} in _zero/_one/_two,
+      // where the number is carried by the wording itself.
+      const dropped = placeholders(enText).filter((p) => !placeholders(v).includes(p));
+      const countOnly = dropped.length === 1 && dropped[0] === "{{count}}";
+      const smallCountForm = /_(zero|one|two)$/.test(k);
+      if (dropped.length && !(countOnly && smallCountForm)) {
+        placeholderLoss.push(`${k} — missing ${dropped.join(", ")}`);
+      }
     }
     untranslated.sort();
+    badValues.sort();
+    placeholderLoss.sort();
 
-    const ok = !gaps.length && !stale.length && !untranslated.length;
+    const ok =
+      !gaps.length && !stale.length && !untranslated.length && !badValues.length && !placeholderLoss.length;
     if (ok) {
       console.log(`✓ ${code} — GATED, complete (plural cats: ${requiredCats.join("/")})`);
       continue;
     }
     failed = true;
+    hardFailed = true;
     console.log(`✗ ${code} — GATED and INCOMPLETE`);
+    if (badValues.length) {
+      console.log(`   UNUSABLE VALUES — must be a non-empty string (${badValues.length}):`);
+      for (const b of badValues) console.log(`     - ${b}`);
+    }
     if (untranslated.length) {
       console.log(`   UNTRANSLATED — value identical to English (${untranslated.length}):`);
-      for (const k of untranslated) console.log(`     - ${k} = ${JSON.stringify(enFlat.get(k))}`);
+      for (const k of untranslated) console.log(`     - ${k} = ${JSON.stringify(locFlatRaw.get(k))}`);
       console.log(`   → translate these, or add the key to "sameAsEnglish" in coverage.json`);
       console.log(`     if the English form is correct in this language (symbol, brand, code).`);
+    }
+    if (placeholderLoss.length) {
+      console.log(`   PLACEHOLDER LOSS — interpolation dropped (${placeholderLoss.length}):`);
+      for (const p of placeholderLoss) console.log(`     - ${p}`);
     }
     if (missing.length) {
       console.log(`   MISSING (${missing.length}):`);
@@ -241,22 +349,45 @@ for (const file of localeFiles) {
 
     if (lost.length) {
       failed = true;
-      console.log(`✗ ${code} — LOST ${lost.length} existing translation(s):`);
+      console.log(`✗ ${code} — LOST ${lost.length} key(s) this locale previously had:`);
       for (const g of lost) console.log(`     - ${fmtGap(g)}`);
-      console.log(`   → restore these, or run --update-baseline if the en key was deliberately removed.`);
+      console.log(`   → restore these. If the en key was deliberately renamed or removed,`);
+      console.log(`     delete it from every locale too, then run --update-baseline.`);
     } else {
-      const note = gained.length ? `, +${gained.length} newly translated — run --update-baseline` : "";
-      console.log(`· ${code} — ${covered.length}/${en.bases.size} translated, ${gaps.length} known gap(s)${note}`);
+      // "present", not "translated" — for a baseline locale this counts keys
+      // that resolve, and says nothing about whether the value is in the target
+      // language. Many are still English. Only gated locales are value-checked.
+      const note = gained.length ? `, +${gained.length} newly filled — run --update-baseline` : "";
+      console.log(`· ${code} — ${covered.length}/${en.bases.size} keys present, ${gaps.length} known gap(s)${note}`);
     }
   }
 
   if (stale.length) {
     failed = true;
+    hardFailed = true;
     console.log(`✗ ${code} — STALE, not in ${SOURCE} (${stale.length}) — delete these:`);
     for (const k of stale) console.log(`     - ${k}`);
   }
 }
 console.log("");
+
+// A baseline entry for a locale file that no longer exists is dead weight and
+// would silently mask a deleted locale. Report it; don't fail on it.
+const localeCodes = new Set(localeFiles.map((f) => f.replace(/\.json$/, "")));
+const orphanBaselines = Object.keys(baseline).filter((c) => !localeCodes.has(c));
+if (orphanBaselines.length) {
+  console.log(`! coverage.json has baseline entries for missing locales: ${orphanBaselines.join(", ")}`);
+  console.log(`  → run --update-baseline to drop them.\n`);
+}
+
+// en authoring smells: a plural family with `_one` but no `_other` (or vice
+// versa) can't be resolved for every count. Not fatal — the key may simply be
+// named unluckily — but worth surfacing once.
+if (enPluralWarnings.length) {
+  console.log(`! ${SOURCE} has ${enPluralWarnings.length} incomplete plural family(ies):`);
+  for (const w of enPluralWarnings) console.log(`     - ${w}`);
+  console.log(`  → a real plural needs both _one and _other in ${SOURCE}; otherwise rename the key.\n`);
+}
 
 // ── code -> en orphan scan ────────────────────────────────────────────────
 // Every static key passed to t("...") in the web/src TS/TSX must exist in
@@ -297,6 +428,7 @@ for (const filePath of walk(WEB_SRC_DIR)) {
 
 if (orphans.size) {
   failed = true;
+  hardFailed = true;
   console.log(`✗ code — ${orphans.size} ORPHAN key(s) referenced but not in ${SOURCE}:`);
   for (const [key, where] of [...orphans].sort()) {
     console.log(`     - ${key}  (${where})`);
@@ -313,9 +445,16 @@ if (UPDATE_BASELINE) {
   writeFileSync(COVERAGE_FILE, JSON.stringify(coverage, null, 2) + "\n", "utf8");
   const total = Object.values(nextBaseline).reduce((n, a) => n + a.length, 0);
   console.log(
-    `baseline updated — ${total} protected translations recorded across ${Object.keys(nextBaseline).length} locales.`,
+    `baseline updated — ${total} protected keys recorded across ${Object.keys(nextBaseline).length} locales.`,
   );
-  process.exit(orphans.size ? 1 : 0);
+  // Rewriting the baseline forgives baseline-tier regressions — that is the
+  // point of the flag. It does NOT forgive a broken gated locale, a stale key,
+  // or a code orphan, so those must still set a non-zero exit.
+  if (failed) {
+    console.error("\ni18n check FAILED — baseline rewritten, but real failures remain (see above).");
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 if (failed) {

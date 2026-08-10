@@ -105,7 +105,12 @@ function hasNonLatinLetter(s) {
   return typeof s === "string" && /\p{L}/u.test(s) && /[^\p{Script=Latin}\P{L}]/u.test(s);
 }
 
-/** Plural bases of en: a base with >=2 distinct CLDR suffixes. */
+/**
+ * Plural bases of en: a base carrying BOTH `_one` and `_other`, the two
+ * categories CLDR defines for English. Must stay identical to the rule in
+ * check-i18n.mjs — if the two scripts disagree about what is plural, this one
+ * writes files the checker then rejects.
+ */
 function enPluralBases(enFlat) {
   const bySuffix = new Map();
   for (const k of enFlat.keys()) {
@@ -115,7 +120,7 @@ function enPluralBases(enFlat) {
     if (!bySuffix.has(b)) bySuffix.set(b, new Set());
     bySuffix.get(b).add(m[1]);
   }
-  return new Set([...bySuffix].filter(([, s]) => s.size >= 2).map(([b]) => b));
+  return new Set([...bySuffix].filter(([, s]) => s.has("one") && s.has("other")).map(([b]) => b));
 }
 
 const locale = process.argv[2];
@@ -129,6 +134,16 @@ const localePath = join(LOCALES_DIR, `${locale}.json`);
 const enFlat = flatten(JSON.parse(readFileSync(join(LOCALES_DIR, "en.json"), "utf8")));
 const pluralBases = enPluralBases(enFlat);
 const locFlat = flatten(JSON.parse(readFileSync(localePath, "utf8")));
+
+const coverage = JSON.parse(readFileSync(join(LOCALES_DIR, "..", "coverage.json"), "utf8"));
+const sameAsEnglishOk = new Set(coverage.sameAsEnglish ?? []);
+
+/** Does en.json define this key, directly or as a CLDR variant of a plural base? */
+function isKnownKey(k) {
+  if (enFlat.has(k)) return true;
+  const m = k.match(PLURAL_RE);
+  return !!m && pluralBases.has(k.slice(0, -(m[1].length + 1)));
+}
 
 const OVERWRITE = rest.includes("--overwrite");
 const inputFiles = rest.filter((a) => !a.startsWith("--"));
@@ -159,6 +174,13 @@ if (rest.includes("--prune-stale")) {
         skipped++;
         continue;
       }
+      // A key en.json doesn't define can only become a STALE key that fails CI
+      // later, far from the typo that caused it. Reject it here instead.
+      if (!isKnownKey(k)) {
+        console.warn(`  ! ${k}: not a key in en.json, skipped (typo?)`);
+        skipped++;
+        continue;
+      }
       if (locFlat.has(k)) {
         if (!OVERWRITE) {
           console.warn(`  = ${k}: already present, kept existing`);
@@ -173,6 +195,15 @@ if (rest.includes("--prune-stale")) {
         // NB: the ASCII test only discriminates for non-Latin-script targets.
         // For a Latin-script locale (es/fr/pt) only the exact-match arm applies,
         // so a real translation is still never clobbered.
+        // Allow-listed keys are *meant* to stay in English (brands, codes,
+        // symbols). They look exactly like untranslated text to the heuristic
+        // below, so --overwrite would silently replace them and the gate — which
+        // only checks "differs from en" — would never notice.
+        if (sameAsEnglishOk.has(k)) {
+          console.warn(`  = ${k}: allow-listed as same-as-English, not overwritten`);
+          skipped++;
+          continue;
+        }
         const existing = locFlat.get(k).value;
         const sameAsEn = enFlat.has(k) && existing === enFlat.get(k).value;
         const staleSourceText =

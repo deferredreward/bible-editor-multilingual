@@ -33,6 +33,39 @@ gained a rule so it can never happen silently again.
 
 `ar.json` is now genuinely fully Arabic. **It still has had no native review.**
 
+## Third pass — independent review hardening
+
+A cold review agent found, and CONFIRMED by running, that the gate could be
+defeated. All fixed and re-tested:
+
+- A gated locale value of `null`, a number, `[]`, `""` or `"   "` passed as
+  "complete" and rendered nothing. Now must be a non-empty string.
+- A trailing space defeated the not-still-English check (byte equality). Now
+  compared trimmed.
+- Arabic's `_zero/_two/_few/_many` were never value-checked (en has no such
+  keys), and `i18n-extract-missing` *seeds* them with English — so an
+  untranslated extract→apply round trip passed silently. Now compared against
+  en's `_other`. This was the worst one: `_few` covers counts 3–10.
+- `--update-baseline` exited 0 even with a broken gated locale / stale key /
+  orphan. Now only baseline-tier regressions are forgiven (`hardFailed`).
+- `i18n-apply --overwrite` clobbered `sameAsEnglish` allow-listed values (they
+  look exactly like untranslated text), and accepted keys absent from en.json,
+  creating future STALE failures. Both now refused.
+- Two ordinary keys ending in plural words (`step_one` + `step_two`) invented a
+  phantom plural base and caused an **unfixable false failure**. An en plural
+  family now requires both `_one` and `_other`. All three scripts share the rule
+  — keep them in sync or apply writes files the checker rejects.
+- Placeholder parity is now checked for gated locales (`{{count}}` may be
+  dropped in `_zero/_one/_two`, which Arabic legitimately does).
+- `i18n-extract-missing` defaulted its output into `web/src/i18n/` (shipped,
+  not gitignored). Now defaults to the OS temp dir.
+
+Known and accepted: `sameAsEnglish` is global across gated locales (only `ar` is
+gated, so it doesn't bite yet); the orphan scan can't see dynamic
+``t(`ns.${x}`)`` call sites (~20 exist); baseline tracks key presence, not
+translation quality — the output now says "keys present" rather than
+"translated".
+
 ## Gotchas found (worth not rediscovering)
 
 - **"Untranslated" can't be tested with a pure-ASCII check.** An em dash or arrow in
