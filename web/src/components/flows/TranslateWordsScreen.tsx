@@ -13,6 +13,30 @@
 // chrome (no populate / add-by-id / search rail — those live on ArticlesScreen
 // and ArticleWorkspace), no FlowNav, hash nav + back-chevrons only.
 //
+// ── 2026-08-10 list restructure + responsive layouts (Benjamin) ─────────────
+//
+//   * "Separate the words from the articles": the list now has two top-level
+//     parts — Words and Academy articles — instead of the old flat
+//     "Key terms" / "Academy articles" pair (which mislabelled all tW terms
+//     as key terms).
+//   * "The words into key terms, names, and other as collapsible": within
+//     Words, three collapsible groups keyed on the tw category already in the
+//     id (kt → Key terms, names → Names, other → Other). Key terms opens by
+//     default; Names and Other start collapsed. The Academy articles section
+//     header uses the same collapsible pattern for consistency (open by
+//     default). Open/closed state is component state — session-local, not
+//     persisted. Each header shows its count and approved tally.
+//   * "Tablet and desktop layouts": below md (900px, the same breakpoint
+//     ArticlesScreen uses) nothing changed — single centred column, list ⇄
+//     detail as swapped views. At md+ the screen becomes master-detail after
+//     the desk-class primitives in docs/mockups/desktop-first/_design.css
+//     (.desk / .rail / .panel): a scrollable list pane (340-380px) on the
+//     inline-start side, a panel-chromed detail pane filling the rest, both
+//     inside a 1180px centred desk. Selecting a row loads the detail pane in
+//     place (ArticleDetail variant="pane": no back chevron, action bar sticky
+//     at the pane's bottom instead of fixed to the viewport). Logical
+//     properties only throughout — the grid order itself flips under RTL.
+//
 // ── Data (all real; nothing sampled from the artifact) ─────────────────────
 //
 //   * Which articles belong to this book, and how often:
@@ -114,10 +138,12 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SaveIcon from "@mui/icons-material/Save";
 
@@ -140,6 +166,10 @@ export interface TranslateWordsScreenProps extends FlowScreenContext {
 type Resource = "tw" | "ta";
 type ArticleState = "ai_draft" | "edited" | "validated" | null;
 type Lang = "target" | "source" | "both";
+
+// Collapsible list groups: the three tw categories plus the Academy articles
+// section (whose header follows the same pattern).
+type GroupKey = "kt" | "names" | "other" | "ta";
 
 // Content width — the artifact's 430px phone shell, given the same extra room
 // the notes/questions screens take.
@@ -296,6 +326,9 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   const dark = theme.palette.mode === "dark";
   const INSPIRE = "#31ADE3";
   const { skip } = theme.palette.flows;
+  // md+ (>=900px, ArticlesScreen's breakpoint): master-detail side by side
+  // instead of the phone's list ⇄ detail view swap.
+  const wide = useMediaQuery(theme.breakpoints.up("md"));
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
@@ -404,6 +437,13 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
 
   // ── selection (list ⇄ detail, internal state like the artifact) ──────────
   const [selected, setSelected] = useState<{ resource: Resource; id: string } | null>(null);
+  // Collapsible group state — session-local by design (2026-08-10, header).
+  const [openGroups, setOpenGroups] = useState<Record<GroupKey, boolean>>({
+    kt: true,
+    names: false,
+    other: false,
+    ta: true,
+  });
   const selectedItem = selected
     ? [...termItems, ...taItems].find((i) => i.resource === selected.resource && i.id === selected.id) ?? null
     : null;
@@ -473,12 +513,13 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
     );
   }
 
-  // ── detail ────────────────────────────────────────────────────────────────
-  if (selected && selectedItem && selectedItem.populated) {
+  // ── detail (phone: a swapped full view; at md+ it renders in the pane) ────
+  if (!wide && selected && selectedItem && selectedItem.populated) {
     return (
       <>
         <ArticleDetail
           key={`${selected.resource}/${selected.id}`}
+          variant="page"
           resource={selected.resource}
           articleId={selected.id}
           paths={selectedItem.paths}
@@ -536,6 +577,88 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
     );
   };
 
+  // Collapsible group header — the word categories and the Academy articles
+  // section share this pattern (2026-08-10 restructure, see file header).
+  // The collapsed chevron points toward inline-end, so it flips under RTL.
+  const collapsedChevron = theme.direction === "rtl" ? "rotate(90deg)" : "rotate(-90deg)";
+  const collapsibleHead = (key: GroupKey, label: string, items: BookItem[]) => {
+    const open = openGroups[key];
+    const pop = items.filter((i) => i.populated);
+    const okCount = pop.filter((i) => i.state === "validated").length;
+    return (
+      <Box
+        component="button"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpenGroups((g) => ({ ...g, [key]: !g[key] }))}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.75,
+          border: "none",
+          background: "transparent",
+          font: "inherit",
+          color: "inherit",
+          cursor: "pointer",
+          width: "100%",
+          textAlign: "start",
+          borderRadius: "8px",
+          paddingBlock: 0.75,
+          paddingInline: 0.25,
+          mt: key === "ta" ? 1.5 : 0,
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <ExpandMoreIcon
+          fontSize="small"
+          sx={{
+            color: "text.secondary",
+            flex: "none",
+            transform: open ? "none" : collapsedChevron,
+            transition: "transform 0.15s ease",
+          }}
+        />
+        <Typography
+          component={key === "ta" ? "h2" : "h3"}
+          sx={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            color: "text.secondary",
+            m: 0,
+          }}
+        >
+          {label}
+        </Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}
+        >
+          · {items.length}
+        </Typography>
+        <Typography
+          variant="caption"
+          sx={{ ml: "auto", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}
+        >
+          {pop.length > 0 ? `${okCount} of ${pop.length} approved` : "none here"}
+        </Typography>
+      </Box>
+    );
+  };
+
+  const groupRows = (key: GroupKey, items: BookItem[], emptyText: string) => {
+    if (!openGroups[key]) return null;
+    if (items.length === 0 && !scanning) {
+      return (
+        <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
+          {emptyText}
+        </Typography>
+      );
+    }
+    return items.map(listRow);
+  };
+
   const listRow = (item: BookItem) => {
     const chip = chipFor(item.state, dirtyArticleIds.has(`${item.resource}/${item.id}`));
     const countText =
@@ -552,11 +675,14 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
         </Box>
       );
     }
+    const isSelected =
+      wide && selected?.resource === item.resource && selected?.id === item.id;
     return (
       <Box
         key={`${item.resource}/${item.id}`}
         component="button"
         type="button"
+        aria-current={isSelected ? "true" : undefined}
         onClick={() => setSelected({ resource: item.resource, id: item.id })}
         sx={{
           ...cardSx,
@@ -568,6 +694,9 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           font: "inherit",
           color: "inherit",
           paddingBlock: 1.25,
+          ...(isSelected
+            ? { borderColor: INSPIRE, bgcolor: alpha(INSPIRE, dark ? 0.12 : 0.06) }
+            : {}),
           "&:hover": { borderColor: INSPIRE },
         }}
       >
@@ -596,20 +725,90 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   const nothingYet =
     !scanning && termItems.length === 0 && taItems.length === 0 && summaryStatus === "ready";
 
+  // Words split by tw category (kt / names / other — the whitelist above);
+  // Academy articles are the other top-level part.
+  const ktItems = termItems.filter((i) => i.category === "kt");
+  const namesItems = termItems.filter((i) => i.category === "names");
+  const otherItems = termItems.filter((i) => i.category === "other");
+
+  // The list content is identical at every width — only its container differs
+  // (phone: the centred column; md+: the scrollable list pane).
+  const listBody = (
+    <>
+      {(twHook.error || taHook.error) && (
+        <Alert severity="warning">
+          The article list could not be loaded
+          {twHook.error ? ` (tW: ${twHook.error.message})` : ""}
+          {taHook.error ? ` (tA: ${taHook.error.message})` : ""}.
+        </Alert>
+      )}
+
+      {scanning && (
+        <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0, mt: 0.5 }}>
+          Scanning {book}&rsquo;s chapters for word links and note references —{" "}
+          {chaptersReady} of {chapterTotal} loaded…
+        </Typography>
+      )}
+      {chaptersFailed > 0 && (
+        <Alert severity="warning">
+          {chaptersFailed} chapter{chaptersFailed === 1 ? "" : "s"} of {book} failed to load, so
+          the lists and occurrence counts below may be incomplete.
+        </Alert>
+      )}
+
+      {nothingYet ? (
+        <Alert severity="info">
+          No translationWords links or translationAcademy references found in {book}.
+        </Alert>
+      ) : (
+        <>
+          {sectionHead("Words", termItems)}
+          {collapsibleHead("kt", "Key terms", ktItems)}
+          {groupRows("kt", ktItems, `No key terms linked in ${book}.`)}
+          {collapsibleHead("names", "Names", namesItems)}
+          {groupRows("names", namesItems, `No names linked in ${book}.`)}
+          {collapsibleHead("other", "Other", otherItems)}
+          {groupRows("other", otherItems, `No other terms linked in ${book}.`)}
+
+          {collapsibleHead("ta", "Academy articles", taItems)}
+          {groupRows("ta", taItems, `No translationAcademy references in ${book}’s notes.`)}
+
+          {unpopulatedCount > 0 && (
+            <Typography variant="caption" color="text.secondary" component="p" sx={{ mx: 0.25 }}>
+              {unpopulatedCount} of the articles referenced in {book} have no populated source in
+              this workspace, so they can be seen above but not translated here. An admin can
+              populate them from the Articles workspace.
+            </Typography>
+          )}
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
-      {/* topbar */}
+    <Box
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        textAlign: "start",
+        ...(wide
+          ? { display: "flex", flexDirection: "column", overflow: "hidden" }
+          : { overflowY: "auto" }),
+      }}
+    >
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
       <Box
         sx={{
           position: "sticky",
           insetBlockStart: 0,
           zIndex: 20,
+          flex: "none",
           bgcolor: "background.paper",
           borderBlockEnd: "1px solid",
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label={`Back to the ${book} package`}
@@ -655,73 +854,96 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
         </Box>
       </Box>
 
-      <Box
-        sx={{
-          maxWidth: COLUMN_PX,
-          mx: "auto",
-          paddingInline: 2,
-          paddingBlockStart: 1,
-          paddingBlockEnd: 4,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.25,
-        }}
-      >
-        {(twHook.error || taHook.error) && (
-          <Alert severity="warning">
-            The article list could not be loaded
-            {twHook.error ? ` (tW: ${twHook.error.message})` : ""}
-            {taHook.error ? ` (tA: ${taHook.error.message})` : ""}.
-          </Alert>
-        )}
-
-        {scanning && (
-          <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0, mt: 0.5 }}>
-            Scanning {book}&rsquo;s chapters for word links and note references —{" "}
-            {chaptersReady} of {chapterTotal} loaded…
-          </Typography>
-        )}
-        {chaptersFailed > 0 && (
-          <Alert severity="warning">
-            {chaptersFailed} chapter{chaptersFailed === 1 ? "" : "s"} of {book} failed to load, so
-            the lists and occurrence counts below may be incomplete.
-          </Alert>
-        )}
-
-        {nothingYet ? (
-          <Alert severity="info">
-            No translationWords links or translationAcademy references found in {book}.
-          </Alert>
-        ) : (
-          <>
-            {sectionHead("Key terms", termItems)}
-            {termItems.length === 0 && !scanning ? (
-              <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
-                No translationWords links in {book}.
-              </Typography>
+      {wide ? (
+        /* desk (docs/mockups/desktop-first/_design.css .desk/.rail/.panel):
+           1180px centred grid — rail-like list pane on the inline-start side,
+           panel-chromed detail pane filling the rest. Grid column order
+           follows the document direction, so this is RTL-safe as-is. */
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            maxWidth: 1180,
+            mx: "auto",
+            display: "grid",
+            gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",
+            gap: 2.5,
+            paddingInline: 2,
+            paddingBlockStart: 1.5,
+            paddingBlockEnd: 2,
+          }}
+        >
+          {/* list pane */}
+          <Box
+            sx={{
+              minHeight: 0,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 1.25,
+              paddingInline: 0.25,
+              paddingBlockEnd: 2,
+            }}
+          >
+            {listBody}
+          </Box>
+          {/* detail pane */}
+          <Box
+            sx={{
+              minHeight: 0,
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "14px",
+              overflow: "hidden",
+            }}
+          >
+            {selected && selectedItem && selectedItem.populated ? (
+              <ArticleDetail
+                key={`${selected.resource}/${selected.id}`}
+                variant="pane"
+                resource={selected.resource}
+                articleId={selected.id}
+                paths={selectedItem.paths}
+                countLabel={
+                  selected.resource === "tw"
+                    ? `${selectedItem.count} ${selectedItem.count === 1 ? "occurrence" : "occurrences"} in ${book}`
+                    : `linked from ${selectedItem.count} ${selectedItem.count === 1 ? "note" : "notes"} in ${book}`
+                }
+                canEdit={canEdit}
+                sourceLangLabel={sourceLangLabel}
+                targetLabel={targetLabel}
+                direction={direction}
+                onBack={() => setSelected(null)}
+                onServerChange={refetchMetas}
+                onToast={say}
+              />
             ) : (
-              termItems.map(listRow)
+              <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", p: 4 }}>
+                <Typography variant="body2" color="text.secondary" textAlign="center">
+                  Select a word or article to translate it here.
+                </Typography>
+              </Stack>
             )}
-
-            {sectionHead("Academy articles", taItems)}
-            {taItems.length === 0 && !scanning ? (
-              <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
-                No translationAcademy references in {book}&rsquo;s notes.
-              </Typography>
-            ) : (
-              taItems.map(listRow)
-            )}
-
-            {unpopulatedCount > 0 && (
-              <Typography variant="caption" color="text.secondary" component="p" sx={{ mx: 0.25 }}>
-                {unpopulatedCount} of the articles referenced in {book} have no populated source in
-                this workspace, so they can be seen above but not translated here. An admin can
-                populate them from the Articles workspace.
-              </Typography>
-            )}
-          </>
-        )}
-      </Box>
+          </Box>
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            maxWidth: COLUMN_PX,
+            mx: "auto",
+            paddingInline: 2,
+            paddingBlockStart: 1,
+            paddingBlockEnd: 4,
+            display: "flex",
+            flexDirection: "column",
+            gap: 1.25,
+          }}
+        >
+          {listBody}
+        </Box>
+      )}
 
       <Snackbar
         open={toast !== null}
@@ -746,6 +968,11 @@ interface ArticleDetailProps {
   sourceLangLabel: string;
   targetLabel: string;
   direction: "ltr" | "rtl";
+  /** "page": the phone's swapped full view (back chevron, viewport-fixed
+   * action bar). "pane": the md+ master-detail panel (no back chevron —
+   * selection lives in the list pane — and the action bar sticks to the
+   * pane's bottom instead of the viewport). */
+  variant: "page" | "pane";
   onBack: () => void;
   onServerChange: () => void;
   onToast: (msg: string) => void;
@@ -760,10 +987,12 @@ function ArticleDetail({
   sourceLangLabel,
   targetLabel,
   direction,
+  variant,
   onBack,
   onServerChange,
   onToast,
 }: ArticleDetailProps) {
+  const pane = variant === "pane";
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   const HL = dark ? "rgba(49, 173, 227, 0.26)" : "rgba(49, 173, 227, 0.18)";
@@ -1298,31 +1527,52 @@ function ArticleDetail({
   }
 
   // ── render ────────────────────────────────────────────────────────────────
+  // Pane mode: a flex column so the action bar's margin-block-start:auto pins
+  // it to the pane's bottom even when the content is short; sticky keeps it
+  // visible when the content scrolls.
   return (
-    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
-      {/* topbar */}
+    <Box
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        overflowY: "auto",
+        textAlign: "start",
+        ...(pane ? { display: "flex", flexDirection: "column" } : {}),
+      }}
+    >
+      {/* topbar (pane: the panel-top chrome — title, no back chevron) */}
       <Box
         sx={{
           position: "sticky",
           insetBlockStart: 0,
-          zIndex: 20,
+          zIndex: pane ? 10 : 20,
+          flex: "none",
           bgcolor: "background.paper",
           borderBlockEnd: "1px solid",
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box
+          sx={{
+            maxWidth: pane ? "none" : COLUMN_PX,
+            mx: "auto",
+            paddingInline: pane ? 2.5 : 2,
+            paddingBlock: 1.5,
+          }}
+        >
           <Stack direction="row" alignItems="center" spacing={1.25}>
-            <IconButton
-              aria-label="Back to the list"
-              onClick={onBack}
-              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
-            >
-              <ChevronLeftIcon fontSize="small" />
-            </IconButton>
+            {!pane && (
+              <IconButton
+                aria-label="Back to the list"
+                onClick={onBack}
+                sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+              >
+                <ChevronLeftIcon fontSize="small" />
+              </IconButton>
+            )}
             <Box sx={{ minWidth: 0 }}>
               <Typography
-                component="h1"
+                component={pane ? "h2" : "h1"}
                 sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}
                 noWrap
               >
@@ -1341,12 +1591,15 @@ function ArticleDetail({
 
       <Box
         sx={{
-          maxWidth: COLUMN_PX,
+          width: "100%",
+          maxWidth: pane ? "none" : COLUMN_PX,
           mx: "auto",
-          paddingInline: 2,
+          flex: "none",
+          paddingInline: pane ? 2.5 : 2,
           paddingBlockStart: 2,
-          // room for the fixed action bar
-          paddingBlockEnd: 15,
+          // page: room for the viewport-fixed action bar; pane: the bar is
+          // in-flow below, so only a small gap is needed
+          paddingBlockEnd: pane ? 2 : 15,
           display: "flex",
           flexDirection: "column",
           gap: 1.5,
@@ -1458,30 +1711,44 @@ function ArticleDetail({
         )}
       </Box>
 
-      {/* fixed action bar — Redo · Approve. "Needs work" is hidden: the
-          article state machine has no such state to write (see header). */}
+      {/* action bar — Redo · Approve. "Needs work" is hidden: the article
+          state machine has no such state to write (see header). Page: fixed
+          to the viewport bottom; pane: anchored inside the pane (sticky at
+          its bottom, pinned there by margin-block-start:auto when short). */}
       {parts !== null && !loadError && (
         <Box
           component="footer"
-          sx={{
-            position: "fixed",
-            insetBlockEnd: 0,
-            insetInline: 0,
-            zIndex: theme.zIndex.appBar,
-            bgcolor: "background.paper",
-            borderBlockStart: "1px solid",
-            borderColor: "divider",
-          }}
+          sx={
+            pane
+              ? {
+                  position: "sticky",
+                  insetBlockEnd: 0,
+                  zIndex: 10,
+                  marginBlockStart: "auto",
+                  bgcolor: "background.paper",
+                  borderBlockStart: "1px solid",
+                  borderColor: "divider",
+                }
+              : {
+                  position: "fixed",
+                  insetBlockEnd: 0,
+                  insetInline: 0,
+                  zIndex: theme.zIndex.appBar,
+                  bgcolor: "background.paper",
+                  borderBlockStart: "1px solid",
+                  borderColor: "divider",
+                }
+          }
         >
           <Stack
             direction="row"
             spacing={1.25}
             sx={{
-              maxWidth: COLUMN_PX,
+              maxWidth: pane ? "none" : COLUMN_PX,
               mx: "auto",
-              paddingInline: 2,
+              paddingInline: pane ? 2.5 : 2,
               paddingBlockStart: 1.5,
-              paddingBlockEnd: "calc(12px + env(safe-area-inset-bottom))",
+              paddingBlockEnd: pane ? 1.5 : "calc(12px + env(safe-area-inset-bottom))",
             }}
           >
             <Button
