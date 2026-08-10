@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { Box, ButtonBase, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import GroupsIcon from "@mui/icons-material/Groups";
 import TuneIcon from "@mui/icons-material/Tune";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
@@ -56,6 +57,34 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
           : { flexDirection: "row", overflowX: "auto" }),
       }}
     >
+      {/* Exit — the desk is a place you leave, so the way out is the first
+          thing in the rail (Benjamin, 2026-08-10: "how do I get out?"). */}
+      <ButtonBase
+        onClick={() => {
+          location.hash = "#/books";
+        }}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          gap: 1.25,
+          textAlign: "start",
+          fontSize: "0.875rem",
+          fontWeight: 600,
+          color: "text.secondary",
+          borderRadius: "9px",
+          paddingBlock: 1,
+          paddingInline: 1.5,
+          whiteSpace: "nowrap",
+          "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+        }}
+      >
+        <ChevronLeftIcon
+          fontSize="small"
+          sx={theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined}
+        />
+        Books
+      </ButtonBase>
       {wide && (
         <Typography
           variant="caption"

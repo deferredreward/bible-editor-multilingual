@@ -485,10 +485,10 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
               variant="outlined"
               sx={{ marginBlockStart: 2 }}
               onClick={() => {
-                location.hash = "#/home";
+                location.hash = "#/books";
               }}
             >
-              Back to home
+              Back to books
             </Button>
           </Box>
         </Panel>

@@ -70,7 +70,8 @@
 // intentional. A chapter with zero notes/questions/verses renders disabled
 // with an honest "No notes" sub rather than linking to an empty queue.
 //
-// Back chevron → #/home (mirrors TranslateNotesScreen:632-638). Data comes
+// Back chevron → #/books (the redesign's top level; #/home is the old flows
+// home and retires with the rest of flexible mode). Data comes
 // from the same one-column plumbing: useBook for the summary, useProjectConfig
 // for the "{source} to {target}" sub-line (TranslateNotesScreen:547-549).
 
@@ -324,9 +325,9 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
         <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label={`Leave ${name} package`}
+              aria-label="Back to books"
               onClick={() => {
-                location.hash = "#/home";
+                location.hash = "#/books";
               }}
               sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
             >

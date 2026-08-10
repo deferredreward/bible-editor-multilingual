@@ -1081,9 +1081,9 @@ export default function TranslateQuestionsScreen({
         <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label={`Leave ${book} ${chapter} questions`}
+              aria-label={`Back to the ${book} package`}
               onClick={() => {
-                location.hash = "#/home";
+                location.hash = `#/package/${book}`;
               }}
               sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
             >
