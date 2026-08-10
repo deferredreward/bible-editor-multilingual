@@ -52,6 +52,23 @@ notes intro-row previews show raw markdown marks.
 - Servers: wrangler :8891, vite :5181 (bound 127.0.0.1). Boot may flash a stale
   "session expired" banner (pre-existing dev-mint race) — dismiss once.
 
-**Next:** Words/Articles screen, Scripture screen, package hub (replaces
-FlowNav), admin desk screens — after Benjamin's questions-screen markup.
-Options offered, undecided: wire tq Redo to the per-row translate pipeline job.
+**2026-08-10 markup round + admin wave (tip f524180):** notes list previews
+target text (never Hebrew/Greek, markdown stripped); words/articles sorted by
+book frequency desc; prev/next at top+bottom on all queue screens; swipe paging
+(useSwipeNav) on notes/questions/scripture — deliberately NOT alignment (drag
+collision, recorded); action bars data-no-swipe. Admin desk shipped:
+#/admin/{progress|workflow|team|setup} in AdminDesk rail chrome, Today-tier
+sections wired real, Phase-2 mockup panels omitted + recorded in headers.
+Entry points: BooksScreen Open → #/package/{book}; hub topbar has admin-only
+desk link. MERGE DECISION (Benjamin 2026-08-10): classic mode STAYS for power
+users; this redesign replaces flexible/flows mode entirely at merge.
+**Verified in browser:** notes previews, frequency sort (yahweh 131 first),
+all four admin screens with real data, books→hub entry. NOT verified: swipe on
+real touch hardware; OBA shows all-zero counts on the progress board (check
+whether OBA content actually imported in this dev workspace or summary quirk).
+**Known cosmetics:** FlowStatusChip inside Typography p logs a
+validateDOMNesting warning (notes list rows).
+
+**Next:** Benjamin's markup on the admin desk; old flows screens retirement
+plan (FlowNav dies when the last old screen is replaced); Codex review when
+the redesign PR is opened.
