@@ -661,10 +661,15 @@ export async function dispatchNext(env: Env): Promise<void> {
   // bot predates provider support and silently ran the job on its own
   // default (billing correctness: never let a BYO-configured org's job run
   // unaccounted for on the shared subscription).
+  // Two causes, both of which must fail the job rather than proceed: the bot
+  // predates provider support and silently stripped the fields, or an unrelated
+  // run already holds this scope upstream (the bot answers already_running and
+  // withholds the ack, because that run may be another org's on the shared
+  // subscription — attaching to it would bill uW and import foreign output).
   if (aiApiKey !== undefined && parsed.provider !== aiProvider) {
     await fail(
       "sdk_error",
-      "ai_provider_not_acknowledged: upstream bot lacks provider support (deploy bp-assistant first)",
+      "ai_provider_not_acknowledged: upstream did not confirm the provider — either the bot predates provider support (deploy bp-assistant first) or another run already holds this scope",
     );
     return;
   }

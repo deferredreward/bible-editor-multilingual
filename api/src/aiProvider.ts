@@ -151,7 +151,34 @@ const NO_KEY: KeyCols = { ciphertext: null, iv: null, hint: null };
 // NOTHING (so a lost race reports the winner as a 409 rather than clobbering
 // it), thereafter UPDATE guarded on the expected version. Deliberately does NOT
 // queue a context export — provider config is not part of the context pack.
+// Reads degrade a missing table to "no provider" (getAiProviderConfig), so a
+// write on an unmigrated workspace DB would otherwise reach the INSERT below and
+// surface as an opaque 500. An admin configuring a provider deserves the real
+// cause: the workspace DB is behind on migrations.
+function notMigrated(e: unknown): boolean {
+  return /no such table/i.test(e instanceof Error ? e.message : String(e));
+}
+
 async function applyWrite(
+  c: Context<AiProviderEnv>,
+  existing: AiProviderRow | null,
+  expected: number,
+  provider: AiProvider,
+  model: string | null,
+  key: KeyCols,
+) {
+  try {
+    return await applyWriteInner(c, existing, expected, provider, model, key);
+  } catch (e) {
+    if (notMigrated(e)) {
+      console.warn("ai_provider_config missing (workspace not migrated); write rejected");
+      return c.json({ error: "ai_provider_not_migrated" }, 503);
+    }
+    throw e;
+  }
+}
+
+async function applyWriteInner(
   c: Context<AiProviderEnv>,
   existing: AiProviderRow | null,
   expected: number,

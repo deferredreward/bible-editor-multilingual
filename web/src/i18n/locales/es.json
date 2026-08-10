@@ -659,6 +659,7 @@
       "clearConfirmBody": "Esto elimina la clave guardada y cambia esta organización de vuelta al proveedor predeterminado (suscripción de uW).",
       "clearConfirmConfirm": "Borrar clave",
       "encryptionUnavailable": "Traer tu propia clave de IA aún no está habilitado en este despliegue — un administrador debe configurar el secreto AI_KEY_WRAPPING_KEY.",
+      "notMigrated": "La base de datos de esta organización está atrasada en migraciones — un administrador debe aplicar la migración del proveedor de IA antes de guardar una clave.",
       "loadFailed": "No se pudo cargar la configuración del servicio de IA.",
       "conflictReloaded": "Otra persona cambió esta configuración — se ha recargado; revísala antes de guardar de nuevo."
     },

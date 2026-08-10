@@ -140,7 +140,17 @@ export function AiServiceSection() {
     } else if (e instanceof ApiError && e.status === 403) {
       save.setMsg(t("preferences.saveForbidden"));
     } else if (e instanceof ApiError && e.status === 503) {
-      save.setMsg(t("preferences.aiService.encryptionUnavailable"));
+      // Two distinct 503s: the wrapping-key secret is unset, or this workspace's
+      // DB predates the ai_provider_config migration. Don't blame encryption for
+      // a migration gap — the admin fixes them differently.
+      const code = (e.body as { error?: string } | null)?.error;
+      save.setMsg(
+        t(
+          code === "ai_provider_not_migrated"
+            ? "preferences.aiService.notMigrated"
+            : "preferences.aiService.encryptionUnavailable",
+        ),
+      );
     } else {
       save.setMsg(t("preferences.saveFailed"));
     }

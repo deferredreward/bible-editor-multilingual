@@ -659,6 +659,7 @@
       "clearConfirmBody": "Isso remove a chave salva e muda esta organização de volta para o provedor padrão (assinatura uW).",
       "clearConfirmConfirm": "Apagar chave",
       "encryptionUnavailable": "Usar sua própria chave de IA ainda não está habilitado nesta implantação — um administrador precisa definir o segredo AI_KEY_WRAPPING_KEY.",
+      "notMigrated": "O banco de dados desta organização está atrasado nas migrações — um administrador precisa aplicar a migração do provedor de IA antes de salvar uma chave.",
       "loadFailed": "Não foi possível carregar as configurações do serviço de IA.",
       "conflictReloaded": "Outra pessoa alterou esta configuração — ela foi recarregada; revise antes de salvar novamente."
     },

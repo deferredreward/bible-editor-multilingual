@@ -659,6 +659,7 @@
       "clearConfirmBody": "Cela supprime la clé enregistrée et fait revenir cette organisation au fournisseur par défaut (abonnement uW).",
       "clearConfirmConfirm": "Effacer la clé",
       "encryptionUnavailable": "Apporter votre propre clé d'IA n'est pas encore activé sur ce déploiement — un administrateur doit configurer le secret AI_KEY_WRAPPING_KEY.",
+      "notMigrated": "La base de données de cette organisation n'est pas à jour — un administrateur doit appliquer la migration du fournisseur d'IA avant d'enregistrer une clé.",
       "loadFailed": "Impossible de charger les paramètres du service d'IA.",
       "conflictReloaded": "Quelqu'un d'autre a modifié cette configuration — elle a été rechargée ; vérifiez avant d'enregistrer à nouveau."
     },
