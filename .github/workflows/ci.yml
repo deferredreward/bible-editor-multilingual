@@ -33,6 +33,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # UI translation coverage. Fails on: a gated locale (see
+      # web/src/i18n/coverage.json) missing any key or CLDR plural category; a
+      # backlog locale LOSING a translation it already had; a stale key no
+      # longer in en.json; or a t("ns.key") in code that en.json doesn't define.
+      # It does NOT demand that new strings be translated into all 13 locales —
+      # only English + the gated locales. See docs/i18n.md.
+      - name: i18n coverage
+        run: npm run check:i18n
+
       # Import/export/alignment/lint suites for the Worker — pure-function
       # tests, no D1 or network needed.
       - name: API unit tests

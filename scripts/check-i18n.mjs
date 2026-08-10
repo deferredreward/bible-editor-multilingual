@@ -27,19 +27,41 @@
  * renders the raw string. Dynamic keys (t(`ns.${x}`)) can't be resolved
  * statically and are skipped.
  *
- * Exits non-zero if any locale is incomplete (missing base, missing plural
- * category, or stale key) or any code orphan is found.
+ * ── TIERING (why this can gate CI without demanding 13 translations) ────────
+ * Most locales are machine-drafted and incomplete, and translating a new UI
+ * string into all 13 languages is not a reasonable ask of every PR. So
+ * web/src/i18n/coverage.json splits locales into two tiers:
  *
- * Run: node scripts/check-i18n.mjs
+ *   gated    — must be complete. Any missing key or plural category FAILS.
+ *              These are the languages we actually ship to a client.
+ *   baseline — every other locale. coverage.json records what it currently HAS
+ *              translated; losing any of that FAILS. Adding a new en string
+ *              does NOT fail these locales — it just widens a backlog we
+ *              already accept and will fill before that language is presented.
+ *
+ * So a PR that adds a UI string owes English + every gated locale, and nothing
+ * else. The 12 backlog locales are a one-way ratchet: they can only improve or
+ * hold, never lose ground, but they never block a feature either.
+ *
+ * STALE keys and code orphans fail for every locale in both tiers — both are
+ * cheap to fix and are genuine rot rather than untranslated work.
+ *
+ * Run:  node scripts/check-i18n.mjs
+ *       node scripts/check-i18n.mjs --update-baseline   (after translating, or
+ *            after deliberately accepting a new gap in a baseline locale)
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const LOCALES_DIR = join(HERE, "..", "web", "src", "i18n", "locales");
+const I18N_DIR = join(HERE, "..", "web", "src", "i18n");
+const LOCALES_DIR = join(I18N_DIR, "locales");
+const COVERAGE_FILE = join(I18N_DIR, "coverage.json");
 const WEB_SRC_DIR = join(HERE, "..", "web", "src");
 const SOURCE = "en.json";
+
+const UPDATE_BASELINE = process.argv.includes("--update-baseline");
 
 const PLURAL_SUFFIXES = ["zero", "one", "two", "few", "many", "other"];
 const PLURAL_RE = new RegExp(`_(${PLURAL_SUFFIXES.join("|")})$`);
@@ -104,6 +126,16 @@ function load(file) {
   return JSON.parse(readFileSync(join(LOCALES_DIR, file), "utf8"));
 }
 
+/** Render a coverage id for humans: `a.b` stays, `a.b#few` becomes `a.b [few]`. */
+function fmtGap(id) {
+  const i = id.indexOf("#");
+  return i === -1 ? id : `${id.slice(0, i)} [${id.slice(i + 1)}]`;
+}
+
+const coverage = JSON.parse(readFileSync(COVERAGE_FILE, "utf8"));
+const gated = new Set(coverage.gated ?? []);
+const baseline = coverage.baseline ?? {};
+
 const enFlat = flatten(load(SOURCE));
 const en = analyze(enFlat);
 
@@ -112,11 +144,14 @@ const localeFiles = readdirSync(LOCALES_DIR)
   .sort();
 
 let failed = false;
-console.log(`i18n check — source ${SOURCE} (${en.bases.size} base keys, ${en.pluralBases.size} plural)\n`);
+const nextBaseline = {};
+console.log(`i18n check — source ${SOURCE} (${en.bases.size} base keys, ${en.pluralBases.size} plural)`);
+console.log(`gated locales (must be complete): ${[...gated].sort().join(", ") || "(none)"}\n`);
 
 for (const file of localeFiles) {
   const code = file.replace(/\.json$/, "");
   const loc = analyze(flatten(load(file)), en.pluralBases);
+  const isGated = gated.has(code);
 
   const missing = [...en.bases].filter((k) => !loc.bases.has(k)).sort();
   const stale = [...loc.bases].filter((k) => !en.bases.has(k)).sort();
@@ -132,31 +167,70 @@ for (const file of localeFiles) {
   for (const base of en.pluralBases) {
     if (missing.includes(base)) continue; // already reported as fully missing
     const present = loc.pluralCats.get(base) ?? new Set();
-    const gaps = requiredCats.filter((c) => !present.has(c));
-    if (gaps.length) pluralGaps.push(`${base} [${gaps.join(", ")}]`);
+    for (const c of requiredCats.filter((c) => !present.has(c))) pluralGaps.push(`${base}#${c}`);
   }
 
-  const ok = !missing.length && !stale.length && !pluralGaps.length;
-  if (ok) {
-    console.log(`✓ ${code} — complete (plural cats: ${requiredCats.join("/")})`);
-    continue;
+  // A "coverage id" is a base key the locale resolves, or `base#category` for
+  // each required plural category it supplies. Uniform ids let one baseline
+  // list cover both kinds.
+  const gaps = [...missing, ...pluralGaps].sort();
+  const missingSet = new Set(missing);
+  const gapSet = new Set(gaps);
+  const covered = [];
+  for (const k of en.bases) {
+    if (missingSet.has(k)) continue;
+    if (!en.pluralBases.has(k)) {
+      covered.push(k);
+      continue;
+    }
+    for (const c of requiredCats) if (!gapSet.has(`${k}#${c}`)) covered.push(`${k}#${c}`);
   }
-  failed = true;
-  console.log(`✗ ${code} — INCOMPLETE`);
-  if (missing.length) {
-    console.log(`   MISSING (${missing.length}):`);
-    for (const k of missing) console.log(`     - ${k}`);
+  covered.sort();
+  nextBaseline[code] = covered;
+
+  if (isGated) {
+    // Tier 1: no tolerance. Every gap is a failure.
+    const ok = !gaps.length && !stale.length;
+    if (ok) {
+      console.log(`✓ ${code} — GATED, complete (plural cats: ${requiredCats.join("/")})`);
+      continue;
+    }
+    failed = true;
+    console.log(`✗ ${code} — GATED and INCOMPLETE`);
+    if (missing.length) {
+      console.log(`   MISSING (${missing.length}):`);
+      for (const k of missing) console.log(`     - ${k}`);
+    }
+    if (pluralGaps.length) {
+      console.log(`   PLURAL categories missing (needs ${requiredCats.join("/")}):`);
+      for (const g of pluralGaps) console.log(`     - ${fmtGap(g)}`);
+    }
+  } else {
+    // Tier 2: a ratchet. Everything the baseline says is translated must still
+    // be translated. New English strings are NOT demanded of this locale.
+    const promised = new Set(baseline[code] ?? []);
+    const coveredSet = new Set(covered);
+    const lost = [...promised].filter((g) => !coveredSet.has(g)).sort();
+    const gained = covered.filter((g) => !promised.has(g));
+
+    if (lost.length) {
+      failed = true;
+      console.log(`✗ ${code} — LOST ${lost.length} existing translation(s):`);
+      for (const g of lost) console.log(`     - ${fmtGap(g)}`);
+      console.log(`   → restore these, or run --update-baseline if the en key was deliberately removed.`);
+    } else {
+      const note = gained.length ? `, +${gained.length} newly translated — run --update-baseline` : "";
+      console.log(`· ${code} — ${covered.length}/${en.bases.size} translated, ${gaps.length} known gap(s)${note}`);
+    }
   }
-  if (pluralGaps.length) {
-    console.log(`   PLURAL categories missing (needs ${requiredCats.join("/")}):`);
-    for (const g of pluralGaps) console.log(`     - ${g}`);
-  }
+
   if (stale.length) {
-    console.log(`   STALE — not in ${SOURCE} (${stale.length}):`);
+    failed = true;
+    console.log(`✗ ${code} — STALE, not in ${SOURCE} (${stale.length}) — delete these:`);
     for (const k of stale) console.log(`     - ${k}`);
   }
-  console.log("");
 }
+console.log("");
 
 // ── code -> en orphan scan ────────────────────────────────────────────────
 // Every static key passed to t("...") in the web/src TS/TSX must exist in
@@ -204,8 +278,22 @@ if (orphans.size) {
   console.log("");
 }
 
+if (UPDATE_BASELINE) {
+  // Gated locales are never baselined — their target is zero gaps.
+  for (const code of Object.keys(nextBaseline)) {
+    if (gated.has(code)) delete nextBaseline[code];
+  }
+  coverage.baseline = nextBaseline;
+  writeFileSync(COVERAGE_FILE, JSON.stringify(coverage, null, 2) + "\n", "utf8");
+  const total = Object.values(nextBaseline).reduce((n, a) => n + a.length, 0);
+  console.log(
+    `baseline updated — ${total} protected translations recorded across ${Object.keys(nextBaseline).length} locales.`,
+  );
+  process.exit(orphans.size ? 1 : 0);
+}
+
 if (failed) {
-  console.error("\ni18n check FAILED — locales incomplete or code references an unknown key.");
+  console.error("\ni18n check FAILED — see above.");
   process.exit(1);
 }
-console.log("\nAll locales complete; no orphan code keys.");
+console.log("All gated locales complete; no regressions, stale keys, or orphan code keys.");

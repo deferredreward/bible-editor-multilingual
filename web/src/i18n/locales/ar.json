@@ -73,6 +73,7 @@
     "pickVersion": "Pick a version on the left to preview.",
     "useVersion": "Use v{{v}}",
     "alreadyCurrent": "Already current",
+    "draftWithAi": "صياغة بالذكاء الاصطناعي",
     "draftAll": "صياغة الكل بالذكاء الاصطناعي ({{n}})",
     "draftAllProgress": "جارٍ الصياغة {{n}}/{{total}}…",
     "draftAllCancel": "إلغاء",
@@ -80,7 +81,71 @@
     "draftAllDonePartial": "تمت صياغة {{n}} قالب (قوالب)؛ فشل {{failed}}.",
     "draftAllCancelled": "تم التوقف. تمت صياغة {{n}} قالب (قوالب).",
     "draftAllFailed": "تم التوقف بعد فشل متكرر ({{code}}). تمت صياغة {{n}} قالب (قوالب).",
-    "draftAllDisabled": "الذكاء الاصطناعي غير مُهيأ — يجب على المسؤول تعيين BT_API_TOKEN."
+    "draftAllDisabled": "الذكاء الاصطناعي غير مُهيأ — يجب على المسؤول تعيين BT_API_TOKEN.",
+    "draftDisabledValidated": "ألغِ الاعتماد أولًا للصياغة فوق ترجمة معتمدة."
+  },
+  "import": {
+    "title": "استيراد الأسفار",
+    "navTitle": "استيراد الأسفار",
+    "backToScripture": "العودة إلى النص الكتابي",
+    "searchPlaceholder": "البحث في الأسفار",
+    "importedCount": "{{n}}/{{total}} مستوردًا",
+    "imported": "مستورد",
+    "notImported": "غير مستورد",
+    "notImportedYet": "لم يُستورد بعد.",
+    "selectBook": "اختر سفرًا لاستيراده.",
+    "loadFailed": "تعذّر تحميل قائمة الأسفار.",
+    "retry": "إعادة المحاولة",
+    "summaryHint": "{{chapters}} أصحاحات · {{tn}} ملاحظات · {{tq}} أسئلة",
+    "intentLegend": "ماذا تريد أن تفعل؟",
+    "intentTranslate": "ترجمة سفر جديد",
+    "intentTranslateDesc": "استورد المصدر الإنجليزي (ULT/UST + الملاحظات والأسئلة) لتتمكن من ترجمته وتشغيل الترجمة بالذكاء الاصطناعي.",
+    "intentLoad": "تحميل عملي الحالي",
+    "intentLoadDesc": "استورد هذا السفر من مستودع مؤسستك الخاص لعرضه أو تحريره أو تدقيقه.",
+    "sources": {
+      "title": "تجاوزات المصادر (متقدم)",
+      "intro": "اسحب ملاحظات أو أسئلة هذا السفر من مستودع Door43 مختلف، أو نطاق أصحاحات من الملاحظات من Aquifer. اترك نطاق الأصحاحات فارغًا لتجاوز السفر بأكمله.",
+      "adminOnly": "يمكن للمسؤولين فقط تغيير تجاوزات المصادر.",
+      "sourceTypeDcs": "مستودع Door43",
+      "sourceTypeAquifer": "Aquifer",
+      "sourceAquifer": "Aquifer ({{lang}})",
+      "aquiferWholeBookHint": "ملاحظات Aquifer تقتصر على tN وتحتاج إلى نطاق أصحاحات. للسفر بأكمله، استخدم «سحب مسودات Aquifer» في قائمة خط المعالجة.",
+      "aquiferNeedsRange": "يحتاج Aquifer إلى نطاق أصحاحات. للسفر بأكمله، استخدم «سحب مسودات Aquifer» في قائمة خط المعالجة.",
+      "aquiferLangUnavailable": "لا توجد لدى Aquifer نسخة بلغة هذا المشروع.",
+      "loadFailed": "تعذّر تحميل تجاوزات المصادر.",
+      "none": "لا توجد تجاوزات — يستخدم هذا السفر مصادر المشروع الافتراضية.",
+      "wholeBook": "السفر بأكمله",
+      "chapterRange": "أصحاح {{start}}–{{end}}",
+      "remove": "إزالة",
+      "addHeading": "إضافة تجاوز",
+      "resourceLabel": "المورد",
+      "resourceTn": "الملاحظات (tN)",
+      "resourceTq": "الأسئلة (tQ)",
+      "fromChapter": "من أصحاح",
+      "toChapter": "إلى أصحاح",
+      "urlLabel": "رابط مستودع Door43",
+      "add": "إضافة تجاوز",
+      "verifying": "جارٍ التحقق…",
+      "overlap": "يتداخل نطاق الأصحاحات هذا مع تجاوز موجود. عدّل النطاق أو أزل الآخر أولًا.",
+      "rangeNeedsBoth": "أدخل أصحاح البداية والنهاية معًا، أو اتركهما فارغين للسفر بأكمله.",
+      "saveFailed": "تعذّر حفظ التجاوز.",
+      "removeFailed": "تعذّرت إزالة التجاوز."
+    },
+    "importButton": "استيراد {{book}}",
+    "importing": "جارٍ الاستيراد…",
+    "importedOk": "تم استيراد {{book}}.",
+    "importedFromSource": "تم استيراد {{book}} — الملاحظات/الأسئلة من {{repos}}.",
+    "importFailed": "تعذّر استيراد {{book}}: {{message}}",
+    "openButton": "فتح في المحرر",
+    "repullButton": "إعادة السحب من Door43…",
+    "alreadyImported": "هذا السفر مستورد بالفعل. افتحه للتحرير، أو أعد سحب الأحدث من Door43 (تعديلاتك محفوظة).",
+    "aiTranslate": "ترجمة بالذكاء الاصطناعي (الملاحظات + الأسئلة)",
+    "aiTranslateDesc": "أنشئ مسودة ملاحظات وأسئلة الترجمة للسفر بأكمله بالذكاء الاصطناعي. يمكنك مراجعة كل أصحاح في المحرر.",
+    "aiTranslateStarted": "بدأت الترجمة بالذكاء الاصطناعي: {{started}} عملية في قائمة الانتظار{{suffix}}.",
+    "aiTranslateSkipped": " ({{skipped}} قيد التشغيل بالفعل)",
+    "aiTranslatePartial": "بدأت {{started}} من عمليات الترجمة بالذكاء الاصطناعي، لكن فشل بدء {{failed}} من عمليات الأصحاحات — أعد المحاولة لإضافة الباقي إلى قائمة الانتظار.",
+    "aiTranslateNone": "لا شيء للترجمة — لم يُعثر على أصحاحات.",
+    "aiTranslateFailedAll": "تعذّر بدء الترجمة بالذكاء الاصطناعي."
   },
   "topbar": {
     "showVerseList": "إظهار قائمة الآيات",
@@ -97,22 +162,107 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} ملاحظة · {{words}} كلمة · {{questions}} سؤالًا",
     "readingTextSize": "حجم نص القراءة",
-    "readingTextSizeTooltip": "حجم نص القراءة",
-    "adjustReadingTextSize": "ضبط حجم نص القراءة",
     "decreaseReadingTextSize": "تصغير حجم نص القراءة",
     "increaseReadingTextSize": "تكبير حجم نص القراءة",
-    "smaller": "أصغر",
-    "larger": "أكبر",
-    "resetTo100": "إعادة الضبط إلى ١٠٠٪",
     "switchToLight": "التبديل إلى الوضع الفاتح",
     "switchToDark": "التبديل إلى الوضع الداكن",
     "toggleColorMode": "تبديل وضع الألوان",
     "uiLanguage": "لغة الواجهة",
+    "layouts": "التخطيطات",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
+    },
+    "status": {
+      "title": "الحالة",
+      "allSaved": "حُفظت كل التعديلات في السحابة",
+      "noPipelines": "لا توجد خطوط أنابيب ذكاء اصطناعي قيد التشغيل",
+      "issuesToCleanUp_one": "{{book}} — مشكلة واحدة بحاجة إلى تنظيف",
+      "issuesToCleanUp_zero": "{{book}} — لا توجد مشكلات بحاجة إلى تنظيف",
+      "issuesToCleanUp_two": "{{book}} — مشكلتان بحاجة إلى تنظيف",
+      "issuesToCleanUp_few": "{{book}} — {{count}} مشكلات بحاجة إلى تنظيف",
+      "issuesToCleanUp_many": "{{book}} — {{count}} مشكلة بحاجة إلى تنظيف",
+      "issuesToCleanUp_other": "{{book}} — {{count}} مشكلة بحاجة إلى تنظيف",
+      "buildUpToDate": "البنية {{commit}} · محدَّثة",
+      "savedLabel": "تم الحفظ",
+      "savingLabel": "جارٍ حفظ {{count}}",
+      "offlineLabel": "غير متصل",
+      "conflictsLabel_one": "تعارض واحد",
+      "conflictsLabel_zero": "لا توجد تعارضات",
+      "conflictsLabel_two": "تعارضان",
+      "conflictsLabel_few": "{{count}} تعارضات",
+      "conflictsLabel_many": "{{count}} تعارضًا",
+      "conflictsLabel_other": "{{count}} تعارض",
+      "failedLabel_one": "إخفاق واحد",
+      "failedLabel_zero": "لا إخفاقات",
+      "failedLabel_two": "إخفاقان",
+      "failedLabel_few": "{{count}} إخفاقات",
+      "failedLabel_many": "{{count}} إخفاقًا",
+      "failedLabel_other": "{{count}} إخفاق"
+    },
+    "more": {
+      "title": "المزيد",
+      "content": "المحتوى",
+      "resources": "الموارد",
+      "view": "العرض",
+      "importTitle": "استيراد من Door43",
+      "importSecondary": "جلب ULT/UST والملاحظات والأسئلة",
+      "exportTitle": "تصدير USFM",
+      "exportSecondary": "تنزيل هذا الأصحاح أو السفر",
+      "showLogosSync": "إظهار مزامنة Logos"
+    },
+    "account": {
+      "mode": "الوضع",
+      "organization": "المؤسسة",
+      "switchHint": "تبديل"
     }
+  },
+  "panelTitle": {
+    "scripture": "النص الكتابي",
+    "original": "اللغة الأصلية",
+    "notes": "ملاحظات الترجمة",
+    "words": "كلمات الترجمة",
+    "questions": "أسئلة الترجمة",
+    "taArticle": "مقال أكاديمية الترجمة",
+    "twArticle": "مقال كلمات الترجمة",
+    "articleList": "المقالات",
+    "alignment": "المحاذاة",
+    "search": "بحث"
+  },
+  "panelBody": {
+    "selectNote": "اختر ملاحظة ترجمة لعرض مقالها في أكاديمية الترجمة.",
+    "selectWord": "اختر كلمة لعرض مقالها في كلمات الترجمة.",
+    "noNoteArticle": "لا تحتوي هذه الملاحظة على مرجع في أكاديمية الترجمة.",
+    "noWordArticle": "لا يوجد مقال في كلمات الترجمة لهذه الكلمة.",
+    "noSourceTa": "لم يُهيأ مصدر أكاديمية الترجمة لهذا المشروع.",
+    "noSourceTw": "لم يُهيأ مصدر كلمات الترجمة لهذا المشروع.",
+    "loadFailed": "تعذّر تحميل هذا المقال.",
+    "openOnDoor43": "فتح على Door43",
+    "noOriginal": "لا يوجد نص باللغة الأصلية لهذا الأصحاح."
+  },
+  "layout": {
+    "dragToMove": "اسحب لتحريك هذه اللوحة",
+    "minimizePanel": "تصغير اللوحة",
+    "expandPanel": "توسيع اللوحة",
+    "resetArrangement": "إعادة تعيين الترتيب",
+    "closeRegion": "إغلاق هذا القسم",
+    "closedRegions": "الأقسام المغلقة",
+    "restoreRegion": "إعادة فتح {{name}}",
+    "restoreAllRegions": "إعادة فتح جميع الأقسام",
+    "dockFullWidth": "شريط بعرض كامل",
+    "dockFullHeight": "عمود بارتفاع كامل",
+    "myLayouts": "تخطيطاتي",
+    "saveAs": "حفظ الحالي باسم…",
+    "manage": "إدارة التخطيطات…",
+    "saveDialogTitle": "حفظ التخطيط",
+    "nameLabel": "اسم التخطيط",
+    "manageDialogTitle": "إدارة التخطيطات",
+    "noUserLayouts": "لم تحفظ أي تخطيطات بعد.",
+    "active": "نشط",
+    "duplicate": "تكرار",
+    "copySuffix": "نسخة",
+    "deleteConfirmTitle": "حذف التخطيط؟",
+    "deleteConfirmBody": "ستتم إزالة \"{{name}}\". لا يمكن التراجع عن هذا."
   },
   "translation": {
     "translationMode": "وضع الترجمة",
@@ -125,6 +275,10 @@
     "examples": "أمثلة",
     "terms": "مصطلحات",
     "sourceLabel": "المصدر الإنجليزي",
+    "sourceAxisLabel": "تخطيط المصدر والمسودة",
+    "sourceAxisStacked": "المصدر فوق المسودة",
+    "sourceAxisSideBySide": "المصدر والمسودة جنبًا إلى جنب",
+    "sourceAxisSideBySideNarrow": "المصدر والمسودة جنبًا إلى جنب (مكدّسان حاليًا — هذه اللوحة ضيقة جدًا)",
     "draftLabel": "مسودة",
     "template": "قالب",
     "stateAiDraft": "مسودة ذكاء اصطناعي",
@@ -192,7 +346,15 @@
       "export": "Export file",
       "saveCount": "Save changes ({{count}})",
       "noMatches": "No strings match your search.",
-      "placeholderWarning": "Missing placeholder(s): {{tokens}} — keep these so values fill in correctly."
+      "placeholderWarning": "Missing placeholder(s): {{tokens}} — keep these so values fill in correctly.",
+      "inspectMode": "وضع التوطين (مرّر المؤشر وانقر في التطبيق الفعلي لتعديل نصوصه)",
+      "inspectHint": "وضع التوطين مفعّل — عُد إلى التطبيق، ثم مرّر المؤشر فوق أي نص لتمييزه وانقر لتعديل ترجمته.",
+      "inspectPausedHint": "متوقف مؤقتًا — تنقّل في التطبيق كالمعتاد. ألغِ تحديد الإيقاف المؤقت لاستئناف تعديل النصوص.",
+      "inspectPause": "إيقاف مؤقت",
+      "inspectNoKey": "تعذّر مطابقة هذا العنصر مع مفتاح ترجمة.",
+      "inspectSave": "حفظ",
+      "inspectCancel": "إلغاء",
+      "inspectExit": "إيقاف وضع التوطين"
     },
     "users": {
       "title": "User management",
@@ -201,6 +363,9 @@
       "role": "Role",
       "added": "Added",
       "addedBy": "Added by",
+      "fromTeam": "Door43 team",
+      "teamManagedEdit": "This user's role comes from a Door43 team, so this change will be undone the next time their membership is checked. Change their team on Door43 to make it stick.",
+      "teamManagedRemove": "Removed for now — but {{username}} is in a Door43 team, so they will regain access the next time they sign in. Remove them from the team on Door43 to revoke access.",
       "roleAdmin": "Admin",
       "roleEditor": "Editor",
       "add": "Add",
@@ -215,9 +380,17 @@
         "last_admin": "Can't remove or demote the last remaining admin.",
         "not_found": "That user isn't in the allowlist."
       },
-      "fromTeam": "Door43 team",
-      "teamManagedEdit": "This user's role comes from a Door43 team, so this change will be undone the next time their membership is checked. Change their team on Door43 to make it stick.",
-      "teamManagedRemove": "Removed for now — but {{username}} is in a Door43 team, so they will regain access the next time they sign in. Remove them from the team on Door43 to revoke access.",
+      "purge": {
+        "button": "مسح الأدوار الممنوحة يدويًا",
+        "confirmTitle": "مسح كل الأدوار الممنوحة يدويًا؟",
+        "confirmIntro": "يزيل هذا كل دور مُنح يدويًا أدناه بحيث يأتي الوصول من فرق Door43 بدلًا من ذلك. يحتفظ أعضاء الفرق بدورهم (يُعاد تطبيقه عند تسجيل دخولهم التالي).",
+        "willLoseAccess": "هؤلاء المستخدمون ليسوا في فريق على Door43 وسيفقدون الوصول:",
+        "teamBacked": "هؤلاء المستخدمون أعضاء في فريق على Door43 ويحتفظون بدورهم:",
+        "confirm": "مسح الأدوار",
+        "none": "لا توجد أدوار ممنوحة يدويًا لمسحها.",
+        "done": "تم مسح {{count}} من الأدوار الممنوحة يدويًا.",
+        "doneKept": "تم مسح {{count}} من الأدوار الممنوحة يدويًا؛ واحتُفظ بـ {{kept}} بوصفه المسؤول الأخير."
+      },
       "reconcile": {
         "allowlistHeading": "Manually granted roles (allowlist)",
         "allowlistNote": "Editor and admin access held in this app. This is not the Door43 org roster — it's who has been granted a role here.",
@@ -247,6 +420,7 @@
     "saveForbidden": "يمكن للمسؤول فقط حفظ هذه الإعدادات.",
     "actionFailed": "حدث خطأ ما — حاول مرة أخرى.",
     "conflict": "قام شخص آخر بالتعديل — تم تحميل أحدث نسخة.",
+    "conflictKeptEdits": "قام شخص آخر بحفظ تغييرات — تم الاحتفاظ بتعديلاتك غير المحفوظة. راجعها واحفظها مرة أخرى.",
     "empty": "فارغ",
     "preview": "معاينة",
     "search": "بحث",
@@ -283,10 +457,27 @@
     "termStatus": "الحالة",
     "replacement": "استخدم بدلًا منه",
     "addTerm": "إضافة",
+    "addRendering": "إضافة ترجمة أخرى",
+    "renderingCount_one": "ترجمة واحدة",
+    "renderingCount_zero": "لا توجد ترجمات",
+    "renderingCount_two": "ترجمتان",
+    "renderingCount_few": "{{count}} ترجمات",
+    "renderingCount_many": "{{count}} ترجمة",
+    "renderingCount_other": "{{count}} ترجمة",
+    "duplicateRendering": "هذه الترجمة موجودة بالفعل لهذا المفهوم.",
+    "termComment": "ملاحظة (المسوّغ)",
+    "termCommentHelp": "سبب هذا الاختيار — لفريقك فقط. لا يُستخدم في المطابقة.",
     "useInstead": "استخدم بدلًا منه: {{term}}",
     "importTitle": "استيراد المصطلحات (CSV)",
     "importHelp": "الصق ملف CSV مع صف عناوين. الأعمدة المطلوبة: concept_id و source_term. اختيارية: target_term و status و replacement و comment و tw_link.",
     "importResult": "{{added}} مضاف، {{updated}} محدَّث، {{errors}} خطأ في الصفوف.",
+    "importPreviewLabel": "معاينة فقط — لم يُحفَظ أي شيء.",
+    "importAppliedLabel": "تم تطبيق الاستيراد.",
+    "importTotals": "{{total}} صف مقروء · {{warnings}} تحذير",
+    "importErrorsTitle": "صفوف تعذّر استيرادها",
+    "importWarningsTitle": "صفوف مكررة — الأسطر اللاحقة تستبدل السابقة",
+    "importLine": "السطر {{line}}: {{message}}",
+    "importMore": "+{{count}} أخرى",
     "dryRun": "معاينة",
     "applyImport": "استيراد",
     "examplesIntro": "أزواج المصدر←الهدف المعتمدة. هذه هي الأعمال المعتمدة التي يتعلم منها الذكاء الاصطناعي كأمثلة. إلغاء اعتماد ملاحظة يزيلها من الذاكرة.",
@@ -326,16 +517,41 @@
       "sourceUrlLabel": "New source URL (Door43)",
       "changeSource": "Change source",
       "confirmReplace": "This will replace {{books}} book(s) ({{verses}} verses) with content from {{owner}}/{{repo}}. Are you sure?",
+      "confirmTitle": "استبدال مصدر النص لمسار {{lane}}",
+      "confirmSource": "المصدر الجديد: {{owner}}/{{repo}}",
+      "confirmWarning": "هذا يعيد تجهيز {{books}} من الأسفار ({{verses}} آية) من المصدر الجديد. يحل النص والمحاذاة المُجهَّزان محل المحتوى الحالي لكل سفر أدناه بمجرد التفعيل.",
+      "confirmLoadingBooks": "جارٍ سرد الأسفار المتأثرة…",
+      "confirmBooksLead": "سيتم استبدال الأسفار التالية ({{count}}):",
+      "confirmBooksSelectLead": "اختر أي الأسفار ({{count}}) سيتم استبداله من المصدر الجديد. الأسفار التي تتركها غير محددة تبقى دون تغيير (تُرحَّل كما هي):",
+      "confirmBooksSelectAll": "استبدال الكل",
+      "confirmBooksSelectNone": "الاحتفاظ بالكل",
+      "confirmBooksSummary": "استبدال {{replace}} · الاحتفاظ بـ {{keep}}",
+      "confirmBooksEditedHint": "تشير ✎ إلى الأسفار التي تحتوي على آيات عدّلتها. تبدأ غير محددة حفاظًا على عملك (يُرحَّل كما هو) — لا تحدد سفرًا منها إلا إذا أردت استبداله من المصدر الجديد.",
+      "bookStatTip": "{{verses}} آية · {{edited}} معدَّلة",
+      "confirmNoBookList": "تعذّر سرد الأسفار المتأثرة، لكن سيتم استبدال كل سفر مستورد في هذا المسار.",
+      "confirmSourceUnverified": "تعذّر التأكد من أن هذا المصدر يحتوي على ملفات أسفار (كان Door43 غير متاح للحظات). يمكنك المتابعة، لكن إذا جاءت الأسفار المُجهَّزة فارغة، فاستخدم الإلغاء للتراجع دون استبدال محتواك الحالي.",
+      "confirmAck": "أفهم أن هذا يستبدل النص والمحاذاة للأسفار المحددة للاستبدال، ويُبقي الباقي دون تغيير.",
+      "confirmBack": "رجوع",
+      "confirmButton": "بدء الاستبدال",
+      "sourceNoBooks": "لا يحتوي هذا المصدر على ملفات أسفار (لا توجد ملفات *.usfm في جذر المستودع) — اختر مصدر نص صالحًا.",
+      "sourceNoRepo": "تعذّر العثور على مستودع المصدر هذا على Door43. تحقق من العنوان.",
+      "sourceInvalidUrl": "لا يبدو هذا عنوان URL صالحًا لمستودع على Door43.",
+      "sourceCheckUnavailable": "تعذّر فحص المصدر الآن (كان Door43 غير متاح). هذا ليس رفضًا — حاول مرة أخرى.",
+      "sourceRetry": "إعادة المحاولة",
       "replacementStarted": "Replacement job started.",
       "replacementRequired": "Replacement required",
       "replacementActive": "Replacement in progress",
       "pendingTargetBanner": "This lane requires a source replacement before content is available.",
       "jobRunning": "Replacement job running…",
       "cancel": "Cancel replacement",
+      "backOut": "إلغاء والتراجع",
+      "backOutHint": "إحباط عملية الاستبدال هذه وإعادة المسار إلى مصدره الحالي. لا يتم استبدال المحتوى الموجود.",
+      "confirmBackOut": "إلغاء عملية الاستبدال هذه والعودة إلى المصدر الحالي؟ يُحذف المحتوى المُجهَّز (غير المفعَّل بعد)؛ ويُحتفَظ بالمحتوى الموجود.",
       "activate": "Activate",
       "replacementActivated": "Replacement activated.",
       "booksProgress": "Books staged: {{done}} / {{total}}",
       "bookRetryHint": "{{book}} failed to stage — click to retry, or dismiss to skip it.",
+      "confirmWaiveBook": "الإذن بغياب {{book}}؟ سيُحذف نهائيًا من هذا الإصدار. لا تفعل ذلك إلا إذا كان السفر مفقودًا فعلًا من مستودع المصدر.",
       "jobStatus": {
         "reserved": "Preparing replacement…",
         "staging": "Staging books…",
@@ -433,8 +649,8 @@
   },
   "sync": {
     "conflictsTooltip": "بعض التعديلات تتعارض مع الخادم — قم بحلها أدناه",
-    "conflict_zero": "تعارض",
     "conflict_one": "تعارض",
+    "conflict_zero": "تعارض",
     "conflict_two": "تعارضان",
     "conflict_few": "تعارضات",
     "conflict_many": "تعارضًا",
@@ -444,8 +660,8 @@
     "queuedStatus": "{{pending}} في قائمة الانتظار — {{status}}",
     "reconnecting": "جارٍ إعادة الاتصال…",
     "offline": "غير متصل",
-    "queuedLocally_zero": "{{count}} تعديل في قائمة الانتظار محليًا.",
     "queuedLocally_one": "{{count}} تعديل في قائمة الانتظار محليًا.",
+    "queuedLocally_zero": "{{count}} تعديل في قائمة الانتظار محليًا.",
     "queuedLocally_two": "{{count}} تعديلان في قائمة الانتظار محليًا.",
     "queuedLocally_few": "{{count}} تعديلات في قائمة الانتظار محليًا.",
     "queuedLocally_many": "{{count}} تعديلًا في قائمة الانتظار محليًا.",
@@ -454,8 +670,8 @@
     "willSaveWhenOnline": "سيتم الحفظ عند العودة للاتصال.",
     "tryingToReachLower": "جارٍ محاولة الوصول إلى الخادم…",
     "youAreOffline": "أنت غير متصل",
-    "savingTooltip_zero": "جارٍ حفظ {{count}} تعديل في السحابة…",
     "savingTooltip_one": "جارٍ حفظ {{count}} تعديل في السحابة…",
+    "savingTooltip_zero": "جارٍ حفظ {{count}} تعديل في السحابة…",
     "savingTooltip_two": "جارٍ حفظ {{count}} تعديلين في السحابة…",
     "savingTooltip_few": "جارٍ حفظ {{count}} تعديلات في السحابة…",
     "savingTooltip_many": "جارٍ حفظ {{count}} تعديلًا في السحابة…",
@@ -465,21 +681,21 @@
     "saved": "محفوظ",
     "jumpToUnsaved": "الانتقال إلى تعديل غير محفوظ",
     "unsaved": "غير محفوظ",
-    "unsavedEditsColon_zero": "{{count}} تعديل غير محفوظ:",
     "unsavedEditsColon_one": "{{count}} تعديل غير محفوظ:",
+    "unsavedEditsColon_zero": "{{count}} تعديل غير محفوظ:",
     "unsavedEditsColon_two": "{{count}} تعديلان غير محفوظان:",
     "unsavedEditsColon_few": "{{count}} تعديلات غير محفوظة:",
     "unsavedEditsColon_many": "{{count}} تعديلًا غير محفوظ:",
     "unsavedEditsColon_other": "{{count}} تعديل غير محفوظ:",
-    "unsavedEditsClickToJump_zero": "{{count}} تعديل غير محفوظ — انقر للانتقال",
     "unsavedEditsClickToJump_one": "{{count}} تعديل غير محفوظ — انقر للانتقال",
+    "unsavedEditsClickToJump_zero": "{{count}} تعديل غير محفوظ — انقر للانتقال",
     "unsavedEditsClickToJump_two": "{{count}} تعديلان غير محفوظان — انقر للانتقال",
     "unsavedEditsClickToJump_few": "{{count}} تعديلات غير محفوظة — انقر للانتقال",
     "unsavedEditsClickToJump_many": "{{count}} تعديلًا غير محفوظ — انقر للانتقال",
     "unsavedEditsClickToJump_other": "{{count}} تعديل غير محفوظ — انقر للانتقال",
     "resolveConflictTooltip": "عدم تطابق الإصدار — أعد المحاولة بإصدار الخادم الحالي (يفوز تعديلك)",
-    "resolveConflicts_zero": "حل {{count}} تعارض",
     "resolveConflicts_one": "حل {{count}} تعارض",
+    "resolveConflicts_zero": "حل {{count}} تعارض",
     "resolveConflicts_two": "حل {{count}} تعارضين",
     "resolveConflicts_few": "حل {{count}} تعارضات",
     "resolveConflicts_many": "حل {{count}} تعارضًا",
@@ -488,18 +704,25 @@
     "discardAll": "تجاهل الكل",
     "retryThisEdit": "إعادة محاولة هذا التعديل",
     "discardThisEdit": "تجاهل هذا التعديل",
-    "discardConfirmTitle_zero": "تجاهل {{count}} تعديل فاشل؟",
     "discardConfirmTitle_one": "تجاهل {{count}} تعديل فاشل؟",
+    "discardConfirmTitle_zero": "تجاهل {{count}} تعديل فاشل؟",
     "discardConfirmTitle_two": "تجاهل {{count}} تعديلين فاشلين؟",
     "discardConfirmTitle_few": "تجاهل {{count}} تعديلات فاشلة؟",
     "discardConfirmTitle_many": "تجاهل {{count}} تعديلًا فاشلًا؟",
     "discardConfirmTitle_other": "تجاهل {{count}} تعديل فاشل؟",
     "discardConfirmBody": "لم تصل هذه التعديلات إلى الخادم قط. تجاهلها يحذفها من هذا الجهاز نهائيًا — لا يمكن استعادتها.",
     "cancel": "إلغاء",
+    "quarantinedDrafts_one": "مسودة معزولة واحدة",
+    "quarantinedDrafts_zero": "لا توجد مسودات معزولة",
+    "quarantinedDrafts_two": "مسودتان معزولتان",
+    "quarantinedDrafts_few": "{{count}} مسودات معزولة",
+    "quarantinedDrafts_many": "{{count}} مسودة معزولة",
+    "quarantinedDrafts_other": "{{count}} مسودة معزولة",
+    "exportQuarantinedDrafts": "تنزيل المسودات المعزولة بصيغة JSON",
+    "discardQuarantinedDrafts": "تجاهل جميع المسودات المعزولة",
+    "export": "تصدير",
     "updateAvailableTooltip": "تم نشر إصدار أحدث. انقر لإعادة التحميل والحصول على أحدث الإصلاحات.",
-    "updateAvailable": "يتوفر تحديث للتطبيق — قم بالتحديث",
-    "buildSha": "الإصدار {{commit}}",
-    "onLatestVersion": "أنت على أحدث إصدار قمت بتحميله."
+    "updateAvailable": "يتوفر تحديث للتطبيق — قم بالتحديث"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -514,7 +737,12 @@
     "selectLabel": "Organization",
     "currentLabel": "Current organization",
     "singleOrgNote": "No other organizations are configured.",
-    "indicatorTooltip": "Organization — switch it in Preferences → Setup"
+    "indicatorTooltip": "Organization — switch it in Preferences → Setup",
+    "chooseTitle": "اختر مؤسستك",
+    "chooseIntro": "ينتمي حسابك على Door43 إلى أكثر من مؤسسة هنا. اختر المؤسسة التي تريد العمل فيها — يمكنك التبديل في أي وقت من التفضيلات.",
+    "chooseCurrentNote": "موقعك الحالي",
+    "chooseFailed": "تعذّر تحميل مؤسساتك — يمكنك التبديل لاحقًا في التفضيلات.",
+    "chooseStay": "متابعة"
   },
   "shell": {
     "scripture": "النص الكتابي",
@@ -559,11 +787,23 @@
     "noUnsavedEdits": "لا توجد تعديلات غير محفوظة",
     "undoEdits": "التراجع عن تعديلات هذه الآية",
     "nothingToCheck": "لا شيء للتحقق منه",
+    "boardTitle": "لوحة الأصحاح — {{book}} {{chapter}}",
+    "shown": "معروض",
+    "hidden": "مخفي",
+    "hideLaneInSidebar": "إخفاء هذا المسار في الشريط الجانبي",
+    "showLaneInSidebar": "إظهار هذا المسار في الشريط الجانبي",
+    "hideLabelInSidebar": "إخفاء {{label}} في الشريط الجانبي",
+    "showLabelInSidebar": "إظهار {{label}} في الشريط الجانبي",
+    "checkAllLabel": "تحديد كل {{label}}",
+    "lanePercentComplete": "{{label}} مكتمل بنسبة {{percent}}%",
     "noNotesInChapter": "لا توجد ملاحظات في هذا الأصحاح",
     "noNotesForVerse": "لا توجد ملاحظات لهذه الآية",
     "noWordsInChapter": "لا توجد كلمات في هذا الأصحاح",
     "noQuestionsInChapter": "لا توجد أسئلة في هذا الأصحاح",
     "clickLinkToAlign": "انقر على أيقونة الرابط في آية ULT أو UST لبدء المحاذاة.",
+    "viewMode": "وضع عرض النص الكتابي",
+    "viewModeTooltip": "وضع عرض النص الكتابي — التبديل بين الصفوف والأعمدة والسفر الكامل",
+    "bookLoadStatus": "{{chapters}} أصحاح · حُمّل {{loaded}}",
     "tooltipRows": "بطاقة مكدسة آية بآية (الافتراضي)",
     "tooltipColumns": "عرض مستندي بأعمدة متوازية للأصحاح الحالي",
     "tooltipBook": "تمرير للسفر كاملًا عبر جميع النسخ المفعّلة (يُحمّل تدريجيًا أثناء التمرير)",
@@ -574,8 +814,8 @@
     "fromPreviousVerse": "من الآية السابقة — حرّرها هناك",
     "introTooltip": "مقدمة الأصحاح — ملاحظات ترجمة على مستوى الأصحاح، وعناوين المزامير (\\d)، وعلامات الفقرات / الشعر التي تمهّد للآية 1.",
     "alignLabel": "محاذاة {{label}}",
-    "colCount_zero": "{{count}} عمود",
     "colCount_one": "{{count}} عمود",
+    "colCount_zero": "{{count}} عمود",
     "colCount_two": "{{count}} عمودان",
     "colCount_few": "{{count}} أعمدة",
     "colCount_many": "{{count}} عمودًا",
@@ -610,8 +850,8 @@
     "failedToLoad": "فشل تحميل {{book}} {{chapter}}: {{error}}",
     "reconnecting": "جارٍ إعادة الاتصال… (المحاولة {{attempt}})",
     "loadingChapter": "جارٍ تحميل {{book}} {{chapter}}…",
-    "editLeftUnaligned_zero": "ترك هذا التعديل {{count}} كلمة غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
     "editLeftUnaligned_one": "ترك هذا التعديل {{count}} كلمة غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
+    "editLeftUnaligned_zero": "ترك هذا التعديل {{count}} كلمة غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
     "editLeftUnaligned_two": "ترك هذا التعديل {{count}} كلمتين غير مُحاذاتين في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
     "editLeftUnaligned_few": "ترك هذا التعديل {{count}} كلمات غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
     "editLeftUnaligned_many": "ترك هذا التعديل {{count}} كلمةً غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
@@ -625,16 +865,41 @@
     "alignLossIntro": "سيؤدي الحفظ إلى ترك {{phrase}} دون رابط مصدر في {{ref}}: ",
     "plusMore": " (+{{n}} أخرى)",
     "alignLossOutro": ". لا بأس بذلك إن كنت تقصد إعادة المحاذاة — لكن إن كان بالخطأ فسيمنع التصدير الليلي إلى الفرع الرئيسي حتى تتم محاذاة {{state}} من جديد. احفظ على أي حال، أو ألغِ لمتابعة التحرير.",
-    "unsavedDualBody": "لديك تغييرات غير محفوظة في أداة المحاذاة جنبًا إلى جنب (تعديلات محاذاة أو نص قراءة). احفظها، أو تجاهلها، أو ألغِ لمتابعة التحرير.",
-    "boardTitle": "لوحة الأصحاح — {{book}} {{chapter}}",
-    "shown": "معروض",
-    "hidden": "مخفي",
-    "hideLaneInSidebar": "إخفاء هذا المسار في الشريط الجانبي",
-    "showLaneInSidebar": "إظهار هذا المسار في الشريط الجانبي",
-    "hideLabelInSidebar": "إخفاء {{label}} في الشريط الجانبي",
-    "showLabelInSidebar": "إظهار {{label}} في الشريط الجانبي",
-    "checkAllLabel": "تحديد كل {{label}}",
-    "lanePercentComplete": "{{label}} مكتمل بنسبة {{percent}}%"
+    "unsavedDualBody": "لديك تغييرات غير محفوظة في أداة المحاذاة جنبًا إلى جنب (تعديلات محاذاة أو نص قراءة). احفظها، أو تجاهلها، أو ألغِ لمتابعة التحرير."
+  },
+  "lanes": {
+    "text": "النص",
+    "tn": "الملاحظات",
+    "tw": "روابط TW",
+    "tq": "الأسئلة",
+    "textShort": "ن",
+    "tnShort": "م",
+    "twShort": "L",
+    "tqShort": "س",
+    "attrOpen": "مفتوح",
+    "attrYou": "أنت",
+    "attrYouPlusOthers_one": "أنت + شخص آخر",
+    "attrYouPlusOthers_zero": "أنت + {{count}}",
+    "attrYouPlusOthers_two": "أنت + شخصان آخران",
+    "attrYouPlusOthers_few": "أنت + {{count}} آخرين",
+    "attrYouPlusOthers_many": "أنت + {{count}} آخرين",
+    "attrYouPlusOthers_other": "أنت + {{count}} آخرين",
+    "attrSomeoneElse": "شخص آخر",
+    "attrPeople_one": "شخص واحد",
+    "attrPeople_zero": "{{count}} شخص",
+    "attrPeople_two": "شخصان",
+    "attrPeople_few": "{{count}} أشخاص",
+    "attrPeople_many": "{{count}} شخصًا",
+    "attrPeople_other": "{{count}} شخص"
+  },
+  "logos": {
+    "openVerse": "افتح هذه الآية في Logos",
+    "autoFollow": "متابعة تلقائية",
+    "autoFollowTooltip": "متابعة الآية النشطة تلقائيًا في Logos (يسحب التركيز عند كل تغيير)",
+    "enableTitle": "تفعيل مزامنة Logos؟",
+    "enableBody": "سيؤدي تحديد هذا إلى جعل Logos يسحب التركيز (يجلب نافذته إلى الأمام) في كل مرة تغيّر فيها الآية. لا بأس إن كان Logos على شاشة ثانية، وإلا فاستخدم زر المزامنة فقط عندما تريد تحريك Logos.",
+    "dontShowAgain": "عدم الإظهار مرة أخرى",
+    "ok": "موافق"
   },
   "pipeline": {
     "aiButton": "AI",
@@ -650,6 +915,26 @@
     "durationNotesTqs": "~30–60 دقيقة",
     "importFromDoor43": "استيراد من Door43",
     "importFromDoor43Desc": "جلب ULT/UST/TN/TQ/TWL — لن يطمس التعديلات المحلية.",
+    "aquiferPull": "Pull Aquifer drafts",
+    "aquiferPullDesc": "Import Aquifer translation notes as drafts to review. Existing translated notes are kept and marked approved.",
+    "aquiferStarting": "Pulling Aquifer drafts for {{book}}…",
+    "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
+    "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
+    "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
+    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}",
+    "resourceFromSource": "Re-source notes from English",
+    "resourceFromSourceDesc": "Replace this book’s notes and questions with the current English source.",
+    "resourceConfirmTitle": "Re-source notes from English?",
+    "resourceConfirmBody": "This re-downloads the entire {{book}} book — scripture, notes, questions and word links — and replaces it from DCS. Any local edits to this book will be lost.",
+    "resourceContinue": "Re-source",
+    "resourceEditsTitle": "Local edits will be discarded",
+    "resourceEditsBody": "{{tn}} notes, {{tq}} questions, {{twl}} word links and {{verses}} verses in {{book}} carry local work — human edits, approvals, or AI drafts. All of it will be permanently discarded.",
+    "resourceDiscardConfirm": "Discard and re-source",
+    "resourceStarting": "Re-sourcing {{book}} from the English source…",
+    "resourceDone": "{{book}} re-sourced from {{sources}}.",
+    "resourceDoneNoSources": "{{book}} re-sourced from the English source.",
+    "resourceAdminOnly": "Re-sourcing notes is admin-only.",
+    "resourceFailed": "Could not re-source notes: {{error}}",
     "startAiPipeline": "بدء خط معالجة بالذكاء الاصطناعي",
     "confirmRun": "تشغيل {{label}}؟ {{duration}} لكل أصحاح — يمكنك متابعة العمل في أصحاحات أخرى أثناء تشغيله.",
     "chapterOrRange": "أصحاح أو نطاق",
@@ -685,8 +970,8 @@
     "stageAlign": "محاذاة",
     "stagePush": "دفع",
     "stageBatch": "دفعة",
-    "pipelinesRunning_zero": "{{count}} خط معالجة قيد التشغيل",
     "pipelinesRunning_one": "{{count}} خط معالجة قيد التشغيل",
+    "pipelinesRunning_zero": "{{count}} خط معالجة قيد التشغيل",
     "pipelinesRunning_two": "{{count}} خطي معالجة قيد التشغيل",
     "pipelinesRunning_few": "{{count}} خطوط معالجة قيد التشغيل",
     "pipelinesRunning_many": "{{count}} خط معالجة قيد التشغيل",
@@ -709,37 +994,18 @@
     "aiOutputApplied": "طُبِّقت مخرجات الذكاء الاصطناعي على {{book}} {{chapter}}.",
     "refreshing": "جارٍ التحديث…",
     "refresh": "تحديث",
-    "dismissAll": "تجاهل الكل",
-    "aquiferPull": "Pull Aquifer drafts",
-    "aquiferPullDesc": "Import Aquifer translation notes as drafts to review. Existing translated notes are kept and marked approved.",
-    "aquiferStarting": "Pulling Aquifer drafts for {{book}}…",
-    "aquiferDone": "{{book}}: {{approved}} approved, {{inserted}} drafts added to review.",
-    "aquiferNotAvailable": "Aquifer has no notes for {{book}}.",
-    "aquiferNotImported": "Import {{book}} first, then pull Aquifer drafts.",
-    "aquiferFailed": "Could not pull Aquifer drafts: {{error}}",
-    "resourceFromSource": "Re-source notes from English",
-    "resourceFromSourceDesc": "Replace this book’s notes and questions with the current English source.",
-    "resourceConfirmTitle": "Re-source notes from English?",
-    "resourceConfirmBody": "This re-downloads the entire {{book}} book — scripture, notes, questions and word links — and replaces it from DCS. Any local edits to this book will be lost.",
-    "resourceContinue": "Re-source",
-    "resourceEditsTitle": "Local edits will be discarded",
-    "resourceEditsBody": "{{tn}} notes, {{tq}} questions, {{twl}} word links and {{verses}} verses in {{book}} carry local work — human edits, approvals, or AI drafts. All of it will be permanently discarded.",
-    "resourceDiscardConfirm": "Discard and re-source",
-    "resourceStarting": "Re-sourcing {{book}} from the English source…",
-    "resourceDone": "{{book}} re-sourced from {{sources}}.",
-    "resourceDoneNoSources": "{{book}} re-sourced from the English source.",
-    "resourceAdminOnly": "Re-sourcing notes is admin-only.",
-    "resourceFailed": "Could not re-source notes: {{error}}"
+    "dismissAll": "تجاهل الكل"
   },
   "noteCard": {
     "clickToEdit": "انقر للتحرير",
+    "notApproved": "غير معتمد",
     "restoreToReorder": "استعد لإعادة الترتيب",
     "addSupportRef": "+ مرجع داعم",
     "supportRefPlaceholder": "figs-, translate-, writing-, …",
     "changeReference": "تغيير المرجع",
     "unsavedEditsSuffix": " · تعديلات غير محفوظة",
-    "timesSaved_zero": "{{count}} مرة",
     "timesSaved_one": "{{count}} مرة",
+    "timesSaved_zero": "{{count}} مرة",
     "timesSaved_two": "{{count}} مرتان",
     "timesSaved_few": "{{count}} مرات",
     "timesSaved_many": "{{count}} مرة",
@@ -810,8 +1076,8 @@
     "versionChip": "الإصدار {{version}}",
     "openDualTooltip": "افتح {{left}} + {{right}} جنبًا إلى جنب (مُحاذَيْن لنفس العبرية)",
     "sideBySide": "⇄ جنبًا إلى جنب",
-    "acceptSuggestions_zero": "✓ قبول {{count}} اقتراح",
     "acceptSuggestions_one": "✓ قبول {{count}} اقتراح",
+    "acceptSuggestions_zero": "✓ قبول {{count}} اقتراح",
     "acceptSuggestions_two": "✓ قبول {{count}} اقتراحين",
     "acceptSuggestions_few": "✓ قبول {{count}} اقتراحات",
     "acceptSuggestions_many": "✓ قبول {{count}} اقتراحًا",
@@ -843,42 +1109,6 @@
     "showSourceTooltip": "إظهار مصدر {{label}}",
     "hideSourceTooltip": "إخفاء مصدر {{label}}"
   },
-  "lanes": {
-    "text": "النص",
-    "tn": "الملاحظات",
-    "tw": "روابط TW",
-    "tq": "الأسئلة",
-    "textShort": "ن",
-    "tnShort": "م",
-    "twShort": "L",
-    "tqShort": "س",
-    "attrOpen": "مفتوح",
-    "attrYou": "أنت",
-    "attrSomeoneElse": "شخص آخر",
-    "attrYouPlusOthers_zero": "أنت + {{count}}",
-    "attrYouPlusOthers_one": "أنت + شخص آخر",
-    "attrYouPlusOthers_two": "أنت + شخصان آخران",
-    "attrYouPlusOthers_few": "أنت + {{count}} آخرين",
-    "attrYouPlusOthers_many": "أنت + {{count}} آخرين",
-    "attrYouPlusOthers_other": "أنت + {{count}} آخرين",
-    "attrPeople_zero": "{{count}} شخص",
-    "attrPeople_one": "شخص واحد",
-    "attrPeople_two": "شخصان",
-    "attrPeople_few": "{{count}} أشخاص",
-    "attrPeople_many": "{{count}} شخصًا",
-    "attrPeople_other": "{{count}} شخص"
-  },
-  "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
-    "openVerse": "افتح هذه الآية في Logos",
-    "autoFollow": "متابعة تلقائية",
-    "autoFollowTooltip": "متابعة الآية النشطة تلقائيًا في Logos (يسحب التركيز عند كل تغيير)",
-    "enableTitle": "تفعيل مزامنة Logos؟",
-    "enableBody": "سيؤدي تحديد هذا إلى جعل Logos يسحب التركيز (يجلب نافذته إلى الأمام) في كل مرة تغيّر فيها الآية. لا بأس إن كان Logos على شاشة ثانية، وإلا فاستخدم زر المزامنة فقط عندما تريد تحريك Logos.",
-    "dontShowAgain": "عدم الإظهار مرة أخرى",
-    "ok": "موافق"
-  },
   "setup": {
     "railLabel": "Setup",
     "back": "Back",
@@ -886,11 +1116,15 @@
     "title": "Set up a new org",
     "intro": "Point the editor at a Door43 org's repositories, then import a first book and fill its translationWords and translationAcademy areas. One database serves one org.",
     "step": {
+      "organization": "منظمتك",
+      "sources": "مصادر السحب",
+      "lanes": "مسارات النص الكتابي الخاصة بك",
+      "review": "المراجعة والتطبيق",
+      "replacement": "إكمال تغيير مصدر النص الكتابي",
       "gatewayAdmin": "Create your repositories",
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -908,24 +1142,368 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
     "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneConfigured": "تم تكوين {{org}}. استورد سفرك الأول وترجمه للبدء.",
+    "goToImport": "الانتقال إلى الاستيراد",
+    "openEditor": "افتح المحرر",
+    "orgIdentityIntro": "هذه هي المنظمة التي تخدمها مساحة العمل هذه. قاعدة بيانات واحدة تخدم منظمة واحدة، لذا لا يمكن تغييرها هنا. أكّد لغة الموارد أدناه.",
+    "orgNameLabel": "المنظمة",
+    "orgLoadFailed": "تعذّر تحميل منظمة مساحة العمل هذه. أعد التحميل وحاول مرة أخرى.",
+    "resourceLanguageLabel": "لغة الموارد",
+    "resourceLanguageHelp": "لغة النص والملاحظات التي تنتجها. تُعبَّأ مسبقًا من بيانات منظمتك حيثما أمكن.",
+    "sourcesIntro": "اختر المستودعات التي تسحب منها. كل مورد محدد افتراضيًا ويسحب من المنظمة الأعلى أدناه؛ ألغِ تحديد أحدها لتركه فارغًا أو توجيهه إلى مصدر مختلف.",
+    "upstreamOrgLabel": "المنظمة الأعلى الافتراضية",
+    "upstreamOrgHelp": "المنظمة التي تترجم منها. الافتراضي unfoldingWord.",
+    "upstreamOrgError": "تعذّر التحقق من هذه المنظمة على Door43. تحقق من الإملاء وحاول مرة أخرى.",
+    "upstreamOrgUnverified": "لم يتم التحقق من هذه المنظمة الأعلى بعد. سيتم التحقق منها عند مغادرة الحقل.",
+    "resource": {
+      "lit": "النص الحرفي (GLT)",
+      "sim": "النص المبسّط (GST)",
+      "tn": "translationNotes",
+      "tq": "translationQuestions",
+      "twl": "translationWords Links",
+      "tw": "translationWords",
+      "ta": "translationAcademy"
+    },
+    "leaveBlank": "اتركه فارغًا",
+    "useDifferentSource": "استخدام مصدر مختلف",
+    "sourceUrlLabel": "عنوان URL لمصدر Door43",
+    "sourceUrlError": {
+      "invalid": "هذا لا يبدو عنوان URL لمستودع على Door43.",
+      "not_found": "لا يوجد مستودع بهذا الاسم على Door43.",
+      "unreachable": "يتعذّر الوصول إلى Door43 حاليًا — حاول مرة أخرى.",
+      "no_books": "هذا المصدر لا يحتوي على ملفات أسفار كتابية — اختر مصدرًا صالحًا."
+    },
+    "lanesIntro": "هذه مستودعات منظمتك أنت — النص الذي تحرّره وتصدّر إليه. أكّد المستودع الهدف، وما إذا كنت تحرّر أم تحاذي فقط، ومن أين يسحب كل مسار.",
+    "lane": {
+      "lit": "المسار الحرفي",
+      "sim": "المسار المبسّط"
+    },
+    "targetRepoLabel": "المستودع الهدف",
+    "targetRepoHelp": "مستودع منظمتك لهذا المسار. مُعبَّأ مسبقًا لكنه قابل للتعديل — لا يلزم أن يكون {lang}_glt (مثل ru_rlob وar_avd).",
+    "targetRepoLocked": "مقفل — هذا المشروع يحتوي على نص بالفعل. لتغيير مصدر النص الكتابي، استخدم \"تغيير مصدر النص الكتابي\" في التفضيلات.",
+    "laneEditModeLabel": "ما الذي يفعله المترجمون في هذا المسار؟",
+    "laneEditMode": {
+      "edit": "تحرير النص",
+      "align": "المحاذاة فقط"
+    },
+    "laneUpstreamLabel": "المصدر الأعلى لهذا المسار",
+    "laneUpstream": {
+      "unfoldingWord": "unfoldingWord",
+      "url": "عنوان URL",
+      "none": "لا شيء (ألّف نصك بنفسك)"
+    },
+    "laneFromTo": "يسحب من",
+    "upstreamNone": "لا شيء",
+    "upstreamPending": "(الصق عنوان URL)",
+    "reviewIntro": "راجع تكوين {{lang}} لـ {{org}} قبل التطبيق.",
+    "reviewFrom": "السحب من (المصادر)",
+    "reviewTo": "منظمتك ({{org}})",
+    "reviewMissing": "غير محدد",
+    "reviewIncomplete": "بعض مستودعات الموارد لا تزال مفقودة أو غامضة. عالجها قبل التطبيق.",
+    "laneSourceMigration": "لا يمكن للإعداد تغيير مصدر النص الكتابي لـ {{lanes}} في مشروع يحتوي على نص بالفعل — فهذا ترحيل. أعد المصدر أدناه للإبقاء على الحالي، أو استخدم \"تغيير مصدر النص الكتابي\" في التفضيلات للقيام بذلك عن قصد.",
+    "revertLaneSource": "إعادة مصدر {{lane}} إلى الحالي ({{repo}})",
+    "identityChangedRevert": "يحتوي هذا المشروع على بيانات بالفعل، لذا لا يمكن هنا تغيير منظمته أو وجهة التصدير أو مستودعات الموارد. أعد تعديلات المستودعات إلى التكوين الحالي لتطبيق تعديل اللغة أو وضع المسار، أو ابدأ من قاعدة بيانات جديدة لإعداد منظمة مختلفة.",
+    "revertAllRepos": "إعادة جميع المستودعات إلى التكوين الحالي",
+    "laneSourceLockedBlocked": "لا يمكن هنا تسوية مصدر النص الكتابي لـ {{lanes}} — فهو في منتصف تغيير مصدر (أو يشير إلى منظمة مختلفة). أكمل ذلك أو ألغِه من \"تغيير مصدر النص الكتابي\" في التفضيلات قبل تطبيق الإعداد.",
+    "replacementStepIntro": "غيّرت مصدر النص الكتابي لمشروع يحتوي على بيانات بالفعل، لذا يجب تجهيز النص الجديد قبل تفعيله. هذه الخطوة تُكمل ذلك التغيير؛ لا يتغير شيء للمحررين حتى تضغط «تفعيل».",
+    "replacementStart": "تجهيز النص الجديد",
+    "replacementIntro": "هذا يجهّز نص المصدر الجديد سفرًا سفرًا. عندما يصبح كل سفر جاهزًا، اضغط «تفعيل» لتحويل المسار.",
+    "replacementNone": "لا يحتاج أي مسار إلى تغيير المصدر. يمكنك المتابعة.",
+    "replacementContinue": "متابعة",
+    "retryDetection": "إعادة محاولة الاكتشاف",
+    "upstreamOrgUnreachable": "يتعذّر الوصول إلى Door43 حاليًا — أعد المحاولة للتحقق من هذه المنظمة.",
+    "upstreamOrgRetry": "إعادة المحاولة",
+    "laneModeFailed": "تعذّر ضبط {{lanes}} على وضع التحرير/المحاذاة المختار — أعد المحاولة قبل المتابعة حتى لا يبقى المسار قابلًا للتحرير عن طريق الخطأ.",
+    "retryLaneMode": "إعادة محاولة إعدادات التحرير/المحاذاة",
+    "laneModeConfirming": "جارٍ تطبيق إعداد التحرير/المحاذاة…",
+    "laneModeConfirmed": "تم تفعيل المسار وضبطه على «{{mode}}».",
+    "laneModeRetryError": "تعذّر ضبط {{lane}} على «{{mode}}» — أعد المحاولة. حتى ينجح هذا يبقى المسار قابلًا للتحرير.",
+    "replacementContinueBlocked": "فعّل كل مسار أعلاه وأكّد إعداد التحرير/المحاذاة الخاص به للمتابعة.",
+    "unverifiedOverride": "تشير هذه الموارد إلى عنوان URL لمصدر لم يتم التحقق منه بعد — تحقق منها أو امسحها قبل المتابعة: {{resources}}.",
+    "replacementActionRequired": "إجراء مطلوب — أعد المحاولة أو تجاوز الأسفار المُعلَّمة أدناه قبل أن يمكن تفعيل هذا المسار.",
+    "bookError": {
+      "notFound": "غير موجود في {{location}}"
+    },
+    "replacementConfirmTitle": "استبدال النص في {{lane}}؟",
+    "replacementConfirmSource": "المصدر الجديد: {{owner}}/{{repo}}",
+    "replacementConfirmWarning": "سيؤدي التفعيل إلى الكتابة فوق النص والمحاذاة الحاليين للأسفار أدناه بالمصدر الجديد. لا يمكن التراجع عن هذا من هنا.",
+    "replacementConfirmLoadingBooks": "جارٍ تحميل الأسفار المتأثرة…",
+    "replacementConfirmBooksLead": "سيتم استبدال {{count}} سفر (أسفار):",
+    "replacementConfirmBooksSelectLead": "اختر أيًّا من الأسفار البالغ عددها {{count}} تريد استبداله من المصدر الجديد. الأسفار التي تتركها غير محددة تبقى دون تغيير (تُرحَّل):",
+    "replacementConfirmBooksSelectAll": "استبدال الكل",
+    "replacementConfirmBooksSelectNone": "الإبقاء على الكل",
+    "replacementConfirmBooksSummary": "استبدال {{replace}} · الإبقاء على {{keep}}",
+    "replacementConfirmBooksEditedHint": "✎ تُعلِّم الأسفار التي تحتوي على آيات حرّرتها. تبدأ غير محددة حتى يُحفظ عملك (يُرحَّل) — حدد أحدها فقط إن أردت الكتابة فوقه من المصدر الجديد.",
+    "replacementConfirmBookStatTip": "{{verses}} آية · {{edited}} محرَّرة",
+    "replacementConfirmNoBookList": "تعذّر سرد الأسفار المتأثرة، لكن سيُستبدل كل سفر مستورد في هذا المسار.",
+    "replacementConfirmAck": "أفهم أن هذا يستبدل نص الأسفار المُعلَّمة للاستبدال، ويُبقي البقية دون تغيير.",
+    "replacementConfirmButton": "تجهيز الاستبدال"
+  },
+  "books": {
+    "GEN": {
+      "name": "التكوين",
+      "abbr": "تك"
+    },
+    "EXO": {
+      "name": "الخروج",
+      "abbr": "خر"
+    },
+    "LEV": {
+      "name": "اللاويين",
+      "abbr": "لا"
+    },
+    "NUM": {
+      "name": "العدد",
+      "abbr": "عد"
+    },
+    "DEU": {
+      "name": "التثنية",
+      "abbr": "تث"
+    },
+    "JOS": {
+      "name": "يشوع",
+      "abbr": "يش"
+    },
+    "JDG": {
+      "name": "القضاة",
+      "abbr": "قض"
+    },
+    "RUT": {
+      "name": "راعوث",
+      "abbr": "را"
+    },
+    "1SA": {
+      "name": "صموئيل الأول",
+      "abbr": "1 صم"
+    },
+    "2SA": {
+      "name": "صموئيل الثاني",
+      "abbr": "2 صم"
+    },
+    "1KI": {
+      "name": "الملوك الأول",
+      "abbr": "1 مل"
+    },
+    "2KI": {
+      "name": "الملوك الثاني",
+      "abbr": "2 مل"
+    },
+    "1CH": {
+      "name": "أخبار الأيام الأول",
+      "abbr": "1 أخ"
+    },
+    "2CH": {
+      "name": "أخبار الأيام الثاني",
+      "abbr": "2 أخ"
+    },
+    "EZR": {
+      "name": "عزرا",
+      "abbr": "عز"
+    },
+    "NEH": {
+      "name": "نحميا",
+      "abbr": "نح"
+    },
+    "EST": {
+      "name": "أستير",
+      "abbr": "أس"
+    },
+    "JOB": {
+      "name": "أيوب",
+      "abbr": "أي"
+    },
+    "PSA": {
+      "name": "المزامير",
+      "abbr": "مز"
+    },
+    "PRO": {
+      "name": "الأمثال",
+      "abbr": "أم"
+    },
+    "ECC": {
+      "name": "الجامعة",
+      "abbr": "جا"
+    },
+    "SNG": {
+      "name": "نشيد الأنشاد",
+      "abbr": "نش"
+    },
+    "ISA": {
+      "name": "إشعياء",
+      "abbr": "إش"
+    },
+    "JER": {
+      "name": "إرميا",
+      "abbr": "إر"
+    },
+    "LAM": {
+      "name": "مراثي إرميا",
+      "abbr": "مرا"
+    },
+    "EZK": {
+      "name": "حزقيال",
+      "abbr": "حز"
+    },
+    "DAN": {
+      "name": "دانيال",
+      "abbr": "دا"
+    },
+    "HOS": {
+      "name": "هوشع",
+      "abbr": "هو"
+    },
+    "JOL": {
+      "name": "يوئيل",
+      "abbr": "يؤ"
+    },
+    "AMO": {
+      "name": "عاموس",
+      "abbr": "عا"
+    },
+    "OBA": {
+      "name": "عوبديا",
+      "abbr": "عو"
+    },
+    "JON": {
+      "name": "يونان",
+      "abbr": "يون"
+    },
+    "MIC": {
+      "name": "ميخا",
+      "abbr": "مي"
+    },
+    "NAM": {
+      "name": "ناحوم",
+      "abbr": "نا"
+    },
+    "HAB": {
+      "name": "حبقوق",
+      "abbr": "حب"
+    },
+    "ZEP": {
+      "name": "صفنيا",
+      "abbr": "صف"
+    },
+    "HAG": {
+      "name": "حجي",
+      "abbr": "حج"
+    },
+    "ZEC": {
+      "name": "زكريا",
+      "abbr": "زك"
+    },
+    "MAL": {
+      "name": "ملاخي",
+      "abbr": "ملا"
+    },
+    "MAT": {
+      "name": "متى",
+      "abbr": "مت"
+    },
+    "MRK": {
+      "name": "مرقس",
+      "abbr": "مر"
+    },
+    "LUK": {
+      "name": "لوقا",
+      "abbr": "لو"
+    },
+    "JHN": {
+      "name": "يوحنا",
+      "abbr": "يو"
+    },
+    "ACT": {
+      "name": "أعمال الرسل",
+      "abbr": "أع"
+    },
+    "ROM": {
+      "name": "رومية",
+      "abbr": "رو"
+    },
+    "1CO": {
+      "name": "كورنثوس الأولى",
+      "abbr": "1 كو"
+    },
+    "2CO": {
+      "name": "كورنثوس الثانية",
+      "abbr": "2 كو"
+    },
+    "GAL": {
+      "name": "غلاطية",
+      "abbr": "غل"
+    },
+    "EPH": {
+      "name": "أفسس",
+      "abbr": "أف"
+    },
+    "PHP": {
+      "name": "فيلبي",
+      "abbr": "في"
+    },
+    "COL": {
+      "name": "كولوسي",
+      "abbr": "كو"
+    },
+    "1TH": {
+      "name": "تسالونيكي الأولى",
+      "abbr": "1 تس"
+    },
+    "2TH": {
+      "name": "تسالونيكي الثانية",
+      "abbr": "2 تس"
+    },
+    "1TI": {
+      "name": "تيموثاوس الأولى",
+      "abbr": "1 تي"
+    },
+    "2TI": {
+      "name": "تيموثاوس الثانية",
+      "abbr": "2 تي"
+    },
+    "TIT": {
+      "name": "تيطس",
+      "abbr": "تي"
+    },
+    "PHM": {
+      "name": "فليمون",
+      "abbr": "فل"
+    },
+    "HEB": {
+      "name": "العبرانيين",
+      "abbr": "عب"
+    },
+    "JAS": {
+      "name": "يعقوب",
+      "abbr": "يع"
+    },
+    "1PE": {
+      "name": "بطرس الأولى",
+      "abbr": "1 بط"
+    },
+    "2PE": {
+      "name": "بطرس الثانية",
+      "abbr": "2 بط"
+    },
+    "1JN": {
+      "name": "يوحنا الأولى",
+      "abbr": "1 يو"
+    },
+    "2JN": {
+      "name": "يوحنا الثانية",
+      "abbr": "2 يو"
+    },
+    "3JN": {
+      "name": "يوحنا الثالثة",
+      "abbr": "3 يو"
+    },
+    "JUD": {
+      "name": "يهوذا",
+      "abbr": "يه"
+    },
+    "REV": {
+      "name": "الرؤيا",
+      "abbr": "رؤ"
+    }
   }
 }
