@@ -76,7 +76,10 @@ const UPDATE_BASELINE = process.argv.includes("--update-baseline");
 
 const PLURAL_SUFFIXES = ["zero", "one", "two", "few", "many", "other"];
 const PLURAL_RE = new RegExp(`_(${PLURAL_SUFFIXES.join("|")})$`);
-const PLACEHOLDER_RE = /\{\{\s*[A-Za-z0-9_]+\s*\}\}/g;
+// Matches {{name}} and i18next format specs {{name, number}} / {{name, datetime}}.
+// Only the variable NAME is compared, so adding or changing a format spec is not
+// mistaken for dropping the placeholder.
+const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9_.]+)\s*(?:,[^}]*)?\}\}/g;
 
 /** en plural families missing `_one` or `_other` — reported, never fatal. */
 const enPluralWarnings = [];
@@ -91,9 +94,28 @@ function sameText(a, b) {
   return typeof a === "string" && typeof b === "string" && a.trim() === b.trim();
 }
 
-/** Placeholders a string interpolates, as a sorted list (duplicates collapsed). */
+/**
+ * Interpolation variable names in a string, as a multiset (name -> count).
+ *
+ * Counted, not de-duplicated: "A {{x}} B {{x}}" translated to "أ {{x}}" really
+ * has dropped an interpolation, and a set comparison cannot see that.
+ */
 function placeholders(s) {
-  return [...new Set((String(s).match(PLACEHOLDER_RE) || []).map((p) => p.replace(/\s+/g, "")))].sort();
+  const out = new Map();
+  for (const m of String(s).matchAll(PLACEHOLDER_RE)) {
+    out.set(m[1], (out.get(m[1]) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** Names present in `a` more often than in `b`, as "{{name}}" labels. */
+function placeholderDiff(a, b) {
+  const out = [];
+  for (const [name, n] of placeholders(a)) {
+    const other = placeholders(b).get(name) ?? 0;
+    if (n > other) out.push(`{{${name}}}${n > 1 ? ` x${n - other}` : ""}`);
+  }
+  return out.sort();
 }
 
 /** Flatten a nested translation object to a map of dotted-key -> string. */
@@ -192,7 +214,13 @@ function fmtGap(id) {
   return i === -1 ? id : `${id.slice(0, i)} [${id.slice(i + 1)}]`;
 }
 
-const coverage = JSON.parse(readFileSync(COVERAGE_FILE, "utf8"));
+let coverage;
+try {
+  coverage = JSON.parse(readFileSync(COVERAGE_FILE, "utf8"));
+} catch (e) {
+  console.error(`✗ coverage.json — cannot be read or parsed: ${e.message}`);
+  process.exit(1);
+}
 const gated = new Set(coverage.gated ?? []);
 const baseline = coverage.baseline ?? {};
 const sameAsEnglishOk = new Set(coverage.sameAsEnglish ?? []);
@@ -203,6 +231,16 @@ const en = analyze(enFlat);
 const localeFiles = readdirSync(LOCALES_DIR)
   .filter((f) => f.endsWith(".json") && f !== SOURCE)
   .sort();
+
+// A gated locale that has no file on disk would otherwise be skipped entirely —
+// the loop below iterates files, not the gated list — silently disabling the
+// whole gate. A typo in `gated` (or a deleted locale) must be loud.
+const missingGated = [...gated].filter((c) => !localeFiles.includes(`${c}.json`) && c !== "en");
+if (missingGated.length) {
+  console.error(`✗ coverage.json lists gated locale(s) with no file: ${missingGated.join(", ")}`);
+  console.error(`  → fix the code in "gated", or restore ${missingGated.map((c) => `${c}.json`).join(", ")}.`);
+  process.exit(1);
+}
 
 let failed = false;
 // `hardFailed` excludes baseline-tier regressions, which --update-baseline is
@@ -295,14 +333,25 @@ for (const file of localeFiles) {
       }
 
       // A translation that drops {{count}} or {{book}} renders a sentence with a
-      // hole in it. Arabic legitimately omits {{count}} in _zero/_one/_two,
-      // where the number is carried by the wording itself.
-      const dropped = placeholders(enText).filter((p) => !placeholders(v).includes(p));
-      const countOnly = dropped.length === 1 && dropped[0] === "{{count}}";
-      const smallCountForm = /_(zero|one|two)$/.test(k);
-      if (dropped.length && !(countOnly && smallCountForm)) {
-        placeholderLoss.push(`${k} — missing ${dropped.join(", ")}`);
-      }
+      // hole in it; one that INVENTS a placeholder renders a literal "{{bogus}}"
+      // because i18next has nothing to substitute. Both are checked.
+      //
+      // Arabic legitimately omits {{count}} in _zero/_one/_two, where the wording
+      // carries the number ("مسودة معزولة واحدة"). That exemption is limited to
+      // genuine plural variants — an ordinary key that merely ends in "_one"
+      // (see the plural-family rule above) must keep its placeholders.
+      const pm = k.match(PLURAL_RE);
+      const pluralBase = pm ? k.slice(0, -(pm[1].length + 1)) : null;
+      const isPluralVariant = !!pluralBase && en.pluralBases.has(pluralBase);
+      const smallCountForm = isPluralVariant && /^(zero|one|two)$/.test(pm[1]);
+
+      const dropped = placeholderDiff(enText, v).filter(
+        (p) => !(smallCountForm && p === "{{count}}"),
+      );
+      if (dropped.length) placeholderLoss.push(`${k} — missing ${dropped.join(", ")}`);
+
+      const added = placeholderDiff(v, enText);
+      if (added.length) placeholderLoss.push(`${k} — unresolvable ${added.join(", ")} (not in ${SOURCE})`);
     }
     untranslated.sort();
     badValues.sort();
@@ -357,8 +406,11 @@ for (const file of localeFiles) {
       // "present", not "translated" — for a baseline locale this counts keys
       // that resolve, and says nothing about whether the value is in the target
       // language. Many are still English. Only gated locales are value-checked.
+      // Count BASES for display, not coverage ids — ids include one entry per
+      // required plural category, which made the ratio exceed 100%.
+      const presentBases = en.bases.size - missing.length;
       const note = gained.length ? `, +${gained.length} newly filled — run --update-baseline` : "";
-      console.log(`· ${code} — ${covered.length}/${en.bases.size} keys present, ${gaps.length} known gap(s)${note}`);
+      console.log(`· ${code} — ${presentBases}/${en.bases.size} keys present, ${gaps.length} known gap(s)${note}`);
     }
   }
 
@@ -450,7 +502,7 @@ if (UPDATE_BASELINE) {
   // Rewriting the baseline forgives baseline-tier regressions — that is the
   // point of the flag. It does NOT forgive a broken gated locale, a stale key,
   // or a code orphan, so those must still set a non-zero exit.
-  if (failed) {
+  if (hardFailed) {
     console.error("\ni18n check FAILED — baseline rewritten, but real failures remain (see above).");
     process.exit(1);
   }

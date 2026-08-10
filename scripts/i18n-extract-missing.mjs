@@ -76,6 +76,9 @@ const outFile = process.argv[3] || join(tmpdir(), `${locale}.missing.json`);
 const enFlat = flatten(JSON.parse(readFileSync(join(LOCALES_DIR, "en.json"), "utf8")));
 const en = basesOf(enFlat);
 const locFlat = flatten(JSON.parse(readFileSync(join(LOCALES_DIR, `${locale}.json`), "utf8")));
+const sameAsEnglishOk = new Set(
+  JSON.parse(readFileSync(join(LOCALES_DIR, "..", "coverage.json"), "utf8")).sameAsEnglish ?? [],
+);
 const loc = basesOf(locFlat, en.pluralBases);
 
 let requiredCats;
@@ -85,23 +88,44 @@ try {
   requiredCats = ["one", "other"];
 }
 
+/**
+ * Does the locale still need work on this exact key?
+ *
+ * Missing entirely — or present but still holding the English text. The second
+ * case matters: this script SEEDS plural categories with English, so a category
+ * it emitted once is "present" forever after. Without this, a seeded-but-
+ * untranslated `_few` was flagged by check-i18n yet never handed back to a
+ * translator — the loop could not fix what the checker demanded.
+ */
+function needsWork(key, enText) {
+  // Keys whose English form is correct in every language (brands, codes,
+  // symbols) must not be handed to a translator as work.
+  if (sameAsEnglishOk.has(key)) return false;
+  const cur = locFlat.get(key);
+  if (cur === undefined) return true;
+  if (typeof cur !== "string" || !cur.trim()) return true;
+  return enText !== undefined && cur.trim() === String(enText).trim();
+}
+
 const out = {};
 for (const base of [...en.bases].sort()) {
   const isPlural = en.pluralBases.has(base);
   if (!isPlural) {
-    if (loc.bases.has(base)) continue;
-    out[base] = enFlat.get(base);
+    const enText = enFlat.get(base);
+    if (!needsWork(base, enText)) continue;
+    out[base] = enText;
     continue;
   }
-  // Plural base: emit each required category the locale is missing.
-  const present = loc.cats.get(base) ?? new Set();
+  // Plural base: emit each required category that is missing OR still English.
   const seed =
     enFlat.get(`${base}_other`) ??
     enFlat.get(`${base}_one`) ??
     enFlat.get([...PLURAL_SUFFIXES].map((s) => `${base}_${s}`).find((k) => enFlat.has(k)));
   for (const cat of requiredCats) {
-    if (present.has(cat)) continue;
-    out[`${base}_${cat}`] = enFlat.get(`${base}_${cat}`) ?? seed;
+    const key = `${base}_${cat}`;
+    const enText = enFlat.get(key) ?? seed;
+    if (!needsWork(key, enText)) continue;
+    out[key] = enText;
   }
 }
 

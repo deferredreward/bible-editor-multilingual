@@ -153,6 +153,14 @@ let skipped = 0;
 let pruned = 0;
 let replaced = 0;
 
+if (rest.includes("--prune-stale") && inputFiles.length) {
+  // Pruning ignores input files; silently discarding a translation batch would
+  // look like the merge simply didn't take.
+  console.error(`refusing to run: --prune-stale ignores input files (${inputFiles.join(", ")}).`);
+  console.error(`run the merge and the prune as two separate commands.`);
+  process.exit(2);
+}
+
 if (rest.includes("--prune-stale")) {
   // A locale key is valid iff en has it verbatim, or it is a CLDR variant of an
   // en plural base (locales legitimately carry categories en does not, e.g.
@@ -205,10 +213,14 @@ if (rest.includes("--prune-stale")) {
           continue;
         }
         const existing = locFlat.get(k).value;
+        // An unusable value (null, number, array, empty or whitespace-only) is
+        // not a translation and check-i18n rejects it — so --overwrite must be
+        // able to repair it. Without this arm the only fix was hand-editing.
+        const unusable = typeof existing !== "string" || !existing.trim();
         const sameAsEn = enFlat.has(k) && existing === enFlat.get(k).value;
         const staleSourceText =
           typeof existing === "string" && !hasNonLatinLetter(existing) && hasNonLatinLetter(v);
-        if (!sameAsEn && !staleSourceText) {
+        if (!unusable && !sameAsEn && !staleSourceText) {
           console.warn(`  ! ${k}: already translated, NOT overwritten`);
           skipped++;
           continue;
