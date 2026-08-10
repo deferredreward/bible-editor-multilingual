@@ -27,10 +27,20 @@ from BookSummary only, chapter-0 front matter excluded). Routes: 1–2-segment
 #/scripture and 2-segment #/words now open the new screens; 3-segment forms
 still open the old flows screens. FlowNav still renders on old screens only;
 retire it when book-open affordances point at #/package/{book}.
-**Verified in browser (this dev DB):** hub counts real; scripture lanes
-faithfully mirror old screen (AVD/NAV text-read-only, empty targets); words
-list real but ALL articles unpopulated here, so the words detail/edit view has
-never been exercised — populate one tw source (Articles workspace) to test it.
+**2026-08-10 responsive pass (committed, tip b2148b9):** every redesign screen
+now has the words-pattern md+/desktop master-detail (900px gate, 1180px desk);
+phone unchanged. New TranslateAlignScreen at
+#/alignment/{book}/{ch}[/{v}[/dual]] wraps AlignmentPanel / AlignTapView /
+SideBySideAligner with their exact save paths; hub gained an Alignment surface;
+scripture desktop gained per-lane Align + Align both. Local dev DB has tw
+kt/prophet + ta translate/figs-metaphor populated (POST /api/articles/:res/add)
+so words detail/editing is testable; prophet carries an Arabic smoke-test draft.
+**Verified in browser (wide only):** all five wide layouts + key interactions
+(row selection drives cursor, dual dialog opens from route and from Align both,
+words edit PATCH 200). NOT verifiable headless: the phone↔wide breakpoint FLIP
+(hidden pane never fires matchMedia change events; useMediaQuery freezes at
+first paint) — Benjamin's real-browser resize is the validator. Cosmetics:
+notes intro-row previews show raw markdown marks.
 
 **Local dev environment gotchas (this worktree):**
 - bsoj lane state in LOCAL D1 was aligned to the preset's desired configs
