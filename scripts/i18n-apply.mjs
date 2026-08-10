@@ -4,12 +4,19 @@
  *
  * Usage:
  *   node scripts/i18n-apply.mjs <locale> <flat.json> [<flat.json> ...]
+ *   node scripts/i18n-apply.mjs <locale> <flat.json> --overwrite
  *   node scripts/i18n-apply.mjs <locale> --prune-stale
  *
  * Merging inserts each dotted key into the locale's nested tree, creating
  * intermediate objects as needed. Existing values are never overwritten — a
  * key already present in the locale is reported and skipped, so re-running is
  * safe and a translator can't silently clobber reviewed text.
+ *
+ * --overwrite additionally replaces values that are still in the SOURCE
+ * language: either identical to en.json, or stale English left behind after
+ * the en wording changed. Genuine translations are still never replaced. Use
+ * this to fill a locale whose keys all exist but whose values were copied from
+ * English.
  *
  * --prune-stale removes keys the locale has that en.json does not, using the
  * same plural-collapsing rules as check-i18n.mjs (a locale plural variant is
@@ -87,6 +94,17 @@ function pathFor(key, enFlat, pluralBases) {
   return key.split(".");
 }
 
+/**
+ * Does the string contain a letter outside the Latin script?
+ *
+ * Used to tell a real translation from source text left behind. Punctuation and
+ * symbols are ignored — an em dash or arrow in otherwise-English text must not
+ * read as "translated". Only meaningful for non-Latin-script targets.
+ */
+function hasNonLatinLetter(s) {
+  return typeof s === "string" && /\p{L}/u.test(s) && /[^\p{Script=Latin}\P{L}]/u.test(s);
+}
+
 /** Plural bases of en: a base with >=2 distinct CLDR suffixes. */
 function enPluralBases(enFlat) {
   const bySuffix = new Map();
@@ -112,9 +130,13 @@ const enFlat = flatten(JSON.parse(readFileSync(join(LOCALES_DIR, "en.json"), "ut
 const pluralBases = enPluralBases(enFlat);
 const locFlat = flatten(JSON.parse(readFileSync(localePath, "utf8")));
 
+const OVERWRITE = rest.includes("--overwrite");
+const inputFiles = rest.filter((a) => !a.startsWith("--"));
+
 let added = 0;
 let skipped = 0;
 let pruned = 0;
+let replaced = 0;
 
 if (rest.includes("--prune-stale")) {
   // A locale key is valid iff en has it verbatim, or it is a CLDR variant of an
@@ -129,7 +151,7 @@ if (rest.includes("--prune-stale")) {
     console.log(`  prune ${k}`);
   }
 } else {
-  for (const file of rest) {
+  for (const file of inputFiles) {
     const map = JSON.parse(readFileSync(file, "utf8"));
     for (const [k, v] of Object.entries(map)) {
       if (typeof v !== "string" || !v.trim()) {
@@ -138,8 +160,30 @@ if (rest.includes("--prune-stale")) {
         continue;
       }
       if (locFlat.has(k)) {
-        console.warn(`  = ${k}: already present, kept existing`);
-        skipped++;
+        if (!OVERWRITE) {
+          console.warn(`  = ${k}: already present, kept existing`);
+          skipped++;
+          continue;
+        }
+        // --overwrite is for replacing values left in the SOURCE language; it
+        // must never silently discard real translated text. A value is treated
+        // as untranslated when it is identical to en.json, or when it is pure
+        // ASCII while the incoming translation is not (the stale-English case:
+        // an old en wording left behind after the source was reworded).
+        // NB: the ASCII test only discriminates for non-Latin-script targets.
+        // For a Latin-script locale (es/fr/pt) only the exact-match arm applies,
+        // so a real translation is still never clobbered.
+        const existing = locFlat.get(k).value;
+        const sameAsEn = enFlat.has(k) && existing === enFlat.get(k).value;
+        const staleSourceText =
+          typeof existing === "string" && !hasNonLatinLetter(existing) && hasNonLatinLetter(v);
+        if (!sameAsEn && !staleSourceText) {
+          console.warn(`  ! ${k}: already translated, NOT overwritten`);
+          skipped++;
+          continue;
+        }
+        locFlat.set(k, { value: v, path: locFlat.get(k).path });
+        replaced++;
         continue;
       }
       locFlat.set(k, { value: v, path: pathFor(k, enFlat, pluralBases) });
@@ -182,4 +226,6 @@ if (roundTrip.size !== ordered.size) {
 }
 
 writeFileSync(localePath, JSON.stringify(tree, null, 2) + "\n", "utf8");
-console.log(`${locale}: +${added} added, ${skipped} skipped, ${pruned} pruned -> ${ordered.size} keys`);
+console.log(
+  `${locale}: +${added} added, ${replaced} replaced, ${skipped} skipped, ${pruned} pruned -> ${ordered.size} keys`,
+);

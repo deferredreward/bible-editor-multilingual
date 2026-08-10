@@ -17,19 +17,28 @@ Branch: `claude/eager-bhabha-354d3b` (rebased onto `89512ed`). Commit `41261eb`.
 - 29 stale keys pruned from all 13 locales.
 - New: `scripts/i18n-extract-missing.mjs`, `scripts/i18n-apply.mjs`.
 
-## Open decision (blocking a follow-up, not this branch)
+## Second wave — Arabic values (Benjamin approved widening scope)
 
-**`ar.json` is 100% key-complete but 178 pre-existing values are still English text**
-— preferences 85, templates 28, setup 26, pipeline 20, workspace 13, topbar 3,
-noteCard 2, aligner 1. These predate this branch. The checker compares *keys*, not
-values, so it cannot see them and reports Arabic as complete.
+The 189 values that were still English text are now translated, and the checker
+gained a rule so it can never happen silently again.
 
-Since Arabic is the first client language, these should probably be translated before
-any Arabic demo. Options: (a) fill them in a follow-up PR, (b) add a non-failing
-"value identical to English" report to the checker so the gap stays visible.
+- 189 values replaced (preferences 85, setup/workspace/topbar/noteCard/aligner/lanes
+  55, templates/pipeline 49), including 5 holding *stale* English from a superseded
+  en.json wording. 0 pre-existing Arabic values were altered; 0 keys lost.
+- New gated-tier rule: a value byte-identical to en.json FAILS. 20 legitimate
+  exceptions (brands, resource proper names, badge codes, symbols, a
+  pure-placeholder string) are allow-listed in `coverage.json` → `sameAsEnglish`.
+- `i18n-apply.mjs --overwrite` fills values still in the source language. It refuses
+  to touch anything that already has a real translation.
+
+`ar.json` is now genuinely fully Arabic. **It still has had no native review.**
 
 ## Gotchas found (worth not rediscovering)
 
+- **"Untranslated" can't be tested with a pure-ASCII check.** An em dash or arrow in
+  otherwise-English text makes the string non-ASCII, so `i18n-apply.mjs` tests for a
+  *letter outside the Latin script* instead. One key (`scriptureLanes.bookRetryHint`)
+  was silently skipped before this was fixed.
 - **`en.json` mixes nesting styles.** `preferences.register` is a *string* sitting
   beside literal dotted keys `"register.default"` / `"register.formal"` in the same
   object. Naive flatten→split(".")→re-nest silently destroys the `register` string.

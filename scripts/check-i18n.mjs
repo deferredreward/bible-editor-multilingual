@@ -32,7 +32,11 @@
  * string into all 13 languages is not a reasonable ask of every PR. So
  * web/src/i18n/coverage.json splits locales into two tiers:
  *
- *   gated    — must be complete. Any missing key or plural category FAILS.
+ *   gated    — must be complete. Any missing key or plural category FAILS, and
+ *              so does any value left byte-identical to English (key presence
+ *              alone would let a copy of en.json pass as "complete"). Keys whose
+ *              English form is correct in that language — symbols, brand names,
+ *              resource codes — are allow-listed in coverage.json.
  *              These are the languages we actually ship to a client.
  *   baseline — every other locale. coverage.json records what it currently HAS
  *              translated; losing any of that FAILS. Adding a new en string
@@ -135,6 +139,7 @@ function fmtGap(id) {
 const coverage = JSON.parse(readFileSync(COVERAGE_FILE, "utf8"));
 const gated = new Set(coverage.gated ?? []);
 const baseline = coverage.baseline ?? {};
+const sameAsEnglishOk = new Set(coverage.sameAsEnglish ?? []);
 
 const enFlat = flatten(load(SOURCE));
 const en = analyze(enFlat);
@@ -189,14 +194,35 @@ for (const file of localeFiles) {
   nextBaseline[code] = covered;
 
   if (isGated) {
-    // Tier 1: no tolerance. Every gap is a failure.
-    const ok = !gaps.length && !stale.length;
+    // Tier 1: no tolerance. Every gap is a failure — and, uniquely for gated
+    // locales, so is a value left byte-identical to English. Key presence alone
+    // is a weak signal: copying en.json and shipping it would otherwise report
+    // "complete" while rendering an entirely English UI. Values that are
+    // legitimately identical (symbols, brand names, resource identifiers) are
+    // listed in coverage.json's sameAsEnglish allow-list.
+    const locFlatRaw = flatten(load(file));
+    const untranslated = [];
+    for (const [k, v] of locFlatRaw) {
+      if (typeof v !== "string" || !enFlat.has(k)) continue;
+      if (enFlat.get(k) !== v) continue;
+      if (sameAsEnglishOk.has(k)) continue;
+      untranslated.push(k);
+    }
+    untranslated.sort();
+
+    const ok = !gaps.length && !stale.length && !untranslated.length;
     if (ok) {
       console.log(`✓ ${code} — GATED, complete (plural cats: ${requiredCats.join("/")})`);
       continue;
     }
     failed = true;
     console.log(`✗ ${code} — GATED and INCOMPLETE`);
+    if (untranslated.length) {
+      console.log(`   UNTRANSLATED — value identical to English (${untranslated.length}):`);
+      for (const k of untranslated) console.log(`     - ${k} = ${JSON.stringify(enFlat.get(k))}`);
+      console.log(`   → translate these, or add the key to "sameAsEnglish" in coverage.json`);
+      console.log(`     if the English form is correct in this language (symbol, brand, code).`);
+    }
     if (missing.length) {
       console.log(`   MISSING (${missing.length}):`);
       for (const k of missing) console.log(`     - ${k}`);

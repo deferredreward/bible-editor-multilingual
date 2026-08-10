@@ -17,6 +17,16 @@
     "         Regenerate with: node scripts/check-i18n.mjs --update-baseline",
     "         These lists should only ever grow.",
     "",
+    "sameAsEnglish: keys whose value is allowed to be identical to en.json in a",
+    "         GATED locale. For gated locales the checker also fails on any value",
+    "         left byte-identical to English, because key presence alone is a weak",
+    "         signal — a copy of en.json would otherwise report 100% complete while",
+    "         rendering an entirely English UI. Add a key here only when the English",
+    "         form is genuinely correct in that language: a symbol, a brand name, a",
+    "         resource code. Never add one just to silence the check.",
+    "         This rule applies to gated locales only; backlog locales are full of",
+    "         untranslated values by definition and are governed by `baseline`.",
+    "",
     "review:  native-speaker review status per locale. `machine-drafted` means the",
     "         strings were produced by an AI and have had NO native pass — do not",
     "         present that language to a client until this says otherwise. Record",
@@ -25,6 +35,28 @@
   "gated": [
     "ar"
   ],
+  "sameAsEnglish": [
+    "import.sources.sourceAquifer",
+    "import.sources.sourceTypeAquifer",
+    "lanes.twShort",
+    "noteCard.sh",
+    "noteCard.supportRefPlaceholder",
+    "noteCard.tcm",
+    "pipeline.aiButton",
+    "preferences.aiService.provider.gemini",
+    "preferences.aiService.provider.openai",
+    "preferences.aiService.provider.xai",
+    "preferences.csvColumnPlaceholder",
+    "preferences.noRendering",
+    "preferences.termArrow",
+    "preferences.users.reconcile.hasRole",
+    "setup.laneUpstream.unfoldingWord",
+    "setup.resource.ta",
+    "setup.resource.tn",
+    "setup.resource.tq",
+    "setup.resource.tw",
+    "setup.resource.twl"
+  ],
   "review": {
     "en": {
       "status": "source",
@@ -32,7 +64,7 @@
     },
     "ar": {
       "status": "machine-drafted",
-      "note": "Complete coverage. Original wave was AI-drafted; the 2026-08-10 gap-fill (books/setup/import/layout/preferences/topbar + misc, 443 keys incl. all six CLDR plural categories) was AI-drafted against the existing ar.json for terminology consistency. Native review still pending — see docs/i18n.md."
+      "note": "Fully translated: every key present and every value in Arabic, apart from the 20 allow-listed brand/code/symbol strings in sameAsEnglish. Two AI-drafted waves on 2026-08-10 — 443 missing keys (books/setup/import/layout/preferences/topbar + misc, all six CLDR plural categories), then 189 values that had been left as English text (preferences, templates, setup, pipeline, workspace), including 5 holding stale English from a superseded en.json wording. Both waves were drafted against the existing ar.json for terminology consistency and validated for placeholder preservation and bidi cleanliness. NATIVE REVIEW STILL PENDING — no Arabic speaker has read any of it."
     },
     "bn": {
       "status": "machine-drafted",
