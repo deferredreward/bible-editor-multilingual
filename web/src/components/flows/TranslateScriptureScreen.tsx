@@ -74,6 +74,30 @@
 // api/src/rows.ts covers tn only), so the banner here is real — a save during
 // an AI run is refused and dropped rather than overwritten. verse_status
 // writes can also come back locked; both surface the banner.
+//
+// ── 2026-08-10 tablet/desktop layouts + align affordances (Benjamin) ────────
+//
+//   * "All 3 widths": below md (900px) nothing changed — the verse-at-a-time
+//     column with the viewport-fixed action bar. At md+ the screen becomes
+//     master-detail after TranslateWordsScreen's desk pattern
+//     (docs/mockups/desktop-first/_design.css .desk/.rail/.panel): a
+//     scrollable verse-list pane (340–380px) on the inline-start side and a
+//     panel-chromed detail pane holding the same reference + lane cards and
+//     done view, with the Save draft / Approve verse bar sticky at the pane's
+//     bottom. Selecting a list row moves the SAME cursor Prev/Next drives —
+//     one selection model, two controls. Rows show the verse number, a
+//     one-line snippet (target text when a lane has it, else the
+//     original-language line), and the verse's terminal status chip
+//     (Approved / Draft saved; an untouched verse is chipless). Desktop
+//     (>=1200px) follows the same desk rule — the grid caps at 1180px.
+//   * Alignment affordances, md+ ONLY (on the phone the Align screen stays
+//     reachable from the hub): a quiet per-lane "Align" button →
+//     #/alignment/{book}/{chapter}/{verse} (single mode — the align screen
+//     owns lane choice) and one "Align both" → …/{verse}/dual. Plain hash
+//     navigations at the CURRENT verse; no new state machinery.
+//   * RTL: logical properties only. The desk grid's column order follows the
+//     document direction by itself, and chevrons follow theme.direction
+//     (scaleX flip).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -92,7 +116,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
@@ -157,7 +182,14 @@ export default function TranslateScriptureScreen({
   const INSPIRE_DEEP = "#1B84B8";
   // .ref in the mockup: Ocean in light, Cultivate in dark.
   const REF_COLOR = dark ? "#70C9CC" : "#014263";
+  const ACCENT = dark ? INSPIRE : INSPIRE_DEEP;
   const { ok, skip } = theme.palette.flows;
+  // md+ (>=900px, the words screen's breakpoint): master-detail side by side
+  // instead of the phone's single verse-at-a-time column (see file header).
+  const wide = useMediaQuery(theme.breakpoints.up("md"));
+  // Chevron glyphs don't flip with CSS direction on their own — mirror them
+  // under RTL so "back"/"previous" keep pointing the right way.
+  const chevronFlip = theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined;
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
@@ -649,9 +681,29 @@ export default function TranslateScriptureScreen({
               </>
             )}
           </Typography>
-          <Box sx={{ ml: "auto" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ marginInlineStart: "auto" }}
+          >
+            {/* md+ only — a quiet single-lane hand-off to the Align screen,
+                which owns lane choice (see the 2026-08-10 header section).
+                On the phone, alignment stays reachable from the hub. */}
+            {wide && verseNum != null && (
+              <Button
+                size="small"
+                title={`Open the Align screen at ${book} ${chapter}:${verseNum} — the lane is chosen there`}
+                onClick={() => {
+                  location.hash = `#/alignment/${book}/${chapter}/${verseNum}`;
+                }}
+                sx={{ minHeight: 32, paddingInline: 1, color: ACCENT, fontWeight: 700 }}
+              >
+                Align
+              </Button>
+            )}
             <FlowStatusChip kind={chip.kind} label={chip.label} />
-          </Box>
+          </Stack>
         </Stack>
         <Typography component="p" sx={{ ...tagSx, mt: 0, mb: 0.75 }}>
           Your text · {display}
@@ -694,20 +746,192 @@ export default function TranslateScriptureScreen({
     );
   }
 
+  // One verse row in the md+ list pane: verse number · one-line snippet
+  // (target text when a lane has it, else the original-language line) · the
+  // verse's terminal status chip. An untouched verse is chipless — the
+  // absence IS the "untouched" mark. Selecting a row moves the SAME cursor
+  // Prev/Next drives; from the done view it reopens that verse.
+  function renderVerseRow(v: number, idx: number) {
+    const ultText = verseIndexes.ULT?.[v]?.plain_text ?? "";
+    const ustText = verseIndexes.UST?.[v]?.plain_text ?? "";
+    const usesTarget = ultText.trim().length > 0 || ustText.trim().length > 0;
+    const snippet = usesTarget
+      ? ultText.trim().length > 0
+        ? ultText
+        : ustText
+      : (verseIndexes[sourceLane]?.[v]?.plain_text ?? "");
+    const snippetRtl = usesTarget
+      ? versionIsRtl(projectConfig, ultText.trim().length > 0 ? "ULT" : "UST")
+      : sourceRtl;
+    const st = statuses[v];
+    const isSelected = !done && idx === cursor;
+    return (
+      <Box
+        key={v}
+        component="button"
+        type="button"
+        aria-current={isSelected ? "true" : undefined}
+        onClick={() => {
+          setCursor(idx);
+          if (view !== "verses") setView("verses");
+        }}
+        sx={{
+          ...cardSx,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.25,
+          width: "100%",
+          cursor: "pointer",
+          font: "inherit",
+          color: "inherit",
+          paddingBlock: 1,
+          ...(isSelected
+            ? { borderColor: INSPIRE, bgcolor: alpha(INSPIRE, dark ? 0.12 : 0.06) }
+            : {}),
+          "&:hover": { borderColor: INSPIRE },
+        }}
+      >
+        <Typography
+          sx={{
+            fontWeight: 700,
+            fontVariantNumeric: "tabular-nums",
+            color: REF_COLOR,
+            flex: "none",
+            minWidth: 22,
+            textAlign: "start",
+          }}
+        >
+          {v}
+        </Typography>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          dir={snippetRtl ? "rtl" : "ltr"}
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            fontFamily: SCRIPTURE_FONT_STACK,
+            textAlign: "start",
+          }}
+        >
+          {snippet.trim().length > 0 ? snippet : "—"}
+        </Typography>
+        {st && (
+          <FlowStatusChip
+            kind={st === "approved" ? "approved" : "edited"}
+            label={st === "approved" ? "Approved" : "Draft saved"}
+          />
+        )}
+      </Box>
+    );
+  }
+
+  // The two honest verbs (Redraft is hidden; see header). Phone: fixed to the
+  // viewport bottom, exactly as before. md+ pane: sticky at the pane's
+  // bottom, pinned there by margin-block-start:auto when the content is short
+  // (the words screen's pane pattern).
+  const actionBar = (
+    <Box
+      component="footer"
+      sx={
+        wide
+          ? {
+              position: "sticky",
+              insetBlockEnd: 0,
+              zIndex: 10,
+              marginBlockStart: "auto",
+              bgcolor: "background.paper",
+              borderBlockStart: "1px solid",
+              borderColor: "divider",
+            }
+          : {
+              position: "fixed",
+              insetBlockEnd: 0,
+              insetInline: 0,
+              zIndex: theme.zIndex.appBar,
+              bgcolor: "background.paper",
+              borderBlockStart: "1px solid",
+              borderColor: "divider",
+            }
+      }
+    >
+      <Stack
+        direction="row"
+        spacing={1.25}
+        sx={{
+          maxWidth: wide ? "none" : COLUMN_PX,
+          mx: "auto",
+          paddingInline: wide ? 2.5 : 2,
+          paddingBlockStart: 1.5,
+          paddingBlockEnd: wide ? 1.5 : "calc(12px + env(safe-area-inset-bottom))",
+        }}
+      >
+        <Button
+          disabled={busy || !canEditRole}
+          title={canEditRole ? "Save both lanes without approving" : "View-only access."}
+          onClick={() => void handleSave()}
+          sx={{
+            flex: 1,
+            minHeight: 50,
+            borderRadius: "12px",
+            fontWeight: 700,
+            bgcolor: skip.soft,
+            color: skip.ink,
+            "&:hover": { bgcolor: skip.soft },
+          }}
+        >
+          Save draft
+        </Button>
+        <Button
+          disabled={busy || !canEditRole}
+          title={canEditRole ? "Save and mark this verse done" : "View-only access."}
+          onClick={() => void handleApprove()}
+          startIcon={<CheckIcon />}
+          sx={{
+            flex: 1.4,
+            minHeight: 50,
+            borderRadius: "12px",
+            fontWeight: 700,
+            bgcolor: ok.main,
+            color: "#fff",
+            "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
+          }}
+        >
+          Approve verse
+        </Button>
+      </Stack>
+    </Box>
+  );
+
   return (
-    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
-      {/* topbar */}
+    <Box
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        textAlign: "start",
+        ...(wide
+          ? { display: "flex", flexDirection: "column", overflow: "hidden" }
+          : { overflowY: "auto" }),
+      }}
+    >
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
       <Box
         sx={{
           position: "sticky",
           insetBlockStart: 0,
           zIndex: 20,
+          flex: "none",
           bgcolor: "background.paper",
           borderBlockEnd: "1px solid",
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box
+          sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}
+        >
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label={`Back to ${book} package`}
@@ -716,7 +940,7 @@ export default function TranslateScriptureScreen({
               }}
               sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
             >
-              <ChevronLeftIcon fontSize="small" />
+              <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
             </IconButton>
             <Box sx={{ minWidth: 0 }}>
               <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
@@ -755,245 +979,285 @@ export default function TranslateScriptureScreen({
         </Box>
       </Box>
 
+      {/* md+ desk (the words screen's pattern, after docs/mockups/desktop-first/
+          _design.css .desk/.rail/.panel): 1180px centred grid — verse-list pane
+          on the inline-start side, panel-chromed detail pane filling the rest.
+          Grid column order follows the document direction, so this is RTL-safe
+          as-is. On the phone both wrappers collapse (display: contents) and the
+          centred column renders exactly as before. */}
       <Box
-        sx={{
-          maxWidth: COLUMN_PX,
-          mx: "auto",
-          paddingInline: 2,
-          paddingBlockStart: 2,
-          // room for the fixed action bar
-          paddingBlockEnd: done ? 4 : 15,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.5,
-        }}
+        sx={
+          wide
+            ? {
+                flex: 1,
+                minHeight: 0,
+                width: "100%",
+                maxWidth: 1180,
+                mx: "auto",
+                display: "grid",
+                gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",
+                gap: 2.5,
+                paddingInline: 2,
+                paddingBlockStart: 1.5,
+                paddingBlockEnd: 2,
+              }
+            : { display: "contents" }
+        }
       >
-        {lock && (
-          // Real here, unlike the notes screen: verse PATCH is not lock-exempt,
-          // so a save during an AI run is refused and dropped.
-          <LockBanner pipelineType={lock.pipelineType} startedAt={lock.startedAt ?? null} />
-        )}
-
-        {notice && (
-          <Alert severity={notice.severity} onClose={() => setNotice(null)}>
-            {notice.text}
-          </Alert>
-        )}
-
-        {!canEditRole && (
-          <Alert severity="info">
-            You have view-only access to this project, so the verse editors are read-only.
-          </Alert>
-        )}
-
-        {total === 0 ? (
-          <Alert severity="info">No verses loaded for {`${book} ${chapter}`}.</Alert>
-        ) : done ? (
-          <Box sx={{ ...cardSx, textAlign: "center", paddingBlock: 4.5 }}>
-            <Box
-              component="svg"
-              width="96"
-              height="96"
-              viewBox="0 0 96 96"
-              aria-hidden="true"
-              sx={{ mx: "auto", display: "block" }}
-            >
-              <circle cx="48" cy="48" r="46" fill={ok.soft} />
-              <circle cx="48" cy="48" r="36" fill={ok.main} />
-              <path
-                d="M33 49 L44 60 L64 37"
-                fill="none"
-                stroke="#fff"
-                strokeWidth="6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </Box>
-            <Typography component="h2" sx={{ fontSize: "1.375rem", fontWeight: 700, mt: 1.5 }}>
-              {book} {chapter} scripture complete
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {[
-                approvedCount > 0 ? `${approvedCount} approved` : null,
-                savedCount > 0 ? `${savedCount} draft saved` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || `${total} verse(s)`}
-            </Typography>
-            <Stack spacing={1}>
-              <Button
-                variant="contained"
-                disabled={!hasNextChapter}
-                onClick={() => {
-                  location.hash = `#/scripture/${book}/${nextChapter}`;
-                }}
-                sx={{
-                  minHeight: 52,
-                  borderRadius: "12px",
-                  fontWeight: 700,
-                  bgcolor: INSPIRE,
-                  color: "#06293B",
-                  "&:hover": { bgcolor: INSPIRE_DEEP },
-                }}
-              >
-                {hasNextChapter
-                  ? `Continue to ${book} ${nextChapter}`
-                  : `${book} is complete — no chapter ${nextChapter}`}
-              </Button>
-              <Button
-                onClick={() => {
-                  setReviewing(true);
-                  setCursor(0);
-                  setView("verses");
-                }}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Review again
-              </Button>
-            </Stack>
-          </Box>
-        ) : (
-          <>
-            {/* scripture reference + the lane-agnostic original-language line.
-                The mockup's per-lane published-source line does not exist in
-                this app's data — see the header. */}
-            <Box sx={cardSx}>
-              <Typography sx={{ fontSize: "0.875rem", fontWeight: 700, color: REF_COLOR, mb: 0.75 }}>
-                {book} {chapter}:{verseNum}
-              </Typography>
-              <Box
-                sx={{
-                  bgcolor: "action.hover",
-                  borderRadius: "9px",
-                  paddingBlock: 1.25,
-                  paddingInline: 1.5,
-                }}
-              >
-                <Box
-                  component="span"
-                  sx={{
-                    display: "block",
-                    fontSize: "0.656rem",
-                    fontWeight: 700,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    color: "text.secondary",
-                    mb: 0.375,
-                  }}
-                >
-                  {sourceLabel}
-                </Box>
-                <Typography
-                  component="p"
-                  dir={sourceRtl ? "rtl" : "ltr"}
-                  sx={{
-                    fontFamily: SCRIPTURE_FONT_STACK,
-                    fontSize: sourceRtl ? "1.25rem" : "1.03rem",
-                    lineHeight: 1.6,
-                    m: 0,
-                    textAlign: "start",
-                  }}
-                >
-                  {sourceDto?.plain_text ?? (
-                    <Box component="em" sx={{ fontSize: "0.875rem", fontFamily: "inherit" }}>
-                      No {sourceLabel} source text loaded for this verse.
-                    </Box>
-                  )}
-                </Typography>
-              </Box>
-            </Box>
-
-            {/* the two target lanes */}
-            {renderLaneCard("ULT")}
-            {renderLaneCard("UST")}
-
-            {/* previous / next */}
-            <Stack direction="row" justifyContent="space-between" spacing={1.25}>
-              <Button
-                startIcon={<ChevronLeftIcon />}
-                disabled={cursor === 0 || busy}
-                onClick={() => setCursor((c) => Math.max(0, c - 1))}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Previous
-              </Button>
-              <Button
-                endIcon={<ChevronRightIcon />}
-                disabled={busy || (cursor >= total - 1 && statusedCount < total)}
-                onClick={() => {
-                  if (cursor < total - 1) setCursor((c) => c + 1);
-                  else setView("done");
-                }}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Next
-              </Button>
-            </Stack>
-          </>
-        )}
-      </Box>
-
-      {/* fixed action bar — the two honest verbs (Redraft is hidden; see header) */}
-      {!done && total > 0 && verseNum != null && (
-        <Box
-          component="footer"
-          sx={{
-            position: "fixed",
-            insetBlockEnd: 0,
-            insetInline: 0,
-            zIndex: theme.zIndex.appBar,
-            bgcolor: "background.paper",
-            borderBlockStart: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Stack
-            direction="row"
-            spacing={1.25}
+        {/* verse-list pane (md+ only) */}
+        {wide && (
+          <Box
             sx={{
-              maxWidth: COLUMN_PX,
-              mx: "auto",
-              paddingInline: 2,
-              paddingBlockStart: 1.5,
-              paddingBlockEnd: "calc(12px + env(safe-area-inset-bottom))",
+              minHeight: 0,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 1.25,
+              paddingInline: 0.25,
+              paddingBlockEnd: 2,
             }}
           >
-            <Button
-              disabled={busy || !canEditRole}
-              title={canEditRole ? "Save both lanes without approving" : "View-only access."}
-              onClick={() => void handleSave()}
-              sx={{
-                flex: 1,
-                minHeight: 50,
-                borderRadius: "12px",
-                fontWeight: 700,
-                bgcolor: skip.soft,
-                color: skip.ink,
-                "&:hover": { bgcolor: skip.soft },
-              }}
-            >
-              Save draft
-            </Button>
-            <Button
-              disabled={busy || !canEditRole}
-              title={canEditRole ? "Save and mark this verse done" : "View-only access."}
-              onClick={() => void handleApprove()}
-              startIcon={<CheckIcon />}
-              sx={{
-                flex: 1.4,
-                minHeight: 50,
-                borderRadius: "12px",
-                fontWeight: 700,
-                bgcolor: ok.main,
-                color: "#fff",
-                "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
-              }}
-            >
-              Approve verse
-            </Button>
-          </Stack>
+            {queueVerses.map(renderVerseRow)}
+          </Box>
+        )}
+        {/* detail pane (md+: panel chrome + its own scroller; phone: inert) */}
+        <Box
+          sx={
+            wide
+              ? {
+                  minHeight: 0,
+                  overflowY: "auto",
+                  bgcolor: "background.paper",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "14px",
+                  display: "flex",
+                  flexDirection: "column",
+                }
+              : { display: "contents" }
+          }
+        >
+          <Box
+            sx={
+              wide
+                ? {
+                    flex: "none",
+                    paddingInline: 2.5,
+                    paddingBlockStart: 2,
+                    paddingBlockEnd: 2,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1.5,
+                  }
+                : {
+                    maxWidth: COLUMN_PX,
+                    mx: "auto",
+                    paddingInline: 2,
+                    paddingBlockStart: 2,
+                    // room for the viewport-fixed action bar
+                    paddingBlockEnd: done ? 4 : 15,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1.5,
+                  }
+            }
+          >
+            {lock && (
+              // Real here, unlike the notes screen: verse PATCH is not lock-exempt,
+              // so a save during an AI run is refused and dropped.
+              <LockBanner pipelineType={lock.pipelineType} startedAt={lock.startedAt ?? null} />
+            )}
+
+            {notice && (
+              <Alert severity={notice.severity} onClose={() => setNotice(null)}>
+                {notice.text}
+              </Alert>
+            )}
+
+            {!canEditRole && (
+              <Alert severity="info">
+                You have view-only access to this project, so the verse editors are read-only.
+              </Alert>
+            )}
+
+            {total === 0 ? (
+              <Alert severity="info">No verses loaded for {`${book} ${chapter}`}.</Alert>
+            ) : done ? (
+              <Box sx={{ ...cardSx, textAlign: "center", paddingBlock: 4.5 }}>
+                <Box
+                  component="svg"
+                  width="96"
+                  height="96"
+                  viewBox="0 0 96 96"
+                  aria-hidden="true"
+                  sx={{ mx: "auto", display: "block" }}
+                >
+                  <circle cx="48" cy="48" r="46" fill={ok.soft} />
+                  <circle cx="48" cy="48" r="36" fill={ok.main} />
+                  <path
+                    d="M33 49 L44 60 L64 37"
+                    fill="none"
+                    stroke="#fff"
+                    strokeWidth="6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </Box>
+                <Typography component="h2" sx={{ fontSize: "1.375rem", fontWeight: 700, mt: 1.5 }}>
+                  {book} {chapter} scripture complete
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  {[
+                    approvedCount > 0 ? `${approvedCount} approved` : null,
+                    savedCount > 0 ? `${savedCount} draft saved` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || `${total} verse(s)`}
+                </Typography>
+                <Stack spacing={1}>
+                  <Button
+                    variant="contained"
+                    disabled={!hasNextChapter}
+                    onClick={() => {
+                      location.hash = `#/scripture/${book}/${nextChapter}`;
+                    }}
+                    sx={{
+                      minHeight: 52,
+                      borderRadius: "12px",
+                      fontWeight: 700,
+                      bgcolor: INSPIRE,
+                      color: "#06293B",
+                      "&:hover": { bgcolor: INSPIRE_DEEP },
+                    }}
+                  >
+                    {hasNextChapter
+                      ? `Continue to ${book} ${nextChapter}`
+                      : `${book} is complete — no chapter ${nextChapter}`}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setReviewing(true);
+                      setCursor(0);
+                      setView("verses");
+                    }}
+                    sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                  >
+                    Review again
+                  </Button>
+                </Stack>
+              </Box>
+            ) : (
+              <>
+                {/* scripture reference + the lane-agnostic original-language line.
+                    The mockup's per-lane published-source line does not exist in
+                    this app's data — see the header. */}
+                <Box sx={cardSx}>
+                  <Typography sx={{ fontSize: "0.875rem", fontWeight: 700, color: REF_COLOR, mb: 0.75 }}>
+                    {book} {chapter}:{verseNum}
+                  </Typography>
+                  <Box
+                    sx={{
+                      bgcolor: "action.hover",
+                      borderRadius: "9px",
+                      paddingBlock: 1.25,
+                      paddingInline: 1.5,
+                    }}
+                  >
+                    <Box
+                      component="span"
+                      sx={{
+                        display: "block",
+                        fontSize: "0.656rem",
+                        fontWeight: 700,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        color: "text.secondary",
+                        mb: 0.375,
+                      }}
+                    >
+                      {sourceLabel}
+                    </Box>
+                    <Typography
+                      component="p"
+                      dir={sourceRtl ? "rtl" : "ltr"}
+                      sx={{
+                        fontFamily: SCRIPTURE_FONT_STACK,
+                        fontSize: sourceRtl ? "1.25rem" : "1.03rem",
+                        lineHeight: 1.6,
+                        m: 0,
+                        textAlign: "start",
+                      }}
+                    >
+                      {sourceDto?.plain_text ?? (
+                        <Box component="em" sx={{ fontSize: "0.875rem", fontFamily: "inherit" }}>
+                          No {sourceLabel} source text loaded for this verse.
+                        </Box>
+                      )}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {/* the two target lanes */}
+                {renderLaneCard("ULT")}
+                {renderLaneCard("UST")}
+
+                {/* md+ only — dual-mode hand-off to the Align screen (both lanes
+                    side by side); the per-lane buttons above cover single mode. */}
+                {wide && verseNum != null && (
+                  <Stack direction="row" justifyContent="flex-end">
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      title={`Open the Align screen at ${book} ${chapter}:${verseNum} with both lanes side by side`}
+                      onClick={() => {
+                        location.hash = `#/alignment/${book}/${chapter}/${verseNum}/dual`;
+                      }}
+                      sx={{
+                        minHeight: 40,
+                        borderRadius: "10px",
+                        fontWeight: 700,
+                        color: ACCENT,
+                        borderColor: INSPIRE,
+                        borderWidth: "1.5px",
+                      }}
+                    >
+                      Align both
+                    </Button>
+                  </Stack>
+                )}
+
+                {/* previous / next */}
+                <Stack direction="row" justifyContent="space-between" spacing={1.25}>
+                  <Button
+                    startIcon={<ChevronLeftIcon sx={chevronFlip} />}
+                    disabled={cursor === 0 || busy}
+                    onClick={() => setCursor((c) => Math.max(0, c - 1))}
+                    sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    endIcon={<ChevronRightIcon sx={chevronFlip} />}
+                    disabled={busy || (cursor >= total - 1 && statusedCount < total)}
+                    onClick={() => {
+                      if (cursor < total - 1) setCursor((c) => c + 1);
+                      else setView("done");
+                    }}
+                    sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                  >
+                    Next
+                  </Button>
+                </Stack>
+              </>
+            )}
+          </Box>
+          {/* md+: the action bar lives inside the pane, sticky at its bottom */}
+          {wide && !done && total > 0 && verseNum != null && actionBar}
         </Box>
-      )}
+      </Box>
+
+      {/* phone action bar — viewport-fixed, exactly as before */}
+      {!wide && !done && total > 0 && verseNum != null && actionBar}
 
       {/* alignment-loss confirm — the same decision ScriptureScreen puts to the
           user; typing is kept either way. */}
@@ -1033,7 +1297,9 @@ export default function TranslateScriptureScreen({
         autoHideDuration={1400}
         onClose={() => setToast(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-        sx={{ bottom: 96 }}
+        // Phone: clear the viewport-fixed action bar; md+: the bar is in the
+        // pane, so the toast sits at the normal offset.
+        sx={{ bottom: wide ? 24 : 96 }}
       />
     </Box>
   );
