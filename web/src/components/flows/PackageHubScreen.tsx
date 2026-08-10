@@ -88,6 +88,7 @@ import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import TuneIcon from "@mui/icons-material/Tune";
 
 import type { FlowScreenContext } from "./types";
 import { useBook } from "../../hooks/useBook";
@@ -104,7 +105,7 @@ const COLUMN_PX = 480;
 // The four chapter-scoped surfaces expand in place; words navigates directly.
 type ExpandableSurface = "scripture" | "notes" | "questions" | "alignment";
 
-export default function PackageHubScreen({ book }: PackageHubScreenProps) {
+export default function PackageHubScreen({ book, role }: PackageHubScreenProps) {
   const theme = useTheme();
   const { skip } = theme.palette.flows;
   // md+ (>=900px): the surface cards flow into the grid-3 desk (file header).
@@ -352,6 +353,18 @@ export default function PackageHubScreen({ book }: PackageHubScreenProps) {
               >
                 {totals.chapters} {totals.chapters === 1 ? "chapter" : "chapters"}
               </Typography>
+            )}
+            {role === "admin" && (
+              <IconButton
+                aria-label="Open the admin desk"
+                title="Admin"
+                onClick={() => {
+                  location.hash = "#/admin/progress";
+                }}
+                sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+              >
+                <TuneIcon fontSize="small" />
+              </IconButton>
             )}
           </Stack>
           {/* No progress bar: the API has no book-level approval rollup, and a

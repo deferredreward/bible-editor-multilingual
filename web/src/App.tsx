@@ -54,7 +54,8 @@ type Location =
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
   | { view: "translateScripture"; book: string; chapter: number }
-  | { view: "translateAlign"; book: string; chapter: number; verse: number; mode: "single" | "dual" };
+  | { view: "translateAlign"; book: string; chapter: number; verse: number; mode: "single" | "dual" }
+  | { view: "admin"; section: "team" | "setup" | "workflow" | "progress" };
 
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
@@ -77,6 +78,10 @@ const TranslateScriptureScreen = lazy(() => import("./components/flows/Translate
 const TranslateWordsScreen = lazy(() => import("./components/flows/TranslateWordsScreen"));
 const PackageHubScreen = lazy(() => import("./components/flows/PackageHubScreen"));
 const TranslateAlignScreen = lazy(() => import("./components/flows/TranslateAlignScreen"));
+const AdminTeamScreen = lazy(() => import("./components/flows/AdminTeamScreen"));
+const AdminSetupScreen = lazy(() => import("./components/flows/AdminSetupScreen"));
+const AdminWorkflowScreen = lazy(() => import("./components/flows/AdminWorkflowScreen"));
+const AdminProgressScreen = lazy(() => import("./components/flows/AdminProgressScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -169,6 +174,11 @@ function parseHash(): Location {
       book: ts[1].toUpperCase(),
       chapter: ts[2] ? parseInt(ts[2], 10) : 1,
     };
+  }
+  // Redesigned admin desk (#/admin/{section}); AdminDesk renders the rail.
+  const ad = location.hash.match(/^#\/admin\/(team|setup|workflow|progress)$/);
+  if (ad) {
+    return { view: "admin", section: ad[1] as "team" | "setup" | "workflow" | "progress" };
   }
   // #/alignment (redesign) is distinct from the old 3-segment #/align, which
   // still flows to the fv catch-all below. Must sit above the final book-code
@@ -710,6 +720,7 @@ export function App() {
           loc.view === "translateWords" ||
           loc.view === "translateScripture" ||
           loc.view === "translateAlign" ||
+          loc.view === "admin" ||
           loc.view === "verse" ? (
           <Suspense
             fallback={
@@ -754,6 +765,16 @@ export function App() {
               <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : loc.view === "translateAlign" ? (
               <TranslateAlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} mode={loc.mode} />
+            ) : loc.view === "admin" ? (
+              loc.section === "team" ? (
+                <AdminTeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              ) : loc.section === "setup" ? (
+                <AdminSetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              ) : loc.section === "workflow" ? (
+                <AdminWorkflowScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              ) : (
+                <AdminProgressScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              )
             ) : (
               <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
             )}

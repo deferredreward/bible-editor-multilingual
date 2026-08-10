@@ -566,7 +566,7 @@ function BookDetailPanel({
   );
 }
 
-export default function BooksScreen({ role, onNavigate }: BooksScreenProps) {
+export default function BooksScreen({ role }: BooksScreenProps) {
   const theme = useTheme();
   const gridView = useMediaQuery(theme.breakpoints.up("tablet"));
 
@@ -803,7 +803,12 @@ export default function BooksScreen({ role, onNavigate }: BooksScreenProps) {
         book={selected}
         imported={importedSet.has(selected)}
         onImported={refetchBooks}
-        onOpenBook={(b) => onNavigate(b, 1)}
+        // Redesign entry point: opening a book lands on its package hub
+        // (#/package/{book}), not the classic chapter view. Classic remains
+        // reachable through its own routes.
+        onOpenBook={(b) => {
+          location.hash = `#/package/${b}`;
+        }}
       />
     );
   })();
