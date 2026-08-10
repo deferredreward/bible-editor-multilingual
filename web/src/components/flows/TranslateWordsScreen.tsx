@@ -36,6 +36,13 @@
 //     place (ArticleDetail variant="pane": no back chevron, action bar sticky
 //     at the pane's bottom instead of fixed to the viewport). Logical
 //     properties only throughout — the grid order itself flips under RTL.
+//   * "Sort by frequency in the book, descending" (Benjamin, same day): within
+//     each group, rows order by the book count — tW occurrence count, tA
+//     linked-notes count — most-referenced first, so the most effective work
+//     is prioritized visually. Ties break alphabetically by id (stable).
+//     Populated vs unpopulated deliberately does NOT affect order: frequency
+//     is the only primary key, and an unpopulated high-frequency term ranking
+//     first is correct — it's the most effective thing to populate.
 //
 // ── Data (all real; nothing sampled from the artifact) ─────────────────────
 //
@@ -315,7 +322,6 @@ interface BookItem {
   slug: string;
   category: string;
   count: number;
-  first: number; // chapter*1000+verse of first reference, for ordering
   populated: boolean;
   paths: string[];
   state: ArticleState;
@@ -361,30 +367,24 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   }
   const scanning = chapterTotal > 0 && chaptersReady + chaptersFailed < chapterTotal;
 
-  // Per-book reference maps, filled progressively as chapters land.
+  // Per-book reference counts, filled progressively as chapters land.
   const bookRefs = useMemo(() => {
-    const tw = new Map<string, { count: number; first: number }>();
-    const ta = new Map<string, { count: number; first: number }>();
-    const bump = (m: Map<string, { count: number; first: number }>, id: string, pos: number) => {
-      const cur = m.get(id);
-      if (cur) {
-        cur.count++;
-        if (pos < cur.first) cur.first = pos;
-      } else {
-        m.set(id, { count: 1, first: pos });
-      }
+    const tw = new Map<string, number>();
+    const ta = new Map<string, number>();
+    const bump = (m: Map<string, number>, id: string) => {
+      m.set(id, (m.get(id) ?? 0) + 1);
     };
     for (const st of chapters.values()) {
       if (st.kind !== "ready") continue;
       for (const r of st.data.twl) {
         if (r.deleted_at != null) continue;
         const id = twArticleIdOf(r.tw_link);
-        if (id) bump(tw, id, r.chapter * 1000 + r.verse);
+        if (id) bump(tw, id);
       }
       for (const r of st.data.tn) {
         if (r.deleted_at != null || r.trashed_at != null) continue;
         const id = taArticleIdOf(r.support_reference);
-        if (id) bump(ta, id, r.chapter * 1000 + r.verse);
+        if (id) bump(ta, id);
       }
     }
     return { tw, ta };
@@ -396,11 +396,11 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   const buildItems = useCallback(
     (
       resource: Resource,
-      refs: Map<string, { count: number; first: number }>,
+      refs: Map<string, number>,
       groups: Map<string, ArticleUnitMeta[]>,
     ): BookItem[] => {
       const items: BookItem[] = [];
-      for (const [id, ref] of refs) {
+      for (const [id, count] of refs) {
         const parts = groups.get(id);
         const [category, slug] = id.split("/");
         items.push({
@@ -408,14 +408,15 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           id,
           slug: slug ?? id,
           category: category ?? "",
-          count: ref.count,
-          first: ref.first,
+          count,
           populated: Boolean(parts && parts.length > 0),
           paths: (parts ?? []).map((p) => p.path),
           state: parts ? aggregateState(parts.map((p) => p.translation_state ?? null)) : null,
         });
       }
-      items.sort((a, b) => a.first - b.first || a.id.localeCompare(b.id));
+      // Frequency in the book, descending (Benjamin 2026-08-10, see header) —
+      // populated-ness never reorders; ties fall back to id, alphabetically.
+      items.sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
       return items;
     },
     [],
