@@ -53,7 +53,8 @@ type Location =
   | { view: "questions"; book: string; chapter: number }
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
-  | { view: "translateScripture"; book: string; chapter: number };
+  | { view: "translateScripture"; book: string; chapter: number }
+  | { view: "translateAlign"; book: string; chapter: number; verse: number; mode: "single" | "dual" };
 
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
@@ -75,6 +76,7 @@ const TranslateQuestionsScreen = lazy(() => import("./components/flows/Translate
 const TranslateScriptureScreen = lazy(() => import("./components/flows/TranslateScriptureScreen"));
 const TranslateWordsScreen = lazy(() => import("./components/flows/TranslateWordsScreen"));
 const PackageHubScreen = lazy(() => import("./components/flows/PackageHubScreen"));
+const TranslateAlignScreen = lazy(() => import("./components/flows/TranslateAlignScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -166,6 +168,19 @@ function parseHash(): Location {
       view: "translateScripture",
       book: ts[1].toUpperCase(),
       chapter: ts[2] ? parseInt(ts[2], 10) : 1,
+    };
+  }
+  // #/alignment (redesign) is distinct from the old 3-segment #/align, which
+  // still flows to the fv catch-all below. Must sit above the final book-code
+  // catch-all, which is unanchored and would swallow "alignment" as a book.
+  const al = location.hash.match(/^#\/alignment\/([A-Za-z0-9]+)\/(\d+)(?:\/(\d+))?(\/dual)?$/);
+  if (al) {
+    return {
+      view: "translateAlign",
+      book: al[1].toUpperCase(),
+      chapter: parseInt(al[2], 10),
+      verse: al[3] ? parseInt(al[3], 10) : 1,
+      mode: al[4] ? "dual" : "single",
     };
   }
   const fv = location.hash.match(
@@ -694,6 +709,7 @@ export function App() {
           loc.view === "package" ||
           loc.view === "translateWords" ||
           loc.view === "translateScripture" ||
+          loc.view === "translateAlign" ||
           loc.view === "verse" ? (
           <Suspense
             fallback={
@@ -736,6 +752,8 @@ export function App() {
               <TranslateWordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
             ) : loc.view === "translateScripture" ? (
               <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+            ) : loc.view === "translateAlign" ? (
+              <TranslateAlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} mode={loc.mode} />
             ) : (
               <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
             )}
