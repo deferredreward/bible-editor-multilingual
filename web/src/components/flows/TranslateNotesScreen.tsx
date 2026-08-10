@@ -41,6 +41,19 @@
 //   detail pane scroller) pages the same cursor via useSwipeNav — disabled
 //   on the done view, direction-mapped to the TARGET language's direction.
 //
+// ── 2026-08-10 article-type round (Benjamin) ────────────────────────────────
+//
+// Each note's tA article type ("metaphor", "merism", …) is derived from the
+// row's support_reference (last path segment; category prefix stripped for
+// the label, full slug kept as the tooltip) and shown as a quiet read-only
+// pill on the list rows and in the draft card's header. A compact type
+// filter (MUI Select: "All types" plus the types present in THIS chapter's
+// queue, with counts) narrows both the list pane and the Prev/Next / swipe /
+// advance traversal by mapping cursor movement through a derived index list
+// over the frozen queue — the queue itself is never mutated, and with no
+// filter active every traversal path is byte-equivalent to before. Filter
+// state is component-local and resets on chapter change.
+//
 // Data + save machinery is the proven plumbing, unchanged:
 //   * rows + verses            → useChapter
 //   * English source note      → useSourceNotes (published en_tn TSV, keyed by
@@ -70,6 +83,8 @@ import {
   Button,
   CircularProgress,
   IconButton,
+  MenuItem,
+  Select,
   Snackbar,
   Stack,
   TextField,
@@ -130,6 +145,22 @@ function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
   return Array.isArray(vo) ? vo : null;
 }
 
+// tA article type, derived from the row's support reference:
+// "rc://*/ta/man/translate/figs-metaphor" → slug "figs-metaphor". The display
+// label strips the category prefix and reads hyphens as spaces —
+// "figs-metaphor" → "metaphor", "writing-newevent" → "newevent",
+// "grammar-connect-logic-result" → "connect logic result". The full slug
+// stays available as the tooltip (2026-08-10 article-type round).
+function typeSlugOf(supportReference: string | null | undefined): string | null {
+  if (!supportReference) return null;
+  const seg = supportReference.split("/").filter(Boolean).pop();
+  return seg || null;
+}
+
+function typeLabelOf(slug: string): string {
+  return slug.replace(/^(?:figs|translate|writing|grammar)-/, "").replace(/-/g, " ");
+}
+
 export default function TranslateNotesScreen({ book, chapter }: TranslateNotesScreenProps) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
@@ -187,6 +218,9 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   const [cursor, setCursor] = useState(0);
   const [view, setView] = useState<"cards" | "done">("cards");
   const [reviewing, setReviewing] = useState(false);
+  // Article-type filter (slug, e.g. "figs-metaphor"); null = show everything.
+  // Session-local, reset on chapter change (2026-08-10 article-type round).
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
 
   useEffect(() => {
     if (!data || data.book !== book || data.chapter !== chapter) return;
@@ -203,6 +237,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     setCursor(firstOpen < 0 ? 0 : firstOpen);
     setView(ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
+    setTypeFilter(null);
   }, [data, book, chapter, queue, chapterKey]);
 
   const rowById = useMemo(() => {
@@ -216,6 +251,50 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   const currentId = queueIds && cursor < queueIds.length ? queueIds[cursor] : null;
   const row = currentId ? (rowById.get(currentId) ?? null) : null;
   const statusedCount = queueIds ? queueIds.filter((id) => statuses[id]).length : 0;
+
+  // ── article-type filter (2026-08-10) ─────────────────────────────────────
+  // Distinct types present in THIS chapter's queue, with counts — the filter
+  // menu is built from what is actually here, never a global taxonomy.
+  const typeOptions = useMemo(() => {
+    if (!queueIds) return [];
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const id of queueIds) {
+      const slug = typeSlugOf(rowById.get(id)?.support_reference);
+      if (!slug) continue;
+      const entry = counts.get(slug);
+      if (entry) entry.count += 1;
+      else counts.set(slug, { label: typeLabelOf(slug), count: 1 });
+    }
+    return [...counts.entries()]
+      .map(([slug, v]) => ({ slug, label: v.label, count: v.count }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [queueIds, rowById]);
+
+  // The filtered traversal: an ascending index list over the FROZEN queue —
+  // the queue itself is never mutated. Every cursor movement while a filter
+  // is active maps through this list; with no filter the original code paths
+  // run untouched (byte-equivalent behavior).
+  const visibleIdx = useMemo(() => {
+    if (!queueIds || !typeFilter) return [];
+    const out: number[] = [];
+    queueIds.forEach((id, i) => {
+      if (typeSlugOf(rowById.get(id)?.support_reference) === typeFilter) out.push(i);
+    });
+    return out;
+  }, [queueIds, typeFilter, rowById]);
+
+  // Applying a filter the current card doesn't match snaps the cursor to the
+  // first matching card (an empty match set renders the empty state instead).
+  // A filter whose type vanished from the queue (refetch) clears itself.
+  useEffect(() => {
+    if (!typeFilter || !queueIds) return;
+    if (!typeOptions.some((o) => o.slug === typeFilter)) {
+      setTypeFilter(null);
+      return;
+    }
+    if (visibleIdx.length === 0) return;
+    if (!visibleIdx.includes(cursor)) setCursor(visibleIdx[0]);
+  }, [typeFilter, typeOptions, visibleIdx, cursor, queueIds]);
 
   // ── editor state ─────────────────────────────────────────────────────────
   const [draftValue, setDraftValue] = useState("");
@@ -375,13 +454,26 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   const nextUnstatused = useCallback(
     (from: number, table: Record<string, CardStatus>): number => {
       if (!queueIds) return -1;
+      if (typeFilter) {
+        // Same cycle — start just after `from`, wrap, check `from` itself
+        // last — restricted to the filtered index list.
+        const n = visibleIdx.length;
+        if (n === 0) return -1;
+        const after = visibleIdx.findIndex((i) => i > from);
+        const start = after < 0 ? 0 : after;
+        for (let k = 0; k < n; k++) {
+          const idx = visibleIdx[(start + k) % n];
+          if (!table[queueIds[idx]]) return idx;
+        }
+        return -1;
+      }
       for (let i = 1; i <= queueIds.length; i++) {
         const idx = (from + i) % queueIds.length;
         if (!table[queueIds[idx]]) return idx;
       }
       return -1;
     },
-    [queueIds],
+    [queueIds, typeFilter, visibleIdx],
   );
 
   const advanceAfter = useCallback(
@@ -389,21 +481,58 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
       if (!queueIds) return;
       const table = { ...statuses, [id]: next };
       if (reviewing) {
+        if (typeFilter) {
+          const nxt = visibleIdx.find((i) => i > cursor);
+          if (nxt === undefined) setView("done");
+          else setCursor(nxt);
+          return;
+        }
         if (cursor >= queueIds.length - 1) setView("done");
         else setCursor(cursor + 1);
         return;
       }
       const nxt = nextUnstatused(cursor, table);
-      if (nxt === -1) setView("done");
-      else setCursor(nxt);
+      if (nxt === -1) {
+        // Filtered set exhausted while the wider chapter still has open
+        // cards: hold position rather than show the (untrue) chapter-complete
+        // view. Without a filter this condition is never taken.
+        if (typeFilter && queueIds.some((qid) => !table[qid])) return;
+        setView("done");
+      } else setCursor(nxt);
     },
-    [queueIds, statuses, reviewing, cursor, nextUnstatused],
+    [queueIds, statuses, reviewing, cursor, nextUnstatused, typeFilter, visibleIdx],
   );
 
   // Free navigation — one cursor, four drivers: the card stack's Prev/Next,
-  // the topbar chevrons, list-row clicks (md+), and touch swipes.
-  const goPrev = useCallback(() => setCursor((c) => Math.max(0, c - 1)), []);
-  const goNext = useCallback(() => setCursor((c) => Math.min(total - 1, c + 1)), [total]);
+  // the topbar chevrons, list-row clicks (md+), and touch swipes. With a type
+  // filter active, movement maps through visibleIdx; without one, the
+  // original clamp arithmetic runs untouched.
+  const goPrev = useCallback(() => {
+    if (!typeFilter) {
+      setCursor((c) => Math.max(0, c - 1));
+      return;
+    }
+    setCursor((c) => {
+      let target = c;
+      for (const i of visibleIdx) {
+        if (i >= c) break;
+        target = i;
+      }
+      return target;
+    });
+  }, [typeFilter, visibleIdx]);
+  const goNext = useCallback(() => {
+    if (!typeFilter) {
+      setCursor((c) => Math.min(total - 1, c + 1));
+      return;
+    }
+    setCursor((c) => visibleIdx.find((i) => i > c) ?? c);
+  }, [typeFilter, visibleIdx, total]);
+
+  // Disabled logic for every Prev/Next affordance — reduces to the original
+  // expressions (cursor === 0 / cursor >= total - 1) when no filter is active.
+  const canPrev = typeFilter ? visibleIdx.some((i) => i < cursor) : cursor > 0;
+  const canNext = typeFilter ? visibleIdx.some((i) => i > cursor) : cursor < total - 1;
 
   // Swipe pages in the TARGET language's reading order (the content being
   // paged), not the UI chrome's — the words screen derives direction the same
@@ -597,6 +726,25 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     ? `${book} ${chapter} · ${(projectConfig?.translationSource?.languageCode ?? "en").toUpperCase()} to ${targetLabel}`
     : `${book} ${chapter} · ${targetLabel}`;
 
+  // "N of M" — while a type filter is active, position and count are within
+  // the filtered set and the type label is appended ("3 of 12 · metaphor");
+  // with no filter this is character-for-character the original string.
+  const filteredPos = typeFilter ? visibleIdx.indexOf(cursor) : -1;
+  const headerCount = typeFilter
+    ? `${
+        done
+          ? visibleIdx.length
+          : visibleIdx.length === 0
+            ? 0
+            : Math.max(1, filteredPos + 1)
+      } of ${visibleIdx.length} · ${typeLabelOf(typeFilter)}`
+    : done
+      ? `${total} of ${total}`
+      : `${Math.min(cursor + 1, total)} of ${total}`;
+
+  // The current card's article type (detail header pill).
+  const rowTypeSlug = row ? typeSlugOf(row.support_reference) : null;
+
   const cardSx = {
     bgcolor: "background.paper",
     border: "1px solid",
@@ -621,6 +769,65 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     color: "text.secondary",
     mb: 1,
   };
+
+  // Quiet read-only pill naming the note's tA article type ("metaphor",
+  // "merism", …). Full slug rides the title attribute. Muted chip language
+  // (skip.soft/skip.ink) — deliberately NOT a FlowStatusChip: this is
+  // classification, not status. textTransform/letterSpacing are reset so the
+  // pill reads normally inside the uppercase labelSx header row.
+  const typePill = (slug: string) => (
+    <Box
+      component="span"
+      title={slug}
+      sx={{
+        flex: "none",
+        maxWidth: 120,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        bgcolor: skip.soft,
+        color: skip.ink,
+        borderRadius: 999,
+        fontSize: "0.6875rem",
+        fontWeight: 600,
+        lineHeight: 1.6,
+        paddingInline: 1,
+        paddingBlock: 0.25,
+        textTransform: "none",
+        letterSpacing: 0,
+      }}
+    >
+      {typeLabelOf(slug)}
+    </Box>
+  );
+
+  // Compact article-type filter — list-pane header on wide, above the cards
+  // on phone. Options are the types present in this chapter's queue, with
+  // counts. data-no-swipe: a drag on the select must never page the queue.
+  const typeFilterControl =
+    typeOptions.length > 0 ? (
+      <Box data-no-swipe>
+        <Select
+          size="small"
+          fullWidth
+          displayEmpty
+          value={typeFilter ?? ""}
+          onChange={(e) => {
+            const v = e.target.value as string;
+            setTypeFilter(v === "" ? null : v);
+          }}
+          aria-label="Filter notes by type"
+          sx={{ borderRadius: "10px", fontSize: "0.875rem", bgcolor: "background.paper" }}
+        >
+          <MenuItem value="">All types</MenuItem>
+          {typeOptions.map((o) => (
+            <MenuItem key={o.slug} value={o.slug} title={o.slug}>
+              {o.label} ({o.count})
+            </MenuItem>
+          ))}
+        </Select>
+      </Box>
+    ) : null;
 
   function Lane({ label, text, selection }: { label: string; text: string | null; selection: string }) {
     return (
@@ -755,6 +962,11 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               </Button>
             </Stack>
           </Box>
+        ) : typeFilter && visibleIdx.length === 0 ? (
+          <Alert severity="info">
+            No “{typeLabelOf(typeFilter)}” notes in {book} {chapter}. Choose “All types” to keep
+            going.
+          </Alert>
         ) : !row ? (
           <Box sx={cardSx}>
             <Typography variant="body2" color="text.secondary">
@@ -850,7 +1062,9 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
                 />
                 {targetLabel} draft{aiDrafted ? " · AI" : ""}
-                <Box sx={{ ml: "auto" }}>
+                <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 0.75 }}>
+                  {/* read-only article type — classification, not a verb */}
+                  {rowTypeSlug && typePill(rowTypeSlug)}
                   <FlowStatusChip kind={chip.kind} label={chip.label} />
                 </Box>
               </Typography>
@@ -939,7 +1153,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             <Stack direction="row" justifyContent="space-between" spacing={1.25}>
               <Button
                 startIcon={<ChevronLeftIcon />}
-                disabled={cursor === 0}
+                disabled={!canPrev}
                 onClick={goPrev}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
@@ -947,7 +1161,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               </Button>
               <Button
                 endIcon={<ChevronRightIcon />}
-                disabled={cursor >= total - 1}
+                disabled={!canNext}
                 onClick={goNext}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
@@ -981,6 +1195,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
       );
     }
     const st = statuses[id];
+    const typeSlug = typeSlugOf(r.support_reference);
     const rowChip: { kind: FlowStatusKind; label: string } =
       st === "approved"
         ? { kind: "approved", label: "Approved" }
@@ -1037,6 +1252,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             {preview || "Nothing drafted yet"}
           </Typography>
         </Box>
+        {typeSlug && typePill(typeSlug)}
         <FlowStatusChip kind={rowChip.kind} label={rowChip.label} />
         <ChevronRightIcon fontSize="small" sx={{ color: "text.secondary", flex: "none" }} />
       </Box>
@@ -1174,9 +1390,9 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
         <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label={`Leave ${book} ${chapter} notes`}
+              aria-label={`Back to the ${book} package`}
               onClick={() => {
-                location.hash = "#/home";
+                location.hash = `#/package/${book}`;
               }}
               sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
             >
@@ -1200,7 +1416,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
                 whiteSpace: "nowrap",
               }}
             >
-              {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
+              {headerCount}
             </Typography>
             {/* compact prev/next — same cursor and disabled logic as the card
                 stack's Prev/Next; chevrons flip under RTL (the scripture
@@ -1208,7 +1424,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             <IconButton
               size="small"
               aria-label="Previous note"
-              disabled={done || cursor === 0}
+              disabled={done || !canPrev}
               onClick={goPrev}
               sx={{ flex: "none" }}
             >
@@ -1217,7 +1433,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             <IconButton
               size="small"
               aria-label="Next note"
-              disabled={done || cursor >= total - 1}
+              disabled={done || !canNext}
               onClick={goNext}
               sx={{ flex: "none" }}
             >
@@ -1278,10 +1494,17 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               paddingBlockEnd: 2,
             }}
           >
+            {typeFilterControl}
             {total === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
                 No translation notes in {book} {chapter}.
               </Typography>
+            ) : typeFilter && visibleIdx.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
+                No “{typeLabelOf(typeFilter)}” notes in {book} {chapter}.
+              </Typography>
+            ) : typeFilter ? (
+              visibleIdx.map((i) => listRow(queueIds[i], i))
             ) : (
               queueIds.map(listRow)
             )}
@@ -1340,6 +1563,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             gap: 1.5,
           }}
         >
+          {!done && total > 0 && typeFilterControl}
           {detailBody}
         </Box>
       )}
