@@ -15,13 +15,13 @@
 //     use): the hub is navigation, not master-detail, so instead of a
 //     list/detail desk the SAME surface cards flow into a responsive grid —
 //     the design system's grid-3 idiom (docs/mockups/desktop-first/_design.css
-//     .grid-3): repeat(auto-fit, minmax(320px, 1fr)) inside a 1180px centred
+//     .grid-3): repeat(auto-fit, minmax(320px, 1fr)) inside a 1440px centred
 //     container. Section headers span the full grid width; each surface card
 //     keeps its tallies and expands its chapter list inline inside its own
 //     grid cell (alignItems start, so an open card never stretches its row
 //     siblings; at md+ a long chapter list scrolls within the cell instead of
 //     growing unbounded). No new chrome beyond that. Desktop >=1200px follows
-//     the same rule — auto-fit adds columns as the 1180px desk allows.
+//     the same rule — auto-fit adds columns as the 1440px desk allows.
 //   * New Alignment surface, chapter-scoped like notes/questions, linking to
 //     #/alignment/{book}/{ch} — TranslateAlignScreen's route contract (built
 //     in a sibling 2026-08-10 slice; the hash is dead until that route lands
@@ -322,7 +322,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label="Back to books"
@@ -375,7 +375,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
       <Box
         sx={{
-          maxWidth: wide ? 1180 : COLUMN_PX,
+          maxWidth: wide ? 1440 : COLUMN_PX,
           mx: "auto",
           paddingInline: 2,
           paddingBlockStart: wide ? 1.5 : 1,
@@ -383,7 +383,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
           ...(wide
             ? {
                 // grid-3 idiom (_design.css): panel cards, as many columns as
-                // the 1180px desk fits. alignItems start keeps an expanded
+                // the 1440px desk fits. alignItems start keeps an expanded
                 // card from stretching its row siblings.
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",

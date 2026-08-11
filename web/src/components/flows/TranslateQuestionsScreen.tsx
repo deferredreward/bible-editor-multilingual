@@ -47,7 +47,7 @@
 // Phone (<900px) is unchanged: one centred column, viewport-fixed Approve bar.
 // At md+ (900px — the same breakpoint TranslateWordsScreen and ArticlesScreen
 // use) the screen becomes master-detail after the desk-class primitives in
-// docs/mockups/desktop-first/_design.css (.desk / .panel): an 1180px centred
+// docs/mockups/desktop-first/_design.css (.desk / .panel): a 1440px centred
 // grid with a scrollable list pane (340-380px — the question queue as rows:
 // verse ref, question preview, status chip) on the inline-start side and a
 // panel-chromed detail pane holding the current card stack, with the Approve
@@ -1078,7 +1078,7 @@ export default function TranslateQuestionsScreen({
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label={`Back to the ${book} package`}
@@ -1154,7 +1154,7 @@ export default function TranslateQuestionsScreen({
 
       {wide ? (
         /* desk (the words screen's md+ pattern, after the desk-class
-           primitives in docs/mockups/desktop-first/_design.css): 1180px
+           primitives in docs/mockups/desktop-first/_design.css): 1440px
            centred grid — the question queue as a scrollable list pane on the
            inline-start side, a panel-chromed detail pane holding the current
            card stack. Grid column order follows the document direction, so
@@ -1164,7 +1164,7 @@ export default function TranslateQuestionsScreen({
             flex: 1,
             minHeight: 0,
             width: "100%",
-            maxWidth: 1180,
+            maxWidth: 1440,
             mx: "auto",
             display: "grid",
             gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",

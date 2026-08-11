@@ -4,7 +4,7 @@
 // still usable narrow.
 //
 //   * >=900px (theme md): a 232px sticky rail beside the content column,
-//     inside the 1180px desk — the .desk-shell/.rail primitives from
+//     inside the 1440px desk — the .desk-shell/.rail primitives from
 //     docs/mockups/desktop-first/_design.css translated to the MUI/sx idiom
 //     the flows screens already use.
 //   * <900px: the rail becomes a horizontal scroll strip above the content
@@ -131,6 +131,57 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
           </ButtonBase>
         );
       })}
+      {/* Admin surfaces that predate the desk redesign, kept reachable here
+          since FlowNav is retiring (Benjamin 2026-08-11). Each moves into the
+          desk when its own redesign lands. */}
+      {wide && (
+        <Typography
+          variant="caption"
+          sx={{
+            fontWeight: 700,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "text.secondary",
+            paddingInline: 1.5,
+            paddingBlock: 0.75,
+            marginBlockStart: 0.5,
+          }}
+        >
+          More tools
+        </Typography>
+      )}
+      {(
+        [
+          { hash: "#/ai", label: "AI studio" },
+          { hash: "#/style", label: "Style" },
+          { hash: "#/curate", label: "Templates" },
+          { hash: "#/observe", label: "Observe" },
+        ] as const
+      ).map((l) => (
+        <ButtonBase
+          key={l.hash}
+          onClick={() => {
+            location.hash = l.hash;
+          }}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-start",
+            gap: 1.25,
+            textAlign: "start",
+            fontSize: "0.875rem",
+            fontWeight: 600,
+            color: "text.secondary",
+            borderRadius: "9px",
+            paddingBlock: 1,
+            paddingInline: 1.5,
+            whiteSpace: "nowrap",
+            "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+          }}
+        >
+          {l.label}
+        </ButtonBase>
+      ))}
     </Box>
   );
 
@@ -138,7 +189,7 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
     <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
       <Box
         sx={{
-          maxWidth: 1180,
+          maxWidth: 1440,
           mx: "auto",
           paddingInline: 2,
           paddingBlock: 2,

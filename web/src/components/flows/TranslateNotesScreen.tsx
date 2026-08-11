@@ -21,7 +21,7 @@
 // _design.css): a scrollable list pane (340-380px) showing the note queue as
 // rows (verse ref · quote-or-note preview · status chip) on the inline-start
 // side, and a panel-chromed detail pane holding the same card stack, both
-// inside a 1180px centred desk. Selecting a row moves the SAME queue cursor
+// inside a 1440px centred desk. Selecting a row moves the SAME queue cursor
 // the phone's Prev/Next drives — one cursor, two representations — and the
 // action bar goes sticky at the pane's bottom instead of viewport-fixed
 // (pinned there by margin-block-start:auto when the content is short).
@@ -1387,7 +1387,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label={`Back to the ${book} package`}
@@ -1463,7 +1463,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
       </Box>
 
       {wide ? (
-        /* desk (the words screen's md+ pattern): 1180px centred grid — the
+        /* desk (the words screen's md+ pattern): 1440px centred grid — the
            note queue as a scrollable list pane on the inline-start side, the
            card stack in a panel-chromed detail pane. Grid column order follows
            the document direction, so this is RTL-safe as-is. */
@@ -1472,7 +1472,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             flex: 1,
             minHeight: 0,
             width: "100%",
-            maxWidth: 1180,
+            maxWidth: 1440,
             mx: "auto",
             display: "grid",
             gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",

@@ -39,7 +39,7 @@
 //     2026-08-10: screens with prev/next get controls at top and bottom) —
 //     same goVerse hash rewrite and same disabled logic as the detail
 //     header's pair.
-//   * md+ (>=900): 1180px desk, verse-list pane minmax(340px,380px) +
+//   * md+ (>=900): 1440px desk, verse-list pane minmax(340px,380px) +
 //     panel-chromed detail pane (TranslateWordsScreen.tsx:857-930). Phone
 //     (<900): one centred column with Prev/Next (notes-screen pattern). The
 //     phone column is 720px, wider than the notes screens' 480 — the drag
@@ -773,7 +773,7 @@ export default function TranslateAlignScreen({
         borderColor: "divider",
       }}
     >
-      <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+      <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
         <Stack direction="row" alignItems="center" spacing={1.25}>
           <IconButton
             aria-label={`Back to the ${book} package`}
@@ -857,7 +857,7 @@ export default function TranslateAlignScreen({
     return (
       <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
         {topbar}
-        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 2 }}>
+        <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 2 }}>
           <Skeleton variant="rounded" height={44} />
           <Skeleton variant="rounded" height={280} sx={{ mt: 2 }} />
         </Box>
@@ -869,7 +869,7 @@ export default function TranslateAlignScreen({
     return (
       <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
         {topbar}
-        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 2 }}>
+        <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 2 }}>
           <Alert severity="error">
             Could not load {book} {chapter}. Check your connection and try again.
           </Alert>
@@ -1213,7 +1213,7 @@ export default function TranslateAlignScreen({
 
       {wide ? (
         /* desk (docs/mockups/desktop-first/_design.css .desk/.rail/.panel via
-           TranslateWordsScreen.tsx:857-930): 1180px centred grid — verse-list
+           TranslateWordsScreen.tsx:857-930): 1440px centred grid — verse-list
            pane inline-start, panel-chromed detail pane filling the rest. Grid
            column order follows the document direction, so RTL-safe as-is. */
         <Box
@@ -1221,7 +1221,7 @@ export default function TranslateAlignScreen({
             flex: 1,
             minHeight: 0,
             width: "100%",
-            maxWidth: 1180,
+            maxWidth: 1440,
             mx: "auto",
             display: "grid",
             gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",

@@ -32,7 +32,7 @@
 //     the desk-class primitives in docs/mockups/desktop-first/_design.css
 //     (.desk / .rail / .panel): a scrollable list pane (340-380px) on the
 //     inline-start side, a panel-chromed detail pane filling the rest, both
-//     inside a 1180px centred desk. Selecting a row loads the detail pane in
+//     inside a 1440px centred desk. Selecting a row loads the detail pane in
 //     place (ArticleDetail variant="pane": no back chevron, action bar sticky
 //     at the pane's bottom instead of fixed to the viewport). Logical
 //     properties only throughout — the grid order itself flips under RTL.
@@ -809,7 +809,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           borderColor: "divider",
         }}
       >
-        <Box sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
               aria-label={`Back to the ${book} package`}
@@ -857,7 +857,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
 
       {wide ? (
         /* desk (docs/mockups/desktop-first/_design.css .desk/.rail/.panel):
-           1180px centred grid — rail-like list pane on the inline-start side,
+           1440px centred grid — rail-like list pane on the inline-start side,
            panel-chromed detail pane filling the rest. Grid column order
            follows the document direction, so this is RTL-safe as-is. */
         <Box
@@ -865,7 +865,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
             flex: 1,
             minHeight: 0,
             width: "100%",
-            maxWidth: 1180,
+            maxWidth: 1440,
             mx: "auto",
             display: "grid",
             gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",

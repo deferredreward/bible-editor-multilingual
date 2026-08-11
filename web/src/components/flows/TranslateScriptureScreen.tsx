@@ -89,7 +89,7 @@
 //     one-line snippet (target text when a lane has it, else the
 //     original-language line), and the verse's terminal status chip
 //     (Approved / Draft saved; an untouched verse is chipless). Desktop
-//     (>=1200px) follows the same desk rule — the grid caps at 1180px.
+//     (>=1200px) follows the same desk rule — the grid caps at 1440px.
 //   * Alignment affordances, md+ ONLY (on the phone the Align screen stays
 //     reachable from the hub): a quiet per-lane "Align" button →
 //     #/alignment/{book}/{chapter}/{verse} (single mode — the align screen
@@ -972,7 +972,7 @@ export default function TranslateScriptureScreen({
         }}
       >
         <Box
-          sx={{ maxWidth: wide ? 1180 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}
+          sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}
         >
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
@@ -1045,7 +1045,7 @@ export default function TranslateScriptureScreen({
       </Box>
 
       {/* md+ desk (the words screen's pattern, after docs/mockups/desktop-first/
-          _design.css .desk/.rail/.panel): 1180px centred grid — verse-list pane
+          _design.css .desk/.rail/.panel): 1440px centred grid — verse-list pane
           on the inline-start side, panel-chromed detail pane filling the rest.
           Grid column order follows the document direction, so this is RTL-safe
           as-is. On the phone both wrappers collapse (display: contents) and the
@@ -1057,7 +1057,7 @@ export default function TranslateScriptureScreen({
                 flex: 1,
                 minHeight: 0,
                 width: "100%",
-                maxWidth: 1180,
+                maxWidth: 1440,
                 mx: "auto",
                 display: "grid",
                 gridTemplateColumns: "minmax(340px, 380px) minmax(0, 1fr)",
