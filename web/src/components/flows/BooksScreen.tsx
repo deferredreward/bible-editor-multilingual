@@ -2,6 +2,14 @@
 //
 // a2-import: Admin — Import books. Port of docs/flows/ui/a2-import.html.
 //
+// 2026-08-11 (Benjamin): this screen is the redesign's top-level entry, and two
+// decisions landed together: (1) the old FlowNav pill bar (which pointed at the
+// retired flows routes) is replaced by the redesign's own sticky topbar idiom
+// (see PackageHubScreen) — title, org/language sub, admin-only Tune button to
+// #/admin/progress; (2) the per-book source-overrides editor was duplicated
+// between here and the admin Setup screen — it now lives on Admin → Setup ONLY,
+// and this screen's copy is removed in favor of a caption link to #/admin/setup.
+//
 // Real data only. The book grid's imported/not-imported state comes from
 // GET /api/books; a FAILED list load renders an explicit error + retry and
 // never collapses into an all-"not imported" list (that would re-expose the
@@ -23,6 +31,8 @@ import {
   Box,
   Button,
   CircularProgress,
+  IconButton,
+  Link,
   Popover,
   Stack,
   TextField,
@@ -33,6 +43,7 @@ import {
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import TuneIcon from "@mui/icons-material/Tune";
 import {
   api,
   ApiError,
@@ -55,8 +66,6 @@ import {
 import { startBookAiTranslate } from "../../lib/aiTranslate";
 import { isTranslationProject, useProjectConfig } from "../../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "../ImportFromDoor43Dialog";
-import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
-import { FlowNav } from "./FlowNav";
 import { FlowStatusChip } from "./FlowStatusChip";
 import { Panel, PanelBody, PanelFoot, PanelTop } from "./BooksPanel";
 import { BooksActivityPanel, BooksPendingPanel } from "./BooksActivityPanels";
@@ -516,18 +525,12 @@ function BookDetailPanel({
             book is safe to re-pull; a populated one carries more risk on the nightly re-import.
           </Alert>
 
-          <Accordion
-            disableGutters
-            elevation={0}
-            sx={{ mt: 2, border: 1, borderColor: "divider", "&:before": { display: "none" } }}
-          >
-            <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 44 }}>
-              <Typography variant="body2">Advanced — per-book source overrides</Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-              <BookSourceOverridesPanel book={book} />
-            </AccordionDetails>
-          </Accordion>
+          {/* 2026-08-11: the per-book source-overrides editor that used to sit
+              here (duplicated with the admin Setup screen) now lives on
+              Admin → Setup only. */}
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
+            Source overrides moved to <Link href="#/admin/setup">Admin → Setup</Link>.
+          </Typography>
 
           {message && (
             <Alert severity="success" sx={{ mt: 2 }} onClose={() => setMessage(null)}>
@@ -568,7 +571,11 @@ function BookDetailPanel({
 
 export default function BooksScreen({ role }: BooksScreenProps) {
   const theme = useTheme();
+  const { skip } = theme.palette.flows;
   const gridView = useMediaQuery(theme.breakpoints.up("tablet"));
+  // Shared app-wide config cache (BookDetailPanel below already subscribes to
+  // it) — read here only to label the topbar; no new fetch.
+  const projectConfig = useProjectConfig();
 
   const [books, setBooks] = useState<BookListEntry[]>([]);
   const [booksStatus, setBooksStatus] = useState<BooksFetchStatus>("loading");
@@ -629,14 +636,59 @@ export default function BooksScreen({ role }: BooksScreenProps) {
       return next;
     });
 
+  // Redesign topbar (PackageHubScreen idiom): sticky, title + sub, quiet icon
+  // buttons. No back chevron — this screen IS the redesign's top-level entry.
+  const topbar = (
+    <Box
+      sx={{
+        position: "sticky",
+        insetBlockStart: 0,
+        zIndex: 20,
+        bgcolor: "background.paper",
+        borderBlockEnd: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Box sx={{ maxWidth: 1180, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
+        <Stack direction="row" alignItems="center" spacing={1.25}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
+              Books
+            </Typography>
+            <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+              {projectConfig
+                ? `${projectConfig.org} · ${projectConfig.languageName}`
+                : "Import and manage books"}
+            </Typography>
+          </Box>
+          <Box sx={{ flex: 1 }} />
+          {role === "admin" && (
+            <IconButton
+              aria-label="Open the admin desk"
+              title="Admin"
+              onClick={() => {
+                location.hash = "#/admin/progress";
+              }}
+              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+            >
+              <TuneIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Stack>
+      </Box>
+    </Box>
+  );
+
   if (role !== "admin") {
     return (
-      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-        <FlowNav current="books" role={role} />
-        <Alert severity="info" sx={{ mt: 3 }}>
-          Importing books is an administrator task. Your account doesn't have the admin role in this
-          workspace, so this screen has nothing to show you.
-        </Alert>
+      <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
+        {topbar}
+        <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
+          <Alert severity="info" sx={{ mt: 1 }}>
+            Importing books is an administrator task. Your account doesn't have the admin role in this
+            workspace, so this screen has nothing to show you.
+          </Alert>
+        </Box>
       </Box>
     );
   }
@@ -814,10 +866,10 @@ export default function BooksScreen({ role }: BooksScreenProps) {
   })();
 
   return (
-    <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-      <FlowNav current="books" role={role} />
-
-      <Box sx={{ mt: 2, mb: 2 }}>
+    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
+      {topbar}
+      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
+      <Box sx={{ mt: 0, mb: 2 }}>
         <Typography
           variant="caption"
           sx={{
@@ -892,6 +944,7 @@ export default function BooksScreen({ role }: BooksScreenProps) {
 
       <Box sx={{ mt: 2.5 }}>
         <BooksLanePanel />
+      </Box>
       </Box>
     </Box>
   );
