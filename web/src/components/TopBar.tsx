@@ -35,6 +35,7 @@ import AddIcon from "@mui/icons-material/Add";
 import NavigateBeforeIcon from "@mui/icons-material/NavigateBefore";
 import NavigateNextIcon from "@mui/icons-material/NavigateNext";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import MenuOpenIcon from "@mui/icons-material/MenuOpen";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -204,6 +205,20 @@ function LayoutSwitcher({
           </ListSubheader>
         )}
         {userLayouts.map(renderLayoutItem)}
+        <Divider />
+        {/* Entry into the book-package redesign (replaces flexible mode at
+            merge; classic stays). TODO(i18n) with the flows sweep. */}
+        <MenuItem
+          onClick={() => {
+            setOpen(false);
+            location.hash = "#/books";
+          }}
+        >
+          <ListItemIcon>
+            <MenuBookIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Book packages (new UI)</ListItemText>
+        </MenuItem>
         {closedRegions.length > 0 && onRestoreRegion && [
           <Divider key="closed-divider" />,
           <ListSubheader key="closed-header" sx={{ lineHeight: 2, bgcolor: "transparent" }}>
