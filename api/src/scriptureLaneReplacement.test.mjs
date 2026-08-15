@@ -672,7 +672,11 @@ function d1Batch(db, fns) {
     () => db.prepare(`
       UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
       WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')
-    `).run("job-backout"),
+        AND NOT EXISTS (
+          SELECT 1 FROM scripture_lane_state s
+           WHERE s.lane = ?2 AND s.active_generation = ?3
+        )
+    `).run("job-backout", "lit", 2),
     () => db.prepare(`
       UPDATE scripture_lane_state
         SET replacement_job_id = NULL,

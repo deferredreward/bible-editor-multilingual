@@ -236,20 +236,31 @@ test("back-out is idempotent — a second call leaves gen-1 alone", async () => 
 
 test("back-out never deletes rows in the ACTIVE generation", async () => {
   // Pathological: the job's generation IS the active one. Cleanup must bail
-  // rather than delete live content.
+  // rather than delete live content, and (issue #127) cancelling the job
+  // itself must now be refused too — the lane is actively serving this job's
+  // own generation, so marking it 'cancelled' would misreport a live source
+  // as reverted.
   const db = freshDb({ activeGen: 2, jobGen: 2 });
   seedBook(db, 2, JOB);
 
-  await backOutReplacement(makeEnv(db), JOB);
+  await assert.rejects(() => backOutReplacement(makeEnv(db), JOB), /job_generation_live/);
 
   assert.deepEqual(counts(db, 2), { verses: 3, meta: 1, syncs: 1 }, "active gen untouched");
+  assert.equal(
+    db.prepare(`SELECT status FROM scripture_lane_replacement WHERE job_id = ?`).get(JOB).status,
+    "staging",
+    "job status left alone, not falsely marked cancelled",
+  );
 });
 
-test("back-out deletes nothing once the lane has been detached from the job", async () => {
+test("back-out refuses when the lane is already serving the job's generation (issue #127)", async () => {
   // Races activateReplacement: it flips active_generation to this job's
   // generation and clears replacement_job_id. A back-out holding a stale read
-  // of the job must not purge the generation the lane now serves — the guard
-  // lives inside the DELETE predicates, so a flip that lands mid-flight wins.
+  // of the job must not purge the generation the lane now serves (the DELETE
+  // guard already covers that) AND must refuse to mark the job 'cancelled' —
+  // otherwise the record of which source is live disagrees with what's live.
+  // The guard lives inside the final UPDATE's predicate, not a pre-batch
+  // read-then-branch, so a flip that lands mid-flight always wins.
   const db = freshDb({ jobStatus: "ready" });
   seedBook(db, 2, JOB);
   db.prepare(
@@ -258,7 +269,7 @@ test("back-out deletes nothing once the lane has been detached from the job", as
       WHERE lane = 'lit'`,
   ).run();
 
-  await backOutReplacement(makeEnv(db), JOB);
+  await assert.rejects(() => backOutReplacement(makeEnv(db), JOB), /job_generation_live/);
 
   assert.deepEqual(
     counts(db, 2),
@@ -269,6 +280,11 @@ test("back-out deletes nothing once the lane has been detached from the job", as
     db.prepare(`SELECT active_generation FROM scripture_lane_state WHERE lane='lit'`).get()
       .active_generation,
     2,
+  );
+  assert.equal(
+    db.prepare(`SELECT status FROM scripture_lane_replacement WHERE job_id = ?`).get(JOB).status,
+    "ready",
+    "job left honestly 'ready' rather than falsely marked cancelled",
   );
 });
 
