@@ -41,7 +41,7 @@
 
 import type { Env } from "./index";
 import type { WorkflowStep } from "cloudflare:workers";
-import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, NT_BOOKS } from "./dcsSources";
+import { dcsUrls, dcsResourceFile, dcsRawUrl, fileCommitSha, fetchText, heldOutNoteResources, NT_BOOKS } from "./dcsSources";
 import { getProjectConfig, type ProjectConfig } from "./projectConfig.ts";
 import { heldOutChapters, isChapterHeldOut, NOTHING_HELD_OUT, type HeldOut } from "./bookSource.ts";
 import {
@@ -2077,13 +2077,27 @@ async function planAndStageBookResources(
   // carry the held-out ranges so the chunk apply + prune skip them. Only queried
   // when tn/tq are actually requested, matching the guard in runReimport.
   const needsNoteProv = resources.some((r) => r === "tn" || r === "tq");
+  // Scripture/twl hold-out (issue #142): whole-book only — unlike tn/tq there is
+  // no per-chapter-range override mechanism for ult/ust/twl, so a non-null
+  // book_imports.*_source column always means the WHOLE book is held out for
+  // that resource. Only queried when one of those resources is requested.
+  const needsScriptureProv = resources.some((r) => r === "ult" || r === "ust" || r === "twl");
   const [cfg, prov] = await Promise.all([
     getProjectConfig(env),
-    needsNoteProv
+    needsNoteProv || needsScriptureProv
       ? env.DB
-          .prepare(`SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`)
+          .prepare(
+            `SELECT tn_source, tq_source, ult_source, ust_source, twl_source
+               FROM book_imports WHERE book = ?1`,
+          )
           .bind(book)
-          .first<{ tn_source: string | null; tq_source: string | null }>()
+          .first<{
+            tn_source: string | null;
+            tq_source: string | null;
+            ult_source: string | null;
+            ust_source: string | null;
+            twl_source: string | null;
+          }>()
       : Promise.resolve(null),
   ]);
   const heldByResource: Partial<Record<"tn" | "tq", HeldOut>> = {};
@@ -2091,6 +2105,7 @@ async function planAndStageBookResources(
     if (!resources.includes(r)) continue;
     heldByResource[r] = await heldOutChapters(env, cfg, book, r, r === "tn" ? prov?.tn_source : prov?.tq_source);
   }
+  const scriptureHeld: Set<Resource> = needsScriptureProv ? heldOutNoteResources(prov) : new Set();
 
   const entries: StagedResource[] = [];
   for (const resource of resources) {
@@ -2100,6 +2115,12 @@ async function planAndStageBookResources(
         entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null });
         continue;
       }
+    }
+    if ((resource === "ult" || resource === "ust" || resource === "twl") && scriptureHeld.has(resource)) {
+      // Source-pulled scripture/twl: never re-fetch from the org/lane repo —
+      // no watermark write either, exactly like the tn/tq whole-book case above.
+      entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null });
+      continue;
     }
     const file = dcsResourceFile(cfg, book, resource);
     if (!file) { entries.push({ resource, changed: false, masterSha: null, r2Key: null, src: null }); continue; }
