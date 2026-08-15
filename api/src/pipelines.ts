@@ -22,6 +22,8 @@ import { currentUserId, requireEditor } from "./auth";
 import { importJobOutput } from "./pipelineImport";
 import { getProjectConfig } from "./projectConfig.ts";
 import { buildTranslateOptions } from "./translateOptions.ts";
+import { getAiProviderConfig, resolveDispatchAi, scrubSecret } from "./aiProvider.ts";
+import { decryptApiKey } from "./aiKeyCrypto.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents";
@@ -587,7 +589,7 @@ export async function dispatchNext(env: Env): Promise<void> {
       : undefined;
   const isArticleJob =
     job.pipeline_type === "translate" && (optResourceType === "tw" || optResourceType === "ta");
-  const upstreamBody = {
+  const upstreamBody: Record<string, unknown> = {
     pipelineType: job.pipeline_type,
     ...(isArticleJob
       ? {}
@@ -596,6 +598,32 @@ export async function dispatchNext(env: Env): Promise<void> {
     sessionKey: job.session_key,
     ...(options ? { options } : {}),
   };
+
+  // Per-org AI provider config (migration 0066): translate jobs only. Read
+  // fresh at every dispatch — never cached — so an admin's config change
+  // applies to jobs that were already queued. A BYO provider that can't be
+  // decrypted must fail the job, never silently fall back to the shared
+  // subscription (billing correctness).
+  let aiApiKey: string | undefined; // plaintext lives ONLY in this function scope
+  let aiProvider: string | undefined;
+  if (job.pipeline_type === "translate") {
+    const row = await getAiProviderConfig(env.DB);
+    const ai = resolveDispatchAi(row, env.AI_KEY_WRAPPING_KEY);
+    if (ai.kind === "error") {
+      await fail("sdk_error", `ai_provider_unavailable: ${ai.reason}`);
+      return;
+    }
+    if (ai.kind === "configured") {
+      try {
+        aiApiKey = await decryptApiKey(env.AI_KEY_WRAPPING_KEY!, ai.ciphertext, ai.iv);
+      } catch {
+        await fail("sdk_error", "ai_provider_key_decrypt_failed");
+        return;
+      }
+      aiProvider = ai.provider;
+      Object.assign(upstreamBody, { provider: ai.provider, model: ai.model, apiKey: aiApiKey });
+    }
+  }
 
   let upstream: Response;
   try {
@@ -613,18 +641,36 @@ export async function dispatchNext(env: Env): Promise<void> {
   }
 
   const text = await upstream.text();
+  const scrubbed = aiApiKey ? scrubSecret(text, aiApiKey) : text;
   if (!upstream.ok) {
-    await fail("sdk_error", `upstream ${upstream.status}: ${text.slice(0, 200)}`);
+    await fail("sdk_error", `upstream ${upstream.status}: ${scrubbed.slice(0, 200)}`);
     return;
   }
-  let parsed: { jobId?: string } | null = null;
+  let parsed: { jobId?: string; provider?: string } | null = null;
   try {
     parsed = JSON.parse(text);
   } catch {
     /* fall through to malformed handling */
   }
   if (!parsed || typeof parsed.jobId !== "string") {
-    await fail("missing_output", `upstream missing jobId: ${text.slice(0, 200)}`);
+    await fail("missing_output", `upstream missing jobId: ${scrubbed.slice(0, 200)}`);
+    return;
+  }
+
+  // A provider was injected but the upstream bot didn't echo it back — the
+  // bot predates provider support and silently ran the job on its own
+  // default (billing correctness: never let a BYO-configured org's job run
+  // unaccounted for on the shared subscription).
+  // Two causes, both of which must fail the job rather than proceed: the bot
+  // predates provider support and silently stripped the fields, or an unrelated
+  // run already holds this scope upstream (the bot answers already_running and
+  // withholds the ack, because that run may be another org's on the shared
+  // subscription — attaching to it would bill uW and import foreign output).
+  if (aiApiKey !== undefined && parsed.provider !== aiProvider) {
+    await fail(
+      "sdk_error",
+      "ai_provider_not_acknowledged: upstream did not confirm the provider — either the bot predates provider support (deploy bp-assistant first) or another run already holds this scope",
+    );
     return;
   }
 

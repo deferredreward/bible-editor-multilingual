@@ -70,21 +70,15 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "maelezo {{notes}} · maneno {{words}} · maswali {{questions}}",
     "readingTextSize": "Ukubwa wa maandishi ya kusoma",
-    "readingTextSizeTooltip": "ukubwa wa maandishi ya kusoma",
-    "adjustReadingTextSize": "rekebisha ukubwa wa maandishi ya kusoma",
     "decreaseReadingTextSize": "punguza ukubwa wa maandishi ya kusoma",
     "increaseReadingTextSize": "ongeza ukubwa wa maandishi ya kusoma",
-    "smaller": "kidogo",
-    "larger": "kubwa",
-    "resetTo100": "Rejesha hadi 100%",
     "switchToLight": "badilisha kwenda hali angavu",
     "switchToDark": "badilisha kwenda hali giza",
     "toggleColorMode": "geuza hali ya rangi",
     "uiLanguage": "Lugha ya kiolesura",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     }
   },
   "translation": {
@@ -228,9 +222,7 @@
     "discardConfirmBody": "Mabadiliko haya hayakuwahi kufika kwenye seva. Kuyatupa huyafuta kutoka kifaa hiki kabisa — hayawezi kurejeshwa.",
     "cancel": "ghairi",
     "updateAvailableTooltip": "Toleo jipya limesambazwa. Bofya ili kupakia upya na kupata masahihisho ya hivi punde.",
-    "updateAvailable": "Sasisho la programu linapatikana — onyesha upya",
-    "buildSha": "toleo {{commit}}",
-    "onLatestVersion": "Uko kwenye toleo jipya zaidi ulilopakia."
+    "updateAvailable": "Sasisho la programu linapatikana — onyesha upya"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -572,8 +564,6 @@
     "attrPeople_other": "watu {{count}}"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "Fungua mstari huu katika Logos",
     "autoFollow": "fuata kiotomatiki",
     "autoFollowTooltip": "Fuata mstari unaotumika kiotomatiki katika Logos (huchukua umakini kila unapobadilika)",
@@ -621,7 +611,33 @@
       "terminology": "Istilahi",
       "examples": "Mifano",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "Huduma ya AI"
+    },
+    "aiService": {
+      "title": "Huduma ya AI",
+      "intro": "Chagua AI itakayoendesha michakato ya bomba la tafsiri ya shirika hili (kutafsiri madondoo, maswali, maneno, na makala): usajili wa pamoja wa unfoldingWord, au mtoa huduma wako mwenyewe ukiwa na ufunguo wako wa API. Vipengele vingine vya AI, kama uundaji wa madondoo na rasimu za haraka, hutumia usajili wa pamoja wa unfoldingWord kila wakati bila kujali mpangilio huu. Muhimu: baada ya kuhifadhi ufunguo hapa, hauwezi kuonekana tena — unaweza tu kubadilishwa au kufutwa.",
+      "providerLabel": "Mtoa huduma",
+      "provider": {
+        "default": "Chaguo-msingi (usajili wa uW)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "Modeli",
+      "apiKey": "Ufunguo wa API",
+      "apiKeyHelper": "Umehifadhiwa kwa usimbaji fiche na hautaonyeshwa tena — unaweza tu kubadilishwa au kufutwa.",
+      "configured": "Imesanidiwa •••• {{hint}}",
+      "replace": "Badilisha",
+      "clear": "Futa",
+      "clearConfirmTitle": "Futa ufunguo wa API?",
+      "clearConfirmBody": "Hii itaondoa ufunguo uliohifadhiwa na kurejesha shirika hili kwenye mtoa huduma wa chaguo-msingi (usajili wa uW).",
+      "clearConfirmConfirm": "Futa ufunguo",
+      "encryptionUnavailable": "Kuleta ufunguo wako wa AI bado hakujawezeshwa kwenye mfumo huu — msimamizi anahitaji kuweka siri ya AI_KEY_WRAPPING_KEY.",
+      "notMigrated": "Hifadhidata ya shirika hili haijasasishwa — msimamizi anahitaji kutekeleza uhamishaji wa mtoa AI kabla ufunguo uhifadhiwe.",
+      "loadFailed": "Imeshindwa kupakia mipangilio ya huduma ya AI.",
+      "conflictReloaded": "Mtu mwingine amebadilisha mpangilio huu — umepakiwa upya; kagua kabla ya kuhifadhi tena."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
@@ -693,9 +709,11 @@
     "purpose": "Lengo",
     "register": "Daraja la lugha",
     "registerHelp": "Ukali wa lugha ambao AI inapaswa kulenga.",
-    "register.default": "Chaguo-msingi (otomatiki)",
-    "register.formal": "Rasmi",
-    "register.informal": "Isiyo rasmi",
+    "registerOption": {
+      "default": "Chaguo-msingi (otomatiki)",
+      "formal": "Rasmi",
+      "informal": "Isiyo rasmi"
+    },
     "scriptNotes": "Maelezo ya hati / mwelekeo",
     "instructionsIntro": "Mwongozo wa kudumu unaongezwa kwenye kila ombi la rasimu ya AI. Weka mfupi na wa kudumu — maelezo ya kila dokezo yako katika Istilahi na Mifano.",
     "instructionsPlaceholder": "mf. Fuata Laha ya Mtindo wa Kifurushi cha Kitabu. Tumia en-dash kwa masafa ya mistari. Nakili kipande kilichonukuliwa moja kwa moja kutoka maandiko ya GL.",
@@ -710,11 +728,13 @@
     "statusFilter": "Hali",
     "allStatuses": "Hali zote",
     "noTerms": "Hakuna istilahi bado. Ongeza moja hapa chini au ingiza CSV.",
-    "status.preferred": "Inayopendekezwa",
-    "status.admitted": "Imekubaliwa",
-    "status.deprecated": "Imeachwa kutumika",
-    "status.forbidden": "Imepigwa marufuku",
-    "status.do_not_translate": "Usitafsiri",
+    "status": {
+      "preferred": "Inayopendekezwa",
+      "admitted": "Imekubaliwa",
+      "deprecated": "Imeachwa kutumika",
+      "forbidden": "Imepigwa marufuku",
+      "do_not_translate": "Usitafsiri"
+    },
     "conceptId": "Dhana",
     "sourceTerm": "Istilahi ya chanzo",
     "targetTerm": "Tafsiri",
@@ -744,12 +764,14 @@
     "exportStatusNever": "Hakuna uhamishaji wa muktadha bado",
     "exportStatusSuccess": "Kifurushi cha muktadha kiko tayari ({{sha}})",
     "exportStatusOther": "Uhamishaji wa mwisho: {{status}}",
-    "exportStatus.running": "Uhamishaji unaendelea",
-    "exportStatus.failed": "Uhamishaji umeshindwa",
-    "exportStatus.queued": "Uhamishaji umeorodheshwa",
-    "exportStatus.shrink_refused": "Uhamishaji umekataliwa ili kuzuia upotevu usiotarajiwa wa maudhui",
-    "exportStatus.no_content": "Hakuna maudhui ya muktadha ya kuhamisha",
-    "exportStatus.dry_run": "Hakiki ya uhamishaji imekamilika",
+    "exportStatus": {
+      "running": "Uhamishaji unaendelea",
+      "failed": "Uhamishaji umeshindwa",
+      "queued": "Uhamishaji umeorodheshwa",
+      "shrink_refused": "Uhamishaji umekataliwa ili kuzuia upotevu usiotarajiwa wa maudhui",
+      "no_content": "Hakuna maudhui ya muktadha ya kuhamisha",
+      "dry_run": "Hakiki ya uhamishaji imekamilika"
+    },
     "csvColumnPlaceholder": "concept_id,source_term,target_term,status,replacement,comment,tw_link",
     "noRendering": "—",
     "termArrow": "→",
@@ -807,7 +829,6 @@
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -825,24 +846,6 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
-    "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneTitle": "You're all set"
   }
 }

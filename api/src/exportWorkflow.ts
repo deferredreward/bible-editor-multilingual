@@ -243,29 +243,42 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       ? [params.resource]
       : ALL_RESOURCES;
 
-    // Books whose tn/tq did NOT come from the configured org repo — re-sourced
-    // from Aquifer (POST /aquifer-drafts), imported from the English
-    // translationSource, or set to a per-book/per-chapter-range override (#103) —
-    // are held out of that resource's EXPORT: their rows are source-keyed drafts,
-    // and until validated their export snapshot is empty — exporting would push
-    // blank/unapproved (or another org's) notes over the DCS tn/tq repo.
-    // Export-direction handling for these books is deferred (see STATE.md); until
-    // then, skip the held-out resource. Other resources (verses/twl) export
-    // normally. Mirrors the reimport skip in bookReimport.
+    // Books whose tn/tq/ult/ust/twl did NOT come from the configured org/lane
+    // repo — re-sourced from Aquifer (POST /aquifer-drafts, tn/tq only),
+    // imported from the English translationSource, or (tn/tq only) set to a
+    // per-book/per-chapter-range override (#103) — are held out of that
+    // resource's EXPORT: their rows are source-keyed drafts, and until
+    // validated their export snapshot is empty — exporting would push
+    // blank/unapproved (or another org's) content over the DCS repo.
+    // Export-direction handling for these books is deferred (see STATE.md);
+    // until then, skip the held-out resource. Other resources export normally.
+    // Mirrors the reimport skip in bookReimport.ts (issue #142 widened this
+    // from tn/tq-only to also cover ult/ust/twl — see heldOutNoteResources).
     //
-    // Two sources of hold-out: (a) the whole-book book_imports marker, and (b) the
-    // range table (#103 Tier 2). A PARTIALLY-sourced book has NO marker (its base
-    // is the org's own repo), so (b) is what stops it from rendering the
-    // cross-sourced chapters over master. NOTE: this is whole-RESOURCE skip, so a
-    // partial book's OWNED chapters don't publish either — a documented limitation;
-    // the merge-export that publishes owned chapters is a follow-up (STATE.md).
+    // Two sources of hold-out for tn/tq: (a) the whole-book book_imports
+    // marker, and (b) the range table (#103 Tier 2, tn/tq only — ult/ust/twl
+    // have no per-chapter-range mechanism, so (a) is the only source for
+    // them). A PARTIALLY-sourced tn/tq book has NO marker (its base is the
+    // org's own repo), so (b) is what stops it from rendering the
+    // cross-sourced chapters over master. NOTE: this is whole-RESOURCE skip, so
+    // a partial book's OWNED chapters don't publish either — a documented
+    // limitation; the merge-export that publishes owned chapters is a
+    // follow-up (STATE.md).
     const heldOutNotes = new Set(
       await step.do("list-held-out-note-books", async () => {
         const cfg = await getProjectConfig(this.env);
         const rs = await this.env.DB.prepare(
-          `SELECT book, tn_source, tq_source FROM book_imports
-            WHERE tn_source IS NOT NULL OR tq_source IS NOT NULL`,
-        ).all<{ book: string; tn_source: string | null; tq_source: string | null }>();
+          `SELECT book, tn_source, tq_source, ult_source, ust_source, twl_source FROM book_imports
+            WHERE tn_source IS NOT NULL OR tq_source IS NOT NULL
+               OR ult_source IS NOT NULL OR ust_source IS NOT NULL OR twl_source IS NOT NULL`,
+        ).all<{
+          book: string;
+          tn_source: string | null;
+          tq_source: string | null;
+          ult_source: string | null;
+          ust_source: string | null;
+          twl_source: string | null;
+        }>();
         // step.do must return a JSON-serializable value → "BOOK:resource" strings.
         const markerKeys = rs.results.flatMap((r) =>
           [...heldOutNoteResources(r)].map((res) => `${r.book}:${res}`),
@@ -329,8 +342,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const results: StepResult[] = [];
     for (const resource of resources) {
       for (const book of books) {
-        // Aquifer- / English-source-sourced tn or tq: not exported yet (see above)
-        if ((resource === "tn" || resource === "tq") && heldOutNotes.has(`${book}:${resource}`)) continue;
+        // Aquifer- / English-source-sourced tn/tq, or English-source-sourced
+        // ult/ust/twl: not exported yet (see above, issue #142).
+        if (heldOutNotes.has(`${book}:${resource}`)) continue;
         const stepName = `export-${book}-${resource}`;
         try {
           const result = await step.do(

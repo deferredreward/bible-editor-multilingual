@@ -70,21 +70,15 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} หมายเหตุ · {{words}} คำ · {{questions}} คำถาม",
     "readingTextSize": "ขนาดข้อความสำหรับอ่าน",
-    "readingTextSizeTooltip": "ขนาดข้อความสำหรับอ่าน",
-    "adjustReadingTextSize": "ปรับขนาดข้อความสำหรับอ่าน",
     "decreaseReadingTextSize": "ลดขนาดข้อความสำหรับอ่าน",
     "increaseReadingTextSize": "เพิ่มขนาดข้อความสำหรับอ่าน",
-    "smaller": "เล็กลง",
-    "larger": "ใหญ่ขึ้น",
-    "resetTo100": "รีเซ็ตเป็น 100%",
     "switchToLight": "สลับไปโหมดสว่าง",
     "switchToDark": "สลับไปโหมดมืด",
     "toggleColorMode": "สลับโหมดสี",
     "uiLanguage": "ภาษาของส่วนติดต่อ",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     }
   },
   "translation": {
@@ -221,9 +215,7 @@
     "discardConfirmBody": "การแก้ไขเหล่านี้ไม่เคยไปถึงเซิร์ฟเวอร์ การทิ้งจะลบออกจากอุปกรณ์นี้อย่างถาวร — ไม่สามารถกู้คืนได้",
     "cancel": "ยกเลิก",
     "updateAvailableTooltip": "มีการปรับใช้เวอร์ชันใหม่แล้ว คลิกเพื่อโหลดซ้ำและรับการแก้ไขล่าสุด",
-    "updateAvailable": "มีการอัปเดตแอป — รีเฟรช",
-    "buildSha": "บิลด์ {{commit}}",
-    "onLatestVersion": "คุณอยู่ในเวอร์ชันล่าสุดที่คุณโหลด"
+    "updateAvailable": "มีการอัปเดตแอป — รีเฟรช"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -558,8 +550,6 @@
     "attrPeople_other": "{{count}} คน"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "เปิดข้อนี้ใน Logos",
     "autoFollow": "ติดตามอัตโนมัติ",
     "autoFollowTooltip": "ติดตามข้อที่ใช้งานอยู่โดยอัตโนมัติใน Logos (แย่งโฟกัสทุกครั้งที่เปลี่ยน)",
@@ -607,7 +597,33 @@
       "terminology": "คำศัพท์เฉพาะ",
       "examples": "ตัวอย่าง",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "บริการ AI"
+    },
+    "aiService": {
+      "title": "บริการ AI",
+      "intro": "เลือกว่า AI ตัวใดจะรันขั้นตอนไปป์ไลน์การแปลขององค์กรนี้ (การแปลบันทึกย่อ คำถาม คำศัพท์ และบทความ) — การสมัครสมาชิกร่วมของ unfoldingWord หรือผู้ให้บริการของคุณเองพร้อมคีย์ API ของคุณเอง ฟีเจอร์ AI อื่น ๆ เช่น การสร้างบันทึกย่อและร่างด่วน จะใช้การสมัครสมาชิกร่วมของ unfoldingWord เสมอไม่ว่าการตั้งค่านี้จะเป็นอย่างไร สำคัญ: หลังจากบันทึกคีย์ที่นี่แล้ว จะไม่สามารถดูได้อีก ทำได้เพียงแทนที่หรือลบเท่านั้น",
+      "providerLabel": "ผู้ให้บริการ",
+      "provider": {
+        "default": "ค่าเริ่มต้น (การสมัครสมาชิก uW)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "โมเดล",
+      "apiKey": "คีย์ API",
+      "apiKeyHelper": "จัดเก็บแบบเข้ารหัสและจะไม่แสดงอีก — ทำได้เพียงแทนที่หรือลบเท่านั้น",
+      "configured": "กำหนดค่าแล้ว •••• {{hint}}",
+      "replace": "แทนที่",
+      "clear": "ลบ",
+      "clearConfirmTitle": "ลบคีย์ API หรือไม่?",
+      "clearConfirmBody": "การทำเช่นนี้จะลบคีย์ที่บันทึกไว้และเปลี่ยนองค์กรนี้กลับไปใช้ผู้ให้บริการเริ่มต้น (การสมัครสมาชิก uW)",
+      "clearConfirmConfirm": "ลบคีย์",
+      "encryptionUnavailable": "การใช้คีย์ AI ของคุณเองยังไม่เปิดใช้งานบนการติดตั้งนี้ — ผู้ดูแลระบบต้องตั้งค่า secret AI_KEY_WRAPPING_KEY",
+      "notMigrated": "ฐานข้อมูลขององค์กรนี้ยังไม่ได้อัปเดต — ผู้ดูแลระบบต้องใช้ migration ของผู้ให้บริการ AI ก่อนจึงจะบันทึกคีย์ได้",
+      "loadFailed": "ไม่สามารถโหลดการตั้งค่าบริการ AI ได้",
+      "conflictReloaded": "มีคนอื่นเปลี่ยนการตั้งค่านี้ — ได้โหลดใหม่แล้ว โปรดตรวจสอบก่อนบันทึกอีกครั้ง"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
@@ -679,9 +695,11 @@
     "purpose": "วัตถุประสงค์",
     "register": "ระดับภาษา",
     "registerHelp": "ระดับความเป็นทางการที่ AI ควรมุ่งเน้น",
-    "register.default": "ค่าเริ่มต้น (อัตโนมัติ)",
-    "register.formal": "ทางการ",
-    "register.informal": "ไม่เป็นทางการ",
+    "registerOption": {
+      "default": "ค่าเริ่มต้น (อัตโนมัติ)",
+      "formal": "ทางการ",
+      "informal": "ไม่เป็นทางการ"
+    },
     "scriptNotes": "หมายเหตุเรื่องอักษร / ทิศทาง",
     "instructionsIntro": "คำแนะนำถาวรที่แทรกในทุกพรอมต์ร่างแปลของ AI ให้กระชับและคงทน — รายละเอียดเฉพาะแต่ละบันทึกอยู่ในคำศัพท์เฉพาะและตัวอย่าง",
     "instructionsPlaceholder": "เช่น ปฏิบัติตามชีตสไตล์ของชุดหนังสือ ใช้ en-dash สำหรับช่วงข้อความ คัดลอกข้อความอ้างอิงโดยตรงจากข้อความ GL",
@@ -696,11 +714,13 @@
     "statusFilter": "สถานะ",
     "allStatuses": "ทุกสถานะ",
     "noTerms": "ยังไม่มีคำศัพท์ เพิ่มด้านล่างหรือนำเข้า CSV",
-    "status.preferred": "แนะนำ",
-    "status.admitted": "ยอมรับ",
-    "status.deprecated": "เลิกใช้",
-    "status.forbidden": "ห้ามใช้",
-    "status.do_not_translate": "ไม่แปล",
+    "status": {
+      "preferred": "แนะนำ",
+      "admitted": "ยอมรับ",
+      "deprecated": "เลิกใช้",
+      "forbidden": "ห้ามใช้",
+      "do_not_translate": "ไม่แปล"
+    },
     "conceptId": "แนวคิด",
     "sourceTerm": "คำต้นทาง",
     "targetTerm": "คำแปล",
@@ -730,12 +750,14 @@
     "exportStatusNever": "ยังไม่เคยส่งออกบริบท",
     "exportStatusSuccess": "ชุดบริบทพร้อมแล้ว ({{sha}})",
     "exportStatusOther": "ส่งออกล่าสุด: {{status}}",
-    "exportStatus.running": "กำลังส่งออก",
-    "exportStatus.failed": "ส่งออกล้มเหลว",
-    "exportStatus.queued": "จัดคิวส่งออกแล้ว",
-    "exportStatus.shrink_refused": "ปฏิเสธการส่งออกเพื่อป้องกันการสูญเสียเนื้อหาที่ไม่คาดคิด",
-    "exportStatus.no_content": "ไม่มีเนื้อหาบริบทให้ส่งออก",
-    "exportStatus.dry_run": "ดูตัวอย่างการส่งออกเสร็จสมบูรณ์",
+    "exportStatus": {
+      "running": "กำลังส่งออก",
+      "failed": "ส่งออกล้มเหลว",
+      "queued": "จัดคิวส่งออกแล้ว",
+      "shrink_refused": "ปฏิเสธการส่งออกเพื่อป้องกันการสูญเสียเนื้อหาที่ไม่คาดคิด",
+      "no_content": "ไม่มีเนื้อหาบริบทให้ส่งออก",
+      "dry_run": "ดูตัวอย่างการส่งออกเสร็จสมบูรณ์"
+    },
     "csvColumnPlaceholder": "concept_id,source_term,target_term,status,replacement,comment,tw_link",
     "noRendering": "—",
     "termArrow": "→",
@@ -793,7 +815,6 @@
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -811,24 +832,6 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
-    "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneTitle": "You're all set"
   }
 }

@@ -98,7 +98,8 @@ class_name = "ExportWorkflow"
 # `wrangler dev --test-scheduled` exposes /__scheduled regardless.
 
 # Public-safe defaults; secrets go in `wrangler secret put` (DCS_CLIENT_ID,
-# DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN, BT_API_TOKEN).
+# DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN, BT_API_TOKEN,
+# AI_KEY_WRAPPING_KEY).
 # ALLOWED_ORIGINS empty → falls back to the dev allowlist inside src/index.ts
 # (localhost:5173 / 8787 only).
 # DEV_AUTH_ENABLED gates the /api/auth/dev mint endpoint; flipped to "false"
@@ -106,6 +107,10 @@ class_name = "ExportWorkflow"
 # DCS_EXPORT_OWNER controls which owner nightly exports land on (the branch is
 # derived per-book from contributors, not configured).
 # BT_API_TOKEN (secret) authorizes /api/tn-quick + /api/pipelines/*.
+# AI_KEY_WRAPPING_KEY (secret) wraps each org's own AI provider API key stored
+# in ai_provider_config — base64 of 32 random bytes (`openssl rand -base64 32`).
+# Unset → orgs can't store a key (/api/ai-provider reports encryptionAvailable
+# false); the shared BT_API_TOKEN path still works.
 # TN_QUICK_URL / PIPELINE_API_BASE override the bot endpoints.
 #
 # WORKSPACES: JSON array of per-org workspaces, e.g.

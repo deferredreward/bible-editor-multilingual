@@ -8,7 +8,7 @@
 
 import { smartEditVerse, smartReplaceVerse, tokenizePlainText, tokenizeEditableText } from "./replace.ts";
 import { extractEditableText, extractPlainText } from "./usfm.ts";
-import { analyzeAlignmentDelta } from "./alignmentDelta.ts";
+import { analyzeAlignmentDelta, guardBlocksSave } from "./alignmentDelta.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -1947,6 +1947,109 @@ function countAligned(content) {
   const aligned = alignedWords(r.content);
   assert(aligned.find((x) => x.text === "Ephraim")?.strongs.includes("H2"), "'Ephraim' keeps alignment");
   assert(aligned.find((x) => x.text === "and")?.strongs.includes("H3"), "'and' keeps alignment");
+}
+
+// ─── Case: whole-verse wipe reaches the save guard (the ZEC 1:8 hole) ─────────
+// This case exists to pin the CLIENT half of a live data-loss bug, and it is
+// deliberately an assertion about the GUARD, not about replace.ts's output.
+//
+// replace.ts is behaving as designed here. When the edit range spans the whole
+// verse and the replacement text contains no word characters, every branch of
+// localizedRewriteVerse legitimately emits nothing: partitioned milestone halves
+// are both empty, and emitChange tokenizes a punctuation-only string into bare
+// text nodes. The result is a tree with zero \w and zero \zaln — every alignment
+// on the verse destroyed. That is the correct rendering of "the translator
+// replaced the entire verse with a period"; it is not replace.ts's job to refuse.
+//
+// Refusing is analyzeAlignmentDelta's job, and it USED to wave this through.
+// Both of its scoring paths only report words that SURVIVE an edit, so when the
+// after side holds no words at all, every before-word is skipped and total
+// annihilation reported as ZERO losses — `unexpectedLosses: []`, guard passes,
+// API 200. That is the ZEC 1:8 ULT receipt: 38 aligned words → 0, accepted
+// (dev `edit_log` id 1458, delta
+// `{"beforeAligned":38,"afterAligned":0,"unexpectedLosses":[]}`).
+//
+// Reachability is what makes this a regression case rather than a hypothetical:
+// select-all + type a period in a verse cell produces exactly this payload, and
+// every scripture entry point (verse cell, book/doc mode, find/replace, the
+// side-by-side reading line) funnels into smartEditVerse / smartReplaceVerse.
+// The one shape that was ALREADY stopped is the fully-empty tree — the API's
+// `verseObjects` schema is `.min(1)` — so the punctuation-only variants below
+// are the ones that actually shipped.
+{
+  console.log("\n[Case] Whole-verse wipe to punctuation: replace.ts flattens, the guard must catch it");
+  const verse = {
+    verseObjects: [zaln("H1", [w("Hello")]), t(" "), zaln("H2", [w("world")]), t(".")],
+  };
+  const old = extractEditableText(verse);
+
+  // (a) Select-all → type ".". The reachable UI gesture.
+  const wiped = smartEditVerse(verse, old, ".");
+  assert(alignedWords(wiped.content).length === 0, "select-all → '.' leaves ZERO \\w nodes");
+  assert(milestoneCount(wiped.content) === 0, "select-all → '.' leaves ZERO \\zaln milestones");
+  assert(
+    wiped.content.verseObjects.length > 0,
+    "the tree is NON-empty, so the API's verseObjects .min(1) schema does not stop it",
+  );
+  const wipedDelta = analyzeAlignmentDelta(verse, wiped.content);
+  assert(wipedDelta.beforeAligned === 2 && wipedDelta.afterAligned === 0, "2 aligned words → 0");
+  assert(
+    wipedDelta.unexpectedLosses.length === 2,
+    `both destroyed words are reported lost, not zero (got ${JSON.stringify(wipedDelta.unexpectedLosses.map((l) => l.text))})`,
+  );
+  assert(guardBlocksSave(wipedDelta, "text_edit"), "guard BLOCKS the wipe as a text_edit");
+
+  // (b) Same wipe via find/replace — the other producer, hard-blocked (no
+  // "Save anyway" confirm exists for find_replace).
+  const plain = extractPlainText(verse);
+  const replaced = smartReplaceVerse(verse, plain, /Hello world\./g, 0, plain.length, "—");
+  assert(alignedWords(replaced.content).length === 0, "find/replace over the whole verse leaves ZERO \\w nodes");
+  const replacedDelta = analyzeAlignmentDelta(verse, replaced.content);
+  assert(guardBlocksSave(replacedDelta, "find_replace"), "guard BLOCKS the wipe as a find_replace");
+
+  // (c) Deleting every character yields an EMPTY tree. Already stopped at the
+  // API by the .min(1) schema, but the guard must agree rather than rely on it.
+  const cleared = smartEditVerse(verse, old, "");
+  assert(cleared.content.verseObjects.length === 0, "delete-all yields an empty verseObjects (API .min(1) rejects it)");
+  assert(
+    guardBlocksSave(analyzeAlignmentDelta(verse, cleared.content), "text_edit"),
+    "guard ALSO blocks the empty tree — the schema is not the only line of defence",
+  );
+
+  // (d) Boundary control. A punctuation-only edit is NOT a real control here —
+  // it stays on the preserve tier with both words still aligned, so it never
+  // approaches the wipe branch and would pass no matter what the branch did.
+  // Change ONE of the two aligned words instead: one aligned word survives, so
+  // afterAligned is 1, the wipe predicate is false, and the edit must still save
+  // via the ordinary LCS path. This is the assertion that fails if the predicate
+  // is ever loosened from "no aligned words survive" toward "some were lost".
+  const oneWord = smartEditVerse(verse, old, "Hello earth.");
+  const oneWordDelta = analyzeAlignmentDelta(verse, oneWord.content);
+  assert(oneWordDelta.afterAligned === 1, "editing one of two aligned words leaves one aligned");
+  assert(
+    !guardBlocksSave(oneWordDelta, "text_edit"),
+    "editing ONE aligned word still saves cleanly — the wipe branch did not widen",
+  );
+
+  // (e) Pins the KNOWN COST of the predicate, so it is a decision on record
+  // rather than a surprise. `afterAligned === 0` is broader than the flatten
+  // that motivated it: rewording EVERY aligned word also ends with zero
+  // alignment, so it is now refused even though nothing collateral was harmed.
+  // That is deliberate — with no survivors the analyzer cannot tell the edited
+  // word from a casualty (see the wipe branch comment). Recorded here because
+  // the two intents diverge sharply: text_edit gets the "Save anyway" confirm,
+  // find_replace has no override and simply skips the verse.
+  const rewrite = smartEditVerse(verse, old, "Greetings earth.");
+  const rewriteDelta = analyzeAlignmentDelta(verse, rewrite.content);
+  assert(rewriteDelta.afterAligned === 0, "rewording every aligned word leaves none aligned");
+  assert(
+    guardBlocksSave(rewriteDelta, "text_edit"),
+    "COST: a full reword is refused for text_edit (recoverable via Save anyway)",
+  );
+  assert(
+    guardBlocksSave(rewriteDelta, "find_replace"),
+    "COST: a full reword is refused for find_replace, which has NO override",
+  );
 }
 
 if (failed > 0) {

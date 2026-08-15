@@ -70,21 +70,15 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} notas · {{words}} palavras · {{questions}} perguntas",
     "readingTextSize": "Tamanho do texto de leitura",
-    "readingTextSizeTooltip": "tamanho do texto de leitura",
-    "adjustReadingTextSize": "ajustar tamanho do texto de leitura",
     "decreaseReadingTextSize": "diminuir tamanho do texto de leitura",
     "increaseReadingTextSize": "aumentar tamanho do texto de leitura",
-    "smaller": "menor",
-    "larger": "maior",
-    "resetTo100": "Redefinir para 100%",
     "switchToLight": "mudar para o modo claro",
     "switchToDark": "mudar para o modo escuro",
     "toggleColorMode": "alternar modo de cor",
     "uiLanguage": "Idioma da interface",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     }
   },
   "translation": {
@@ -235,9 +229,7 @@
     "discardConfirmBody": "Essas edições nunca chegaram ao servidor. Descartá-las as exclui deste dispositivo permanentemente — elas não podem ser recuperadas.",
     "cancel": "cancelar",
     "updateAvailableTooltip": "Uma versão mais recente foi implantada. Clique para recarregar e obter as últimas correções.",
-    "updateAvailable": "Atualização do app disponível — recarregue",
-    "buildSha": "build {{commit}}",
-    "onLatestVersion": "Você está na versão mais recente que carregou."
+    "updateAvailable": "Atualização do app disponível — recarregue"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -586,8 +578,6 @@
     "attrPeople_other": "{{count}} pessoas"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "Abrir este versículo no Logos",
     "autoFollow": "seguir automaticamente",
     "autoFollowTooltip": "Seguir automaticamente o versículo ativo no Logos (rouba o foco a cada mudança)",
@@ -635,7 +625,33 @@
       "terminology": "Terminologia",
       "examples": "Exemplos",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "Serviço de IA"
+    },
+    "aiService": {
+      "title": "Serviço de IA",
+      "intro": "Escolha qual IA executa as tarefas do pipeline de tradução desta organização (tradução de notas, perguntas, palavras e artigos): a assinatura compartilhada da unfoldingWord, ou seu próprio provedor com sua própria chave de API. Outros recursos de IA, como geração de notas e rascunhos rápidos, sempre usam a assinatura compartilhada da unfoldingWord independentemente desta configuração. Importante: depois de salvar uma chave aqui, ela não pode ser vista novamente, apenas substituída ou apagada.",
+      "providerLabel": "Provedor",
+      "provider": {
+        "default": "Padrão (assinatura uW)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "Modelo",
+      "apiKey": "Chave de API",
+      "apiKeyHelper": "Armazenada criptografada e nunca exibida novamente — só pode ser substituída ou apagada.",
+      "configured": "Configurado •••• {{hint}}",
+      "replace": "Substituir",
+      "clear": "Apagar",
+      "clearConfirmTitle": "Apagar a chave de API?",
+      "clearConfirmBody": "Isso remove a chave salva e muda esta organização de volta para o provedor padrão (assinatura uW).",
+      "clearConfirmConfirm": "Apagar chave",
+      "encryptionUnavailable": "Usar sua própria chave de IA ainda não está habilitado nesta implantação — um administrador precisa definir o segredo AI_KEY_WRAPPING_KEY.",
+      "notMigrated": "O banco de dados desta organização está atrasado nas migrações — um administrador precisa aplicar a migração do provedor de IA antes de salvar uma chave.",
+      "loadFailed": "Não foi possível carregar as configurações do serviço de IA.",
+      "conflictReloaded": "Outra pessoa alterou esta configuração — ela foi recarregada; revise antes de salvar novamente."
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
@@ -707,9 +723,11 @@
     "purpose": "Propósito",
     "register": "Registro",
     "registerHelp": "Formalidade que a IA deve buscar.",
-    "register.default": "Padrão (auto)",
-    "register.formal": "Formal",
-    "register.informal": "Informal",
+    "registerOption": {
+      "default": "Padrão (auto)",
+      "formal": "Formal",
+      "informal": "Informal"
+    },
     "scriptNotes": "Notas de escrita / direção",
     "instructionsIntro": "Orientação permanente injetada em cada solicitação de rascunho de IA. Mantenha concisa e durável — nuances por nota pertencem a Terminologia e Exemplos.",
     "instructionsPlaceholder": "ex.: Siga a folha de estilo do pacote do livro. Use um travessão para intervalos de versículos. Copie o trecho citado diretamente do texto GL.",
@@ -724,11 +742,13 @@
     "statusFilter": "Status",
     "allStatuses": "Todos os status",
     "noTerms": "Ainda não há termos. Adicione um abaixo ou importe um CSV.",
-    "status.preferred": "Preferido",
-    "status.admitted": "Admitido",
-    "status.deprecated": "Obsoleto",
-    "status.forbidden": "Proibido",
-    "status.do_not_translate": "Não traduzir",
+    "status": {
+      "preferred": "Preferido",
+      "admitted": "Admitido",
+      "deprecated": "Obsoleto",
+      "forbidden": "Proibido",
+      "do_not_translate": "Não traduzir"
+    },
     "conceptId": "Conceito",
     "sourceTerm": "Termo fonte",
     "targetTerm": "Tradução",
@@ -758,12 +778,14 @@
     "exportStatusNever": "Ainda não há exportação de contexto",
     "exportStatusSuccess": "Pacote de contexto pronto ({{sha}})",
     "exportStatusOther": "Última exportação: {{status}}",
-    "exportStatus.running": "Exportação em andamento",
-    "exportStatus.failed": "A exportação falhou",
-    "exportStatus.queued": "Exportação enfileirada",
-    "exportStatus.shrink_refused": "Exportação recusada para evitar perda inesperada de conteúdo",
-    "exportStatus.no_content": "Nenhum conteúdo de contexto para exportar",
-    "exportStatus.dry_run": "Pré-visualização da exportação concluída",
+    "exportStatus": {
+      "running": "Exportação em andamento",
+      "failed": "A exportação falhou",
+      "queued": "Exportação enfileirada",
+      "shrink_refused": "Exportação recusada para evitar perda inesperada de conteúdo",
+      "no_content": "Nenhum conteúdo de contexto para exportar",
+      "dry_run": "Pré-visualização da exportação concluída"
+    },
     "csvColumnPlaceholder": "concept_id,source_term,target_term,status,replacement,comment,tw_link",
     "noRendering": "—",
     "termArrow": "→",
@@ -821,7 +843,6 @@
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -839,24 +860,6 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
-    "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneTitle": "You're all set"
   }
 }

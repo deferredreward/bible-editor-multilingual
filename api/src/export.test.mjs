@@ -673,6 +673,28 @@ function utf8Base64(s) {
   // master actually having aligned verses.
   const r8freshboth = usfmAlignmentShrinkRefused("", "");
   assert(r8freshboth.refused === false, `empty render + empty master never refuses`);
+
+  // (9) TOTAL WIPE of a single verse. The render still PARSES and still contains
+  // the verse (so neither the zero-verse fail-closed above nor the "absent from
+  // render → skip" rule applies) — but the verse body is flat text: every \zaln
+  // and every \w gone. This is the ZEC 1:8 signature at export scale. It used to
+  // slip through: analyzeAlignmentDelta reported zero losses because it only
+  // scored words that SURVIVE, and here none do. Must REFUSE, and must name the
+  // words so the alert is actionable.
+  const flattened = `\\id 1CH\n\\c 4\n\\p\n\\v 21 Lekah and Shelah\n`;
+  const r9 = usfmAlignmentShrinkRefused(flattened, master);
+  assert(r9.refused === true, `a verse flattened to plain text in the render is refused`);
+  assert(r9.offenders.length === 1 && r9.offenders[0].ref === "4:21", `wipe offender is 4:21`);
+  assert(
+    JSON.stringify(r9.offenders[0].lostWords) === JSON.stringify(["Lekah", "and", "Shelah"]),
+    `wipe offender names every annihilated word`,
+  );
+
+  // (9b) A verse emptied of body text entirely (\v with no content) is the same
+  // class of loss, not a legitimate deletion — the verse is still present.
+  const emptiedVerse = `\\id 1CH\n\\c 4\n\\p\n\\v 21\n`;
+  const r9b = usfmAlignmentShrinkRefused(emptiedVerse, master);
+  assert(r9b.refused === true, `a verse emptied of all content is refused`);
 }
 
 // --- recreateExportBranchFromMaster: delete + recreate off master ---
