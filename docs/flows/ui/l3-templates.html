@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Curate note templates — Lead flow</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* ============================================================
+     l3-templates.html — bundle I (curate note templates, #/templates).
+     Rail+editor on desktop/tablet; card-at-a-time on mobile (<560).
+     Templates are book-agnostic (DraftMeta carries no
+     book/chapter/verse — 00-code-inventory.md §I) and currently have
+     NO client-side role gating (no isReadOnly()/isAdmin() check found
+     by grep) — mirrored here rather than inventing a gate that
+     doesn't exist in the real app.
+     ============================================================ */
+  /* See l1-ai.html for why this is needed: an author `display` rule on a
+     class otherwise beats the UA [hidden]{display:none} rule at equal
+     specificity — origin wins before specificity in the cascade. */
+  [hidden] { display: none !important; }
+
+  .flow-nav {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .flow-nav a {
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 4px 9px;
+    border-radius: 999px;
+  }
+  .flow-nav a:hover { background: var(--card-2); color: var(--ink); }
+  .flow-nav a[aria-current="true"] { background: var(--hl); color: var(--ink); font-weight: 700; }
+
+  .tmpl-shell {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    gap: 20px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 18px 18px 56px;
+    align-items: start;
+    min-height: calc(100dvh - 96px);
+  }
+  @media (max-width: 900px) { .tmpl-shell { grid-template-columns: minmax(0, 1fr); } }
+
+  /* Below 900, the rail and editor become two views of a card-at-a-time
+     flow: rail visible / editor hidden until a template is picked, then
+     the reverse (a Back arrow returns to the rail). Above 900, both show
+     side by side. */
+  .tmpl-rail { display: block; }
+  .tmpl-editor-wrap { display: block; }
+  @media (max-width: 900px) {
+    [data-view="rail"] .tmpl-editor-wrap { display: none; }
+    [data-view="editor"] .tmpl-rail { display: none; }
+  }
+
+  .rail-panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .rail-search { padding: 12px; border-block-end: 1px solid var(--line); }
+  .rail-bulk { padding: 0 12px 10px; }
+  .rail-list { max-height: 62vh; overflow-y: auto; padding: 6px; }
+  @media (max-width: 900px) { .rail-list { max-height: none; } }
+
+  .rail-group-head {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 10px 8px 4px;
+  }
+  .tmpl-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: start;
+    appearance: none;
+    border: none;
+    background: transparent;
+    border-radius: 9px;
+    padding: 9px 8px;
+    cursor: pointer;
+    color: var(--ink);
+    font-size: 13.5px;
+  }
+  .tmpl-row:hover { background: var(--card-2); }
+  .tmpl-row[aria-current="true"] { background: var(--hl); }
+  .tmpl-row .t-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tmpl-row .t-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--kindle);
+    flex: none;
+  }
+  .tmpl-row .t-stale {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--warn);
+    flex: none;
+  }
+  .tmpl-row .t-state { flex: none; }
+
+  .approved-tally {
+    font-size: 11px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+    margin-inline-start: auto;
+  }
+
+  .editor-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .editor-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 13px 16px;
+    border-block-end: 1px solid var(--line);
+  }
+  .editor-top .back-mobile { display: none; }
+  @media (max-width: 900px) { .editor-top .back-mobile { display: inline-flex; } }
+  .editor-body { padding: 16px; }
+
+  /* Template editor box — was a bare, unstyled <textarea> (no .md-area rule
+     existed in this file, unlike l2-style.html's copy) which is why it
+     rendered small and cramped. Full column width, a monospace face so
+     {PLACEHOLDER} tokens stand out from the surrounding prose, and height
+     that tracks content exactly: one line + padding at minimum, grows to
+     fit with no inner scrollbar, caps at ~60vh where a real scrollbar takes
+     over for unusually long templates. */
+  .tmpl-editor-area {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: calc(1.6em + 28px);
+    max-height: 60vh;
+    padding: 14px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    overflow-y: auto;
+    field-sizing: content;
+  }
+  .editor-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 11px 16px;
+    border-block-start: 1px solid var(--line);
+    background: var(--card-2);
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+
+  .collapsed-banner {
+    background: var(--ok-soft);
+    color: var(--ok-ink);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+
+  .no-role-gate-note {
+    font-size: 11.5px;
+    color: var(--ink-2);
+    background: var(--card-2);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    margin-block-end: 10px;
+  }
+
+  dialog.history-dialog {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 0;
+    max-width: 560px;
+    width: 92vw;
+    color: var(--ink);
+    background: var(--card);
+  }
+  dialog.history-dialog::backdrop { background: rgba(1, 27, 39, 0.45); }
+  dialog.history-dialog .d-top { padding: 16px 18px; border-block-end: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+  dialog.history-dialog .d-body { padding: 14px 18px; max-height: 50vh; overflow-y: auto; }
+  dialog.history-dialog .d-foot { padding: 12px 18px 16px; display: flex; justify-content: flex-end; }
+  .hist-version {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-block-end: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+  .hist-version:last-child { border-block-end: none; }
+</style>
+</head>
+<body data-mode="translation" data-view="editor">
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Lead — Curate note templates</span>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <nav class="flow-nav" style="padding:8px 18px; border-block-end:1px solid var(--line); background:var(--card);">
+    <a href="index.html">Hub</a>
+    <a href="t1-home.html">Translator home</a>
+    <a href="l1-ai.html">Run AI pipelines</a>
+    <a href="l2-style.html">Teach the AI our style</a>
+    <a href="l3-templates.html" aria-current="true">Curate note templates</a>
+  </nav>
+
+  <p class="no-role-gate-note" style="max-width:1180px; margin:10px auto 0; padding-inline:18px;">
+    Note: this route has no client-side role gate today (no admin/editor check found in <code>TemplateWorkspace.tsx</code>) — any signed-in user who can reach <code>#/templates</code> can edit here. Mirrored as-is, not invented for this mockup.
+  </p>
+
+  <div class="tmpl-shell">
+    <aside class="tmpl-rail" aria-label="Template list">
+      <div class="rail-panel">
+        <div class="rail-search">
+          <input class="tinput" id="railSearch" type="text" placeholder="Search templates…" />
+        </div>
+        <div class="rail-bulk">
+          <!-- No bulk draft endpoint exists (api/src/templates.ts only has
+               POST /unit/draft?id=<one>) — "Draft all" here composes real
+               per-unit calls in sequence, not a fabricated bulk request. -->
+          <button type="button" class="btn btn-rerun" style="width:100%;" id="draftAllBtn" data-handle="POST /api/templates/unit/draft" data-bundle="I" data-handle-manual>
+            Draft all with AI (<span id="draftAllCount">0</span>)
+          </button>
+        </div>
+        <div class="rail-list" id="railList" role="list"></div>
+      </div>
+    </aside>
+
+    <div class="tmpl-editor-wrap">
+      <section class="editor-panel">
+        <div class="editor-top">
+          <button type="button" class="iconbtn back-mobile" id="backBtn" aria-label="Back to template list">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+          </button>
+          <div style="flex:1; min-width:0;">
+            <h2 style="margin:0; font-size:16px;" id="editorTitle">Loading…</h2>
+            <span class="chip chip-edited" id="editorStateChip" hidden></span>
+            <span class="approved-tally"><span id="approvedTally">— of —</span> approved</span>
+          </div>
+          <button type="button" class="btn btn-ghost" id="historyBtn" title="Version history">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+            History
+          </button>
+        </div>
+
+        <div class="editor-body">
+          <p class="no-role-gate-note" id="aiDisabledNote" hidden>AI not configured for this workspace — Draft with AI is unavailable (an admin needs to set <code>BT_API_TOKEN</code>). Editing and Approve still work normally.</p>
+          <div class="collapsed-banner" id="collapsedBanner" hidden>Validated — click to expand and edit</div>
+
+          <div id="editorFields">
+            <div class="field">
+              <label class="f-label">Source (English, read-only)</label>
+              <div class="verse" id="sourceMd" style="font-family:var(--font-ui); font-size:14px;">Loading…</div>
+            </div>
+            <div class="field">
+              <label class="f-label" for="targetArea">Target (translated template)</label>
+              <textarea class="md-area tmpl-editor-area" id="targetArea" spellcheck="false" oninput="window.__tmplDirty(); window.__tmplAutosize(this);"></textarea>
+            </div>
+          </div>
+          <div class="seg" role="group" aria-label="Preview or edit" style="max-width:200px; margin-block-start:10px;">
+            <button type="button" aria-pressed="false" id="previewBtn">Preview</button>
+            <button type="button" aria-pressed="true" id="editBtn">Edit</button>
+          </div>
+        </div>
+
+        <div class="editor-foot">
+          <span id="editorFootState">Loading…</span>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-rerun" data-handle="POST /api/templates/unit/draft" data-headers="If-Match" data-bundle="I" data-handle-manual id="draftBtn">Draft with AI</button>
+          <button type="button" class="btn btn-primary" data-handle="PATCH /api/templates/unit" data-headers="If-Match" data-bundle="I" data-handle-manual id="saveBtn">Save</button>
+          <button type="button" class="btn btn-approve" data-handle="POST /api/templates/unit/validate" data-bundle="I" data-handle-manual id="approveBtn">Approve</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- TemplateHistoryDialog (I.3) — populated for real from
+       GET /api/templates/unit/history?id=<id>. No dedicated restore
+       endpoint exists; "Use vN" loads that version's target_md into the
+       editor (marked unsaved) — an explicit Save PATCH is what actually
+       commits it, same CAS path as any other edit. -->
+  <dialog class="history-dialog" id="historyDialog">
+    <div class="d-top">
+      <h3 style="margin:0; font-size:15px;" id="historyTitle">— history</h3>
+    </div>
+    <div class="d-body" id="historyBody">Loading…</div>
+    <div class="d-foot">
+      <button type="button" class="btn btn-primary" id="closeHistoryBtn">Close</button>
+    </div>
+  </dialog>
+
+  <script src="_api.js"></script>
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    var STATE_CHIP_CLASS = { ai_draft: "chip-needs", edited: "chip-edited", validated: "chip-approved" };
+    var STATE_LABEL = { ai_draft: "AI draft", edited: "edited", validated: "validated" };
+    function stateOf(t) { return t.translation_state || (t.has_target ? "edited" : null); }
+    function labelOf(t) { var s = stateOf(t); return s ? (STATE_LABEL[s] || s) : "not started"; }
+    function chipClassOf(t) { var s = stateOf(t); return s ? (STATE_CHIP_CLASS[s] || "") : "chip-needs"; }
+
+    var units = []; // real GET /api/templates rows (metadata only — no md)
+    var current = null; // current unit's template_id
+    var currentUnit = null; // full unit from GET /api/templates/unit?id=
+    var currentVersion = null;
+    var unsavedIds = {}; // template_id -> true while a local edit is unsaved
+    var aiDisabled = false; // set true for real on first 503 from /unit/draft
+
+    function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+    function timeAgo(unixSeconds) {
+      if (!unixSeconds) return "—";
+      var mins = Math.round((Date.now() - unixSeconds * 1000) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + " min ago";
+      var hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + " hr" + (hrs === 1 ? "" : "s") + " ago";
+      return Math.round(hrs / 24) + " day(s) ago";
+    }
+
+    function renderRail() {
+      var groups = {};
+      units.forEach(function (t) { (groups[t.support_ref] = groups[t.support_ref] || []).push(t); });
+      var groupNames = Object.keys(groups).sort();
+      var html = "";
+      groupNames.forEach(function (g) {
+        html += '<div class="rail-group-head">' + esc(g) + "</div>";
+        groups[g].forEach(function (t) {
+          html += '<button type="button" class="tmpl-row" role="listitem" data-tmpl="' + esc(t.template_id) + '" aria-current="' + (t.template_id === current ? "true" : "false") + '">' +
+            (t.stale_source ? '<span class="t-stale" title="Stale source — English sheet changed since this draft"></span>' : "") +
+            '<span class="t-name">' + esc(t.template_id) + "</span>" +
+            (unsavedIds[t.template_id] ? '<span class="t-dot" title="Unsaved edit"></span>' : "") +
+            '<span class="chip ' + chipClassOf(t) + ' t-state" style="font-size:10px; padding:2px 7px;">' + esc(labelOf(t)) + "</span>" +
+            "</button>";
+        });
+      });
+      document.getElementById("railList").innerHTML = html;
+      document.getElementById("draftAllCount").textContent = units.filter(function (t) { return stateOf(t) !== "validated"; }).length;
+      var approved = units.filter(function (t) { return stateOf(t) === "validated"; }).length;
+      document.getElementById("approvedTally").textContent = approved + " of " + units.length;
+    }
+
+    function setAiDisabled(v) {
+      aiDisabled = v;
+      document.getElementById("aiDisabledNote").hidden = !v;
+      document.getElementById("draftBtn").disabled = v;
+      document.getElementById("draftAllBtn").disabled = v;
+    }
+
+    // Explicit empty/error state — shown when there are no templates, or the
+    // list fetch failed, so the hard-coded placeholder markup ("figs-metaphor",
+    // "edited", "18 of 42") never survives on screen as if it were real data.
+    function showEmptyEditor(message) {
+      current = null;
+      currentUnit = null;
+      document.getElementById("editorTitle").textContent = "No template available";
+      document.getElementById("editorStateChip").hidden = true;
+      document.getElementById("sourceMd").textContent = "—";
+      document.getElementById("targetArea").value = "";
+      document.getElementById("editorFields").style.display = "none";
+      document.getElementById("collapsedBanner").hidden = true;
+      document.getElementById("editorFootState").textContent = message;
+      document.getElementById("draftBtn").disabled = true;
+      document.getElementById("saveBtn").disabled = true;
+      document.getElementById("approveBtn").disabled = true;
+    }
+
+    function loadEditor(id) {
+      current = id;
+      currentUnit = null;
+      document.getElementById("editorTitle").textContent = id;
+      document.getElementById("editorStateChip").hidden = true;
+      document.getElementById("sourceMd").textContent = "Loading…";
+      document.getElementById("targetArea").value = "";
+      document.getElementById("editorFields").style.display = "block";
+      document.getElementById("editorFootState").textContent = "Loading…";
+      document.getElementById("saveBtn").disabled = false;
+      document.getElementById("draftBtn").disabled = aiDisabled;
+      renderRail();
+      window.flowApi.get("/api/templates/unit", { id: id }).then(function (res) {
+        if (current !== id) return; // user navigated away before this resolved
+        if (!res.ok) {
+          window.flowShell.toast("Couldn't load " + id + " — " + res.status + " " + res.kind, { nudge: true });
+          document.getElementById("sourceMd").textContent = "Couldn't load this template — " + res.status + " " + res.kind;
+          document.getElementById("editorFootState").textContent = "Unavailable";
+          return;
+        }
+        document.getElementById("editorStateChip").hidden = false;
+        currentUnit = res.data;
+        currentVersion = currentUnit.version;
+        var state = currentUnit.translation_state;
+        var chip = document.getElementById("editorStateChip");
+        chip.className = "chip " + (state ? (STATE_CHIP_CLASS[state] || "") : "chip-needs");
+        chip.textContent = state ? (STATE_LABEL[state] || state) : "not started";
+        document.getElementById("sourceMd").textContent = currentUnit.source_md || "(no source text)";
+        document.getElementById("targetArea").value = currentUnit.target_md || "";
+        document.getElementById("collapsedBanner").hidden = state !== "validated";
+        document.getElementById("editorFields").style.display = state === "validated" ? "none" : "block";
+        document.getElementById("editorFootState").textContent = unsavedIds[id] ? "1 unsaved" : (currentUnit.updated_at ? "Saved " + timeAgo(currentUnit.updated_at) : "Not saved yet");
+        document.getElementById("approveBtn").disabled = !state; // server 404s validate on a null-state row
+        window.__tmplAutosize(document.getElementById("targetArea"));
+      });
+    }
+
+    function loadUnits() {
+      return window.flowApi.get("/api/templates").then(function (res) {
+        if (res.ok) {
+          units = res.data.units || [];
+          renderRail();
+          if (units.length) {
+            if (!current) loadEditor(units[0].template_id);
+          } else {
+            showEmptyEditor("No templates found for this workspace.");
+          }
+        } else {
+          units = [];
+          renderRail();
+          window.flowShell.toast("Couldn't load templates — " + res.status + " " + res.kind, { nudge: true });
+          showEmptyEditor("Couldn't load templates — " + res.status + " " + res.kind);
+        }
+      });
+    }
+
+    document.getElementById("railList").addEventListener("click", function (ev) {
+      var row = ev.target.closest("[data-tmpl]");
+      if (!row) return;
+      loadEditor(row.getAttribute("data-tmpl"));
+      if (window.matchMedia("(max-width: 900px)").matches) {
+        document.body.dataset.view = "editor";
+        window.__tmplAutosize(document.getElementById("targetArea"));
+      }
+    });
+
+    document.getElementById("backBtn").addEventListener("click", function () {
+      document.body.dataset.view = "rail";
+    });
+
+    document.getElementById("collapsedBanner").addEventListener("click", function () {
+      document.getElementById("editorFields").style.display = "block";
+      document.getElementById("collapsedBanner").hidden = true;
+    });
+
+    window.__tmplDirty = function () {
+      unsavedIds[current] = true;
+      document.getElementById("editorFootState").textContent = "1 unsaved";
+      renderRail();
+    };
+
+    // JS fallback for browsers without `field-sizing: content` support —
+    // grow the textarea to fit its text on init/input/re-show.
+    window.__tmplAutosize = function (el) {
+      if (window.CSS && CSS.supports && CSS.supports("field-sizing", "content")) return;
+      if (!el || el.offsetParent === null) return; // hidden: scrollHeight is garbage
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
+    };
+
+    document.getElementById("saveBtn").addEventListener("click", function () {
+      if (!currentUnit) return;
+      var id = current;
+      var body = { target_md: document.getElementById("targetArea").value };
+      window.flowApi.request("PATCH", "/api/templates/unit", { body: body, ifMatch: currentVersion, query: { id: id } }).then(function (res) {
+        if (res.ok) {
+          delete unsavedIds[id];
+          window.flowShell.toast("Saved " + id);
+          // Refresh the rail's cached state/version for this row too.
+          var row = units.find(function (u) { return u.template_id === id; });
+          if (row) { row.translation_state = res.data.translation_state; row.has_target = res.data.target_md ? 1 : 0; row.version = res.data.version; }
+          if (current === id) loadEditor(id);
+          else renderRail();
+        } else if (res.status === 409 && res.body && res.body.current) {
+          window.flowShell.toast("Someone else saved " + id + " first — reloading the current version", { nudge: true });
+          currentVersion = res.body.current.version;
+          if (current === id) loadEditor(id);
+        } else if (res.status === 428) {
+          window.flowShell.toast("Missing version — reload and retry", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    });
+
+    document.getElementById("approveBtn").addEventListener("click", function () {
+      if (!currentUnit) return;
+      var id = current;
+      var wasValidated = currentUnit.translation_state === "validated";
+      window.flowApi.post("/api/templates/unit/validate", { value: wasValidated ? 0 : 1 }, { query: { id: id } }).then(function (res) {
+        if (res.ok) {
+          var row = units.find(function (u) { return u.template_id === id; });
+          if (row) row.translation_state = res.data.translation_state;
+          window.flowShell.toast(wasValidated ? "Un-approved " + id : "Approved " + id);
+          if (current === id) loadEditor(id);
+        } else if (res.status === 404) {
+          window.flowShell.toast("Nothing to approve yet — add a translation first", { nudge: true });
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    });
+
+    document.getElementById("draftBtn").addEventListener("click", function () {
+      if (!currentUnit || aiDisabled) return;
+      var id = current;
+      window.flowApi.request("POST", "/api/templates/unit/draft", { ifMatch: currentVersion, query: { id: id } }).then(function (res) {
+        if (res.ok) {
+          window.flowShell.toast("AI draft applied to " + id);
+          if (current === id) loadEditor(id);
+        } else if (res.status === 503) {
+          setAiDisabled(true);
+          window.flowShell.toast("AI not configured for this workspace", { nudge: true });
+        } else if (res.status === 409) {
+          window.flowShell.toast("Version moved on — reloading", { nudge: true });
+          loadEditor(id);
+        } else {
+          window.flowShell.toast("✗ " + res.status + " " + res.kind, { nudge: true });
+        }
+      });
+    });
+
+    // No bulk endpoint — sequential real POSTs, one per unit needing a draft,
+    // stopping as soon as we hit the real 503 disabled response.
+    document.getElementById("draftAllBtn").addEventListener("click", function () {
+      if (aiDisabled) return;
+      var targets = units.filter(function (t) { return stateOf(t) !== "validated"; });
+      if (!targets.length) { window.flowShell.toast("Nothing left to draft"); return; }
+      var done = 0, stopped = false;
+      targets.reduce(function (chain, t) {
+        return chain.then(function () {
+          if (stopped) return;
+          return window.flowApi.request("POST", "/api/templates/unit/draft", { ifMatch: t.version, query: { id: t.template_id } }).then(function (res) {
+            if (res.ok) { done++; }
+            else if (res.status === 503) { setAiDisabled(true); stopped = true; }
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        window.flowShell.toast(done + " of " + targets.length + " drafted" + (stopped ? " — stopped: AI not configured" : ""));
+        loadUnits();
+      });
+    });
+
+    document.getElementById("historyBtn").addEventListener("click", function () {
+      if (!current) return;
+      var id = current;
+      document.getElementById("historyTitle").textContent = id + " — history";
+      document.getElementById("historyBody").textContent = "Loading…";
+      document.getElementById("historyDialog").showModal();
+      window.flowApi.get("/api/templates/unit/history", { id: id }).then(function (res) {
+        if (!res.ok) { document.getElementById("historyBody").textContent = "✗ " + res.status + " " + res.kind; return; }
+        var target = (res.data.target || []).slice().reverse();
+        var html = target.map(function (e) {
+          var isCurrent = e.version === currentVersion;
+          var who = e.user ? (e.user.full_name || e.user.username) : (e.synthetic ? "imported from sheet" : "AI draft");
+          return '<div class="hist-version">' +
+            '<span>v' + e.version + (isCurrent ? " (current)" : "") + " — " + esc(e.action) + ", " + esc(who) + ", " + timeAgo(e.created_at) + '</span>' +
+            (isCurrent ? '<span class="chip chip-draft">current</span>' : '<button type="button" class="btn btn-ghost btn-sm" data-use-version="' + e.version + '">Use this</button>') +
+            "</div>";
+        }).join("") || "<p>No history yet.</p>";
+        document.getElementById("historyBody").innerHTML = html;
+        document.getElementById("historyBody").dataset.entries = JSON.stringify(target);
+      });
+    });
+    document.getElementById("historyBody").addEventListener("click", function (ev) {
+      var btn = ev.target.closest("[data-use-version]");
+      if (!btn) return;
+      var version = parseInt(btn.getAttribute("data-use-version"), 10);
+      var entries = JSON.parse(document.getElementById("historyBody").dataset.entries || "[]");
+      var entry = entries.find(function (e) { return e.version === version; });
+      if (!entry) return;
+      document.getElementById("targetArea").value = (entry.snapshot && entry.snapshot.target_md) || "";
+      window.__tmplDirty();
+      window.__tmplAutosize(document.getElementById("targetArea"));
+      document.getElementById("historyDialog").close();
+      window.flowShell.toast("Loaded v" + version + " into the editor — click Save to commit it");
+    });
+    document.getElementById("closeHistoryBtn").addEventListener("click", function () {
+      document.getElementById("historyDialog").close();
+    });
+
+    document.getElementById("previewBtn").addEventListener("click", function () {
+      document.getElementById("previewBtn").setAttribute("aria-pressed", "true");
+      document.getElementById("editBtn").setAttribute("aria-pressed", "false");
+      document.getElementById("targetArea").style.display = "none";
+    });
+    document.getElementById("editBtn").addEventListener("click", function () {
+      document.getElementById("editBtn").setAttribute("aria-pressed", "true");
+      document.getElementById("previewBtn").setAttribute("aria-pressed", "false");
+      var area = document.getElementById("targetArea");
+      area.style.display = "block";
+      window.__tmplAutosize(area);
+    });
+
+    document.getElementById("railSearch").addEventListener("input", function (ev) {
+      var q = ev.target.value.toLowerCase();
+      document.querySelectorAll(".tmpl-row").forEach(function (row) {
+        var name = row.getAttribute("data-tmpl").toLowerCase();
+        row.style.display = name.indexOf(q) === -1 ? "none" : "flex";
+      });
+    });
+
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      document.body.dataset.view = "rail";
+    }
+    window.flowApi.ready.then(loadUnits);
+  })();
+  </script>
+</body>
+</html>

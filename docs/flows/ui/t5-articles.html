@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Articles — tW / tA</title>
+<link rel="stylesheet" href="_tokens.css" />
+<!--
+  DraftMeta note: tW/tA drafts are book-agnostic (no book/chapter/verse fields),
+  same as note templates. Any consumer that switches on meta.kind must special-case
+  these two draft kinds rather than reading m.book. See docs/flows/00-code-inventory.md §Note save semantics.
+-->
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu .menu-head { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); padding: 7px 9px 4px; margin: 0; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .articles-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 64px; }
+
+  .seg-row { display: flex; align-items: center; gap: 12px; margin-block-end: 14px; flex-wrap: wrap; }
+  .seg { display: flex; background: var(--skip-soft); border-radius: 10px; padding: 3px; gap: 3px; }
+  .seg button { flex: 1; border: none; background: transparent; border-radius: 8px; padding: 7px 14px; font-weight: 700; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(1,66,99,0.15); }
+  .seg-note { font-size: 11.5px; color: var(--ink-2); }
+
+  .articles-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 819.98px) {
+    .articles-layout { grid-template-columns: minmax(0, 1fr); }
+    .articles-layout[data-view="editor"] .rail-col { display: none; }
+    .articles-layout[data-view="list"] .editor-col { display: none; }
+  }
+
+  .rail-col { position: sticky; top: 12px; }
+  .rail-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .rail-top { padding: 10px 10px 8px; border-block-end: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  .rail-top input[type="search"] { width: 100%; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  .rail-tally { font-size: 12px; color: var(--ink-2); }
+  .populate-btn { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 8px; padding: 6px 9px; font-size: 12px; cursor: pointer; text-align: start; }
+  .add-row { display: flex; gap: 6px; }
+  .add-row input[type="text"] {
+    flex: 1; min-width: 0; font-family: var(--font-ui); font-size: 12.5px; color: var(--ink);
+    background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+  }
+  .add-row button { appearance: none; border: 1px solid var(--inspire); background: transparent; color: var(--inspire-deep); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  :root[data-theme="dark"] .add-row button { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .add-row button { color: var(--inspire); } }
+  :root[data-theme="light"] .add-row button { color: var(--inspire-deep); }
+
+  .article-list { list-style: none; margin: 0; padding: 6px; max-height: 60vh; overflow-y: auto; }
+  .article-list li { margin-bottom: 2px; }
+  .article-list button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: start; appearance: none; border: none; background: transparent; border-radius: 8px; padding: 8px; cursor: pointer; color: var(--ink); }
+  .article-list button:hover { background: var(--card-2); }
+  .article-list button[aria-current="true"] { background: var(--hl); }
+  .article-list .al-main { flex: 1; min-width: 0; }
+  .article-list .al-title { font-weight: 600; font-size: 13.5px; }
+  .article-list .al-sub { font-size: 11.5px; color: var(--ink-2); }
+  .article-list .al-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--kindle); flex: none; }
+
+  .editor-col .editor-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 10px; }
+  .editor-col .back-mobile { display: none; }
+  @media (max-width: 819.98px) { .editor-col .back-mobile { display: inline-flex; } }
+  .unsaved-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; background: var(--kindle-soft); color: var(--kindle-ink); border-radius: 999px; padding: 4px 10px; }
+
+  .editor-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .editor-panel .ep-top { padding: 14px 16px; border-block-end: 1px solid var(--line); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .editor-panel .ep-top h1 { font-size: 17px; margin: 0; }
+  .editor-panel .ep-body { padding: 14px 16px; }
+
+  .part-block + .part-block { margin-block-start: 20px; padding-block-start: 20px; border-block-start: 1px solid var(--line); }
+  .part-head { display: flex; align-items: center; gap: 8px; margin-block-end: 8px; }
+  .part-head h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .part-head .part-dirty { display: inline-flex; width: 6px; height: 6px; border-radius: 50%; background: var(--kindle); }
+  .part-head .spacer { margin-inline-start: auto; }
+  .part-head button { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+  .part-head button.preview-toggle[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+
+  .part-source { font-size: 12.5px; color: var(--ink-2); background: var(--card-2); border: 1px dashed var(--line); border-radius: var(--radius-sm); padding: 9px 11px; margin-block-end: 10px; line-height: 1.55; }
+  .part-source .ps-label { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin-block-end: 5px; }
+  .part-source p { margin: 0 0 8px; }
+  .part-source p:last-child { margin-block-end: 0; }
+
+  textarea.part-area {
+    display: block; width: 100%; min-height: 3.6em; max-height: 60vh; overflow-y: auto;
+    font-family: var(--font-ui); font-size: 15px; line-height: 1.6; color: var(--ink);
+    background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; resize: vertical;
+    field-sizing: content;
+  }
+  textarea.part-area:focus { border-color: var(--inspire); outline: none; }
+  .part-preview {
+    font-size: 15px; line-height: 1.6; background: var(--card-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm);
+    padding: 14px 16px; min-height: 3.6em; max-height: 60vh; overflow-y: auto;
+  }
+  .part-preview p { margin: 0 0 10px; }
+  .part-preview p:last-child { margin-block-end: 0; }
+  .part-preview b { color: var(--ocean); }
+  :root[data-theme="dark"] .part-preview b { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .part-preview b { color: var(--cultivate); } }
+  :root[data-theme="light"] .part-preview b { color: var(--ocean); }
+
+  .ep-foot { padding: 12px 16px; border-block-start: 1px solid var(--line); background: var(--card-2); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .ep-foot .spacer { margin-inline-start: auto; }
+
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-approve { background: var(--ok); color: #fff; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--ink-2); }
+  .empty-state .btn { margin-block-start: 10px; }
+
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 520px; width: 100%; max-height: 84vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-body { padding: 14px 16px; overflow-y: auto; }
+  .dlg-foot { display: flex; gap: 8px; padding: 12px 16px; border-block-start: 1px solid var(--line); justify-content: flex-end; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Articles — tW / tA</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">…</span> <span id="accountName">…</span>
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <p class="menu-head" id="accountMenuHead">…</p>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Notes</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html" aria-current="page">Articles</a>
+    <a href="t6-words.html">Words</a>
+    <a href="index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="articles-wrap">
+    <div class="seg-row">
+      <div class="seg" role="group" aria-label="Article type">
+        <button type="button" id="segTw" aria-pressed="false">translationWords</button>
+        <button type="button" id="segTa" aria-pressed="true">translationAcademy</button>
+      </div>
+      <span class="seg-note">Two focused views, not a shared tab bar — tW and tA never share one content region.</span>
+    </div>
+
+    <div class="articles-layout" id="articlesLayout" data-view="editor">
+      <aside class="rail-col">
+        <div class="rail-panel">
+          <div class="rail-top">
+            <input type="search" placeholder="Search articles…" aria-label="Search articles" />
+            <span class="rail-tally" id="railTally">9 of 15 approved</span>
+            <button type="button" class="populate-btn" id="populateBtn" data-handle="POST /api/articles/populate" data-handle-manual data-bundle="J">Populate from books</button>
+            <div class="add-row">
+              <input type="text" id="addIdInput" placeholder="Add by id…" aria-label="Add article by id" />
+              <button type="button" id="addIdBtn" data-handle="POST /api/articles/tw/add" data-handle-manual data-bundle="J">Add</button>
+            </div>
+          </div>
+          <ul class="article-list" id="articleList" role="list" aria-label="Articles"></ul>
+        </div>
+      </aside>
+
+      <section class="editor-col">
+        <div class="editor-toolbar">
+          <button type="button" class="cluster-btn back-mobile" id="backToListBtn">← Articles</button>
+          <span class="unsaved-chip" id="unsavedChip" hidden><span aria-hidden="true">●</span> <span id="unsavedText">1 unsaved</span></span>
+          <span style="margin-inline-start:auto;"></span>
+          <button type="button" class="cluster-btn" id="historyBtn" data-handle="TODO:no-backend" data-bundle="J">History</button>
+        </div>
+
+        <article class="editor-panel" id="editorPanel">
+          <div class="ep-top">
+            <h1 id="epTitle">faith</h1>
+            <span class="chip chip-edited" id="epStateChip">Edited</span>
+          </div>
+          <div class="ep-body" id="epBody"><!-- parts rendered here --></div>
+          <div class="ep-foot">
+            <button type="button" class="btn btn-outline" id="translateBtn" data-handle="POST /api/pipelines/start" data-bundle="D">Translate / Re-run AI</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-outline" id="saveBtn" data-handle="PATCH /api/articles/:resource/unit" data-headers="If-Match" data-handle-manual data-bundle="J">Save</button>
+            <button type="button" class="btn btn-approve" id="approveBtn" data-handle="POST /api/articles/:resource/unit/validate" data-handle-manual data-bundle="J">Approve</button>
+          </div>
+        </article>
+        <div class="editor-panel empty-state" id="emptyStatePanel" hidden>
+          <p><strong>No articles imported in this environment.</strong></p>
+          <p style="font-size:12.5px;">GET /api/articles/tw and GET /api/articles/ta both return an empty <code>units</code> array here — that's the real backend state, not a loading gap. Use "Populate from books" or "Add by id" in the rail to bring in real translationWords/translationAcademy content.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- history dialog (no backend today) -->
+  <div class="dlg-backdrop" id="histBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="histTitle">
+      <div class="dlg-top"><h2 id="histTitle">Article history</h2><button type="button" class="close-x" id="closeHistBtn" aria-label="Close">✕</button></div>
+      <div class="dlg-body"><p style="font-size:13.5px;color:var(--ink-2);">No history endpoint exists for tW/tA articles today (unlike note templates) — this is a real gap, not a mockup omission.</p></div>
+      <div class="dlg-foot"><button type="button" class="btn btn-outline" id="closeHistBtn2">Close</button></div>
+    </div>
+  </div>
+
+  <script src="_api.js"></script>
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+
+    // Real identity from GET /api/auth/me — no invented full name (the API
+    // only returns username + role), and no invented role either (this menu
+    // used to say "editor" even when the real session was "admin").
+    function renderAccount(me) {
+      var initials = me && me.username ? me.username.slice(0, 2).toUpperCase() : "…";
+      el("accountAvatar").textContent = initials;
+      el("accountName").textContent = (me && me.username) || "…";
+      el("accountMenuHead").textContent = me ? (me.username + " · " + (me.role || "unknown role")) : "…";
+    }
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    var CTX = { book: "ZEC" }; // articles are book-agnostic; book only scopes "Populate from books"
+
+    // "part" -> which field on article_units.part this maps to (see migration
+    // 0039_article_units.sql: one row per markdown FILE, keyed by (resource,path),
+    // grouped by article_id, part in {'body','title','sub-title'}).
+    var PART_ORDER = ["title", "sub-title", "body"];
+    var PART_LABEL = { title: "title", "sub-title": "subtitle", body: "body" };
+
+    // Real state only — no client fixtures. Both GET /api/articles/tw and
+    // GET /api/articles/ta genuinely return {resource, units: []} in this
+    // environment (verified via curl with a dev session cookie), so the list
+    // and editor below render a real empty state rather than invented items.
+    var RESOURCES = { tw: { units: [] }, ta: { units: [] } };
+
+    var resource = "ta";
+    var curArticleId = null;   // selected article_id (group of part-rows)
+    var curParts = {};         // partName -> full ArticleUnit (source_md, target_md, version, translation_state, path)
+    var unsavedParts = {};     // partName -> true
+    var partView = {}; // partName -> "edit" | "preview"
+
+    function mdToHtml(text) {
+      var esc = String(text || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      esc = esc.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*(?!\*)(.+?)\*(?!\*)/g, "$1<i>$2</i>");
+      return esc.split(/\n\n+/).map(function (p) { return "<p>" + p.replace(/\n/g, "<br>") + "</p>"; }).join("");
+    }
+
+    function autoSizeTextarea(ta) {
+      if (window.CSS && CSS.supports && CSS.supports("field-sizing", "content")) return;
+      ta.style.height = "auto";
+      ta.style.height = ta.scrollHeight + "px";
+    }
+
+    function currentUnits() { return RESOURCES[resource].units; }
+
+    // Group flat unit-metadata rows by article_id (each row is one real
+    // markdown file — 'body', and for tA sometimes 'title'/'sub-title' too).
+    function groupedArticles() {
+      var groups = {}; // article_id -> { units: [...] }
+      currentUnits().forEach(function (u) {
+        if (!groups[u.article_id]) groups[u.article_id] = { units: [] };
+        groups[u.article_id].units.push(u);
+      });
+      return groups;
+    }
+    function stateLabel(state) {
+      return state === "validated" ? "Approved" : state === "edited" || state === "ai_draft" ? "Edited" : "Draft";
+    }
+
+    function loadList() {
+      return window.flowApi.get("/api/articles/" + resource).then(function (res) {
+        if (!res.ok) {
+          toast("Could not load " + resource + " articles: " + res.status + " " + res.error, { bundle: "J" });
+          RESOURCES[resource].units = [];
+          return;
+        }
+        RESOURCES[resource].units = Array.isArray(res.data.units) ? res.data.units : [];
+      }).then(function () {
+        curArticleId = null;
+        curParts = {};
+        renderList();
+        renderEditor();
+      });
+    }
+
+    function renderList() {
+      var ul = el("articleList");
+      ul.innerHTML = "";
+      var groups = groupedArticles();
+      var ids = Object.keys(groups).sort();
+      ids.forEach(function (articleId) {
+        var group = groups[articleId];
+        var bodyUnit = group.units.filter(function (u) { return u.part === "body"; })[0] || group.units[0];
+        var li = document.createElement("li");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        if (articleId === curArticleId) btn.setAttribute("aria-current", "true");
+        btn.innerHTML =
+          '<span class="al-main"><span class="al-title">' + escapeHtml(articleId) + '</span>' +
+          '<span class="al-sub">' + stateLabel(bodyUnit && bodyUnit.translation_state) + '</span></span>';
+        btn.addEventListener("click", function () {
+          selectArticle(articleId);
+        });
+        li.appendChild(btn);
+        ul.appendChild(li);
+      });
+      var approved = currentUnits().filter(function (u) { return u.part === "body" && u.translation_state === "validated"; }).length;
+      var totalArticles = ids.length;
+      el("railTally").textContent = totalArticles
+        ? approved + " of " + totalArticles + " approved"
+        : "No " + resource + " articles imported in this environment";
+    }
+
+    function selectArticle(articleId) {
+      curArticleId = articleId;
+      partView = {};
+      unsavedParts = {};
+      curParts = {};
+      var group = groupedArticles()[articleId];
+      if (!group) { renderEditor(); return; }
+      var fetches = group.units.map(function (u) {
+        return window.flowApi.get("/api/articles/" + resource + "/unit", { path: u.path }).then(function (res) {
+          if (res.ok) curParts[u.part] = res.data;
+        });
+      });
+      Promise.all(fetches).then(function () {
+        el("articlesLayout").setAttribute("data-view", "editor");
+        renderList();
+        renderEditor();
+      });
+    }
+
+    function renderEditor() {
+      var partNames = Object.keys(curParts);
+      el("editorPanel").hidden = !curArticleId || !partNames.length;
+      el("emptyStatePanel").hidden = !!curArticleId && !!partNames.length;
+      if (!curArticleId || !partNames.length) return;
+
+      var bodyPart = curParts["body"];
+      el("epTitle").textContent = curArticleId;
+      var state = bodyPart ? bodyPart.translation_state : null;
+      el("epStateChip").className = "chip " + (state === "validated" ? "chip-approved" : state === "edited" || state === "ai_draft" ? "chip-edited" : "chip-draft");
+      el("epStateChip").textContent = stateLabel(state);
+
+      var body = el("epBody");
+      body.innerHTML = "";
+      partNames.sort(function (a, b) { return PART_ORDER.indexOf(a) - PART_ORDER.indexOf(b); });
+      partNames.forEach(function (partName) {
+        var unit = curParts[partName];
+        var val = unit.target_md || "";
+        var srcVal = unit.source_md || "";
+        var isDirty = !!unsavedParts[partName];
+        if (!(partName in partView)) partView[partName] = "edit";
+
+        var block = document.createElement("div");
+        block.className = "part-block";
+
+        var head = document.createElement("div");
+        head.className = "part-head";
+        head.innerHTML =
+          '<h2>' + escapeHtml(PART_LABEL[partName] || partName) + '</h2>' +
+          (isDirty ? '<span class="part-dirty" title="Unsaved changes in this part" aria-hidden="true"></span>' : '') +
+          '<span class="spacer"></span>' +
+          '<button type="button" data-handle="POST /api/templates/unit/draft" data-bundle="D" title="Draft with AI (same mechanism as templates) — real request; returns 503 if AI is not configured in this environment">✨ Draft with AI</button>' +
+          '<button type="button" class="preview-toggle" data-part="' + escapeHtml(partName) + '" aria-pressed="' + (partView[partName] === "preview" ? "true" : "false") + '">' + (partView[partName] === "preview" ? "Edit" : "Preview") + '</button>';
+        block.appendChild(head);
+
+        if (srcVal) {
+          var srcBlock = document.createElement("div");
+          srcBlock.className = "part-source";
+          srcBlock.innerHTML = '<span class="ps-label">Source (English, read-only)</span>' + mdToHtml(srcVal);
+          block.appendChild(srcBlock);
+        }
+
+        var ta = document.createElement("textarea");
+        ta.className = "part-area";
+        ta.value = val;
+        ta.setAttribute("spellcheck", "false");
+        ta.setAttribute("aria-label", partName + " draft (target language)");
+        ta.hidden = partView[partName] === "preview";
+        ta.addEventListener("input", function () {
+          curParts[partName].target_md = ta.value;
+          markUnsaved(partName);
+        });
+        block.appendChild(ta);
+
+        var preview = document.createElement("div");
+        preview.className = "part-preview";
+        preview.hidden = partView[partName] !== "preview";
+        preview.innerHTML = mdToHtml(val);
+        block.appendChild(preview);
+
+        body.appendChild(block);
+        autoSizeTextarea(ta);
+      });
+
+      body.querySelectorAll(".preview-toggle").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var partName = btn.getAttribute("data-part");
+          var blockEl = btn.closest(".part-block");
+          var liveTa = blockEl ? blockEl.querySelector("textarea.part-area") : null;
+          if (liveTa) curParts[partName].target_md = liveTa.value;
+          var showingPreview = partView[partName] === "preview";
+          partView[partName] = showingPreview ? "edit" : "preview";
+          renderEditor();
+        });
+      });
+
+      updateUnsavedChip();
+    }
+
+    function markUnsaved(partName) {
+      unsavedParts[partName] = true;
+      updateUnsavedChip();
+    }
+    function updateUnsavedChip() {
+      var n = Object.keys(unsavedParts).length;
+      el("unsavedChip").hidden = n === 0;
+      el("unsavedText").textContent = n + " unsaved";
+    }
+
+    // Save — PATCH each dirty part with its own real path + If-Match version.
+    // Real fields only: target_md is the entire body of the PATCH (rows.ts-style
+    // CAS on version). A 409 here means someone else saved this exact part first.
+    el("saveBtn").addEventListener("click", function () {
+      var dirtyNames = Object.keys(unsavedParts);
+      if (!dirtyNames.length) { toast("Nothing to save", { bundle: "J" }); return; }
+      Promise.all(dirtyNames.map(function (partName) {
+        var unit = curParts[partName];
+        return window.flowApi.patch("/api/articles/" + resource + "/unit", { target_md: unit.target_md }, { ifMatch: unit.version, query: { path: unit.path } }).then(function (res) {
+          if (res.ok) {
+            curParts[partName] = res.data;
+            delete unsavedParts[partName];
+            return { ok: true, partName: partName };
+          }
+          if (res.kind === "version_conflict") {
+            toast("“" + partName + "” changed elsewhere first (server now at version " + (res.body && res.body.current && res.body.current.version) + ") — reloading this article.", { bundle: "J" });
+          } else {
+            toast("Save failed for “" + partName + "”: " + res.status + " " + res.error, { bundle: "J" });
+          }
+          return { ok: false, partName: partName };
+        });
+      })).then(function (results) {
+        if (results.some(function (r) { return !r.ok; })) {
+          selectArticle(curArticleId); // reload to pick up server-side truth after a conflict
+        } else {
+          toast("Saved " + results.length + " part" + (results.length === 1 ? "" : "s"), { bundle: "J" });
+          renderList();
+          renderEditor();
+        }
+      });
+    });
+
+    // Approve — validate every part that has ever had a translation_state set
+    // (server guards `translation_state IS NOT NULL`; an untouched part can't
+    // be approved, so those are honestly skipped with a note, not force-approved).
+    el("approveBtn").addEventListener("click", function () {
+      var names = Object.keys(curParts);
+      var approvable = names.filter(function (n) { return curParts[n].translation_state != null; });
+      var skipped = names.filter(function (n) { return curParts[n].translation_state == null; });
+      if (!approvable.length) { toast("Nothing to approve — no part has a translation yet", { bundle: "J" }); return; }
+      Promise.all(approvable.map(function (partName) {
+        var unit = curParts[partName];
+        return window.flowApi.post("/api/articles/" + resource + "/unit/validate", { value: 1 }, { query: { path: unit.path } }).then(function (res) {
+          if (res.ok) curParts[partName] = res.data;
+          return res;
+        });
+      })).then(function (results) {
+        var failed = results.filter(function (r) { return !r.ok; });
+        if (failed.length) toast(failed.length + " part(s) failed to approve", { bundle: "J" });
+        else toast("Approved" + (skipped.length ? " (skipped " + skipped.join(", ") + " — no translation yet)" : ""), { bundle: "J" });
+        renderList();
+        renderEditor();
+      });
+    });
+
+    el("segTw").addEventListener("click", function () {
+      resource = "tw"; partView = {};
+      el("segTw").setAttribute("aria-pressed", "true");
+      el("segTa").setAttribute("aria-pressed", "false");
+      el("articlesLayout").setAttribute("data-view", "list");
+      loadList();
+    });
+    el("segTa").addEventListener("click", function () {
+      resource = "ta"; partView = {};
+      el("segTa").setAttribute("aria-pressed", "true");
+      el("segTw").setAttribute("aria-pressed", "false");
+      el("articlesLayout").setAttribute("data-view", "list");
+      loadList();
+    });
+
+    el("backToListBtn").addEventListener("click", function () { el("articlesLayout").setAttribute("data-view", "list"); });
+
+    // Real POST /api/articles/populate — book-scoped, since this environment
+    // only has ZEC imported. Reports the real processed/remaining/warnings
+    // counts from the response rather than a made-up success message.
+    el("populateBtn").addEventListener("click", function () {
+      window.flowApi.post("/api/articles/populate", { book: CTX.book }).then(function (res) {
+        if (!res.ok) { toast("Populate failed: " + res.status + " " + res.error, { bundle: "J" }); return; }
+        toast("Populate: processed " + res.data.processed + ", remaining " + res.data.remaining + (res.data.warnings && res.data.warnings.length ? ", " + res.data.warnings.length + " warning(s)" : ""), { bundle: "J" });
+        loadList();
+      });
+    });
+
+    el("addIdBtn").addEventListener("click", function () {
+      var id = el("addIdInput").value.trim();
+      if (!id) { toast("Enter an id to add", { bundle: "J" }); return; }
+      window.flowApi.post("/api/articles/" + resource + "/add", { id: id }).then(function (res) {
+        if (!res.ok) { toast("Add failed: " + res.status + " " + res.error, { bundle: "J" }); return; }
+        el("addIdInput").value = "";
+        toast("Added " + id, { bundle: "J" });
+        loadList().then(function () { selectArticle(id); });
+      });
+    });
+
+    el("historyBtn").addEventListener("click", function () { el("histBackdrop").hidden = false; });
+    el("closeHistBtn").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+    el("closeHistBtn2").addEventListener("click", function () { el("histBackdrop").hidden = true; });
+
+    function wireMenu(btnId, menuId) {
+      var btn = el(btnId), menu = el(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+    }
+    wireMenu("accountBtn", "accountMenu");
+    document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
+
+    el("segTw").setAttribute("aria-pressed", "false");
+    el("segTa").setAttribute("aria-pressed", "true");
+    window.flowApi.ready.then(function (me) {
+      renderAccount(me);
+      window.flowShell.setContext({ book: CTX.book });
+      el("articlesLayout").setAttribute("data-view", "list");
+      loadList();
+    });
+  })();
+  </script>
+</body>
+</html>

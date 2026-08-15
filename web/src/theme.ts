@@ -1,5 +1,60 @@
 import { createContext } from "react";
 import { createTheme, type Theme, type ThemeOptions } from "@mui/material/styles";
+import { BAND_PX } from "./lib/layoutBands";
+
+// Register the custom breakpoint key with MUI's types. The default five
+// (xs/sm/md/lg/xl) stay implicitly available — BreakpointOverrides only ADDS
+// keys, it does not replace the default set.
+declare module "@mui/material/styles" {
+  interface BreakpointOverrides {
+    tablet: true;
+  }
+  interface Palette {
+    flows: FlowsPalette;
+  }
+  interface PaletteOptions {
+    flows?: FlowsPalette;
+  }
+}
+
+// Semantic status colors for the flow screens (docs/flows/02-architecture.md
+// D4): ok / warn / skip are deliberately NOT the brand accent and NOT MUI's
+// success/warning — a translator's "approved / needs attention / skipped"
+// vocabulary is its own scale. Values are lifted verbatim from
+// docs/flows/ui/_tokens.css (--ok/--ok-ink/--ok-soft, --warn/…, --skip/…).
+// `main` is the solid color (borders, bars, filled marks), `ink` the readable
+// text color on `soft`, `soft` the chip/banner background.
+export interface FlowsStatusColor {
+  main: string;
+  ink: string;
+  soft: string;
+}
+
+export interface FlowsPalette {
+  ok: FlowsStatusColor;
+  warn: FlowsStatusColor;
+  skip: FlowsStatusColor;
+}
+
+// _tokens.css has no --skip-ink: .chip-draft / .chip-skipped / .btn-skip all
+// paint text with --skip itself on a --skip-soft ground, so `ink` mirrors
+// `main` for skip.
+const flowsLight: FlowsPalette = {
+  ok: { main: "#2E9E8F", ink: "#14655B", soft: "#DDF2EE" },
+  warn: { main: "#E59D33", ink: "#8A5A0F", soft: "#FBEEDA" },
+  skip: { main: "#647984", ink: "#647984", soft: "#E3EAEE" },
+};
+
+const flowsDark: FlowsPalette = {
+  ok: { main: "#4BB8A9", ink: "#9ADFD5", soft: "rgba(46, 158, 143, 0.20)" },
+  warn: { main: "#E8A94E", ink: "#F1CE9A", soft: "rgba(229, 157, 51, 0.18)" },
+  skip: { main: "#8FA5B0", ink: "#8FA5B0", soft: "rgba(100, 121, 132, 0.25)" },
+};
+
+// --font-scripture from docs/flows/ui/_tokens.css — humanist serif for
+// scripture and article body text.
+export const SCRIPTURE_FONT_STACK =
+  '"Iowan Old Style", Charter, "Palatino Linotype", Georgia, Cambria, serif';
 
 // Scrollbar overrides apply globally via CssBaseline. We pick a thumb that
 // contrasts with the page background but stays subtle. Firefox uses the
@@ -61,7 +116,32 @@ function scrollbarComponents(track: string, thumb: string, thumbHover: string): 
 
 export type ThemeMode = "light" | "dark";
 
+// Responsive-layout breakpoints (adaptive workspace bands). The project has
+// three real layout bands — phone (<560), tablet (560-899), desktop (>=900) —
+// but MUI's five default keys (xs/sm/md/lg/xl) are preserved here at their
+// EXACT default values so the ~7 files already using object-form `{xs, md}`
+// sx shorthand keep working unchanged. One extra key is inserted between the
+// defaults: `tablet` is the phone/tablet boundary. `md` doubles as the desktop
+// boundary, so no duplicate-valued key is needed for "desktop". Both values
+// come from `layoutBands.ts`'s `BAND_PX` — the one place the thresholds are
+// defined — rather than being repeated here, so this file and the actual band
+// resolution in `useLayoutBand` can never drift apart. Keys must stay in
+// ascending value order — MUI's `createBreakpoints` runs `sortBreakpointsValues`
+// and derives `breakpoints.keys` from ascending VALUE, not insertion order, but
+// any array-form responsive `sx` (e.g. `sx={{ p: [1, 2, 3] }}`) still maps
+// positionally onto that sorted key order, so an out-of-order insertion here
+// would silently repoint those. A repo-wide grep found none in web/src (only
+// object-form `{xs, md}` usage, which is unaffected by inserting keys) — see
+// the Step 0 pre-check in the PR/commit that added this.
+//
+// Defined ONCE and spread into both `lightTheme` and `darkTheme` below so the
+// two themes can never drift apart on breakpoint values.
+const breakpoints = {
+  values: { xs: 0, tablet: BAND_PX.tablet, sm: 600, md: BAND_PX.desktop, lg: 1200, xl: 1536 },
+};
+
 const lightTheme = createTheme({
+  breakpoints,
   palette: {
     mode: "light",
     primary: {
@@ -94,6 +174,7 @@ const lightTheme = createTheme({
     },
     info: { main: "#31ADE3" },
     success: { main: "#70C9CC", contrastText: "#231F20" },
+    flows: flowsLight,
     background: {
       default: "#FFFFFF",
       paper: "#FFFFFF",
@@ -130,6 +211,7 @@ const lightTheme = createTheme({
 });
 
 const darkTheme = createTheme({
+  breakpoints,
   palette: {
     mode: "dark",
     primary: {
@@ -162,6 +244,7 @@ const darkTheme = createTheme({
     },
     info: { main: "#66BCE7" },
     success: { main: "#70C9CC", contrastText: "#0A1620" },
+    flows: flowsDark,
     background: {
       default: "#15191F",
       paper: "#1F242C",

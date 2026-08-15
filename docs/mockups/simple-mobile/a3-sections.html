@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Sections & project</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <aside class="side" data-side></aside>
+  <div class="stage">
+    <div class="admin-stage">
+      <div class="admin-top">
+        <button class="btn light" type="button" onclick="location.href='a2-people.html'">Back</button>
+        <h1>Section assignment · Project setup</h1>
+        <button class="btn teal" type="button" id="saveBtn">Save</button>
+      </div>
+      <div class="admin-body">
+        <div class="settings-grid">
+          <div>
+            <h2 style="margin:0 0 12px;font-size:1.1rem">Book sections</h2>
+            <p class="note" style="margin-top:0">Click a section, then assign a drafter. Progress bars are fake package completion (notes + questions + terms + articles).</p>
+            <div class="section-grid" id="sections"></div>
+            <div style="margin-top:16px" class="field">
+              <label>Assign selected section to</label>
+              <select id="assignee">
+                <option>Ana Ruiz</option>
+                <option>Luis Mora</option>
+                <option>Marco Díaz</option>
+                <option>Unassigned</option>
+              </select>
+            </div>
+            <button class="btn dark" type="button" id="assignBtn">Apply assignment</button>
+          </div>
+
+          <div>
+            <h2 style="margin:0 0 12px;font-size:1.1rem">Project</h2>
+            <div class="card white">
+              <div class="field">
+                <label>Project name</label>
+                <input id="pname" value="Zacarías — español (LATAM)">
+              </div>
+              <div class="field">
+                <label>Source language</label>
+                <input value="English (en)" disabled>
+              </div>
+              <div class="field">
+                <label>Target language</label>
+                <select id="tlang">
+                  <option selected>Spanish — Latin America (es-419)</option>
+                  <option>Spanish — Spain (es-ES)</option>
+                  <option>Portuguese — Brazil (pt-BR)</option>
+                </select>
+              </div>
+              <div class="toggle-row">
+                <span>AI drafts enabled</span>
+                <button type="button" class="toggle on" id="aiToggle"></button>
+              </div>
+              <div class="toggle-row">
+                <span>Include ULT + UST with notes</span>
+                <button type="button" class="toggle on" id="ultToggle"></button>
+              </div>
+              <div class="toggle-row">
+                <span>Export gate: consultant approval</span>
+                <button type="button" class="toggle on" id="gateToggle"></button>
+              </div>
+            </div>
+
+            <h2 style="margin:22px 0 12px;font-size:1.1rem">Package progress</h2>
+            <div class="card">
+              <div class="toggle-row" style="border:none;padding:6px 0">
+                <span>Notes</span><strong id="pNotes">62%</strong>
+              </div>
+              <div class="bar"><i style="width:62%"></i></div>
+              <div class="toggle-row" style="border:none;padding:6px 0;margin-top:10px">
+                <span>Questions</span><strong>41%</strong>
+              </div>
+              <div class="bar"><i style="width:41%"></i></div>
+              <div class="toggle-row" style="border:none;padding:6px 0;margin-top:10px">
+                <span>Key terms</span><strong>28%</strong>
+              </div>
+              <div class="bar"><i style="width:28%"></i></div>
+              <div class="toggle-row" style="border:none;padding:6px 0;margin-top:10px">
+                <span>Articles</span><strong>15%</strong>
+              </div>
+              <div class="bar"><i style="width:15%"></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="admin-foot">
+        <span class="note" id="msg">Select a section to assign.</span>
+        <button class="btn light" type="button" onclick="location.href='t1-home.html'">Preview translator →</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  let sections = [
+    { id: 's1', title: 'Zac 1–2', who: 'Ana Ruiz', pct: 74 },
+    { id: 's2', title: 'Zac 3–6', who: 'Ana Ruiz', pct: 55 },
+    { id: 's3', title: 'Zac 7–8', who: 'Luis Mora', pct: 33 },
+    { id: 's4', title: 'Zac 9–11', who: 'Luis Mora', pct: 12 },
+    { id: 's5', title: 'Zac 12–14', who: 'Unassigned', pct: 0 },
+  ];
+  let selected = 's1';
+
+  function render() {
+    const root = document.getElementById('sections');
+    root.innerHTML = sections.map(s => `
+      <div class="section-card ${s.id === selected ? 'selected' : ''}" data-id="${s.id}">
+        <h3>${s.title}</h3>
+        <div class="who">${s.who}</div>
+        <div class="bar"><i style="width:${s.pct}%"></i></div>
+      </div>
+    `).join('');
+    root.querySelectorAll('.section-card').forEach(card => {
+      card.addEventListener('click', () => {
+        selected = card.dataset.id;
+        const s = sections.find(x => x.id === selected);
+        document.getElementById('assignee').value = s.who === 'Unassigned' ? 'Unassigned' : s.who;
+        render();
+      });
+    });
+  }
+
+  document.getElementById('assignBtn').addEventListener('click', () => {
+    const who = document.getElementById('assignee').value;
+    const s = sections.find(x => x.id === selected);
+    s.who = who;
+    document.getElementById('msg').textContent = s.title + ' → ' + who;
+    render();
+  });
+
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => t.classList.toggle('on'));
+  });
+
+  document.getElementById('saveBtn').addEventListener('click', () => {
+    document.getElementById('msg').textContent =
+      'Saved “' + document.getElementById('pname').value + '” · ' +
+      document.getElementById('tlang').selectedOptions[0].text;
+  });
+
+  render();
+</script>
+</body>
+</html>

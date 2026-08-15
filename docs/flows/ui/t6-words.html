@@ -1,0 +1,1158 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Word links (TWL) — Zechariah 1:8</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .words-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 64px; }
+
+  .nav-strip { display: flex; align-items: center; gap: 10px; margin-block-end: 14px; flex-wrap: wrap; }
+  .nav-strip .ref-big { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--ocean); }
+  :root[data-theme="dark"] .nav-strip .ref-big { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .nav-strip .ref-big { color: var(--cultivate); } }
+  :root[data-theme="light"] .nav-strip .ref-big { color: var(--ocean); }
+  .nav-strip .spacer { margin-inline-start: auto; }
+  .iconbtn { appearance: none; border: none; background: var(--skip-soft); color: var(--ink); width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+  .links-btn-mobile, .verse-btn-mobile { display: none; }
+  @media (max-width: 899.98px) { .links-btn-mobile, .verse-btn-mobile { display: inline-flex; } }
+
+  .words-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 899.98px) {
+    .words-layout { grid-template-columns: minmax(0, 1fr); }
+    .words-layout[data-view="detail"] .table-col { display: none; }
+    .words-layout[data-view="table"] .detail-col { display: none; }
+  }
+
+  .table-col-top { display: flex; align-items: center; gap: 10px; margin-block-end: 10px; flex-wrap: wrap; }
+  .table-col-top .tally { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .table-col-top .spacer { margin-inline-start: auto; }
+  .add-link-btn { appearance: none; border: 1.5px solid var(--inspire); background: transparent; color: var(--inspire-deep); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  :root[data-theme="dark"] .add-link-btn { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .add-link-btn { color: var(--inspire); } }
+  :root[data-theme="light"] .add-link-btn { color: var(--inspire-deep); }
+
+  .table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .twl-table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 480px; }
+  .twl-table th {
+    position: sticky; top: 0; background: var(--card-2); text-align: start; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); padding: 9px 12px; border-block-end: 1px solid var(--line); white-space: nowrap;
+  }
+  .twl-table td { padding: 10px 12px; border-block-end: 1px solid var(--line); vertical-align: middle; }
+  .twl-table tbody tr:last-child td { border-block-end: none; }
+  .twl-table tbody tr { cursor: pointer; }
+  .twl-table tbody tr:hover { background: var(--card-2); }
+  .twl-table tbody tr[aria-selected="true"] { background: var(--hl); }
+  .twl-table tbody tr.is-suggested { cursor: default; }
+  .twl-table tbody tr.is-suggested td { border-block-end: 1px dashed var(--line); }
+  .twl-table .tw-quote { font-family: var(--font-scripture); }
+  .twl-table .tw-gloss { color: var(--ink-2); font-size: 12px; }
+  .twl-table .row-actions { display: flex; gap: 6px; }
+
+  .no-approve-note { font-size: 11.5px; color: var(--ink-2); margin: 8px 2px 0; font-style: italic; }
+
+  /* Suggestion "chip" — dashed border + label, distinct from a saved link row */
+  .chip-suggested {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--inspire-deep); background: var(--card-2);
+    border: 1px dashed var(--inspire); border-radius: 999px; padding: 2px 7px;
+  }
+  :root[data-theme="dark"] .chip-suggested { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .chip-suggested { color: var(--inspire); } }
+  :root[data-theme="light"] .chip-suggested { color: var(--inspire-deep); }
+  .row-accept, .row-reject {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  .row-accept { border-color: var(--ok); color: var(--ok-ink); }
+  .row-reject { border-color: var(--warn); color: var(--warn-ink); }
+  .sugg-controls { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+  .sugg-controls select { font-size: 11.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  .sugg-controls .cluster-btn { font-size: 11.5px; padding: 3px 8px; }
+
+  /* Mobile card-at-a-time list — replaces the table below 560px so nothing scrolls sideways */
+  .twl-cards { display: none; flex-direction: column; gap: 10px; }
+  @media (max-width: 559.98px) {
+    .table-wrap { display: none; }
+    .twl-cards { display: flex; }
+  }
+  .twl-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 12px 14px; cursor: pointer;
+  }
+  .twl-card[aria-selected="true"] { border-color: var(--inspire); background: var(--hl); }
+  .twl-card.is-suggested { border-style: dashed; cursor: default; }
+  .twl-card-row { padding-block: 6px; }
+  .twl-card-row + .twl-card-row { border-block-start: 1px solid var(--line); }
+  .twl-card-row .cr-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin-block-end: 2px; }
+  .twl-card-row .cr-value { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+  .twl-card-row .cr-value.tw-quote-value { font-family: var(--font-scripture); font-size: 17px; }
+  .twl-card-head { display: flex; align-items: center; gap: 8px; margin-block-end: 4px; }
+  .twl-card-head .spacer { margin-inline-start: auto; }
+
+  .detail-col { position: sticky; top: 12px; }
+  .detail-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-block-end: 14px; }
+  .detail-top { padding: 12px 12px 8px; border-block-end: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .detail-top h2 { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .detail-body { padding: 14px; }
+
+  .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 5px; display: block; }
+  .field + .field { margin-block-start: 12px; }
+  .quote-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .quote-display { font-family: var(--font-scripture); font-size: 16px; background: var(--hl); border-radius: 6px; padding: 3px 9px; }
+  .quote-row button { appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+  .occ-input { width: 64px; font-family: var(--font-ui); font-size: 14px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+  .article-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .article-input { flex: 1; min-width: 140px; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  .read-article-link { font-size: 12.5px; font-weight: 600; color: var(--inspire-deep); text-decoration: none; white-space: nowrap; }
+  :root[data-theme="dark"] .read-article-link { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .read-article-link { color: var(--inspire); } }
+  :root[data-theme="light"] .read-article-link { color: var(--inspire-deep); }
+  .gloss-caption { font-size: 12.5px; color: var(--ink-2); margin: 6px 0 0; }
+  .locate-btn { appearance: none; border: none; background: transparent; color: var(--ink-2); cursor: pointer; font-size: 15px; padding: 2px 4px; }
+
+  /* Target-language-in-context — shows which target word(s) render this
+     link's source word, inline in the sentence (see JS comment for the
+     real data source this stands in for). */
+  .tc-context { font-size: 13px; color: var(--ink-2); line-height: 1.5; overflow-wrap: anywhere; }
+  .tc-context mark { background: var(--hl); color: inherit; border-radius: 3px; padding: 0 2px; }
+
+  .detail-actions { display: flex; gap: 8px; margin-block-start: 14px; flex-wrap: wrap; }
+  .detail-actions .btn { flex: 1; }
+  .kill-switch-note { font-size: 11px; color: var(--ink-2); margin: 10px 0 0; }
+
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 38px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-approve { background: var(--ok); color: #fff; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  .sugg-select { font-size: 11.5px; color: var(--ink); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+
+  /* dialogs (quote builder, links sheet, verse sheet) */
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 560px; width: 100%; max-height: 84vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-block-end: 1px solid var(--line); }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-body { padding: 14px 16px; overflow-y: auto; }
+  .dlg-foot { display: flex; gap: 8px; padding: 12px 16px; border-block-start: 1px solid var(--line); justify-content: flex-end; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+
+  .qb-source { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-scripture); font-size: 17px; padding: 10px; background: var(--card-2); border-radius: var(--radius-sm); margin-block-end: 10px; direction: rtl; }
+  .qb-source button { appearance: none; border: none; background: transparent; color: var(--ink); font: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+  .qb-source button[data-selected="true"] { background: var(--hl); }
+  .qb-target { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-scripture); font-size: 15px; padding: 8px 10px; background: var(--card-2); border-radius: var(--radius-sm); margin-block-end: 10px; }
+  .qb-target .tchip { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 999px; padding: 2px 9px; font-size: 13px; cursor: pointer; }
+  .qb-target .tchip[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .qb-preview { font-size: 13.5px; color: var(--ink); margin: 0 0 4px; }
+  .qb-preview .qb-occ { color: var(--ink-2); }
+  .qb-hint { font-size: 11.5px; color: var(--ink-2); margin: 0; }
+
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.35); z-index: 60; }
+  .sheet-backdrop[hidden] { display: none; }
+  .sheet { position: fixed; inset-inline: 0; bottom: 0; z-index: 61; background: var(--card); border-radius: 16px 16px 0 0; box-shadow: var(--shadow); max-height: 78vh; display: flex; flex-direction: column; }
+  .sheet[hidden] { display: none; }
+  .sheet-handle { width: 36px; height: 4px; background: var(--line); border-radius: 2px; margin: 8px auto; flex: none; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px; flex: none; }
+  .sheet-head h2 { font-size: 14px; margin: 0; }
+  .sheet-body { padding: 0 16px 20px; overflow-y: auto; }
+  .ctx-lane { margin-bottom: 12px; }
+  .ctx-lane .lane-tag { margin-bottom: 4px; }
+  .ctx-lane .ctx-verse { background: var(--card-2); border-radius: var(--radius-sm); padding: 8px 10px; font-family: var(--font-scripture); font-size: 14.5px; line-height: 1.5; }
+
+  /* K.4 original-language reference — tap a source word for a quick lexicon summary */
+  .ol-strip { display: flex; align-items: baseline; gap: 10px; margin-block-end: 12px; flex-wrap: wrap; }
+  .ol-strip .ol-label { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .ol-strip .ol-words { display: flex; gap: 6px; flex-wrap: wrap; font-family: var(--font-scripture); font-size: 16px; }
+  .lex-wrap { position: relative; display: inline-flex; }
+  .lex-word { appearance: none; border: none; background: transparent; font: inherit; color: var(--ink); cursor: pointer; padding: 1px 4px; border-radius: 4px; }
+  .lex-word:hover, .lex-word:focus { background: var(--hl); outline: none; }
+  .lex-popover {
+    /* Grows from the inline-start edge by default; flipped to inline-end via the
+       .flip class when the word sits near the viewport's trailing edge — same
+       viewport-clamp approach as a2-import.html's .lint-popover. */
+    position: absolute; inset-block-start: calc(100% + 6px); inset-inline-start: 0;
+    z-index: 40; min-width: 190px; max-width: min(260px, 84vw);
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow); padding: 9px 11px; font-family: var(--font-ui); font-size: 12.5px;
+  }
+  .lex-popover.flip { inset-inline-start: auto; inset-inline-end: 0; }
+  .lex-popover[hidden] { display: none; }
+  .lex-popover .lex-strong { font-weight: 700; margin: 0 0 4px; }
+  .lex-popover .lex-gloss { margin: 0 0 4px; color: var(--ink-2); }
+  .lex-popover .lex-def { margin: 0; }
+
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Word links (TWL) — Zechariah</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <!-- Populated from the real window.flowApi.me ({username, role}) once
+               window.flowApi.ready resolves — see the script below. Neutral
+               placeholder until then; never a fabricated name. -->
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">··</span> <span id="accountName">…</span>
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Notes</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html" aria-current="page">Words</a>
+    <a href="index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="words-wrap">
+    <div class="nav-strip">
+      <button type="button" class="iconbtn" id="prevVerseBtn" aria-label="Previous verse">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <span class="ref-big" id="refBig">ZEC 1:8</span>
+      <button type="button" class="iconbtn" id="nextVerseBtn" aria-label="Next verse">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+      <span class="spacer"></span>
+      <button type="button" class="cluster-btn links-btn-mobile" id="openLinksSheetBtn">Links list</button>
+      <button type="button" class="cluster-btn verse-btn-mobile" id="openVerseSheetBtn">This verse</button>
+    </div>
+
+    <div class="ol-strip" aria-label="Original-language reference">
+      <span class="ol-label">Hebrew</span>
+      <span class="ol-words" id="olWords" dir="rtl"></span>
+    </div>
+
+    <div class="words-layout" id="wordsLayout" data-view="table">
+      <!--
+        Word links get touched rarely once a book is linked — gateway-language
+        teams mostly do occasional cleanup here, not bulk work like tN/tQ. So
+        this screen stays deliberately lightweight: one merged list, no
+        separate suggestions workspace, no bulk-action toolbar.
+      -->
+      <section class="table-col">
+        <div class="table-col-top">
+          <span class="tally" id="tally">3 of 3 linked</span>
+          <span class="spacer"></span>
+          <span class="sugg-controls">
+            <label for="suggFilterSelect">Suggestions</label>
+            <select id="suggFilterSelect" data-handle="GET /api/twl-filters/:book" data-handle-manual data-bundle="D">
+              <option value="all">All candidates</option>
+              <option value="unlinked">Unlinked only</option>
+              <option value="hide-deleted">Hide previously-deleted</option>
+            </select>
+            <button type="button" class="cluster-btn" id="suggRefreshBtn" data-handle="GET /api/twl-suggestions/:book/:chapter/:verse" data-handle-manual data-bundle="D">Refresh</button>
+          </span>
+          <button type="button" class="add-link-btn" id="addLinkBtn">+ Add link</button>
+        </div>
+        <div class="table-wrap">
+          <table class="twl-table">
+            <thead>
+              <tr><th>Quote</th><th>Occ</th><th>tW link</th><th>Gloss</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="twlBody"></tbody>
+          </table>
+        </div>
+        <div class="twl-cards" id="twlCards" role="list" aria-label="Word links"></div>
+        <p class="no-approve-note">Word links have no approve lifecycle — there is no validate endpoint for TWL rows; Save is the only state-changing action here. AI suggestions below are unsaved candidates — Add or Reject each one.</p>
+      </section>
+
+      <aside class="detail-col">
+        <div class="detail-panel" id="detailPanel">
+          <div class="detail-top">
+            <button type="button" class="cluster-btn" id="backToTableBtn" style="display:none;">← Links</button>
+            <h2>Edit word link</h2>
+          </div>
+          <div class="detail-body">
+            <div class="field">
+              <span class="field-label">Quote (original-language)</span>
+              <div class="quote-row">
+                <span class="quote-display" id="detailQuote" dir="rtl"></span>
+                <button type="button" id="buildQuoteBtn" data-handle="local:quote-builder" data-bundle="F">Build from source</button>
+                <button type="button" class="locate-btn" id="locateBtn" data-handle="local:locate-word" data-bundle="F" title="Preview where this occurs">📍</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label">Occurrence</span>
+              <input type="number" min="1" class="occ-input" id="detailOcc" aria-label="Occurrence" />
+            </div>
+            <div class="field">
+              <span class="field-label">tW article link</span>
+              <div class="article-row">
+                <input type="text" class="article-input" id="detailArticle" list="catalogList" aria-label="translationWords article id" data-handle="GET /api/catalogs" data-handle-manual data-bundle="F" />
+                <a href="t5-articles.html" class="read-article-link" id="readArticleLink">Read article →</a>
+              </div>
+              <!-- Populated from the real GET /api/catalogs response by
+                   populateArticleDatalist() below; left empty until then —
+                   no baked-in fixture options. -->
+              <datalist id="catalogList"></datalist>
+              <p class="gloss-caption" id="detailGloss"></p>
+              <p class="gloss-caption" id="catalogListStatus" style="font-style:italic;"></p>
+            </div>
+            <div class="field">
+              <span class="field-label">In target (ULT)</span>
+              <p class="tc-context" id="detailTargetContext"></p>
+            </div>
+            <div class="detail-actions">
+              <button type="button" class="btn btn-outline" id="undoLinkBtn" data-handle="local:undo-link" data-bundle="F">Undo</button>
+              <button type="button" class="btn btn-outline" id="saveLinkBtn" data-handle="PATCH /api/rows/twl/:id" data-headers="If-Match" data-handle-manual data-bundle="F">Save</button>
+              <button type="button" class="btn btn-warn" id="deleteLinkBtn" data-handle="DELETE /api/rows/twl/:id" data-headers="If-Match" data-handle-manual data-bundle="F">Delete</button>
+            </div>
+            <p class="kill-switch-note">Manual reorder is disabled (kill-switched) — TWL is canonically ordered by source-word position.</p>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Quote builder (F.4 QuoteBuilderPopper) -->
+  <div class="dlg-backdrop" id="qbBackdrop" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="qbTitle">
+      <div class="dlg-top"><h2 id="qbTitle">Build quote from source</h2><button type="button" class="close-x" id="closeQbBtn" aria-label="Close">✕</button></div>
+      <div class="dlg-body">
+        <p class="qb-hint">Click, or shift-click to extend, the Hebrew source words this link should point to.</p>
+        <div class="qb-source" id="qbSource"></div>
+        <p class="qb-hint">Target chips (ULT) — toggling shows the alignment-ancestor chain this quote would cover; cosmetic in this mockup.</p>
+        <div class="qb-target" id="qbTarget"></div>
+        <p class="qb-preview">Quote: <b id="qbPreviewQuote" dir="rtl">—</b> <span class="qb-occ" id="qbPreviewOcc"></span></p>
+      </div>
+      <div class="dlg-foot">
+        <button type="button" class="btn btn-outline" id="qbCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="qbUseBtn">Use selection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- mobile "Links" sheet — the rail list -->
+  <div class="sheet-backdrop" id="linksSheetBackdrop" hidden></div>
+  <div class="sheet" id="linksSheet" hidden role="dialog" aria-modal="true" aria-labelledby="linksSheetTitle">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="linksSheetTitle">Word links</h2>
+      <button type="button" class="close-x" id="closeLinksSheetBtn" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body" id="linksSheetBody"></div>
+  </div>
+
+  <!-- mobile "This verse" context sheet -->
+  <div class="sheet-backdrop" id="verseSheetBackdrop" hidden></div>
+  <div class="sheet" id="verseSheet" hidden role="dialog" aria-modal="true" aria-labelledby="verseSheetTitle">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="verseSheetTitle">This verse — read-only context</h2>
+      <button type="button" class="close-x" id="closeVerseSheetBtn" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body" id="verseSheetBody">
+      <!-- Populated from the real ULT/UST plain_text for CTX.verse by
+           renderVerseSheet() below, or an honest unavailable message per lane
+           — no client-side fixture data on this screen (see comment above). -->
+    </div>
+  </div>
+
+  <script src="_api.js"></script>
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    var CTX = { book: "ZEC", chapter: 1, verse: 8 };
+
+    // ---- everything below is populated from real API responses. There is no
+    // client-side fixture data on this screen; where the backend genuinely has
+    // nothing (lexicon table, twl-suggestions, alignment for a quarantined
+    // lane), the UI says so instead of inventing content. ----
+    var chapterData = null;
+    var LINKS = [];          // real twl rows for CTX.verse (id, quote, occurrence, article, version, ref_raw, tags)
+    var SUGGESTIONS = [];    // real GET /api/twl-suggestions/:book/:chapter/:verse
+    var SOURCE_WORDS = [];   // [{i, t, strong, occurrence}] parsed from the real UHB verse content
+    var ultAvailable = false;
+    var ultPlainText = null;
+    var ustAvailable = false;
+    var ustPlainText = null;
+    var targetWordList = { words: [], groups: [] }; // real ULT \zaln alignment, flattened (see extractTargetWordList)
+    var verseNums = []; // sorted verse numbers > 0 present in this chapter (for prev/next nav)
+
+    var cur = 0;
+    var unsaved = {};
+    var nextSeq = 1;
+    var qbTargetRow = null; // link being edited by the quote builder ("add" when creating a new one)
+
+    function twLinkToId(link) {
+      if (!link) return "";
+      var m = /^rc:\/\/\*\/tw\/dict\/bible\/(.+)$/.exec(link);
+      return m ? m[1] : link;
+    }
+    function idToTwLink(id) {
+      return id ? "rc://*/tw/dict/bible/" + id : null;
+    }
+
+    // ---------- real data extraction ----------
+
+    // UHB verse content.verseObjects is a flat list of source-word nodes
+    // (tag "w", type "word") each carrying its own Strong's number — real
+    // per-word lexicon keys, not a hardcoded index map.
+    function extractSourceWords(uhbVerse) {
+      var vo = uhbVerse && uhbVerse.content && uhbVerse.content.verseObjects;
+      if (!Array.isArray(vo)) return [];
+      var out = [];
+      vo.forEach(function (node) {
+        if (node && node.type === "word" && node.text) {
+          out.push({ i: out.length, t: node.text, strong: node.strong || null, occurrence: node.occurrence ? Number(node.occurrence) : 1 });
+        }
+      });
+      return out;
+    }
+
+    // Walk the ULT verse's real verseObjects tree, producing:
+    //   groups: one entry per top-level \zaln-s/\zaln-e milestone, {sourceText}
+    //   words:  every rendered target word in verse order, tagged with which
+    //           group (if any) it belongs to (-1 = not covered by an alignment
+    //           milestone, e.g. a bare conjunction).
+    // This is the verse's OWN alignment data — the same data the aligner
+    // (t4-align.html) and smartEditVerse round-trip — not a stand-in fixture.
+    function extractTargetWordList(ultVerse) {
+      var vo = ultVerse && ultVerse.content && ultVerse.content.verseObjects;
+      var words = [];
+      var groups = [];
+      if (!Array.isArray(vo)) return { words: words, groups: groups };
+      function walk(nodes, groupIdx) {
+        (nodes || []).forEach(function (node) {
+          if (!node) return;
+          if (node.tag === "zaln" && node.type === "milestone") {
+            var gi = groups.length;
+            groups.push({ sourceText: node.content || "" });
+            walk(node.children, gi);
+            return;
+          }
+          if (node.type === "word" && node.text) {
+            words.push({ text: node.text, groupIdx: groupIdx });
+            return;
+          }
+          if (Array.isArray(node.children)) walk(node.children, groupIdx);
+        });
+      }
+      walk(vo, -1);
+      return { words: words, groups: groups };
+    }
+
+    // "In target (ULT)" — highlight the real ULT word(s) aligned to `quote`
+    // via the verse's own zaln milestones. Honest fallbacks: no ULT content
+    // (lane quarantined) or no milestone matches this exact quote string.
+    function targetContextHtml(quote) {
+      if (!ultAvailable) {
+        return '<em>ULT verse content is unavailable in this environment right now ' +
+          '(the ULT scripture lane is flagged replacement_required — see HTML comment above the load function). ' +
+          'Nothing is faked here.</em>';
+      }
+      if (!targetWordList.words.length) {
+        return '<em>No alignment data on this verse.</em>';
+      }
+      var matchIdxs = [];
+      targetWordList.groups.forEach(function (g, i) { if (g.sourceText === quote) matchIdxs.push(i); });
+      if (!matchIdxs.length) {
+        return escapeHtml(ultPlainText || "") +
+          '<br><em>No exact alignment-milestone match for “' + escapeHtml(quote) + '” — quotes spanning partial/merged milestones aren\'t resolved in this preview.</em>';
+      }
+      return targetWordList.words.map(function (w) {
+        return matchIdxs.indexOf(w.groupIdx) > -1 ? "<mark>" + escapeHtml(w.text) + "</mark>" : escapeHtml(w.text);
+      }).join(" ");
+    }
+
+    // Best-effort mapping of a twl-suggestions English span back to a source
+    // quote + occurrence via the same real zaln data. This is a simplified
+    // stand-in for the full app's web/src/lib/twlResolve.ts (multi-word spans,
+    // partial-word alignment, disambiguation) — handles the common single
+    // English-word case only; anything else degrades to an honest "couldn't
+    // resolve" rather than a guess.
+    function resolveSuggestionToQuote(s) {
+      if (!ultAvailable || !targetWordList.words.length) return null;
+      var wanted = String(s.matchedText || "").trim().toLowerCase();
+      if (!wanted || /\s/.test(wanted)) return null; // multi-word spans: not attempted here
+      var seen = 0;
+      for (var i = 0; i < targetWordList.words.length; i++) {
+        var w = targetWordList.words[i];
+        if (w.text.trim().toLowerCase() === wanted) {
+          seen++;
+          if (seen === s.glOccurrence && w.groupIdx > -1) {
+            var group = targetWordList.groups[w.groupIdx];
+            var occ = 0;
+            for (var k = 0; k <= w.groupIdx; k++) {
+              if (targetWordList.groups[k].sourceText === group.sourceText) occ++;
+            }
+            return { origWords: group.sourceText, occurrence: occ };
+          }
+        }
+      }
+      return null;
+    }
+
+    function refRawFor() { return CTX.chapter + ":" + CTX.verse; }
+
+    // Derives every per-verse piece of state (SOURCE_WORDS, ULT/UST
+    // availability + plain text, target word list, twl LINKS) from the
+    // already-loaded chapterData for the current CTX.verse. Used both on
+    // initial load and by goVerse() below, which changes CTX.verse without
+    // refetching the (already in-hand) chapter.
+    function deriveForVerse() {
+      var uhb = chapterData.verses && chapterData.verses.UHB && chapterData.verses.UHB[CTX.verse];
+      SOURCE_WORDS = extractSourceWords(uhb);
+
+      var ult = chapterData.verses && chapterData.verses.ULT && chapterData.verses.ULT[CTX.verse];
+      ultAvailable = !!ult;
+      if (ult) {
+        ultPlainText = ult.plain_text || "";
+        targetWordList = extractTargetWordList(ult);
+      } else {
+        // Verified against this environment's live chapters.ts: a lane with
+        // scripture_lane_state.replacement_required = 1 is omitted from
+        // `verses` entirely (chapters.ts "Filter by active generation per
+        // lane; replacement_required lanes are omitted"). Confirmed via
+        // `wrangler d1 execute ... SELECT ... FROM scripture_lane_state`
+        // showing lit.replacement_required = 1 on this deployment. This is a
+        // real, current backend state — not a fixture gap — so every
+        // ULT-dependent feature below degrades honestly instead of guessing.
+        ultPlainText = null;
+        targetWordList = { words: [], groups: [] };
+      }
+
+      var ust = chapterData.verses && chapterData.verses.UST && chapterData.verses.UST[CTX.verse];
+      ustAvailable = !!ust;
+      ustPlainText = ust ? (ust.plain_text || "") : null;
+
+      LINKS = (chapterData.twl || [])
+        .filter(function (r) { return r.verse === CTX.verse; })
+        .sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); })
+        .map(function (r) {
+          return { id: r.id, quote: r.orig_words || "", occurrence: r.occurrence || 1, article: twLinkToId(r.tw_link), ref_raw: r.ref_raw, tags: r.tags, version: r.version };
+        });
+      cur = 0;
+    }
+
+    function fetchSuggestions() {
+      return window.flowApi.get("/api/twl-suggestions/" + CTX.book + "/" + CTX.chapter + "/" + CTX.verse).then(function (res) {
+        SUGGESTIONS = (res && res.ok && res.data && Array.isArray(res.data.suggestions)) ? res.data.suggestions : [];
+      });
+    }
+
+    function renderRefBig() {
+      var ref = CTX.book + " " + CTX.chapter + ":" + CTX.verse;
+      el("refBig").textContent = ref;
+      el("linksSheetTitle").textContent = "Word links — " + ref;
+    }
+
+    // ---------- load real data ----------
+    function loadReal() {
+      return window.flowApi.ready.then(function () {
+        window.flowShell.setContext({ book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, bibleVersion: "ULT" });
+        return window.flowApi.chapter(CTX.book, CTX.chapter);
+      }).then(function (res) {
+        if (!res.ok) {
+          toast("Could not load chapter " + CTX.book + " " + CTX.chapter + " (" + res.status + " " + res.error + ")", { bundle: "F" });
+          return;
+        }
+        chapterData = res.data;
+        // Verse-nav range: same "sorted verse numbers present in this chapter"
+        // approach as t3-scripture.html's goVerse — UHB is present even when a
+        // target lane is quarantined, so it anchors the real range.
+        var refVerses = (chapterData.verses && (chapterData.verses.UHB || chapterData.verses.ULT)) || {};
+        verseNums = Object.keys(refVerses)
+          .map(Number)
+          .filter(function (n) { return n > 0; })
+          .sort(function (a, b) { return a - b; });
+        if (verseNums.length && verseNums.indexOf(CTX.verse) === -1) CTX.verse = verseNums[0];
+        deriveForVerse();
+      }).then(function () {
+        return fetchSuggestions();
+      }).then(function () {
+        renderOlStrip();
+        populateArticleDatalist();
+        renderRefBig();
+        render();
+      });
+    }
+
+    // Re-derives and re-renders the whole verse-scoped view for CTX.verse
+    // using the chapter data already in hand (no refetch) — real navigation,
+    // not a "local nav" toast over an unchanged verse.
+    function goVerse(delta) {
+      if (!verseNums.length) { toast("No verse range loaded yet", { bundle: "F" }); return; }
+      var idx = verseNums.indexOf(CTX.verse);
+      if (idx === -1) idx = 0;
+      idx = Math.max(0, Math.min(verseNums.length - 1, idx + delta));
+      if (verseNums[idx] === CTX.verse) return;
+      CTX.verse = verseNums[idx];
+      window.flowShell.setContext({ book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, bibleVersion: "ULT" });
+      deriveForVerse();
+      fetchSuggestions().then(function () {
+        renderOlStrip();
+        renderRefBig();
+        render();
+        if (!el("verseSheet").hidden) renderVerseSheet();
+      });
+    }
+
+    function populateArticleDatalist() {
+      window.flowApi.get("/api/catalogs").then(function (res) {
+        var dl = el("catalogList");
+        var status = el("catalogListStatus");
+        if (!res.ok || !res.data || !Array.isArray(res.data.twLinks)) {
+          dl.innerHTML = "";
+          status.textContent = "Could not load the tW catalog (" + res.status + " " + (res.error || "unknown") + ") — no autocomplete options available.";
+          return;
+        }
+        status.textContent = res.data.twLinks.length ? "" : "The tW catalog is empty in this environment — no autocomplete options available.";
+        dl.innerHTML = res.data.twLinks.map(function (link) {
+          return '<option value="' + escapeHtml(twLinkToId(link)) + '"></option>';
+        }).join("");
+      });
+    }
+
+    // Populates the mobile "This verse" context sheet from the real ULT/UST
+    // plain_text for CTX.verse, or an honest unavailable message per lane —
+    // there is no client-side fixture data on this screen.
+    function renderVerseSheet() {
+      el("verseSheetBody").innerHTML =
+        '<div class="ctx-lane"><p class="lane-tag">ULT <span class="lane-arrow">→</span> GLT</p><p class="ctx-verse">' +
+        (ultAvailable
+          ? escapeHtml(ultPlainText || "(no ULT text for this verse)")
+          : '<em>ULT verse content is unavailable in this environment right now (lane quarantined) — nothing real to show.</em>') +
+        '</p></div>' +
+        '<div class="ctx-lane"><p class="lane-tag">UST <span class="lane-arrow">→</span> GST</p><p class="ctx-verse">' +
+        (ustAvailable
+          ? escapeHtml(ustPlainText || "(no UST text for this verse)")
+          : '<em>UST verse content is unavailable in this environment right now — nothing real to show.</em>') +
+        '</p></div>';
+    }
+
+    function tally() {
+      el("tally").textContent = LINKS.length + " word link" + (LINKS.length === 1 ? "" : "s") + " on this verse";
+    }
+
+    // Suggestions render inline in the same list as saved links (table rows +
+    // mobile cards), visually marked as dashed/"Suggested" rather than living
+    // in a separate panel. Real fields from twl-suggestions: matchedText
+    // (English span), glOccurrence, articleId, twLink, tag, disambiguation[].
+    function suggestionCandidateHtml(s) {
+      return s.disambiguation && s.disambiguation.length > 1
+        ? '<select class="sugg-select" data-sugg-key="' + escapeHtml(s.matchedText) + '|' + s.glOccurrence + '">' + s.disambiguation.map(function (c) { return '<option value="' + escapeHtml(c) + '"' + (c === s.articleId ? " selected" : "") + '>' + escapeHtml(c) + '</option>'; }).join("") + '</select>'
+        : escapeHtml(s.articleId);
+    }
+
+    function renderTable() {
+      var body = el("twlBody");
+      var cards = el("twlCards");
+      body.innerHTML = "";
+      cards.innerHTML = "";
+
+      LINKS.forEach(function (link, i) {
+        function selectRow() {
+          cur = i;
+          el("wordsLayout").setAttribute("data-view", "detail");
+          renderDetail();
+          renderTable();
+        }
+
+        var tr = document.createElement("tr");
+        tr.setAttribute("aria-selected", i === cur ? "true" : "false");
+        tr.setAttribute("role", "button");
+        tr.setAttribute("tabindex", "0");
+        tr.setAttribute("aria-label", "Edit word link " + link.quote + " → " + link.article);
+        tr.innerHTML =
+          '<td class="tw-quote" dir="rtl">' + escapeHtml(link.quote) + '</td>' +
+          '<td>' + link.occurrence + '</td>' +
+          '<td>' + escapeHtml(link.article) + '</td>' +
+          '<td class="tw-gloss">' + (link.article ? '<a href="t5-articles.html">' + escapeHtml(link.article) + ' →</a>' : '<em>no article linked</em>') + '</td>' +
+          '<td></td>';
+        tr.addEventListener("click", selectRow);
+        tr.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRow(); }
+        });
+        body.appendChild(tr);
+
+        var card = document.createElement("div");
+        card.className = "twl-card";
+        card.setAttribute("role", "listitem");
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("aria-selected", i === cur ? "true" : "false");
+        card.setAttribute("aria-label", "Edit word link " + link.quote + " → " + link.article);
+        card.innerHTML =
+          '<div class="twl-card-row"><span class="cr-label">Quote</span><span class="cr-value tw-quote-value" dir="rtl">' + escapeHtml(link.quote) + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Occurrence</span><span class="cr-value">' + link.occurrence + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">tW link</span><span class="cr-value">' + escapeHtml(link.article) + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">In target (ULT)</span><span class="cr-value tc-context">' + targetContextHtml(link.quote) + '</span></div>';
+        card.addEventListener("click", selectRow);
+        card.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRow(); }
+        });
+        cards.appendChild(card);
+      });
+
+      if (!SUGGESTIONS.length) {
+        var noneRow = document.createElement("tr");
+        noneRow.innerHTML = '<td colspan="5" style="color:var(--ink-2);font-style:italic;">No AI-suggested links for this verse — GET /api/twl-suggestions returned none.</td>';
+        body.appendChild(noneRow);
+      }
+
+      SUGGESTIONS.forEach(function (s) {
+        var candidateHtml = suggestionCandidateHtml(s);
+        var suggKey = s.matchedText + "|" + s.glOccurrence;
+        var actionsHtml =
+          '<button type="button" class="row-accept" data-handle="POST /api/rows/twl" data-handle-manual data-bundle="F" data-sugg-accept="' + escapeHtml(suggKey) + '">✓ Add</button>' +
+          '<button type="button" class="row-reject" data-handle="local:reject-suggestion" data-bundle="F" data-sugg-reject="' + escapeHtml(suggKey) + '">✗ Reject</button>';
+
+        var tr = document.createElement("tr");
+        tr.className = "is-suggested";
+        tr.innerHTML =
+          '<td class="tw-quote">' + escapeHtml(s.matchedText) + ' <span class="chip-suggested">Suggested</span></td>' +
+          '<td>' + s.glOccurrence + '</td>' +
+          '<td>' + candidateHtml + '</td>' +
+          '<td class="tw-gloss">' + escapeHtml(s.tag || "") + '</td>' +
+          '<td class="row-actions">' + actionsHtml + '</td>';
+        body.appendChild(tr);
+
+        var card = document.createElement("div");
+        card.className = "twl-card is-suggested";
+        card.innerHTML =
+          '<div class="twl-card-head"><span class="chip-suggested">Suggested</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Matched (ULT English)</span><span class="cr-value tw-quote-value">' + escapeHtml(s.matchedText) + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">Occurrence</span><span class="cr-value">' + s.glOccurrence + '</span></div>' +
+          '<div class="twl-card-row"><span class="cr-label">tW link</span><span class="cr-value">' + candidateHtml + '</span></div>' +
+          '<div class="twl-card-row row-actions">' + actionsHtml + '</div>';
+        cards.appendChild(card);
+      });
+
+      tally();
+    }
+
+    function renderDetail() {
+      if (LINKS.length === 0) {
+        el("detailPanel").hidden = true;
+        return;
+      }
+      el("detailPanel").hidden = false;
+      var link = LINKS[cur];
+      el("detailQuote").textContent = link.quote;
+      el("detailOcc").value = link.occurrence;
+      el("detailArticle").value = link.article;
+      el("detailGloss").textContent = link.article
+        ? "No article text available locally (translationWords import is empty in this environment — see t5-articles.html)."
+        : "No tW article linked.";
+      el("detailTargetContext").innerHTML = targetContextHtml(link.quote);
+      el("readArticleLink").href = "t5-articles.html";
+      var dirty = !!unsaved[link.id];
+      el("saveLinkBtn").disabled = !dirty;
+      el("undoLinkBtn").disabled = !dirty;
+      el("backToTableBtn").style.display = "";
+    }
+
+    function render() {
+      renderTable();
+      renderDetail();
+    }
+
+    el("detailOcc").addEventListener("input", function () { unsaved[LINKS[cur].id] = true; renderDetail(); });
+    el("detailArticle").addEventListener("input", function () { unsaved[LINKS[cur].id] = true; renderDetail(); });
+
+    el("saveLinkBtn").addEventListener("click", function () {
+      var link = LINKS[cur];
+      if (!unsaved[link.id]) { toast("Nothing to save", { bundle: "F" }); return; }
+      var body = {
+        occurrence: Number(el("detailOcc").value) || link.occurrence,
+        orig_words: link.quote,
+        tw_link: idToTwLink(el("detailArticle").value)
+      };
+      window.flowApi.patch("/api/rows/twl/" + encodeURIComponent(link.id), body, { ifMatch: link.version, query: { book: CTX.book } }).then(function (res) {
+        if (res.ok) {
+          link.occurrence = res.data.occurrence;
+          link.article = twLinkToId(res.data.tw_link);
+          link.quote = res.data.orig_words;
+          link.version = res.data.version;
+          delete unsaved[link.id];
+          toast("Saved word link", { bundle: "F" });
+          renderTable();
+          renderDetail();
+          return;
+        }
+        if (res.kind === "version_conflict") {
+          var currentV = res.body && res.body.current && res.body.current.version;
+          toast("Someone else changed this link first (server is now at version " + currentV + ") — reloading to refresh.", { bundle: "F" });
+          loadReal();
+          return;
+        }
+        if (res.kind === "precondition_required") {
+          toast("Client bug: request went out without If-Match (428) — this shouldn't happen; please report it.", { bundle: "F" });
+          return;
+        }
+        toast("Save failed: " + res.status + " " + res.error, { bundle: "F" });
+      });
+    });
+    el("undoLinkBtn").addEventListener("click", function () {
+      var link = LINKS[cur];
+      if (!unsaved[link.id]) { toast("Nothing to undo", { bundle: "F" }); return; }
+      delete unsaved[link.id];
+      renderDetail();
+      toast("Reverted to last-saved", { bundle: "F" });
+    });
+    el("deleteLinkBtn").addEventListener("click", function () {
+      var link = LINKS[cur];
+      window.flowApi.del("/api/rows/twl/" + encodeURIComponent(link.id), { ifMatch: link.version, query: { book: CTX.book } }).then(function (res) {
+        if (!res.ok) {
+          if (res.kind === "version_conflict") {
+            toast("Delete blocked — this link changed elsewhere first. Reloading.", { bundle: "F" });
+            loadReal();
+            return;
+          }
+          toast("Delete failed: " + res.status + " " + res.error, { bundle: "F" });
+          return;
+        }
+        LINKS.splice(cur, 1);
+        if (cur >= LINKS.length) cur = Math.max(0, LINKS.length - 1);
+        toast("Deleted word link " + link.quote, { bundle: "F" });
+        render();
+      });
+    });
+    el("locateBtn").addEventListener("click", function () {
+      toast("Highlighting “" + LINKS[cur].quote + "” in the verse (hover-preview, local only)", { bundle: "F" });
+    });
+
+    el("addLinkBtn").addEventListener("click", function () {
+      qbTargetRow = "add";
+      openQuoteBuilder();
+    });
+    el("buildQuoteBtn").addEventListener("click", function () {
+      qbTargetRow = cur;
+      openQuoteBuilder();
+    });
+
+    // quote builder
+    var qbSelected = [];
+    function openQuoteBuilder() {
+      var src = el("qbSource");
+      src.innerHTML = "";
+      SOURCE_WORDS.forEach(function (w) {
+        var word = document.createElement("button");
+        word.type = "button";
+        word.textContent = w.t;
+        word.dataset.i = w.i;
+        word.dataset.selected = "false";
+        word.setAttribute("aria-label", "Source word " + w.t + " (shift-click to extend selection)");
+        word.addEventListener("click", function (ev) {
+          if (ev.shiftKey && qbSelected.length) {
+            var lo = Math.min(qbSelected[0], w.i), hi = Math.max(qbSelected[0], w.i);
+            qbSelected = [];
+            for (var k = lo; k <= hi; k++) qbSelected.push(k);
+          } else {
+            qbSelected = [w.i];
+          }
+          renderQbSource();
+          renderQbPreview();
+        });
+        src.appendChild(word);
+      });
+      qbSelected = [];
+      var tgt = el("qbTarget");
+      tgt.innerHTML = "";
+      if (!ultAvailable) {
+        tgt.innerHTML = '<span class="qb-hint" style="margin:0;">ULT target words unavailable in this environment (lane replacement pending) — target chips are cosmetic anyway; source selection still works.</span>';
+      } else {
+        targetWordList.words.forEach(function (w) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "tchip";
+          btn.textContent = w.text;
+          btn.setAttribute("aria-pressed", "false");
+          btn.addEventListener("click", function () {
+            btn.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") === "true" ? "false" : "true");
+          });
+          tgt.appendChild(btn);
+        });
+      }
+      renderQbSource();
+      renderQbPreview();
+      el("qbBackdrop").hidden = false;
+    }
+    function renderQbSource() {
+      el("qbSource").querySelectorAll("button").forEach(function (span) {
+        span.dataset.selected = qbSelected.indexOf(Number(span.dataset.i)) !== -1 ? "true" : "false";
+      });
+    }
+    // Occurrence = 1-based count of this exact word sequence among all matches
+    // in SOURCE_WORDS, counting only up to (and including) the selection's own
+    // start index — mirrors the server's real occurrence semantics (rows.ts
+    // hasOrigLang / TSV occurrence convention), computed from the real UHB word
+    // list rather than assumed to always be 1.
+    function computeOccurrence(quoteWords, selStartIdx) {
+      var n = quoteWords.length, count = 0;
+      for (var start = 0; start + n <= SOURCE_WORDS.length; start++) {
+        var match = true;
+        for (var k = 0; k < n; k++) { if (SOURCE_WORDS[start + k].t !== quoteWords[k]) { match = false; break; } }
+        if (match) {
+          count++;
+          if (start === selStartIdx) return count;
+        }
+      }
+      return count || 1;
+    }
+    function renderQbPreview() {
+      var sorted = qbSelected.slice().sort(function (a, b) { return a - b; });
+      var words = sorted.map(function (i) {
+        var w = SOURCE_WORDS.filter(function (s) { return s.i === i; })[0];
+        return w ? w.t : "";
+      });
+      el("qbPreviewQuote").textContent = words.length ? words.join(" ") : "—";
+      el("qbPreviewOcc").textContent = words.length ? "(occurrence " + computeOccurrence(words, sorted[0]) + ")" : "";
+    }
+    el("closeQbBtn").addEventListener("click", function () { el("qbBackdrop").hidden = true; });
+    el("qbCancelBtn").addEventListener("click", function () { el("qbBackdrop").hidden = true; });
+    el("qbUseBtn").addEventListener("click", function () {
+      if (!qbSelected.length) { toast("Select at least one source word", { bundle: "F" }); return; }
+      var sorted = qbSelected.slice().sort(function (a, b) { return a - b; });
+      var words = sorted.map(function (i) {
+        return SOURCE_WORDS.filter(function (s) { return s.i === i; })[0].t;
+      });
+      var quote = words.join(" ");
+      var occurrence = computeOccurrence(words, sorted[0]);
+      if (qbTargetRow === "add") {
+        window.flowApi.post("/api/rows/twl", {
+          book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, ref_raw: refRawFor(),
+          tags: null, orig_words: quote, occurrence: occurrence, tw_link: null
+        }, { query: { book: CTX.book } }).then(function (res) {
+          if (!res.ok) { toast("Create failed: " + res.status + " " + res.error, { bundle: "F" }); return; }
+          LINKS.push({ id: res.data.id, quote: res.data.orig_words, occurrence: res.data.occurrence, article: twLinkToId(res.data.tw_link), ref_raw: res.data.ref_raw, tags: res.data.tags, version: res.data.version });
+          cur = LINKS.length - 1;
+          unsaved[res.data.id] = true; // article is still unset — nudge the translator to fill it before Save is "clean"
+          toast("Quote built and saved — now set the tW article", { bundle: "F" });
+          el("qbBackdrop").hidden = true;
+          el("wordsLayout").setAttribute("data-view", "detail");
+          render();
+        });
+      } else {
+        var link = LINKS[cur];
+        link.quote = quote;
+        link.occurrence = occurrence;
+        unsaved[link.id] = true;
+        toast("Quote updated locally — commits on Save", { bundle: "F" });
+        el("qbBackdrop").hidden = true;
+        el("wordsLayout").setAttribute("data-view", "detail");
+        render();
+      }
+    });
+
+    // suggestions: accept / reject — rows appear inline in both the table
+    // (desktop/tablet) and the card list (mobile), so wire the same handler
+    // to both containers. Real POST on accept; reject is genuinely
+    // client-only (twlFilters is a read-only deny-list route — there's no
+    // write endpoint to persist a rejection from here).
+    function handleSuggRowClick(ev) {
+      var acceptBtn = ev.target.closest ? ev.target.closest("[data-sugg-accept]") : null;
+      var rejectBtn = ev.target.closest ? ev.target.closest("[data-sugg-reject]") : null;
+      if (acceptBtn) {
+        var key = acceptBtn.getAttribute("data-sugg-accept");
+        var s = SUGGESTIONS.filter(function (x) { return (x.matchedText + "|" + x.glOccurrence) === key; })[0];
+        if (!s) return;
+        var row = acceptBtn.closest("tr, .twl-card");
+        var select = row ? row.querySelector('select[data-sugg-key="' + CSS.escape(key) + '"]') : null;
+        var articleId = select ? select.value : s.articleId;
+        var resolved = resolveSuggestionToQuote(s);
+        if (!resolved) {
+          toast("Couldn't auto-resolve “" + s.matchedText + "” to a source-language quote (this preview only resolves single-word spans via the verse's own alignment data) — link it manually with Build from source.", { bundle: "F" });
+          return;
+        }
+        window.flowApi.post("/api/rows/twl", {
+          book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, ref_raw: refRawFor(),
+          tags: s.tag || null, orig_words: resolved.origWords, occurrence: resolved.occurrence,
+          tw_link: idToTwLink(articleId)
+        }, { query: { book: CTX.book } }).then(function (res) {
+          if (!res.ok) { toast("Add failed: " + res.status + " " + res.error, { bundle: "F" }); return; }
+          LINKS.push({ id: res.data.id, quote: res.data.orig_words, occurrence: res.data.occurrence, article: twLinkToId(res.data.tw_link), ref_raw: res.data.ref_raw, tags: res.data.tags, version: res.data.version });
+          SUGGESTIONS = SUGGESTIONS.filter(function (x) { return x !== s; });
+          cur = LINKS.length - 1;
+          toast("Added word link from suggestion", { bundle: "F" });
+          render();
+        });
+      } else if (rejectBtn) {
+        var rkey = rejectBtn.getAttribute("data-sugg-reject");
+        SUGGESTIONS = SUGGESTIONS.filter(function (x) { return (x.matchedText + "|" + x.glOccurrence) !== rkey; });
+        toast("Rejected (client-only — no deny-list write endpoint exists here; twl-filters is read-only)", { bundle: "F" });
+        renderTable();
+      }
+    }
+    el("twlBody").addEventListener("click", handleSuggRowClick);
+    el("twlCards").addEventListener("click", handleSuggRowClick);
+
+    // mobile detail back
+    el("backToTableBtn").addEventListener("click", function () { el("wordsLayout").setAttribute("data-view", "table"); });
+
+    // mobile sheets
+    function renderLinksSheet() {
+      var body = el("linksSheetBody");
+      body.innerHTML = "";
+      LINKS.forEach(function (link, i) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "cluster-btn";
+        btn.style.width = "100%";
+        btn.style.marginBottom = "6px";
+        btn.style.textAlign = "start";
+        btn.textContent = link.quote + " → " + link.article;
+        btn.addEventListener("click", function () {
+          cur = i;
+          el("linksSheetBackdrop").hidden = true;
+          el("linksSheet").hidden = true;
+          el("wordsLayout").setAttribute("data-view", "detail");
+          renderDetail();
+          renderTable();
+        });
+        body.appendChild(btn);
+      });
+    }
+    el("openLinksSheetBtn").addEventListener("click", function () { renderLinksSheet(); el("linksSheetBackdrop").hidden = false; el("linksSheet").hidden = false; });
+    el("closeLinksSheetBtn").addEventListener("click", function () { el("linksSheetBackdrop").hidden = true; el("linksSheet").hidden = true; });
+    el("linksSheetBackdrop").addEventListener("click", function () { el("linksSheetBackdrop").hidden = true; el("linksSheet").hidden = true; });
+
+    el("openVerseSheetBtn").addEventListener("click", function () { renderVerseSheet(); el("verseSheetBackdrop").hidden = false; el("verseSheet").hidden = false; });
+    el("closeVerseSheetBtn").addEventListener("click", function () { el("verseSheetBackdrop").hidden = true; el("verseSheet").hidden = true; });
+    el("verseSheetBackdrop").addEventListener("click", function () { el("verseSheetBackdrop").hidden = true; el("verseSheet").hidden = true; });
+
+    el("prevVerseBtn").addEventListener("click", function () { goVerse(-1); });
+    el("nextVerseBtn").addEventListener("click", function () { goVerse(1); });
+
+    // K.4 original-language reference — tap a source word for a lexicon
+    // popover. Real GET /api/lexicon/:strong per word's real Strong's number
+    // (from the UHB verseObjects, not a hardcoded index map). The local
+    // lexicon table is EMPTY in this environment (verified: every lookup
+    // 404s {"error":"not_found","strong":"H..."}), so every popover honestly
+    // reports "no entry" instead of showing invented glosses — populating it
+    // is scripts/import-lexicon.mjs, not a UI concern.
+    var lexCache = {};
+    function renderOlStrip() {
+      el("olWords").innerHTML = SOURCE_WORDS.map(function (w, i) {
+        var strong = w.strong || "";
+        return '<span class="lex-wrap"><button type="button" class="lex-word" data-strong="' + escapeHtml(strong) + '" data-handle="GET /api/lexicon/:strong" data-handle-manual data-bundle="K" aria-haspopup="true" aria-expanded="false" aria-controls="lexPop' + i + '">' + escapeHtml(w.t) + '</button>' +
+          '<div class="lex-popover" id="lexPop' + i + '" role="dialog" hidden></div></span>';
+      }).join("");
+    }
+    document.addEventListener("click", function (ev) {
+      var word = ev.target.closest ? ev.target.closest(".lex-word") : null;
+      document.querySelectorAll(".lex-popover").forEach(function (p) {
+        if (!word || p !== word.parentElement.querySelector(".lex-popover")) { p.hidden = true; }
+      });
+      document.querySelectorAll(".lex-word[aria-expanded]").forEach(function (b) { if (b !== word) b.setAttribute("aria-expanded", "false"); });
+      if (!word) return;
+      ev.stopPropagation();
+      var pop = word.parentElement.querySelector(".lex-popover");
+      var willOpen = pop.hasAttribute("hidden");
+      if (!willOpen) { pop.hidden = true; word.setAttribute("aria-expanded", "false"); return; }
+      var strong = word.dataset.strong;
+      pop.hidden = false;
+      word.setAttribute("aria-expanded", "true");
+      pop.classList.remove("flip");
+      if (!strong) {
+        pop.innerHTML = '<p class="lex-strong">(no Strong\'s number on this word)</p>';
+      } else if (lexCache[strong]) {
+        renderLexEntry(pop, strong, lexCache[strong]);
+      } else {
+        pop.innerHTML = '<p class="lex-strong">' + escapeHtml(strong) + '</p><p class="lex-gloss">Loading…</p>';
+        window.flowApi.get("/api/lexicon/" + encodeURIComponent(strong)).then(function (res) {
+          lexCache[strong] = res;
+          // Only repaint if this popover is still the open one.
+          if (word.getAttribute("aria-expanded") === "true") renderLexEntry(pop, strong, res);
+        });
+      }
+      var rect = pop.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 8) pop.classList.add("flip");
+    });
+    function renderLexEntry(pop, strong, res) {
+      if (res.ok) {
+        var e = res.data || {};
+        pop.innerHTML = '<p class="lex-strong">' + escapeHtml(strong) + '</p>' +
+          '<p class="lex-gloss">' + escapeHtml(e.gloss || e.def || "(entry found, no gloss field)") + '</p>' +
+          '<p class="lex-def">' + escapeHtml(e.definition || "") + '</p>';
+      } else {
+        pop.innerHTML = '<p class="lex-strong">' + escapeHtml(strong) + '</p>' +
+          '<p class="lex-gloss"><em>No lexicon entry loaded locally (' + res.status + ' ' + escapeHtml(res.error || "not_found") + ').</em></p>' +
+          '<p class="lex-def">The local lexicon table is empty in this environment — <code>scripts/import-lexicon.mjs</code> populates UHAL/UGL.</p>';
+      }
+    }
+
+    // Real refresh + filter — reload suggestions/deny-lists from the API
+    // rather than just re-rendering the same in-memory array.
+    el("suggRefreshBtn").addEventListener("click", function () {
+      window.flowApi.get("/api/twl-suggestions/" + CTX.book + "/" + CTX.chapter + "/" + CTX.verse).then(function (res) {
+        SUGGESTIONS = (res.ok && res.data && Array.isArray(res.data.suggestions)) ? res.data.suggestions : [];
+        toast(SUGGESTIONS.length ? "Suggestions refreshed (" + SUGGESTIONS.length + ")" : "Suggestions refreshed — none for this verse", { bundle: "D" });
+        renderTable();
+      });
+    });
+    el("suggFilterSelect").addEventListener("change", function () {
+      window.flowApi.get("/api/twl-filters/" + CTX.book).then(function (res) {
+        if (!res.ok) { toast("Could not load deny-lists: " + res.status + " " + res.error, { bundle: "D" }); return; }
+        var unlinkedN = (res.data.unlinked || []).length, deletedN = (res.data.deleted || []).length;
+        toast("Deny-lists loaded — " + unlinkedN + " unlinked, " + deletedN + " deleted for " + CTX.book + " (filtering by these is not yet wired into this preview's rendering)", { bundle: "D" });
+      });
+    });
+
+    // Real identity from window.flowApi.me ({userId, username, role}) once
+    // window.flowApi.ready resolves. The API returns only username + role —
+    // never a full name, so the label is the username as-is.
+    window.flowApi.ready.then(function (me) {
+      if (!me || !me.username) return;
+      el("accountAvatar").textContent = me.username.slice(0, 2).toUpperCase();
+      el("accountName").textContent = me.username;
+      if (me.role) el("accountBtn").title = "Role: " + me.role;
+    });
+
+    // account menu
+    (function () {
+      var btn = el("accountBtn"), menu = el("accountMenu");
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+      document.addEventListener("click", function () { menu.setAttribute("hidden", ""); btn.setAttribute("aria-expanded", "false"); });
+    })();
+
+    loadReal();
+  })();
+  </script>
+</body>
+</html>

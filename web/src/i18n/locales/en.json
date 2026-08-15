@@ -235,6 +235,7 @@
     "resetArrangement": "Reset arrangement",
     "closeRegion": "Close this section",
     "closedRegions": "Closed sections",
+    "regionSwitcher": "Switch section",
     "restoreRegion": "Reopen {{name}}",
     "restoreAllRegions": "Reopen all sections",
     "dockFullWidth": "Full-width band",

@@ -1,0 +1,1177 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Alignment — ZEC 1:8</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .flow-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px 18px; background: var(--card); border-block-end: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .flow-nav a { flex: none; text-decoration: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .flow-nav a[aria-current="page"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .skip-link { position: absolute; inset-inline-start: -999px; top: 0; background: var(--ocean); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; z-index: 100; }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .cluster-item { position: relative; }
+  .cluster-btn { appearance: none; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); border-radius: 999px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .cluster-btn[aria-pressed="true"] { background: var(--hl); border-color: var(--inspire); color: var(--ink); }
+  .menu { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; z-index: 50; }
+  .menu[hidden] { display: none; }
+  .menu button { display: block; width: 100%; text-align: start; appearance: none; border: none; background: transparent; color: var(--ink); font-size: 13.5px; padding: 8px 9px; border-radius: 7px; cursor: pointer; }
+  .menu button:hover { background: var(--card-2); }
+
+  .align-wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 96px; }
+
+  .align-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 14px; }
+  .align-toolbar .at-count { font-size: 12.5px; font-weight: 700; color: var(--warn-ink); background: var(--warn-soft); border-radius: 999px; padding: 4px 10px; }
+  .align-toolbar .spacer { margin-inline-start: auto; }
+
+  .verse-ref-row { display: flex; align-items: center; gap: 10px; margin-block-end: 10px; flex-wrap: wrap; }
+  .verse-ref-row .ref-big { font-size: 18px; font-weight: 700; color: var(--ocean); }
+  :root[data-theme="dark"] .verse-ref-row .ref-big { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .verse-ref-row .ref-big { color: var(--cultivate); } }
+  :root[data-theme="light"] .verse-ref-row .ref-big { color: var(--ocean); }
+
+  /* ---------- mode toggle (segmented control) ---------- */
+  .mode-toggle-row { display: flex; align-items: center; gap: 10px; margin-block-end: 14px; flex-wrap: wrap; }
+  .mode-toggle-row .seg { max-width: 340px; }
+  @media (max-width: 559.98px) { .mode-toggle-row { display: none !important; } }
+
+  /* =========================================================
+     DRAG CANVAS VIEW (desktop-first; unchanged behaviour)
+     ========================================================= */
+  .source-row {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow); margin-block-end: 14px; font-family: var(--font-scripture); font-size: 17px;
+  }
+  .source-row .src-word {
+    cursor: grab; padding: 3px 7px; border-radius: 6px; border: 1px solid transparent;
+  }
+  .source-row .src-word:hover { background: var(--hl); border-color: var(--inspire); }
+  .source-row .src-word.unaligned { border-bottom: 2px dashed var(--warn); }
+
+  .align-canvas { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-block-end: 16px; align-items: stretch; }
+  .align-card {
+    background: var(--card); border: 1.5px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow);
+    padding: 10px; position: relative; cursor: grab;
+    /* uniform row skyline: every card fills its grid row; slots got a matching
+       min-height + centered label (mixed heights made tablet rows ragged) */
+    min-height: 78px; display: flex; flex-direction: column;
+  }
+  .align-card:hover { border-color: var(--inspire); }
+  /* canvas is dir=rtl for Hebrew card ORDER; card content is per-language */
+  .align-card { direction: ltr; }
+  .align-card .ac-source { font-family: var(--font-scripture); font-size: 15px; color: var(--ink-2); margin: 0 0 4px; direction: rtl; text-align: start; unicode-bidi: plaintext; }
+  .align-card .ac-target { font-family: var(--font-scripture); font-size: 16px; font-weight: 600; margin: 0; }
+  .align-card .ac-clear {
+    position: absolute; top: 4px; inset-inline-end: 4px; appearance: none; border: none; background: transparent;
+    color: var(--ink-2); font-size: 12px; cursor: pointer; width: 18px; height: 18px; border-radius: 50%;
+  }
+  .align-card.ghost { border-style: dashed; opacity: 0.85; }
+  .align-card.ghost .ac-target::after { content: " ●"; color: var(--inspire); font-size: 10px; }
+  /* empty (unaligned) cards keep their Hebrew visible; only the hint is muted */
+  .align-card.unaligned-slot { align-items: center; justify-content: center; text-align: center; border-style: dashed; min-height: 78px; }
+  .align-card.unaligned-slot .ac-hint { color: var(--ink-2); font-size: 12.5px; margin: 4px 0 0; }
+  .align-card.drop-hot { border-color: var(--inspire); background: var(--hl); }
+  .source-row .src-word[draggable="true"] { cursor: grab; }
+  .source-row .src-word.dragging { opacity: 0.4; }
+
+  .canvas-note { font-size: 12px; color: var(--ink-2); margin: -6px 0 14px; }
+
+  .action-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .action-bar .spacer { margin-inline-start: auto; }
+  .btn { appearance: none; border: none; border-radius: 10px; min-height: 44px; padding: 0 12px; font-weight: 700; font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-primary { background: var(--inspire); color: #06293B; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink); }
+  .btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  /* =========================================================
+     TAP-TO-PAIR VIEW (mobile-first interaction; also default
+     on tablet, and toggleable on desktop)
+     ========================================================= */
+
+  /* suggestion queue */
+  .suggest-stack { margin-block-end: 14px; }
+  .suggest-card {
+    background: var(--card); border: 1.5px solid var(--inspire); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 14px 16px;
+  }
+  .suggest-meta { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 8px; }
+  .suggest-pair { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-block-end: 12px; }
+  .suggest-src { font-family: var(--font-scripture); font-size: 18px; }
+  .suggest-arrow { color: var(--inspire); font-weight: 700; }
+  .suggest-tgt { font-family: var(--font-scripture); font-size: 17px; font-weight: 600; }
+  .suggest-actions { display: flex; gap: 8px; }
+  .suggest-actions .btn { flex: 1; }
+  .suggest-done {
+    font-size: 13.5px; color: var(--ink-2); background: var(--card-2); border: 1px dashed var(--line);
+    border-radius: var(--radius-sm); padding: 10px 14px; margin-block-end: 14px;
+  }
+
+  .tap-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 12px; }
+  .tap-toolbar .at-count { font-size: 12.5px; font-weight: 700; color: var(--ok-ink); background: var(--ok-soft); border-radius: 999px; padding: 4px 10px; font-variant-numeric: tabular-nums; }
+  .tap-toolbar .spacer { margin-inline-start: auto; }
+
+  /* source ribbon — scrolls horizontally inside its own container */
+  .source-ribbon-outer {
+    overflow-x: auto; -webkit-overflow-scrolling: touch; margin-block-end: 12px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow);
+  }
+  .source-ribbon { display: flex; gap: 10px; padding: 12px; min-width: min-content; }
+  .src-group {
+    flex: none; min-width: 108px; border: 1.5px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--card-2); padding: 8px; display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  }
+  .src-group.group-selected { border-color: var(--inspire); background: var(--hl); }
+  .src-group[data-unaligned="true"] { border-bottom: 3px solid var(--warn); }
+  .src-group-words { display: flex; gap: 3px; flex-wrap: wrap; }
+  .src-word-btn {
+    appearance: none; border: 1px solid transparent; background: transparent; color: var(--ink);
+    border-radius: 7px; padding: 4px 6px; min-height: 44px; min-width: 44px; cursor: pointer;
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    font-family: var(--font-scripture); font-size: 16px;
+  }
+  .src-word-btn .sw-idx { font-family: var(--font-ui); font-size: 9.5px; color: var(--ink-2); font-weight: 700; }
+  .src-word-btn .sw-heb { line-height: 1.2; }
+  .src-word-btn.selected, .src-word-btn[aria-pressed="true"] { background: var(--inspire); color: #06293B; }
+  .src-word-btn.selected .sw-idx, .src-word-btn[aria-pressed="true"] .sw-idx { color: #06293B; }
+  .src-group-aligned { display: flex; flex-wrap: wrap; gap: 4px; min-height: 30px; }
+  .empty-slot { font-size: 11px; color: var(--ink-2); font-style: italic; align-self: center; }
+  .split-btn {
+    appearance: none; border: 1px dashed var(--line); background: transparent; color: var(--ink-2);
+    border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 700; cursor: pointer; align-self: flex-start;
+  }
+  .split-btn:hover { border-color: var(--inspire); color: var(--ink); }
+
+  /* ---------- reference alignment panel (issue #150 mockup) ---------- */
+  .ref-panel-toggle-row { margin-block-end: 12px; }
+  .ref-panel {
+    margin-block-end: 16px; background: var(--card-2); border: 1px dashed var(--line);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .ref-panel[hidden] { display: none; }
+  .ref-panel-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-block-end: 4px; }
+  .ref-panel-top h3 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2); margin: 0;
+  }
+  .ref-panel-top .spacer { margin-inline-start: auto; }
+  .ref-panel-note { font-size: 11.5px; color: var(--ink-2); margin: 0 0 10px; font-style: italic; }
+  .ref-panel-phone-note { display: none; }
+  @media (max-width: 559.98px) { .ref-panel-phone-note { display: block; } }
+  .ref-groups { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ref-group {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    padding: 6px 9px; cursor: default; opacity: 0.85;
+  }
+  .ref-group .rg-heb { font-family: var(--font-scripture); font-size: 14px; direction: rtl; }
+  .ref-group .rg-eng { font-family: var(--font-ui); font-size: 11px; color: var(--ink-2); margin-block-start: 2px; }
+
+  .jump-pill {
+    appearance: none; border: 1px solid var(--warn); background: var(--warn-soft); color: var(--warn-ink);
+    border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; min-height: 34px;
+  }
+
+  /* target pool */
+  .target-pool {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow); margin-block-end: 14px; min-height: 60px;
+  }
+  .target-pool .empty-note { font-size: 13px; color: var(--ink-2); font-style: italic; }
+
+  /* chips — shared by pool + aligned-in-card, min 44px touch target */
+  .chip.pool-chip, .chip.aligned-chip {
+    appearance: none; border: 1.5px solid var(--line); background: var(--card-2); color: var(--ink);
+    font-family: var(--font-scripture); font-size: 15px; font-weight: 600; border-radius: 999px;
+    padding: 8px 14px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center;
+  }
+  .chip.aligned-chip { background: var(--ok-soft); border-color: var(--ok); color: var(--ok-ink); min-height: 38px; padding: 6px 12px; font-size: 14px; }
+  .chip.pool-chip.selected, .chip.pool-chip[aria-pressed="true"] { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+  .chip.aligned-chip.selected, .chip.aligned-chip[aria-pressed="true"] { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .chip, .src-group, .src-word-btn { transition: background-color 0.12s ease, border-color 0.12s ease; }
+  }
+
+  /* tap action bar */
+  .tap-action-bar {
+    position: sticky; inset-block-end: 0; z-index: 25; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--inspire); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 10px 14px; margin-block-end: 14px;
+  }
+  .tap-action-bar .spacer { margin-inline-start: auto; }
+
+  /* form-factor policy */
+  #dragView { display: none; }
+  #tapView { display: block; }
+  body[data-align-mode="drag"] #dragView { display: block; }
+  body[data-align-mode="drag"] #tapView { display: none; }
+  body[data-align-mode="tap"] #dragView { display: none; }
+  body[data-align-mode="tap"] #tapView { display: block; }
+  @media (max-width: 559.98px) {
+    #dragView { display: none !important; }
+    #tapView { display: block !important; }
+  }
+
+  /* side-by-side dialog */
+  .dlg-backdrop { position: fixed; inset: 0; background: rgba(1,66,99,0.4); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 12px; }
+  .dlg-backdrop[hidden] { display: none; }
+  .dlg-full { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); width: 100%; max-width: 1100px; max-height: 92vh; display: flex; flex-direction: column; }
+  .dlg-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-block-end: 1px solid var(--line); flex-wrap: wrap; }
+  .dlg-top h2 { font-size: 15px; margin: 0; }
+  .dlg-top .spacer { margin-inline-start: auto; }
+  .close-x { appearance: none; border: none; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+  .dlg-body { padding: 14px 16px; overflow: auto; }
+  .sbs-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 820px) { .sbs-cols { grid-template-columns: 1fr; } }
+  .sbs-col { background: var(--card-2); border-radius: var(--radius-sm); padding: 10px; }
+  .sbs-col h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2); margin: 0 0 8px; }
+  .reading-line { font-family: var(--font-scripture); font-size: 14.5px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-block-end: 8px; }
+  .reading-line[contenteditable="true"]:focus { border-color: var(--inspire); outline: none; }
+  .reading-line.locked { opacity: 0.6; pointer-events: none; }
+  .rl-actions { display: flex; gap: 6px; margin-block-end: 10px; }
+  .rl-actions button { appearance: none; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+  .rl-actions button[disabled] { opacity: 0.5; cursor: default; }
+  .cluster-btn[disabled] { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body data-mode="translation" data-align-mode="tap">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">Alignment — Zechariah</span>
+    <span class="account-cluster">
+      <button type="button" class="cluster-btn" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <!-- Populated from the real window.flowApi.me ({username, role}) once
+               window.flowApi.ready resolves — see the script below. Neutral
+               placeholder until then; never a fabricated name. -->
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">··</span> <span id="accountName">…</span>
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <hr style="border:none;border-block-start:1px solid var(--line);margin:4px 2px;" />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html">Home</a>
+    <a href="t2-review.html">Notes</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html" aria-current="page">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html">Words</a>
+    <a href="index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="align-wrap">
+    <div class="verse-ref-row">
+      <span class="ref-big">ZEC 1:8 · ULT</span>
+      <button type="button" class="cluster-btn" id="historyBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion/history" data-bundle="H">Verse history</button>
+      <button type="button" class="cluster-btn" id="sbsBtn">Side-by-side</button>
+    </div>
+
+    <div class="mode-toggle-row">
+      <div class="seg" role="group" aria-label="Alignment interaction mode">
+        <button type="button" id="dragModeBtn" aria-pressed="false">Drag canvas</button>
+        <button type="button" id="tapModeBtn" aria-pressed="true">Tap mode (keyboard accessible)</button>
+      </div>
+    </div>
+
+    <!-- Mockup for issue #150 — read-only reference, interactive copying is out of scope. -->
+    <div class="ref-panel-toggle-row">
+      <button type="button" class="cluster-btn" id="refPanelToggle" aria-pressed="false" aria-expanded="false" aria-controls="refPanel" data-handle="local:toggle-reference-panel" data-bundle="H">
+        Reference — unfoldingWord's ULT alignment
+      </button>
+    </div>
+    <div class="ref-panel" id="refPanel" hidden aria-label="Reference — unfoldingWord's ULT alignment (read-only)">
+      <div class="ref-panel-top">
+        <h3>Reference — unfoldingWord's ULT alignment</h3>
+        <span class="spacer"></span>
+        <!-- Refresh would reuse the existing verse-content GET for the ULT lane (00b, bundle G/H). -->
+        <button type="button" class="cluster-btn" id="refPanelRefreshBtn" data-handle="GET /api/verses/:book/:chapter/:verse/:bibleVersion" data-handle-manual data-bundle="H" title="Refresh from ULT verse content">⟳ Refresh</button>
+      </div>
+      <p class="ref-panel-note">Read-only — shown for comparison, not editable here.<span class="ref-panel-phone-note"> Whether this fits comfortably on a phone screen is still an open question; it's collapsed by default here.</span></p>
+      <div class="ref-groups" id="refGroups" role="list" aria-label="unfoldingWord ULT reference alignment" dir="rtl"></div>
+    </div>
+
+    <!-- ============ DRAG CANVAS VIEW ============ -->
+    <div id="dragView">
+      <div class="align-toolbar">
+        <span class="at-count" id="unalignedCount">3 unaligned</span>
+        <span id="selectionCount" style="font-size:12.5px;color:var(--ink-2);">0 selected</span>
+        <button type="button" class="cluster-btn" id="colorsToggle" aria-pressed="true">Colors</button>
+        <button type="button" class="cluster-btn" id="hoverLinkToggle" aria-pressed="false">Hover-link</button>
+        <button type="button" class="cluster-btn" id="unalignedOnlyToggle" aria-pressed="false">Unaligned only</button>
+        <span class="spacer"></span>
+        <button type="button" class="cluster-btn" id="clearAllBtn" data-handle="local:clear-alignment" data-bundle="H">Clear</button>
+        <button type="button" class="cluster-btn" id="resetBtn" data-handle="local:reset-alignment" data-bundle="H">Reset</button>
+      </div>
+
+      <p class="canvas-note">This demo supports basic drag — pick up an underlined word and drop it on a Hebrew card. The production aligner is a richer custom HTML5 DnD canvas.</p>
+
+      <!-- Target-language words: follow the TARGET language's direction (LTR here).
+           Direction must always be driven by language, never hardcoded: source rows
+           follow the source (Hebrew hbo = rtl, Greek grc = LTR — an NT book must
+           NOT flip), target rows follow the target. Rendered from DRAG state. -->
+      <div class="source-row" id="dragTargetRow" aria-label="Target language words" role="list" dir="ltr"></div>
+
+      <!-- One card per SOURCE word/group — every Hebrew word is always present,
+           aligned or not. Cards follow SOURCE order/direction (Hebrew: first word
+           rightmost); card content stays per-language (.align-card ltr, .ac-source
+           rtl). For a Greek (grc) source this container would be ltr. -->
+      <div class="align-canvas" id="dragCanvas" role="list" aria-label="Alignment cards" dir="rtl"></div>
+
+      <div class="action-bar">
+        <button type="button" class="btn btn-outline" id="acceptSuggestionsBtn" data-handle="local:accept-suggestions" data-bundle="H">Accept 1 suggestion</button>
+        <button type="button" class="btn btn-outline" id="refreshSuggestBtn" data-handle="GET /api/align/suggest" data-handle-manual data-bundle="H">Refresh suggestions</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="saveBtn" disabled
+          data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+      </div>
+      <p class="canvas-note" id="saveDisabledNote">Save is disabled in this preview: it cannot faithfully reconstruct a valid USFM <code>\zaln-s/\zaln-e</code> verseObjects tree from the drag-canvas state (see web/src/lib/replace.ts for what that reconstruction actually requires). Sending a malformed body would be worse than not saving.</p>
+    </div>
+
+    <!-- ============ TAP-TO-PAIR VIEW ============ -->
+    <div id="tapView">
+      <div class="suggest-stack" id="suggestStack" aria-live="polite"></div>
+      <p class="suggest-done" id="suggestDone" hidden>All suggestions reviewed — manual tap-to-pair is below.</p>
+
+      <div class="tap-toolbar">
+        <span class="at-count" id="tapProgress">0 of 0 words aligned</span>
+        <button type="button" class="jump-pill" id="jumpUnalignedBtn">Jump to unaligned ↓</button>
+        <span class="spacer"></span>
+        <button type="button" class="cluster-btn" id="tapRefreshBtn" data-handle="GET /api/align/suggest" data-handle-manual data-bundle="H">Refresh suggestions</button>
+      </div>
+
+      <div class="source-ribbon-outer" dir="rtl">
+        <div class="source-ribbon" id="sourceRibbon" role="list" aria-label="Hebrew source word groups"></div>
+      </div>
+
+      <div class="target-pool" id="targetPool" role="list" aria-label="Unaligned target words"></div>
+
+      <div class="tap-action-bar" id="tapActionBar" hidden role="region" aria-label="Alignment actions">
+        <span id="selectionDesc" style="font-size:12.5px;color:var(--ink-2);"></span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-warn" id="unalignBtn" data-handle="local:align-unalign" data-bundle="H">Unalign</button>
+        <button type="button" class="btn btn-outline" id="combineBtn" data-handle="local:align-combine" data-bundle="H" hidden>⧉ Combine</button>
+        <button type="button" class="btn btn-outline" id="splitTargetBtn" data-handle="local:align-split-target" data-bundle="H" hidden>✂ Split words</button>
+        <button type="button" class="btn btn-outline" id="clearSelBtn" data-handle="local:align-clear-selection" data-bundle="H">Clear</button>
+      </div>
+
+      <div class="action-bar">
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="saveBtnTap" disabled
+          data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="H">Save alignment</button>
+      </div>
+      <p class="canvas-note">Save is disabled here for the same reason as the drag view — see the note above.</p>
+    </div>
+  </main>
+
+  <!-- side-by-side dialog -->
+  <div class="dlg-backdrop" id="sbsBackdrop" hidden>
+    <div class="dlg-full" role="dialog" aria-modal="true" aria-labelledby="sbsTitle">
+      <div class="dlg-top">
+        <!-- sbsPrevBtn/sbsNextBtn removed: wiring cross-verse nav here would need to
+             re-derive the whole align screen's state (drag cards, tap state,
+             suggestions) for the new verse, which is out of scope for this dialog —
+             a dead control was worse than no control. Use the main verse nav instead. -->
+        <h2 id="sbsTitle">ZEC 1:8 — ULT + UST side-by-side</h2>
+        <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:5px;">
+          <input type="checkbox" id="hebrewInfoToggle" /> Hebrew info
+        </label>
+        <span class="spacer"></span>
+        <button type="button" class="close-x" id="closeSbsBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="dlg-body">
+        <div class="sbs-cols">
+          <div class="sbs-col">
+            <h3>ULT → GLT</h3>
+            <div class="rl-actions">
+              <button type="button" id="sbsSaveLitBtn" disabled
+                data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
+            </div>
+            <!-- Populated from the real ULT plain_text for CTX.verse by renderSbs()
+                 below, or an honest unavailable message when the ULT lane is
+                 quarantined — never fixture text. -->
+            <div class="reading-line" contenteditable="true" id="litReadingLine"></div>
+            <p style="font-size:12px;color:var(--ink-2);margin:0 0 8px;">Alignment canvas (ULT) — same card grid as the main view, omitted here for brevity.</p>
+          </div>
+          <div class="sbs-col">
+            <h3>UST → GST</h3>
+            <div class="rl-actions">
+              <button type="button" id="sbsSaveSimBtn" disabled
+                data-handle="PATCH /api/verses/:book/:chapter/:verse/:bibleVersion" data-headers="If-Match, X-Source-Generation" data-bundle="G">Save line</button>
+              <button type="button" data-handle="local:reset-alignment" data-bundle="G">Undo</button>
+            </div>
+            <!-- Populated from the real UST plain_text for CTX.verse by renderSbs()
+                 below, or an honest unavailable message — never fixture text. -->
+            <div class="reading-line locked" id="simReadingLine"></div>
+            <p style="font-size:12px;color:var(--ink-2);margin:0 0 8px;">Reading-line text is locked while this side's alignment has unsaved drags.</p>
+          </div>
+        </div>
+        <p class="canvas-note" id="sbsSaveDisabledNote">Save line is disabled in this preview for the same reason as the main Align view: it cannot faithfully reconstruct a valid USFM <code>\zaln-s/\zaln-e</code> verseObjects tree from reading-line text, so saving would erase alignment.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="_api.js"></script>
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    function el(id) { return document.getElementById(id); }
+    function toast(t, o) { window.flowShell.toast(t, o); }
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    var CTX = { book: "ZEC", chapter: 1, verse: 8 };
+    var chapterData = null;
+    var ultAvailable = false;
+    var ultPlainText = null;
+    var ustAvailable = false;
+    var ustPlainText = null;
+    var SOURCE_WORDS = []; // real UHB word list [{i,t,strong,occurrence}]
+
+    // Real ULT \zaln alignment, flattened the same way as t6-words.html:
+    // groups = one per top-level milestone {sourceText}; words = every
+    // rendered ULT word in verse order tagged with its groupIdx (-1 = not
+    // covered by a milestone). This IS the verse's current real alignment —
+    // used both to seed the editor's starting state and (best-effort) to
+    // rebuild source-word groupings that span more than one Hebrew word.
+    function extractTargetWordList(ultVerse) {
+      var vo = ultVerse && ultVerse.content && ultVerse.content.verseObjects;
+      var words = [];
+      var groups = [];
+      if (!Array.isArray(vo)) return { words: words, groups: groups };
+      function walk(nodes, groupIdx) {
+        (nodes || []).forEach(function (node) {
+          if (!node) return;
+          if (node.tag === "zaln" && node.type === "milestone") {
+            var gi = groups.length;
+            groups.push({ sourceText: node.content || "" });
+            walk(node.children, gi);
+            return;
+          }
+          if (node.type === "word" && node.text) {
+            words.push({ text: node.text, groupIdx: groupIdx });
+            return;
+          }
+          if (Array.isArray(node.children)) walk(node.children, groupIdx);
+        });
+      }
+      walk(vo, -1);
+      return { words: words, groups: groups };
+    }
+
+    function extractSourceWords(uhbVerse) {
+      var vo = uhbVerse && uhbVerse.content && uhbVerse.content.verseObjects;
+      if (!Array.isArray(vo)) return [];
+      var out = [];
+      vo.forEach(function (node) {
+        if (node && node.type === "word" && node.text) {
+          out.push({ i: out.length, t: node.text, strong: node.strong || null, occurrence: node.occurrence ? Number(node.occurrence) : 1 });
+        }
+      });
+      return out;
+    }
+
+    // Best-effort: fold contiguous runs of UHB words into ONE source group
+    // when a real zaln milestone's `content` (which may be multi-word, e.g.
+    // "עַל סוּס") matches them in sequence — this reconstructs the verse's
+    // actual current groupings rather than always showing one card per word.
+    // A milestone whose content can't be matched contiguously (rare; would
+    // mean the source text doesn't literally match its own alignment content)
+    // is simply left unmatched — its target words show up unaligned instead
+    // of guessed at.
+    function buildSourceGroups(uhbWords, extraction) {
+      var targets = extraction.words.map(function (w, i) { return { id: "t" + i, text: w.text }; });
+      var targetIdsByGroupIdx = {};
+      extraction.words.forEach(function (w, i) {
+        if (w.groupIdx > -1) {
+          (targetIdsByGroupIdx[w.groupIdx] = targetIdsByGroupIdx[w.groupIdx] || []).push("t" + i);
+        }
+      });
+      var claimed = uhbWords.map(function () { return false; });
+      var milestoneForStart = {};
+      extraction.groups.forEach(function (g, gi) {
+        var tokens = (g.sourceText || "").trim().split(/\s+/).filter(Boolean);
+        if (!tokens.length) return;
+        for (var start = 0; start + tokens.length <= uhbWords.length; start++) {
+          var ok = true;
+          for (var k = 0; k < tokens.length; k++) {
+            if (claimed[start + k] || uhbWords[start + k].t !== tokens[k]) { ok = false; break; }
+          }
+          if (ok) {
+            for (var k2 = 0; k2 < tokens.length; k2++) claimed[start + k2] = true;
+            milestoneForStart[start] = { end: start + tokens.length - 1, targetIds: (targetIdsByGroupIdx[gi] || []).slice() };
+            break;
+          }
+        }
+      });
+      var groups = [];
+      var i = 0, gcounter = 0;
+      while (i < uhbWords.length) {
+        var m = milestoneForStart[i];
+        if (m) {
+          groups.push({ id: "g" + (gcounter++), words: uhbWords.slice(i, m.end + 1).map(function (w) { return { idx: w.i, heb: w.t }; }), aligned: m.targetIds });
+          i = m.end + 1;
+        } else {
+          groups.push({ id: "g" + (gcounter++), words: [{ idx: uhbWords[i].i, heb: uhbWords[i].t }], aligned: [] });
+          i++;
+        }
+      }
+      return { groups: groups, targets: targets };
+    }
+
+    function loadReal() {
+      return window.flowApi.ready.then(function () {
+        window.flowShell.setContext({ book: CTX.book, chapter: CTX.chapter, verse: CTX.verse, bibleVersion: "ULT" });
+        return window.flowApi.chapter(CTX.book, CTX.chapter);
+      }).then(function (res) {
+        if (!res.ok) {
+          toast("Could not load chapter data (" + res.status + " " + res.error + ")", { bundle: "H" });
+          return;
+        }
+        chapterData = res.data;
+        var uhb = chapterData.verses && chapterData.verses.UHB && chapterData.verses.UHB[CTX.verse];
+        SOURCE_WORDS = extractSourceWords(uhb);
+        var ult = chapterData.verses && chapterData.verses.ULT && chapterData.verses.ULT[CTX.verse];
+        ultAvailable = !!ult;
+        ultPlainText = ult ? (ult.plain_text || "") : null;
+        var ust = chapterData.verses && chapterData.verses.UST && chapterData.verses.UST[CTX.verse];
+        ustAvailable = !!ust;
+        ustPlainText = ust ? (ust.plain_text || "") : null;
+        updateSbsGate();
+        renderSbs();
+        if (!ultAvailable) {
+          // Verified live against this environment: chapters.ts omits a lane
+          // entirely once scripture_lane_state.replacement_required = 1 (checked
+          // via `wrangler d1 execute ... SELECT * FROM scripture_lane_state`).
+          // ULT is currently quarantined here, so there is no target text or
+          // alignment to edit — render that honestly instead of a fixture.
+          showUltUnavailable();
+          return;
+        }
+        var extraction = extractTargetWordList(ult);
+        var built = buildSourceGroups(SOURCE_WORDS, extraction);
+        initFromReal(built.groups, built.targets, extraction.groups);
+      });
+    }
+
+    function showUltUnavailable() {
+      // Replaces each view's ENTIRE contents (toolbar, canvas, action bar —
+      // everything), so nothing inside them (unalignedCount, tapProgress, the
+      // Save buttons, etc.) exists to update afterward. Do that first, then stop.
+      ["dragView", "tapView"].forEach(function (id) {
+        el(id).innerHTML = '<p class="canvas-note" style="font-style:italic;">' +
+          'ULT verse content is unavailable in this environment right now — the ULT scripture lane is flagged ' +
+          '<code>replacement_required</code> (verified via the live D1 scripture_lane_state table), so chapters.ts omits it entirely. ' +
+          'There is nothing real to align until that lane is replaced. Nothing on this screen is faked to look otherwise.</p>';
+      });
+      el("refPanel").innerHTML = '<p class="ref-panel-note">Same reason — no ULT alignment data to show.</p>';
+    }
+
+    // Side-by-side dialog stays reachable only when there is real ULT content
+    // to show — opening it while ULT is quarantined would contradict the
+    // "nothing real to align" message shown on the main view.
+    function updateSbsGate() {
+      var btn = el("sbsBtn");
+      btn.disabled = !ultAvailable;
+      btn.title = ultAvailable ? "" : "ULT verse content is unavailable in this environment right now (lane quarantined) — nothing to show side-by-side.";
+    }
+
+    // Populates the side-by-side dialog from the real ULT/UST plain_text for
+    // CTX.verse (or an honest unavailable message per lane) — called whenever
+    // that data is (re)loaded, so the dialog is correct whether or not it is
+    // currently open.
+    function renderSbs() {
+      el("sbsTitle").textContent = CTX.book + " " + CTX.chapter + ":" + CTX.verse + " — ULT + UST side-by-side";
+      el("litReadingLine").textContent = ultAvailable
+        ? (ultPlainText || "(no ULT text for this verse)")
+        : "ULT verse content is unavailable in this environment right now (lane quarantined) — nothing real to show.";
+      el("simReadingLine").textContent = ustAvailable
+        ? (ustPlainText || "(no UST text for this verse)")
+        : "UST verse content is unavailable in this environment right now — nothing real to show.";
+    }
+
+    function wireMenu(btnId, menuId) {
+      var btn = el(btnId), menu = el(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        if (open) { menu.removeAttribute("hidden"); btn.setAttribute("aria-expanded", "true"); }
+      });
+    }
+    wireMenu("accountBtn", "accountMenu");
+    document.addEventListener("click", function () { document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); }); });
+
+    // Real identity from window.flowApi.me ({userId, username, role}) once
+    // window.flowApi.ready resolves. The API returns only username + role —
+    // never a full name, so the label is the username as-is.
+    window.flowApi.ready.then(function (me) {
+      if (!me || !me.username) return;
+      el("accountAvatar").textContent = me.username.slice(0, 2).toUpperCase();
+      el("accountName").textContent = me.username;
+      if (me.role) el("accountBtn").title = "Role: " + me.role;
+    });
+
+    ["colorsToggle", "hoverLinkToggle", "unalignedOnlyToggle"].forEach(function (id) {
+      el(id).addEventListener("click", function () {
+        var p = el(id).getAttribute("aria-pressed") === "true";
+        el(id).setAttribute("aria-pressed", p ? "false" : "true");
+      });
+    });
+
+    el("sbsBtn").addEventListener("click", function () {
+      if (el("sbsBtn").disabled) return;
+      el("sbsBackdrop").hidden = false;
+    });
+    el("closeSbsBtn").addEventListener("click", function () { el("sbsBackdrop").hidden = true; });
+
+    /* =========================================================
+       Reference alignment panel (issue #150 mockup) — real data note: this
+       environment has no data source distinct from the working ULT copy
+       (no separate "unfoldingWord canonical" snapshot table), so rather than
+       inventing a second fixture, the panel shows the SAME real \zaln
+       alignment the editor below loads, read-only. Populated by
+       initFromReal() once the real chapter data is in.
+       ========================================================= */
+    function renderReferencePanel(groups, targets) {
+      function targetText(id) {
+        var t = targets.filter(function (x) { return x.id === id; })[0];
+        return t ? t.text : "";
+      }
+      el("refGroups").innerHTML = groups.map(function (g) {
+        var heb = g.words.map(function (w) { return w.heb; }).join(" ");
+        var eng = g.aligned.length ? g.aligned.map(targetText).join(" ") : "(unaligned)";
+        return '<div class="ref-group" role="listitem"><div class="rg-heb">' + escapeHtml(heb) + '</div><div class="rg-eng" dir="ltr">' + escapeHtml(eng) + "</div></div>";
+      }).join("");
+    }
+    el("refPanelToggle").addEventListener("click", function () {
+      var willOpen = el("refPanel").hidden;
+      el("refPanel").hidden = !willOpen;
+      el("refPanelToggle").setAttribute("aria-pressed", willOpen ? "true" : "false");
+      el("refPanelToggle").setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
+
+    /* =========================================================
+       Drag view — data-driven, with WORKING native DnD for the demo.
+       Every source word always renders a card (Hebrew visible even
+       when unaligned). Populated from the real \zaln groups/targets by
+       initFromReal() — there is no local fixture data on this screen.
+       "ghost" (wordMAP suggestion awaiting accept) never populates from real
+       data here: GET /api/align/suggest returns per-Strong's candidate
+       surfaces, not a ready-to-drop card, so this preview doesn't attempt to
+       synthesize ghost cards from it (see refreshSuggestBtn's handler for
+       what that endpoint's real response looks like instead).
+       ========================================================= */
+    var DRAG_TARGET_WORDS = [];
+    var dragCards = [];
+
+    function dragAlignedWords() {
+      var set = {};
+      dragCards.forEach(function (c) { if (!c.ghost) c.targets.forEach(function (t) { set[t] = c.heb; }); });
+      return set;
+    }
+
+    function renderDragView() {
+      var aligned = dragAlignedWords();
+      var unalignedCount = DRAG_TARGET_WORDS.filter(function (w) { return !aligned[w]; }).length;
+      el("unalignedCount").textContent = unalignedCount + " unaligned";
+
+      el("dragTargetRow").innerHTML = DRAG_TARGET_WORDS.map(function (w) {
+        var isAligned = !!aligned[w];
+        return '<span class="src-word' + (isAligned ? "" : " unaligned") + '" role="listitem"' +
+          (isAligned ? ' title="' + escapeHtml(aligned[w]) + '"' : ' draggable="true"') +
+          ' data-word="' + escapeHtml(w) + '">' + escapeHtml(w) + "</span>";
+      }).join("");
+
+      var unalignedOnly = el("unalignedOnlyToggle").getAttribute("aria-pressed") === "true";
+      el("dragCanvas").innerHTML = dragCards.map(function (c, i) {
+        if (unalignedOnly && c.targets.length && !c.ghost) return "";
+        var empty = c.targets.length === 0;
+        var cls = "align-card" + (empty ? " unaligned-slot" : "") + (c.ghost ? " ghost" : "");
+        var btn = c.ghost
+          ? '<button type="button" class="ac-clear" aria-label="Accept suggestion" data-drag-accept="' + i + '" data-handle="local:accept-suggestions" data-bundle="H">✓</button>'
+          : (empty ? "" : '<button type="button" class="ac-clear" aria-label="Clear alignment" data-drag-clear="' + i + '" data-handle="local:clear-alignment" data-bundle="H">✕</button>');
+        return '<div class="' + cls + '" role="listitem" data-card="' + i + '"' + (c.ghost ? ' title="Suggested — from wordMAP memory"' : "") + '>' +
+          btn + '<p class="ac-source">' + escapeHtml(c.heb) + "</p>" +
+          (empty ? '<p class="ac-hint">drag a word here</p>' : '<p class="ac-target">' + c.targets.map(escapeHtml).join(" ") + "</p>") +
+        "</div>";
+      }).join("");
+    }
+
+    el("dragTargetRow").addEventListener("dragstart", function (ev) {
+      var w = ev.target.closest && ev.target.closest(".src-word[draggable]");
+      if (!w) return;
+      ev.dataTransfer.setData("text/plain", w.getAttribute("data-word"));
+      ev.dataTransfer.effectAllowed = "move";
+      w.classList.add("dragging");
+    });
+    el("dragTargetRow").addEventListener("dragend", function (ev) {
+      if (ev.target.classList) ev.target.classList.remove("dragging");
+    });
+    el("dragCanvas").addEventListener("dragover", function (ev) {
+      var card = ev.target.closest && ev.target.closest(".align-card");
+      if (!card || card.classList.contains("ghost")) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+      card.classList.add("drop-hot");
+    });
+    el("dragCanvas").addEventListener("dragleave", function (ev) {
+      var card = ev.target.closest && ev.target.closest(".align-card");
+      if (card) card.classList.remove("drop-hot");
+    });
+    el("dragCanvas").addEventListener("drop", function (ev) {
+      var card = ev.target.closest && ev.target.closest(".align-card");
+      if (!card || card.classList.contains("ghost")) return;
+      ev.preventDefault();
+      var word = ev.dataTransfer.getData("text/plain");
+      var c = dragCards[parseInt(card.getAttribute("data-card"), 10)];
+      if (!word || !c) return;
+      c.targets.push(word);
+      renderDragView();
+      window.flowShell.toast("Aligned “" + word + "” → " + c.heb + " (local — Save to persist)", { bundle: "H" });
+    });
+    el("dragCanvas").addEventListener("click", function (ev) {
+      var acc = ev.target.closest && ev.target.closest("[data-drag-accept]");
+      if (acc) { dragCards[parseInt(acc.getAttribute("data-drag-accept"), 10)].ghost = false; renderDragView(); return; }
+      var clr = ev.target.closest && ev.target.closest("[data-drag-clear]");
+      if (clr) { dragCards[parseInt(clr.getAttribute("data-drag-clear"), 10)].targets = []; renderDragView(); }
+    });
+
+    // No ghost cards ever populate from real data (see comment above dragCards) —
+    // there's nothing for this button to accept, so hide it rather than leave a
+    // dead control that would toast a fake success.
+    el("acceptSuggestionsBtn").style.display = "none";
+    el("clearAllBtn").addEventListener("click", function () {
+      dragCards.forEach(function (c) { c.targets = []; c.ghost = false; });
+      renderDragView();
+    });
+    var dragInitialSnapshot = [];
+    el("resetBtn").addEventListener("click", function () {
+      dragCards = JSON.parse(JSON.stringify(dragInitialSnapshot));
+      renderDragView();
+    });
+    el("unalignedOnlyToggle").addEventListener("click", function () {
+      var on = el("unalignedOnlyToggle").getAttribute("aria-pressed") === "true";
+      el("unalignedOnlyToggle").setAttribute("aria-pressed", on ? "false" : "true");
+      renderDragView();
+    });
+
+    /* =========================================================
+       Form-factor policy: <560 tap-only; 560-899 tap default;
+       >=900 drag default. A segmented toggle lets 560+ switch.
+       ========================================================= */
+    var userOverride = false;
+    function band(w) { return w < 560 ? "phone" : (w < 900 ? "tablet" : "desktop"); }
+    var lastBand = null;
+
+    function setAlignMode(mode) {
+      document.body.setAttribute("data-align-mode", mode);
+      el("dragModeBtn").setAttribute("aria-pressed", mode === "drag" ? "true" : "false");
+      el("tapModeBtn").setAttribute("aria-pressed", mode === "tap" ? "true" : "false");
+    }
+
+    function applyDefaultForWidth() {
+      var w = window.innerWidth;
+      var b = band(w);
+      if (b === lastBand && userOverride) return;
+      lastBand = b;
+      userOverride = false;
+      if (b === "phone") { setAlignMode("tap"); return; }
+      if (b === "tablet") { setAlignMode("tap"); return; }
+      setAlignMode("drag");
+    }
+    applyDefaultForWidth();
+    window.addEventListener("resize", applyDefaultForWidth);
+
+    el("dragModeBtn").addEventListener("click", function () { userOverride = true; setAlignMode("drag"); });
+    el("tapModeBtn").addEventListener("click", function () { userOverride = true; setAlignMode("tap"); });
+
+    /* =========================================================
+       TAP-TO-PAIR interaction model (demo/local state only —
+       no per-tap network calls; Save alignment is the one write).
+       ========================================================= */
+    var comboCounter = 0;
+    // Populated from the real \zaln data by initFromReal(); starts empty (no
+    // fixture) — this is the verse's actual current alignment, not a demo state.
+    // `suggestions` stays empty: GET /api/align/suggest returns per-Strong's
+    // candidate surfaces (see refreshSuggestBtn), not ready-made source/target
+    // id pairs, so this preview doesn't fabricate the combine-suggestion queue.
+    var state = {
+      sourceGroups: [],
+      targets: [],
+      selection: { side: null, ids: [] },
+      suggestions: [],
+      suggestionIdx: 0
+    };
+
+    function findGroup(id) { for (var i = 0; i < state.sourceGroups.length; i++) { if (state.sourceGroups[i].id === id) return state.sourceGroups[i]; } return null; }
+    function findTarget(id) { for (var i = 0; i < state.targets.length; i++) { if (state.targets[i].id === id) return state.targets[i]; } return null; }
+
+    function removeFromAllGroups(tid) {
+      state.sourceGroups.forEach(function (g) {
+        var i = g.aligned.indexOf(tid);
+        if (i > -1) g.aligned.splice(i, 1);
+      });
+    }
+
+    function commitAttach(tids, destGid) {
+      var g = findGroup(destGid);
+      if (!g) return;
+      tids.forEach(function (tid) {
+        removeFromAllGroups(tid);
+        if (g.aligned.indexOf(tid) === -1) g.aligned.push(tid);
+      });
+    }
+
+    function combineGroups(ids) {
+      var groups = ids.map(findGroup).filter(Boolean);
+      if (groups.length < 2) return null;
+      groups.sort(function (a, b) { return a.words[0].idx - b.words[0].idx; });
+      var mergedWords = [];
+      var mergedAligned = [];
+      groups.forEach(function (g) {
+        mergedWords = mergedWords.concat(g.words);
+        g.aligned.forEach(function (tid) { if (mergedAligned.indexOf(tid) === -1) mergedAligned.push(tid); });
+      });
+      var newGroup = { id: "c" + (++comboCounter), words: mergedWords, aligned: mergedAligned };
+      var firstOriginalIndex = state.sourceGroups.findIndex(function (g) { return g.id === groups[0].id; });
+      var insertPos = 0;
+      for (var i = 0; i < firstOriginalIndex; i++) {
+        if (ids.indexOf(state.sourceGroups[i].id) === -1) insertPos++;
+      }
+      state.sourceGroups = state.sourceGroups.filter(function (g) { return ids.indexOf(g.id) === -1; });
+      state.sourceGroups.splice(insertPos, 0, newGroup);
+      return newGroup.id;
+    }
+
+    function doSplit(gid) {
+      var idx = state.sourceGroups.findIndex(function (g) { return g.id === gid; });
+      if (idx === -1) return;
+      var g = state.sourceGroups[idx];
+      if (g.words.length <= 1) return;
+      var singles = g.words.map(function (w) { return { id: "g" + w.idx, words: [w], aligned: [] }; });
+      var args = [idx, 1].concat(singles);
+      state.sourceGroups.splice.apply(state.sourceGroups, args);
+    }
+
+    // Hebrew-order helper: a target's position is its index in state.targets,
+    // which is kept in verse order and used to sort chips so that a target
+    // aligned to an earlier source word always renders before one aligned to
+    // a later source word, and unaligned targets keep verse order in the pool.
+    function targetOrderIndex(tid) {
+      return state.targets.findIndex(function (t) { return t.id === tid; });
+    }
+
+    function isMultiWordTarget(tid) {
+      var t = findTarget(tid);
+      return !!t && t.text.trim().split(/\s+/).length > 1;
+    }
+
+    // Split a multi-word target chip (e.g. "a horse") into individual word
+    // chips. Split members stay attached to whatever source group the parent
+    // chip was aligned to (or stay unaligned if the parent was unaligned),
+    // and take the parent's position so verse order is preserved.
+    var targetSplitCounter = 0;
+    function doSplitTarget(tid) {
+      var t = findTarget(tid);
+      if (!t) return;
+      var words = t.text.trim().split(/\s+/);
+      if (words.length < 2) return;
+      var idx = state.targets.findIndex(function (x) { return x.id === tid; });
+      if (idx === -1) return;
+      var newTargets = words.map(function (w) {
+        targetSplitCounter++;
+        return { id: tid + "-s" + targetSplitCounter, text: w };
+      });
+      var args = [idx, 1].concat(newTargets);
+      state.targets.splice.apply(state.targets, args);
+      var newIds = newTargets.map(function (nt) { return nt.id; });
+      state.sourceGroups.forEach(function (g) {
+        var gi = g.aligned.indexOf(tid);
+        if (gi > -1) {
+          var spliceArgs = [gi, 1].concat(newIds);
+          g.aligned.splice.apply(g.aligned, spliceArgs);
+        }
+      });
+    }
+
+    function toggleSourceSelection(gid) {
+      var g = findGroup(gid);
+      if (!g) return;
+      if (g.words.length > 1) {
+        if (state.selection.side === "source" && state.selection.ids.length === 1 && state.selection.ids[0] === gid) {
+          state.selection = { side: null, ids: [] };
+        } else {
+          state.selection = { side: "source", ids: [gid] };
+        }
+        return;
+      }
+      if (state.selection.side !== "source") {
+        state.selection = { side: "source", ids: [gid] };
+        return;
+      }
+      var i = state.selection.ids.indexOf(gid);
+      if (i > -1) state.selection.ids.splice(i, 1); else state.selection.ids.push(gid);
+      if (!state.selection.ids.length) state.selection = { side: null, ids: [] };
+    }
+
+    function toggleTargetSelection(tid) {
+      if (state.selection.side !== "target") {
+        state.selection = { side: "target", ids: [tid] };
+        return;
+      }
+      var i = state.selection.ids.indexOf(tid);
+      if (i > -1) state.selection.ids.splice(i, 1); else state.selection.ids.push(tid);
+      if (!state.selection.ids.length) state.selection = { side: null, ids: [] };
+    }
+
+    function onTargetChipClick(tid) {
+      if (state.selection.side === "source") {
+        if (state.selection.ids.length === 1) {
+          commitAttach([tid], state.selection.ids[0]);
+          state.selection = { side: null, ids: [] };
+          render();
+          return;
+        }
+        if (state.selection.ids.length > 1) {
+          window.flowShell.toast("Select ⧉ Combine first, or Clear the source selection.", { bundle: "H" });
+          return;
+        }
+      }
+      toggleTargetSelection(tid);
+      render();
+    }
+
+    function applySuggestion(s) {
+      var destId = s.sourceIds.length > 1 ? combineGroups(s.sourceIds) : s.sourceIds[0];
+      if (!destId) return;
+      s.targetIds.forEach(function (tid) { commitAttach([tid], destId); });
+    }
+
+    function renderSuggestions() {
+      var stack = el("suggestStack");
+      var done = el("suggestDone");
+      if (state.suggestionIdx >= state.suggestions.length) {
+        stack.hidden = true;
+        stack.innerHTML = "";
+        done.hidden = false;
+        done.textContent = state.suggestions.length
+          ? "All suggestions reviewed — manual tap-to-pair is below."
+          : "No combine-suggestions synthesized in this preview (see the code comment above `state.suggestions`) — manual tap-to-pair is below.";
+        return;
+      }
+      done.hidden = true;
+      stack.hidden = false;
+      var s = state.suggestions[state.suggestionIdx];
+      stack.innerHTML =
+        '<div class="suggest-card">' +
+          '<p class="suggest-meta">Suggestion ' + (state.suggestionIdx + 1) + " of " + state.suggestions.length + '</p>' +
+          '<div class="suggest-pair">' +
+            '<span class="suggest-src" dir="rtl">' + escapeHtml(s.srcLabel) + "</span>" +
+            '<span class="suggest-arrow" aria-hidden="true">↔</span>' +
+            '<span class="suggest-tgt">' + escapeHtml(s.tgtLabel) + "</span>" +
+          "</div>" +
+          '<div class="suggest-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="accept" data-handle="local:accept-suggestion" data-bundle="H">✓ Accept</button>' +
+            '<button type="button" class="btn btn-outline" data-action="skip" data-handle="local:skip-suggestion" data-bundle="H">✗ Skip</button>' +
+          "</div>" +
+        "</div>";
+    }
+
+    function renderRibbon() {
+      var ribbon = el("sourceRibbon");
+      ribbon.innerHTML = state.sourceGroups.map(function (g) {
+        var isCombined = g.words.length > 1;
+        var groupSelected = state.selection.side === "source" && state.selection.ids.indexOf(g.id) > -1;
+        var wordsHtml = g.words.map(function (w) {
+          var wordSelected = groupSelected;
+          return '<button type="button" class="src-word-btn' + (wordSelected ? " selected" : "") + '" data-src-select data-word-idx="' + w.idx + '" aria-pressed="' + wordSelected + '">' +
+            '<span class="sw-idx">' + w.idx + "</span><span class=\"sw-heb\">" + escapeHtml(w.heb) + "</span></button>";
+        }).join("");
+        var sortedAligned = g.aligned.slice().sort(function (a, b) { return targetOrderIndex(a) - targetOrderIndex(b); });
+        var alignedHtml = sortedAligned.map(function (tid) {
+          var t = findTarget(tid);
+          if (!t) return "";
+          var selected = state.selection.side === "target" && state.selection.ids.indexOf(tid) > -1;
+          return '<button type="button" class="chip aligned-chip' + (selected ? " selected" : "") + '" data-tchip data-target="' + tid + '" aria-pressed="' + selected + '">' + escapeHtml(t.text) + "</button>";
+        }).join("") || '<span class="empty-slot">unaligned</span>';
+        return '<div class="src-group' + (groupSelected ? " group-selected" : "") + '" role="listitem" data-group-id="' + g.id + '" data-unaligned="' + (g.aligned.length === 0) + '" dir="rtl">' +
+          '<div class="src-group-words">' + wordsHtml + "</div>" +
+          '<div class="src-group-aligned" dir="ltr" aria-label="Aligned target words">' + alignedHtml + "</div>" +
+          (isCombined ? '<button type="button" class="split-btn" data-action="split" data-group="' + g.id + '">Split</button>' : "") +
+        "</div>";
+      }).join("");
+    }
+
+    function renderPool() {
+      var pool = el("targetPool");
+      var poolTargets = state.targets.filter(function (t) {
+        return !state.sourceGroups.some(function (g) { return g.aligned.indexOf(t.id) > -1; });
+      });
+      if (!poolTargets.length) {
+        pool.innerHTML = '<span class="empty-note">All target words are aligned.</span>';
+        return;
+      }
+      pool.innerHTML = poolTargets.map(function (t) {
+        var selected = state.selection.side === "target" && state.selection.ids.indexOf(t.id) > -1;
+        return '<button type="button" class="chip pool-chip' + (selected ? " selected" : "") + '" data-tchip data-target="' + t.id + '" aria-pressed="' + selected + '">' + escapeHtml(t.text) + "</button>";
+      }).join("");
+    }
+
+    function renderActionBar() {
+      var bar = el("tapActionBar");
+      if (!state.selection.ids.length) { bar.hidden = true; return; }
+      bar.hidden = false;
+      var n = state.selection.ids.length;
+      el("selectionDesc").textContent = n + " " + state.selection.side + " word" + (n > 1 ? "s" : "") + " selected";
+      el("unalignBtn").hidden = state.selection.side !== "target";
+      el("combineBtn").hidden = !(state.selection.side === "source" && n >= 2);
+      el("splitTargetBtn").hidden = !(state.selection.side === "target" && n === 1 && isMultiWordTarget(state.selection.ids[0]));
+    }
+
+    function renderCounter() {
+      var aligned = 0;
+      state.sourceGroups.forEach(function (g) { aligned += g.aligned.length; });
+      el("tapProgress").textContent = aligned + " of " + state.targets.length + " words aligned";
+    }
+
+    function render() {
+      renderSuggestions();
+      renderRibbon();
+      renderPool();
+      renderActionBar();
+      renderCounter();
+    }
+
+    el("suggestStack").addEventListener("click", function (ev) {
+      var acc = ev.target.closest('[data-action="accept"]');
+      var skip = ev.target.closest('[data-action="skip"]');
+      if (acc) {
+        applySuggestion(state.suggestions[state.suggestionIdx]);
+        state.suggestionIdx++;
+        render();
+      } else if (skip) {
+        state.suggestionIdx++;
+        renderSuggestions();
+      }
+    });
+
+    el("sourceRibbon").addEventListener("click", function (ev) {
+      var splitBtn = ev.target.closest('[data-action="split"]');
+      if (splitBtn) { ev.stopPropagation(); doSplit(splitBtn.getAttribute("data-group")); render(); return; }
+      var chip = ev.target.closest("[data-tchip]");
+      if (chip) { onTargetChipClick(chip.getAttribute("data-target")); return; }
+      var wordBtn = ev.target.closest("[data-src-select]");
+      var groupEl = ev.target.closest(".src-group");
+      if (!groupEl) return;
+      var gid = groupEl.getAttribute("data-group-id");
+      if (state.selection.side === "target" && state.selection.ids.length) {
+        commitAttach(state.selection.ids.slice(), gid);
+        state.selection = { side: null, ids: [] };
+        render();
+        return;
+      }
+      if (wordBtn) { toggleSourceSelection(gid); render(); }
+    });
+
+    el("targetPool").addEventListener("click", function (ev) {
+      var chip = ev.target.closest("[data-tchip]");
+      if (!chip) return;
+      onTargetChipClick(chip.getAttribute("data-target"));
+    });
+
+    el("unalignBtn").addEventListener("click", function () {
+      state.selection.ids.forEach(removeFromAllGroups);
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+    el("combineBtn").addEventListener("click", function () {
+      combineGroups(state.selection.ids);
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+    el("splitTargetBtn").addEventListener("click", function () {
+      doSplitTarget(state.selection.ids[0]);
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+    el("clearSelBtn").addEventListener("click", function () {
+      state.selection = { side: null, ids: [] };
+      render();
+    });
+
+    el("jumpUnalignedBtn").addEventListener("click", function () {
+      var target = el("sourceRibbon").querySelector('.src-group[data-unaligned="true"]');
+      if (!target) { window.flowShell.toast("Every source word has at least one aligned target.", { bundle: "H" }); return; }
+      var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      target.scrollIntoView({ inline: "center", block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+    });
+
+    // Real GET /api/align/suggest over this verse's real UHB Strong's numbers.
+    // The response is per-Strong's candidate target surfaces + confidence
+    // (align_freq corpus / lexicon fallback) — informational only in this
+    // preview (see comments above `state.suggestions`), so it's rendered as a
+    // toast/summary rather than synthesized into draggable ghost cards.
+    function fetchAlignSuggestions() {
+      var strongs = SOURCE_WORDS.map(function (w) { return w.strong; }).filter(Boolean);
+      var uniq = strongs.filter(function (s, i) { return strongs.indexOf(s) === i; });
+      if (!uniq.length) { toast("No Strong's numbers on this verse's source words", { bundle: "H" }); return; }
+      window.flowApi.get("/api/align/suggest", { bible: "ult", strongs: uniq.join(",") }).then(function (res) {
+        if (!res.ok) { toast("Suggestion lookup failed: " + res.status + " " + res.error, { bundle: "H" }); return; }
+        var keys = Object.keys(res.data.suggestions || {});
+        if (!keys.length) {
+          toast("No learned alignment suggestions for these " + uniq.length + " Strong's numbers in this environment (align_freq has no rows for them)", { bundle: "H" });
+          return;
+        }
+        var summary = keys.slice(0, 3).map(function (k) {
+          var top = res.data.suggestions[k].words[0];
+          return k + "→" + (top ? top.surface : "?");
+        }).join(", ");
+        toast("Suggestions for " + keys.length + " word(s): " + summary + (keys.length > 3 ? "…" : ""), { bundle: "H" });
+      });
+    }
+    el("refreshSuggestBtn").addEventListener("click", fetchAlignSuggestions);
+    el("tapRefreshBtn").addEventListener("click", fetchAlignSuggestions);
+
+    el("refPanelRefreshBtn").addEventListener("click", function () {
+      loadReal();
+    });
+
+    // Wire the real \zaln-derived groups/targets into both interaction models
+    // and render everything. Called once after loadReal() fetches real data
+    // (or not at all if the ULT lane is quarantined — see showUltUnavailable).
+    function initFromReal(groups, targets, zalnGroups) {
+      renderReferencePanel(groups, targets);
+
+      dragCards = groups.map(function (g) {
+        return { heb: g.words.map(function (w) { return w.heb; }).join(" "), targets: g.aligned.map(function (id) { var t = targets.filter(function (x) { return x.id === id; })[0]; return t ? t.text : ""; }), ghost: false };
+      });
+      DRAG_TARGET_WORDS = targets.map(function (t) { return t.text; });
+      dragInitialSnapshot = JSON.parse(JSON.stringify(dragCards));
+      renderDragView();
+
+      state.sourceGroups = groups;
+      state.targets = targets;
+      render();
+    }
+
+    loadReal();
+  })();
+  </script>
+</body>
+</html>

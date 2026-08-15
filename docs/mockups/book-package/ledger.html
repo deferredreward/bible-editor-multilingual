@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Book package · Ledger — one book, one table</title>
+<link rel="stylesheet" href="_pkg.css" />
+<style>
+  /* One table, one control, one expansion. Nothing else on the screen. */
+  .wrap {
+    padding: 16px 20px 0;
+  }
+  .ledger-table {
+    font-size: 13.5px;
+  }
+  .ledger-table td.ch {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ledger-table td.ch .caret {
+    display: inline-block;
+    width: 12px;
+    color: var(--ink-2);
+    font-size: 10px;
+    transition: transform 0.12s ease;
+  }
+  .ledger-table tr[aria-expanded="true"] td.ch .caret {
+    transform: rotate(90deg);
+  }
+  .ledger-table tfoot td {
+    border-block-start: 1px solid var(--line);
+    border-block-end: 0;
+    font-weight: 700;
+    color: var(--ink-2);
+    font-size: 12.5px;
+  }
+  /* the measure cell: a number and, under it, the same number as a bar. The bar
+     exists only where a ratio is meaningful — never as decoration. */
+  .m {
+    display: grid;
+    gap: 3px;
+    justify-items: end;
+    min-width: 74px;
+  }
+  .m .bar {
+    width: 100%;
+    max-width: 88px;
+  }
+  .m em {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .zero {
+    color: var(--ink-2);
+    opacity: 0.5;
+  }
+
+  /* expansion drawer: verse-level detail, same discipline */
+  .drawer td {
+    padding: 0;
+    background: var(--card-2);
+  }
+  .drawer-inner {
+    padding: 10px 12px 12px;
+  }
+  .vgrid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  .vgrid th {
+    text-align: start;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 4px 8px;
+    border-block-end: 1px solid var(--line);
+  }
+  .vgrid td {
+    padding: 4px 8px;
+    border-block-end: 1px solid var(--line);
+    vertical-align: baseline;
+  }
+  .vgrid tr:last-child td {
+    border-block-end: 0;
+  }
+  .vgrid .num {
+    text-align: end;
+    font-variant-numeric: tabular-nums;
+    width: 52px;
+  }
+  .vgrid .vno {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    width: 44px;
+  }
+  .vgrid .snip {
+    font-family: var(--font-scripture);
+    color: var(--ink-2);
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .vgrid .flag {
+    width: 130px;
+    text-align: end;
+  }
+  .drawer-note {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+
+  /* the lens strip is the only configuration control on the screen */
+  .lensbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px 12px;
+  }
+  .lensbar .why {
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .lensbar .spacer {
+    flex: 1;
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="pkghead" id="head">
+  <h1>Zechariah <span style="font-weight:400;color:var(--ink-2)">— book package</span></h1>
+  <p class="sub" id="headline">…</p>
+  <span class="spacer"></span>
+  <nav aria-label="Screens"></nav>
+  <button class="iconbtn" data-action="toggle-theme" aria-label="Toggle light / dark" title="Toggle light / dark">◐</button>
+</header>
+
+<div class="too-narrow">
+  <strong>This screen is desktop-only by design.</strong> A book package is 211 verses
+  across five resources; below about 1100px the table cannot show enough columns to be
+  worth reading. The phone equivalent is a queue, not a ledger.
+</div>
+
+<main id="main" class="desktop-only">
+  <div class="lensbar">
+    <div class="seg" id="lens" role="group" aria-label="Lens">
+      <button type="button" data-lens="coverage" aria-pressed="true">Coverage</button>
+      <button type="button" data-lens="coherence" aria-pressed="false">Coherence</button>
+      <button type="button" data-lens="weight" aria-pressed="false">Weight</button>
+    </div>
+    <p class="why" id="lens-why">…</p>
+    <span class="spacer"></span>
+    <p class="why" id="hint">Click a chapter for its verses · ↑ ↓ to move · Enter to open</p>
+  </div>
+
+  <div class="wrap">
+    <section class="panel">
+      <div class="panel-top">
+        <h2 id="table-title">…</h2>
+        <span class="chip chip-info tier" id="tier">Mockup</span>
+        <span class="spacer"></span>
+        <p class="panel-sub" id="table-sub">…</p>
+      </div>
+      <table class="dtable ledger-table" id="ledger">
+        <thead><tr id="lhead"></tr></thead>
+        <tbody id="lbody"></tbody>
+        <tfoot><tr id="lfoot"></tr></tfoot>
+      </table>
+      <div class="panel-foot">
+        <span id="foot-state">…</span>
+        <span class="spacer"></span>
+        <span id="foot-next"></span>
+      </div>
+    </section>
+  </div>
+
+  <p class="provenance" id="prov"></p>
+</main>
+
+<script src="_zec.js"></script>
+<script src="_pkg.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var P = window.PKG;
+  var T = P.totals;
+  var esc = P.esc;
+
+  var state = { lens: "coverage", open: null, cursor: 0 };
+
+  // ---------------------------------------------------------------- helpers
+
+  function el(id) { return document.getElementById(id); }
+
+  function bar(parts) {
+    var h = '<div class="bar">';
+    parts.forEach(function (p) {
+      if (p.w > 0) h += '<i class="' + (p.cls || "") + '" style="width:' + p.w + '%"></i>';
+    });
+    return h + "</div>";
+  }
+
+  // A measured cell: the value, and the same value as a proportion. Both come
+  // from the same number, so they cannot disagree.
+  function measure(value, parts, caption) {
+    if (!value) return '<td class="num"><span class="zero">0</span></td>';
+    return (
+      '<td class="num"><span class="m"><span>' + value + "</span>" +
+      (parts ? bar(parts) : "") +
+      (caption ? "<em>" + caption + "</em>" : "") +
+      "</span></td>"
+    );
+  }
+
+  function pct(n, d) { return d ? Math.round((n / d) * 100) : 0; }
+
+  // ---------------------------------------------------------------- lenses
+  //
+  // A lens is a question. The columns are whatever answers it and nothing more —
+  // that is the whole configurability story on this screen: you pick the
+  // question, the table picks the columns.
+
+  var maxDensity = 0;
+  P.chapters.forEach(function (c) {
+    maxDensity = Math.max(maxDensity, c.tn / c.verses);
+  });
+  var maxRows = 0;
+  P.chapters.forEach(function (c) {
+    maxRows = Math.max(maxRows, c.tn + c.tq + c.twl);
+  });
+  var totalRows = T.tn + T.tq + T.twl;
+
+  var LENSES = {
+    coverage: {
+      title: "Is every part of the book served?",
+      why: "Every chapter, every resource, and how thickly the notes sit on the text.",
+      cols: [
+        { key: "verses", label: "Verses", cell: function (c) { return measure(c.verses); } },
+        { key: "tn", label: "Notes", cell: function (c) { return measure(c.tn); } },
+        {
+          key: "density",
+          label: "Notes / verse",
+          cell: function (c) {
+            var d = c.tn / c.verses;
+            return measure(d.toFixed(1), [{ w: pct(d, maxDensity), cls: "" }]);
+          },
+        },
+        { key: "tq", label: "Questions", cell: function (c) { return measure(c.tq); } },
+        { key: "twl", label: "Word links", cell: function (c) { return measure(c.twl); } },
+        { key: "articles", label: "tA articles", cell: function (c) { return measure(c.articles); } },
+        { key: "terms", label: "tW terms", cell: function (c) { return measure(c.terms); } },
+      ],
+      foot: function () {
+        return [
+          measure(T.verses), measure(T.tn),
+          measure((T.tn / T.verses).toFixed(1)),
+          measure(T.tq), measure(T.twl),
+          measure(T.articles + " distinct"), measure(T.terms + " distinct"),
+        ];
+      },
+      state: function () {
+        return T.tn + " notes over " + T.verses + " verses — " + (T.tn / T.verses).toFixed(1) + " per verse across the book.";
+      },
+      next: "Nothing here is a completion figure — see the note below.",
+    },
+
+    coherence: {
+      title: "Does this behave like one book?",
+      why: "A package assembled over years drifts. These columns show where its own conventions disagree.",
+      cols: [
+        {
+          key: "qlang",
+          label: "Quote language",
+          cell: function (c) {
+            var q = c.quoteHeb + c.quoteEng;
+            if (!q) return '<td class="num"><span class="zero">—</span></td>';
+            var label = c.quoteHeb && c.quoteEng ? "mixed" : c.quoteHeb ? "Hebrew" : "English";
+            return (
+              '<td class="num"><span class="m"><span>' + label + "</span>" +
+              bar([
+                { w: pct(c.quoteHeb, q), cls: "" },
+                { w: pct(c.quoteEng, q), cls: "warn" },
+              ]) +
+              "<em>" + c.quoteHeb + " heb · " + c.quoteEng + " eng</em></span></td>"
+            );
+          },
+        },
+        {
+          key: "resolve",
+          label: "Quote resolves in ULT",
+          cell: function (c) {
+            var q = c.quoteHeb + c.quoteEng;
+            if (!q) return '<td class="num"><span class="zero">—</span></td>';
+            var bad = c.unlocatable + c.drifted;
+            var good = q - bad;
+            return (
+              '<td class="num"><span class="m"><span>' + pct(good, q) + "%</span>" +
+              bar([
+                { w: pct(good, q), cls: "ok" },
+                { w: pct(c.drifted, q), cls: "warn" },
+                { w: pct(c.unlocatable, q), cls: "quiet" },
+              ]) +
+              "<em>" + (bad ? bad + " need a look" : "clean") + "</em></span></td>"
+            );
+          },
+        },
+        { key: "noArticle", label: "Notes w/o article", cell: function (c) { return measure(c.noArticle, c.noArticle ? [{ w: pct(c.noArticle, c.tn), cls: "warn" }] : null, c.noArticle ? pct(c.noArticle, c.tn) + "% of notes" : ""); } },
+        { key: "adapted", label: "Adapted", cell: function (c) { return measure(c.adapted); } },
+        { key: "flagged", label: "Flagged", cell: function (c) { return measure(c.flagged); } },
+        { key: "intro", label: "Chapter intro", cell: function (c) { return c.tnIntro ? '<td class="num">yes</td>' : '<td class="num"><span class="zero">missing</span></td>'; } },
+      ],
+      foot: function () {
+        return [
+          measure(T.quoteHeb + " heb / " + T.quoteEng + " eng"),
+          measure(pct(T.located + T.partial, T.quoted) + "%"),
+          measure(T.noArticle),
+          measure(T.adapted),
+          measure(T.flagged),
+          measure(T.tnIntro + " of 15"),
+        ];
+      },
+      state: function () {
+        var hebCh = P.chapters.filter(function (c) { return c.quoteHeb && !c.quoteEng; }).map(function (c) { return c.n; });
+        var engCh = P.chapters.filter(function (c) { return c.quoteEng && !c.quoteHeb; }).map(function (c) { return c.n; });
+        return "Quotes are Hebrew in chapters " + hebCh.join(", ") + " and English in chapters " + engCh.join(", ") + ". No chapter mixes the two.";
+      },
+      next: "This split is in the real fixture — two authoring generations in one book.",
+    },
+
+    weight: {
+      title: "Where is the work concentrated?",
+      why: "Rows, not verses, are the unit of effort. This is what a scheduler would look at.",
+      cols: [
+        { key: "verses", label: "Verses", cell: function (c) { return measure(c.verses); } },
+        {
+          key: "rows",
+          label: "Rows in chapter",
+          cell: function (c) {
+            var n = c.tn + c.tq + c.twl;
+            return measure(n, [{ w: pct(n, maxRows), cls: "" }], pct(n, totalRows) + "% of book");
+          },
+        },
+        {
+          key: "mix",
+          label: "Mix",
+          cell: function (c) {
+            var n = c.tn + c.tq + c.twl;
+            return (
+              '<td class="num"><span class="m"><span>' + (c.tn + " / " + c.tq + " / " + c.twl) + "</span>" +
+              bar([
+                { w: pct(c.tn, n), cls: "" },
+                { w: pct(c.tq, n), cls: "ok" },
+                { w: pct(c.twl, n), cls: "warn" },
+              ]) +
+              "<em>notes / questions / links</em></span></td>"
+            );
+          },
+        },
+        {
+          key: "perVerse",
+          label: "Rows / verse",
+          cell: function (c) {
+            var d = (c.tn + c.tq + c.twl) / c.verses;
+            return measure(d.toFixed(1));
+          },
+        },
+      ],
+      foot: function () {
+        return [
+          measure(T.verses),
+          measure(totalRows),
+          measure(T.tn + " / " + T.tq + " / " + T.twl),
+          measure((totalRows / T.verses).toFixed(1)),
+        ];
+      },
+      state: function () {
+        var heavy = P.chapters.slice().sort(function (a, b) {
+          return b.tn + b.tq + b.twl - (a.tn + a.tq + a.twl);
+        })[0];
+        return "Chapter " + heavy.n + " is the heaviest at " + (heavy.tn + heavy.tq + heavy.twl) +
+          " rows over " + heavy.verses + " verses.";
+      },
+      next: "Effort would also need per-user check-off data, which this mockup does not have.",
+    },
+  };
+
+  // ---------------------------------------------------------------- drawer
+
+  function verseRows(ch) {
+    var out = [];
+    var chap = P.chapters.filter(function (c) { return c.n === ch; })[0];
+    if (!chap) return out;
+    for (var v = 1; v <= chap.verses; v++) {
+      var ref = ch + ":" + v;
+      var notes = P.notes.filter(function (r) { return r.ch === ch && r.verse === v; });
+      out.push({
+        v: v,
+        ref: ref,
+        text: P.plainFor(ref) || "",
+        tn: notes.length,
+        tq: P.questions.filter(function (r) { return r.ch === ch && r.verse === v; }).length,
+        twl: P.links.filter(function (r) { return r.ch === ch && r.verse === v; }).length,
+        bad: notes.filter(function (r) { return r.loc === "none" || r.loc === "normalized" || r.loc === "partial"; }).length,
+        flagged: notes.filter(function (r) { return /ISSUE/.test(r.tags || ""); }).length,
+      });
+    }
+    return out;
+  }
+
+  function drawerHtml(ch) {
+    var rows = verseRows(ch);
+    var intro = P.notes.filter(function (r) { return r.ch === ch && r.intro; });
+    var h = '<tr class="drawer"><td colspan="99"><div class="drawer-inner">';
+    h += '<table class="vgrid"><thead><tr>' +
+      "<th>Verse</th><th>ULT</th>" +
+      '<th class="num">Notes</th><th class="num">Qs</th><th class="num">Links</th>' +
+      '<th class="flag">Quote check</th></tr></thead><tbody>';
+    if (intro.length) {
+      h += '<tr><td class="vno">intro</td><td class="snip">' +
+        esc(P.firstSentence(intro[0].note, 90)) +
+        '</td><td class="num">' + intro.length + '</td><td class="num">—</td><td class="num">—</td>' +
+        '<td class="flag"><span class="chip">chapter notes</span></td></tr>';
+    }
+    rows.forEach(function (r) {
+      var flag = "";
+      if (r.flagged) flag = '<span class="chip chip-warn">' + r.flagged + " flagged</span>";
+      else if (r.bad) flag = '<span class="chip chip-warn">' + r.bad + " to check</span>";
+      else if (r.tn) flag = '<span class="chip chip-ok">clean</span>';
+      h += "<tr>" +
+        '<td class="vno">' + r.v + "</td>" +
+        '<td class="snip" title="' + esc(r.text) + '">' + esc(r.text) + "</td>" +
+        '<td class="num">' + (r.tn || '<span class="zero">0</span>') + "</td>" +
+        '<td class="num">' + (r.tq || '<span class="zero">0</span>') + "</td>" +
+        '<td class="num">' + (r.twl || '<span class="zero">0</span>') + "</td>" +
+        '<td class="flag">' + flag + "</td></tr>";
+    });
+    h += "</tbody></table>";
+    h += '<p class="drawer-note">Verse text is the ULT from <code>en_ult_38-ZEC.usfm</code>. ' +
+      '“Quote check” counts notes whose Quote could not be resolved against that text — computed here, ' +
+      "not a stored status.</p>";
+    h += "</div></td></tr>";
+    return h;
+  }
+
+  // ---------------------------------------------------------------- render
+
+  function render() {
+    var lens = LENSES[state.lens];
+
+    el("headline").textContent =
+      T.chapters + " chapters · " + T.verses + " verses · " + T.tn + " notes · " +
+      T.tq + " questions · " + T.twl + " word links";
+
+    el("table-title").textContent = lens.title;
+    el("lens-why").textContent = lens.why;
+    el("table-sub").textContent = P.meta.book + " · ULT + tN + tQ + tWL";
+    el("foot-state").textContent = lens.state();
+    el("foot-next").textContent = lens.next;
+
+    var head = "<th>Chapter</th>";
+    lens.cols.forEach(function (c) { head += '<th class="num">' + c.label + "</th>"; });
+    el("lhead").innerHTML = head;
+
+    var body = "";
+    // Front matter is part of the package and is easy to forget, so it gets a row.
+    // It only has a value under the notes column; everything else is genuinely
+    // not applicable and says so.
+    body += '<tr data-ch="0"><td class="ch">front</td>';
+    lens.cols.forEach(function (col) {
+      if (col.key === "tn") body += measure(P.frontNotes.length);
+      else if (col.key === "intro") body += '<td class="num">' + (P.frontNotes.length ? "yes" : "missing") + "</td>";
+      else body += '<td class="num"><span class="zero">n/a</span></td>';
+    });
+    body += "</tr>";
+
+    P.chapters.forEach(function (c, i) {
+      var sel = i === state.cursor;
+      body += '<tr class="selectable" data-ch="' + c.n + '"' +
+        ' aria-selected="' + (sel ? "true" : "false") + '"' +
+        ' aria-expanded="' + (state.open === c.n ? "true" : "false") + '">' +
+        '<td class="ch"><span class="caret">▶</span>' + c.n + "</td>";
+      lens.cols.forEach(function (col) { body += col.cell(c); });
+      body += "</tr>";
+      if (state.open === c.n) body += drawerHtml(c.n);
+    });
+    el("lbody").innerHTML = body;
+
+    var foot = "<td>All " + T.chapters + "</td>" + lens.foot().join("");
+    el("lfoot").innerHTML = foot;
+
+    el("prov").innerHTML =
+      "<b>Where these numbers come from.</b> Every figure on this screen is computed at page load from " +
+      "<code>docs/samples/en_ult_38-ZEC.usfm</code>, <code>en_tn_tn_ZEC.tsv</code>, <code>en_tq_tq_ZEC.tsv</code> and " +
+      "<code>en_twl_twl_ZEC.tsv</code> — the real unfoldingWord fixtures already in this repo. " +
+      "Nothing is typed in by hand and nothing is invented. " +
+      "<br><br><b>What is real but derived.</b> “tA articles” and “tW terms” are counts of <i>distinct articles referenced by this chapter’s rows</i>, " +
+      "not stored per-book totals — tW and tA are not book-scoped in the schema. “Quote resolves in ULT” is computed by this mockup " +
+      "from the ULT’s own alignment milestones (" + T.alignedSegments + " of them): " + T.located + " of " + T.quoted +
+      " quotes resolve exactly, " + T.partial + " partly, " + T.normalized + " only after normalising punctuation, and " +
+      T.unlocatable + " not at all. " +
+      "<br><br><b>What is missing on purpose.</b> There is no completion percentage anywhere on this screen, because there is no " +
+      "book-level progress endpoint in the API — check-off is per verse per lane per user, and rolling it up to a book is new work, " +
+      "not an existing capability. A mockup that showed “62% complete” here would be inventing it.";
+  }
+
+  // ---------------------------------------------------------------- events
+
+  el("lens").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-lens]");
+    if (!b) return;
+    state.lens = b.dataset.lens;
+    Array.prototype.forEach.call(el("lens").querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    });
+    render();
+  });
+
+  el("lbody").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-ch]");
+    if (!tr || tr.classList.contains("drawer")) return;
+    var ch = parseInt(tr.dataset.ch, 10);
+    if (!ch) return;
+    state.open = state.open === ch ? null : ch;
+    state.cursor = ch - 1;
+    render();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      state.cursor = Math.max(0, Math.min(P.chapters.length - 1, state.cursor + (e.key === "ArrowDown" ? 1 : -1)));
+      render();
+      var row = el("lbody").querySelector('tr[aria-selected="true"]');
+      if (row) row.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter") {
+      var c = P.chapters[state.cursor];
+      if (!c) return;
+      state.open = state.open === c.n ? null : c.n;
+      render();
+    }
+  });
+
+  P.mountHead(el("head"), "ledger.html");
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BEM — Aesthetic Minimal Notes (NN/g mockups)</title>
+<style>
+  :root {
+    --inspire: #31ADE3;
+    --inspire-50: #e8f6fc;
+    --ocean: #014263;
+    --tech: #231F20;
+    --cultivate: #70C9CC;
+    --kindle: #E59D33;
+    --success: #2e7d32;
+    --bg: #F4F8FB;
+    --card: #ffffff;
+    --border: #E5EBF0;
+    --muted: #6b7280;
+    --muted-2: #9aa3ad;
+    --highlight: #fff48a;
+    --radius: 6px;
+    --serif: "Source Serif Pro", "Source Serif 4", Cambria, "Times New Roman", serif;
+    --sans: Roboto, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--tech);
+    font-size: 14px;
+    line-height: 1.45;
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+  button, textarea { font-family: inherit; }
+  button { cursor: pointer; }
+  button:disabled { opacity: 0.45; cursor: default; }
+
+  /* ---------- Prototype chrome (not product) ---------- */
+  .proto-bar {
+    background: #111827;
+    color: #e5e7eb;
+    padding: 10px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    border-bottom: 1px solid #000;
+    flex-shrink: 0;
+  }
+  .proto-bar h1 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #fff;
+  }
+  .proto-bar p {
+    margin: 0;
+    font-size: 12px;
+    color: #9ca3af;
+    flex: 1;
+    min-width: 200px;
+  }
+  .concept-tabs {
+    display: flex;
+    gap: 4px;
+    background: #1f2937;
+    padding: 3px;
+    border-radius: 8px;
+  }
+  .concept-tabs button {
+    border: none;
+    background: transparent;
+    color: #d1d5db;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .concept-tabs button[aria-selected="true"] {
+    background: var(--inspire);
+    color: #fff;
+  }
+  .concept-tabs button:hover:not([aria-selected="true"]) {
+    background: #374151;
+    color: #fff;
+  }
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--ocean);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    z-index: 100;
+    opacity: 0;
+    transition: transform .25s ease, opacity .25s ease;
+    pointer-events: none;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ---------- Shared product pieces ---------- */
+  .stage {
+    flex: 1;
+    min-height: 0;
+    display: none;
+    flex-direction: column;
+  }
+  .stage.active { display: flex; }
+
+  .thin-top {
+    height: 44px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .ref {
+    font-weight: 600;
+    color: var(--ocean);
+    font-size: 15px;
+  }
+  .spacer { flex: 1; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--cultivate);
+    box-shadow: 0 0 0 3px rgba(112,201,204,0.25);
+  }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--ocean); color: #fff;
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 600;
+  }
+  .ghost-link {
+    border: none; background: none; color: var(--muted);
+    font-size: 12px; padding: 4px 6px; border-radius: 4px;
+  }
+  .ghost-link:hover, .ghost-link.active { color: var(--ocean); background: var(--inspire-50); }
+
+  .btn {
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--tech);
+    border-radius: var(--radius);
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .btn:hover { border-color: #c5ced6; background: #fafbfc; }
+  .btn.primary {
+    background: var(--inspire);
+    border-color: var(--inspire);
+    color: #fff;
+  }
+  .btn.primary:hover { filter: brightness(0.95); }
+  .btn.success {
+    background: var(--success);
+    border-color: var(--success);
+    color: #fff;
+  }
+  .icon-more {
+    width: 32px; height: 32px; border-radius: var(--radius);
+    border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 18px; line-height: 1;
+  }
+  .icon-more:hover { background: var(--bg); border-color: var(--border); color: var(--tech); }
+
+  .menu {
+    position: absolute;
+    right: 0; top: calc(100% + 4px);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-width: 180px;
+    padding: 4px;
+    z-index: 20;
+    display: none;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  }
+  .menu.open { display: block; }
+  .menu button {
+    display: block; width: 100%; text-align: left;
+    border: none; background: none;
+    padding: 8px 10px; border-radius: 6px;
+    font-size: 13px; color: var(--tech);
+  }
+  .menu button:hover { background: var(--bg); }
+
+  .quote-he {
+    font-family: "Times New Roman", "SBL Hebrew", Cardo, serif;
+    font-size: 20px;
+    direction: rtl;
+    text-align: right;
+    line-height: 1.6;
+  }
+  .reading {
+    font-family: var(--serif);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-2);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .hl { background: var(--highlight); padding: 0 2px; border-radius: 2px; }
+
+  /* ---------- 1. Focus Theater ---------- */
+  .theater-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 0;
+  }
+  .verse-gutter {
+    border-right: 1px solid var(--border);
+    background: var(--card);
+    padding: 12px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: auto;
+  }
+  .verse-gutter button {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    width: 100%;
+    height: 32px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .verse-gutter button:hover { background: var(--bg); color: var(--ocean); }
+  .verse-gutter button[aria-current="true"] {
+    background: var(--inspire-50);
+    color: var(--inspire);
+    box-shadow: inset 3px 0 0 var(--inspire);
+  }
+  .theater-main {
+    overflow: auto;
+    padding: 28px 32px 48px;
+    max-width: 920px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .scripture-strip {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    color: var(--muted);
+  }
+  .scripture-strip strong { color: var(--ocean); font-weight: 600; margin-right: 8px; }
+  .focus-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px 18px;
+  }
+  .focus-card.approved {
+    border-color: rgba(46,125,50,0.35);
+    background: linear-gradient(180deg, rgba(112,201,204,0.08), #fff 40%);
+  }
+  .focus-quote {
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  .pane {
+    min-height: 160px;
+  }
+  .pane.source {
+    background: #fafbfc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: var(--muted);
+  }
+  .pane.draft textarea {
+    width: 100%;
+    min-height: 160px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    resize: vertical;
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--tech);
+  }
+  .pane.draft textarea:focus {
+    outline: 2px solid rgba(49,173,227,0.35);
+    border-color: var(--inspire);
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+  }
+  .actions .spacer { flex: 1; }
+  .status-pill {
+    font-size: 12px;
+    color: var(--success);
+    font-weight: 500;
+    display: none;
+  }
+  .focus-card.approved .status-pill { display: inline; }
+  .note-picker {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .note-picker button {
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .note-picker button[aria-selected="true"] {
+    border-color: var(--inspire);
+    background: var(--inspire-50);
+    color: var(--ocean);
+  }
+  .note-picker button.done::after {
+    content: " ✓";
+    color: var(--success);
+  }
+
+  /* ---------- 2. Translation Desk ---------- */
+  .desk-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 64px minmax(240px, 35%) 1fr;
+  }
+  .desk-rail {
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 10px 6px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .desk-rail button {
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    padding: 8px 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--muted);
+  }
+  .desk-rail button:hover { background: var(--bg); }
+  .desk-rail button[aria-current="true"] {
+    background: var(--inspire-50);
+    color: var(--ocean);
+  }
+  .desk-rail .vn { font-size: 13px; font-weight: 600; }
+  .checks { display: flex; gap: 3px; }
+  .checks i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #d1d5db; display: block;
+  }
+  .checks i.on { background: var(--cultivate); }
+  .desk-scripture {
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .desk-scripture .toolbar {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 4px;
+  }
+  .desk-scripture .body {
+    padding: 16px 18px;
+    overflow: auto;
+    flex: 1;
+  }
+  .verse-block {
+    margin-bottom: 14px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .verse-block:hover { background: #fafbfc; }
+  .verse-block.active {
+    background: var(--inspire-50);
+    box-shadow: inset 3px 0 0 var(--inspire);
+  }
+  .verse-block .vn {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--inspire);
+    margin-right: 6px;
+  }
+  .desk-notes {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--bg);
+  }
+  .section-head {
+    padding: 12px 16px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-head h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ocean);
+  }
+  .count {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .note-list {
+    flex: 1;
+    overflow: auto;
+    padding: 12px 14px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .note-row {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    color: inherit;
+  }
+  .note-row:hover { border-color: #cfd8e0; }
+  .note-row[aria-expanded="true"] {
+    border-color: var(--inspire);
+    background: #fff;
+    cursor: default;
+    box-shadow: 0 0 0 1px var(--inspire);
+  }
+  .note-row.approved {
+    border-left: 3px solid var(--cultivate);
+  }
+  .note-row .preview-quote {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .note-row .preview-draft {
+    font-family: var(--serif);
+    font-size: 14px;
+    color: var(--tech);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .note-row .expanded { display: none; margin-top: 14px; }
+  .note-row[aria-expanded="true"] .preview-draft,
+  .note-row[aria-expanded="true"] .preview-quote { display: none; }
+  .note-row[aria-expanded="true"] .expanded { display: block; }
+  .sticky-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    position: relative;
+  }
+
+  /* ---------- 3. Prose Continuum ---------- */
+  .prose-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    max-width: 860px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .prose-gutter {
+    padding: 72px 4px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid transparent;
+  }
+  .prose-gutter button {
+    border: none;
+    background: none;
+    color: var(--muted-2);
+    height: 28px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .prose-gutter button:hover { color: var(--ocean); background: var(--inspire-50); }
+  .prose-gutter button[aria-current="true"] {
+    color: var(--inspire);
+    font-weight: 700;
+  }
+  .prose-main {
+    overflow: auto;
+    padding: 0 28px 64px;
+  }
+  .sticky-verse {
+    position: sticky;
+    top: 0;
+    background: rgba(244,248,251,0.92);
+    backdrop-filter: blur(6px);
+    padding: 16px 0 12px;
+    border-bottom: 1px solid var(--border);
+    z-index: 5;
+    margin-bottom: 8px;
+  }
+  .sticky-verse .eyebrow {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .manuscript {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .prose-note {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 14px 16px 14px 14px;
+    border-left: 3px solid transparent;
+    border-radius: 0 8px 8px 0;
+    color: inherit;
+    width: 100%;
+    cursor: pointer;
+  }
+  .prose-note:hover { background: rgba(255,255,255,0.65); }
+  .prose-note[data-state="approved"] { border-left-color: var(--cultivate); }
+  .prose-note[data-state="needs"] { border-left-color: var(--kindle); }
+  .prose-note[data-state="editing"],
+  .prose-note[aria-expanded="true"] {
+    border-left-color: var(--inspire);
+    background: var(--card);
+    cursor: default;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .prose-note .p-quote {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .prose-note .p-body {
+    font-family: var(--serif);
+    font-size: 16px;
+    color: var(--tech);
+  }
+  .prose-note .editor { display: none; margin-top: 12px; }
+  .prose-note[aria-expanded="true"] .p-body,
+  .prose-note[aria-expanded="true"] .p-quote { display: none; }
+  .prose-note[aria-expanded="true"] .editor { display: block; }
+  .prose-note textarea {
+    width: 100%;
+    min-height: 120px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: var(--serif);
+    font-size: 16px;
+    resize: vertical;
+  }
+  .prose-note textarea:focus {
+    outline: 2px solid rgba(49,173,227,0.35);
+    border-color: var(--inspire);
+  }
+  .prose-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+    position: relative;
+  }
+  .approve-fab {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--inspire);
+    color: #fff;
+    font-size: 18px;
+    display: grid;
+    place-items: center;
+  }
+  .approve-fab:hover { filter: brightness(0.95); }
+  .approve-fab.done { background: var(--success); }
+
+  .hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted-2);
+  }
+
+  @media (max-width: 820px) {
+    .pair { grid-template-columns: 1fr; }
+    .desk-body { grid-template-columns: 52px 1fr; }
+    .desk-scripture { display: none; }
+    .theater-main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="proto-bar">
+  <h1>Aesthetic &amp; Minimalist — Notes</h1>
+  <p>NN/g heuristic mockups for resource translators. Click verses, notes, Save / Approve, and ··· menus.</p>
+  <div class="concept-tabs" role="tablist" aria-label="Concept">
+    <button type="button" role="tab" id="tab-theater" aria-selected="true" aria-controls="stage-theater">1 · Focus Theater</button>
+    <button type="button" role="tab" id="tab-desk" aria-selected="false" aria-controls="stage-desk">2 · Translation Desk</button>
+    <button type="button" role="tab" id="tab-prose" aria-selected="false" aria-controls="stage-prose">3 · Prose Continuum</button>
+  </div>
+</header>
+
+<!-- ==================== 1. FOCUS THEATER ==================== -->
+<section class="stage active" id="stage-theater" role="tabpanel" aria-labelledby="tab-theater">
+  <div class="thin-top">
+    <div class="ref" data-bind="ref">ZEC 1:3</div>
+    <span class="hint">One note · everything else is reference</span>
+    <div class="spacer"></div>
+    <span class="dot" title="Synced"></span>
+    <div class="avatar" title="Account">DR</div>
+  </div>
+  <div class="theater-body">
+    <nav class="verse-gutter" id="theater-verses" aria-label="Verses"></nav>
+    <div class="theater-main">
+      <div class="scripture-strip">
+        <strong data-bind="ref">ZEC 1:3</strong>
+        <span class="reading" id="theater-scripture"></span>
+      </div>
+      <div class="note-picker" id="theater-picker" aria-label="Notes for verse"></div>
+      <article class="focus-card" id="theater-card">
+        <div class="focus-quote">
+          <div class="label">Quote</div>
+          <div class="quote-he" id="theater-quote"></div>
+        </div>
+        <div class="pair">
+          <div class="pane source">
+            <div class="label">Source</div>
+            <div class="reading" id="theater-source"></div>
+          </div>
+          <div class="pane draft">
+            <div class="label">Draft</div>
+            <textarea id="theater-draft" aria-label="Draft translation"></textarea>
+          </div>
+        </div>
+        <div class="actions">
+          <span class="status-pill" id="theater-status">Approved</span>
+          <div class="spacer"></div>
+          <button type="button" class="btn" id="theater-save">Save</button>
+          <button type="button" class="btn primary" id="theater-approve">Approve</button>
+          <div style="position:relative">
+            <button type="button" class="icon-more" id="theater-more" aria-haspopup="true" aria-expanded="false" title="More">···</button>
+            <div class="menu" id="theater-menu" role="menu">
+              <button type="button" role="menuitem" data-action="quote">Build quote from source</button>
+              <button type="button" role="menuitem" data-action="template">Insert template</button>
+              <button type="button" role="menuitem" data-action="suggest">AI Suggest</button>
+              <button type="button" role="menuitem" data-action="history">Version history</button>
+              <button type="button" role="menuitem" data-action="unapprove">Unapprove</button>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 2. TRANSLATION DESK ==================== -->
+<section class="stage" id="stage-desk" role="tabpanel" aria-labelledby="tab-desk" hidden>
+  <div class="thin-top">
+    <div class="ref">ZEC 1 · Notes</div>
+    <span class="hint">Notes are the desk; scripture is a tool</span>
+    <div class="spacer"></div>
+    <span class="dot" title="Synced"></span>
+    <div class="avatar">DR</div>
+  </div>
+  <div class="desk-body">
+    <nav class="desk-rail" id="desk-rail" aria-label="Chapter verses"></nav>
+    <aside class="desk-scripture">
+      <div class="toolbar">
+        <button type="button" class="ghost-link active" data-ver="ult">ULT</button>
+        <button type="button" class="ghost-link" data-ver="ust">UST</button>
+      </div>
+      <div class="body reading" id="desk-scripture-body"></div>
+    </aside>
+    <div class="desk-notes">
+      <div class="section-head">
+        <h2>Notes</h2>
+        <span class="count" id="desk-count"></span>
+        <div class="spacer"></div>
+        <button type="button" class="btn" id="desk-add">+ Add</button>
+      </div>
+      <div class="note-list" id="desk-list"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 3. PROSE CONTINUUM ==================== -->
+<section class="stage" id="stage-prose" role="tabpanel" aria-labelledby="tab-prose" hidden>
+  <div class="thin-top">
+    <div class="ref" data-bind="ref">ZEC 1:3</div>
+    <span class="hint">Manuscript first — tools only on the open note</span>
+    <div class="spacer"></div>
+    <span class="dot" title="Synced"></span>
+  </div>
+  <div class="prose-body">
+    <nav class="prose-gutter" id="prose-gutter" aria-label="Verses"></nav>
+    <div class="prose-main">
+      <div class="sticky-verse">
+        <div class="eyebrow" data-bind="ref">ZEC 1:3</div>
+        <div class="reading" id="prose-scripture"></div>
+      </div>
+      <div class="manuscript" id="prose-list"></div>
+    </div>
+  </div>
+</section>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(() => {
+  const verses = {
+    1: { ult: "In the eighth month, in the second year of Darius, the word of Yahweh came to Zechariah…", ust: "Yahweh gave this message to Zechariah in the eighth month…" },
+    2: { ult: "Yahweh was very angry with your ancestors.", ust: "Yahweh was very angry with your ancestors." },
+    3: { ult: "Therefore say to them, ‘This is what <span class=\"hl\">Yahweh of hosts</span> says: “Return to me,” says Yahweh of hosts, “and I will return to you,”…", ust: "So tell the people that <span class=\"hl\">Yahweh, the Commander of angel armies</span>, says…" },
+    4: { ult: "Do not be like your ancestors, to whom the former prophets cried out…", ust: "Do not be like your ancestors. The earlier prophets warned them…" },
+    5: { ult: "Your ancestors, where are they? And the prophets, do they live forever?", ust: "Your ancestors are gone. And the prophets did not live forever." },
+    6: { ult: "But my words and my decrees that I commanded my servants the prophets…", ust: "But everything I said through my prophets happened…" },
+  };
+
+  const notesByVerse = {
+    1: [
+      { id: "n1a", quote: "הַחֹדֶשׁ הַשְּׁמִינִי", quoteEn: "the eighth month", source: "This may refer to the month of Marcheshvan.", draft: "Esto puede referirse al mes de Marjesván.", state: "approved" },
+    ],
+    2: [
+      { id: "n2a", quote: "קָצַף", quoteEn: "was very angry", source: "The word expresses intense anger.", draft: "La palabra expresa una ira intensa.", state: "approved" },
+    ],
+    3: [
+      { id: "n3a", quote: "יְהוָה צְבָאוֹת", quoteEn: "Yahweh of hosts", source: "The title “Yahweh of hosts” portrays Yahweh as the commander of heavenly armies.", draft: "El título «Yahweh de los ejércitos» presenta a Yahweh como comandante de los ejércitos celestiales.", state: "editing" },
+      { id: "n3b", quote: "שׁוּבוּ אֵלַי", quoteEn: "Return to me", source: "“Return” is a call to repent and renew covenant faithfulness.", draft: "", state: "needs" },
+      { id: "n3c", quote: "וְאָשׁוּב אֲלֵיכֶם", quoteEn: "and I will return to you", source: "Yahweh promises to restore relationship when the people repent.", draft: "Yahweh promete restaurar la relación cuando el pueblo se arrepienta.", state: "editing" },
+    ],
+    4: [
+      { id: "n4a", quote: "אַל־תִּהְיוּ כַאֲבֹתֵיכֶם", quoteEn: "Do not be like your ancestors", source: "A warning not to repeat the disobedience of previous generations.", draft: "Una advertencia a no repetir la desobediencia de generaciones anteriores.", state: "needs" },
+    ],
+    5: [
+      { id: "n5a", quote: "אֲבוֹתֵיכֶם אַיֵּה הֵם", quoteEn: "Your ancestors, where are they?", source: "A rhetorical question emphasizing that the ancestors died under judgment.", draft: "", state: "needs" },
+    ],
+    6: [
+      { id: "n6a", quote: "דְּבָרַי וְחֻקַּי", quoteEn: "my words and my decrees", source: "Refers to Yahweh’s prophetic messages and covenant requirements.", draft: "Se refiere a los mensajes proféticos y a los requisitos del pacto.", state: "approved" },
+    ],
+  };
+
+  let verse = 3;
+  let activeNoteId = "n3a";
+  let deskVer = "ult";
+
+  const toastEl = document.getElementById("toast");
+  let toastTimer;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1800);
+  }
+
+  function notesFor(v) { return notesByVerse[v] || []; }
+  function activeNote() {
+    return notesFor(verse).find(n => n.id === activeNoteId) || notesFor(verse)[0];
+  }
+  function setVerse(v, preferNoteId) {
+    verse = v;
+    const list = notesFor(v);
+    activeNoteId = preferNoteId && list.some(n => n.id === preferNoteId)
+      ? preferNoteId
+      : (list[0] && list[0].id) || null;
+    renderAll();
+  }
+  function bindRefs() {
+    document.querySelectorAll("[data-bind='ref']").forEach(el => {
+      el.textContent = `ZEC 1:${verse}`;
+    });
+  }
+
+  // ----- Concept tabs -----
+  const tabs = [
+    ["tab-theater", "stage-theater"],
+    ["tab-desk", "stage-desk"],
+    ["tab-prose", "stage-prose"],
+  ];
+  tabs.forEach(([tabId, stageId]) => {
+    document.getElementById(tabId).addEventListener("click", () => {
+      tabs.forEach(([t, s]) => {
+        const selected = t === tabId;
+        document.getElementById(t).setAttribute("aria-selected", selected);
+        const stage = document.getElementById(s);
+        stage.classList.toggle("active", selected);
+        stage.hidden = !selected;
+      });
+    });
+  });
+
+  // ----- Shared overflow close -----
+  document.addEventListener("click", (e) => {
+    document.querySelectorAll(".menu.open").forEach(m => {
+      if (!m.parentElement.contains(e.target)) {
+        m.classList.remove("open");
+        const btn = m.parentElement.querySelector("[aria-expanded]");
+        if (btn) btn.setAttribute("aria-expanded", "false");
+      }
+    });
+  });
+
+  function wireMore(btnId, menuId) {
+    const btn = document.getElementById(btnId);
+    const menu = document.getElementById(menuId);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !menu.classList.contains("open");
+      menu.classList.toggle("open", open);
+      btn.setAttribute("aria-expanded", open);
+    });
+    menu.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-action]");
+      if (!item) return;
+      const action = item.dataset.action;
+      const n = activeNote();
+      if (action === "unapprove" && n) {
+        n.state = "editing";
+        toast("Unapproved — back to draft");
+        renderAll();
+      } else if (action === "template" && n) {
+        n.draft = (n.draft ? n.draft + "\n\n" : "") + "Connecting Statement:\n";
+        toast("Template inserted (mock)");
+        renderAll();
+      } else if (action === "suggest") {
+        toast("AI Suggest would run here");
+      } else if (action === "quote") {
+        toast("Quote builder would open");
+      } else if (action === "history") {
+        toast("History sheet (mock)");
+      }
+      menu.classList.remove("open");
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  // ===== Theater =====
+  function renderTheater() {
+    const gutter = document.getElementById("theater-verses");
+    gutter.innerHTML = "";
+    Object.keys(verses).forEach(v => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = v;
+      if (+v === verse) b.setAttribute("aria-current", "true");
+      b.addEventListener("click", () => setVerse(+v));
+      gutter.appendChild(b);
+    });
+
+    document.getElementById("theater-scripture").innerHTML = verses[verse].ult;
+    const picker = document.getElementById("theater-picker");
+    picker.innerHTML = "";
+    notesFor(verse).forEach((n, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = `Note ${i + 1}`;
+      if (n.state === "approved") b.classList.add("done");
+      if (n.id === activeNoteId) b.setAttribute("aria-selected", "true");
+      b.addEventListener("click", () => { activeNoteId = n.id; renderAll(); });
+      picker.appendChild(b);
+    });
+
+    const n = activeNote();
+    const card = document.getElementById("theater-card");
+    if (!n) {
+      card.style.display = "none";
+      return;
+    }
+    card.style.display = "";
+    card.classList.toggle("approved", n.state === "approved");
+    document.getElementById("theater-quote").textContent = n.quote;
+    document.getElementById("theater-source").textContent = n.source;
+    const ta = document.getElementById("theater-draft");
+    if (document.activeElement !== ta) ta.value = n.draft;
+    ta.disabled = n.state === "approved";
+    document.getElementById("theater-approve").textContent =
+      n.state === "approved" ? "Approved" : "Approve";
+    document.getElementById("theater-approve").disabled = n.state === "approved";
+    document.getElementById("theater-approve").classList.toggle("success", n.state === "approved");
+    document.getElementById("theater-approve").classList.toggle("primary", n.state !== "approved");
+  }
+
+  document.getElementById("theater-draft").addEventListener("input", (e) => {
+    const n = activeNote();
+    if (!n || n.state === "approved") return;
+    n.draft = e.target.value;
+    if (n.state === "needs" && n.draft.trim()) n.state = "editing";
+  });
+  document.getElementById("theater-save").addEventListener("click", () => {
+    const n = activeNote();
+    if (!n) return;
+    toast(`Saved draft for ${n.quoteEn}`);
+  });
+  document.getElementById("theater-approve").addEventListener("click", () => {
+    const n = activeNote();
+    if (!n || n.state === "approved") return;
+    if (!n.draft.trim()) { toast("Write a draft before approving"); return; }
+    n.state = "approved";
+    toast("Approved");
+    renderAll();
+  });
+  wireMore("theater-more", "theater-menu");
+
+  // ===== Desk =====
+  function renderDesk() {
+    const rail = document.getElementById("desk-rail");
+    rail.innerHTML = "";
+    Object.keys(verses).forEach(v => {
+      const list = notesFor(+v);
+      const allDone = list.length && list.every(n => n.state === "approved");
+      const any = list.length > 0;
+      const b = document.createElement("button");
+      b.type = "button";
+      if (+v === verse) b.setAttribute("aria-current", "true");
+      b.innerHTML = `<span class="vn">${v}</span><span class="checks"><i class="${any ? "on" : ""}"></i><i class="${allDone ? "on" : ""}"></i><i></i></span>`;
+      b.title = allDone ? "Notes done" : any ? "Has notes" : "No notes";
+      b.addEventListener("click", () => setVerse(+v));
+      rail.appendChild(b);
+    });
+
+    const body = document.getElementById("desk-scripture-body");
+    body.innerHTML = "";
+    Object.keys(verses).forEach(v => {
+      const div = document.createElement("div");
+      div.className = "verse-block" + (+v === verse ? " active" : "");
+      div.innerHTML = `<span class="vn">${v}</span>${verses[v][deskVer]}`;
+      div.addEventListener("click", () => setVerse(+v));
+      body.appendChild(div);
+    });
+
+    const list = notesFor(verse);
+    document.getElementById("desk-count").textContent =
+      `${list.filter(n => n.state === "approved").length}/${list.length} approved · v${verse}`;
+
+    const el = document.getElementById("desk-list");
+    el.innerHTML = "";
+    list.forEach(n => {
+      const row = document.createElement("div");
+      row.className = "note-row" + (n.state === "approved" ? " approved" : "");
+      row.setAttribute("aria-expanded", n.id === activeNoteId ? "true" : "false");
+      const preview = n.draft.trim() || (n.state === "needs" ? "— untranslated —" : n.source);
+      row.innerHTML = `
+        <div class="preview-quote">${escapeHtml(n.quoteEn)}</div>
+        <div class="preview-draft">${escapeHtml(preview)}</div>
+        <div class="expanded">
+          <div class="label">Quote</div>
+          <div class="quote-he" style="margin-bottom:12px">${escapeHtml(n.quote)}</div>
+          <div class="pair">
+            <div class="pane source"><div class="label">Source</div><div class="reading">${escapeHtml(n.source)}</div></div>
+            <div class="pane draft"><div class="label">Draft</div>
+              <textarea data-note="${n.id}" ${n.state === "approved" ? "disabled" : ""}>${escapeHtml(n.draft)}</textarea>
+            </div>
+          </div>
+          <div class="sticky-actions">
+            <span class="hint">${n.state === "approved" ? "Approved" : "Explicit save only"}</span>
+            <div class="spacer"></div>
+            <button type="button" class="btn" data-save="${n.id}">Save</button>
+            <button type="button" class="btn ${n.state === "approved" ? "success" : "primary"}" data-approve="${n.id}" ${n.state === "approved" ? "disabled" : ""}>${n.state === "approved" ? "Approved" : "Approve"}</button>
+            <div style="position:relative">
+              <button type="button" class="icon-more" data-more="${n.id}">···</button>
+              <div class="menu" data-menu="${n.id}">
+                <button type="button" data-desk-action="suggest" data-id="${n.id}">AI Suggest</button>
+                <button type="button" data-desk-action="unapprove" data-id="${n.id}">Unapprove</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      if (n.id !== activeNoteId) {
+        row.addEventListener("click", () => { activeNoteId = n.id; renderAll(); });
+      }
+      el.appendChild(row);
+    });
+
+    el.querySelectorAll("textarea[data-note]").forEach(ta => {
+      ta.addEventListener("input", () => {
+        const n = notesFor(verse).find(x => x.id === ta.dataset.note);
+        if (!n || n.state === "approved") return;
+        n.draft = ta.value;
+        if (n.state === "needs" && n.draft.trim()) n.state = "editing";
+      });
+      ta.addEventListener("click", e => e.stopPropagation());
+    });
+    el.querySelectorAll("[data-save]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        toast("Saved");
+      });
+    });
+    el.querySelectorAll("[data-approve]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const n = notesFor(verse).find(x => x.id === btn.dataset.approve);
+        if (!n || n.state === "approved") return;
+        if (!n.draft.trim()) { toast("Write a draft before approving"); return; }
+        n.state = "approved";
+        toast("Approved");
+        renderAll();
+      });
+    });
+    el.querySelectorAll("[data-more]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const id = btn.dataset.more;
+        const menu = el.querySelector(`[data-menu="${id}"]`);
+        const open = !menu.classList.contains("open");
+        el.querySelectorAll(".menu").forEach(m => m.classList.remove("open"));
+        menu.classList.toggle("open", open);
+      });
+    });
+    el.querySelectorAll("[data-desk-action]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const n = notesFor(verse).find(x => x.id === btn.dataset.id);
+        if (btn.dataset.deskAction === "unapprove" && n) {
+          n.state = "editing";
+          toast("Unapproved");
+          renderAll();
+        } else {
+          toast("AI Suggest would run here");
+        }
+      });
+    });
+  }
+
+  document.querySelectorAll(".desk-scripture .ghost-link").forEach(btn => {
+    btn.addEventListener("click", () => {
+      deskVer = btn.dataset.ver;
+      document.querySelectorAll(".desk-scripture .ghost-link").forEach(b => {
+        b.classList.toggle("active", b === btn);
+      });
+      renderDesk();
+      bindRefs();
+    });
+  });
+  document.getElementById("desk-add").addEventListener("click", () => {
+    const id = "n" + verse + "x" + Math.random().toString(36).slice(2, 5);
+    notesFor(verse).push({
+      id,
+      quote: "…",
+      quoteEn: "new quote",
+      source: "New English source note.",
+      draft: "",
+      state: "needs",
+    });
+    activeNoteId = id;
+    toast("Note added (mock)");
+    renderAll();
+  });
+
+  // ===== Prose =====
+  function renderProse() {
+    const gutter = document.getElementById("prose-gutter");
+    gutter.innerHTML = "";
+    Object.keys(verses).forEach(v => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = v;
+      if (+v === verse) b.setAttribute("aria-current", "true");
+      b.addEventListener("click", () => setVerse(+v));
+      gutter.appendChild(b);
+    });
+    document.getElementById("prose-scripture").innerHTML = verses[verse].ult;
+
+    const list = document.getElementById("prose-list");
+    list.innerHTML = "";
+    notesFor(verse).forEach(n => {
+      const row = document.createElement("div");
+      row.className = "prose-note";
+      row.dataset.state = n.state === "approved" ? "approved" : (n.id === activeNoteId ? "editing" : n.state);
+      row.setAttribute("aria-expanded", n.id === activeNoteId ? "true" : "false");
+      const bodyText = n.draft.trim() || (n.state === "needs" ? "Tap to translate…" : n.source);
+      row.innerHTML = `
+        <div class="p-quote">${escapeHtml(n.quoteEn)} · <span class="quote-he" style="font-size:14px;display:inline">${escapeHtml(n.quote)}</span></div>
+        <div class="p-body">${escapeHtml(bodyText)}</div>
+        <div class="editor">
+          <div class="label">Source</div>
+          <div class="reading" style="color:var(--muted);margin-bottom:10px">${escapeHtml(n.source)}</div>
+          <div class="label">Draft</div>
+          <textarea data-prose="${n.id}" ${n.state === "approved" ? "disabled" : ""}>${escapeHtml(n.draft)}</textarea>
+          <div class="prose-actions">
+            <button type="button" class="btn" data-psave="${n.id}">Save</button>
+            <button type="button" class="approve-fab ${n.state === "approved" ? "done" : ""}" data-papprove="${n.id}" title="Approve">${n.state === "approved" ? "✓" : "✓"}</button>
+            <div style="position:relative">
+              <button type="button" class="icon-more" data-pmore="${n.id}">···</button>
+              <div class="menu" data-pmenu="${n.id}">
+                <button type="button" data-paction="suggest" data-id="${n.id}">AI Suggest</button>
+                <button type="button" data-paction="unapprove" data-id="${n.id}">Unapprove</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      if (n.id !== activeNoteId) {
+        row.addEventListener("click", () => { activeNoteId = n.id; renderAll(); });
+      }
+      list.appendChild(row);
+    });
+
+    list.querySelectorAll("textarea[data-prose]").forEach(ta => {
+      ta.addEventListener("input", () => {
+        const n = notesFor(verse).find(x => x.id === ta.dataset.prose);
+        if (!n || n.state === "approved") return;
+        n.draft = ta.value;
+        if (n.state === "needs" && n.draft.trim()) n.state = "editing";
+      });
+      ta.addEventListener("click", e => e.stopPropagation());
+    });
+    list.querySelectorAll("[data-psave]").forEach(btn => {
+      btn.addEventListener("click", e => { e.stopPropagation(); toast("Saved"); });
+    });
+    list.querySelectorAll("[data-papprove]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const n = notesFor(verse).find(x => x.id === btn.dataset.papprove);
+        if (!n) return;
+        if (n.state === "approved") return;
+        if (!n.draft.trim()) { toast("Write a draft before approving"); return; }
+        n.state = "approved";
+        toast("Approved");
+        renderAll();
+      });
+    });
+    list.querySelectorAll("[data-pmore]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const menu = list.querySelector(`[data-pmenu="${btn.dataset.pmore}"]`);
+        const open = !menu.classList.contains("open");
+        list.querySelectorAll(".menu").forEach(m => m.classList.remove("open"));
+        menu.classList.toggle("open", open);
+      });
+    });
+    list.querySelectorAll("[data-paction]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const n = notesFor(verse).find(x => x.id === btn.dataset.id);
+        if (btn.dataset.paction === "unapprove" && n) {
+          n.state = "editing";
+          toast("Unapproved");
+          renderAll();
+        } else toast("AI Suggest would run here");
+      });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderAll() {
+    bindRefs();
+    renderTheater();
+    renderDesk();
+    renderProse();
+  }
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

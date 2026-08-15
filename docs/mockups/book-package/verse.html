@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verse — is this coherent?</title>
+<link rel="stylesheet" href="_pkg.css" />
+<style>
+  /* Three regions: the verse, its resources, one detail area. No panel toolbars,
+     no per-resource headers, no minimise / save / link / eye / kebab anywhere. */
+  .stepbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .stepbar .vref {
+    font-size: 17px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 92px;
+  }
+  .stepbar select {
+    font: inherit;
+    font-size: 13px;
+    padding: 3px 6px;
+    color: var(--ink);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+
+  .modebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 9px 20px;
+    border-block-end: 1px solid var(--line);
+    background: var(--card);
+  }
+  .modebar .why { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .modebar .spacer { flex: 1; }
+  .flagrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .flag {
+    appearance: none;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--skip-soft);
+    color: var(--ink-2);
+  }
+  .flag.ok { background: var(--ok-soft); color: var(--ok-ink); cursor: default; }
+  .flag.attention { background: var(--warn-soft); color: var(--warn-ink); }
+  .flag.note { background: var(--hl); color: var(--inspire-deep); }
+  :root[data-theme="dark"] .flag.note { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .flag.note { color: var(--inspire); } }
+  :root[data-theme="light"] .flag.note { color: var(--inspire-deep); }
+
+  .vgrid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 440px;
+    gap: 0;
+    height: calc(100dvh - 52px - 43px);
+    min-height: 520px;
+  }
+  .col-text {
+    overflow: auto;
+    padding: 16px 20px 40px;
+    min-width: 0;
+  }
+  .col-detail {
+    overflow: auto;
+    border-inline-start: 1px solid var(--line);
+    background: var(--card);
+    padding: 16px 18px 40px;
+    min-width: 0;
+  }
+
+  /* ---------------------------------------------------------- read mode */
+  .tblock { margin: 0 0 22px; }
+  .tblock .label { margin: 0 0 6px; }
+  .heb-line {
+    font-family: var(--font-hebrew);
+    font-size: 25px;
+    line-height: 2.05;
+    direction: rtl;
+    text-align: start;
+    unicode-bidi: isolate;
+    margin: 0 0 20px;
+  }
+  .hw { border-radius: 4px; padding: 0 2px; cursor: pointer; }
+  .hw:hover { background: var(--card-2); }
+  .hw.on { background: var(--hl); box-shadow: inset 0 -2px 0 var(--inspire); }
+  .hw.marked { box-shadow: inset 0 -2px 0 var(--cultivate); }
+  .prose {
+    font-family: var(--font-scripture);
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0 0 20px;
+  }
+  .pg { cursor: pointer; border-radius: 3px; }
+  .pg:hover { background: var(--card-2); }
+  .pg.on { background: var(--hl); box-shadow: inset 0 -2px 0 var(--inspire); }
+  /* Words with no original behind them — supplied by the translator. Marked
+     quietly, because it is information, not a fault. */
+  .pg.supplied { color: var(--ink-2); }
+
+  /* ---------------------------------------------------------- audit mode */
+  .spine { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .spine th {
+    text-align: start;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 6px 10px;
+    border-block-end: 1px solid var(--line);
+    position: sticky;
+    inset-block-start: 0;
+    background: var(--ground);
+  }
+  .spine td {
+    padding: 7px 10px;
+    border-block-end: 1px solid var(--line);
+    vertical-align: baseline;
+  }
+  .spine tr { cursor: pointer; }
+  .spine tr:hover td { background: var(--card-2); }
+  .spine tr[aria-selected="true"] td { background: var(--hl); }
+  .spine .c-heb {
+    font-family: var(--font-hebrew);
+    font-size: 19px;
+    line-height: 1.7;
+    direction: rtl;
+    text-align: start;
+    unicode-bidi: isolate;
+    width: 24%;
+  }
+  .spine .c-lit { width: 30%; font-family: var(--font-scripture); font-size: 15px; }
+  .spine .c-sim { width: 34%; font-family: var(--font-scripture); font-size: 15px; color: var(--ink-2); }
+  .spine .c-mark { width: 12%; text-align: end; white-space: nowrap; }
+  .hole {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--warn-ink);
+    background: var(--warn-soft);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+  .cont { font-size: 11px; color: var(--ink-2); font-style: italic; }
+  .m-dot {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 999px;
+    margin-inline-start: 4px;
+    background: var(--hl);
+    color: var(--inspire-deep);
+  }
+  .m-dot.term { background: rgba(112, 201, 204, 0.28); color: var(--ok-ink); }
+  :root[data-theme="dark"] .m-dot { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .m-dot { color: var(--inspire); } }
+  :root[data-theme="light"] .m-dot { color: var(--inspire-deep); }
+
+  /* ---------------------------------------------------------- resources */
+  .reslist { margin: 24px 0 0; }
+  .reslist .label { margin: 0 0 6px; }
+  .rrow {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: baseline;
+    width: 100%;
+    text-align: start;
+    appearance: none;
+    border: 0;
+    border-block-end: 1px solid var(--line);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 7px 8px;
+    cursor: pointer;
+  }
+  .rrow:hover { background: var(--card-2); }
+  .rrow[aria-current="true"] { background: var(--hl); }
+  .rrow .tag {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    min-width: 46px;
+  }
+  .rrow .body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rrow .side { font-size: 11.5px; color: var(--ink-2); }
+  .rrow .qheb {
+    font-family: var(--font-hebrew);
+    font-size: 15px;
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+
+  /* ---------------------------------------------------------- detail */
+  .d-empty { font-size: 13px; color: var(--ink-2); padding: 30px 2px; }
+  .d-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 0 12px;
+  }
+  .d-sec { margin: 0 0 18px; }
+  .d-sec .label { margin: 0 0 5px; }
+  .d-heb {
+    font-family: var(--font-hebrew);
+    font-size: 22px;
+    line-height: 1.8;
+    direction: rtl;
+    text-align: start;
+    unicode-bidi: isolate;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+  }
+  .d-quote {
+    font-family: var(--font-scripture);
+    font-size: 15.5px;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+  }
+  .alt {
+    font-family: var(--font-scripture);
+    background: var(--ok-soft);
+    color: var(--ok-ink);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  .wgrid { display: grid; gap: 8px; }
+  .wcard {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    background: var(--card-2);
+  }
+  .wcard .wtop {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    justify-content: space-between;
+  }
+  .wcard .wheb {
+    font-family: var(--font-hebrew);
+    font-size: 21px;
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+  .wcard .wlem {
+    font-family: var(--font-hebrew);
+    font-size: 15px;
+    color: var(--ink-2);
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+  .wcard .wmorph { font-size: 12px; color: var(--ink-2); margin: 3px 0 0; }
+  .wcard .wpron { font-size: 12px; margin: 3px 0 0; }
+  .wcard .wstrong { font-size: 11px; }
+
+  /* Real article prose, set to read rather than to fill a panel. */
+  .article { font-size: 13.5px; line-height: 1.6; }
+  .article h3, .article h4, .article h5, .article h6 {
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 14px 0 4px;
+  }
+  .article p { margin: 0 0 8px; }
+  .article ul { margin: 0 0 8px; padding-inline-start: 18px; }
+  .article li { margin: 0 0 3px; }
+  .article blockquote {
+    margin: 0 0 8px;
+    padding: 2px 0 2px 10px;
+    border-inline-start: 2px solid var(--line);
+    color: var(--ink-2);
+    font-family: var(--font-scripture);
+  }
+  .article blockquote p { margin: 0 0 4px; }
+  details.src { margin: 6px 0 0; }
+  details.src summary {
+    cursor: pointer;
+    font-size: 11.5px;
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .kvs { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; margin: 0; }
+  .kvs dt { color: var(--ink-2); }
+  .kvs dd { margin: 0; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="pkghead" id="head">
+  <div class="stepbar">
+    <button class="iconbtn" id="prev" aria-label="Previous verse" title="Previous verse (←)">‹</button>
+    <span class="vref" id="vref">…</span>
+    <button class="iconbtn" id="next" aria-label="Next verse" title="Next verse (→)">›</button>
+    <select id="pick" aria-label="Go to verse"></select>
+  </div>
+  <span class="spacer"></span>
+  <nav aria-label="Screens"></nav>
+  <button class="iconbtn" data-action="toggle-theme" aria-label="Toggle light / dark" title="Toggle light / dark">◐</button>
+</header>
+
+<div class="too-narrow">
+  <strong>Desktop only, on purpose.</strong> Judging a verse means holding the original,
+  two renderings and the notes in view together. Below 1100px that stops being possible
+  without hiding something that matters.
+</div>
+
+<div class="desktop-only">
+  <div class="modebar">
+    <div class="seg" id="mode" role="group" aria-label="View">
+      <button type="button" data-mode="read" aria-pressed="true">Read</button>
+      <button type="button" data-mode="audit" aria-pressed="false">Audit</button>
+    </div>
+    <p class="why" id="why">…</p>
+    <span class="spacer"></span>
+    <div class="flagrow" id="flags"></div>
+  </div>
+
+  <main id="main" class="vgrid">
+    <section class="col-text" id="text"></section>
+    <aside class="col-detail" id="detail"></aside>
+  </main>
+
+  <p class="provenance" id="prov"></p>
+</div>
+
+<script src="_verse.js"></script>
+<script src="_vlib.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var L = window.VL;
+  var V = L.V;
+  var esc = L.esc;
+  function el(id) { return document.getElementById(id); }
+
+  var state = { ref: L.refs[0], mode: "read", sel: null };
+  // sel: {kind:'unit'|'tn'|'twl'|'tq', n?:unitIndex, k?:resourceKey}
+
+  // ------------------------------------------------------------ selection
+
+  function activeSpans() {
+    var v = L.decorate(state.ref);
+    var units = {}, ult = {}, ust = {}, words = {};
+    var s = state.sel;
+    if (!s) return { units: units, ult: ult, ust: ust, words: words };
+
+    function add(spans, unitList) {
+      (unitList || []).forEach(function (n) { units[n] = true; });
+      (spans.ult || []).forEach(function (g) { ult[g] = true; });
+      (spans.ust || []).forEach(function (g) { ust[g] = true; });
+    }
+
+    if (s.kind === "unit") {
+      var u = v.units[s.n];
+      if (u) {
+        units[u.n] = true;
+        u.ult.forEach(function (g) { ult[g] = true; });
+        u.ust.forEach(function (g) { ust[g] = true; });
+        u.words.forEach(function (i) { words[i] = true; });
+      }
+    } else if (s.kind === "tn" || s.kind === "twl") {
+      var row = rowByKey(s.k);
+      if (row) {
+        add(row.spans, row.spans.units);
+        row.words.forEach(function (i) { words[i] = true; });
+      }
+    }
+    return { units: units, ult: ult, ust: ust, words: words };
+  }
+
+  function rowByKey(k) {
+    var v = L.decorate(state.ref);
+    var all = v.tn.concat(v.twl).concat(v.tq);
+    for (var i = 0; i < all.length; i++) if (all[i].k === k) return all[i];
+    return null;
+  }
+
+  // ------------------------------------------------------------ text column
+
+  function readHtml(spans) {
+    var v = L.decorate(state.ref);
+    // Words carrying a note or a term link get a quiet underline, so the reader
+    // can see where the helps attach before clicking anything.
+    var marked = {};
+    v.tn.forEach(function (r) { r.words.forEach(function (i) { marked[i] = true; }); });
+    v.twl.forEach(function (r) { r.words.forEach(function (i) { marked[i] = true; }); });
+
+    return (
+      '<div class="tblock">' +
+      '<p class="label">Original · UHB</p>' +
+      '<div class="heb-line" dir="rtl" id="hebline">' +
+      L.hebrewHtml(state.ref, { units: spans.units, marked: marked }) +
+      "</div>" +
+      '<p class="label">Literal · ULT</p>' +
+      '<div class="prose" id="ultline">' + L.proseHtml(state.ref, "ult", { groups: spans.ult }) + "</div>" +
+      '<p class="label">Simplified · UST</p>' +
+      '<div class="prose" id="ustline">' + L.proseHtml(state.ref, "ust", { groups: spans.ust }) + "</div>" +
+      "</div>"
+    );
+  }
+
+  function auditHtml(spans) {
+    var rows = L.unitRows(state.ref);
+    var v = L.decorate(state.ref);
+    var prevUlt = null, prevUst = null;
+
+    var body = rows
+      .map(function (r) {
+        // A rendering repeated from the row above is a restructure, not a second
+        // translation — say so instead of printing the same sentence twice.
+        var ultCell = r.ult
+          ? (r.ult === prevUlt ? '<span class="cont">↑ same phrase</span>' : esc(r.ult))
+          : '<span class="hole">not rendered</span>';
+        var ustCell = r.ust
+          ? (r.ust === prevUst ? '<span class="cont">↑ same phrase</span>' : esc(r.ust))
+          : '<span class="hole">not rendered</span>';
+        prevUlt = r.ult; prevUst = r.ust;
+
+        var marks = r.notes
+          .map(function (n) { return '<span class="m-dot" title="' + esc(n.article || "note") + '">N</span>'; })
+          .join("") +
+          r.terms
+            .map(function (t) { return '<span class="m-dot term" title="' + esc(t.key) + '">W</span>'; })
+            .join("");
+
+        return (
+          '<tr data-unit="' + r.unit.n + '" aria-selected="' + (spans.units[r.unit.n] ? "true" : "false") + '">' +
+          '<td class="c-heb" dir="rtl">' + esc(r.heb) + "</td>" +
+          '<td class="c-lit">' + ultCell + "</td>" +
+          '<td class="c-sim">' + ustCell + "</td>" +
+          '<td class="c-mark">' + marks + "</td></tr>"
+        );
+      })
+      .join("");
+
+    var supplied = "";
+    var sup = v.unalignedUlt.filter(function (t) { return /[A-Za-z]/.test(t); });
+    var supU = v.unalignedUst.filter(function (t) { return /[A-Za-z]/.test(t); });
+    if (sup.length || supU.length) {
+      supplied =
+        '<p class="why" style="margin:10px 2px 0">Supplied, with no original word behind it — ' +
+        (sup.length ? "literal: " + esc(sup.join(" · ")) : "") +
+        (sup.length && supU.length ? " · " : "") +
+        (supU.length ? "simplified: " + esc(supU.join(" · ")) : "") +
+        "</p>";
+    }
+
+    return (
+      '<table class="spine" id="spine"><thead><tr>' +
+      "<th>Original</th><th>Literal · ULT</th><th>Simplified · UST</th><th></th>" +
+      "</tr></thead><tbody>" + body + "</tbody></table>" + supplied
+    );
+  }
+
+  function resourcesHtml() {
+    var v = L.decorate(state.ref);
+    var s = state.sel;
+    var cur = s && (s.kind === "tn" || s.kind === "twl" || s.kind === "tq") ? s.k : null;
+
+    function row(r, tag, bodyHtml, side) {
+      return (
+        '<button type="button" class="rrow" data-key="' + r.k + '"' +
+        ' aria-current="' + (cur === r.k ? "true" : "false") + '">' +
+        '<span class="tag">' + tag + "</span>" +
+        '<span class="body">' + bodyHtml + "</span>" +
+        '<span class="side">' + esc(side || "") + "</span></button>"
+      );
+    }
+
+    var h = "";
+    if (v.tn.length) {
+      h += '<div class="reslist"><p class="label">Notes · ' + v.tn.length + "</p>";
+      h += v.tn
+        .map(function (r) {
+          return row(
+            r,
+            r.article ? esc(r.article.replace(/^(figs|writing|grammar|translate)-/, "")) : "note",
+            (r.quote ? '<span class="qheb" dir="rtl">' + esc(r.quote.replace(/&/g, " … ")) + "</span> " : "") +
+              '<span style="color:var(--ink-2)">' + esc(firstBit(r.note)) + "</span>",
+            r.words.length ? "" : "quote not anchored",
+          );
+        })
+        .join("");
+      h += "</div>";
+    }
+    if (v.twl.length) {
+      h += '<div class="reslist"><p class="label">Word links · ' + v.twl.length + "</p>";
+      h += v.twl
+        .map(function (r) {
+          return row(
+            r,
+            esc(r.key.split("/")[0]),
+            '<span class="qheb" dir="rtl">' + esc(r.orig) + '</span> <span style="color:var(--ink-2)">' +
+              esc(r.key.split("/")[1]) + "</span>",
+            r.tags || "",
+          );
+        })
+        .join("");
+      h += "</div>";
+    }
+    if (v.tq.length) {
+      h += '<div class="reslist"><p class="label">Questions · ' + v.tq.length + "</p>";
+      h += v.tq.map(function (r) { return row(r, "q", esc(r.q), ""); }).join("");
+      h += "</div>";
+    }
+    return h;
+  }
+
+  function firstBit(text) {
+    var s = String(text || "").replace(/\\n/g, " ").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+    return s.length > 110 ? s.slice(0, 110).replace(/\s+\S*$/, "") + "…" : s;
+  }
+
+  // ------------------------------------------------------------ detail
+
+  function wordCard(w) {
+    return (
+      '<div class="wcard"><div class="wtop">' +
+      '<span class="wheb" dir="rtl">' + esc(w.w) + "</span>" +
+      '<span class="wlem" dir="rtl">' + esc(w.lemma) + "</span>" +
+      "</div>" +
+      '<p class="wmorph">' + esc(L.morphText(w)) + "</p>" +
+      (w.pron
+        ? '<p class="wpron">attached pronoun: <b>' + esc(w.pron.gloss) + "</b> <span style=\"color:var(--ink-2)\">(" +
+          esc(w.pron.parse) + ")</span></p>"
+        : "") +
+      '<p class="wmorph wstrong mono">' + esc(w.strong) + " · " + esc(w.morph) + "</p>" +
+      "</div>"
+    );
+  }
+
+  function articleHtml(a, kind) {
+    if (!a) {
+      return '<p class="why">No ' + kind + " article is available for this reference.</p>";
+    }
+    return (
+      '<div class="d-sec"><p class="label">' + esc(kind) + " · " + esc(a.title) + "</p>" +
+      (a.sub ? '<p class="why" style="margin:0 0 8px">' + esc(a.sub) + "</p>" : "") +
+      '<div class="article">' + L.md(a.body) + "</div></div>"
+    );
+  }
+
+  function detailHtml() {
+    var v = L.decorate(state.ref);
+    var s = state.sel;
+    if (!s) {
+      return (
+        '<p class="d-empty">Select a word, a row, a note or a word link.<br><br>' +
+        "Everything is anchored to the original words, so a selection anywhere lights up " +
+        "the same place in all three texts.</p>"
+      );
+    }
+
+    if (s.kind === "unit") {
+      var u = v.units[s.n];
+      if (!u) return '<p class="d-empty">Nothing selected.</p>';
+      var words = u.words.map(function (i) { return v.words[i]; });
+      var notes = v.tn.filter(function (r) { return r.spans.units.indexOf(u.n) >= 0; });
+      var terms = v.twl.filter(function (r) { return r.spans.units.indexOf(u.n) >= 0; });
+      return (
+        '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+        '<span class="chip">original word' + (words.length > 1 ? "s" : "") + "</span></div>" +
+        '<div class="d-sec"><p class="label">Morphology · from UHB</p><div class="wgrid">' +
+        words.map(wordCard).join("") + "</div></div>" +
+        '<div class="d-sec"><p class="label">Literal · ULT</p><div class="d-quote">' +
+        (u.ultText ? esc(u.ultText) : '<span class="hole">not rendered</span>') + "</div></div>" +
+        '<div class="d-sec"><p class="label">Simplified · UST</p><div class="d-quote">' +
+        (u.ustText ? esc(u.ustText) : '<span class="hole">not rendered</span>') + "</div></div>" +
+        (notes.length || terms.length
+          ? '<div class="d-sec"><p class="label">Attached here</p>' +
+            notes.map(function (r) {
+              return '<button type="button" class="rrow" data-key="' + r.k + '"><span class="tag">' +
+                esc(r.article || "note") + '</span><span class="body">' + esc(firstBit(r.note)) +
+                '</span><span class="side"></span></button>';
+            }).join("") +
+            terms.map(function (r) {
+              return '<button type="button" class="rrow" data-key="' + r.k + '"><span class="tag">' +
+                esc(r.key.split("/")[0]) + '</span><span class="body">' + esc(r.key.split("/")[1]) +
+                '</span><span class="side"></span></button>';
+            }).join("") +
+            "</div>"
+          : '<p class="why">No note or word link attaches to this word.</p>')
+      );
+    }
+
+    var row = rowByKey(s.k);
+    if (!row) return '<p class="d-empty">Nothing selected.</p>';
+
+    if (s.kind === "tq") {
+      return (
+        '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+        '<span class="chip">question</span></div>' +
+        '<div class="d-sec"><p class="label">Question</p><div class="d-quote">' + esc(row.q) + "</div></div>" +
+        '<div class="d-sec"><p class="label">Expected answer</p><div class="d-quote">' + esc(row.a) + "</div></div>" +
+        '<p class="why">A question that cannot be answered from the two renderings above is ' +
+        "the clearest sign that something in this verse does not line up.</p>"
+      );
+    }
+
+    if (s.kind === "twl") {
+      var tw = L.articleFor(row);
+      return (
+        '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+        '<span class="chip chip-info mono">' + esc(row.key) + "</span>" +
+        (row.tags ? '<span class="chip">' + esc(row.tags) + "</span>" : "") + "</div>" +
+        '<div class="d-sec"><p class="label">Linked from</p><div class="d-heb" dir="rtl">' +
+        esc(row.orig) + "</div></div>" +
+        '<div class="d-sec"><dl class="kvs">' +
+        "<dt>occurrence</dt><dd>" + esc(row.occ) + "</dd>" +
+        "<dt>id</dt><dd class=\"mono\">" + esc(row.id) + "</dd>" +
+        "<dt>link</dt><dd class=\"mono\">" + esc(row.link) + "</dd></dl></div>" +
+        articleHtml(tw, "translationWords")
+      );
+    }
+
+    // tN
+    var ta = L.articleFor(row);
+    var anchored = row.words.length;
+    return (
+      '<div class="d-top"><span class="ref">' + esc(V.meta.book + " " + state.ref) + "</span>" +
+      (row.article ? '<span class="chip chip-info mono">' + esc(row.article) + "</span>" : "") +
+      '<span class="chip ' + (anchored ? "chip-ok" : "chip-warn") + '">' +
+      (anchored ? "quote anchored" : "quote not found") + "</span>" +
+      (row.tags ? '<span class="chip chip-warn">' + esc(row.tags) + "</span>" : "") + "</div>" +
+      (row.quote
+        ? '<div class="d-sec"><p class="label">Quote</p><div class="d-heb" dir="rtl">' +
+          esc(row.quote.replace(/&/g, " … ")) + "</div></div>"
+        : "") +
+      '<div class="d-sec"><p class="label">Note</p><div class="article">' + L.note(row.note) + "</div></div>" +
+      articleHtml(ta, "translationAcademy")
+    );
+  }
+
+  // ------------------------------------------------------------ flags
+
+  function flagsHtml() {
+    return L.coherence(state.ref)
+      .map(function (c, i) {
+        var label =
+          c.level === "ok" ? "✓ " + c.label : c.label;
+        return (
+          '<button type="button" class="flag ' + c.level + '" data-flag="' + i + '"' +
+          ' title="' + esc(c.detail) + '">' + esc(label) +
+          (c.units && c.units.length ? " · " + c.units.length : "") +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  // ------------------------------------------------------------ render
+
+  function render() {
+    var v = L.decorate(state.ref);
+    var spans = activeSpans();
+
+    el("vref").textContent = V.meta.book + " " + state.ref;
+    el("why").textContent =
+      state.mode === "read"
+        ? "Read the verse three ways. Click any word to see what the other texts do with it."
+        : "One row per original word: what the literal text made of it, and what the simplified text made of it.";
+
+    el("text").innerHTML =
+      (state.mode === "read" ? readHtml(spans) : auditHtml(spans)) + resourcesHtml();
+    el("detail").innerHTML = detailHtml();
+    el("flags").innerHTML = flagsHtml();
+
+    var cov = V.meta.coverage;
+    el("prov").innerHTML =
+      "<b>Everything here is real.</b> Original text, morphology, both renderings and their " +
+      "word alignment come from <code>hbo_uhb_38-ZEC.usfm</code>, <code>en_ult_38-ZEC.usfm</code> and " +
+      "<code>en_ust_38-ZEC.usfm</code>; notes, word links and questions from the ZEC TSVs — all in " +
+      "<code>docs/samples/</code>. translationAcademy and translationWords prose is the real text from the " +
+      "<code>en_ta</code> and <code>en_tw</code> repositories (" + Object.keys(V.ta).length + " and " +
+      Object.keys(V.tw).length + " articles for this chapter, none missing). Morphology is decoded by " +
+      "<code>web/src/lib/morph.ts</code> — the product's own decoder, not a re-implementation." +
+      "<br><br><b>How the three texts are joined.</b> The literal and simplified texts are each aligned to the " +
+      "same original words, so they can be joined per word instead of merely shown side by side. Of " +
+      (cov.joinTiers.exact + cov.joinTiers.strong + cov.joinTiers.skeleton + cov.joinTiers.weak + cov.joinTiers.none) +
+      " alignment milestones in this chapter, " + cov.joinTiers.exact + " matched on the exact pointed form, " +
+      cov.joinTiers.strong + " on Strong's number, " + cov.joinTiers.weak +
+      " on consonants alone, and " + cov.joinTiers.none + " not at all. All " + cov.tnAnchored +
+      " note quotes and all " + cov.twlAnchored + " word links anchor to specific words." +
+      "<br><br><b>What is not here.</b> No editing, no approve, no save — this is a reading and checking " +
+      "surface with no backend. The coherence flags are observations computed from the alignment, not " +
+      "stored statuses, and not verdicts: a word the simplified text does not render is often correct.";
+  }
+
+  // ------------------------------------------------------------ events
+
+  function go(delta) {
+    var i = L.refs.indexOf(state.ref);
+    var n = Math.max(0, Math.min(L.refs.length - 1, i + delta));
+    if (n === i) return;
+    state.ref = L.refs[n];
+    state.sel = null;
+    el("pick").value = state.ref;
+    render();
+    el("text").scrollTop = 0;
+  }
+
+  el("prev").addEventListener("click", function () { go(-1); });
+  el("next").addEventListener("click", function () { go(1); });
+
+  el("pick").innerHTML = L.refs
+    .map(function (r) { return '<option value="' + r + '">' + V.meta.book + " " + r + "</option>"; })
+    .join("");
+  el("pick").addEventListener("change", function (e) {
+    state.ref = e.target.value;
+    state.sel = null;
+    render();
+  });
+
+  el("mode").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-mode]");
+    if (!b) return;
+    state.mode = b.dataset.mode;
+    Array.prototype.forEach.call(el("mode").querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    });
+    render();
+  });
+
+  // One delegated handler: any anchored thing anywhere selects the same way.
+  document.addEventListener("click", function (e) {
+    var res = e.target.closest("[data-key]");
+    if (res) {
+      var k = res.dataset.key;
+      state.sel = { kind: k.replace(/\d+$/, ""), k: k };
+      render();
+      return;
+    }
+    var unit = e.target.closest("[data-unit]");
+    if (unit) {
+      state.sel = { kind: "unit", n: parseInt(unit.dataset.unit, 10) };
+      render();
+      return;
+    }
+    var pg = e.target.closest("[data-group]");
+    if (pg) {
+      // Clicking a rendered phrase selects the original word behind it.
+      var v = L.decorate(state.ref);
+      var gid = parseInt(pg.dataset.group, 10);
+      var inUlt = pg.parentNode.id === "ultline";
+      var hit = v.units.filter(function (u) {
+        return (inUlt ? u.ult : u.ust).indexOf(gid) >= 0;
+      })[0];
+      state.sel = hit ? { kind: "unit", n: hit.n } : null;
+      render();
+      return;
+    }
+    var flag = e.target.closest("[data-flag]");
+    if (flag) {
+      var c = L.coherence(state.ref)[parseInt(flag.dataset.flag, 10)];
+      if (c && c.units && c.units.length) {
+        state.mode = "audit";
+        Array.prototype.forEach.call(el("mode").querySelectorAll("button"), function (x) {
+          x.setAttribute("aria-pressed", x.dataset.mode === "audit" ? "true" : "false");
+        });
+        state.sel = { kind: "unit", n: c.units[0] };
+        render();
+        var row = el("text").querySelector('tr[aria-selected="true"]');
+        if (row) row.scrollIntoView({ block: "center" });
+      }
+    }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    else if (e.key === "Escape") { state.sel = null; render(); }
+    else if (e.key === "a" || e.key === "r") {
+      state.mode = e.key === "a" ? "audit" : "read";
+      Array.prototype.forEach.call(el("mode").querySelectorAll("button"), function (x) {
+        x.setAttribute("aria-pressed", x.dataset.mode === state.mode ? "true" : "false");
+      });
+      render();
+    }
+  });
+
+  L.mountHead(el("head"), "verse.html");
+  el("pick").value = state.ref;
+  render();
+})();
+</script>
+</body>
+</html>

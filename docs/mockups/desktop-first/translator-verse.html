@@ -1,0 +1,1471 @@
+<title>Finish This Verse — Titus 1:4</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ============================================================
+   unfoldingWord — Book Package mockups · shared design system
+   Brand: Inspire #31ADE3 · Ocean #014263 · Tech #231F20
+          Cultivate #70C9CC · Kindle #E59D33
+   Type:  UI = system sans · Scripture/articles = humanist serif
+   Every color decision goes through the tokens below.
+   ============================================================ */
+
+:root {
+  --inspire: #31ADE3;
+  --inspire-deep: #1B84B8;
+  --ocean: #014263;
+  --tech: #231F20;
+  --cultivate: #70C9CC;
+  --kindle: #E59D33;
+
+  /* grounds & ink — cool, ocean-biased neutrals */
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;          /* inset panels, verse blocks */
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);   /* quote highlight in scripture */
+
+  /* semantic (separate from accent) */
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-scripture: "Iowan Old Style", Charter, "Palatino Linotype", Georgia, Cambria, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0B1B23;
+    --card: #13272F;
+    --card-2: #0F2129;
+    --ink: #E3EDF2;
+    --ink-2: #90A6B1;
+    --line: #23404B;
+    --hl: rgba(49, 173, 227, 0.26);
+    --ok: #4BB8A9;
+    --ok-ink: #9ADFD5;
+    --ok-soft: rgba(46, 158, 143, 0.20);
+    --warn: #E8A94E;
+    --warn-ink: #F1CE9A;
+    --warn-soft: rgba(229, 157, 51, 0.18);
+    --skip: #8FA5B0;
+    --skip-soft: rgba(100, 121, 132, 0.25);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0B1B23;
+  --card: #13272F;
+  --card-2: #0F2129;
+  --ink: #E3EDF2;
+  --ink-2: #90A6B1;
+  --line: #23404B;
+  --hl: rgba(49, 173, 227, 0.26);
+  --ok: #4BB8A9;
+  --ok-ink: #9ADFD5;
+  --ok-soft: rgba(46, 158, 143, 0.20);
+  --warn: #E8A94E;
+  --warn-ink: #F1CE9A;
+  --warn-soft: rgba(229, 157, 51, 0.18);
+  --skip: #8FA5B0;
+  --skip-soft: rgba(100, 121, 132, 0.25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+}
+
+/* ---------- base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; font-size: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--inspire); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- phone shell (translator mockups) ---------- */
+.phone {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px 10px;
+}
+.topbar .title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topbar h1 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.topbar .sub {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin: 1px 0 0;
+}
+.count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--skip-soft);
+  margin-top: 10px;
+  overflow: hidden;
+}
+.progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--inspire);
+  transition: width 0.35s ease;
+}
+
+/* ---------- content & cards ---------- */
+.content {
+  flex: 1;
+  padding: 16px 16px 120px;   /* room for actionbar */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+.card-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 8px;
+}
+.card-label .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--inspire); }
+
+/* scripture */
+.ref {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ocean);
+  margin: 0 0 6px;
+}
+:root[data-theme="dark"] .ref { color: var(--cultivate); }
+@media (prefers-color-scheme: dark) { .ref { color: var(--cultivate); } }
+:root[data-theme="light"] .ref { color: var(--ocean); }
+.verse {
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.verse + .verse { margin-top: 8px; }
+.verse .vlabel {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  display: block;
+  margin-bottom: 3px;
+}
+.verse mark {
+  background: var(--hl);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.quote-chip {
+  display: inline-block;
+  font-family: var(--font-scripture);
+  font-size: 15px;
+  background: var(--hl);
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 0 0 8px;
+}
+.quote-chip small { font-family: var(--font-ui); color: var(--ink-2); font-style: italic; }
+
+.note-body { font-size: 15.5px; line-height: 1.55; margin: 0; }
+.note-body b, .note-body strong { color: var(--ocean); }
+@media (prefers-color-scheme: dark) { .note-body b, .note-body strong { color: var(--cultivate); } }
+:root[data-theme="dark"] .note-body b, :root[data-theme="dark"] .note-body strong { color: var(--cultivate); }
+:root[data-theme="light"] .note-body b, :root[data-theme="light"] .note-body strong { color: var(--ocean); }
+
+/* editable target draft */
+.editable { cursor: text; border-radius: 6px; }
+.editable:hover { background: var(--hl); }
+textarea.edit-area {
+  width: 100%;
+  min-height: 110px;
+  font-family: var(--font-ui);
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- chips / status ---------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.chip-draft    { background: var(--skip-soft); color: var(--skip); }
+.chip-approved { background: var(--ok-soft);   color: var(--ok-ink); }
+.chip-edited   { background: var(--hl);        color: var(--inspire-deep); }
+.chip-needs    { background: var(--warn-soft); color: var(--warn-ink); }
+.chip-skipped  { background: var(--skip-soft); color: var(--skip); text-decoration: none; }
+
+/* ---------- buttons ---------- */
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  min-height: 50px;
+  padding: 0 14px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.btn:active { transform: scale(0.97); }
+.btn svg { flex: none; }
+
+.btn-approve { background: var(--ok); color: #fff; flex: 1.4; }
+.btn-primary { background: var(--inspire); color: #06293B; }
+.btn-rerun {
+  background: transparent;
+  color: var(--inspire-deep);
+  border: 1.5px solid var(--inspire);
+}
+@media (prefers-color-scheme: dark) { .btn-rerun { color: var(--inspire); } }
+:root[data-theme="dark"] .btn-rerun { color: var(--inspire); }
+:root[data-theme="light"] .btn-rerun { color: var(--inspire-deep); }
+.btn-skip { background: var(--skip-soft); color: var(--skip); }
+.btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+.btn-ghost { background: transparent; color: var(--ink-2); min-height: 40px; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+
+/* icon-only round button (back chevrons etc.) */
+.iconbtn {
+  appearance: none;
+  border: none;
+  background: var(--skip-soft);
+  color: var(--ink);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+
+/* ---------- bottom action bar ---------- */
+.actionbar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  z-index: 30;
+}
+.actionbar .btn { flex: 1; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--ocean);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 9px 18px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+  max-width: 90%;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- spinner ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
+
+/* ---------- list rows (words/articles, admin) ---------- */
+.listitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.listitem:hover { border-color: var(--inspire); }
+.listitem .li-main { flex: 1; min-width: 0; }
+.listitem .li-title { font-weight: 600; font-size: 15.5px; margin: 0; }
+.listitem .li-sub { font-size: 13px; color: var(--ink-2); margin: 1px 0 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 2px 2px;
+}
+.section-head h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+.section-head .tally {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- segmented control ---------- */
+.seg {
+  display: flex;
+  background: var(--skip-soft);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.seg button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(1, 66, 99, 0.15);
+}
+
+/* ---------- switches (admin) ---------- */
+.switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  border: none;
+  background: var(--skip-soft);
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { left: 21px; }
+
+/* ---------- admin shell ---------- */
+.admin {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 16px 96px;
+}
+.admin-head { margin: 4px 2px 16px; }
+.admin-head .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--inspire-deep);
+  margin: 0 0 4px;
+}
+@media (prefers-color-scheme: dark) { .admin-head .eyebrow { color: var(--inspire); } }
+:root[data-theme="dark"] .admin-head .eyebrow { color: var(--inspire); }
+:root[data-theme="light"] .admin-head .eyebrow { color: var(--inspire-deep); }
+.admin-head h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+.admin-head .sub { color: var(--ink-2); font-size: 14px; margin: 4px 0 0; }
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ocean);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.avatar.alt { background: var(--inspire-deep); }
+.avatar.alt2 { background: var(--kindle); color: #3A2600; }
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--skip-soft);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--inspire);
+  border-radius: 3px;
+  transition: width 0.35s ease;
+}
+.bar > i.ok { background: var(--ok); }
+.bar > i.warn { background: var(--warn); }
+
+/* ============================================================
+   Desk-class admin primitives (tablet + desktop first,
+   still usable at 375px). Panels carry a top / body / foot
+   chrome; the foot always states live state on the left and
+   the next action on the right.
+   ============================================================ */
+
+.desk {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 18px 56px;
+}
+.desk-shell {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .desk-shell { grid-template-columns: minmax(0, 1fr); }
+}
+
+.rail {
+  position: sticky;
+  top: 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+.rail button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+.rail button:hover { background: var(--card-2); color: var(--ink); }
+.rail button[aria-current="true"] {
+  background: var(--hl);
+  color: var(--ink);
+}
+.rail .rail-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 8px 11px 4px;
+}
+@media (max-width: 900px) { .rail .rail-head { display: none; } }
+.rail .rail-tally {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.panel + .panel { margin-top: 16px; }
+.panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.panel-top h2 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.panel-top .panel-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 2px 0 0;
+  width: 100%;
+}
+.panel-top .spacer { margin-left: auto; }
+.panel-body { padding: 16px; }
+.panel-body.flush { padding: 0; }
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--card-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.panel-foot .foot-state { font-variant-numeric: tabular-nums; }
+.panel-foot .spacer { margin-left: auto; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 820px) {
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* data tables — every column real data, header sticks while the body scrolls */
+.table-wrap { overflow-x: auto; }
+.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  min-width: 560px;
+}
+.dtable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card-2);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.dtable tbody tr:last-child td { border-bottom: none; }
+.dtable tbody tr.selectable { cursor: pointer; }
+.dtable tbody tr.selectable:hover { background: var(--card-2); }
+.dtable tbody tr[aria-selected="true"] { background: var(--hl); }
+.dtable .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* small tappable toggle chip used for applies-to / lane pickers */
+.tchip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tchip[aria-pressed="true"] {
+  background: var(--hl);
+  border-color: var(--inspire);
+  color: var(--ink);
+}
+.chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* key/value definition rows for settings summaries */
+.kv { display: grid; grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.6fr); gap: 6px 14px; font-size: 14px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; }
+
+/* text inputs / selects shared by setup + preferences screens */
+.tinput, .tselect {
+  width: 100%;
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.tinput:focus, .tselect:focus { border-color: var(--inspire); outline: none; box-shadow: 0 0 0 3px var(--hl); }
+.f-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 5px;
+}
+.field + .field { margin-top: 13px; }
+.f-help { font-size: 12.5px; color: var(--ink-2); margin: 5px 0 0; }
+
+/* ---------- verse-bundle step rail (phone) ---------- */
+.steps {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 0 1px;
+  -webkit-overflow-scrolling: touch;
+}
+.step {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 6px 12px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+.step .step-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.step[aria-current="true"] {
+  border-color: var(--inspire);
+  background: var(--hl);
+  color: var(--ink);
+}
+.step[data-state="approved"] .step-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.step[data-state="skipped"] .step-mark { background: var(--skip); border-color: var(--skip); color: #fff; }
+.step[data-state="edited"] .step-mark { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+
+/* ---------- scripture lanes (ULT to GLT, UST to GST) ---------- */
+.lane-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.lane-arrow { color: var(--inspire); font-weight: 700; }
+.target-box {
+  width: 100%;
+  min-height: 96px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- side-by-side / block-paired article view ---------- */
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+@media (max-width: 560px) {
+  .pair { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+.pair-col-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 4px;
+}
+.blockpair + .blockpair {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* ============================================================
+   Page-specific: Finish This Verse (verse-first, all-resources)
+   ============================================================ */
+[hidden] { display: none !important; }
+
+.verse-toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 -4px;
+}
+.verse-toggle-row .btn-ghost {
+  min-height: 30px;
+  padding: 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.item-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.item-eyebrow .chip { margin-left: auto; text-transform: none; letter-spacing: normal; }
+
+.greek-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 0 10px;
+}
+.greek-eyebrow {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+.greek-text {
+  font-family: var(--font-scripture);
+  font-size: 17px;
+  color: var(--ink);
+  margin: 0;
+}
+
+.lane { margin-bottom: 14px; }
+.lane:last-child { margin-bottom: 0; }
+.lane .lane-tag { margin-bottom: 6px; }
+.lane .en-block {
+  font-family: var(--font-scripture);
+  font-size: 16px;
+  line-height: 1.55;
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  margin: 0 0 8px;
+}
+
+.term-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--font-scripture);
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+.term-head .term-en { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--line); }
+.term-head .term-es { font-weight: 700; color: var(--ocean); }
+:root[data-theme="dark"] .term-head .term-es { color: var(--cultivate); }
+@media (prefers-color-scheme: dark) { .term-head .term-es { color: var(--cultivate); } }
+:root[data-theme="light"] .term-head .term-es { color: var(--ocean); }
+
+.done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 36px 20px 26px;
+}
+.done h2 {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  margin: 12px 0 0;
+}
+.done .tallies {
+  color: var(--ink-2);
+  font-size: 14.5px;
+  margin: 0 0 16px;
+}
+.done .btn { width: 100%; }
+.done .btn-primary { min-height: 52px; }
+.done-badge .ring { fill: var(--ok-soft); }
+.done-badge .core { fill: var(--ok); }
+.done-badge .tick {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+</style>
+
+<div class="phone">
+  <header class="topbar">
+    <div class="title-row">
+      <button class="iconbtn" id="backBtn" aria-label="Back to Titus 1">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <div class="title-text">
+        <h1>Titus 1:4</h1>
+        <p class="sub">Everything in Titus 1:4 &middot; English &rarr; Espa&ntilde;ol</p>
+      </div>
+      <span class="count" id="count">0 of 5 done</span>
+    </div>
+    <div class="progress"><i id="progressFill" style="width:0%"></i></div>
+    <nav class="steps" id="stepsRail" aria-label="Verse items"></nav>
+  </header>
+
+  <main class="content">
+    <div class="verse-toggle-row">
+      <button class="btn btn-ghost" id="verseToggle">Hide verse</button>
+    </div>
+
+    <section class="card" id="verseCard">
+      <p class="ref">Titus 1:4</p>
+      <div class="verse"><span class="vlabel">ULT</span><span id="ultText"></span></div>
+      <div class="verse"><span class="vlabel">UST</span><span id="ustText"></span></div>
+    </section>
+
+    <section class="card" id="itemCard"></section>
+
+    <section class="card done" id="doneView" hidden>
+      <svg class="done-badge" width="96" height="96" viewBox="0 0 96 96" aria-hidden="true">
+        <circle class="ring" cx="48" cy="48" r="46"></circle>
+        <circle class="core" cx="48" cy="48" r="36"></circle>
+        <path class="tick" d="M33 49 L44 60 L64 37"></path>
+      </svg>
+      <h2>Titus 1:4 is done</h2>
+      <p class="tallies" id="tallies"></p>
+      <button class="btn btn-primary" id="nextVerseBtn">Next verse &mdash; Titus 1:5</button>
+      <button class="btn btn-ghost" id="reviewBtn">Review this verse again</button>
+    </section>
+  </main>
+
+  <footer class="actionbar" id="actionbar">
+    <button class="btn btn-rerun" id="redraftBtn">
+      <svg id="redraftIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+      Redraft
+    </button>
+    <button class="btn btn-skip" id="skipBtn">Not needed</button>
+    <button class="btn btn-approve" id="approveBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      Approve
+    </button>
+  </footer>
+
+  <div class="toast" id="toast" role="status"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var VERSE = {
+    ult: "to Titus, a true son according to our common faith. Grace and peace from God the Father and Christ Jesus our Savior.",
+    ust: "Titus, you are like a true son to me, because we both believe the same message. I pray that God the Father and Christ Jesus our Savior will continue to be kind to you and give you peace."
+  };
+
+  var STEPS = [
+    {
+      type: "literal",
+      label: "ULT → GLT",
+      status: null,
+      variantIdx: 0,
+      variants: [
+        "a Tito, un verdadero hijo según nuestra fe común. Gracia y paz de Dios el Padre y de Cristo Jesús nuestro Salvador.",
+        "a Tito, mi verdadero hijo conforme a la fe que compartimos. Gracia y paz de parte de Dios el Padre y de Cristo Jesús nuestro Salvador."
+      ]
+    },
+    {
+      type: "simplified",
+      label: "UST → GST",
+      status: null,
+      variantIdx: 0,
+      variants: [
+        "Tito, tú eres como un verdadero hijo para mí, porque los dos creemos el mismo mensaje. Pido a Dios que el Padre y Cristo Jesús nuestro Salvador sigan siendo bondadosos contigo y te den paz.",
+        "Tito, eres para mí como un hijo verdadero, porque compartimos la misma fe. Oro para que Dios el Padre y Cristo Jesús nuestro Salvador continúen mostrándote bondad y dándote paz."
+      ]
+    },
+    {
+      type: "note",
+      label: "Note",
+      status: null,
+      variantIdx: 0,
+      greek: "κατὰ κοινὴν πίστιν",
+      ultHl: "according to our common faith",
+      ustHl: "we both believe the same message",
+      en: "Paul and Titus share the <b>same faith</b> in Christ. This is why Paul can call Titus a true son. Alternate translation: 'because we both believe in Christ'",
+      variants: [
+        "Pablo y Tito comparten la <b>misma fe</b> en Cristo. Por eso Pablo puede llamar a Tito un verdadero hijo. Traducción alternativa: 'porque ambos creemos en Cristo'",
+        "Pablo llama a Tito verdadero hijo porque los dos tienen la <b>misma fe</b> en Cristo. Otra forma de traducirlo: 'porque compartimos la fe en Cristo'"
+      ]
+    },
+    {
+      type: "question",
+      label: "Question",
+      status: null,
+      variantIdx: 0,
+      enQ: "Why does Paul call Titus a true son?",
+      enA: "Because they share the same faith in Christ.",
+      qVariants: [
+        "¿Por qué llama Pablo a Tito un verdadero hijo?",
+        "¿Por qué Pablo se refiere a Tito como un verdadero hijo?"
+      ],
+      aVariants: [
+        "Porque comparten la misma fe en Cristo.",
+        "Porque los dos creen en Cristo de la misma manera."
+      ]
+    },
+    {
+      type: "keyterm",
+      label: "Key Term",
+      status: null,
+      variantIdx: 0,
+      termEn: "true son",
+      termEs: "verdadero hijo",
+      ultHl: "a true son",
+      ustHl: "like a true son to me",
+      enDef: "Paul speaks of Titus as his son because he led him to faith and trained him, not because they are related by birth.",
+      variants: [
+        "Pablo habla de Tito como su hijo porque lo guio a la fe y lo entrenó, no porque sean parientes de nacimiento.",
+        "Pablo llama hijo a Tito porque él lo llevó a la fe y lo formó, no porque tengan un lazo de sangre."
+      ]
+    }
+  ];
+
+  var cur = 0;
+  var view = "cards";       // "cards" | "done"
+  var reviewing = false;
+  var verseCollapsed = false;
+  var advancing = false;
+  var spinning = false;
+
+  function el(id) { return document.getElementById(id); }
+
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function markHighlight(text, hl) {
+    if (!hl) return escapeHtml(text);
+    var esc = escapeHtml(text);
+    var ehl = escapeHtml(hl);
+    return esc.replace(ehl, "<mark>" + ehl + "</mark>");
+  }
+
+  function doneCount() {
+    return STEPS.filter(function (s) { return s.status !== null; }).length;
+  }
+  function allDone() {
+    return STEPS.every(function (s) { return s.status !== null; });
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = el("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1400);
+  }
+
+  function markSvg(state) {
+    if (state === "approved") {
+      return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+    }
+    if (state === "skipped") {
+      return '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+    }
+    if (state === "edited") {
+      return '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>';
+    }
+    return "";
+  }
+
+  function renderSteps() {
+    var rail = el("stepsRail");
+    rail.innerHTML = "";
+    STEPS.forEach(function (s, i) {
+      var b = document.createElement("button");
+      b.className = "step";
+      b.type = "button";
+      if (i === cur && view === "cards") b.setAttribute("aria-current", "true");
+      if (s.status) b.setAttribute("data-state", s.status);
+      b.innerHTML = '<span class="step-mark">' + markSvg(s.status) + '</span>' + escapeHtml(s.label);
+      b.addEventListener("click", function () {
+        if (advancing || spinning) return;
+        cur = i;
+        view = "cards";
+        render();
+      });
+      rail.appendChild(b);
+    });
+  }
+
+  function renderVerse() {
+    el("verseCard").hidden = verseCollapsed;
+    el("verseToggle").textContent = verseCollapsed ? "Show verse" : "Hide verse";
+    var s = STEPS[cur];
+    var ultHl = (s && (s.type === "note" || s.type === "keyterm")) ? s.ultHl : null;
+    var ustHl = (s && (s.type === "note" || s.type === "keyterm")) ? s.ustHl : null;
+    el("ultText").innerHTML = markHighlight(VERSE.ult, ultHl);
+    el("ustText").innerHTML = markHighlight(VERSE.ust, ustHl);
+  }
+
+  function chipFor(status) {
+    if (status === "approved") return ["chip chip-approved", "Approved"];
+    if (status === "edited") return ["chip chip-edited", "Edited"];
+    if (status === "skipped") return ["chip chip-skipped", "Not needed"];
+    return ["chip chip-draft", "Draft"];
+  }
+
+  function markDirty(step) {
+    if (step.status === null) {
+      step.status = "edited";
+      renderSteps();
+      updateHeader();
+      checkAutoAdvance();
+    }
+  }
+
+  function buildLiteralOrSimplified(step, wrap) {
+    var isLit = step.type === "literal";
+    var lane = document.createElement("div");
+    lane.className = "lane";
+    var tag = document.createElement("p");
+    tag.className = "lane-tag";
+    tag.innerHTML = (isLit ? "ULT" : "UST") + ' <span class="lane-arrow">→</span> ' + (isLit ? "GLT" : "GST");
+    var en = document.createElement("p");
+    en.className = "en-block";
+    en.textContent = isLit ? VERSE.ult : VERSE.ust;
+    var ta = document.createElement("textarea");
+    ta.className = "target-box";
+    ta.value = step.variants[step.variantIdx];
+    ta.addEventListener("input", function () {
+      step.variants[step.variantIdx] = ta.value;
+      markDirty(step);
+    });
+    lane.appendChild(tag);
+    lane.appendChild(en);
+    lane.appendChild(ta);
+    wrap.appendChild(lane);
+  }
+
+  function buildNote(step, wrap) {
+    var strip = document.createElement("div");
+    strip.className = "greek-strip";
+    strip.innerHTML = '<p class="greek-eyebrow">Greek</p><p class="greek-text">' + escapeHtml(step.greek) + "</p>";
+    wrap.appendChild(strip);
+
+    var enP = document.createElement("p");
+    enP.className = "note-body";
+    enP.style.margin = "10px 0";
+    enP.innerHTML = step.en;
+    wrap.appendChild(enP);
+
+    var lane = document.createElement("div");
+    lane.className = "lane";
+    var tag = document.createElement("p");
+    tag.className = "lane-tag";
+    tag.textContent = "Español";
+    var ta = document.createElement("textarea");
+    ta.className = "target-box";
+    ta.value = stripHtml(step.variants[step.variantIdx]);
+    ta.addEventListener("input", function () {
+      step.variants[step.variantIdx] = escapeHtml(ta.value);
+      markDirty(step);
+    });
+    lane.appendChild(tag);
+    lane.appendChild(ta);
+    wrap.appendChild(lane);
+  }
+
+  function buildQuestion(step, wrap) {
+    var laneQ = document.createElement("div");
+    laneQ.className = "lane";
+    laneQ.innerHTML = '<p class="lane-tag">Question</p><p class="en-block">' + escapeHtml(step.enQ) + "</p>";
+    var taQ = document.createElement("textarea");
+    taQ.className = "target-box";
+    taQ.style.minHeight = "56px";
+    taQ.value = step.qVariants[step.variantIdx];
+    taQ.addEventListener("input", function () {
+      step.qVariants[step.variantIdx] = taQ.value;
+      markDirty(step);
+    });
+    laneQ.appendChild(taQ);
+
+    var laneA = document.createElement("div");
+    laneA.className = "lane";
+    laneA.innerHTML = '<p class="lane-tag">Answer</p><p class="en-block">' + escapeHtml(step.enA) + "</p>";
+    var taA = document.createElement("textarea");
+    taA.className = "target-box";
+    taA.style.minHeight = "56px";
+    taA.value = step.aVariants[step.variantIdx];
+    taA.addEventListener("input", function () {
+      step.aVariants[step.variantIdx] = taA.value;
+      markDirty(step);
+    });
+    laneA.appendChild(taA);
+
+    wrap.appendChild(laneQ);
+    wrap.appendChild(laneA);
+  }
+
+  function buildKeyterm(step, wrap) {
+    var head = document.createElement("p");
+    head.className = "term-head";
+    head.innerHTML = '<span class="term-en">' + escapeHtml(step.termEn) + '</span> → <span class="term-es">' + escapeHtml(step.termEs) + "</span>";
+    wrap.appendChild(head);
+
+    var enP = document.createElement("p");
+    enP.className = "note-body";
+    enP.style.margin = "0 0 10px";
+    enP.textContent = step.enDef;
+    wrap.appendChild(enP);
+
+    var lane = document.createElement("div");
+    lane.className = "lane";
+    var tag = document.createElement("p");
+    tag.className = "lane-tag";
+    tag.textContent = "Español";
+    var ta = document.createElement("textarea");
+    ta.className = "target-box";
+    ta.value = step.variants[step.variantIdx];
+    ta.addEventListener("input", function () {
+      step.variants[step.variantIdx] = ta.value;
+      markDirty(step);
+    });
+    lane.appendChild(tag);
+    lane.appendChild(ta);
+    wrap.appendChild(lane);
+
+    var help = document.createElement("p");
+    help.className = "f-help";
+    help.textContent = "This article is shared by every verse that links to “" + step.termEs + "”, so approving your edit here updates it everywhere it appears.";
+    wrap.appendChild(help);
+  }
+
+  function stripHtml(html) {
+    var d = document.createElement("div");
+    d.innerHTML = html;
+    return d.textContent || "";
+  }
+
+  function renderItem() {
+    var step = STEPS[cur];
+    var card = el("itemCard");
+    card.innerHTML = "";
+
+    var eyebrow = document.createElement("div");
+    eyebrow.className = "item-eyebrow";
+    var dotLabel = document.createElement("p");
+    dotLabel.className = "card-label";
+    dotLabel.style.margin = "0";
+    dotLabel.innerHTML = '<span class="dot"></span>' + escapeHtml(step.label);
+    eyebrow.appendChild(dotLabel);
+    var chipSpec = chipFor(step.status);
+    var chip = document.createElement("span");
+    chip.className = chipSpec[0];
+    chip.textContent = chipSpec[1];
+    eyebrow.appendChild(chip);
+    card.appendChild(eyebrow);
+
+    var wrap = document.createElement("div");
+    if (step.type === "literal" || step.type === "simplified") buildLiteralOrSimplified(step, wrap);
+    else if (step.type === "note") buildNote(step, wrap);
+    else if (step.type === "question") buildQuestion(step, wrap);
+    else if (step.type === "keyterm") buildKeyterm(step, wrap);
+    card.appendChild(wrap);
+  }
+
+  function updateHeader() {
+    var n = doneCount();
+    el("count").textContent = n + " of " + STEPS.length + " done";
+    el("progressFill").style.width = (n / STEPS.length * 100) + "%";
+  }
+
+  function render() {
+    var done = view === "done";
+    el("doneView").hidden = !done;
+    el("verseToggle").parentElement.hidden = done;
+    el("verseCard").hidden = done || verseCollapsed;
+    el("itemCard").hidden = done;
+    el("actionbar").hidden = done;
+
+    renderSteps();
+    updateHeader();
+
+    if (done) {
+      var a = STEPS.filter(function (s) { return s.status === "approved"; }).length;
+      var e = STEPS.filter(function (s) { return s.status === "edited"; }).length;
+      var sk = STEPS.filter(function (s) { return s.status === "skipped"; }).length;
+      var parts = [];
+      if (a) parts.push(a + " approved");
+      if (e) parts.push(e + " edited");
+      if (sk) parts.push(sk + " not needed");
+      el("tallies").textContent = parts.join(" · ");
+      return;
+    }
+
+    renderVerse();
+    renderItem();
+  }
+
+  function nextUnstatused() {
+    for (var i = 1; i <= STEPS.length; i++) {
+      var idx = (cur + i) % STEPS.length;
+      if (STEPS[idx].status === null) return idx;
+    }
+    return -1;
+  }
+
+  function checkAutoAdvance() {
+    if (reviewing) return;
+    if (allDone()) {
+      advancing = true;
+      setTimeout(function () {
+        advancing = false;
+        view = "done";
+        render();
+      }, 700);
+    }
+  }
+
+  function advance() {
+    advancing = false;
+    if (!reviewing) {
+      var nxt = nextUnstatused();
+      if (nxt === -1) {
+        view = "done";
+      } else {
+        cur = nxt;
+      }
+    } else {
+      if (cur >= STEPS.length - 1) {
+        view = "done";
+      } else {
+        cur++;
+      }
+    }
+    render();
+  }
+
+  el("backBtn").addEventListener("click", function () {
+    toast("Back to Titus 1");
+  });
+
+  el("verseToggle").addEventListener("click", function () {
+    verseCollapsed = !verseCollapsed;
+    render();
+  });
+
+  el("approveBtn").addEventListener("click", function () {
+    if (advancing || spinning) return;
+    STEPS[cur].status = "approved";
+    render();
+    toast("Approved");
+    advancing = true;
+    setTimeout(advance, 350);
+  });
+
+  el("skipBtn").addEventListener("click", function () {
+    if (advancing || spinning) return;
+    STEPS[cur].status = "skipped";
+    render();
+    toast("Marked not needed");
+    advancing = true;
+    setTimeout(advance, 350);
+  });
+
+  el("redraftBtn").addEventListener("click", function () {
+    if (spinning || advancing) return;
+    spinning = true;
+    el("redraftIcon").classList.add("spin");
+    render();
+    setTimeout(function () {
+      spinning = false;
+      el("redraftIcon").classList.remove("spin");
+      var s = STEPS[cur];
+      s.variantIdx = (s.variantIdx + 1) % s.variants.length;
+      if (s.qVariants) { /* keep in sync for question type */ }
+      s.status = null;
+      render();
+      toast("New draft ready");
+    }, 900);
+  });
+
+  el("nextVerseBtn").addEventListener("click", function () {
+    toast("Titus 1:5 would load next");
+  });
+
+  el("reviewBtn").addEventListener("click", function () {
+    reviewing = true;
+    cur = 0;
+    view = "cards";
+    render();
+  });
+
+  render();
+})();
+</script>

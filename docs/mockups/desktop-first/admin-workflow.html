@@ -1,0 +1,1552 @@
+<title>Workflow · unfoldingWord Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ============================================================
+   unfoldingWord — Book Package mockups · shared design system
+   Brand: Inspire #31ADE3 · Ocean #014263 · Tech #231F20
+          Cultivate #70C9CC · Kindle #E59D33
+   Type:  UI = system sans · Scripture/articles = humanist serif
+   Every color decision goes through the tokens below.
+   ============================================================ */
+
+:root {
+  --inspire: #31ADE3;
+  --inspire-deep: #1B84B8;
+  --ocean: #014263;
+  --tech: #231F20;
+  --cultivate: #70C9CC;
+  --kindle: #E59D33;
+
+  /* grounds & ink — cool, ocean-biased neutrals */
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;          /* inset panels, verse blocks */
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);   /* quote highlight in scripture */
+
+  /* semantic (separate from accent) */
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-scripture: "Iowan Old Style", Charter, "Palatino Linotype", Georgia, Cambria, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0B1B23;
+    --card: #13272F;
+    --card-2: #0F2129;
+    --ink: #E3EDF2;
+    --ink-2: #90A6B1;
+    --line: #23404B;
+    --hl: rgba(49, 173, 227, 0.26);
+    --ok: #4BB8A9;
+    --ok-ink: #9ADFD5;
+    --ok-soft: rgba(46, 158, 143, 0.20);
+    --warn: #E8A94E;
+    --warn-ink: #F1CE9A;
+    --warn-soft: rgba(229, 157, 51, 0.18);
+    --skip: #8FA5B0;
+    --skip-soft: rgba(100, 121, 132, 0.25);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0B1B23;
+  --card: #13272F;
+  --card-2: #0F2129;
+  --ink: #E3EDF2;
+  --ink-2: #90A6B1;
+  --line: #23404B;
+  --hl: rgba(49, 173, 227, 0.26);
+  --ok: #4BB8A9;
+  --ok-ink: #9ADFD5;
+  --ok-soft: rgba(46, 158, 143, 0.20);
+  --warn: #E8A94E;
+  --warn-ink: #F1CE9A;
+  --warn-soft: rgba(229, 157, 51, 0.18);
+  --skip: #8FA5B0;
+  --skip-soft: rgba(100, 121, 132, 0.25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --ground: #EDF3F6;
+  --card: #FFFFFF;
+  --card-2: #F3F8FA;
+  --ink: #1B2A32;
+  --ink-2: #5B7280;
+  --line: #D8E3E9;
+  --hl: rgba(49, 173, 227, 0.18);
+  --ok: #2E9E8F;
+  --ok-ink: #14655B;
+  --ok-soft: #DDF2EE;
+  --warn: #E59D33;
+  --warn-ink: #8A5A0F;
+  --warn-soft: #FBEEDA;
+  --skip: #647984;
+  --skip-soft: #E3EAEE;
+  --shadow: 0 1px 2px rgba(1, 66, 99, 0.05), 0 6px 20px rgba(1, 66, 99, 0.08);
+}
+
+/* ---------- base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; font-size: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--inspire); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- phone shell (translator mockups) ---------- */
+.phone {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px 10px;
+}
+.topbar .title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topbar h1 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.topbar .sub {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin: 1px 0 0;
+}
+.count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--skip-soft);
+  margin-top: 10px;
+  overflow: hidden;
+}
+.progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--inspire);
+  transition: width 0.35s ease;
+}
+
+/* ---------- content & cards ---------- */
+.content {
+  flex: 1;
+  padding: 16px 16px 120px;   /* room for actionbar */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+.card-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 8px;
+}
+.card-label .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--inspire); }
+
+/* scripture */
+.ref {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ocean);
+  margin: 0 0 6px;
+}
+:root[data-theme="dark"] .ref { color: var(--cultivate); }
+@media (prefers-color-scheme: dark) { .ref { color: var(--cultivate); } }
+:root[data-theme="light"] .ref { color: var(--ocean); }
+.verse {
+  background: var(--card-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.verse + .verse { margin-top: 8px; }
+.verse .vlabel {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  display: block;
+  margin-bottom: 3px;
+}
+.verse mark {
+  background: var(--hl);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.quote-chip {
+  display: inline-block;
+  font-family: var(--font-scripture);
+  font-size: 15px;
+  background: var(--hl);
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 0 0 8px;
+}
+.quote-chip small { font-family: var(--font-ui); color: var(--ink-2); font-style: italic; }
+
+.note-body { font-size: 15.5px; line-height: 1.55; margin: 0; }
+.note-body b, .note-body strong { color: var(--ocean); }
+@media (prefers-color-scheme: dark) { .note-body b, .note-body strong { color: var(--cultivate); } }
+:root[data-theme="dark"] .note-body b, :root[data-theme="dark"] .note-body strong { color: var(--cultivate); }
+:root[data-theme="light"] .note-body b, :root[data-theme="light"] .note-body strong { color: var(--ocean); }
+
+/* editable target draft */
+.editable { cursor: text; border-radius: 6px; }
+.editable:hover { background: var(--hl); }
+textarea.edit-area {
+  width: 100%;
+  min-height: 110px;
+  font-family: var(--font-ui);
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- chips / status ---------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.chip-draft    { background: var(--skip-soft); color: var(--skip); }
+.chip-approved { background: var(--ok-soft);   color: var(--ok-ink); }
+.chip-edited   { background: var(--hl);        color: var(--inspire-deep); }
+.chip-needs    { background: var(--warn-soft); color: var(--warn-ink); }
+.chip-skipped  { background: var(--skip-soft); color: var(--skip); text-decoration: none; }
+
+/* ---------- buttons ---------- */
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  min-height: 50px;
+  padding: 0 14px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.btn:active { transform: scale(0.97); }
+.btn svg { flex: none; }
+
+.btn-approve { background: var(--ok); color: #fff; flex: 1.4; }
+.btn-primary { background: var(--inspire); color: #06293B; }
+.btn-rerun {
+  background: transparent;
+  color: var(--inspire-deep);
+  border: 1.5px solid var(--inspire);
+}
+@media (prefers-color-scheme: dark) { .btn-rerun { color: var(--inspire); } }
+:root[data-theme="dark"] .btn-rerun { color: var(--inspire); }
+:root[data-theme="light"] .btn-rerun { color: var(--inspire-deep); }
+.btn-skip { background: var(--skip-soft); color: var(--skip); }
+.btn-warn { background: var(--warn-soft); color: var(--warn-ink); }
+.btn-ghost { background: transparent; color: var(--ink-2); min-height: 40px; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+
+/* icon-only round button (back chevrons etc.) */
+.iconbtn {
+  appearance: none;
+  border: none;
+  background: var(--skip-soft);
+  color: var(--ink);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+
+/* ---------- bottom action bar ---------- */
+.actionbar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  z-index: 30;
+}
+.actionbar .btn { flex: 1; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--ocean);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 9px 18px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+  max-width: 90%;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- spinner ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
+
+/* ---------- list rows (words/articles, admin) ---------- */
+.listitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.listitem:hover { border-color: var(--inspire); }
+.listitem .li-main { flex: 1; min-width: 0; }
+.listitem .li-title { font-weight: 600; font-size: 15.5px; margin: 0; }
+.listitem .li-sub { font-size: 13px; color: var(--ink-2); margin: 1px 0 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 2px 2px;
+}
+.section-head h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+.section-head .tally {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- segmented control ---------- */
+.seg {
+  display: flex;
+  background: var(--skip-soft);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.seg button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(1, 66, 99, 0.15);
+}
+
+/* ---------- switches (admin) ---------- */
+.switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  border: none;
+  background: var(--skip-soft);
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { left: 21px; }
+.switch[disabled] { opacity: 0.5; cursor: default; }
+
+/* ---------- admin shell ---------- */
+.admin {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 16px 96px;
+}
+.admin-head { margin: 4px 2px 16px; }
+.admin-head .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--inspire-deep);
+  margin: 0 0 4px;
+}
+@media (prefers-color-scheme: dark) { .admin-head .eyebrow { color: var(--inspire); } }
+:root[data-theme="dark"] .admin-head .eyebrow { color: var(--inspire); }
+:root[data-theme="light"] .admin-head .eyebrow { color: var(--inspire-deep); }
+.admin-head h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+.admin-head .sub { color: var(--ink-2); font-size: 14px; margin: 4px 0 0; }
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ocean);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.avatar.alt { background: var(--inspire-deep); }
+.avatar.alt2 { background: var(--kindle); color: #3A2600; }
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--skip-soft);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--inspire);
+  border-radius: 3px;
+  transition: width 0.35s ease;
+}
+.bar > i.ok { background: var(--ok); }
+.bar > i.warn { background: var(--warn); }
+
+/* ============================================================
+   Desk-class admin primitives (tablet + desktop first,
+   still usable at 375px). Panels carry a top / body / foot
+   chrome; the foot always states live state on the left and
+   the next action on the right.
+   ============================================================ */
+
+.desk {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 18px 56px;
+}
+.desk-shell {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .desk-shell { grid-template-columns: minmax(0, 1fr); }
+}
+
+.rail {
+  position: sticky;
+  top: 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+.rail button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+.rail button:hover { background: var(--card-2); color: var(--ink); }
+.rail button[aria-current="true"] {
+  background: var(--hl);
+  color: var(--ink);
+}
+.rail .rail-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 8px 11px 4px;
+}
+@media (max-width: 900px) { .rail .rail-head { display: none; } }
+.rail .rail-tally {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.panel + .panel { margin-top: 16px; }
+.panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.panel-top h2 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.panel-top .panel-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 2px 0 0;
+  width: 100%;
+}
+.panel-top .spacer { margin-left: auto; }
+.panel-body { padding: 16px; }
+.panel-body.flush { padding: 0; }
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--card-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.panel-foot .foot-state { font-variant-numeric: tabular-nums; }
+.panel-foot .spacer { margin-left: auto; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 820px) {
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* data tables — every column real data, header sticks while the body scrolls */
+.table-wrap { overflow-x: auto; }
+.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  min-width: 560px;
+}
+.dtable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card-2);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.dtable tbody tr:last-child td { border-bottom: none; }
+.dtable tbody tr.selectable { cursor: pointer; }
+.dtable tbody tr.selectable:hover { background: var(--card-2); }
+.dtable tbody tr[aria-selected="true"] { background: var(--hl); }
+.dtable .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* small tappable toggle chip used for applies-to / lane pickers */
+.tchip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tchip[aria-pressed="true"] {
+  background: var(--hl);
+  border-color: var(--inspire);
+  color: var(--ink);
+}
+.chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* key/value definition rows for settings summaries */
+.kv { display: grid; grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.6fr); gap: 6px 14px; font-size: 14px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; }
+
+/* text inputs / selects shared by setup + preferences screens */
+.tinput, .tselect {
+  width: 100%;
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.tinput:focus, .tselect:focus { border-color: var(--inspire); outline: none; box-shadow: 0 0 0 3px var(--hl); }
+.f-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 5px;
+}
+.field + .field { margin-top: 13px; }
+.f-help { font-size: 12.5px; color: var(--ink-2); margin: 5px 0 0; }
+
+/* ---------- verse-bundle step rail (phone) ---------- */
+.steps {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 0 1px;
+  -webkit-overflow-scrolling: touch;
+}
+.step {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 6px 12px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+.step .step-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.step[aria-current="true"] {
+  border-color: var(--inspire);
+  background: var(--hl);
+  color: var(--ink);
+}
+.step[data-state="approved"] .step-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.step[data-state="skipped"] .step-mark { background: var(--skip); border-color: var(--skip); color: #fff; }
+.step[data-state="edited"] .step-mark { background: var(--inspire); border-color: var(--inspire); color: #06293B; }
+
+/* ---------- scripture lanes (ULT to GLT, UST to GST) ---------- */
+.lane-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.lane-arrow { color: var(--inspire); font-weight: 700; }
+.target-box {
+  width: 100%;
+  min-height: 96px;
+  font-family: var(--font-scripture);
+  font-size: 16.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1.5px solid var(--inspire);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ---------- side-by-side / block-paired article view ---------- */
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+@media (max-width: 560px) {
+  .pair { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+.pair-col-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 4px;
+}
+.blockpair + .blockpair {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* ============================================================
+   Page: Admin — Workflow (8-step book package model)
+   ============================================================ */
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 2px 16px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.legend-row .chip { cursor: default; }
+.tier-group { display: inline-flex; gap: 6px; flex: none; }
+.tier-group .chip { cursor: default; }
+
+.quiet-line {
+  margin: 12px 2px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.quiet-line svg { flex: none; margin-top: 2px; color: var(--ink-2); }
+
+.stepline {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 3px 3px 9px;
+  -webkit-overflow-scrolling: touch;
+}
+.steptile {
+  appearance: none;
+  cursor: pointer;
+  flex: none;
+  min-width: 172px;
+  text-align: left;
+  border: 1.5px solid var(--line);
+  background: var(--card-2);
+  border-radius: var(--radius);
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.steptile:hover { border-color: var(--inspire); }
+.steptile[aria-current="true"] {
+  border-color: var(--inspire);
+  background: var(--hl);
+  box-shadow: 0 0 0 3px rgba(49, 173, 227, 0.15);
+}
+.steptile .st-top { display: flex; align-items: center; gap: 8px; }
+.steptile .st-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ocean);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="dark"] .steptile .st-num { background: var(--inspire-deep); }
+@media (prefers-color-scheme: dark) { .steptile .st-num { background: var(--inspire-deep); } }
+:root[data-theme="light"] .steptile .st-num { background: var(--ocean); }
+.steptile .st-name { font-size: 14.5px; font-weight: 700; letter-spacing: -0.01em; }
+.steptile .st-pair { font-size: 12.5px; color: var(--ink-2); }
+.steptile .st-count {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--inspire-deep);
+  background: var(--hl);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="dark"] .steptile .st-count { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .steptile .st-count { color: var(--inspire); } }
+:root[data-theme="light"] .steptile .st-count { color: var(--inspire-deep); }
+.steptile .st-count.zero { color: var(--ink-2); background: var(--skip-soft); }
+
+.srow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+.srow:first-child { border-top: none; }
+.srow .srow-label { flex: 1; min-width: 0; }
+.srow .srow-label p { margin: 0; font-size: 14.5px; font-weight: 600; }
+.srow .srow-label .f-help { margin: 2px 0 0; }
+
+.jobactions { display: flex; gap: 6px; }
+.btn-sm { min-height: 34px; font-size: 13px; padding: 0 12px; border-radius: 9px; }
+
+.book-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.book-row:first-child { border-top: none; }
+.book-row .book-name { flex: 1; font-weight: 600; font-size: 14px; }
+.book-row .chiprow { flex: none; }
+
+.lifecycle { display: flex; align-items: center; margin: 4px 2px 10px; flex-wrap: wrap; gap: 0; }
+.lc-node { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); }
+.lc-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--card); border: 2px solid var(--skip); flex: none; }
+.lc-node[data-state="done"] .lc-dot { background: var(--ok); border-color: var(--ok); }
+.lc-node[data-state="current"] { color: var(--inspire-deep); }
+:root[data-theme="dark"] .lc-node[data-state="current"] { color: var(--inspire); }
+@media (prefers-color-scheme: dark) { .lc-node[data-state="current"] { color: var(--inspire); } }
+:root[data-theme="light"] .lc-node[data-state="current"] { color: var(--inspire-deep); }
+.lc-node[data-state="current"] .lc-dot { background: var(--inspire); border-color: var(--inspire); }
+.lc-sep { width: 30px; height: 2px; background: var(--line); margin: 0 6px; flex: none; }
+.lc-sep.done { background: var(--ok); }
+</style>
+
+<main class="desk">
+  <header class="admin-head">
+    <p class="eyebrow">Español (América Latina) · Titus, Ruth, Jonah</p>
+    <h1>Workflow</h1>
+    <p class="sub">How book packages move from draft to publish, and the machinery underneath them.</p>
+  </header>
+
+  <div class="legend-row">
+    <span class="chip chip-approved">Today</span> already live in production ·
+    <span class="chip chip-edited">Phase 2</span> designed, not yet built ·
+    <span class="chip chip-draft">Later</span> proposed, not scheduled
+  </div>
+
+  <div class="desk-shell">
+    <nav class="rail" aria-label="Sections" id="rail">
+      <span class="rail-head">Workflow</span>
+      <button type="button" data-target="panel-steps" aria-current="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h10"></path><path d="M4 18h16"></path></svg>
+        The 8 steps
+      </button>
+      <button type="button" data-target="panel-stepsettings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"></path><path d="M4 10V3"></path><path d="M12 21v-9"></path><path d="M12 8V3"></path><path d="M20 21v-5"></path><path d="M20 12V3"></path><path d="M1 14h6"></path><path d="M9 8h6"></path><path d="M17 16h6"></path></svg>
+        Step settings
+      </button>
+      <button type="button" data-target="panel-pipeline">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect><path d="M9 2v3"></path><path d="M15 2v3"></path><path d="M9 19v3"></path><path d="M15 19v3"></path><path d="M2 9h3"></path><path d="M2 15h3"></path><path d="M19 9h3"></path><path d="M19 15h3"></path></svg>
+        AI pipeline
+      </button>
+      <button type="button" data-target="panel-source">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"></path></svg>
+        Scripture source
+      </button>
+      <button type="button" data-target="panel-publish">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"></path><path d="M6 10l6-6 6 6"></path><path d="M4 20h16"></path></svg>
+        Publishing
+      </button>
+    </nav>
+
+    <div class="panels">
+      <section class="panel" id="panel-steps">
+        <div class="panel-top">
+          <h2>The 8 steps</h2>
+          <span class="tier-group"><span class="chip chip-approved">Today</span><span class="chip chip-edited">Phase 2</span></span>
+          <p class="panel-sub">Every book package — literal text, simplified text, translationNotes, Word links, Questions, and every referenced translationWords / translationAcademy article — moves through these steps in order.</p>
+        </div>
+        <div class="panel-body">
+          <div class="stepline" id="stepline" role="list" aria-label="Workflow steps"></div>
+          <p class="quiet-line">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v.01"></path><path d="M11 12h1v5h1"></path></svg>
+            <span>There is deliberately no community check step here — that happens downstream, outside this tool, once a package is published. That absence is a decision, not an oversight.</span>
+          </p>
+          <p class="quiet-line">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"></path><path d="M9 15h6"></path><path d="M9 11h6"></path></svg>
+            <span>A package is not done just because the text is drafted — it isn't finished until every translationWords / translationAcademy article it references is also translated. Final validation is where that gets checked.</span>
+          </p>
+        </div>
+        <div class="panel-foot">
+          <span class="foot-state" id="stepsFoot"></span>
+          <span class="spacer"></span>
+          <span>Click a step to configure it below</span>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-stepsettings">
+        <div class="panel-top">
+          <h2 id="ssTitle">Step settings</h2>
+          <span class="chip chip-edited">Phase 2</span>
+          <p class="panel-sub">Settings for the step selected above. This is a preview of step-level controls — nothing here is enforced by the app yet.</p>
+        </div>
+        <div class="panel-body" id="ssBody"></div>
+        <div class="panel-foot">
+          <span class="foot-state" id="ssFoot"></span>
+          <span class="spacer"></span>
+          <span>Changes apply to this preview immediately</span>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-pipeline">
+        <div class="panel-top">
+          <h2>AI pipeline</h2>
+          <span class="chip chip-approved">Today</span>
+          <p class="panel-sub">Per-chapter AI jobs run through four stages — Draft, Align, Push, Batch — across Titus, Ruth, and Jonah.</p>
+        </div>
+        <div class="panel-body flush">
+          <div class="table-wrap">
+            <table class="dtable">
+              <thead>
+                <tr><th>Chapter</th><th>Stage</th><th>State</th><th>Started</th><th class="num">Rows touched</th><th></th></tr>
+              </thead>
+              <tbody id="pipelineBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-foot">
+          <span class="foot-state" id="pipelineFoot"></span>
+          <span class="spacer"></span>
+          <span>Failed and paused jobs need attention</span>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-source">
+        <div class="panel-top">
+          <h2>Scripture source</h2>
+          <span class="chip chip-approved">Today</span>
+          <p class="panel-sub">Where the literal and simplified text come from, and the lifecycle for replacing it.</p>
+        </div>
+        <div class="panel-body">
+          <div class="grid-2">
+            <div>
+              <div class="kv">
+                <dt>Current source</dt><dd id="srcCurrent"></dd>
+                <dt>Door43 URL</dt><dd id="srcUrl"></dd>
+              </div>
+
+              <p class="f-label" style="margin-top:16px;">Change source</p>
+              <div class="field">
+                <label class="f-label" for="newUrl">New Door43 URL</label>
+                <input class="tinput" id="newUrl" type="text" placeholder="https://git.door43.org/es-419_gl/es-419_glt">
+              </div>
+              <div class="field">
+                <span class="f-label">Per book — keep or replace</span>
+                <div id="bookRows"></div>
+              </div>
+              <div class="srow">
+                <div class="srow-label"><p>Text read-only</p><p class="f-help">Blocks new edits to literal/simplified text while the swap is staged.</p></div>
+                <button type="button" class="switch" id="swReadonly" role="switch" aria-checked="true" aria-label="Text read-only"></button>
+              </div>
+              <div class="srow">
+                <div class="srow-label"><p>Alignment writable</p><p class="f-help">Lets translators keep aligning against the old text during the swap.</p></div>
+                <button type="button" class="switch" id="swAlignWritable" role="switch" aria-checked="true" aria-label="Alignment writable"></button>
+              </div>
+              <button type="button" class="btn btn-rerun" id="stageBtn" style="margin-top:14px; width:100%;">Stage replacement</button>
+            </div>
+
+            <div>
+              <p class="f-label">Staged replacement</p>
+              <div class="lifecycle" id="lifecycle"></div>
+              <p class="f-help" id="lifecycleNote"></p>
+              <button type="button" class="btn btn-approve" id="activateBtn" style="margin-top:12px; width:100%;">Activate</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel-foot">
+          <span class="foot-state" id="sourceFoot"></span>
+          <span class="spacer"></span>
+          <span id="sourceNextAction"></span>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-publish">
+        <div class="panel-top">
+          <h2>Publishing</h2>
+          <span class="chip chip-approved">Today</span>
+          <p class="panel-sub">Nightly export renders D1 to TSV + USFM and commits to a Door43 fork branch.</p>
+        </div>
+        <div class="panel-body">
+          <div class="kv">
+            <dt>Last run</dt><dd id="lastRun"></dd>
+            <dt>Next run</dt><dd id="nextRun"></dd>
+            <dt>Target</dt><dd>Door43 · branch <b>live-snapshot</b></dd>
+          </div>
+          <div class="srow" style="margin-top:8px;">
+            <div class="srow-label"><p>Hold publishing while final validation is open</p><p class="f-help">Final validation (step 7) isn't wired into publishing yet — toggling this saves a preference with no effect today. Phase 2.</p></div>
+            <button type="button" class="switch" id="holdSwitch" role="switch" aria-checked="false" aria-label="Hold publishing while final validation is open"></button>
+          </div>
+          <button type="button" class="btn btn-primary" id="exportBtn" style="margin-top:14px;">Run export now</button>
+        </div>
+        <div class="panel-foot">
+          <span class="foot-state" id="publishFoot"></span>
+          <span class="spacer"></span>
+          <span>Exports run automatically at 05:30 UTC</span>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var CONTENT_TYPES = ["Literal", "Simplified", "Notes", "Word links", "Questions", "Articles"];
+
+  var PAIRS = ["Pair 1", "Pair 2", "Pair 3", "Unassigned"];
+  var PAIR_MEMBERS = {
+    "Pair 1": "María Delgado · Carlos Reyes",
+    "Pair 2": "Samuel Ortiz · Lucía Fernández",
+    "Pair 3": "Dra. Elena Vargas · Tomás Guzmán",
+    "Unassigned": "No pair assigned"
+  };
+
+  var STEP_NAMES = ["Draft", "Peer check", "Source check", "Align", "Translate resources", "Harmonize", "Final validation", "Publish"];
+
+  function appliesFor(types) {
+    var o = {};
+    CONTENT_TYPES.forEach(function (t) { o[t] = types.indexOf(t) !== -1; });
+    return o;
+  }
+
+  var steps = [
+    { pair: "Unassigned", applies: appliesFor(CONTENT_TYPES), blocksNext: true, aiApplicable: true, aiAuto: true },
+    { pair: "Pair 1", applies: appliesFor(["Literal", "Simplified", "Notes", "Word links", "Questions"]), blocksNext: true, aiApplicable: false, aiAuto: false },
+    { pair: "Pair 3", applies: appliesFor(["Literal", "Simplified"]), blocksNext: true, aiApplicable: false, aiAuto: false },
+    { pair: "Pair 2", applies: appliesFor(["Literal", "Simplified"]), blocksNext: false, aiApplicable: true, aiAuto: true },
+    { pair: "Pair 3", applies: appliesFor(["Notes", "Word links", "Questions", "Articles"]), blocksNext: true, aiApplicable: true, aiAuto: true },
+    { pair: "Pair 1", applies: appliesFor(["Literal", "Simplified", "Notes", "Word links", "Questions"]), blocksNext: false, aiApplicable: false, aiAuto: false },
+    { pair: "Unassigned", applies: appliesFor(CONTENT_TYPES), blocksNext: true, aiApplicable: false, aiAuto: false },
+    { pair: "Unassigned", applies: appliesFor(CONTENT_TYPES), blocksNext: true, aiApplicable: false, aiAuto: false }
+  ];
+
+  var packages = [
+    { name: "Titus", stepNum: 4 },
+    { name: "Ruth", stepNum: 2 },
+    { name: "Jonah", stepNum: 5 }
+  ];
+
+  var selectedStep = 3; // 0-indexed -> step 4, Align (Titus)
+
+  var pipelineJobs = [
+    { chapter: "Titus 1", stage: "Draft", state: "done", started: "Jul 29 · 14:02", rows: 340 },
+    { chapter: "Titus 2", stage: "Align", state: "running", started: "Jul 31 · 08:10", rows: 128 },
+    { chapter: "Titus 3", stage: "Push", state: "paused-usage", started: "Jul 31 · 07:55", rows: 0 },
+    { chapter: "Ruth 1", stage: "Batch", state: "done", started: "Jul 28 · 22:14", rows: 512 },
+    { chapter: "Ruth 2", stage: "Draft", state: "failed", started: "Jul 30 · 19:41", rows: 0 },
+    { chapter: "Ruth 3", stage: "Align", state: "paused-outage", started: "Jul 31 · 06:03", rows: 44 },
+    { chapter: "Jonah 1", stage: "Push", state: "running", started: "Jul 31 · 09:12", rows: 96 },
+    { chapter: "Jonah 2", stage: "Batch", state: "done", started: "Jul 29 · 11:47", rows: 288 }
+  ];
+
+  var STATE_LABEL = {
+    "running": "Running",
+    "paused-outage": "Paused · outage",
+    "paused-usage": "Paused · usage limit",
+    "failed": "Failed",
+    "done": "Done"
+  };
+  var STATE_CHIP = {
+    "running": "chip-edited",
+    "paused-outage": "chip-needs",
+    "paused-usage": "chip-needs",
+    "failed": "chip-needs",
+    "done": "chip-approved"
+  };
+
+  var sourceState = {
+    current: "es-419_glt",
+    url: "https://git.door43.org/es-419_gl/es-419_glt",
+    books: { "Titus": "keep", "Ruth": "keep", "Jonah": "keep" },
+    readonly: true,
+    alignWritable: true
+  };
+
+  var LIFECYCLE_STEPS = ["reserved", "staging", "ready", "completed"];
+  var lifecycle = { state: "ready" };
+
+  var publishState = {
+    lastRun: "Succeeded — 3 books, 1,140 rows to live-snapshot (Jul 31 · 05:30 UTC)",
+    nextRun: "Tonight at 05:30 UTC",
+    hold: false,
+    running: false
+  };
+
+  var stepsFootEl = document.getElementById("stepsFoot");
+  var steplineEl = document.getElementById("stepline");
+  var ssTitleEl = document.getElementById("ssTitle");
+  var ssBodyEl = document.getElementById("ssBody");
+  var ssFootEl = document.getElementById("ssFoot");
+  var pipelineBodyEl = document.getElementById("pipelineBody");
+  var pipelineFootEl = document.getElementById("pipelineFoot");
+  var srcCurrentEl = document.getElementById("srcCurrent");
+  var srcUrlEl = document.getElementById("srcUrl");
+  var bookRowsEl = document.getElementById("bookRows");
+  var swReadonlyEl = document.getElementById("swReadonly");
+  var swAlignWritableEl = document.getElementById("swAlignWritable");
+  var stageBtnEl = document.getElementById("stageBtn");
+  var lifecycleEl = document.getElementById("lifecycle");
+  var lifecycleNoteEl = document.getElementById("lifecycleNote");
+  var activateBtnEl = document.getElementById("activateBtn");
+  var sourceFootEl = document.getElementById("sourceFoot");
+  var sourceNextActionEl = document.getElementById("sourceNextAction");
+  var lastRunEl = document.getElementById("lastRun");
+  var nextRunEl = document.getElementById("nextRun");
+  var holdSwitchEl = document.getElementById("holdSwitch");
+  var exportBtnEl = document.getElementById("exportBtn");
+  var publishFootEl = document.getElementById("publishFoot");
+  var toastEl = document.getElementById("toast");
+  var railEl = document.getElementById("rail");
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 1600);
+  }
+
+  function packageCount(stepIndex) {
+    return packages.filter(function (p) { return p.stepNum - 1 === stepIndex; }).length;
+  }
+
+  function renderSteps() {
+    steplineEl.innerHTML = steps.map(function (st, i) {
+      var count = packageCount(i);
+      return '<button type="button" class="steptile" role="listitem" data-step="' + i + '" aria-current="' + (i === selectedStep ? "true" : "false") + '">'
+        + '<div class="st-top"><span class="st-num">' + (i + 1) + '</span><span class="st-name">' + esc(STEP_NAMES[i]) + '</span></div>'
+        + '<span class="st-pair">' + esc(st.pair) + '</span>'
+        + '<span class="st-count' + (count === 0 ? " zero" : "") + '">' + count + " package" + (count === 1 ? "" : "s") + '</span>'
+        + '</button>';
+    }).join("");
+
+    var lines = packages.map(function (p) {
+      return p.name + " is at step " + p.stepNum + " · " + STEP_NAMES[p.stepNum - 1] + " · " + steps[p.stepNum - 1].pair;
+    });
+    stepsFootEl.textContent = lines.join("  ·  ");
+  }
+
+  function switchRow(label, hint, on, key, disabled) {
+    return '<div class="srow-label"><p>' + label + '</p>' + (hint ? '<p class="f-help">' + hint + '</p>' : '') + '</div>'
+      + '<button type="button" class="switch" role="switch" aria-checked="' + (on ? "true" : "false")
+      + '" data-action="ss-switch" data-key="' + key + '" aria-label="' + label + '"' + (disabled ? " disabled" : "") + '></button>';
+  }
+
+  function renderStepSettings() {
+    var st = steps[selectedStep];
+    ssTitleEl.textContent = "Step settings — " + (selectedStep + 1) + " · " + STEP_NAMES[selectedStep];
+
+    var chips = CONTENT_TYPES.map(function (t) {
+      return '<button type="button" class="tchip" data-action="applies" data-type="' + esc(t) + '" aria-pressed="' + (st.applies[t] ? "true" : "false") + '">' + esc(t) + '</button>';
+    }).join("");
+
+    var pairOptions = PAIRS.map(function (p) {
+      return '<option value="' + esc(p) + '"' + (p === st.pair ? " selected" : "") + '>' + esc(p) + (p === "Unassigned" ? "" : " — " + esc(PAIR_MEMBERS[p])) + '</option>';
+    }).join("");
+
+    ssBodyEl.innerHTML =
+      '<div class="field"><span class="f-label">Applies to</span><div class="chiprow">' + chips + '</div></div>'
+      + '<div class="srow">' + switchRow("Blocks the next step until finished", "Packages can't advance to the next step while this is on.", st.blocksNext, "blocksNext", false) + '</div>'
+      + '<div class="srow">' + switchRow(
+          "AI drafts this step automatically",
+          st.aiApplicable ? "The AI pipeline drafts this step's content without waiting for a person." : "AI drafting doesn't apply to this step — it's human review, not generation.",
+          st.aiAuto, "aiAuto", !st.aiApplicable
+        ) + '</div>'
+      + '<div class="field"><label class="f-label" for="ssPair">Assigned pair</label><select class="tselect" id="ssPair" data-action="ss-pair">' + pairOptions + '</select></div>';
+
+    ssFootEl.textContent = "Step " + (selectedStep + 1) + " · " + STEP_NAMES[selectedStep] + " assigned to " + st.pair;
+  }
+
+  function pipelineActionsHTML(job) {
+    if (job.state === "failed") {
+      return '<div class="jobactions"><button type="button" class="btn btn-warn btn-sm" data-action="retry" data-chapter="' + esc(job.chapter) + '">Retry</button></div>';
+    }
+    return "";
+  }
+
+  function renderPipeline() {
+    pipelineBodyEl.innerHTML = pipelineJobs.map(function (job) {
+      return '<tr>'
+        + '<td>' + esc(job.chapter) + '</td>'
+        + '<td>' + esc(job.stage) + '</td>'
+        + '<td><span class="chip ' + STATE_CHIP[job.state] + '">' + STATE_LABEL[job.state] + '</span></td>'
+        + '<td>' + esc(job.started) + '</td>'
+        + '<td class="num">' + job.rows + '</td>'
+        + '<td>' + pipelineActionsHTML(job) + '</td>'
+        + '</tr>';
+    }).join("");
+
+    var counts = { running: 0, "paused-outage": 0, "paused-usage": 0, failed: 0, done: 0 };
+    pipelineJobs.forEach(function (j) { counts[j.state] += 1; });
+    pipelineFootEl.textContent = counts.running + " running · " + (counts["paused-outage"] + counts["paused-usage"]) + " paused · " + counts.failed + " failed · " + counts.done + " done";
+  }
+
+  function renderSource() {
+    srcCurrentEl.textContent = sourceState.current;
+    srcUrlEl.textContent = sourceState.url;
+
+    bookRowsEl.innerHTML = Object.keys(sourceState.books).map(function (book) {
+      var choice = sourceState.books[book];
+      return '<div class="book-row"><span class="book-name">' + esc(book) + '</span><div class="chiprow">'
+        + '<button type="button" class="tchip" data-action="book-choice" data-book="' + esc(book) + '" data-choice="keep" aria-pressed="' + (choice === "keep" ? "true" : "false") + '">Keep</button>'
+        + '<button type="button" class="tchip" data-action="book-choice" data-book="' + esc(book) + '" data-choice="replace" aria-pressed="' + (choice === "replace" ? "true" : "false") + '">Replace</button>'
+        + '</div></div>';
+    }).join("");
+
+    swReadonlyEl.setAttribute("aria-checked", sourceState.readonly ? "true" : "false");
+    swAlignWritableEl.setAttribute("aria-checked", sourceState.alignWritable ? "true" : "false");
+
+    lifecycleEl.innerHTML = LIFECYCLE_STEPS.map(function (s, i) {
+      var curIdx = LIFECYCLE_STEPS.indexOf(lifecycle.state);
+      var st = i < curIdx ? "done" : (i === curIdx ? "current" : "pending");
+      var sep = i > 0 ? '<span class="lc-sep' + (i <= curIdx ? " done" : "") + '"></span>' : "";
+      var label = s.charAt(0).toUpperCase() + s.slice(1);
+      return sep + '<span class="lc-node" data-state="' + st + '"><span class="lc-dot"></span>' + label + '</span>';
+    }).join("");
+
+    var noteMap = {
+      reserved: "A replacement slot is reserved but staging hasn't started.",
+      staging: "Books are staging into the replacement source now.",
+      ready: "Ready to activate — Titus, Ruth, and Jonah will switch to the new source.",
+      completed: "This replacement is complete. Titus, Ruth, and Jonah now read from the new source."
+    };
+    lifecycleNoteEl.textContent = noteMap[lifecycle.state];
+    activateBtnEl.disabled = lifecycle.state !== "ready";
+
+    sourceFootEl.textContent = "Replacement is " + lifecycle.state;
+    sourceNextActionEl.textContent = lifecycle.state === "ready" ? "Activate to switch the source" : (lifecycle.state === "completed" ? "No pending replacement" : "Waiting on staging");
+  }
+
+  function renderPublish() {
+    lastRunEl.textContent = publishState.lastRun;
+    nextRunEl.textContent = publishState.nextRun;
+    holdSwitchEl.setAttribute("aria-checked", publishState.hold ? "true" : "false");
+    publishFootEl.textContent = publishState.running ? "Export running…" : "Last export succeeded";
+  }
+
+  function renderAll() {
+    renderSteps();
+    renderStepSettings();
+    renderPipeline();
+    renderSource();
+    renderPublish();
+  }
+
+  document.addEventListener("click", function (e) {
+    var stepTile = e.target.closest(".steptile");
+    if (stepTile) {
+      selectedStep = parseInt(stepTile.getAttribute("data-step"), 10);
+      renderSteps();
+      renderStepSettings();
+      return;
+    }
+
+    var appliesBtn = e.target.closest('[data-action="applies"]');
+    if (appliesBtn) {
+      var type = appliesBtn.getAttribute("data-type");
+      var st = steps[selectedStep];
+      st.applies[type] = !st.applies[type];
+      renderStepSettings();
+      return;
+    }
+
+    var switchBtn = e.target.closest('[data-action="ss-switch"]');
+    if (switchBtn && !switchBtn.disabled) {
+      var key = switchBtn.getAttribute("data-key");
+      var s2 = steps[selectedStep];
+      s2[key] = !s2[key];
+      renderStepSettings();
+      return;
+    }
+
+    var retryBtn = e.target.closest('[data-action="retry"]');
+    if (retryBtn) {
+      var chapter = retryBtn.getAttribute("data-chapter");
+      var job = pipelineJobs.filter(function (j) { return j.chapter === chapter; })[0];
+      if (job) {
+        job.state = "running";
+        job.started = "Just now";
+        renderPipeline();
+        toast(chapter + " is running again");
+      }
+      return;
+    }
+
+    var bookChoiceBtn = e.target.closest('[data-action="book-choice"]');
+    if (bookChoiceBtn) {
+      var book = bookChoiceBtn.getAttribute("data-book");
+      var choice = bookChoiceBtn.getAttribute("data-choice");
+      sourceState.books[book] = choice;
+      renderSource();
+      return;
+    }
+
+    if (e.target === swReadonlyEl) {
+      sourceState.readonly = !sourceState.readonly;
+      renderSource();
+      return;
+    }
+    if (e.target === swAlignWritableEl) {
+      sourceState.alignWritable = !sourceState.alignWritable;
+      renderSource();
+      return;
+    }
+
+    if (e.target === stageBtnEl || e.target.closest("#stageBtn")) {
+      toast("New replacement staged — it will move through reserved, staging, then ready.");
+      return;
+    }
+
+    if (e.target === activateBtnEl || e.target.closest("#activateBtn")) {
+      if (lifecycle.state === "ready") {
+        lifecycle.state = "completed";
+        renderSource();
+        toast("Replacement activated — Titus, Ruth, and Jonah now read from the new source.");
+      }
+      return;
+    }
+
+    if (e.target === holdSwitchEl) {
+      publishState.hold = !publishState.hold;
+      renderPublish();
+      return;
+    }
+
+    if (e.target === exportBtnEl || e.target.closest("#exportBtn")) {
+      if (publishState.running) return;
+      publishState.running = true;
+      exportBtnEl.disabled = true;
+      exportBtnEl.textContent = "Exporting…";
+      renderPublish();
+      setTimeout(function () {
+        publishState.running = false;
+        publishState.lastRun = "Succeeded — 3 books exported to live-snapshot (just now)";
+        exportBtnEl.disabled = false;
+        exportBtnEl.textContent = "Run export now";
+        renderPublish();
+        toast("Export finished — pushed to live-snapshot");
+      }, 900);
+      return;
+    }
+
+    var railBtn = e.target.closest("#rail button[data-target]");
+    if (railBtn) {
+      var target = document.getElementById(railBtn.getAttribute("data-target"));
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      Array.prototype.forEach.call(railEl.querySelectorAll("button[data-target]"), function (b) {
+        b.setAttribute("aria-current", b === railBtn ? "true" : "false");
+      });
+      return;
+    }
+  });
+
+  document.addEventListener("change", function (e) {
+    if (e.target.id === "ssPair") {
+      steps[selectedStep].pair = e.target.value;
+      renderSteps();
+      renderStepSettings();
+    }
+  });
+
+  if ("IntersectionObserver" in window) {
+    var panelIds = ["panel-steps", "panel-stepsettings", "panel-pipeline", "panel-source", "panel-publish"];
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        var btn = railEl.querySelector('button[data-target="' + entry.target.id + '"]');
+        if (!btn) return;
+        Array.prototype.forEach.call(railEl.querySelectorAll("button[data-target]"), function (b) {
+          b.setAttribute("aria-current", b === btn ? "true" : "false");
+        });
+      });
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    panelIds.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+  }
+
+  renderAll();
+})();
+</script>

@@ -24,6 +24,7 @@ import { useLexicon } from "../hooks/useLexicon";
 import { useAiDrafts } from "../hooks/useAiDrafts";
 import { useTwlFilters } from "../hooks/useTwlFilters";
 import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
+import { useLayoutBand } from "../hooks/useLayoutBand";
 import { outbox } from "../sync/outbox";
 import { api, CHECK_LANES } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion, LaneReplacementEvent } from "../sync/api";
@@ -84,6 +85,7 @@ import {
   resolveHidden,
   type DropTarget,
 } from "../lib/layoutTree";
+import { resolveBandHidden } from "../lib/layoutBands";
 import {
   loadLayoutStore,
   mergeOverride,
@@ -458,9 +460,40 @@ export function Shell({
       return next;
     });
   }, []);
+  // Layout band (phone / tablet / desktop), driven by the theme's breakpoints
+  // (see theme.ts). This is the responsive-layout foundation: below desktop
+  // width, the workspace shows fewer regions at once instead of squeezing
+  // everything into unusable slivers — see the bandHiddenRegionIds useMemo
+  // below and WorkspaceLayout's region switcher.
+  const { band } = useLayoutBand();
+  // Which region the user is currently focused on for band-driven hiding.
+  // Render-time only — never persisted. Persisting this would mean shrinking
+  // the window could permanently narrow what's visible after resizing back up;
+  // it is a viewport constraint, not the user's own arrangement (that's
+  // `closedRegions` / layoutStore, a completely separate concept — see the
+  // CRITICAL note where bandHiddenRegionIds is passed to WorkspaceLayout).
+  const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null);
   // Rail width tracks the visible lane count (verse column + ~25px per lane),
   // floored so the "Board" button label stays readable. 0 when collapsed.
-  const railWidth = railCollapsed ? 0 : Math.max(96, 48 + enabledLanes.length * 25);
+  // Below desktop width the rail is force-collapsed, giving its ~100px back to
+  // the text. Driven through this single `effectiveRailCollapsed` value (rather
+  // than special-casing width) because the Classic divider drag math in
+  // WorkspaceLayout depends on `railWidth` agreeing with what's actually
+  // rendered.
+  //
+  // This is also what makes the TABLET band distinct for Classic. Classic has
+  // only two regions, so the region cap (2 at tablet) never hides anything
+  // there and a 768px window would otherwise render identically to 1400px.
+  // Dropping the rail is the smallest change that makes tablet meaningfully
+  // narrower, and the rail — a verse-number list — is the least useful thing on
+  // a narrow screen: the TopBar's chapter/verse pickers and "go to ref" box
+  // still cover navigation.
+  //
+  // The TopBar's rail toggle is SUPPRESSED in these bands (see the
+  // `onToggleRail` prop at its call site) rather than left visible: a control
+  // that can't win against a forced value is a dead control.
+  const effectiveRailCollapsed = railCollapsed || band !== "desktop";
+  const railWidth = effectiveRailCollapsed ? 0 : Math.max(96, 48 + enabledLanes.length * 25);
   const [alignerTarget, setAlignerTarget] = useState<AlignerTarget | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>("resources");
   const [alignmentDirty, setAlignmentDirty] = useState(false);
@@ -564,6 +597,54 @@ export function Shell({
     () => loadLayoutStore().overrides[activeLayout.id],
     [activeLayout.id, layoutRev],
   );
+
+  // Band-driven region hiding (render-time overlay ONLY — see the CRITICAL
+  // note at the WorkspaceLayout call site). Uses the same effective tree the
+  // rest of the layout machinery resolves further down (effectiveRoot), so
+  // band-hidden ids agree with what's actually on screen; recomputed here
+  // (rather than reusing the `effRoot` computed later) because this must live
+  // above the `if (!data)` early return, same reason as `layoutOverride`.
+  //
+  // CRITICAL: resolveBandHidden is fed ONLY the OPEN regions (`openRegionIds`
+  // below), never every region in the tree. Feeding it every region ignores
+  // which ones the user already closed, and the union of user-closed ids and
+  // band-hidden-over-ALL-regions ids can cover every region that exists —
+  // renderNode's `visible.length === 0` guard then returns null and the whole
+  // workspace goes blank. It also means the band wastes a visible slot on a
+  // region that's already closed, and the switcher can point a tab at one.
+  // `openRegionIds` is also what the switcher's tab strip uses (via
+  // `bandRegions` below) — closed regions are restored through the separate
+  // closed-region reopen strip, not the switcher.
+  const { openRegionIds, bandHiddenRegionIds } = useMemo(() => {
+    const rootForBand = effectiveRoot(activeLayout, layoutOverride);
+    const resolvedHidden = resolveHidden(rootForBand, layoutOverride?.hidden);
+    const openRegions = collectRegions(rootForBand).filter((r) => !resolvedHidden[r.id]);
+    const openIds = openRegions.map((r) => r.id);
+    // PIN the region holding a dirty aligner. Narrowing the window is the ONE
+    // unmount trigger that cannot be gated: every other path that unmounts a
+    // region (setRegionHidden, selectLayout, handleSetPanelMode, and the
+    // switcher's focusRegionWithGate) runs runWithDirtyGate first, but a resize
+    // is not an action we can interpose a prompt on. Unsaved aligner drags live
+    // in component state only — they never reach the outbox or the drafts store
+    // — so letting the band unmount that region would discard them silently,
+    // and this responsive work is what made a resize able to unmount anything
+    // at all. resolveBandHidden always keeps the focused region, so pinning is
+    // just overriding the focus. Tapping another tab still works: that path
+    // goes through the dirty gate, which clears the dirty state and releases
+    // the pin. Persisting the drags is the real fix and is tracked separately.
+    const pinnedId =
+      panelMode === "alignment" && alignmentDirty
+        ? (openRegions.find((r) =>
+            r.panels.some((p) =>
+              (RESOURCE_PANEL_TYPES as readonly string[]).includes(p.type),
+            ),
+          )?.id ?? null)
+        : null;
+    return {
+      openRegionIds: openIds,
+      bandHiddenRegionIds: resolveBandHidden(openIds, band, pinnedId ?? focusedRegionId),
+    };
+  }, [activeLayout, layoutOverride, band, focusedRegionId, panelMode, alignmentDirty]);
 
   // Toast state shared between the pipeline trigger menu and the status bar.
   // Cleared on dismiss or after a short auto-timeout.
@@ -1791,6 +1872,16 @@ export function Shell({
     }
   }, []);
 
+  // Tapping a band-switcher tab unmounts the outgoing region exactly like
+  // setRegionHidden's close does (see its dirty-gate comment further down): an
+  // alignment panel's unsaved drags live only in component state and never
+  // reach the outbox, so switching the switcher's focus without this gate
+  // would silently drop them the same way an ungated close would.
+  const focusRegionWithGate = useCallback(
+    (id: string) => runWithDirtyGate(() => setFocusedRegionId(id)),
+    [runWithDirtyGate],
+  );
+
   const requestSelectVerse = useCallback(
     (v: number) => {
       runWithDirtyGate(() => {
@@ -2435,7 +2526,18 @@ export function Shell({
   // only mount in the data branch, so runWithDirtyGate would soft-lock.
   if (!data) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          // 100vh includes mobile browsers' retractable URL bar, so the
+          // status bar ends up under browser chrome. 100dvh (dynamic
+          // viewport height) excludes it; the plain 100vh above is the
+          // fallback for browsers that don't support dvh yet.
+          height: "100vh",
+          "@supports (height: 100dvh)": { height: "100dvh" },
+        }}
+      >
         <TopBar
           book={book}
           chapter={chapter}
@@ -3219,6 +3321,33 @@ export function Shell({
       }))
     : [];
 
+  // One id -> region lookup, built once, instead of re-walking the whole tree
+  // per id (collectRegions(effRoot).find(...) inside a .map was O(regions^2)).
+  const regionById = new Map(collectRegions(effRoot).map((r) => [r.id, r]));
+
+  // Band-hidden regions, labeled the same way as `closedRegions` so
+  // WorkspaceLayout's switcher can show a human name. This is the VIEWPORT
+  // constraint (computed in the hook zone above from the same effective
+  // tree) — it is a completely separate concept from `closedRegions` (the
+  // USER's own intent) and must never be merged into layoutStore or the
+  // `hidden` override: shrinking the window must never permanently narrow
+  // what comes back when the user widens it again.
+  const bandHiddenRegions = bandHiddenRegionIds
+    .map((id) => regionById.get(id))
+    .filter((r): r is PanelRegion => !!r)
+    .map((r) => ({ id: r.id, label: regionLabel(r) }));
+
+  // The OPEN regions (not user-closed), in tree order, for the band switcher's
+  // tab strip. Deliberately `openRegionIds` (computed in the hook zone above)
+  // rather than every region in the tree — see the CRITICAL comment there:
+  // the switcher must never list a region the user has closed, since that
+  // region is band-hidden by construction (resolveBandHidden was fed only
+  // open ids) and a tab pointing at it would show nothing when tapped.
+  const bandRegions = openRegionIds
+    .map((id) => regionById.get(id))
+    .filter((r): r is PanelRegion => !!r)
+    .map((r) => ({ id: r.id, label: regionLabel(r) }));
+
   // Fresh out of the store for the same reason currentSizes is: setLayoutHidden
   // replaces the record wholesale, so seeding it from this render's closure could
   // erase a change made since.
@@ -3615,7 +3744,19 @@ export function Shell({
   };
 
   return (
-    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <Box
+      sx={{
+        // 100vh includes mobile browsers' retractable URL bar, so the status/
+        // sync bar ends up under browser chrome. 100dvh (dynamic viewport
+        // height) excludes it; the plain 100vh above is the fallback for
+        // browsers that don't support dvh yet.
+        height: "100vh",
+        "@supports (height: 100dvh)": { height: "100dvh" },
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
       <TopBar
         book={book}
         chapter={chapter}
@@ -3646,8 +3787,11 @@ export function Shell({
         onOpenExportMenu={(anchorEl) => exportUsfmRef.current?.openMenu(anchorEl)}
         username={meUsername}
         onLogout={onLogout}
-        railCollapsed={railCollapsed}
-        onToggleRail={toggleRail}
+        railCollapsed={effectiveRailCollapsed}
+        // Omitted below desktop width, which makes TopBar drop the control
+        // entirely — the rail is force-collapsed there, so a toggle would do
+        // nothing. Restored the moment the window is wide enough to honour it.
+        onToggleRail={band === "desktop" ? toggleRail : undefined}
         layouts={builtinLayouts}
         userLayouts={userLayouts}
         activeLayoutId={activeLayout.id}
@@ -3698,10 +3842,16 @@ export function Shell({
         closedRegions={closedRegions}
         onRestoreRegion={(id) => setRegionHidden(id, false)}
         restoreLabel={(label) => t("layout.restoreRegion", { name: label })}
-        railCollapsed={railCollapsed}
+        railCollapsed={effectiveRailCollapsed}
         railWidth={railWidth}
         effectiveSplit={effectiveSplit}
         onSplitRatioChange={setSplitRatio}
+        band={band}
+        bandRegions={bandRegions}
+        bandHiddenRegions={bandHiddenRegions}
+        focusedRegionId={focusedRegionId}
+        onFocusRegion={focusRegionWithGate}
+        switcherLabel={t("layout.regionSwitcher")}
         railNode={
           <>
             <Tooltip title={t("shell.chapterCheckoffBoard")} placement="right">

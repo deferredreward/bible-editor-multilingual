@@ -247,6 +247,7 @@
     "resetArrangement": "إعادة تعيين الترتيب",
     "closeRegion": "إغلاق هذا القسم",
     "closedRegions": "الأقسام المغلقة",
+    "regionSwitcher": "تبديل القسم",
     "restoreRegion": "إعادة فتح {{name}}",
     "restoreAllRegions": "إعادة فتح جميع الأقسام",
     "dockFullWidth": "شريط بعرض كامل",

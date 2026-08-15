@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translator · Home — queue dispatcher</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* ---------- shared flow nav (repeated per-screen, not in _tokens.css) ---------- */
+  .flow-nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px 18px;
+    background: var(--card);
+    border-block-end: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
+  }
+  .flow-nav a {
+    flex: none;
+    text-decoration: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 5px 11px;
+    white-space: nowrap;
+  }
+  .flow-nav a[aria-current="page"] {
+    background: var(--hl);
+    border-color: var(--inspire);
+    color: var(--ink);
+  }
+  .skip-link {
+    position: absolute;
+    inset-inline-start: -999px;
+    top: 0;
+    background: var(--ocean);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 0 0 8px 0;
+    z-index: 100;
+  }
+  .skip-link:focus { inset-inline-start: 0; }
+
+  .home {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 16px 16px 64px;
+  }
+
+  .banners { display: flex; flex-direction: column; gap: 8px; margin-block-end: 14px; }
+
+  .home-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-block-end: 16px;
+  }
+  .home-head h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .home-head .sub { color: var(--ink-2); font-size: 13.5px; margin: 2px 0 0; }
+  .head-titles { flex: 1; min-width: 220px; }
+  .demo-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 12px;
+  }
+  .demo-controls .demo-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin-inline-end: 2px;
+  }
+  .demo-controls button {
+    appearance: none;
+    border: 1px dashed var(--line);
+    background: transparent;
+    color: var(--ink-2);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .demo-controls button:hover { border-color: var(--inspire); color: var(--ink); }
+
+  .home-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+    gap: 18px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .home-layout { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .queues {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  @media (max-width: 820px) {
+    .queues { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .qcard {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .qcard:hover { border-color: var(--inspire); }
+  .qcard .q-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 0 0 6px;
+  }
+  .qcard .q-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--inspire); flex: none; }
+  .qcard h2 { font-size: 17px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .qcard .q-count {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--ocean);
+    margin: 0 0 8px;
+  }
+  :root[data-theme="dark"] .qcard .q-count { color: var(--cultivate); }
+  @media (prefers-color-scheme: dark) { .qcard .q-count { color: var(--cultivate); } }
+  :root[data-theme="light"] .qcard .q-count { color: var(--ocean); }
+  .qcard .q-desc { font-size: 13.5px; color: var(--ink-2); margin: 0 0 12px; line-height: 1.45; }
+  .qcard .q-bar { height: 6px; border-radius: 3px; background: var(--skip-soft); overflow: hidden; }
+  .qcard .q-bar > i { display: block; height: 100%; background: var(--inspire); border-radius: 3px; }
+  .qcard .q-bar > i.ok { background: var(--ok); }
+  .qcard .q-bar > i.warn { background: var(--warn); }
+  .qcard .q-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .qcard .q-arrow { color: var(--inspire-deep); font-weight: 700; }
+  :root[data-theme="dark"] .qcard .q-arrow { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .qcard .q-arrow { color: var(--inspire); } }
+  :root[data-theme="light"] .qcard .q-arrow { color: var(--inspire-deep); }
+
+  .recent {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px;
+  }
+  .recent h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 0 0 10px;
+  }
+  .recent ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .recent li { font-size: 13px; line-height: 1.4; padding-block-end: 10px; border-block-end: 1px solid var(--line); }
+  .recent li:last-child { border-block-end: none; padding-block-end: 0; }
+  .recent .r-time { display: block; color: var(--ink-2); font-size: 11.5px; margin-block-start: 2px; }
+  @media (max-width: 900px) {
+    .recent { margin-block-start: 14px; }
+  }
+
+  /* ---------- account/status cluster ---------- */
+  .cluster-item { position: relative; }
+  /* t1-home is the only screen carrying five top-bar controls (status pill,
+     Mode, Theme, More, account). The shared .account-cluster is `flex: none;
+     white-space: nowrap`, so it cannot shrink — at 375px it measured 378px on
+     its own and pushed the page to a 432px scrollWidth, i.e. a horizontal body
+     scroll, which the build rules forbid at any width.
+     Dropping the pill's label (keeping the ● and the whole control tappable,
+     with the same jobs menu behind it) reclaims ~60px and clears the overflow
+     without removing any affordance. */
+  @media (max-width: 560px) {
+    #statusBtnText { display: none; }
+    .topbar-shared .account-cluster { min-width: 0; }
+  }
+  .cluster-btn {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card-2);
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cluster-btn:hover { border-color: var(--inspire); }
+  .status-pill { background: var(--hl); border-color: transparent; color: var(--inspire-deep); }
+  :root[data-theme="dark"] .status-pill { color: var(--inspire); }
+  @media (prefers-color-scheme: dark) { .status-pill { color: var(--inspire); } }
+  :root[data-theme="light"] .status-pill { color: var(--inspire-deep); }
+  .menu {
+    position: absolute;
+    inset-block-start: calc(100% + 6px);
+    inset-inline-end: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    min-width: 240px;
+    padding: 6px;
+    z-index: 50;
+  }
+  .menu[hidden] { display: none; }
+  .menu .menu-head {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 7px 9px 4px;
+  }
+  .menu button, .menu .menu-static {
+    display: block;
+    width: 100%;
+    text-align: start;
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    padding: 8px 9px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .menu button:hover { background: var(--card-2); }
+  .menu .menu-note { font-size: 11.5px; color: var(--ink-2); padding: 0 9px 6px; margin: 0; }
+  .menu hr { border: none; border-block-start: 1px solid var(--line); margin: 4px 2px; }
+  .menu .job-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    padding: 7px 9px;
+  }
+  .menu .job-row .job-main { flex: 1; min-width: 0; }
+  .menu .job-row .job-title { font-weight: 600; }
+  .menu .job-row .job-sub { color: var(--ink-2); font-size: 11.5px; }
+  .menu .job-row button { width: auto; padding: 3px 8px; font-size: 11.5px; background: var(--skip-soft); }
+</style>
+</head>
+<body data-mode="translation">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor</span></span>
+    <span class="screen-title">ZEC · gateway translation workspace</span>
+    <span class="account-cluster">
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn status-pill" id="statusBtn" aria-haspopup="true" aria-expanded="false" aria-controls="statusMenu">
+          <span aria-hidden="true">●</span> <span id="statusBtnText">…</span>
+        </button>
+        <div class="menu" id="statusMenu" role="menu" hidden>
+          <p class="menu-head">Pipeline jobs</p>
+          <div id="jobRows"></div>
+          <hr />
+          <button type="button" id="refreshJobsBtn">Refresh</button>
+        </div>
+      </span>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" data-action="toggle-mode" aria-pressed="false" title="Preview authoring vs translation mode">Mode</button>
+      </span>
+      <button type="button" class="cluster-btn" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-controls="moreMenu" title="View preferences">More ▾</button>
+        <div class="menu" id="moreMenu" role="menu" hidden>
+          <p class="menu-head">View</p>
+          <div class="job-row">
+            <span class="job-main">Text size</span>
+            <button type="button" id="textSizeDown" data-handle="local:text-size-decrease" data-bundle="K" aria-label="Decrease text size">A−</button>
+            <button type="button" id="textSizeUp" data-handle="local:text-size-increase" data-bundle="K" aria-label="Increase text size">A+</button>
+          </div>
+          <label class="menu-static" for="uiLanguageSelect" style="cursor:default;">Interface language
+            <select id="uiLanguageSelect" data-handle="local:set-ui-language" data-bundle="K" style="width:100%; margin-top:4px; font-size:12.5px;">
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="ar">العربية</option>
+            </select>
+          </label>
+          <p class="menu-note">View preferences only — saved to this device, no server sync.</p>
+        </div>
+      </span>
+      <span class="cluster-item">
+        <button type="button" class="cluster-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
+          <span class="avatar" id="accountAvatar" style="width:20px;height:20px;font-size:10px;">…</span> <span id="accountName">…</span>
+        </button>
+        <div class="menu" id="accountMenu" role="menu" hidden>
+          <p class="menu-head" id="accountMenuHead">…</p>
+          <button type="button" role="menuitem" data-handle="PATCH /api/project-config/mode" data-bundle="C">Switch to authoring mode</button>
+          <button type="button" role="menuitem" id="orgSwitchItem" data-handle="POST /api/workspaces/:slug" data-bundle="A">Switch organization…</button>
+          <p class="menu-note">Switching organization reloads the app.</p>
+          <hr />
+          <button type="button" role="menuitem" data-handle="POST /api/auth/logout" data-bundle="AUTH">Sign out</button>
+        </div>
+      </span>
+    </span>
+  </header>
+
+  <nav class="flow-nav" aria-label="Translator screens">
+    <a href="t1-home.html" aria-current="page">Home</a>
+    <a href="t2-review.html">Notes</a>
+    <a href="t3-scripture.html">Scripture</a>
+    <a href="t4-align.html">Align</a>
+    <a href="t5-articles.html">Articles</a>
+    <a href="t6-words.html">Words</a>
+    <a href="index.html">Hub ↗</a>
+  </nav>
+
+  <main id="main" class="home">
+    <div class="banners" id="banners">
+      <div class="banner banner--alert" data-banner="alert" hidden>
+        <span aria-hidden="true">⚠️</span>
+        <span class="banner-msg">Export run for ZEC failed — the pre-export freshness gate rejected stale D1 data. <a href="a4-observe.html" style="color:inherit;">View run</a></span>
+        <button type="button" class="banner-action" data-handle="POST /api/alerts/:id/dismiss" data-bundle="K" data-dismiss="alert" aria-label="Dismiss">✕</button>
+      </div>
+      <div class="banner banner--lock" data-banner="lock" hidden>
+        <span aria-hidden="true">🔒</span>
+        <span class="banner-msg">AI generate run in progress for ZEC 3 — started 6 min ago. Editing is locked for this chapter. You can still mark notes to keep before the new set lands.</span>
+        <button type="button" class="banner-action" data-handle="POST /api/rows/tn/:id/keep" data-bundle="E">Mark notes to keep</button>
+        <button type="button" class="banner-action" data-handle="local:dismiss-banner" data-bundle="K" data-dismiss="lock" aria-label="Dismiss">✕</button>
+      </div>
+      <div class="banner banner--ready" data-banner="ready" hidden>
+        <span aria-hidden="true">✨</span>
+        <span class="banner-msg">New AI translate drafts are ready for ZEC 5. Save your work, then refresh.</span>
+        <button type="button" class="banner-action" data-handle="local:refresh-chapter" data-bundle="K">Refresh</button>
+        <button type="button" class="banner-action" data-handle="local:dismiss-banner" data-bundle="K" data-dismiss="ready" aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+
+    <div class="home-head">
+      <div class="head-titles">
+        <h1 id="greetingHeading">Good morning</h1>
+        <p class="sub" id="bookSub">Loading…</p>
+      </div>
+      <!-- No context-pack/build endpoint is documented for this preview — honest
+           unknown state rather than a fabricated sha (see JS below). -->
+      <span class="chip-pack" title="Feeds AI drafting for this workspace" id="contextPackChip">
+        <span aria-hidden="true">🧠</span> Context pack: unknown
+      </span>
+      <div class="demo-controls" role="group" aria-label="Demo triggers">
+        <span class="demo-label">Demo</span>
+        <button type="button" id="demoAlert">Simulate system alert</button>
+        <button type="button" id="demoLock">Simulate chapter lock</button>
+        <button type="button" id="demoReady">Simulate drafts ready</button>
+      </div>
+    </div>
+
+    <div class="home-layout">
+      <section class="queues" aria-label="Work queues" role="list">
+        <a class="qcard" role="listitem" href="t3-scripture.html">
+          <p class="q-eyebrow"><span class="dot"></span>Scripture text</p>
+          <h2 id="scriptureBookName">Loading…</h2>
+          <p class="q-count" id="scriptureCount">Loading…</p>
+          <div class="q-bar"><i id="scriptureBar" style="width:0%"></i></div>
+          <p class="q-desc">ULT → GLT (literal) and UST → GST (simplified), verse by verse.</p>
+          <p class="q-foot"><span id="scriptureFoot"></span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t2-review.html#notes">
+          <p class="q-eyebrow"><span class="dot"></span>Notes &amp; questions</p>
+          <h2>Translation notes</h2>
+          <p class="q-count" id="notesCount">Loading…</p>
+          <div class="q-bar"><i class="ok" id="notesBar" style="width:0%"></i></div>
+          <p class="q-desc">AI-drafted translation notes, one card at a time.</p>
+          <p class="q-foot"><span id="notesFoot"></span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t2-review.html#questions">
+          <p class="q-eyebrow"><span class="dot"></span>Notes &amp; questions</p>
+          <h2>Questions</h2>
+          <p class="q-count" id="questionsCount">Loading…</p>
+          <div class="q-bar"><i class="ok" id="questionsBar" style="width:0%"></i></div>
+          <p class="q-desc">AI-drafted translation questions, one card at a time.</p>
+          <p class="q-foot"><span id="questionsFoot"></span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t4-align.html">
+          <p class="q-eyebrow"><span class="dot"></span>Word alignment</p>
+          <h2>Alignment</h2>
+          <!-- No alignment-progress endpoint is documented for this preview —
+               honest unknown state rather than a fabricated count. -->
+          <p class="q-count">Not available in this preview</p>
+          <div class="q-bar"><i style="width:0%"></i></div>
+          <p class="q-desc">Link target words to the Hebrew/Greek source, verse by verse.</p>
+          <p class="q-foot"><span></span><span class="q-arrow">Open →</span></p>
+        </a>
+
+        <a class="qcard" role="listitem" href="t5-articles.html">
+          <p class="q-eyebrow"><span class="dot"></span>tW / tA articles</p>
+          <h2>Articles</h2>
+          <!-- No articles-progress endpoint is documented for this preview —
+               honest unknown state rather than a fabricated count. -->
+          <p class="q-count">Not available in this preview</p>
+          <div class="q-bar"><i style="width:0%"></i></div>
+          <p class="q-desc">Key-term and translation-academy articles referenced from this book.</p>
+          <p class="q-foot"><span></span><span class="q-arrow">Open →</span></p>
+        </a>
+      </section>
+
+      <aside class="recent" aria-label="Recent activity">
+        <h2>Recent activity</h2>
+        <!-- No activity/audit-log endpoint is documented for this preview —
+             honest empty state rather than fabricated entries (see JS below). -->
+        <ul id="recentList">
+          <li>Recent activity isn't wired to a real endpoint in this preview.</li>
+        </ul>
+      </aside>
+    </div>
+  </main>
+
+  <script src="_api.js"></script>
+  <script src="_shell.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    function wireMenu(btnId, menuId) {
+      var btn = document.getElementById(btnId);
+      var menu = document.getElementById(menuId);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var open = menu.hasAttribute("hidden");
+        document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+        document.querySelectorAll(".cluster-btn[aria-expanded]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+        if (open) {
+          menu.removeAttribute("hidden");
+          btn.setAttribute("aria-expanded", "true");
+        }
+      });
+    }
+    wireMenu("statusBtn", "statusMenu");
+    wireMenu("accountBtn", "accountMenu");
+    wireMenu("moreBtn", "moreMenu");
+    document.addEventListener("click", function () {
+      document.querySelectorAll(".menu").forEach(function (m) { m.setAttribute("hidden", ""); });
+      document.querySelectorAll(".cluster-btn[aria-expanded]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+    });
+
+    document.getElementById("demoAlert").addEventListener("click", function () {
+      window.flowShell.toast("→ GET /api/alerts/me", { bundle: "K" });
+      document.querySelector('[data-banner="alert"]').hidden = false;
+    });
+    document.getElementById("demoLock").addEventListener("click", function () {
+      document.querySelector('[data-banner="lock"]').hidden = false;
+    });
+    document.getElementById("demoReady").addEventListener("click", function () {
+      document.querySelector('[data-banner="ready"]').hidden = false;
+    });
+    document.addEventListener("click", function (ev) {
+      var dismiss = ev.target.closest ? ev.target.closest("[data-dismiss]") : null;
+      if (!dismiss) return;
+      var target = document.querySelector('[data-banner="' + dismiss.getAttribute("data-dismiss") + '"]');
+      if (target) target.hidden = true;
+    });
+
+    // ---- real data ----------------------------------------------------------
+    var BOOK = "ZEC";
+    var CHAPTER = 1;
+    function el(id) { return document.getElementById(id); }
+
+    function timeGreeting() {
+      var h = new Date().getHours();
+      if (h < 5) return "Good night";
+      if (h < 12) return "Good morning";
+      if (h < 18) return "Good afternoon";
+      return "Good evening";
+    }
+
+    function loadGreeting() {
+      return window.flowApi.ready.then(function (me) {
+        var name = me && me.username ? me.username : "there";
+        el("greetingHeading").textContent = timeGreeting() + ", " + name;
+      });
+    }
+
+    // Real identity from GET /api/auth/me — no invented full name (the API
+    // only returns username + role), and no invented role either (the account
+    // menu used to say "editor" even when the real session was "admin").
+    function renderAccount(me) {
+      var initials = me && me.username ? me.username.slice(0, 2).toUpperCase() : "…";
+      el("accountAvatar").textContent = initials;
+      el("accountName").textContent = (me && me.username) || "…";
+      el("accountMenuHead").textContent = me ? (me.username + " · " + (me.role || "unknown role")) : "…";
+    }
+
+    // Book-wide totals (per-chapter tn/tq/twl/verses) from the book summary,
+    // plus chapter 1's real rows for an approved-count and a scripture
+    // "done" count — the API doesn't expose a book-wide "done"/"approved"
+    // rollup, so those two numbers are chapter-1-scoped and labeled as such.
+    function loadQueues() {
+      return Promise.all([
+        window.flowApi.get("/api/chapters/" + BOOK),
+        window.flowApi.chapter(BOOK, CHAPTER),
+      ]).then(function (results) {
+        var bookResult = results[0], chapterResult = results[1];
+        if (!bookResult.ok || !chapterResult.ok) {
+          el("scriptureCount").textContent = "Could not load";
+          el("notesCount").textContent = "Could not load";
+          el("questionsCount").textContent = "Could not load";
+          window.flowShell.toast("Could not load " + BOOK + " data (" + (bookResult.kind || chapterResult.kind) + ")", { nudge: true });
+          return;
+        }
+        var chapters = bookResult.data.chapters || [];
+        var totalVerses = chapters.reduce(function (s, c) { return s + (c.verses || 0); }, 0);
+        var totalTn = chapters.reduce(function (s, c) { return s + (c.tn || 0); }, 0);
+        var totalTq = chapters.reduce(function (s, c) { return s + (c.tq || 0); }, 0);
+
+        // No book-title endpoint exists in this preview (GET /api/chapters/:book
+        // only echoes the book code) — show the real code rather than a
+        // fabricated full name.
+        el("scriptureBookName").textContent = bookResult.data.book || BOOK;
+        var statuses = chapterResult.data.verseStatuses || [];
+        var doneInCh1 = statuses.filter(function (s) { return s.verse > 0 && s.done; }).length;
+        var versesCh1 = (chapters.filter(function (c) { return c.chapter === CHAPTER; })[0] || {}).verses || 0;
+        el("scriptureCount").textContent = doneInCh1 + " of " + versesCh1 + " verses done in chapter " + CHAPTER;
+        el("scriptureBar").style.width = versesCh1 ? Math.round((doneInCh1 / versesCh1) * 100) + "%" : "0%";
+        el("scriptureFoot").textContent = chapters.length + " chapters, " + totalVerses + " verses total";
+
+        var tn = chapterResult.data.tn || [];
+        var tq = chapterResult.data.tq || [];
+        var tnApproved = tn.filter(function (r) { return r.translation_state === "validated"; }).length;
+        var tqApproved = tq.filter(function (r) { return r.translation_state === "validated"; }).length;
+        el("notesCount").textContent = tnApproved + " of " + tn.length + " approved in chapter " + CHAPTER;
+        el("notesBar").style.width = tn.length ? Math.round((tnApproved / tn.length) * 100) + "%" : "0%";
+        el("notesFoot").textContent = totalTn + " notes across " + chapters.length + " chapters";
+        el("questionsCount").textContent = tqApproved + " of " + tq.length + " approved in chapter " + CHAPTER;
+        el("questionsBar").style.width = tq.length ? Math.round((tqApproved / tq.length) * 100) + "%" : "0%";
+        el("questionsFoot").textContent = totalTq + " questions across " + chapters.length + " chapters";
+
+        el("bookSub").textContent = (bookResult.data.book || BOOK) + " · " + (window.flowApi.me && window.flowApi.me.workspace ? window.flowApi.me.workspace + " workspace" : "workspace unknown");
+      });
+    }
+
+    function renderJobs(data) {
+      var jobs = (data && data.jobs) || [];
+      el("statusBtnText").textContent = jobs.length + (jobs.length === 1 ? " running" : " running");
+      var rows = el("jobRows");
+      if (!jobs.length) {
+        rows.innerHTML = '<p class="menu-note">No pipeline jobs running in this workspace.</p>';
+        return;
+      }
+      rows.innerHTML = jobs.map(function (j) {
+        return '<div class="job-row"><span aria-hidden="true">⏳</span>' +
+          '<span class="job-main"><span class="job-title">' + (j.type || "Job") + '</span><span class="job-sub">' + (j.book || "") + (j.chapter ? " " + j.chapter : "") + " · " + (j.stage || j.status || "") + '</span></span>' +
+          '<button type="button" data-handle="POST /api/pipelines/:jobId/cancel" data-param-jobId="' + j.id + '" data-bundle="D">Cancel</button></div>';
+      }).join("");
+    }
+    function loadJobs() {
+      return window.flowApi.get("/api/pipelines").then(function (result) {
+        if (!result.ok) { el("statusBtnText").textContent = "unknown"; return; }
+        renderJobs(result.data);
+      });
+    }
+    el("refreshJobsBtn").addEventListener("click", loadJobs);
+    document.addEventListener("flow:handled", function (ev) {
+      if (ev.detail && ev.detail.path && ev.detail.path.indexOf("/api/pipelines/") === 0 && ev.detail.result && ev.detail.result.ok) {
+        loadJobs();
+      }
+    });
+
+    window.flowShell.setContext({ book: BOOK, chapter: CHAPTER });
+    window.flowApi.ready.then(function (me) {
+      renderAccount(me);
+      loadGreeting();
+      loadQueues();
+      loadJobs();
+    });
+  })();
+  </script>
+</body>
+</html>

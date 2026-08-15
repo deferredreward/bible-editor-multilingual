@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Adaptive UI flows — hub</title>
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .hub {
+    /* no max-width — the preview should use every pixel available */
+    padding: 18px 18px 56px;
+  }
+  .hub-head { margin: 4px 2px 20px; }
+  .hub-head .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--inspire-deep);
+    margin: 0 0 4px;
+  }
+  @media (prefers-color-scheme: dark) { .hub-head .eyebrow { color: var(--inspire); } }
+  :root[data-theme="dark"] .hub-head .eyebrow { color: var(--inspire); }
+  :root[data-theme="light"] .hub-head .eyebrow { color: var(--inspire-deep); }
+  .hub-head h1 { font-size: 24px; letter-spacing: -0.02em; margin: 0; }
+  .hub-head .sub { color: var(--ink-2); font-size: 14px; margin: 4px 0 0; }
+
+  /* Slim rail + big preview: the list is names-only (purpose in a tooltip) so
+     the scaled iframe gets nearly the full width and stays readable. */
+  .hub-layout {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 820px) {
+    .hub-layout { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .flow-group + .flow-group { margin-top: 18px; }
+  .flow-group h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 0 0 8px 2px;
+  }
+  .screen-list { display: flex; flex-direction: column; gap: 4px; }
+  .screen-row {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .screen-row:hover { border-color: var(--inspire); }
+  .screen-row[aria-current="true"] { background: var(--hl); border-color: var(--inspire); }
+  .screen-row .s-name {
+    font-weight: 700;
+    font-size: 12.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .screen-row .s-bundles {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--ink-2);
+    margin-inline-start: 6px;
+  }
+  /* purpose lives in the tooltip (title attr, set from this node by JS) */
+  .screen-row .s-purpose { display: none; }
+
+  .preview-panel {
+    position: sticky;
+    inset-block-start: 18px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .preview-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    border-block-end: 1px solid var(--line);
+  }
+  .preview-top .p-title {
+    font-weight: 700;
+    font-size: 14px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .width-btns { display: flex; gap: 4px; }
+  .width-btns button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink-2);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .width-btns button[aria-pressed="true"] {
+    background: var(--hl);
+    border-color: var(--inspire);
+    color: var(--ink);
+  }
+  .preview-stage {
+    background: var(--ground);
+    padding: 20px;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    min-height: 400px;
+  }
+  /* The frame keeps the TRUE device dimensions so the page's own breakpoints fire
+     honestly; .frame-scaler shrinks it visually to fit the panel via transform. */
+  .frame-scaler { flex: none; overflow: hidden; }
+  .device-frame {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    transform-origin: top left;
+    transition: transform 0.15s ease;
+    overflow: hidden;
+  }
+  @media (prefers-reduced-motion: reduce) { .device-frame { transition: none; } }
+  .device-frame iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
+  }
+  .preview-empty {
+    color: var(--ink-2);
+    font-size: 14px;
+    text-align: center;
+    padding: 40px 20px;
+  }
+
+  .topbar-shared .account-cluster button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink-2);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <header class="topbar-shared">
+    <span class="brand"><span class="mark">bE</span><span class="brand-word">bible-editor · flows</span></span>
+    <span class="screen-title">Hub — screen index &amp; device preview</span>
+    <span class="account-cluster">
+      <button type="button" data-action="toggle-mode" title="Preview authoring vs translation mode">Mode</button>
+      <button type="button" data-action="toggle-theme" title="Toggle light/dark">Theme</button>
+    </span>
+  </header>
+
+  <main class="hub">
+    <div class="hub-head">
+      <p class="eyebrow">Adaptive UI flows</p>
+      <h1>13 screens · 3 roles · 3 form factors</h1>
+      <p class="sub">Click a screen to open it. Each screen is wired to the real backend —
+        this hub itself loads <code>_api.js</code>, which mints a dev session on load — so actionable
+        controls make real requests and show a toast with the real result, or degrade to an
+        honest unreachable/disabled state when no backend is running. See
+        <a href="README.md#running-the-functional-preview">"Running the functional preview"</a>
+        in <code>docs/flows/README.md</code> to start one, and <code>docs/flows/02-architecture.md</code>
+        for the handle/bundle conventions.</p>
+    </div>
+
+    <div class="hub-layout">
+      <div class="flow-groups">
+        <section class="flow-group">
+          <h2>Translator</h2>
+          <div class="screen-list">
+            <a class="screen-row" data-screen="t1-home.html">
+              <span class="s-name">t1-home.html</span><span class="s-bundles">E · K</span>
+              <p class="s-purpose">Queue dispatcher + trust chips — home screen, counts per queue.</p>
+            </a>
+            <a class="screen-row" data-screen="t2-review.html">
+              <span class="s-name">t2-review.html</span><span class="s-bundles">E · F</span>
+              <p class="s-purpose">Unified review queue (notes + questions): approve / approve-all / suggest / template / edit+Save / history / 409s / lock.</p>
+            </a>
+            <a class="screen-row" data-screen="t3-scripture.html">
+              <span class="s-name">t3-scripture.html</span><span class="s-bundles">G</span>
+              <p class="s-purpose">Paired lanes ULT→GLT / UST→GST, verse edit, verse status, ChapterBoard, verse history.</p>
+            </a>
+            <a class="screen-row" data-screen="t4-align.html">
+              <span class="s-name">t4-align.html</span><span class="s-bundles">H</span>
+              <p class="s-purpose">Alignment: drag canvas on desktop, tap-to-pair + AI-suggestion cards on touch (Drag/Tap toggle).</p>
+            </a>
+            <a class="screen-row" data-screen="t5-articles.html">
+              <span class="s-name">t5-articles.html</span><span class="s-bundles">J</span>
+              <p class="s-purpose">tW/tA article queues + editor — split screens, no tabs.</p>
+            </a>
+            <a class="screen-row" data-screen="t6-words.html">
+              <span class="s-name">t6-words.html</span><span class="s-bundles">F</span>
+              <p class="s-purpose">Word links — edit TWL rows, quote builder, suggestions.</p>
+            </a>
+          </div>
+        </section>
+
+        <section class="flow-group">
+          <h2>Lead</h2>
+          <div class="screen-list">
+            <a class="screen-row" data-screen="l1-ai.html">
+              <span class="s-name">l1-ai.html</span><span class="s-bundles">D · K</span>
+              <p class="s-purpose">Run pipelines (3 base + 2 translate-mode), job progress (batch x/y), confirm/conflict dialogs, lock implications.</p>
+            </a>
+            <a class="screen-row" data-screen="l2-style.html">
+              <span class="s-name">l2-style.html</span><span class="s-bundles">C</span>
+              <p class="s-purpose">Preferences sections + context pack export + pack sha + templates.tsv count.</p>
+            </a>
+            <a class="screen-row" data-screen="l3-templates.html">
+              <span class="s-name">l3-templates.html</span><span class="s-bundles">I</span>
+              <p class="s-purpose">Template curation queue — Draft-with-AI / Save / Approve / history.</p>
+            </a>
+          </div>
+        </section>
+
+        <section class="flow-group">
+          <h2>Admin</h2>
+          <div class="screen-list">
+            <a class="screen-row" data-screen="a1-setup.html">
+              <span class="s-name">a1-setup.html</span><span class="s-bundles">A</span>
+              <p class="s-purpose">Org setup wizard (5 linear steps), WorkspaceChoiceDialog.</p>
+            </a>
+            <a class="screen-row" data-screen="a2-import.html">
+              <span class="s-name">a2-import.html</span><span class="s-bundles">B</span>
+              <p class="s-purpose">Book picker + wait states, ImportFromDoor43Dialog.</p>
+            </a>
+            <a class="screen-row" data-screen="a3-team.html">
+              <span class="s-name">a3-team.html</span><span class="s-bundles">A/team</span>
+              <p class="s-purpose">Team/user management, org switch.</p>
+            </a>
+            <a class="screen-row" data-screen="a4-observe.html">
+              <span class="s-name">a4-observe.html</span><span class="s-bundles">K</span>
+              <p class="s-purpose">Dashboard — export runs, pipeline jobs, health, pack status; "Workflow stages" future card.</p>
+            </a>
+          </div>
+        </section>
+      </div>
+
+      <aside class="preview-panel">
+        <div class="preview-top">
+          <span class="p-title" id="previewTitle">No screen loaded</span>
+          <div class="width-btns" role="group" aria-label="Preview width">
+            <button type="button" data-width="375">Mobile 375</button>
+            <button type="button" data-width="768">Tablet 768</button>
+            <button type="button" data-width="1280" aria-pressed="true">Desktop 1280</button>
+            <button type="button" id="openTabBtn" title="Open the current screen in its own browser tab">New tab ↗</button>
+          </div>
+        </div>
+        <div class="preview-stage" id="previewStage">
+          <p class="preview-empty">Select a screen from the left to preview it here.</p>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="_api.js"></script>
+  <script src="_shell.js"></script>
+  <script>
+    (function () {
+      "use strict";
+      var rows = document.querySelectorAll(".screen-row");
+      var stage = document.getElementById("previewStage");
+      var titleEl = document.getElementById("previewTitle");
+      var widthBtns = document.querySelectorAll(".width-btns button[data-width]");
+      var openTabBtn = document.getElementById("openTabBtn");
+      var DEVICE_HEIGHTS = { 375: 812, 768: 1024, 1280: 800 };
+      var currentWidth = 1280;
+      var currentScreen = null;
+      var scaler = null;
+      var frame = null;
+
+      function applyScale() {
+        if (!frame) return;
+        var h = DEVICE_HEIGHTS[currentWidth] || 800;
+        // stage has 20px padding each side; never upscale past 1:1
+        var avail = stage.clientWidth - 40;
+        var f = Math.min(1, avail / currentWidth);
+        frame.style.width = currentWidth + "px";
+        frame.style.height = h + "px";
+        frame.style.transform = "scale(" + f + ")";
+        scaler.style.width = Math.round(currentWidth * f) + "px";
+        scaler.style.height = Math.round(h * f) + "px";
+        titleEl.textContent = currentScreen + " · " + currentWidth + "px" +
+          (f < 1 ? " at " + Math.round(f * 100) + "%" : "");
+      }
+
+      function renderFrame() {
+        if (!currentScreen) return;
+        stage.innerHTML = "";
+        scaler = document.createElement("div");
+        scaler.className = "frame-scaler";
+        frame = document.createElement("div");
+        frame.className = "device-frame";
+        var iframe = document.createElement("iframe");
+        iframe.src = currentScreen;
+        iframe.title = currentScreen;
+        frame.appendChild(iframe);
+        scaler.appendChild(frame);
+        stage.appendChild(scaler);
+        applyScale();
+      }
+
+      window.addEventListener("resize", applyScale);
+
+      rows.forEach(function (row) {
+        row.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          var screen = row.getAttribute("data-screen");
+          rows.forEach(function (r) { r.removeAttribute("aria-current"); });
+          row.setAttribute("aria-current", "true");
+          titleEl.textContent = screen;
+          currentScreen = screen;
+          renderFrame();
+        });
+      });
+
+      widthBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          widthBtns.forEach(function (b) { b.setAttribute("aria-pressed", "false"); });
+          btn.setAttribute("aria-pressed", "true");
+          currentWidth = parseInt(btn.getAttribute("data-width"), 10);
+          applyScale(); // rescale in place — no iframe reload needed
+        });
+      });
+
+      openTabBtn.addEventListener("click", function () {
+        if (currentScreen) window.open(currentScreen, "_blank", "noopener");
+      });
+
+      // slim rail: purpose text lives in the tooltip
+      rows.forEach(function (row) {
+        var p = row.querySelector(".s-purpose");
+        if (p) row.setAttribute("title", p.textContent);
+      });
+
+      // load the first screen on arrival so the preview is never empty
+      if (rows.length) rows[0].click();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translator · Questions · Terms · Articles</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <aside class="side" data-side></aside>
+  <div class="stage">
+    <div class="phone" id="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-body">
+        <div class="phone-bar">
+          <button class="ghost-btn" type="button" onclick="location.href='t1-home.html'">← Home</button>
+          <span class="pill" id="statusPill">Draft</span>
+        </div>
+
+        <div class="tabs" id="tabs">
+          <button class="tab" type="button" data-kind="questions">Questions</button>
+          <button class="tab" type="button" data-kind="terms">Key terms</button>
+          <button class="tab" type="button" data-kind="articles">Articles</button>
+        </div>
+
+        <div id="view"></div>
+
+        <div class="stack" style="margin-top:10px">
+          <button class="soft-btn" type="button" id="rerun">↻ AI translate again</button>
+          <div class="row">
+            <button class="danger-btn" type="button" id="reject">Reject</button>
+            <button class="soft-btn" type="button" id="draftBtn" style="background:#eceae4;color:var(--ink)">Keep draft</button>
+          </div>
+          <button class="primary-btn" type="button" id="approve">Approve</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const data = {
+    questions: [
+      {
+        title: 'Zac 1:1–6',
+        source: 'Why did Yahweh tell the people to return to him?',
+        target: '¿Por qué Yahvé les dijo al pueblo que volvieran a él?',
+        alt: '¿Cuál fue la razón por la que Yahvé pidió al pueblo que regresara a él?',
+      },
+      {
+        title: 'Zac 1:7–17',
+        source: 'What did the man among the myrtle trees report about the earth?',
+        target: '¿Qué informó el hombre entre los mirtos acerca de la tierra?',
+        alt: 'Según el hombre que estaba entre los mirtos, ¿cómo estaba la tierra?',
+      },
+    ],
+    terms: [
+      {
+        title: 'prophet',
+        source: 'A prophet is a person who speaks God’s messages to people. Sometimes prophets also wrote those messages. Yahweh sent prophets to warn, encourage, and teach his people.',
+        target: 'Un profeta es una persona que comunica los mensajes de Dios al pueblo. A veces también los escribía. Yahvé envió profetas para advertir, animar y enseñar a su pueblo.',
+        alt: 'Profeta: alguien a quien Dios encarga hablar su mensaje. Puede advertir, consolar o instruir al pueblo de Yahvé.',
+      },
+      {
+        title: 'Yahweh of hosts',
+        source: 'This title presents Yahweh as the commander of great armies, including the angels. It emphasizes his power to protect and to judge.',
+        target: 'Este título presenta a Yahvé como el comandante de grandes ejércitos, incluidos los ángeles. Enfatiza su poder para proteger y para juzgar.',
+        alt: '«Yahvé de los ejércitos» lo muestra como jefe de ejércitos celestiales: poderoso para salvar y para juzgar.',
+      },
+    ],
+    articles: [
+      {
+        title: 'What is a metaphor?',
+        source: 'A metaphor is a figure of speech that describes something by saying it is something else. It helps readers see a truth in a vivid way. Example: “Yahweh is my shepherd” does not mean God is a literal herder of sheep; it means he cares for his people like a shepherd cares for sheep.',
+        target: 'Una metáfora es una figura que describe algo diciendo que es otra cosa. Ayuda a ver una verdad de forma viva. Ejemplo: «Yahvé es mi pastor» no significa que Dios cuide ovejas literales; significa que cuida a su pueblo como un pastor cuida las ovejas.',
+        alt: 'Metáfora: decir que una cosa «es» otra para pintar una idea. «Yahvé es mi pastor» habla de cuidado, no de un oficio literal.',
+      },
+    ],
+  };
+
+  const labels = {
+    questions: { source: 'English question', target: 'Spanish question' },
+    terms: { source: 'English key term', target: 'Spanish key term' },
+    articles: { source: 'English article', target: 'Spanish article' },
+  };
+
+  let kind = (location.hash || '#questions').slice(1);
+  if (!data[kind]) kind = 'questions';
+  let index = 0;
+  let status = 'draft';
+  const phone = document.getElementById('phone');
+
+  function syncTabs() {
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.kind === kind);
+    });
+  }
+
+  function render() {
+    const item = data[kind][index];
+    const L = labels[kind];
+    syncTabs();
+    document.getElementById('statusPill').textContent =
+      status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Draft';
+    document.getElementById('statusPill').className =
+      'pill ' + (status === 'approved' ? 'green' : status === 'rejected' ? '' : 'amber');
+
+    const view = document.getElementById('view');
+    view.classList.remove('fade-in');
+    void view.offsetWidth;
+    view.classList.add('fade-in');
+    view.innerHTML = `
+      <div class="meta-row">
+        <span class="pill teal">${item.title}</span>
+        <span class="pill">${index + 1}/${data[kind].length}</span>
+      </div>
+      <div class="card">
+        <h3>${L.source}</h3>
+        <p class="body serif">${item.source}</p>
+      </div>
+      <div class="card white" style="border-color:#b9ddd7;box-shadow:0 0 0 3px var(--accent-soft)">
+        <h3>${L.target} · editable</h3>
+        <textarea class="textarea" id="draft">${item.target}</textarea>
+      </div>
+    `;
+  }
+
+  function next() {
+    index = (index + 1) % data[kind].length;
+    status = 'draft';
+    render();
+  }
+
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab');
+    if (!btn) return;
+    kind = btn.dataset.kind;
+    location.hash = kind;
+    index = 0;
+    status = 'draft';
+    render();
+  });
+
+  document.getElementById('approve').addEventListener('click', () => {
+    status = 'approved';
+    const ta = document.getElementById('draft');
+    data[kind][index].target = ta.value;
+    render();
+    showToast(phone, 'Approved');
+    setTimeout(next, 700);
+  });
+
+  document.getElementById('reject').addEventListener('click', () => {
+    status = 'rejected';
+    render();
+    showToast(phone, 'Rejected · skipped');
+    setTimeout(next, 700);
+  });
+
+  document.getElementById('draftBtn').addEventListener('click', () => {
+    status = 'draft';
+    data[kind][index].target = document.getElementById('draft').value;
+    render();
+    showToast(phone, 'Saved as draft');
+  });
+
+  document.getElementById('rerun').addEventListener('click', () => {
+    const btn = document.getElementById('rerun');
+    btn.innerHTML = '<span class="spinning">↻</span> Translating…';
+    btn.disabled = true;
+    setTimeout(() => {
+      document.getElementById('draft').value = data[kind][index].alt;
+      status = 'draft';
+      document.getElementById('statusPill').textContent = 'Draft';
+      document.getElementById('statusPill').className = 'pill amber';
+      btn.innerHTML = '↻ AI translate again';
+      btn.disabled = false;
+      showToast(phone, 'Fresh AI translation');
+    }, 850);
+  });
+
+  window.addEventListener('hashchange', () => {
+    const k = location.hash.slice(1);
+    if (data[k]) { kind = k; index = 0; status = 'draft'; render(); }
+  });
+
+  render();
+</script>
+</body>
+</html>
