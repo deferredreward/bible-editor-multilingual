@@ -37,25 +37,35 @@ function normalizeOccurrences(parsed: unknown): void {
 
 export const verses = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
-// content must be the usfm-js verse-objects tree (at minimum, a non-empty
-// verseObjects array). The whole tree is replaced on every PATCH; a malformed
-// body that passed validation as `unknown` would brick the verse — the
-// alignment dialog walks verseObjects without null-guarding.
+// content must be the usfm-js verse-objects tree. The whole tree is replaced
+// on every PATCH; a malformed body that passed validation as `unknown` would
+// brick the verse — the alignment dialog walks verseObjects without
+// null-guarding. Ordinary verses must keep at least one verse-object (an
+// empty save would silently blank real scripture text with no way to tell
+// "intentionally cleared" from "client bug"). Verse 0 is the per-chapter
+// "front" pseudo-verse (section headings, Psalm `\d` titles, etc. — see
+// importParsers.ts's "front" handling) rather than translatable scripture
+// text, so it may legitimately go empty once a translator deletes its last
+// heading; requiring min(1) there made heading deletion permanently
+// impossible (it always "failed" back to the old content).
 const VerseObjectSchema = z.object({}).passthrough();
-const PatchSchema = z.object({
-  content: z
-    .object({
-      verseObjects: z.array(VerseObjectSchema).min(1),
-    })
-    .passthrough(),
-  // Optional, but NOT nullable: the SQL uses COALESCE(?2, plain_text), so an
-  // explicit null would silently mean "keep" rather than "clear". Restrict to
-  // string|absent so the API contract matches the SQL (omit to keep).
-  plain_text: z.string().optional(),
-  alignment_intent: z
-    .enum(["text_edit", "find_replace", "section_edit", "alignment_edit"])
-    .optional(),
-});
+export function buildPatchSchema(verse: number) {
+  const minVerseObjects = verse === 0 ? 0 : 1;
+  return z.object({
+    content: z
+      .object({
+        verseObjects: z.array(VerseObjectSchema).min(minVerseObjects),
+      })
+      .passthrough(),
+    // Optional, but NOT nullable: the SQL uses COALESCE(?2, plain_text), so an
+    // explicit null would silently mean "keep" rather than "clear". Restrict to
+    // string|absent so the API contract matches the SQL (omit to keep).
+    plain_text: z.string().optional(),
+    alignment_intent: z
+      .enum(["text_edit", "find_replace", "section_edit", "alignment_edit"])
+      .optional(),
+  });
+}
 
 // Valid USFM marker names are alphanumeric (e.g. "p", "q1", "zaln", "ts"); a
 // marker `tag` carrying an HTML metacharacter has no legitimate origin and is
@@ -250,7 +260,7 @@ verses.patch("/:book/:chapter/:verse/:bibleVersion", requireEditor, async (c) =>
   } catch {
     return c.json({ error: "invalid_body" }, 400);
   }
-  const parsed = PatchSchema.safeParse(body);
+  const parsed = buildPatchSchema(verse).safeParse(body);
   if (!parsed.success) {
     return c.json({ error: "invalid_body", details: parsed.error.format() }, 400);
   }
