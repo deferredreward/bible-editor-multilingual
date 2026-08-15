@@ -1488,7 +1488,7 @@ function BriefSection({ prefsState }: { prefsState: PrefsState }) {
       >
         {REGISTERS.map((r) => (
           <MenuItem key={r} value={r}>
-            {t(`preferences.register.${r}`)}
+            {t(`preferences.registerOption.${r}`)}
           </MenuItem>
         ))}
       </TextField>
