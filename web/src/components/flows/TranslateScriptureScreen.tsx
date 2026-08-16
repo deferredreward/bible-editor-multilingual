@@ -304,6 +304,21 @@ export default function TranslateScriptureScreen({
   const dirtyRef = useRef<Record<TargetLane, boolean>>({ ULT: false, UST: false });
   const hydratedKeyRef = useRef<Record<TargetLane, string | null>>({ ULT: null, UST: null });
 
+  // Phone focus mode (issue #164), same idea as TranslateNotesScreen.tsx's
+  // `focusMode` — the on-screen keyboard leaves almost no room on a phone, so
+  // an active lane edit hides the surrounding chrome (topbar, Prev/Next)
+  // until the user blurs out. Unlike Notes/Questions there is no pre-existing
+  // edit-mode boolean here (the lane TextFields are always-on), so this is
+  // driven directly by onFocus/onBlur on the lane TextField in
+  // renderLaneCard() below. The action bar (Save draft / Approve verse) is
+  // deliberately NOT hidden by focus mode, unlike Notes/Questions: blur fires
+  // before a tap's click/pointerup completes, so hiding the only Save button
+  // on blur risks eating the tap that was meant to press it. Keeping it
+  // visible sidesteps that race entirely. Wide/desktop behavior is untouched
+  // — this is always false there.
+  const [laneFocused, setLaneFocused] = useState(false);
+  const focusMode = !wide && laneFocused;
+
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; severity: "info" | "warning" } | null>(
@@ -776,6 +791,8 @@ export default function TranslateScriptureScreen({
           value={values[bv]}
           disabled={!canEdit}
           onChange={(e) => handleLaneChange(bv, e.target.value)}
+          onFocus={() => setLaneFocused(true)}
+          onBlur={() => setLaneFocused(false)}
           inputProps={{
             dir: targetRtl ? "rtl" : "ltr",
             spellCheck: false,
@@ -889,7 +906,8 @@ export default function TranslateScriptureScreen({
   // The two honest verbs (Redraft is hidden; see header). Phone: fixed to the
   // viewport bottom, exactly as before. md+ pane: sticky at the pane's
   // bottom, pinned there by margin-block-start:auto when the content is short
-  // (the words screen's pane pattern).
+  // (the words screen's pane pattern). Deliberately NOT gated by focusMode
+  // (issue #164) — see the comment at focusMode's declaration.
   const actionBar = (
     <Box
       component="footer"
@@ -977,90 +995,94 @@ export default function TranslateScriptureScreen({
           : { overflowY: "auto" }),
       }}
     >
-      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
-      <Box
-        sx={{
-          position: "sticky",
-          insetBlockStart: 0,
-          zIndex: 20,
-          flex: "none",
-          bgcolor: "background.paper",
-          borderBlockEnd: "1px solid",
-          borderColor: "divider",
-        }}
-      >
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert).
+          Hidden in phone focus mode (issue #164) to free space for the
+          keyboard — same convention as TranslateNotesScreen.tsx. */}
+      {!focusMode && (
         <Box
-          sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}
+          sx={{
+            position: "sticky",
+            insetBlockStart: 0,
+            zIndex: 20,
+            flex: "none",
+            bgcolor: "background.paper",
+            borderBlockEnd: "1px solid",
+            borderColor: "divider",
+          }}
         >
-          <Stack direction="row" alignItems="center" spacing={1.25}>
-            <IconButton
-              aria-label={`Back to ${book} package`}
-              onClick={() => {
-                location.hash = `#/package/${book}`;
-              }}
-              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
-            >
-              <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
-            </IconButton>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                Scripture
-              </Typography>
-              <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
-                {sub}
-              </Typography>
-            </Box>
-            <Box sx={{ flex: 1 }} />
-            <Typography
-              variant="body2"
-              sx={{
-                fontWeight: 600,
-                color: "text.secondary",
-                fontVariantNumeric: "tabular-nums",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {done ? `${total} of ${total}` : `Verse ${Math.min(cursor + 1, total)} of ${total}`}
-            </Typography>
-            {/* compact prev/next — the same cursor and disabled logic as the
-                bottom buttons (goPrev/goNext), also disabled on the done view
-                where the bottom pair doesn't render. */}
-            <Stack direction="row" spacing={0.75} sx={{ flex: "none" }}>
+          <Box
+            sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1.25}>
               <IconButton
-                aria-label="Previous verse"
-                size="small"
-                disabled={done || busy || cursor === 0}
-                onClick={goPrev}
-                sx={{ bgcolor: skip.soft, width: 30, height: 30, flex: "none" }}
+                aria-label={`Back to ${book} package`}
+                onClick={() => {
+                  location.hash = `#/package/${book}`;
+                }}
+                sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
               >
                 <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
               </IconButton>
-              <IconButton
-                aria-label="Next verse"
-                size="small"
-                disabled={done || busy || (cursor >= total - 1 && statusedCount < total)}
-                onClick={goNext}
-                sx={{ bgcolor: skip.soft, width: 30, height: 30, flex: "none" }}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
+                  Scripture
+                </Typography>
+                <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+                  {sub}
+                </Typography>
+              </Box>
+              <Box sx={{ flex: 1 }} />
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                  color: "text.secondary",
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
               >
-                <ChevronRightIcon fontSize="small" sx={chevronFlip} />
-              </IconButton>
+                {done ? `${total} of ${total}` : `Verse ${Math.min(cursor + 1, total)} of ${total}`}
+              </Typography>
+              {/* compact prev/next — the same cursor and disabled logic as the
+                  bottom buttons (goPrev/goNext), also disabled on the done view
+                  where the bottom pair doesn't render. */}
+              <Stack direction="row" spacing={0.75} sx={{ flex: "none" }}>
+                <IconButton
+                  aria-label="Previous verse"
+                  size="small"
+                  disabled={done || busy || cursor === 0}
+                  onClick={goPrev}
+                  sx={{ bgcolor: skip.soft, width: 30, height: 30, flex: "none" }}
+                >
+                  <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
+                </IconButton>
+                <IconButton
+                  aria-label="Next verse"
+                  size="small"
+                  disabled={done || busy || (cursor >= total - 1 && statusedCount < total)}
+                  onClick={goNext}
+                  sx={{ bgcolor: skip.soft, width: 30, height: 30, flex: "none" }}
+                >
+                  <ChevronRightIcon fontSize="small" sx={chevronFlip} />
+                </IconButton>
+              </Stack>
             </Stack>
-          </Stack>
-          <Box
-            sx={{ height: 4, borderRadius: "2px", bgcolor: skip.soft, mt: 1.25, overflow: "hidden" }}
-          >
             <Box
-              sx={{
-                height: "100%",
-                borderRadius: "2px",
-                bgcolor: INSPIRE,
-                transition: "width 0.35s ease",
-                width: total === 0 ? "0%" : `${(statusedCount / total) * 100}%`,
-              }}
-            />
+              sx={{ height: 4, borderRadius: "2px", bgcolor: skip.soft, mt: 1.25, overflow: "hidden" }}
+            >
+              <Box
+                sx={{
+                  height: "100%",
+                  borderRadius: "2px",
+                  bgcolor: INSPIRE,
+                  transition: "width 0.35s ease",
+                  width: total === 0 ? "0%" : `${(statusedCount / total) * 100}%`,
+                }}
+              />
+            </Box>
           </Box>
         </Box>
-      </Box>
+      )}
 
       {/* md+ desk (the words screen's pattern, after docs/mockups/desktop-first/
           _design.css .desk/.rail/.panel): 1440px centred grid — verse-list pane
@@ -1318,25 +1340,27 @@ export default function TranslateScriptureScreen({
                   </Stack>
                 )}
 
-                {/* previous / next */}
-                <Stack direction="row" justifyContent="space-between" spacing={1.25}>
-                  <Button
-                    startIcon={<ChevronLeftIcon sx={chevronFlip} />}
-                    disabled={cursor === 0 || busy}
-                    onClick={goPrev}
-                    sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    endIcon={<ChevronRightIcon sx={chevronFlip} />}
-                    disabled={busy || (cursor >= total - 1 && statusedCount < total)}
-                    onClick={goNext}
-                    sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-                  >
-                    Next
-                  </Button>
-                </Stack>
+                {/* previous / next — hidden in phone focus mode (issue #164) */}
+                {!focusMode && (
+                  <Stack direction="row" justifyContent="space-between" spacing={1.25}>
+                    <Button
+                      startIcon={<ChevronLeftIcon sx={chevronFlip} />}
+                      disabled={cursor === 0 || busy}
+                      onClick={goPrev}
+                      sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      endIcon={<ChevronRightIcon sx={chevronFlip} />}
+                      disabled={busy || (cursor >= total - 1 && statusedCount < total)}
+                      onClick={goNext}
+                      sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                    >
+                      Next
+                    </Button>
+                  </Stack>
+                )}
               </>
             )}
           </Box>
