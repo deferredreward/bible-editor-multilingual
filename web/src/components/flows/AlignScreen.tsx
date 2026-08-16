@@ -796,9 +796,17 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
                           dir={targetRtl ? "rtl" : "ltr"}
                           sx={{ fontSize: 11, color: "text.secondary", marginBlockStart: "2px" }}
                         >
-                          {g.targets.length
-                            ? g.targets.map((t) => t.text).join(" ")
-                            : "(unaligned)"}
+                          {g.targets.length ? (
+                            g.targets.map((t) => t.text).join(" ")
+                          ) : (
+                            // UI chrome, always English — pin dir so it
+                            // doesn't inherit the parent box's targetRtl
+                            // (issue #163). Real target text above correctly
+                            // follows targetRtl; this is only the placeholder.
+                            <Box component="span" dir="ltr" sx={{ textAlign: "start" }}>
+                              (unaligned)
+                            </Box>
+                          )}
                         </Box>
                       </Box>
                     ))}

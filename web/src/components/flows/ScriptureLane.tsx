@@ -251,7 +251,10 @@ export function ScriptureLane({
         }}
       >
         {sourceText ?? (
-          <Box component="em" sx={{ fontSize: "0.85rem", fontFamily: "inherit" }}>
+          // UI chrome, always English — pin dir so it doesn't inherit the
+          // parent Typography's rtl (issue #163). Real source text above
+          // correctly follows sourceRtl; this is only the empty-state copy.
+          <Box component="em" dir="ltr" sx={{ fontSize: "0.85rem", fontFamily: "inherit", textAlign: "start" }}>
             No {sourceLabel} source text loaded for this verse.
           </Box>
         )}

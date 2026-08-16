@@ -426,9 +426,12 @@ export function AlignTapView({
                   sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, minHeight: 30 }}
                 >
                   {card.targets.length === 0 ? (
+                    // UI chrome, always English — pin dir so it doesn't inherit
+                    // the surrounding rtl box's direction (issue #163).
                     <Typography
                       variant="caption"
-                      sx={{ color: "text.secondary", fontStyle: "italic", alignSelf: "center" }}
+                      dir="ltr"
+                      sx={{ color: "text.secondary", fontStyle: "italic", alignSelf: "center", textAlign: "start" }}
                     >
                       unaligned
                     </Typography>
@@ -491,7 +494,9 @@ export function AlignTapView({
         }}
       >
         {pool.length === 0 ? (
-          <Typography variant="body2" sx={{ color: "text.secondary", fontStyle: "italic" }}>
+          // UI chrome, always English — pin dir so it doesn't inherit the
+          // surrounding rtl box's direction (issue #163).
+          <Typography variant="body2" dir="ltr" sx={{ color: "text.secondary", fontStyle: "italic", textAlign: "start" }}>
             All target words are aligned.
           </Typography>
         ) : (
