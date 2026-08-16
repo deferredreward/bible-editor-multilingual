@@ -70,21 +70,15 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} टिप्पणियाँ · {{words}} शब्द · {{questions}} प्रश्न",
     "readingTextSize": "पठन पाठ का आकार",
-    "readingTextSizeTooltip": "पठन पाठ का आकार",
-    "adjustReadingTextSize": "पठन पाठ का आकार समायोजित करें",
     "decreaseReadingTextSize": "पठन पाठ का आकार घटाएँ",
     "increaseReadingTextSize": "पठन पाठ का आकार बढ़ाएँ",
-    "smaller": "छोटा",
-    "larger": "बड़ा",
-    "resetTo100": "100% पर रीसेट करें",
     "switchToLight": "हल्के मोड पर स्विच करें",
     "switchToDark": "गहरे मोड पर स्विच करें",
     "toggleColorMode": "रंग मोड बदलें",
     "uiLanguage": "इंटरफ़ेस भाषा",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     }
   },
   "translation": {
@@ -229,9 +223,7 @@
     "discardConfirmBody": "ये संपादन कभी सर्वर तक नहीं पहुँचे। इन्हें त्यागने से ये इस डिवाइस से स्थायी रूप से मिट जाते हैं — इन्हें पुनः प्राप्त नहीं किया जा सकता।",
     "cancel": "रद्द करें",
     "updateAvailableTooltip": "एक नया संस्करण तैनात किया गया है। नवीनतम सुधार पाने के लिए पुनः लोड करने हेतु क्लिक करें।",
-    "updateAvailable": "ऐप अपडेट उपलब्ध — रीफ़्रेश करें",
-    "buildSha": "बिल्ड {{commit}}",
-    "onLatestVersion": "आप अपने द्वारा लोड किए गए नवीनतम संस्करण पर हैं।"
+    "updateAvailable": "ऐप अपडेट उपलब्ध — रीफ़्रेश करें"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -573,8 +565,6 @@
     "attrPeople_other": "{{count}} लोग"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "इस पद को Logos में खोलें",
     "autoFollow": "स्वतः अनुसरण",
     "autoFollowTooltip": "Logos में सक्रिय पद का स्वतः अनुसरण करें (हर बदलाव पर फ़ोकस छीन लेता है)",
@@ -622,7 +612,33 @@
       "terminology": "शब्दावली",
       "examples": "उदाहरण",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "AI सेवा"
+    },
+    "aiService": {
+      "title": "AI सेवा",
+      "intro": "चुनें कि इस संगठन के अनुवाद पाइपलाइन रन (नोट्स, प्रश्नों, शब्दों और लेखों का अनुवाद) कौन सी AI चलाएगी: साझा unfoldingWord सदस्यता, या आपका अपना API कुंजी वाला अपना प्रदाता। अन्य AI सुविधाएँ, जैसे नोट जनरेशन और त्वरित मसौदे, इस सेटिंग की परवाह किए बिना हमेशा साझा unfoldingWord सदस्यता का उपयोग करती हैं। महत्वपूर्ण: यहाँ कुंजी सहेजने के बाद उसे फिर से नहीं देखा जा सकता, केवल बदला या मिटाया जा सकता है।",
+      "providerLabel": "प्रदाता",
+      "provider": {
+        "default": "डिफ़ॉल्ट (uW सदस्यता)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "मॉडल",
+      "apiKey": "API कुंजी",
+      "apiKeyHelper": "एन्क्रिप्ट करके संग्रहित; फिर कभी नहीं दिखाई जाती — केवल बदली या मिटाई जा सकती है।",
+      "configured": "कॉन्फ़िगर किया गया •••• {{hint}}",
+      "replace": "बदलें",
+      "clear": "मिटाएं",
+      "clearConfirmTitle": "API कुंजी मिटाएं?",
+      "clearConfirmBody": "इससे संग्रहित कुंजी हटेगी और यह संगठन डिफ़ॉल्ट प्रदाता (uW सदस्यता) पर वापस चला जाएगा।",
+      "clearConfirmConfirm": "कुंजी मिटाएं",
+      "encryptionUnavailable": "अपनी स्वयं की AI कुंजी लाना इस डिप्लॉयमेंट पर अभी सक्षम नहीं है — किसी व्यवस्थापक को AI_KEY_WRAPPING_KEY सीक्रेट सेट करना होगा।",
+      "notMigrated": "इस संगठन का डेटाबेस माइग्रेशन में पीछे है — कुंजी सहेजने से पहले किसी व्यवस्थापक को AI प्रदाता माइग्रेशन लागू करना होगा।",
+      "loadFailed": "AI सेवा सेटिंग्स लोड नहीं हो सकीं।",
+      "conflictReloaded": "किसी और ने यह कॉन्फ़िगरेशन बदल दिया है — इसे फिर से लोड कर दिया गया है; फिर से सहेजने से पहले जाँच लें।"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
@@ -694,9 +710,11 @@
     "purpose": "उद्देश्य",
     "register": "रजिस्टर",
     "registerHelp": "AI को किस औपचारिकता का लक्ष्य रखना चाहिए।",
-    "register.default": "डिफ़ॉल्ट (स्वचालित)",
-    "register.formal": "औपचारिक",
-    "register.informal": "अनौपचारिक",
+    "registerOption": {
+      "default": "डिफ़ॉल्ट (स्वचालित)",
+      "formal": "औपचारिक",
+      "informal": "अनौपचारिक"
+    },
     "scriptNotes": "लिपि / दिशा नोट्स",
     "instructionsIntro": "हर AI प्रारूप प्रॉम्प्ट में शामिल स्थायी मार्गदर्शन। संक्षिप्त और टिकाऊ रखें — प्रति-नोट सूक्ष्मता शब्दावली और उदाहरणों में होनी चाहिए।",
     "instructionsPlaceholder": "उदा. Book Package Style Sheet का पालन करें। पद सीमा के लिए en-dash का उपयोग करें। उद्धृत अंश सीधे GL पाठ से कॉपी करें।",
@@ -711,11 +729,13 @@
     "statusFilter": "स्थिति",
     "allStatuses": "सभी स्थितियाँ",
     "noTerms": "अभी कोई शब्द नहीं। नीचे एक जोड़ें या CSV आयात करें।",
-    "status.preferred": "पसंदीदा",
-    "status.admitted": "स्वीकृत",
-    "status.deprecated": "अप्रचलित",
-    "status.forbidden": "वर्जित",
-    "status.do_not_translate": "अनुवाद न करें",
+    "status": {
+      "preferred": "पसंदीदा",
+      "admitted": "स्वीकृत",
+      "deprecated": "अप्रचलित",
+      "forbidden": "वर्जित",
+      "do_not_translate": "अनुवाद न करें"
+    },
     "conceptId": "अवधारणा",
     "sourceTerm": "स्रोत शब्द",
     "targetTerm": "प्रतिपादन",
@@ -745,12 +765,14 @@
     "exportStatusNever": "अभी तक कोई संदर्भ निर्यात नहीं",
     "exportStatusSuccess": "संदर्भ पैक तैयार ({{sha}})",
     "exportStatusOther": "अंतिम निर्यात: {{status}}",
-    "exportStatus.running": "निर्यात प्रगति पर",
-    "exportStatus.failed": "निर्यात विफल",
-    "exportStatus.queued": "निर्यात कतार में",
-    "exportStatus.shrink_refused": "अप्रत्याशित सामग्री हानि रोकने के लिए निर्यात अस्वीकार किया गया",
-    "exportStatus.no_content": "निर्यात के लिए कोई संदर्भ सामग्री नहीं",
-    "exportStatus.dry_run": "निर्यात पूर्वावलोकन पूर्ण",
+    "exportStatus": {
+      "running": "निर्यात प्रगति पर",
+      "failed": "निर्यात विफल",
+      "queued": "निर्यात कतार में",
+      "shrink_refused": "अप्रत्याशित सामग्री हानि रोकने के लिए निर्यात अस्वीकार किया गया",
+      "no_content": "निर्यात के लिए कोई संदर्भ सामग्री नहीं",
+      "dry_run": "निर्यात पूर्वावलोकन पूर्ण"
+    },
     "csvColumnPlaceholder": "concept_id,source_term,target_term,status,replacement,comment,tw_link",
     "noRendering": "—",
     "termArrow": "→",
@@ -808,7 +830,6 @@
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -826,24 +847,6 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
-    "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneTitle": "You're all set"
   }
 }

@@ -16,3 +16,9 @@ JWT_SIGNING_KEY=dev-only-replace-with-a-random-32-byte-string
 # "AI generation unavailable"). In production set with:
 #   wrangler secret put BT_API_TOKEN
 BT_API_TOKEN=
+
+# Wraps org-supplied BYO AI provider API keys before they hit D1 (aiKeyCrypto.ts).
+# Base64-encoded 32 random bytes; generate with: openssl rand -base64 32
+# In production set with:
+#   wrangler secret put AI_KEY_WRAPPING_KEY
+AI_KEY_WRAPPING_KEY=

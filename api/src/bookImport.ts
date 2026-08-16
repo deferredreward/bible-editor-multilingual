@@ -482,9 +482,17 @@ interface ImportCounts {
   tq: number;
   twl: number;
   fetched: { ult: boolean; ust: boolean; orig: boolean; tn: boolean; tq: boolean; twl: boolean };
-  /** Note-source provenance: 'source:<owner>/<repo>' when tn/tq came from the
-   *  English translationSource instead of the org's own repo, else null. */
-  sources: { tn: string | null; tq: string | null };
+  /** Resource-source provenance: 'source:<owner>/<repo>' when the resource came
+   *  from the project's English translationSource instead of the org/lane's own
+   *  repo, else null. tn/tq additionally support 'aquifer:<lang>'; ult/ust/twl
+   *  have no Aquifer path (issue #142). */
+  sources: {
+    tn: string | null;
+    tq: string | null;
+    ult: string | null;
+    ust: string | null;
+    twl: string | null;
+  };
 }
 
 // Fetch each per-chapter-range source file for a note resource (issue #103
@@ -1013,6 +1021,15 @@ async function importBookFromDcs(
       sources: {
         tn: noteSource.tn ? sourceProvenance(noteSource.tn.owner, noteSource.tn.repo) : null,
         tq: noteSource.tq ? sourceProvenance(noteSource.tq.owner, noteSource.tq.repo) : null,
+        ult: scriptureOverrides.fromSource.lit
+          ? sourceProvenance(scriptureOverrides.lit.owner, scriptureOverrides.lit.repo)
+          : null,
+        ust: scriptureOverrides.fromSource.sim
+          ? sourceProvenance(scriptureOverrides.sim.owner, scriptureOverrides.sim.repo)
+          : null,
+        twl: scriptureOverrides.fromSource.twl && scriptureOverrides.twl
+          ? sourceProvenance(scriptureOverrides.twl.owner, scriptureOverrides.twl.repo)
+          : null,
       },
     };
 
@@ -1050,8 +1067,9 @@ async function importBookFromDcs(
       .map(([k]) => k)
       .join(",");
     const marker = await env.DB.prepare(
-      `INSERT OR REPLACE INTO book_imports (book, source_url, imported_at, imported_by, tn_source, tq_source)
-       SELECT ?1, ?2, unixepoch(), ?3, ?6, ?7
+      `INSERT OR REPLACE INTO book_imports
+         (book, source_url, imported_at, imported_by, tn_source, tq_source, ult_source, ust_source, twl_source)
+       SELECT ?1, ?2, unixepoch(), ?3, ?6, ?7, ?8, ?9, ?10
         WHERE EXISTS (
               SELECT 1 FROM scripture_lane_state
                WHERE lane = 'lit' AND replacement_job_id IS NULL
@@ -1063,7 +1081,18 @@ async function importBookFromDcs(
                  AND replacement_required = 0 AND active_generation = ?5
             )`,
     )
-      .bind(book, `dcs:${sources}`, userId, litGen, simGen, counts.sources.tn, counts.sources.tq)
+      .bind(
+        book,
+        `dcs:${sources}`,
+        userId,
+        litGen,
+        simGen,
+        counts.sources.tn,
+        counts.sources.tq,
+        counts.sources.ult,
+        counts.sources.ust,
+        counts.sources.twl,
+      )
       .run();
     if ((marker.meta?.changes ?? 0) !== 1) {
       throw new Error("lane_state_changed_during_import");
@@ -1075,19 +1104,17 @@ async function importBookFromDcs(
     // nightly reimports that resource.
     for (const resource of ["ult", "ust", "tn", "tq", "twl"] as Resource[]) {
       if (!counts.fetched[resource]) continue;
-      // Skip source-pulled resources. tn/tq ARE held out of the nightly
-      // reimport (heldOutNoteResources reads tn_source/tq_source provenance),
-      // so their watermark would be write-only. ult/ust/twl have NO such
-      // hold-out — the skip here only avoids stamping a watermark under the
-      // org's identity (resourceSourceRef resolves ult/ust from lane state and
-      // twl from the org repo, neither of which reflects the source pull; a
-      // matching-by-luck stamp would be a lie). Consequence, accepted for now:
-      // the nightly gate fails open on an absent watermark, so if the org/lane
-      // file EXISTS and differs, the nightly refetches it and overwrites
-      // still-pristine rows. Fresh scaffold orgs are safe (404 → no-op, and
-      // the first nightly export round-trips byte-identically); the exposed
-      // case is force+translateFromSource over a populated scripture repo.
-      // Real fix is scripture provenance mirroring tn/tq — issue #142.
+      // Skip source-pulled resources. ALL FIVE resources are now held out of
+      // the nightly reimport + export via their book_imports.*_source column
+      // (heldOutNoteResources reads all five — issue #142 closed the ult/ust/
+      // twl gap: previously they had no column, so a missing watermark plus
+      // the reimport's fail-open-on-unknown behavior meant the nightly job
+      // could silently re-fetch and overwrite source-pulled scripture/twl rows
+      // from a populated org/lane repo). Stamping a watermark for a held-out
+      // resource would be write-only (the reimport short-circuits before
+      // checking it) and, for ult/ust/twl, would also be misleading —
+      // resourceSourceRef resolves them from lane state / the org repo, neither
+      // of which reflects the actual source pull.
       if (resource === "tn" && noteSource.tn) continue;
       if (resource === "tq" && noteSource.tq) continue;
       if (resource === "ult" && scriptureOverrides.fromSource.lit) continue;

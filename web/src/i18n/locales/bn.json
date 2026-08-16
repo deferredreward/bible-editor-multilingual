@@ -70,21 +70,15 @@
     "importedFromSource": "Notes imported from the English source ({{repos}}).",
     "stats": "{{notes}} নোট · {{words}} শব্দ · {{questions}} প্রশ্ন",
     "readingTextSize": "পঠন লেখার আকার",
-    "readingTextSizeTooltip": "পঠন লেখার আকার",
-    "adjustReadingTextSize": "পঠন লেখার আকার সমন্বয় করুন",
     "decreaseReadingTextSize": "পঠন লেখার আকার কমান",
     "increaseReadingTextSize": "পঠন লেখার আকার বাড়ান",
-    "smaller": "ছোট",
-    "larger": "বড়",
-    "resetTo100": "100%-এ রিসেট করুন",
     "switchToLight": "আলো মোডে স্যুইচ করুন",
     "switchToDark": "অন্ধকার মোডে স্যুইচ করুন",
     "toggleColorMode": "রঙ মোড টগল করুন",
     "uiLanguage": "ইন্টারফেস ভাষা",
     "mode": {
       "editor": "Editor",
-      "translator": "Translator",
-      "tooltip": "Switch between Editor and Translator mode"
+      "translator": "Translator"
     }
   },
   "translation": {
@@ -228,9 +222,7 @@
     "discardConfirmBody": "এই সম্পাদনাগুলি কখনও সার্ভারে পৌঁছায়নি। বাতিল করলে এগুলি এই ডিভাইস থেকে স্থায়ীভাবে মুছে যায় — পুনরুদ্ধার করা যায় না।",
     "cancel": "বাতিল করুন",
     "updateAvailableTooltip": "একটি নতুন সংস্করণ স্থাপন করা হয়েছে। পুনরায় লোড করে সর্বশেষ সংশোধন পেতে ক্লিক করুন।",
-    "updateAvailable": "অ্যাপ আপডেট উপলব্ধ — রিফ্রেশ করুন",
-    "buildSha": "বিল্ড {{commit}}",
-    "onLatestVersion": "আপনি লোড করা সর্বশেষ সংস্করণে আছেন।"
+    "updateAvailable": "অ্যাপ আপডেট উপলব্ধ — রিফ্রেশ করুন"
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
@@ -572,8 +564,6 @@
     "attrPeople_other": "{{count}} জন"
   },
   "logos": {
-    "hideButton": "Hide Logos button",
-    "settingsTooltip": "Logos settings",
     "openVerse": "এই পদটি Logos-এ খুলুন",
     "autoFollow": "স্বয়ংক্রিয় অনুসরণ",
     "autoFollowTooltip": "Logos-এ সক্রিয় পদ স্বয়ংক্রিয়ভাবে অনুসরণ করুন (প্রতিটি পরিবর্তনে ফোকাস কেড়ে নেয়)",
@@ -621,7 +611,33 @@
       "terminology": "পরিভাষা",
       "examples": "উদাহরণ",
       "localization": "Localization",
-      "users": "Users"
+      "users": "Users",
+      "aiService": "AI সেবা"
+    },
+    "aiService": {
+      "title": "AI সেবা",
+      "intro": "এই সংস্থার অনুবাদ পাইপলাইন কাজ (নোট, প্রশ্ন, শব্দ এবং প্রবন্ধ অনুবাদ) কোন AI চালাবে বেছে নিন: শেয়ার্ড unfoldingWord সাবস্ক্রিপশন, বা আপনার নিজস্ব API কী দিয়ে আপনার নিজের প্রদানকারী। অন্যান্য AI ফিচার, যেমন নোট তৈরি এবং কুইক ড্রাফট, এই সেটিং নির্বিশেষে সবসময় শেয়ার্ড unfoldingWord সাবস্ক্রিপশন ব্যবহার করে। গুরুত্বপূর্ণ: এখানে একটি কী সংরক্ষণ করার পর তা আর দেখা যাবে না, শুধু প্রতিস্থাপন বা মুছে ফেলা যাবে।",
+      "providerLabel": "প্রদানকারী",
+      "provider": {
+        "default": "ডিফল্ট (uW সাবস্ক্রিপশন)",
+        "claude": "Claude (API)",
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "xai": "xAI Grok"
+      },
+      "model": "মডেল",
+      "apiKey": "API কী",
+      "apiKeyHelper": "এনক্রিপ্ট করে সংরক্ষিত এবং আর দেখানো হয় না — শুধু প্রতিস্থাপন বা মোছা যায়।",
+      "configured": "কনফিগার করা হয়েছে •••• {{hint}}",
+      "replace": "প্রতিস্থাপন করুন",
+      "clear": "মুছুন",
+      "clearConfirmTitle": "API কী মুছবেন?",
+      "clearConfirmBody": "এটি সংরক্ষিত কী মুছে দেবে এবং এই সংস্থাকে ডিফল্ট প্রদানকারীতে (uW সাবস্ক্রিপশন) ফিরিয়ে দেবে।",
+      "clearConfirmConfirm": "কী মুছুন",
+      "encryptionUnavailable": "নিজের AI কী আনা এই ডিপ্লয়মেন্টে এখনও চালু নেই — একজন অ্যাডমিনকে AI_KEY_WRAPPING_KEY সিক্রেট সেট করতে হবে।",
+      "notMigrated": "এই সংস্থার ডেটাবেস মাইগ্রেশনে পিছিয়ে আছে — কী সংরক্ষণের আগে একজন অ্যাডমিনকে AI প্রদানকারীর মাইগ্রেশন প্রয়োগ করতে হবে।",
+      "loadFailed": "AI সেবার সেটিংস লোড করা যায়নি।",
+      "conflictReloaded": "অন্য কেউ এই কনফিগারেশন পরিবর্তন করেছে — পুনরায় লোড করা হয়েছে; আবার সংরক্ষণ করার আগে পর্যালোচনা করুন।"
     },
     "localization": {
       "intro": "Edit the {{language}} interface strings. English is shown on the left for reference; edit the {{language}} text on the right. Changes take effect immediately and are shared with everyone using {{language}} on their next load. Switch languages using the language menu in the top bar.",
@@ -693,9 +709,11 @@
     "purpose": "উদ্দেশ্য",
     "register": "রেজিস্টার",
     "registerHelp": "AI-কে কোন আনুষ্ঠানিকতার লক্ষ্য রাখা উচিত।",
-    "register.default": "ডিফল্ট (স্বয়ংক্রিয়)",
-    "register.formal": "আনুষ্ঠানিক",
-    "register.informal": "অনানুষ্ঠানিক",
+    "registerOption": {
+      "default": "ডিফল্ট (স্বয়ংক্রিয়)",
+      "formal": "আনুষ্ঠানিক",
+      "informal": "অনানুষ্ঠানিক"
+    },
     "scriptNotes": "লিপি / দিকনির্দেশনা নোট",
     "instructionsIntro": "প্রতিটি AI খসড়া প্রম্পটে অন্তর্ভুক্ত স্থায়ী নির্দেশনা। সংক্ষিপ্ত ও টেকসই রাখুন — প্রতি-নোট সূক্ষ্মতা পরিভাষা ও উদাহরণে থাকা উচিত।",
     "instructionsPlaceholder": "যেমন Book Package Style Sheet অনুসরণ করুন। পদ পরিসীমার জন্য en-dash ব্যবহার করুন। উদ্ধৃত অংশ সরাসরি GL পাঠ থেকে কপি করুন।",
@@ -710,11 +728,13 @@
     "statusFilter": "অবস্থা",
     "allStatuses": "সব অবস্থা",
     "noTerms": "এখনও কোনো শব্দ নেই। নিচে একটি যোগ করুন বা CSV আমদানি করুন।",
-    "status.preferred": "পছন্দের",
-    "status.admitted": "স্বীকৃত",
-    "status.deprecated": "অপ্রচলিত",
-    "status.forbidden": "নিষিদ্ধ",
-    "status.do_not_translate": "অনুবাদ করবেন না",
+    "status": {
+      "preferred": "পছন্দের",
+      "admitted": "স্বীকৃত",
+      "deprecated": "অপ্রচলিত",
+      "forbidden": "নিষিদ্ধ",
+      "do_not_translate": "অনুবাদ করবেন না"
+    },
     "conceptId": "ধারণা",
     "sourceTerm": "উৎস শব্দ",
     "targetTerm": "প্রতিগমন",
@@ -744,12 +764,14 @@
     "exportStatusNever": "এখনও কোনো প্রসঙ্গ রপ্তানি হয়নি",
     "exportStatusSuccess": "প্রসঙ্গ প্যাক প্রস্তুত ({{sha}})",
     "exportStatusOther": "সর্বশেষ রপ্তানি: {{status}}",
-    "exportStatus.running": "রপ্তানি চলছে",
-    "exportStatus.failed": "রপ্তানি ব্যর্থ",
-    "exportStatus.queued": "রপ্তানি সারিতে",
-    "exportStatus.shrink_refused": "অপ্রত্যাশিত বিষয়বস্তু ক্ষতি রোধ করতে রপ্তানি প্রত্যাখ্যান করা হয়েছে",
-    "exportStatus.no_content": "রপ্তানির জন্য কোনো প্রসঙ্গ বিষয়বস্তু নেই",
-    "exportStatus.dry_run": "রপ্তানি প্রিভিউ সম্পন্ন হয়েছে",
+    "exportStatus": {
+      "running": "রপ্তানি চলছে",
+      "failed": "রপ্তানি ব্যর্থ",
+      "queued": "রপ্তানি সারিতে",
+      "shrink_refused": "অপ্রত্যাশিত বিষয়বস্তু ক্ষতি রোধ করতে রপ্তানি প্রত্যাখ্যান করা হয়েছে",
+      "no_content": "রপ্তানির জন্য কোনো প্রসঙ্গ বিষয়বস্তু নেই",
+      "dry_run": "রপ্তানি প্রিভিউ সম্পন্ন হয়েছে"
+    },
     "csvColumnPlaceholder": "concept_id,source_term,target_term,status,replacement,comment,tw_link",
     "noRendering": "—",
     "termArrow": "→",
@@ -807,7 +829,6 @@
       "detectOrg": "Detect your org",
       "confirmLanes": "Confirm literal & simplified",
       "apply": "Apply configuration",
-      "importBook": "Import your first book",
       "done": "Done"
     },
     "gatewayAdminIntro": "First, create your organization's resource repositories on Door43 (for example, using gatewayAdmin). You'll need one repository per resource:",
@@ -825,24 +846,6 @@
     "projectNotEmpty": "This database already holds project data for a different org. One database serves one org/project at a time — switching would let old content export into the new org. Start from a fresh database to onboard a different org.",
     "laneBusy": "A scripture source replacement is in progress. Finish or cancel it before applying a new configuration.",
     "applyFailed": "Could not apply the configuration. Please try again.",
-    "importIntro": "Import a first book. After import, its translationWords and translationAcademy articles are populated from the book's notes.",
-    "bookLabel": "Book",
-    "translateFromSource": "Translate notes from English source",
-    "translateFromSourceHelp": "Imports translationNotes and translationQuestions from the English source (unfoldingWord) instead of this organization's own repositories. Use when the organization's existing notes are stale machine translations.",
-    "importedFromSource": "Notes imported from the English source ({{repos}}).",
-    "importButton": "Import book",
-    "importing": "Importing…",
-    "populating": "Populating articles… {{processed}} done, {{remaining}} remaining",
-    "populateSkipped": "Articles were not populated — this project has no translation source configured.",
-    "populateAborted": "Article population stopped because the source configuration changed. You can re-run it later from the articles workspace.",
-    "unknownBook": "That book isn't recognized.",
-    "importInProgress": "An import for this book is already in progress. Try again in a moment.",
-    "importFailed": "Could not import the book. Please try again.",
-    "doneTitle": "You're all set",
-    "doneSummary": "Imported {{book}} and populated {{processed}} article(s) for {{org}}.",
-    "populateWarnings_one": "{{count}} article could not be fetched and was skipped.",
-    "populateWarnings_other": "{{count}} articles could not be fetched and were skipped.",
-    "populateIncomplete": "Population reached its safety limit with articles still queued — re-run it from the articles workspace.",
-    "goToScripture": "Go to the scripture view"
+    "doneTitle": "You're all set"
   }
 }

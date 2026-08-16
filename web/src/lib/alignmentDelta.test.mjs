@@ -144,6 +144,76 @@ const content = (verseObjects) => ({ verseObjects });
   );
 }
 
+// ── Total wipe (the empty-after hole) ────────────────────────────────────────
+// Mirror of the API suite. Regression for the ZEC 1:8 receipt: a whole-verse
+// flatten took 38 aligned words to 0 and the API answered 200 (dev `edit_log`
+// id 1458, delta `{"beforeAligned":38,"afterAligned":0,"unexpectedLosses":[]}`)
+// because both scoring paths only report words that SURVIVE the edit — and in a
+// wipe none do. Total wipe is the MAXIMUM loss case.
+
+const alignedTrio = () => content([
+  zaln("H1", [w("He")]), t(" "),
+  zaln("H2", [w("came")]), t(" "),
+  zaln("H3", [w("home")]),
+]);
+
+{
+  console.log("[alignmentDelta] ZEC 1:8 shape: whole-verse flatten is blocked, not zero-loss");
+  // The exact payload the flattening save built: one text node, whole verse.
+  const delta = analyzeAlignmentDelta(alignedTrio(), content([t("He came home")]));
+  assert(delta.beforeAligned === 3 && delta.afterAligned === 0, "3 aligned words → 0");
+  assert(delta.unexpectedLosses.length === 3, "EVERY previously-aligned word is reported lost");
+  assert(delta.unexpectedLosses.every((l) => l.reason === "lost"), "all wipe losses use reason 'lost'");
+  assert(guardBlocksSave(delta, "text_edit"), "guard BLOCKS the flatten as a text_edit");
+  assert(guardBlocksSave(delta, "find_replace"), "guard BLOCKS the flatten as a find_replace");
+  assert(guardBlocksSave(delta, "section_edit"), "guard BLOCKS the flatten as a section_edit");
+  assert(
+    !guardBlocksSave(delta, "alignment_edit"),
+    "alignment_edit stays exempt — unaligning everything from the panel is legitimate",
+  );
+  // The Shell confirm lists delta.unexpectedLosses.map(l => l.text); a wipe must
+  // therefore name the destroyed words rather than show an empty list.
+  assert(
+    JSON.stringify(lostAlignedWords(alignedTrio(), content([t("He came home")])))
+      === JSON.stringify(["He", "came", "home"]),
+    "lostAlignedWords names every annihilated word (it used to report none)",
+  );
+}
+
+{
+  console.log("[alignmentDelta] emptied verse / absent verseObjects are blocked");
+  assert(
+    guardBlocksSave(analyzeAlignmentDelta(alignedTrio(), content([])), "text_edit"),
+    "emptying an aligned verse is blocked",
+  );
+  assert(
+    guardBlocksSave(analyzeAlignmentDelta(alignedTrio(), {}), "text_edit"),
+    "absent verseObjects is blocked too, not thrown on",
+  );
+}
+
+{
+  // Negative control: an UNALIGNED resource must stay freely editable.
+  console.log("[alignmentDelta] wiping an UNALIGNED verse is not a loss");
+  const before = content([w("He"), t(" "), w("came")]);
+  const delta = analyzeAlignmentDelta(before, content([t("Something else entirely")]));
+  assert(delta.beforeAligned === 0 && delta.unexpectedLosses.length === 0, "nothing aligned was lost");
+  assert(!guardBlocksSave(delta, "text_edit"), "guard does NOT fire on an unaligned verse");
+}
+
+{
+  // Negative control: the wipe branch must not swallow the ordinary case.
+  console.log("[alignmentDelta] partial loss still routes through the LCS path");
+  const delta = analyzeAlignmentDelta(alignedTrio(), content([
+    zaln("H1", [w("He")]), t(" "),
+    w("went"), t(" "),
+    w("home"),
+  ]));
+  assert(delta.afterAligned === 1, "one aligned word survives — not a wipe");
+  assert(delta.unexpectedLosses.length === 1, "only the untouched survivor is reported");
+  assert(delta.unexpectedLosses[0]?.text === "home", "collateral loss is home, not the edited word");
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

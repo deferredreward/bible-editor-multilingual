@@ -807,12 +807,24 @@ export async function backOutReplacement(
     ).bind(laneScriptureResource(job.lane as LaneKey), job.generation, job.lane, jobId),
   ];
 
-  await env.DB.batch([
+  // Refuse to cancel a job whose generation the lane is already actively
+  // serving (issue #127). This mirrors the job_terminal guard above: a job
+  // only ever reaches this state if activateReplacement's pointer-flip landed
+  // but its own completion write did not (both are CAS'd together in one
+  // batch, so this is defensive rather than a known-reachable race — see the
+  // comment on activateReplacement's batch). Baked into the UPDATE's WHERE
+  // itself, not a pre-batch read-then-branch, for the same TOCTOU reason the
+  // DELETE guards above are.
+  const results = await env.DB.batch([
     ...cleanup,
     env.DB.prepare(
       `UPDATE scripture_lane_replacement SET status = 'cancelled', completed_at = unixepoch()
-        WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')`,
-    ).bind(jobId),
+        WHERE job_id = ?1 AND status NOT IN ('completed', 'cancelled')
+          AND NOT EXISTS (
+            SELECT 1 FROM scripture_lane_state s
+             WHERE s.lane = ?2 AND s.active_generation = ?3
+          )`,
+    ).bind(jobId, job.lane, job.generation),
     // Clear the full freeze AND the replacement_required/pending_target that the
     // non-cancel paths preserve. Guarded on our job so a lane taken over by a
     // concurrent workflow is a no-op. active_generation / active_config_json are
@@ -828,6 +840,22 @@ export async function backOutReplacement(
         WHERE lane = ?1 AND replacement_job_id = ?2`,
     ).bind(job.lane, jobId),
   ]);
+
+  const jobCancelled = (results[cleanup.length]?.meta?.changes ?? 0) > 0;
+  if (!jobCancelled) {
+    // Disambiguate before erroring: a benign concurrent terminal race (someone
+    // else cancelled/completed this job between our read and the batch) is
+    // fine to treat as idempotent, same as the early-return above. Anything
+    // else means the NOT EXISTS guard fired — the lane is already serving this
+    // job's generation, so cancelling it would misreport a live source as
+    // reverted.
+    const currentJob = await getJob(env, jobId);
+    if (currentJob && (currentJob.status === "completed" || currentJob.status === "cancelled")) return;
+    throw Object.assign(new Error("job_generation_live"), {
+      status: 409,
+      detail: { lane: job.lane, generation: job.generation },
+    });
+  }
 }
 
 export async function failReplacement(

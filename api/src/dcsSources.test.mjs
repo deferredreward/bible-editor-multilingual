@@ -359,6 +359,36 @@ function runPure() {
   );
   assert(setOf({ tq_source: "source:unfoldingWord/en_tq" }) === "tq", "source-sourced tq only → tq held out");
 
+  // Issue #142: heldOutNoteResources widened to also cover ult/ust/twl
+  // provenance (scripture/twl-from-translationSource has no Aquifer path, so
+  // only 'source:<owner>/<repo>' shows up in these three columns).
+  assert(
+    setOf({ ult_source: null, ust_source: null, twl_source: null }) === "",
+    "all-null scripture provenance → nothing held out",
+  );
+  assert(
+    setOf({ ult_source: "source:unfoldingWord/en_ult" }) === "ult",
+    "source-sourced ult only → ult held out",
+  );
+  assert(
+    setOf({ ust_source: "source:unfoldingWord/en_ust" }) === "ust",
+    "source-sourced ust only → ust held out",
+  );
+  assert(
+    setOf({ twl_source: "source:unfoldingWord/en_twl" }) === "twl",
+    "source-sourced twl only → twl held out",
+  );
+  assert(
+    setOf({
+      tn_source: "source:unfoldingWord/en_tn",
+      tq_source: "source:unfoldingWord/en_tq",
+      ult_source: "source:unfoldingWord/en_ult",
+      ust_source: "source:unfoldingWord/en_ust",
+      twl_source: "source:unfoldingWord/en_twl",
+    }) === "tn,tq,twl,ult,ust",
+    "all five source-pulled → all five held out (force+translateFromSource over a populated org/lane)",
+  );
+
   // Auto-fallback trigger: ONLY a hard 404 means "the org genuinely has no such
   // file". Every transient failure must keep the import failing + retrying
   // rather than silently substituting English notes.
