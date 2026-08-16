@@ -69,6 +69,22 @@ whether OBA content actually imported in this dev workspace or summary quirk).
 **Known cosmetics:** FlowStatusChip inside Typography p logs a
 validateDOMNesting warning (notes list rows).
 
-**Next:** Benjamin's markup on the admin desk; old flows screens retirement
-plan (FlowNav dies when the last old screen is replaced); Codex review when
-the redesign PR is opened.
+**2026-08-15 mobile markup round (tip 9bbffec, after merging origin/main
+post-#157/#152):** dir="auto" verse snippets (scripture+align lists — RTL-declared
+lane + LTR stand-in text used to show verse tails); tap-mode toggle pill contained,
+label "Tap mode"; AlignTapView bounded in a bordered scroll box (save bar sticky
+inside); topbar Scripture button on alignment (label ≥560px, icon below); per-lane
+Align + Align both now on phone; Redo buttons use AutoAwesomeIcon; phone focus mode
+on notes/questions/words (editor open → topbar/action bar/pager/filters hide until
+Done); editor focus via preventScroll + centered scrollIntoView (no autoFocus);
+words "both" source column 38% at 0.78rem.
+**Verified in browser (devtools MCP, 501px + 1280px, fresh load per width):** all
+eight items, focus-mode round-trips, words Save → article_units row in local D1,
+dual dialog, hub/books/admin sweep, zero console errors. NOT verified: real
+keyboard/touch feel of the scroll fix and focus mode (needs Benjamin's device);
+swipe on hardware; RTL wide layouts under Arabic UI.
+**Known cosmetics:** English UI strings inside RTL-directed containers render with
+leading punctuation (e.g. ".All target words are aligned" in the tap-view pool).
+
+**Next:** old flows screens retirement plan (FlowNav dies when the last old
+screen is replaced); real-device pass on focus mode + swipe.
