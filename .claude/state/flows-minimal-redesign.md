@@ -86,5 +86,18 @@ swipe on hardware; RTL wide layouts under Arabic UI.
 **Known cosmetics:** English UI strings inside RTL-directed containers render with
 leading punctuation (e.g. ".All target words are aligned" in the tap-view pool).
 
+**2026-08-15 PR #165 + review rounds (tips 19e46b3, 4a539c2):** PR open, CI
+green, dev worker serves 4a539c2. Two independent Claude reviews ran per the
+pre-merge protocol (commit-scoped, then full-PR-diff): headline finds were the
+questions QaPair component-in-component (remounted per keystroke — likely the
+original "lose my spot" bug; hoisted to module scope, browser-verified), the
+align tap-draft flush writing cross-verse corrupted drafts on fast verse nav
+(fixed with tapEditKeyRef provenance; the old rehydration guard also raced
+IndexedDB and skipped same-mount rehydrate — round-trip now browser-verified),
+phone save-bar unpinning in the bounded tap box, and width-split scroll policy.
+Deferred to issues: #163 RTL UI-string punctuation, #164 scripture focus mode,
+#166 /api/exports wrapper, #167 pre-existing drafts stash race. Codex pass on
+the PR is the remaining protocol step (running at handoff if not concluded).
+
 **Next:** old flows screens retirement plan (FlowNav dies when the last old
 screen is replaced); real-device pass on focus mode + swipe.
