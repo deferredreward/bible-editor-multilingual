@@ -99,5 +99,18 @@ Deferred to issues: #163 RTL UI-string punctuation, #164 scripture focus mode,
 #166 /api/exports wrapper, #167 pre-existing drafts stash race. Codex pass on
 the PR is the remaining protocol step (running at handoff if not concluded).
 
+**2026-08-16 loose-end closures:** OBA zero-counts DIAGNOSED — GET /api/books
+reads book_imports directly, and remote dev D1 today has no OBA row anywhere
+(verses/tn/tq/twl/book_imports all empty for it), so the sighting was a
+book_imports row without content (half-landed import) that has since vanished
+with the old worktree's local D1 or been cleaned remotely; the redesign screens
+render /api/books honestly — not a UI bug, cannot reproduce. RTL wide layouts
+VERIFIED under Arabic UI (dir=rtl): notes and alignment master-detail mirror
+correctly, reused aligner internals already localized; remaining artifacts are
+the known English-chrome i18n TODO + issue #163 punctuation class. Nested-
+component audit after the QaPair bug: four more stateless cases found, filed as
+issue #172 (no user-visible defect beyond ChapterList scroll reset — not
+expanded into this PR).
+
 **Next:** old flows screens retirement plan (FlowNav dies when the last old
 screen is replaced); real-device pass on focus mode + swipe.
