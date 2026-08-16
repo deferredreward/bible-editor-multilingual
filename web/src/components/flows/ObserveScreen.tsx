@@ -21,13 +21,16 @@
 //   - Workflow stages       -> no backend (docs/flows/02-architecture.md D2);
 //     up/down reorder buttons only, no native drag-and-drop, no persistence
 //
-// GET /api/health, GET/POST /api/exports*, and GET/POST /api/workspaces/pool*
-// have no wrapper in sync/api.ts yet, so this file talks to them directly via
-// observeFetch() below, mirroring api.ts's request() header discipline
-// (credentials, X-Workspace, X-CSRF-Token on writes). Unlike request(), it
-// does not retry once on a stale session — this is a manual-refresh
-// observability dashboard, not the hot edit path, so a 401/403 here just
-// renders as an honest error rather than silently retrying.
+// GET/POST /api/exports* are wrapped in sync/api.ts (api.exportsList/
+// exportsRun/exportsInstance — issue #166), so they get the same silent
+// 401-refresh-and-retry as every other api.* call. GET /api/health and
+// GET/POST /api/workspaces/pool* still have no wrapper, so this file talks
+// to them directly via observeFetch() below, mirroring api.ts's request()
+// header discipline (credentials, X-Workspace, X-CSRF-Token on writes).
+// Unlike request(), it does not retry once on a stale session — this is a
+// manual-refresh observability dashboard, not the hot edit path, so a
+// 401/403 on health/pool just renders as an honest error rather than
+// silently retrying.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Alert from "@mui/material/Alert";
@@ -53,7 +56,14 @@ import { useTheme } from "@mui/material/styles";
 import { FlowNav } from "./FlowNav";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
-import { api, ApiError, type ContextExportStatus, type PipelineJobRow, type PipelineQueueSummary } from "../../sync/api";
+import {
+  api,
+  ApiError,
+  type ContextExportStatus,
+  type ExportSnapshot,
+  type PipelineJobRow,
+  type PipelineQueueSummary,
+} from "../../sync/api";
 import { getWorkspaceSlug } from "../../sync/workspace";
 
 export interface ObserveScreenProps extends FlowScreenContext {}
@@ -113,19 +123,6 @@ interface HealthResponse {
   ok: boolean;
   service: string;
   time: string;
-}
-
-interface ExportSnapshot {
-  id: number;
-  book: string;
-  resource: string;
-  branch: string | null;
-  commit_sha: string | null;
-  committed_at: number;
-  rows_exported: number;
-  error: string | null;
-  pr_number: number | null;
-  pr_error: string | null;
 }
 
 interface PoolSlot {
@@ -412,7 +409,8 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const loadExports = useCallback(() => {
     if (!isAdmin) return;
     setExportsError(null);
-    observeFetch<{ snapshots: ExportSnapshot[] }>("/api/exports")
+    api
+      .exportsList()
       .then((res) => setSnapshots(res.snapshots))
       .catch((err) => {
         setExportsError(
@@ -484,10 +482,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     setActiveRun(null);
     setRunStatus(null);
     try {
-      const res = await observeFetch<{ id: string; status: string }>("/api/exports/run", {
-        method: "POST",
-        body: JSON.stringify({ shrinkOverride }),
-      });
+      const res = await api.exportsRun(shrinkOverride);
       setActiveRun(res);
     } catch (err) {
       const message =
@@ -505,7 +500,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     if (!activeRun?.id) return;
     setCheckingRunStatus(true);
     try {
-      const res = await observeFetch<{ id: string; status: unknown }>(`/api/exports/instance/${encodeURIComponent(activeRun.id)}`);
+      const res = await api.exportsInstance(activeRun.id);
       setRunStatus(res.status);
     } catch (err) {
       setRunStatus(err instanceof ApiError ? err.body : { error: "load failed" });

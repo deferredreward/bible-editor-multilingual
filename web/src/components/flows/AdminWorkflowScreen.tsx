@@ -58,10 +58,7 @@
 //                            Fencing token = crypto.randomUUID(), same as
 //                            BooksLanePanel.tsx:305.
 //   * Export history       → GET /api/exports?limit=12 (api/src/exports.ts:83,
-//                            requireAdmin). No wrapper exists in sync/api.ts, so
-//                            this file talks to it via adminFetch() below — the
-//                            same minimal client ObserveScreen.tsx:78-107 uses,
-//                            including its documented 401-banner gap.
+//                            requireAdmin), via api.exportsList(12).
 //   * Run export now       → POST /api/exports/run (api/src/exports.ts:37,
 //                            requireAdmin, 202 {id,status} :72; manual runs leave
 //                            validateAndMerge unset — no auto-merge — unlike the
@@ -146,77 +143,19 @@ import { pipelineStore, type PipelineJob } from "../../sync/pipelineStore";
 import {
   api,
   ApiError,
+  type ExportSnapshot,
   type LanePublicState,
   type LaneReplacementJobResponse,
   type PipelineState,
   type PipelineType,
   type ProjectConfig,
 } from "../../sync/api";
-import { getWorkspaceSlug } from "../../sync/workspace";
 
 export interface AdminWorkflowScreenProps extends FlowScreenContext {}
 
 const INSPIRE = "#31ADE3";
 const INSPIRE_DEEP = "#1B84B8";
 const OCEAN = "#014263";
-
-// ── Minimal client for the /api/exports endpoints sync/api.ts doesn't wrap ──
-// Clone of ObserveScreen.tsx:63-107 (same header discipline: credentials,
-// X-Workspace, X-CSRF-Token on writes; no silent retry, no global 401 banner —
-// an error here renders as an honest error on this dashboard).
-
-function readCsrfCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const prefix = "be_csrf=";
-  for (const part of document.cookie.split("; ")) {
-    if (part.startsWith(prefix)) {
-      try {
-        return decodeURIComponent(part.slice(prefix.length));
-      } catch {
-        return part.slice(prefix.length);
-      }
-    }
-  }
-  return null;
-}
-
-async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const method = (init?.method ?? "GET").toUpperCase();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...((init?.headers as Record<string, string>) ?? {}),
-  };
-  headers["X-Workspace"] = getWorkspaceSlug();
-  if (method !== "GET" && method !== "HEAD") {
-    const csrf = readCsrfCookie();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-  }
-  const res = await fetch(path, { ...init, method, headers, credentials: "include" });
-  let body: unknown = null;
-  try {
-    body = await res.json();
-  } catch {
-    /* no/invalid JSON body — status alone is enough to classify */
-  }
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`, body);
-  return body as T;
-}
-
-// Local response shape for GET /api/exports rows (server type lives in
-// api/src/exports.ts:88-109, a separate workspace; same local-copy pattern as
-// ObserveScreen.tsx:118-129).
-interface ExportSnapshot {
-  id: number;
-  book: string;
-  resource: string;
-  branch: string | null;
-  commit_sha: string | null;
-  committed_at: number;
-  rows_exported: number;
-  error: string | null;
-  pr_number: number | null;
-  pr_error: string | null;
-}
 
 // ── formatting helpers ───────────────────────────────────────────────────────
 
@@ -546,7 +485,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
   const loadSnapshots = useCallback(async () => {
     try {
-      const res = await adminFetch<{ snapshots: ExportSnapshot[] }>("/api/exports?limit=12");
+      const res = await api.exportsList(12);
       setSnapshots(res.snapshots);
       setSnapshotsError(null);
     } catch (e) {
@@ -698,10 +637,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const handleRunConfirmed = async () => {
     setRunBusy(true);
     try {
-      const res = await adminFetch<{ id: string; status: string }>("/api/exports/run", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
+      const res = await api.exportsRun();
       setRunInfo(res);
       setInstanceStatus(null);
       setMsg(`Export queued (run ${res.id}).`);
@@ -723,9 +659,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const handleCheckInstance = async () => {
     if (!runInfo) return;
     try {
-      const res = await adminFetch<{ id: string; status: unknown }>(
-        `/api/exports/instance/${encodeURIComponent(runInfo.id)}`,
-      );
+      const res = await api.exportsInstance(runInfo.id);
       const s = res.status as { status?: string } | null;
       setInstanceStatus(typeof s?.status === "string" ? s.status : JSON.stringify(res.status));
     } catch {

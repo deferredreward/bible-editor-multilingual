@@ -43,9 +43,9 @@
 //     same as PackageHubScreen (its header, "BookSummary includes a chapter-0
 //     entry") — intro rows aren't reachable via the chapter-scoped screens.
 //   * Activity — the two real feeds ObserveScreen.tsx already surfaces:
-//     export snapshots via GET /api/exports (no sync/api.ts wrapper yet; the
-//     local GET helper below mirrors ObserveScreen.tsx's observeFetch, lines
-//     78-107) and AI pipeline jobs via api.pipelineList() (GET /api/pipelines).
+//     export snapshots via api.exportsList() (GET /api/exports, capped to
+//     FEED_LIMIT since only the top FEED_LIMIT merged items ever render) and
+//     AI pipeline jobs via api.pipelineList() (GET /api/pipelines).
 //     Merged and sorted by timestamp (committed_at / updated_at, unix seconds
 //     — PipelineJobRow api.ts:1419-1420).
 //
@@ -108,49 +108,12 @@ import {
   ApiError,
   type BookListEntry,
   type BookSummary,
+  type ExportSnapshot,
   type PipelineJobRow,
 } from "../../sync/api";
-import { getWorkspaceSlug } from "../../sync/workspace";
 import { bookName, BOOKS } from "../../lib/bookNames";
 
 export interface AdminProgressScreenProps extends FlowScreenContext {}
-
-// ── Minimal GET client for /api/exports (no sync/api.ts wrapper yet) ────────
-// Mirrors ObserveScreen.tsx's observeFetch (lines 78-107) minus the write
-// path: GET-only, so no CSRF header. Same honest-gap note applies: a 401 here
-// renders as an error on this screen without raising the global re-auth
-// banner (emitAuthError is module-private to sync/api.ts).
-
-async function adminGet<T>(path: string): Promise<T> {
-  const res = await fetch(path, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Workspace": getWorkspaceSlug(),
-    },
-    credentials: "include",
-  });
-  let body: unknown = null;
-  try {
-    body = await res.json();
-  } catch {
-    /* no/invalid JSON body — status alone is enough to classify */
-  }
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`, body);
-  return body as T;
-}
-
-// Local shape for GET /api/exports rows (server types live in api/src, a
-// separate workspace) — same fields ObserveScreen.tsx declares, trimmed to
-// what the feed renders.
-interface ExportSnapshot {
-  id: number;
-  book: string;
-  resource: string;
-  committed_at: number;
-  rows_exported: number;
-  error: string | null;
-}
 
 type SummaryState =
   | { kind: "loading" }
@@ -393,7 +356,8 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
-    adminGet<{ snapshots: ExportSnapshot[] }>("/api/exports")
+    api
+      .exportsList(FEED_LIMIT)
       .then((res) => {
         if (!cancelled) setSnapshots(res.snapshots);
       })
