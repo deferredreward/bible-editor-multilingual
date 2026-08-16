@@ -116,6 +116,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip } from "./FlowStatusChip";
@@ -735,22 +736,27 @@ export default function TranslateAlignScreen({
     active: boolean,
     label: string,
     onClick: () => void,
-    opts?: { disabled?: boolean; title?: string },
+    opts?: { disabled?: boolean; title?: string; ariaLabel?: string },
   ) => (
     <Button
       key={label}
       onClick={onClick}
       aria-pressed={active}
+      aria-label={opts?.ariaLabel}
       disabled={opts?.disabled}
       title={opts?.title}
       sx={{
         flex: 1,
+        height: 34,
         minHeight: 34,
+        maxHeight: 34,
         borderRadius: "8px",
         fontWeight: 600,
         fontSize: "0.8rem",
         textTransform: "none",
         whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
         color: active ? "text.primary" : "text.secondary",
         bgcolor: active ? "background.paper" : "transparent",
         boxShadow: active ? "0 1px 3px rgba(1,66,99,0.15)" : "none",
@@ -792,6 +798,31 @@ export default function TranslateAlignScreen({
               {sub}
             </Typography>
           </Box>
+          {/* jump to the scripture screen for this chapter — the package
+              back-chevron above only returns to the package hub, not
+              scripture itself */}
+          {isTabletUp ? (
+            <Button
+              size="small"
+              startIcon={<MenuBookIcon fontSize="small" />}
+              onClick={() => {
+                location.hash = `#/scripture/${book}/${chapter}`;
+              }}
+              sx={{ flex: "none", minHeight: 34, textTransform: "none", fontWeight: 600 }}
+            >
+              Scripture
+            </Button>
+          ) : (
+            <IconButton
+              aria-label="Back to scripture"
+              onClick={() => {
+                location.hash = `#/scripture/${book}/${chapter}`;
+              }}
+              sx={{ width: 34, height: 34, flex: "none" }}
+            >
+              <MenuBookIcon fontSize="small" />
+            </IconButton>
+          )}
           <Box sx={{ flex: 1 }} />
           {/* compact prev/next flanking the count (top-and-bottom controls,
               Benjamin 2026-08-10) — same goVerse hash rewrite and disabled
@@ -917,7 +948,7 @@ export default function TranslateAlignScreen({
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {r.hasTarget ? (
             <Typography
-              dir={targetRtl ? "rtl" : "ltr"}
+              dir="auto"
               sx={{
                 fontFamily: SCRIPTURE_FONT_STACK,
                 fontSize: "0.88rem",
@@ -1078,17 +1109,16 @@ export default function TranslateAlignScreen({
               <Stack
                 direction="row"
                 spacing={0.5}
-                sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
+                sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5, overflow: "hidden" }}
               >
                 {segButton(interaction === "drag", "Drag canvas", () => setInteractionChoice("drag"), {
                   disabled: interaction !== "drag" && dirty,
                 })}
-                {segButton(
-                  interaction === "tap",
-                  "Tap mode (keyboard accessible)",
-                  () => setInteractionChoice("tap"),
-                  { disabled: interaction !== "tap" && dirty },
-                )}
+                {segButton(interaction === "tap", "Tap mode", () => setInteractionChoice("tap"), {
+                  disabled: interaction !== "tap" && dirty,
+                  title: "Tap mode — keyboard accessible",
+                  ariaLabel: "Tap mode — keyboard accessible",
+                })}
               </Stack>
               {dirty && (
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
@@ -1139,7 +1169,19 @@ export default function TranslateAlignScreen({
               />
             </Box>
           ) : tapState ? (
-            <>
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 420,
+                minWidth: 0,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "12px",
+              }}
+            >
               <AlignTapView
                 // Fresh mount per lane+verse: the view's own local state
                 // (selection, skipped ghosts) must not carry across a target
@@ -1189,7 +1231,7 @@ export default function TranslateAlignScreen({
                   Save alignment
                 </Button>
               </Box>
-            </>
+            </Box>
           ) : (
             <Alert severity="info">This verse has no parsable {laneLabel} content to align.</Alert>
           )}

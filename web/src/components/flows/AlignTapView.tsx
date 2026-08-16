@@ -215,7 +215,7 @@ export function AlignTapView({
   const warn = theme.palette.flows.warn;
 
   return (
-    <Box>
+    <Box sx={{ minWidth: 0 }}>
       {/* ── suggestion queue: real proposals only ─────────────────────── */}
       {current ? (
         <Box

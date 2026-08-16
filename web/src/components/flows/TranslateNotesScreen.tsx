@@ -95,7 +95,7 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
-import RefreshIcon from "@mui/icons-material/Refresh";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
@@ -302,6 +302,14 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   const hydratedKeyRef = useRef<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editing, setEditing] = useState(false);
+  // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
+  // up there is almost no room, so an active edit on a narrow viewport hides
+  // the surrounding chrome (topbar, action bar, Prev/Next, type filter) and
+  // leaves only the scripture/source context cards, the editor, and its Done
+  // button. Wide/desktop behavior is untouched — this is always false there.
+  const focusMode = !wide && editing;
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const editorInputRef = useRef<HTMLInputElement>(null);
 
   const [busy, setBusy] = useState(false);
   const [redoing, setRedoing] = useState(false);
@@ -367,6 +375,19 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   }, [draftValue, row?.id, row?.version, book]);
 
   useUnsavedGuard(hasDiff);
+
+  // Entering edit mode focuses the textarea without letting the browser's own
+  // autoFocus scroll fire mid-keyboard-open (which, combined with the
+  // same-frame height change on phones, loses the user's place); we drive the
+  // scroll ourselves, a frame later, once layout has settled.
+  useEffect(() => {
+    if (!editing) return;
+    editorInputRef.current?.focus({ preventScroll: true });
+    const raf = requestAnimationFrame(() => {
+      editorContainerRef.current?.scrollIntoView({ block: "center" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [editing]);
 
   // ── outbox reconciliation ────────────────────────────────────────────────
   useEffect(
@@ -1055,7 +1076,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             </Box>
 
             {/* target draft — the centrepiece */}
-            <Box sx={cardSx}>
+            <Box ref={editorContainerRef} sx={cardSx}>
               <Typography component="p" sx={labelSx}>
                 <Box
                   component="span"
@@ -1072,7 +1093,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               {editing ? (
                 <>
                   <TextField
-                    autoFocus
+                    inputRef={editorInputRef}
                     multiline
                     fullWidth
                     minRows={4}
@@ -1149,25 +1170,28 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               )}
             </Box>
 
-            {/* previous / next */}
-            <Stack direction="row" justifyContent="space-between" spacing={1.25}>
-              <Button
-                startIcon={<ChevronLeftIcon />}
-                disabled={!canPrev}
-                onClick={goPrev}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Previous
-              </Button>
-              <Button
-                endIcon={<ChevronRightIcon />}
-                disabled={!canNext}
-                onClick={goNext}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Next
-              </Button>
-            </Stack>
+            {/* previous / next — hidden in phone focus mode (keyboard-up
+                editing) so the editor gets the room */}
+            {!focusMode && (
+              <Stack direction="row" justifyContent="space-between" spacing={1.25}>
+                <Button
+                  startIcon={<ChevronLeftIcon />}
+                  disabled={!canPrev}
+                  onClick={goPrev}
+                  sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                >
+                  Previous
+                </Button>
+                <Button
+                  endIcon={<ChevronRightIcon />}
+                  disabled={!canNext}
+                  onClick={goNext}
+                  sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                >
+                  Next
+                </Button>
+              </Stack>
+            )}
           </>
         )}
     </>
@@ -1309,7 +1333,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
               title={redoBlockedReason ?? "Ask the AI for a fresh draft"}
               onClick={() => void handleRedo()}
               startIcon={
-                <RefreshIcon
+                <AutoAwesomeIcon
                   sx={
                     redoing
                       ? { animation: "be-spin 0.8s linear infinite", "@keyframes be-spin": { to: { transform: "rotate(360deg)" } } }
@@ -1375,7 +1399,10 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
           : { overflowY: "auto" }),
       }}
     >
-      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert).
+          Hidden in phone focus mode — an active edit on a narrow viewport
+          gets the keyboard-constrained screen to itself. */}
+      {!focusMode && (
       <Box
         sx={{
           position: "sticky",
@@ -1461,6 +1488,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
           </Box>
         </Box>
       </Box>
+      )}
 
       {wide ? (
         /* desk (the words screen's md+ pattern): 1440px centred grid — the
@@ -1556,18 +1584,19 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
             mx: "auto",
             paddingInline: 2,
             paddingBlockStart: 2,
-            // room for the fixed action bar
-            paddingBlockEnd: done ? 4 : 15,
+            // room for the fixed action bar — collapsed in phone focus mode,
+            // where the action bar itself is hidden
+            paddingBlockEnd: done ? 4 : focusMode ? 2 : 15,
             display: "flex",
             flexDirection: "column",
             gap: 1.5,
           }}
         >
-          {!done && total > 0 && typeFilterControl}
+          {!done && total > 0 && !focusMode && typeFilterControl}
           {detailBody}
         </Box>
       )}
-      {!wide && actionBar}
+      {!wide && !focusMode && actionBar}
 
       <Snackbar
         open={toast !== null}

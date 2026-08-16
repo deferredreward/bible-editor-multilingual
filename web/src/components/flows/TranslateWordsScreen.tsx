@@ -133,7 +133,7 @@
 // keys); this screen clears them itself once a PATCH round-trips, the same
 // contract ArticlesScreen.tsx:575-586 implements.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -151,7 +151,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import RefreshIcon from "@mui/icons-material/Refresh";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SaveIcon from "@mui/icons-material/Save";
 
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
@@ -1021,6 +1021,20 @@ function ArticleDetail({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftsByPath, setDraftsByPath] = useState<Record<string, string>>({});
   const [editingPath, setEditingPath] = useState<string | null>(null);
+  // Ref-based focus (not autoFocus) so entering editing doesn't yank the page
+  // to wherever the browser's default scroll-into-view lands — we focus
+  // without scrolling, then scroll the editor container to center ourselves.
+  const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (editingPath === null) return;
+    const el = editorContainerRef.current;
+    if (!el) return;
+    const input = el.querySelector("textarea, input") as HTMLElement | null;
+    input?.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ block: "center" });
+    });
+  }, [editingPath]);
   const [reloadKey, setReloadKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [redoing, setRedoing] = useState(false);
@@ -1314,6 +1328,17 @@ function ArticleDetail({
     m: 0,
     mb: 0.5,
   };
+  const colHeadSx = { ...langTagSx, mb: 0.375 };
+  // Source is the first grid column, target the second (see bothView's JSX)
+  // — shrink source to 1fr / target to 1.6fr so target dominates, and drop
+  // the source column's font a step further than the target's.
+  const pairSx = {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.6fr)",
+    gap: 1.25,
+    fontSize: "0.84rem",
+  };
+  const srcColSx = { fontSize: "0.78rem" };
 
   function segButton(value: Lang, label: string) {
     const active = lang === value;
@@ -1392,9 +1417,8 @@ function ArticleDetail({
   function partEditor(part: ArticleUnit) {
     const text = draftsByPath[part.path] ?? "";
     return (
-      <>
+      <Box ref={editorContainerRef}>
         <TextField
-          autoFocus
           multiline
           fullWidth
           minRows={part.part === "body" ? 10 : 1}
@@ -1428,7 +1452,7 @@ function ArticleDetail({
             Done
           </Button>
         </Stack>
-      </>
+      </Box>
     );
   }
 
@@ -1438,13 +1462,6 @@ function ArticleDetail({
   function bothView(part: ArticleUnit) {
     const src = part.source_md ?? "";
     const tgt = draftsByPath[part.path] ?? "";
-    const colHeadSx = { ...langTagSx, mb: 0.375 };
-    const pairSx = {
-      display: "grid",
-      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-      gap: 1.25,
-      fontSize: "0.84rem",
-    };
     const srcBlocks = splitMdBlocks(src);
     const tgtBlocks = splitMdBlocks(tgt);
     const paired = tgt.trim().length > 0 && srcBlocks.length === tgtBlocks.length && srcBlocks.length > 0;
@@ -1452,7 +1469,7 @@ function ArticleDetail({
       return (
         <>
           <Box sx={pairSx}>
-            <Box>
+            <Box sx={srcColSx}>
               <Typography component="p" sx={colHeadSx}>
                 {sourceLangLabel}
               </Typography>
@@ -1486,7 +1503,7 @@ function ArticleDetail({
             }}
           >
             <Box sx={pairSx}>
-              <Box>
+              <Box sx={srcColSx}>
                 <Typography component="p" sx={colHeadSx}>
                   {sourceLangLabel}
                 </Typography>
@@ -1527,6 +1544,13 @@ function ArticleDetail({
     );
   }
 
+  // Phone focus mode: editing on a phone (variant="page") hides the topbar,
+  // the viewport-fixed action bar, the language segmented control, and the
+  // "tap to edit" hint, so the small viewport is spent on the editor instead
+  // of chrome around it. Wide/pane stays byte-identical — this only ever
+  // applies when !pane.
+  const focusMode = editingPath !== null && !pane;
+
   // ── render ────────────────────────────────────────────────────────────────
   // Pane mode: a flex column so the action bar's margin-block-start:auto pins
   // it to the pane's bottom even when the content is short; sticky keeps it
@@ -1542,53 +1566,55 @@ function ArticleDetail({
       }}
     >
       {/* topbar (pane: the panel-top chrome — title, no back chevron) */}
-      <Box
-        sx={{
-          position: "sticky",
-          insetBlockStart: 0,
-          zIndex: pane ? 10 : 20,
-          flex: "none",
-          bgcolor: "background.paper",
-          borderBlockEnd: "1px solid",
-          borderColor: "divider",
-        }}
-      >
+      {!focusMode && (
         <Box
           sx={{
-            maxWidth: pane ? "none" : COLUMN_PX,
-            mx: "auto",
-            paddingInline: pane ? 2.5 : 2,
-            paddingBlock: 1.5,
+            position: "sticky",
+            insetBlockStart: 0,
+            zIndex: pane ? 10 : 20,
+            flex: "none",
+            bgcolor: "background.paper",
+            borderBlockEnd: "1px solid",
+            borderColor: "divider",
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1.25}>
-            {!pane && (
-              <IconButton
-                aria-label="Back to the list"
-                onClick={onBack}
-                sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
-              >
-                <ChevronLeftIcon fontSize="small" />
-              </IconButton>
-            )}
-            <Box sx={{ minWidth: 0 }}>
-              <Typography
-                component={pane ? "h2" : "h1"}
-                sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}
-                noWrap
-              >
-                {sourceTitle}
-              </Typography>
-              <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-                <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }} noWrap>
-                  {targetTitle || countLabel}
+          <Box
+            sx={{
+              maxWidth: pane ? "none" : COLUMN_PX,
+              mx: "auto",
+              paddingInline: pane ? 2.5 : 2,
+              paddingBlock: 1.5,
+            }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1.25}>
+              {!pane && (
+                <IconButton
+                  aria-label="Back to the list"
+                  onClick={onBack}
+                  sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+                >
+                  <ChevronLeftIcon fontSize="small" />
+                </IconButton>
+              )}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography
+                  component={pane ? "h2" : "h1"}
+                  sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}
+                  noWrap
+                >
+                  {sourceTitle}
                 </Typography>
-                <FlowStatusChip kind={chip.kind} label={chip.label} />
-              </Stack>
-            </Box>
-          </Stack>
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+                  <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }} noWrap>
+                    {targetTitle || countLabel}
+                  </Typography>
+                  <FlowStatusChip kind={chip.kind} label={chip.label} />
+                </Stack>
+              </Box>
+            </Stack>
+          </Box>
         </Box>
-      </Box>
+      )}
 
       <Box
         sx={{
@@ -1599,8 +1625,9 @@ function ArticleDetail({
           paddingInline: pane ? 2.5 : 2,
           paddingBlockStart: 2,
           // page: room for the viewport-fixed action bar; pane: the bar is
-          // in-flow below, so only a small gap is needed
-          paddingBlockEnd: pane ? 2 : 15,
+          // in-flow below, so only a small gap is needed. Focus mode hides
+          // that fixed bar, so it only needs the small gap too.
+          paddingBlockEnd: pane || focusMode ? 2 : 15,
           display: "flex",
           flexDirection: "column",
           gap: 1.5,
@@ -1633,17 +1660,19 @@ function ArticleDetail({
         ) : (
           <>
             {/* language segment (artifact .seg) */}
-            <Stack
-              direction="row"
-              spacing={0.5}
-              role="group"
-              aria-label="Language"
-              sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
-            >
-              {segButton("target", targetLabel)}
-              {segButton("source", sourceLangLabel)}
-              {segButton("both", "Both")}
-            </Stack>
+            {!focusMode && (
+              <Stack
+                direction="row"
+                spacing={0.5}
+                role="group"
+                aria-label="Language"
+                sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
+              >
+                {segButton("target", targetLabel)}
+                {segButton("source", sourceLangLabel)}
+                {segButton("both", "Both")}
+              </Stack>
+            )}
 
             <Box sx={cardSx}>
               {/* draft row: chip + honest AI/save affordances */}
@@ -1686,7 +1715,19 @@ function ArticleDetail({
                     </Typography>
                   )}
                   {editingPath === p.path ? (
-                    partEditor(p)
+                    focusMode && lang === "both" ? (
+                      <Box sx={pairSx}>
+                        <Box sx={srcColSx}>
+                          <Typography component="p" sx={colHeadSx}>
+                            {sourceLangLabel}
+                          </Typography>
+                          <MarkdownView markdown={p.source_md ?? ""} dir="ltr" />
+                        </Box>
+                        <Box>{partEditor(p)}</Box>
+                      </Box>
+                    ) : (
+                      partEditor(p)
+                    )
                   ) : lang === "source" ? (
                     <MarkdownView markdown={p.source_md ?? ""} dir="ltr" />
                   ) : lang === "target" ? (
@@ -1716,7 +1757,7 @@ function ArticleDetail({
           state machine has no such state to write (see header). Page: fixed
           to the viewport bottom; pane: anchored inside the pane (sticky at
           its bottom, pinned there by margin-block-start:auto when short). */}
-      {parts !== null && !loadError && (
+      {parts !== null && !loadError && !focusMode && (
         <Box
           component="footer"
           sx={
@@ -1761,7 +1802,7 @@ function ArticleDetail({
               }
               onClick={() => void handleRedo()}
               startIcon={
-                <RefreshIcon
+                <AutoAwesomeIcon
                   sx={
                     redoing
                       ? {

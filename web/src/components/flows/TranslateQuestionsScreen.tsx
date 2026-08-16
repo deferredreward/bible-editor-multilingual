@@ -222,6 +222,12 @@ export default function TranslateQuestionsScreen({
   const hydratedKeyRef = useRef<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editingField, setEditingField] = useState<Field | null>(null);
+  // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
+  // up there is almost no room, so an active edit on a narrow viewport hides
+  // the surrounding chrome (topbar, Approve bar, Prev/Next) and leaves only
+  // the scripture/source context cards, the editor, and its Done button.
+  // Wide/desktop behavior is untouched — this is always false there.
+  const focusMode = !wide && editingField !== null;
 
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -564,6 +570,20 @@ export default function TranslateQuestionsScreen({
   function QaPair({ field, sourceText }: { field: Field; sourceText: string | null }) {
     const value = values[field];
     const editing = editingField === field;
+    const containerRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+    // Entering edit mode focuses the textarea without letting the browser's
+    // own autoFocus scroll fire mid-keyboard-open (which, combined with the
+    // same-frame height change on phones, loses the user's place); we drive
+    // the scroll ourselves, a frame later, once layout has settled.
+    useEffect(() => {
+      if (!editing) return;
+      inputRef.current?.focus({ preventScroll: true });
+      const raf = requestAnimationFrame(() => {
+        containerRef.current?.scrollIntoView({ block: "center" });
+      });
+      return () => cancelAnimationFrame(raf);
+    }, [editing]);
     return (
       <Box>
         <Box
@@ -595,7 +615,7 @@ export default function TranslateQuestionsScreen({
           )}
         </Box>
 
-        <Box>
+        <Box ref={containerRef}>
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
             <Box component="span" sx={langTagSx}>
               {targetLabel}
@@ -608,7 +628,7 @@ export default function TranslateQuestionsScreen({
           {editing ? (
             <>
               <TextField
-                autoFocus
+                inputRef={inputRef}
                 multiline
                 fullWidth
                 minRows={3}
@@ -1031,25 +1051,28 @@ export default function TranslateQuestionsScreen({
               <QaPair field="response" sourceText={sourceQuestion?.response ?? null} />
             </Box>
 
-            {/* previous / next */}
-            <Stack direction="row" justifyContent="space-between" spacing={1.25}>
-              <Button
-                startIcon={<ChevronLeftIcon />}
-                disabled={cursor === 0}
-                onClick={() => setCursor((c) => Math.max(0, c - 1))}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Previous
-              </Button>
-              <Button
-                endIcon={<ChevronRightIcon />}
-                disabled={cursor >= total - 1}
-                onClick={() => setCursor((c) => Math.min(total - 1, c + 1))}
-                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-              >
-                Next
-              </Button>
-            </Stack>
+            {/* previous / next — hidden in phone focus mode (keyboard-up
+                editing) so the editor gets the room */}
+            {!focusMode && (
+              <Stack direction="row" justifyContent="space-between" spacing={1.25}>
+                <Button
+                  startIcon={<ChevronLeftIcon />}
+                  disabled={cursor === 0}
+                  onClick={() => setCursor((c) => Math.max(0, c - 1))}
+                  sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                >
+                  Previous
+                </Button>
+                <Button
+                  endIcon={<ChevronRightIcon />}
+                  disabled={cursor >= total - 1}
+                  onClick={() => setCursor((c) => Math.min(total - 1, c + 1))}
+                  sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+                >
+                  Next
+                </Button>
+              </Stack>
+            )}
           </>
         )}
     </>
@@ -1066,7 +1089,10 @@ export default function TranslateQuestionsScreen({
           : { overflowY: "auto" }),
       }}
     >
-      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert) */}
+      {/* topbar (at md+ the root doesn't scroll, so sticky is simply inert).
+          Hidden in phone focus mode — an active edit on a narrow viewport
+          gets the keyboard-constrained screen to itself. */}
+      {!focusMode && (
       <Box
         sx={{
           position: "sticky",
@@ -1151,6 +1177,7 @@ export default function TranslateQuestionsScreen({
           </Box>
         </Box>
       </Box>
+      )}
 
       {wide ? (
         /* desk (the words screen's md+ pattern, after the desk-class
@@ -1237,8 +1264,9 @@ export default function TranslateQuestionsScreen({
             mx: "auto",
             paddingInline: 2,
             paddingBlockStart: 2,
-            // room for the viewport-fixed action bar
-            paddingBlockEnd: done ? 4 : 15,
+            // room for the viewport-fixed action bar — collapsed in phone
+            // focus mode, where the action bar itself is hidden
+            paddingBlockEnd: done ? 4 : focusMode ? 2 : 15,
             display: "flex",
             flexDirection: "column",
             gap: 1.5,
@@ -1248,7 +1276,7 @@ export default function TranslateQuestionsScreen({
         </Box>
       )}
 
-      {!wide && actionBar(false)}
+      {!wide && !focusMode && actionBar(false)}
 
       <Snackbar
         open={toast !== null}

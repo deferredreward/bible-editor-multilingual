@@ -726,10 +726,11 @@ export default function TranslateScriptureScreen({
             spacing={0.75}
             sx={{ marginInlineStart: "auto" }}
           >
-            {/* md+ only — a quiet single-lane hand-off to the Align screen,
-                which owns lane choice (see the 2026-08-10 header section).
-                On the phone, alignment stays reachable from the hub. */}
-            {wide && verseNum != null && (
+            {/* a quiet single-lane hand-off to the Align screen, which owns
+                lane choice (see the 2026-08-10 header section). Rendered on
+                phone too (kept size="small" so the lane-card header doesn't
+                wrap at a 480px column width). */}
+            {verseNum != null && (
               <Button
                 size="small"
                 title={`Open the Align screen at ${book} ${chapter}:${verseNum} — the lane is chosen there`}
@@ -799,9 +800,6 @@ export default function TranslateScriptureScreen({
         ? ultText
         : ustText
       : (verseIndexes[sourceLane]?.[v]?.plain_text ?? "");
-    const snippetRtl = usesTarget
-      ? versionIsRtl(projectConfig, ultText.trim().length > 0 ? "ULT" : "UST")
-      : sourceRtl;
     const st = statuses[v];
     const isSelected = !done && idx === cursor;
     return (
@@ -845,7 +843,7 @@ export default function TranslateScriptureScreen({
         <Typography
           variant="body2"
           color="text.secondary"
-          dir={snippetRtl ? "rtl" : "ltr"}
+          dir="auto"
           sx={{
             flex: 1,
             minWidth: 0,
@@ -1274,9 +1272,10 @@ export default function TranslateScriptureScreen({
                 {renderLaneCard("ULT")}
                 {renderLaneCard("UST")}
 
-                {/* md+ only — dual-mode hand-off to the Align screen (both lanes
-                    side by side); the per-lane buttons above cover single mode. */}
-                {wide && verseNum != null && (
+                {/* dual-mode hand-off to the Align screen (both lanes side by
+                    side); the per-lane buttons above cover single mode.
+                    Rendered on phone too, right above Previous/Next. */}
+                {verseNum != null && (
                   <Stack direction="row" justifyContent="flex-end">
                     <Button
                       variant="outlined"
