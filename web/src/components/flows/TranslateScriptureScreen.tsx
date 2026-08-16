@@ -249,6 +249,11 @@ export default function TranslateScriptureScreen({
   const chapterKey = `${book}:${chapter}`;
   const [queue, setQueue] = useState<{ key: string; verses: number[] } | null>(null);
   const [statuses, setStatuses] = useState<Record<number, VerseTerminal>>({});
+  // Prior status per verse, captured just before handleApprove's optimistic
+  // "approved" overwrite — lets a late verse_status fatal (outbox
+  // reconciliation below) restore what was there before instead of blanking
+  // the verse.
+  const prevStatusRef = useRef<Record<number, VerseTerminal | undefined>>({});
   const [cursor, setCursor] = useState(0);
   const [view, setView] = useState<"verses" | "done">("verses");
   const [reviewing, setReviewing] = useState(false);
@@ -416,8 +421,22 @@ export default function TranslateScriptureScreen({
       ) {
         setLock(result.lockBody);
       }
+      if (target.kind === "verse_status" && target.book === book && result.kind === "fatal") {
+        say(
+          `Approve didn't reach the server for ${target.chapter}:${target.verse} (${result.reason}) — the verse is not recorded as done.`,
+        );
+        applyLocalVerseStatus(target.verse, false);
+        setStatuses((prev) => {
+          if (prev[target.verse] !== "approved") return prev;
+          const restored = prevStatusRef.current[target.verse];
+          const next = { ...prev };
+          if (restored) next[target.verse] = restored;
+          else delete next[target.verse];
+          return next;
+        });
+      }
     });
-  }, [book, projectConfig, say]);
+  }, [book, projectConfig, say, applyLocalVerseStatus]);
 
   // ── lane derivation (evidence-based, ported from ScriptureScreen:514-544) ─
   function laneInfo(bv: TargetLane) {
@@ -609,6 +628,7 @@ export default function TranslateScriptureScreen({
       }
       applyLocalVerseStatus(verseNum, true);
       void outbox.enqueueVerseStatus(book, chapter, verseNum, true);
+      prevStatusRef.current[verseNum] = statuses[verseNum];
       setStatuses((prev) => ({ ...prev, [verseNum]: "approved" }));
       setToast("Verse approved");
       advanceAfter(verseNum, "approved");

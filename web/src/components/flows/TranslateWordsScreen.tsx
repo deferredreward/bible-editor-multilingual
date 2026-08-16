@@ -353,9 +353,50 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
 
   // The book's chapters — the only source of per-book twl/tn rows today.
   const { summary, summaryStatus, chapters, loadChapter } = useBook(book, translationMode);
+
+  // `chapters` mirrored into a ref so the worker loop below always sees the
+  // latest load state without needing it as an effect dependency (that would
+  // restart the whole queue on every chapter completion).
+  const chaptersRef = useRef(chapters);
+  chaptersRef.current = chapters;
+
+  // Four workers drain the chapter queue instead of firing loadChapter for
+  // every chapter at once — mirrors AdminProgressScreen.tsx's queue+worker
+  // pattern (its BookSummary fan-out). loadChapter itself is fire-and-forget
+  // (no promise), so each worker polls chaptersRef for its chapter to leave
+  // "loading"/"unloaded" before pulling the next one off the queue.
   useEffect(() => {
     if (!summary) return;
-    for (const ch of summary.chapters) loadChapter(ch.chapter);
+    let cancelled = false;
+    const queue = summary.chapters.map((c) => c.chapter);
+    const waitForSettled = (ch: number) =>
+      new Promise<void>((resolve) => {
+        const check = () => {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          const st = chaptersRef.current.get(ch);
+          if (st && st.kind !== "loading" && st.kind !== "unloaded") {
+            resolve();
+            return;
+          }
+          setTimeout(check, 50);
+        };
+        check();
+      });
+    const worker = async () => {
+      for (;;) {
+        const ch = queue.shift();
+        if (ch === undefined || cancelled) return;
+        loadChapter(ch);
+        await waitForSettled(ch);
+      }
+    };
+    for (let i = 0; i < Math.min(4, queue.length); i++) void worker();
+    return () => {
+      cancelled = true;
+    };
   }, [summary, loadChapter]);
 
   const chapterTotal = summary?.chapters.length ?? 0;

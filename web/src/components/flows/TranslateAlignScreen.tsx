@@ -311,17 +311,22 @@ export default function TranslateAlignScreen({
   }, [targetVerse, sourceVerseObjects]);
 
   const [tapState, setTapState] = useState<AlignmentState | null>(computedInitial);
-  const tapStateRef = useRef(tapState);
-  useEffect(() => {
-    tapStateRef.current = tapState;
-  });
 
   const draftKey = alignmentDraftKey(book, chapter, verse, lane);
+
+  // Which draft key the current tapState's edits belong to. On verse nav the
+  // persist effect below re-runs once with the NEW draftKey while tapState is
+  // still the OLD verse's edited state (the reset effect's setTapState hasn't
+  // committed yet); without this provenance check that mixed run schedules —
+  // and its cleanup flushes — the old verse's alignment under the new verse's
+  // key. Set at every real edit and at draft rehydration; nulled on reset.
+  const tapEditKeyRef = useRef<string | null>(null);
 
   // Reset to the freshly parsed baseline on verse/lane/content change, then
   // re-hydrate a crash-saved alignment draft — same store, same key shape and
   // the same three guards the drag canvas uses (AlignScreen.tsx:220-248).
   useEffect(() => {
+    tapEditKeyRef.current = null;
     setTapState(computedInitial);
     if (!computedInitial || !targetVerse) return;
     const baseVersion = targetVerse.version;
@@ -341,9 +346,15 @@ export default function TranslateAlignScreen({
         void alignmentDrafts.clear(draftKey);
         return;
       }
-      if (tapStateRef.current !== computedInitial) return; // user already edited
+      // "User already edited" guard, race-free: edits stamp tapEditKeyRef with
+      // this verse's key synchronously in the onChange handler, so it can't
+      // lose to a fast IndexedDB get() the way the old tapState-ref compare
+      // did (that ref synced in a passive effect, which made same-mount verse
+      // re-entry silently skip rehydration).
+      if (tapEditKeyRef.current === draftKey) return;
       const vo = (rec.content as { verseObjects?: unknown[] }).verseObjects;
       if (!Array.isArray(vo)) return;
+      tapEditKeyRef.current = draftKey; // rehydrated edits belong to this key
       setTapState(parseAlignment(vo, sourceVerseObjects));
     });
     return () => {
@@ -354,44 +365,37 @@ export default function TranslateAlignScreen({
   const tapDirty = tapState !== null && tapState !== computedInitial;
 
   // Persist in-progress tap edits (debounced) so a crash doesn't lose them
-  // (AlignScreen.tsx:252-266). `pendingTapDraftRef` tracks whatever write is
-  // currently scheduled so the unmount effect below can flush it immediately
-  // instead of losing it to the debounce window when the user navigates away.
-  const pendingTapDraftRef = useRef<{
-    key: string;
-    content: { verseObjects: unknown[] };
-    version: number;
-    gen?: number;
-  } | null>(null);
+  // (AlignScreen.tsx:252-266). The cleanup below flushes synchronously
+  // whenever this effect run's timer hasn't fired yet — this covers BOTH
+  // unmount and same-screen verse navigation (prev/next chevrons, list-row
+  // click), neither of which unmount TranslateAlignScreen. Verse nav changes
+  // `draftKey`/`targetVerse`, which are deps here, so React tears down this
+  // effect run (and its pending timer) before the next one starts; without
+  // an explicit flush in the cleanup, a pairing made <400ms before
+  // navigating was silently dropped. The flush uses only this closure's
+  // captured key/content/version — never a mutable ref — so a later render
+  // can't repoint or null out what gets written.
   useEffect(() => {
-    if (!tapDirty || !tapState || !targetVerse) {
-      pendingTapDraftRef.current = null;
-      return;
-    }
+    if (!tapDirty || !tapState || !targetVerse) return;
+    // Provenance guard: skip the one mid-transition run where the new
+    // draftKey is paired with the previous verse's still-uncommitted state.
+    if (tapEditKeyRef.current !== draftKey) return;
     const baseVersion = targetVerse.version;
     const gen = targetVerse.source_generation;
     const content = { verseObjects: serializeAlignment(tapState) };
-    pendingTapDraftRef.current = { key: draftKey, content, version: baseVersion, gen };
+    const key = draftKey;
+    let fired = false;
     const t = setTimeout(() => {
-      void alignmentDrafts.set(draftKey, content, baseVersion, { sourceGeneration: gen });
-      pendingTapDraftRef.current = null;
+      fired = true;
+      void alignmentDrafts.set(key, content, baseVersion, { sourceGeneration: gen });
     }, 400);
-    return () => clearTimeout(t);
-  }, [tapState, tapDirty, targetVerse, draftKey]);
-
-  // Flush any still-pending debounced draft write on unmount — otherwise a
-  // navigation (back chevron, Scripture button, route change) inside the
-  // 400ms window silently drops the last tap-mode edit.
-  useEffect(() => {
     return () => {
-      const pending = pendingTapDraftRef.current;
-      if (pending) {
-        void alignmentDrafts.set(pending.key, pending.content, pending.version, {
-          sourceGeneration: pending.gen,
-        });
+      clearTimeout(t);
+      if (!fired) {
+        void alignmentDrafts.set(key, content, baseVersion, { sourceGeneration: gen });
       }
     };
-  }, []);
+  }, [tapState, tapDirty, targetVerse, draftKey]);
 
   // ── suggestions (the same scorer the drag canvas uses; AlignScreen.tsx:268-297)
   const sourceIndexMap = useMemo(() => buildSourceIndexMap(sourceVerse), [sourceVerse]);
@@ -524,6 +528,7 @@ export default function TranslateAlignScreen({
   }, [canEdit, tapState, targetVerse, lane, enqueueAlignment, draftKey, book, chapter]);
 
   const handleTapReset = useCallback(() => {
+    tapEditKeyRef.current = null;
     setTapState(computedInitial);
     void alignmentDrafts.clear(draftKey);
   }, [computedInitial, draftKey]);
@@ -1222,7 +1227,10 @@ export default function TranslateAlignScreen({
                 // change (AlignScreen.tsx:847-853).
                 key={`tap:${lane}:${chapter}:${verse}`}
                 state={tapState}
-                onChange={setTapState}
+                onChange={(next) => {
+                  tapEditKeyRef.current = draftKey;
+                  setTapState(next);
+                }}
                 canEdit={canEdit}
                 sourceIndexMap={sourceIndexMap}
                 sourceRtl={sourceRtl}

@@ -207,18 +207,23 @@ function LayoutSwitcher({
         {userLayouts.map(renderLayoutItem)}
         <Divider />
         {/* Entry into the book-package redesign (replaces flexible mode at
-            merge; classic stays). TODO(i18n) with the flows sweep. */}
-        <MenuItem
-          onClick={() => {
-            setOpen(false);
-            location.hash = "#/books";
-          }}
-        >
-          <ListItemIcon>
-            <MenuBookIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Book packages (new UI)</ListItemText>
-        </MenuItem>
+            merge; classic stays). TODO(i18n) with the flows sweep.
+            Admin-only: #/books itself walls off non-admins with an
+            "importing books is an administrator task" message, so the
+            entry is a dead end for editors/viewers. */}
+        {isAdmin() && (
+          <MenuItem
+            onClick={() => {
+              setOpen(false);
+              location.hash = "#/books";
+            }}
+          >
+            <ListItemIcon>
+              <MenuBookIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Book packages (new UI)</ListItemText>
+          </MenuItem>
+        )}
         {closedRegions.length > 0 && onRestoreRegion && [
           <Divider key="closed-divider" />,
           <ListSubheader key="closed-header" sx={{ lineHeight: 2, bgcolor: "transparent" }}>
