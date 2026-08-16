@@ -354,21 +354,44 @@ export default function TranslateAlignScreen({
   const tapDirty = tapState !== null && tapState !== computedInitial;
 
   // Persist in-progress tap edits (debounced) so a crash doesn't lose them
-  // (AlignScreen.tsx:252-266).
+  // (AlignScreen.tsx:252-266). `pendingTapDraftRef` tracks whatever write is
+  // currently scheduled so the unmount effect below can flush it immediately
+  // instead of losing it to the debounce window when the user navigates away.
+  const pendingTapDraftRef = useRef<{
+    key: string;
+    content: { verseObjects: unknown[] };
+    version: number;
+    gen?: number;
+  } | null>(null);
   useEffect(() => {
-    if (!tapDirty || !tapState || !targetVerse) return;
+    if (!tapDirty || !tapState || !targetVerse) {
+      pendingTapDraftRef.current = null;
+      return;
+    }
     const baseVersion = targetVerse.version;
     const gen = targetVerse.source_generation;
+    const content = { verseObjects: serializeAlignment(tapState) };
+    pendingTapDraftRef.current = { key: draftKey, content, version: baseVersion, gen };
     const t = setTimeout(() => {
-      void alignmentDrafts.set(
-        draftKey,
-        { verseObjects: serializeAlignment(tapState) },
-        baseVersion,
-        { sourceGeneration: gen },
-      );
+      void alignmentDrafts.set(draftKey, content, baseVersion, { sourceGeneration: gen });
+      pendingTapDraftRef.current = null;
     }, 400);
     return () => clearTimeout(t);
   }, [tapState, tapDirty, targetVerse, draftKey]);
+
+  // Flush any still-pending debounced draft write on unmount — otherwise a
+  // navigation (back chevron, Scripture button, route change) inside the
+  // 400ms window silently drops the last tap-mode edit.
+  useEffect(() => {
+    return () => {
+      const pending = pendingTapDraftRef.current;
+      if (pending) {
+        void alignmentDrafts.set(pending.key, pending.content, pending.version, {
+          sourceGeneration: pending.gen,
+        });
+      }
+    };
+  }, []);
 
   // ── suggestions (the same scorer the drag canvas uses; AlignScreen.tsx:268-297)
   const sourceIndexMap = useMemo(() => buildSourceIndexMap(sourceVerse), [sourceVerse]);
@@ -1113,6 +1136,8 @@ export default function TranslateAlignScreen({
               >
                 {segButton(interaction === "drag", "Drag canvas", () => setInteractionChoice("drag"), {
                   disabled: interaction !== "drag" && dirty,
+                  title: "Drag canvas — mouse/touch drag",
+                  ariaLabel: "Drag canvas — mouse/touch drag",
                 })}
                 {segButton(interaction === "tap", "Tap mode", () => setInteractionChoice("tap"), {
                   disabled: interaction !== "tap" && dirty,
@@ -1172,14 +1197,23 @@ export default function TranslateAlignScreen({
             <Box
               sx={{
                 flex: 1,
-                minHeight: 420,
                 minWidth: 0,
-                overflowY: "auto",
                 display: "flex",
                 flexDirection: "column",
                 border: "1px solid",
                 borderColor: "divider",
                 borderRadius: "12px",
+                // Sticky save bar below binds to THIS box only when it's the
+                // nearest scroll container, which is true on wide (height-
+                // constrained desk pane) but not on phone: there the column
+                // is unconstrained-height, this box never scrolls, and
+                // overflowY:auto would silently degrade sticky to static —
+                // stranding Save at the page bottom on a long verse. Phone
+                // instead leaves scrolling to the page column so sticky
+                // rebinds to the viewport (Benjamin/design review 2026-08-15).
+                ...(wide
+                  ? { minHeight: 420, overflowY: "auto" }
+                  : { overflowY: "visible" }),
               }}
             >
               <AlignTapView

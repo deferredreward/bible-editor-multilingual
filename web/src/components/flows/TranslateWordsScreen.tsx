@@ -1023,7 +1023,11 @@ function ArticleDetail({
   const [editingPath, setEditingPath] = useState<string | null>(null);
   // Ref-based focus (not autoFocus) so entering editing doesn't yank the page
   // to wherever the browser's default scroll-into-view lands — we focus
-  // without scrolling, then scroll the editor container to center ourselves.
+  // without scrolling, then scroll the editor container into view ourselves.
+  // In the pane (md+) layout we only reveal it if off-screen, matching the
+  // old autoFocus behavior; on phone we center it, then re-center once more
+  // when the on-screen keyboard finishes opening (visualViewport 'resize'),
+  // since that resize can happen after our first scroll.
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (editingPath === null) return;
@@ -1031,10 +1035,31 @@ function ArticleDetail({
     if (!el) return;
     const input = el.querySelector("textarea, input") as HTMLElement | null;
     input?.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      el.scrollIntoView({ block: "center" });
+    const raf = requestAnimationFrame(() => {
+      el.scrollIntoView({ block: pane ? "nearest" : "center" });
     });
-  }, [editingPath]);
+    let vv: VisualViewport | undefined;
+    let onResize: (() => void) | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    if (!pane) {
+      vv = window.visualViewport ?? undefined;
+      if (vv) {
+        onResize = () => {
+          el.scrollIntoView({ block: "center" });
+          vv?.removeEventListener("resize", onResize!);
+        };
+        vv.addEventListener("resize", onResize);
+        timeout = setTimeout(() => {
+          vv?.removeEventListener("resize", onResize!);
+        }, 1500);
+      }
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      if (vv && onResize) vv.removeEventListener("resize", onResize);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [editingPath, pane]);
   const [reloadKey, setReloadKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [redoing, setRedoing] = useState(false);

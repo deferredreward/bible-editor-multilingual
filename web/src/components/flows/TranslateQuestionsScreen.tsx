@@ -122,6 +122,227 @@ const FIELDS: Field[] = ["question", "response"];
 // Content width — the mockup's 430px phone shell, given a little more room.
 const COLUMN_PX = 480;
 
+// Shared with QaPair below and with the queue-row previews further down this
+// file — no theme/state dependency, so it's a plain module constant rather
+// than something threaded through props.
+const langTagSx = {
+  display: "block",
+  fontSize: "0.656rem",
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase" as const,
+  color: "text.secondary",
+  m: 0,
+};
+
+interface QaPairProps {
+  field: Field;
+  sourceText: string | null;
+  value: string;
+  editing: boolean;
+  // md+ vs phone: governs both the reveal-scroll behavior below and (via the
+  // caller) whether the on-screen-keyboard focus mode applies at all.
+  wide: boolean;
+  targetLabel: string;
+  sourceLangLabel: string;
+  translationMode: boolean;
+  hasSourceProjection: boolean;
+  chipKind: FlowStatusKind;
+  chipLabel: string;
+  hl: string;
+  inspire: string;
+  onChange: (value: string) => void;
+  onStartEdit: () => void;
+  onDone: () => void;
+}
+
+// One field pair: the source line (quiet, read-only) directly above the
+// target line (normal ink, tap-to-edit) — grouped by FIELD, so the eye never
+// crosses a language boundary between two different fields.
+//
+// Hoisted to module scope (2026-08-15, mobile polish fix): this used to be
+// declared inside TranslateQuestionsScreen's body, which meant every parent
+// render (i.e. every keystroke, since typing calls the parent's setValues)
+// created a NEW QaPair function identity, so React unmounted/remounted the
+// whole subtree on every character — losing focus, caret position, and IME
+// composition state, and re-firing the focus/scroll effect below on every
+// keystroke instead of once per edit session. All parent-closure state it
+// used to read directly is now threaded through as explicit props.
+function QaPair({
+  sourceText,
+  value,
+  editing,
+  wide,
+  targetLabel,
+  sourceLangLabel,
+  translationMode,
+  hasSourceProjection,
+  chipKind,
+  chipLabel,
+  hl,
+  inspire,
+  onChange,
+  onStartEdit,
+  onDone,
+}: QaPairProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Entering edit mode focuses the textarea without letting the browser's own
+  // autoFocus scroll fire mid-keyboard-open (which, combined with the
+  // same-frame height change on phones, loses the user's place); we drive the
+  // scroll ourselves, a frame later, once layout has settled.
+  //
+  // Scroll policy differs by width: at md+ (wide) there's no on-screen
+  // keyboard to fight, so this only needs to reveal the field if it's off
+  // screen ("nearest", matching the old autoFocus reveal behavior — desktop
+  // is otherwise untouched). On phone, the keyboard hasn't necessarily
+  // finished opening (and resizing the viewport) by the first rAF, so we
+  // center once now AND register a one-shot visualViewport 'resize' listener
+  // that re-centers when the keyboard finishes animating in — removed after
+  // it fires once, or after 1500ms if it never does.
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus({ preventScroll: true });
+    const raf = requestAnimationFrame(() => {
+      containerRef.current?.scrollIntoView({ block: wide ? "nearest" : "center" });
+    });
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const vv = !wide && typeof window !== "undefined" ? window.visualViewport : null;
+
+    function cleanupVv() {
+      if (vv) vv.removeEventListener("resize", handleResize);
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+    function handleResize() {
+      containerRef.current?.scrollIntoView({ block: "center" });
+      cleanupVv();
+    }
+    if (vv) {
+      vv.addEventListener("resize", handleResize);
+      timeoutId = setTimeout(cleanupVv, 1500);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      cleanupVv();
+    };
+  }, [editing, wide]);
+  return (
+    <Box>
+      <Box
+        sx={{
+          bgcolor: "action.hover",
+          borderRadius: "9px",
+          paddingBlock: 1,
+          paddingInline: 1.25,
+          mb: 1,
+        }}
+      >
+        <Box component="span" sx={langTagSx}>
+          {sourceLangLabel}
+        </Box>
+        {sourceText ? (
+          <Typography
+            sx={{ color: "text.secondary", fontSize: "0.94rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}
+          >
+            {sourceText}
+          </Typography>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            {translationMode
+              ? hasSourceProjection
+                ? "No published source for this question — it may have been added here rather than translated."
+                : "No source repository is configured for questions, so there is nothing to compare against."
+              : "This workspace authors questions rather than translating them, so there is no separate source."}
+          </Typography>
+        )}
+      </Box>
+
+      <Box ref={containerRef}>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+          <Box component="span" sx={langTagSx}>
+            {targetLabel}
+          </Box>
+          <Box sx={{ ml: "auto" }}>
+            <FlowStatusChip kind={chipKind} label={chipLabel} />
+          </Box>
+        </Stack>
+
+        {editing ? (
+          <>
+            <TextField
+              inputRef={inputRef}
+              multiline
+              fullWidth
+              minRows={3}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              sx={{
+                "& .MuiOutlinedInput-root": {
+                  bgcolor: "action.hover",
+                  borderRadius: "9px",
+                  fontSize: "0.97rem",
+                  lineHeight: 1.55,
+                },
+                "& .MuiOutlinedInput-notchedOutline": {
+                  borderWidth: "1.5px",
+                  borderColor: inspire,
+                },
+              }}
+            />
+            <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
+              <Button
+                onClick={onDone}
+                sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
+              >
+                Done
+              </Button>
+            </Stack>
+          </>
+        ) : (
+          <>
+            <Box
+              role="button"
+              tabIndex={0}
+              onClick={onStartEdit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onStartEdit();
+                }
+              }}
+              sx={{
+                cursor: "text",
+                borderRadius: "6px",
+                paddingBlock: 0.25,
+                paddingInline: 0.5,
+                marginBlock: -0.25,
+                marginInline: -0.5,
+                fontSize: "0.97rem",
+                lineHeight: 1.55,
+                whiteSpace: "pre-wrap",
+                "&:hover": { background: hl },
+              }}
+            >
+              {value.trim().length > 0 ? (
+                value
+              ) : (
+                <Box component="em" sx={{ color: "text.secondary" }}>
+                  Nothing drafted yet — tap to write this in {targetLabel}.
+                </Box>
+              )}
+            </Box>
+            <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>
+              Tap the text to edit
+            </Typography>
+          </>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 export default function TranslateQuestionsScreen({
   book,
   chapter,
@@ -381,7 +602,7 @@ export default function TranslateQuestionsScreen({
   const swipeNav = useSwipeNav({
     onPrev: () => setCursor((c) => Math.max(0, c - 1)),
     onNext: () => setCursor((c) => Math.min(total - 1, c + 1)),
-    enabled: view === "cards" && total > 1,
+    enabled: view === "cards" && total > 1 && !focusMode,
     rtl: targetRtl,
   });
 
@@ -527,16 +748,6 @@ export default function TranslateQuestionsScreen({
     mb: 1,
   };
 
-  const langTagSx = {
-    display: "block",
-    fontSize: "0.656rem",
-    fontWeight: 700,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-    color: "text.secondary",
-    m: 0,
-  };
-
   function Lane({ label, text }: { label: string; text: string | null }) {
     return (
       <Box
@@ -560,144 +771,6 @@ export default function TranslateQuestionsScreen({
             translation-mode workspace whose target lanes have not been drafted yet.
           </Box>
         )}
-      </Box>
-    );
-  }
-
-  // One field pair: the source line (quiet, read-only) directly above the
-  // target line (normal ink, tap-to-edit) — grouped by FIELD, so the eye never
-  // crosses a language boundary between two different fields.
-  function QaPair({ field, sourceText }: { field: Field; sourceText: string | null }) {
-    const value = values[field];
-    const editing = editingField === field;
-    const containerRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
-    // Entering edit mode focuses the textarea without letting the browser's
-    // own autoFocus scroll fire mid-keyboard-open (which, combined with the
-    // same-frame height change on phones, loses the user's place); we drive
-    // the scroll ourselves, a frame later, once layout has settled.
-    useEffect(() => {
-      if (!editing) return;
-      inputRef.current?.focus({ preventScroll: true });
-      const raf = requestAnimationFrame(() => {
-        containerRef.current?.scrollIntoView({ block: "center" });
-      });
-      return () => cancelAnimationFrame(raf);
-    }, [editing]);
-    return (
-      <Box>
-        <Box
-          sx={{
-            bgcolor: "action.hover",
-            borderRadius: "9px",
-            paddingBlock: 1,
-            paddingInline: 1.25,
-            mb: 1,
-          }}
-        >
-          <Box component="span" sx={langTagSx}>
-            {sourceLangLabel}
-          </Box>
-          {sourceText ? (
-            <Typography
-              sx={{ color: "text.secondary", fontSize: "0.94rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}
-            >
-              {sourceText}
-            </Typography>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              {translationMode
-                ? sourceProjection
-                  ? "No published source for this question — it may have been added here rather than translated."
-                  : "No source repository is configured for questions, so there is nothing to compare against."
-                : "This workspace authors questions rather than translating them, so there is no separate source."}
-            </Typography>
-          )}
-        </Box>
-
-        <Box ref={containerRef}>
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
-            <Box component="span" sx={langTagSx}>
-              {targetLabel}
-            </Box>
-            <Box sx={{ ml: "auto" }}>
-              <FlowStatusChip kind={chip.kind} label={chip.label} />
-            </Box>
-          </Stack>
-
-          {editing ? (
-            <>
-              <TextField
-                inputRef={inputRef}
-                multiline
-                fullWidth
-                minRows={3}
-                value={value}
-                onChange={(e) => setValues((prev) => ({ ...prev, [field]: e.target.value }))}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    bgcolor: "action.hover",
-                    borderRadius: "9px",
-                    fontSize: "0.97rem",
-                    lineHeight: 1.55,
-                  },
-                  "& .MuiOutlinedInput-notchedOutline": {
-                    borderWidth: "1.5px",
-                    borderColor: INSPIRE,
-                  },
-                }}
-              />
-              <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
-                <Button
-                  onClick={() => {
-                    setEditingField(null);
-                    if (value !== baselineRef.current[field]) setToast("Draft updated");
-                  }}
-                  sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
-                >
-                  Done
-                </Button>
-              </Stack>
-            </>
-          ) : (
-            <>
-              <Box
-                role="button"
-                tabIndex={0}
-                onClick={() => setEditingField(field)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setEditingField(field);
-                  }
-                }}
-                sx={{
-                  cursor: "text",
-                  borderRadius: "6px",
-                  paddingBlock: 0.25,
-                  paddingInline: 0.5,
-                  marginBlock: -0.25,
-                  marginInline: -0.5,
-                  fontSize: "0.97rem",
-                  lineHeight: 1.55,
-                  whiteSpace: "pre-wrap",
-                  "&:hover": { background: HL },
-                }}
-              >
-                {value.trim().length > 0 ? (
-                  value
-                ) : (
-                  <Box component="em" sx={{ color: "text.secondary" }}>
-                    Nothing drafted yet — tap to write this in {targetLabel}.
-                  </Box>
-                )}
-              </Box>
-              <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>
-                Tap the text to edit
-              </Typography>
-            </>
-          )}
-        </Box>
       </Box>
     );
   }
@@ -1036,7 +1109,27 @@ export default function TranslateQuestionsScreen({
                 />
                 Question
               </Typography>
-              <QaPair field="question" sourceText={sourceQuestion?.question ?? null} />
+              <QaPair
+                field="question"
+                sourceText={sourceQuestion?.question ?? null}
+                value={values.question}
+                editing={editingField === "question"}
+                wide={wide}
+                targetLabel={targetLabel}
+                sourceLangLabel={sourceLangLabel}
+                translationMode={translationMode}
+                hasSourceProjection={sourceProjection !== null}
+                chipKind={chip.kind}
+                chipLabel={chip.label}
+                hl={HL}
+                inspire={INSPIRE}
+                onChange={(v) => setValues((prev) => ({ ...prev, question: v }))}
+                onStartEdit={() => setEditingField("question")}
+                onDone={() => {
+                  setEditingField(null);
+                  if (values.question !== baselineRef.current.question) setToast("Draft updated");
+                }}
+              />
             </Box>
 
             {/* expected answer */}
@@ -1048,7 +1141,27 @@ export default function TranslateQuestionsScreen({
                 />
                 Expected answer
               </Typography>
-              <QaPair field="response" sourceText={sourceQuestion?.response ?? null} />
+              <QaPair
+                field="response"
+                sourceText={sourceQuestion?.response ?? null}
+                value={values.response}
+                editing={editingField === "response"}
+                wide={wide}
+                targetLabel={targetLabel}
+                sourceLangLabel={sourceLangLabel}
+                translationMode={translationMode}
+                hasSourceProjection={sourceProjection !== null}
+                chipKind={chip.kind}
+                chipLabel={chip.label}
+                hl={HL}
+                inspire={INSPIRE}
+                onChange={(v) => setValues((prev) => ({ ...prev, response: v }))}
+                onStartEdit={() => setEditingField("response")}
+                onDone={() => {
+                  setEditingField(null);
+                  if (values.response !== baselineRef.current.response) setToast("Draft updated");
+                }}
+              />
             </Box>
 
             {/* previous / next — hidden in phone focus mode (keyboard-up

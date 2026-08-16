@@ -309,7 +309,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   // button. Wide/desktop behavior is untouched — this is always false there.
   const focusMode = !wide && editing;
   const editorContainerRef = useRef<HTMLDivElement>(null);
-  const editorInputRef = useRef<HTMLInputElement>(null);
+  const editorInputRef = useRef<HTMLTextAreaElement>(null);
 
   const [busy, setBusy] = useState(false);
   const [redoing, setRedoing] = useState(false);
@@ -379,15 +379,39 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   // Entering edit mode focuses the textarea without letting the browser's own
   // autoFocus scroll fire mid-keyboard-open (which, combined with the
   // same-frame height change on phones, loses the user's place); we drive the
-  // scroll ourselves, a frame later, once layout has settled.
+  // scroll ourselves, a frame later, once layout has settled. On wide/desktop
+  // layouts we only reveal the editor if it's actually off-screen (matching
+  // the old autoFocus behavior); on phone we center it, then re-center once
+  // more when the on-screen keyboard finishes opening (visualViewport
+  // 'resize'), since that resize can happen after our first scroll.
   useEffect(() => {
     if (!editing) return;
     editorInputRef.current?.focus({ preventScroll: true });
     const raf = requestAnimationFrame(() => {
-      editorContainerRef.current?.scrollIntoView({ block: "center" });
+      editorContainerRef.current?.scrollIntoView({ block: wide ? "nearest" : "center" });
     });
-    return () => cancelAnimationFrame(raf);
-  }, [editing]);
+    let vv: VisualViewport | undefined;
+    let onResize: (() => void) | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    if (!wide) {
+      vv = window.visualViewport ?? undefined;
+      if (vv) {
+        onResize = () => {
+          editorContainerRef.current?.scrollIntoView({ block: "center" });
+          vv?.removeEventListener("resize", onResize!);
+        };
+        vv.addEventListener("resize", onResize);
+        timeout = setTimeout(() => {
+          vv?.removeEventListener("resize", onResize!);
+        }, 1500);
+      }
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      if (vv && onResize) vv.removeEventListener("resize", onResize);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [editing, wide]);
 
   // ── outbox reconciliation ────────────────────────────────────────────────
   useEffect(
@@ -562,7 +586,7 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
   const swipe = useSwipeNav({
     onPrev: goPrev,
     onNext: goNext,
-    enabled: view === "cards" && total > 0,
+    enabled: view === "cards" && total > 0 && !focusMode,
     rtl: targetRtl,
   });
 
