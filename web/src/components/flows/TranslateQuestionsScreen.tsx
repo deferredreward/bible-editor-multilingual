@@ -486,6 +486,11 @@ export default function TranslateQuestionsScreen({
   const [values, setValues] = useState<Record<Field, string>>({ question: "", response: "" });
   const baselineRef = useRef<Record<Field, string>>({ question: "", response: "" });
   const hydratedKeyRef = useRef<string | null>(null);
+  // The row key the stash effect has actually caught up with. Declared (and
+  // updated) after the stash effect below, so during a row-change commit it
+  // still holds the *outgoing* row's key while the stash effect runs — see
+  // the guard there and issue #167.
+  const stashedKeyRef = useRef<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editingField, setEditingField] = useState<Field | null>(null);
   // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
@@ -551,9 +556,20 @@ export default function TranslateQuestionsScreen({
   // what makes "no save on blur, no save on unmount" safe. Only the dirty fields
   // go into the patch, matching the shape ReviewQueue writes under this key
   // (ReviewQueue.tsx:390-422) so the two never mis-read each other's records.
+  // Guarded against a same-commit race (issue #167): on a row change, the
+  // hydration effect above runs first and synchronously repoints baselineRef
+  // at the *new* row, but `values` in this closure is still the *outgoing*
+  // row's fields until the pending setValues(fallback) flushes on the next
+  // render. Without the guard, this effect would read those stale values
+  // against the already-swapped baseline and stash the old card's text under
+  // the new row's key. stashedKeyRef (updated by the effect below, declared
+  // after this one) still holds the outgoing row's key during this exact
+  // commit, so the mismatch skips the write; the next commit — once `values`
+  // has actually caught up — runs this effect again with a consistent pair.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tq", book, row.id);
+    if (stashedKeyRef.current !== key) return;
     const patch: Record<string, string> = {};
     const baseline: Record<string, string> = {};
     for (const f of FIELDS) {
@@ -575,6 +591,10 @@ export default function TranslateQuestionsScreen({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values, row?.id, row?.version, book]);
+
+  useEffect(() => {
+    stashedKeyRef.current = row ? rowKey("tq", book, row.id) : null;
+  }, [row?.id, book]);
 
   useUnsavedGuard(hasDiff);
 
