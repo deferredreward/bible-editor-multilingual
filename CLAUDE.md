@@ -177,10 +177,12 @@ new admin desk (`#/admin/*` plus the desk rail's More-tools pages).
 admin-facing feature, naming its home on each side (or an explicit gap with the
 GitHub issue that tracks the port). **When you add, move, or remove an
 admin-facing feature or section in either UI, update the map.** The guard
-(`web/src/adminSurfaceMap.test.mjs`, part of `npm --workspace web run test`)
+(`web/src/lib/adminSurfaceMap.test.mjs`, part of `npm --workspace web run test`)
 cross-checks the map against `PreferencesWorkspace`'s `Section` union and
-`AdminDesk`'s nav lists, so an unregistered surface fails the suite with
-instructions. Don't build an admin feature in one UI without either wiring it
+`AdminDesk`'s nav lists, so an unregistered section or nav destination fails the
+suite with instructions. Enforcement is section/page-granular — a feature added
+*inside* an existing section is on your honor plus this rule, not the test.
+Don't build an admin feature in one UI without either wiring it
 into the other or filing the gap issue the map demands. Classic may retire later
 (#173); when it does, classic pointers get deleted entry-by-entry and the map
 remains the desk's feature inventory.

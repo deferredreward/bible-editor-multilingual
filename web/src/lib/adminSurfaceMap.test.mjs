@@ -19,6 +19,9 @@ import { ADMIN_SURFACES } from "../adminSurfaceMap.ts";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => readFileSync(path.join(webRoot, rel), "utf8");
+// Strip line comments before parsing so a future `// note; with a semicolon`
+// inside a type union can't truncate the parse and silently shrink coverage.
+const readStripped = (rel) => read(rel).replace(/\/\/[^\n]*/g, "");
 
 const REGISTER_HINT =
   "Register it in web/src/adminSurfaceMap.ts: point at its home in BOTH UIs, or set the missing side to null " +
@@ -26,7 +29,7 @@ const REGISTER_HINT =
   "See the map header for the rules.";
 
 function parseClassicSections() {
-  const src = read("src/components/PreferencesWorkspace.tsx");
+  const src = readStripped("src/components/PreferencesWorkspace.tsx");
   const m = src.match(/export type Section =([\s\S]*?);/);
   assert.ok(
     m,
@@ -37,8 +40,11 @@ function parseClassicSections() {
   return ids;
 }
 
+// Known limitation (accepted): only literal `hash: "#/…"` rail entries are seen,
+// so a future entry built from a constant or template would escape coverage.
+// Keep More-tools entries literal, or extend this parser when that changes.
 function parseDeskPages() {
-  const src = read("src/components/flows/AdminDesk.tsx");
+  const src = readStripped("src/components/flows/AdminDesk.tsx");
   const um = src.match(/export type AdminSection =([^;]*);/);
   assert.ok(
     um,
@@ -100,10 +106,14 @@ test("map entries point at real code and declare their gaps", () => {
 
     if (e.desk) {
       assert.ok(
+        typeof e.desk.anchor === "string" && e.desk.anchor.length > 0,
+        `Entry "${e.id}" has an empty desk anchor — includes("") passes vacuously; give it a real mount/definition string.`,
+      );
+      assert.ok(
         deskPages.has(e.desk.page),
         `Entry "${e.id}" claims desk page "${e.desk.page}", which is not in AdminDesk's nav (sections: ${[...sections]}, tools: ${[...hashes]}) — stale map entry? Update or remove it.`,
       );
-      const src = read(e.desk.file);
+      const src = readStripped(e.desk.file);
       assert.ok(
         src.includes(e.desk.anchor),
         `Entry "${e.id}": anchor "${e.desk.anchor}" no longer appears in ${e.desk.file} — the feature moved or retired; update the map.`,
