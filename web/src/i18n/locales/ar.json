@@ -32,6 +32,8 @@
     "partSubTitle": "العنوان الفرعي",
     "partBody": "المتن",
     "backToScripture": "العودة إلى النص الكتابي",
+    "hideList": "إخفاء قائمة المقالات",
+    "showList": "إظهار قائمة المقالات",
     "searchPlaceholder": "بحث في المقالات",
     "addArticle": "إضافة «{{id}}»",
     "addUnknownId": "تعذّر العثور على «{{id}}» في المصدر.",

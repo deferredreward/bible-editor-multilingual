@@ -111,3 +111,43 @@ export function useNotePairAxis(): [NotePairAxis, (next: NotePairAxis) => void] 
   }, []);
   return [axis, setNotePairAxis];
 }
+
+// ── Article rail collapse ───────────────────────────────────────────────────
+//
+// Whether the tW/tA article list rail (ArticleWorkspace.tsx and
+// ArticlesScreen.tsx) is fully collapsed to a slim strip. Shared between both
+// article viewers so collapsing it in one carries into the other. Defaults OFF
+// (rail shown) so nothing changes appearance until a translator opts in.
+const ARTICLE_RAIL_COLLAPSED_KEY = "be:articleRailCollapsed";
+
+export function getArticleRailCollapsed(): boolean {
+  try {
+    return localStorage.getItem(ARTICLE_RAIL_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+// Both article views can be mounted independently across navigations, so
+// writes fan out to every mounted reader the same way setNotePairAxis does.
+const articleRailCollapsedListeners = new Set<(collapsed: boolean) => void>();
+
+export function setArticleRailCollapsed(next: boolean): void {
+  try {
+    localStorage.setItem(ARTICLE_RAIL_COLLAPSED_KEY, String(next));
+  } catch {
+    /* quota or private mode — soft fail, still notify so the UI stays live */
+  }
+  for (const listener of articleRailCollapsedListeners) listener(next);
+}
+
+export function useArticleRailCollapsed(): [boolean, (next: boolean) => void] {
+  const [collapsed, setCollapsedState] = useState<boolean>(getArticleRailCollapsed);
+  useEffect(() => {
+    articleRailCollapsedListeners.add(setCollapsedState);
+    return () => {
+      articleRailCollapsedListeners.delete(setCollapsedState);
+    };
+  }, []);
+  return [collapsed, setArticleRailCollapsed];
+}

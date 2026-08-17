@@ -47,6 +47,8 @@ import SaveIcon from "@mui/icons-material/Save";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
+import MenuOpenIcon from "@mui/icons-material/MenuOpen";
+import MenuIcon from "@mui/icons-material/Menu";
 import { FlowNav } from "./FlowNav";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
@@ -56,6 +58,7 @@ import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../../sync/api";
 import { drafts as draftStore, articleKey, type DraftRecord } from "../../sync/drafts";
 import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
+import { useArticleRailCollapsed } from "../../lib/editorPrefs";
 import { MarkdownView } from "../MarkdownView";
 
 type Resource = "tw" | "ta";
@@ -95,6 +98,10 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
   // mutating control is disabled and the reason is stated rather than left to
   // a 403 at click time.
   const canEdit = role !== "viewer";
+
+  const [railCollapsedPref, setRailCollapsedPref] = useArticleRailCollapsed();
+  // Mobile's rail IS the full-screen list pane — it must never collapse there.
+  const railCollapsed = isDesktop && railCollapsedPref;
 
   const [resource, setResource] = useState<Resource>("ta");
   const { units, loading, refetch } = useArticles(isTranslation ? resource : null);
@@ -281,7 +288,26 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
         }}
       >
         {/* ── Rail ── */}
-        {showRail && (
+        {showRail && railCollapsed ? (
+          <Box
+            sx={{
+              width: 40,
+              flexShrink: 0,
+              borderInlineEnd: "1px solid",
+              borderColor: "divider",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              pt: 1,
+            }}
+          >
+            <Tooltip title="Show article list">
+              <IconButton size="small" onClick={() => setRailCollapsedPref(false)}>
+                <MenuIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        ) : showRail ? (
           <Box
             sx={{
               width: isDesktop ? 280 : "100%",
@@ -294,6 +320,15 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
             }}
           >
             <Stack spacing={1} sx={{ p: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
+              {isDesktop && (
+                <Stack direction="row" justifyContent="flex-end">
+                  <Tooltip title="Hide article list">
+                    <IconButton size="small" onClick={() => setRailCollapsedPref(true)}>
+                      <MenuOpenIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              )}
               <TextField
                 size="small"
                 fullWidth
@@ -397,7 +432,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
               )}
             </Box>
           </Box>
-        )}
+        ) : null}
 
         {/* ── Editor ── */}
         {showEditor && (

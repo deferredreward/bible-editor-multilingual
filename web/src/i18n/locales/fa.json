@@ -590,6 +590,8 @@
     "partSubTitle": "زیرعنوان",
     "partBody": "متن",
     "backToScripture": "بازگشت به کتاب‌مقدس",
+    "hideList": "پنهان کردن فهرست مقاله‌ها",
+    "showList": "نمایش فهرست مقاله‌ها",
     "searchPlaceholder": "جستجوی مقاله‌ها",
     "addArticle": "افزودن «{{id}}»",
     "addUnknownId": "«{{id}}» در منبع یافت نشد.",

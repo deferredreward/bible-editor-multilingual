@@ -13,14 +13,17 @@ import {
   ToggleButtonGroup,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import CheckIcon from "@mui/icons-material/Check";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SaveIcon from "@mui/icons-material/Save";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import EditIcon from "@mui/icons-material/Edit";
+import MenuOpenIcon from "@mui/icons-material/MenuOpen";
+import MenuIcon from "@mui/icons-material/Menu";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../sync/api";
 // Aliased: ArticleEditor has its own local `drafts` state (path → text), and an
@@ -30,6 +33,7 @@ import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { pipelineStore, getSessionKey } from "../sync/pipelineStore";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useArticles } from "../hooks/useArticles";
+import { useArticleRailCollapsed } from "../lib/editorPrefs";
 import { MarkdownView } from "./MarkdownView";
 
 type ArticleState = "ai_draft" | "edited" | "validated" | null;
@@ -103,6 +107,13 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
   const { t } = useTranslation();
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
+  // Compact whenever an article is open at the width where the editor's
+  // source|target split is active — that's when the full 280px rail crowds
+  // the "both mode" side-by-side view.
+  const compact = isDesktop && !!articleId;
+  const [railCollapsed, setRailCollapsed] = useArticleRailCollapsed();
 
   const { units, loading, refetch } = useArticles(isTranslation ? resource : null);
 
@@ -231,9 +242,34 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
   return (
     <Box sx={{ height: "100%", display: "flex", minHeight: 0 }}>
       {/* ── Left rail ── */}
+      {railCollapsed ? (
+        <Box
+          sx={{
+            width: 40,
+            flexShrink: 0,
+            borderInlineEnd: "1px solid",
+            borderColor: "divider",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            pt: 1,
+          }}
+        >
+          <Tooltip title={t("articles.showList")}>
+            <IconButton size="small" onClick={() => setRailCollapsed(false)}>
+              <MenuIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={t("articles.backToScripture")}>
+            <IconButton size="small" onClick={onBack}>
+              <ArrowBackIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      ) : (
       <Box
         sx={{
-          width: 280,
+          width: compact ? 170 : 280,
           flexShrink: 0,
           borderInlineEnd: "1px solid",
           borderColor: "divider",
@@ -249,9 +285,14 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
                 <ArrowBackIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }}>
               {t("articles.title")}
             </Typography>
+            <Tooltip title={t("articles.hideList")}>
+              <IconButton size="small" onClick={() => setRailCollapsed(true)}>
+                <MenuOpenIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Stack>
           <ToggleButtonGroup
             size="small"
@@ -339,9 +380,9 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
             filtered.map((a) => {
               const selected = a.id === articleId;
               const unsaved = dirtyArticleIds.has(a.id);
-              return (
+              const entry = (
                 <Box
-                  key={a.id}
+                  key={compact ? undefined : a.id}
                   onClick={() => onNavigate(resource, a.id)}
                   sx={{
                     px: 1.5,
@@ -369,7 +410,7 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {a.id}
+                    {compact ? a.id.split("/").pop() : a.id}
                   </Typography>
                   {unsaved && (
                     // Same warning colour (Kindle) the verse/row editors use for
@@ -387,13 +428,21 @@ export function ArticleWorkspace({ resource, articleId, onNavigate, onBack }: Pr
                       />
                     </Tooltip>
                   )}
-                  <StateChip state={a.state} />
+                  {!compact && <StateChip state={a.state} />}
                 </Box>
+              );
+              return compact ? (
+                <Tooltip key={a.id} title={a.id}>
+                  {entry}
+                </Tooltip>
+              ) : (
+                entry
               );
             })
           )}
         </Box>
       </Box>
+      )}
 
       {/* ── Main pane ── */}
       <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
