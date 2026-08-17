@@ -129,6 +129,7 @@ import { MarkdownView } from "../MarkdownView";
 import { SetupWizard } from "../SetupWizard";
 import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
+import { AiServiceSection } from "../AiServiceSection";
 import { bookName } from "../../lib/bookNames";
 import { AdminDesk } from "./AdminDesk";
 import type { FlowScreenContext } from "./types";
@@ -144,6 +145,7 @@ type SectionKey =
   | "commonIssues"
   | "terminology"
   | "examples"
+  | "aiService"
   | "overrides";
 
 const SECTION_LABELS: Record<SectionKey, string> = {
@@ -153,6 +155,7 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   commonIssues: "Common issues",
   terminology: "Terminology",
   examples: "Examples",
+  aiService: "AI service",
   overrides: "Source overrides",
 };
 
@@ -791,6 +794,26 @@ function ExamplesPanel({ enabled }: { enabled: boolean }) {
   );
 }
 
+// ── AI service ──────────────────────────────────────────────────────────────
+// AiServiceSection (web/src/components/AiServiceSection.tsx) is already a
+// self-contained admin panel — provider/model select, stored-key row, save
+// w/ optimistic concurrency — and was written expecting exactly this "move to
+// an Admin-flow screen" step (see its file-top comment). It renders its own
+// heading, so it's mounted directly rather than wrapped in SectionPanel's
+// title/sub chrome (which would double it up); only the Paper card frame is
+// reused here to match the other sections' outer shape.
+function AiServicePanel() {
+  return (
+    <Paper
+      id="admin-setup-sec-aiService"
+      variant="outlined"
+      sx={{ borderRadius: "14px", overflow: "hidden", scrollMarginTop: "64px", padding: 2 }}
+    >
+      <AiServiceSection />
+    </Paper>
+  );
+}
+
 // ── Source overrides ────────────────────────────────────────────────────────
 // Overrides are stored per book (api/src/bookSource.ts), so the reused
 // BookSourceOverridesPanel needs a book context the artifact's mockup didn't
@@ -878,6 +901,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
         ...(memoryAvailable
           ? (["brief", "instructions", "commonIssues", "terminology", "examples"] as SectionKey[])
           : []),
+        "aiService",
         "overrides",
       ]
     : [];
@@ -1003,6 +1027,8 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
                 <ExamplesPanel enabled={memoryAvailable} />
               </>
             )}
+
+            <AiServicePanel />
 
             <OverridesPanel initialBook={me?.lastBook ?? null} />
           </>
