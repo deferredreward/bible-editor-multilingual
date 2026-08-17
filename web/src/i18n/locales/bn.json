@@ -590,6 +590,8 @@
     "partSubTitle": "উপশিরোনাম",
     "partBody": "মূল অংশ",
     "backToScripture": "শাস্ত্রে ফিরে যান",
+    "hideList": "নিবন্ধ তালিকা লুকান",
+    "showList": "নিবন্ধ তালিকা দেখান",
     "searchPlaceholder": "নিবন্ধ খুঁজুন",
     "addArticle": "\"{{id}}\" যোগ করুন",
     "addUnknownId": "উৎসে \"{{id}}\" খুঁজে পাওয়া যায়নি।",

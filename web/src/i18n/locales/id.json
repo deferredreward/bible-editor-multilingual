@@ -576,6 +576,8 @@
     "partSubTitle": "Subjudul",
     "partBody": "Isi",
     "backToScripture": "Kembali ke Kitab Suci",
+    "hideList": "Sembunyikan daftar artikel",
+    "showList": "Tampilkan daftar artikel",
     "searchPlaceholder": "Cari artikel",
     "addArticle": "Tambah \"{{id}}\"",
     "addUnknownId": "Tidak dapat menemukan \"{{id}}\" di sumber.",

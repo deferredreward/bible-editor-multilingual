@@ -618,6 +618,8 @@
     "partSubTitle": "Подзаголовок",
     "partBody": "Текст",
     "backToScripture": "Назад к Писанию",
+    "hideList": "Скрыть список статей",
+    "showList": "Показать список статей",
     "searchPlaceholder": "Поиск статей",
     "addArticle": "Добавить «{{id}}»",
     "addUnknownId": "Не удалось найти «{{id}}» в источнике.",

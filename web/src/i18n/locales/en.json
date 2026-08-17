@@ -32,6 +32,8 @@
     "partSubTitle": "Subtitle",
     "partBody": "Body",
     "backToScripture": "Back to scripture",
+    "hideList": "Hide article list",
+    "showList": "Show article list",
     "searchPlaceholder": "Search articles",
     "addArticle": "Add \"{{id}}\"",
     "addUnknownId": "Couldn’t find \"{{id}}\" at the source.",

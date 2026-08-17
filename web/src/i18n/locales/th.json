@@ -576,6 +576,8 @@
     "partSubTitle": "ชื่อเรื่องรอง",
     "partBody": "เนื้อหา",
     "backToScripture": "กลับไปยังพระคัมภีร์",
+    "hideList": "ซ่อนรายการบทความ",
+    "showList": "แสดงรายการบทความ",
     "searchPlaceholder": "ค้นหาบทความ",
     "addArticle": "เพิ่ม \"{{id}}\"",
     "addUnknownId": "ไม่พบ \"{{id}}\" ที่แหล่งที่มา",
