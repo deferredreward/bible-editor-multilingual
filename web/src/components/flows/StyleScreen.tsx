@@ -1,25 +1,15 @@
 // TODO(i18n) — flow screens ship English literals until the i18n sweep.
 //
 // l2-style: "Teach the AI our style" (Lead). Port of docs/flows/ui/l2-style.html.
-// IA per that mockup: context-pack export status · Brief · Instructions +
-// Common issues · Terminology · Examples · QA rules · Templates pointer.
+// Post-#187 this screen owns ONLY the style-specific surfaces: context-pack
+// export status, QA rules preview, and the templates-coverage pointer.
 //
-// Two hard-won invariants are carried over from PreferencesWorkspace (PR #146)
-// and must not be re-litigated here:
-//
-//  1. ONE shared version. Brief, Instructions and Common issues all live in the
-//     single `translation_prefs` row, so they share one version number. The
-//     `useTranslationPrefs` hook is lifted to this screen (not per-section) so a
-//     save from any section updates the version every other section will send as
-//     `If-Match` on its next save. A never-saved project returns a synthetic row
-//     with `version: 0` (not a 404), and the first write MUST still send
-//     `If-Match: 0` — `api.putTranslationPrefs` always sends the header, so
-//     passing `prefs.version` through is exactly right; omitting it would 428.
-//  2. A 409 KEEPS the user's edits. Every editor seeds its local draft from
-//     `prefs` exactly once, so a sibling section's save can never overwrite text
-//     being typed. On a 409 we adopt the server's fresh row from the conflict
-//     body (`currentPrefsFromConflict`) purely to fix the version for the retry,
-//     and leave the on-screen draft alone. Nothing the user typed is discarded.
+// The memory sections (Brief / Instructions / Common issues / Terminology /
+// Examples) that used to be duplicated here were removed in #187 — their
+// canonical home is now the admin Setup page (AdminSetupScreen), with classic
+// PreferencesWorkspace keeping its copy until classic retires. The shared-
+// version / 409-conflict save logic for those sections lives with those owners
+// now, not here.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Alert from "@mui/material/Alert";
