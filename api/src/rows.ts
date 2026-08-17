@@ -8,6 +8,7 @@ import { broadcastChapter } from "./wsEvents.ts";
 import { newRowId } from "./rowId.ts";
 import { reopenLaneChecks } from "./laneReopen.ts";
 import { refParts, coveredVersesFromRef } from "./importParsers.ts";
+import { normalizeBookCode, CHAPTER_EXISTS_SQL } from "./rowsCreateGuard.ts";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -223,6 +224,15 @@ rows.post("/:kind", requireEditor, async (c) => {
   const parsed = CREATE_SCHEMA[kind].safeParse(body);
   if (!parsed.success) return c.json({ error: "invalid_body", details: parsed.error.format() }, 400);
   const data = parsed.data as Record<string, unknown>;
+
+  // See rowsCreateGuard.ts for why both of these are needed and what each
+  // one closes off (upstream issue #491).
+  data.book = normalizeBookCode(data.book as string);
+  const chapterExists = await c.env.DB.prepare(CHAPTER_EXISTS_SQL)
+    .bind(data.book, data.chapter)
+    .first<{ ok: number }>();
+  if (!chapterExists) return c.json({ error: "not_found", reason: "unknown_chapter" }, 404);
+
   const userId = currentUserId(c);
 
   // Block new rows while an AI pipeline is running for this chapter — the
