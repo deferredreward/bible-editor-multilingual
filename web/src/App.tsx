@@ -57,6 +57,32 @@ type Location =
   | { view: "translateAlign"; book: string; chapter: number; verse: number; mode: "single" | "dual" }
   | { view: "admin"; section: "team" | "setup" | "workflow" | "progress" };
 
+// The position (book/chapter/verse) a route represents, for recording the
+// user's last location so the Books "Continue" card can jump them back. Returns
+// null for routes that carry no working position — the package hub (#/package/
+// {BOOK} is a book with no chapter/verse: browsing, not working, so it must not
+// overwrite a precise stored position with 1:1) and every non-scripture view.
+//
+// NOTE on view names (#200): the redesign routes the issue targets parse to the
+// `translate*` views, NOT the same-named old-flow views. `#/scripture/{BOOK}
+// [/{CH}]` → `translateScripture` (the `ts` regex claims the 1–2 segment arity
+// ahead of the old 3-segment `scripture`); `#/alignment/{BOOK}/{CH}[/{VS}]` →
+// `translateAlign`. `translateScripture` carries no verse, so it records verse 1.
+function positionFromLoc(loc: Location): { book: string; chapter: number; verse: number } | null {
+  switch (loc.view) {
+    case "chapter":
+    case "translateAlign":
+      return { book: loc.book, chapter: loc.chapter, verse: loc.verse };
+    case "notes":
+      return { book: loc.book, chapter: loc.chapter, verse: loc.verse ?? 1 };
+    case "questions":
+    case "translateScripture":
+      return { book: loc.book, chapter: loc.chapter, verse: 1 };
+    default:
+      return null;
+  }
+}
+
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
 const HomeScreen = lazy(() => import("./components/flows/HomeScreen"));
@@ -400,11 +426,16 @@ export function App() {
   // state — BooksScreen needs to actually re-render when it changes.
   const [livePosition, setLivePosition] = useState<{ book: string; chapter: number; verse: number } | null>(null);
   useEffect(() => {
-    if (loc.view !== "chapter") return;
+    // Track the same routes the server-side push does (classic chapter + the
+    // redesign scripture routes), so the card updates in-session no matter which
+    // UI the translator works in (#200). The prev-comparison keeps this a no-op
+    // when the position is unchanged.
+    const pos = positionFromLoc(loc);
+    if (!pos) return;
     setLivePosition((prev) =>
-      prev && prev.book === loc.book && prev.chapter === loc.chapter && prev.verse === loc.verse
+      prev && prev.book === pos.book && prev.chapter === pos.chapter && prev.verse === pos.verse
         ? prev
-        : { book: loc.book, chapter: loc.chapter, verse: loc.verse },
+        : pos,
     );
   }, [loc]);
 
@@ -439,10 +470,15 @@ export function App() {
   }, [auth]);
 
   // Debounced push of the current location to the server so the next sign-in
-  // on a different device / after a logout can land back here.
+  // on a different device / after a logout can land back here. Records from the
+  // classic chapter view AND the redesign routes (#/scripture, #/alignment,
+  // #/notes, #/questions — see positionFromLoc); the package hub and
+  // non-scripture views map to null and leave the stored position untouched (#200).
   useEffect(() => {
-    if (auth.kind !== "ready" || loc.view !== "chapter") return;
-    const { book, chapter, verse } = loc;
+    if (auth.kind !== "ready") return;
+    const pos = positionFromLoc(loc);
+    if (!pos) return;
+    const { book, chapter, verse } = pos;
     const t = setTimeout(() => {
       void updateLastLocation(book, chapter, verse);
     }, 1500);
