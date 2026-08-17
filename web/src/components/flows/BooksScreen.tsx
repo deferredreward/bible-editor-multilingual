@@ -609,7 +609,7 @@ function BookDetailPanel({
   );
 }
 
-export default function BooksScreen({ role, me, onNavigate, lastPosition }: BooksScreenProps) {
+export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScreenProps) {
   const theme = useTheme();
   const { skip } = theme.palette.flows;
   const gridView = useMediaQuery(theme.breakpoints.up("tablet"));
@@ -715,7 +715,15 @@ export default function BooksScreen({ role, me, onNavigate, lastPosition }: Book
             <MenuItem
               onClick={() => {
                 setMenuAnchor(null);
-                onNavigate(me?.lastBook || "OBA", me?.lastChapter || 1, me?.lastVerse || 1);
+                // Same live position the Continue card uses — `me` is a
+                // boot-time snapshot, so reading it here would send the user
+                // to last session's verse while the card above showed this
+                // session's.
+                onNavigate(
+                  lastPosition?.book ?? "OBA",
+                  lastPosition?.chapter ?? 1,
+                  lastPosition?.verse ?? 1,
+                );
               }}
             >
               <ListItemIcon>
