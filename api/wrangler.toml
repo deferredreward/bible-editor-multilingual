@@ -93,9 +93,15 @@ name = "bible-editor-export-dev"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
-# No [triggers] on the default env: crons are registered only on production
-# (below) so an accidental dev deploy can't double-fire the nightly export.
+# No crons on the default env: they're registered only on production (below)
+# so an accidental dev deploy can't double-fire the nightly export.
 # `wrangler dev --test-scheduled` exposes /__scheduled regardless.
+# This is spelled as an explicit empty list rather than an omitted [triggers]
+# block on purpose — omitting it leaves whatever crons are already attached to
+# the dev script in place, so it can't *guarantee* the dev worker is cron-free.
+# `crons = []` actively clears them on every deploy.
+[triggers]
+crons = []
 
 # Public-safe defaults; secrets go in `wrangler secret put` (DCS_CLIENT_ID,
 # DCS_CLIENT_SECRET, JWT_SIGNING_KEY, DCS_SERVICE_TOKEN, BT_API_TOKEN,
