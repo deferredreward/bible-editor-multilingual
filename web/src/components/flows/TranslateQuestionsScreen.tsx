@@ -343,6 +343,44 @@ function QaPair({
   );
 }
 
+interface LaneProps {
+  label: string;
+  text: string | null;
+  labelFontFamily: string | undefined;
+}
+
+// Read-only scripture reference lane (ULT/UST) shown above a question card.
+//
+// Hoisted to module scope (2026-08-16, nested-component audit, issue #172):
+// same remount-on-every-render risk as the QaPair hoist above — `theme` is
+// now an explicit `labelFontFamily` prop instead of a closed-over value.
+function Lane({ label, text, labelFontFamily }: LaneProps) {
+  return (
+    <Box
+      sx={{
+        bgcolor: "action.hover",
+        borderRadius: "9px",
+        paddingBlock: 1.25,
+        paddingInline: 1.5,
+        fontFamily: SCRIPTURE_FONT_STACK,
+        fontSize: "1.03rem",
+        lineHeight: 1.55,
+        "& + &": { mt: 1 },
+      }}
+    >
+      <Box component="span" sx={{ ...langTagSx, fontFamily: labelFontFamily, mb: 0.375 }}>
+        {label}
+      </Box>
+      {text ?? (
+        <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
+          No {label} text exists for this verse in this workspace. That is normal in a
+          translation-mode workspace whose target lanes have not been drafted yet.
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 export default function TranslateQuestionsScreen({
   book,
   chapter,
@@ -748,33 +786,6 @@ export default function TranslateQuestionsScreen({
     mb: 1,
   };
 
-  function Lane({ label, text }: { label: string; text: string | null }) {
-    return (
-      <Box
-        sx={{
-          bgcolor: "action.hover",
-          borderRadius: "9px",
-          paddingBlock: 1.25,
-          paddingInline: 1.5,
-          fontFamily: SCRIPTURE_FONT_STACK,
-          fontSize: "1.03rem",
-          lineHeight: 1.55,
-          "& + &": { mt: 1 },
-        }}
-      >
-        <Box component="span" sx={{ ...langTagSx, fontFamily: theme.typography.fontFamily, mb: 0.375 }}>
-          {label}
-        </Box>
-        {text ?? (
-          <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
-            No {label} text exists for this verse in this workspace. That is normal in a
-            translation-mode workspace whose target lanes have not been drafted yet.
-          </Box>
-        )}
-      </Box>
-    );
-  }
-
   // md+ list pane: one row per question — verse ref, question preview, the
   // row's status chip (the same chipFor the card uses). Selecting a row moves
   // the SAME cursor the phone Prev/Next buttons drive; from the done view it
@@ -1096,8 +1107,8 @@ export default function TranslateQuestionsScreen({
                   ? `${book} ${row.chapter} intro`
                   : `${book} ${row.chapter}:${row.verse}`}
               </Typography>
-              <Lane label={litLabel} text={ultText} />
-              <Lane label={simLabel} text={ustText} />
+              <Lane label={litLabel} text={ultText} labelFontFamily={theme.typography.fontFamily} />
+              <Lane label={simLabel} text={ustText} labelFontFamily={theme.typography.fontFamily} />
             </Box>
 
             {/* question */}
