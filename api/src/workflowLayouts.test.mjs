@@ -78,13 +78,12 @@ test("every built-in layout passes a structural shape check", () => {
 
 test("translate-* layouts are gated by translationSource", () => {
   const authoringIds = builtinLayoutsFor(authoring).map((l) => l.id);
-  assert.deepEqual(authoringIds, [CLASSIC_LAYOUT_ID, "builtin:flexible"]);
+  assert.deepEqual(authoringIds, [CLASSIC_LAYOUT_ID]);
   assert.ok(!authoringIds.includes("builtin:translate-notes"));
 
   const translationIds = builtinLayoutsFor(translation).map((l) => l.id);
   assert.deepEqual(translationIds, [
     CLASSIC_LAYOUT_ID,
-    "builtin:flexible",
     "builtin:translate-notes",
   ]);
 

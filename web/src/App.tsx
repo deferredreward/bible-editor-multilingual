@@ -49,7 +49,7 @@ type Location =
   | { view: "team" }
   | { view: "observe" }
   | { view: "verse"; book: string; chapter: number; verse: number }
-  | { view: "notes"; book: string; chapter: number }
+  | { view: "notes"; book: string; chapter: number; verse: number | null }
   | { view: "questions"; book: string; chapter: number }
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
@@ -84,9 +84,10 @@ const AdminWorkflowScreen = lazy(() => import("./components/flows/AdminWorkflowS
 const AdminProgressScreen = lazy(() => import("./components/flows/AdminProgressScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
-// Loads faster than ZEC on a cold cache and keeps the default landing page
-// snappy. Bookmarks / direct links still win because parseHash only falls
-// back to this when no hash is present.
+// Used as the fallback book code for partial routes (e.g. a hash with a
+// chapter/verse but no book) and as the initial book for useBook before a
+// chapter view is active. The default landing page is Books (#/books), not
+// a chapter view, so this no longer controls landing-page load weight.
 const DEFAULT_BOOK = "OBA";
 
 // Set when the user explicitly clicks "Sign out". Read at boot to suppress
@@ -133,9 +134,14 @@ function parseHash(): Location {
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
   }
-  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
   if (nt) {
-    return { view: "notes", book: nt[1].toUpperCase(), chapter: nt[2] ? parseInt(nt[2], 10) : 1 };
+    return {
+      view: "notes",
+      book: nt[1].toUpperCase(),
+      chapter: nt[2] ? parseInt(nt[2], 10) : 1,
+      verse: nt[3] ? parseInt(nt[3], 10) : null,
+    };
   }
   const qn = location.hash.match(/^#\/questions\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
   if (qn) {
@@ -205,17 +211,13 @@ function parseHash(): Location {
     };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
-  if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
+  if (!m) return { view: "books" };
   return {
     view: "chapter",
     book: m[1].toUpperCase(),
     chapter: m[2] ? parseInt(m[2], 10) : 1,
     verse: m[3] ? parseInt(m[3], 10) : 1,
   };
-}
-
-function isDefaultLoc(l: Location): boolean {
-  return l.view === "chapter" && l.book === DEFAULT_BOOK && l.chapter === 1 && l.verse === 1;
 }
 
 // Auth gate. The API requires a valid Access cookie for every write, so we
@@ -390,20 +392,6 @@ export function App() {
     navigate(book, chapter, verse);
   };
 
-  // Hydrate from server-side last-position. Fires once per auth session,
-  // only when `loc` is the default book — a bookmarked deep link (which
-  // makes `loc` non-default on mount) always wins. Reset on sign-out so the
-  // next sign-in re-hydrates instead of stranding the user on the default.
-  const hydratedRef = useRef(false);
-  useEffect(() => {
-    if (auth.kind !== "ready" || hydratedRef.current) return;
-    hydratedRef.current = true;
-    const me = auth.me;
-    if (!me?.lastBook || me.lastChapter === null || me.lastVerse === null) return;
-    if (!isDefaultLoc(loc)) return;
-    navigate(me.lastBook, me.lastChapter, me.lastVerse);
-  }, [auth, loc]);
-
   // Workspace reconciliation. The server's be_ws cookie is the source of
   // truth for which org's D1 database we're talking to; localStorage is just
   // the client's mirror, and the outbox's IndexedDB name is derived from it
@@ -559,10 +547,9 @@ export function App() {
     // Strip the URL hash too: leaving #/JON/3 around would confuse the next
     // boot into thinking the user requested a specific verse. Mirror that
     // into React state (replaceState doesn't fire hashchange) so the next
-    // sign-in's hydration sees loc=default and pulls from the server.
+    // sign-in lands on the default Books screen instead of a stale deep link.
     history.replaceState(null, "", location.pathname);
-    setLoc({ view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 });
-    hydratedRef.current = false;
+    setLoc({ view: "books" });
     setAuth({ kind: "missing" });
   };
 
@@ -754,7 +741,7 @@ export function App() {
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "notes" ? (
-              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} />
             ) : loc.view === "questions" ? (
               <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : loc.view === "package" ? (
