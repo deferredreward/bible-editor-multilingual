@@ -44,7 +44,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 import SaveIcon from "@mui/icons-material/Save";
 import UploadIcon from "@mui/icons-material/Upload";
 
-import { FlowNav } from "./FlowNav";
+import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader, workspaceEyebrow } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import {
@@ -208,12 +209,17 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
   const unsavedCount = Object.values(dirty).filter(Boolean).length;
 
   const onConflict = useCallback(() => setConflict(true), []);
+  const eyebrow = workspaceEyebrow(cfg);
 
   return (
-    <Box sx={{ pb: 8 }}>
-      <FlowNav current="style" role={role} />
+    <AdminDesk current="style">
+      <AdminPageHeader
+        eyebrow={eyebrow}
+        title="Style"
+        subtitle="Teach the AI your project's style — brief, instructions, terminology, examples, and QA rules."
+      />
 
-      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2 }}>
+      <Box sx={{ pb: 8 }}>
         <PackStatusBar role={role} />
 
         {/* A real 409 from the shared prefs row. Never auto-dismissed: the user
@@ -360,7 +366,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
           </Stack>
         </Box>
       </Box>
-    </Box>
+    </AdminDesk>
   );
 }
 

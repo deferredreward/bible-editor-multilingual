@@ -137,6 +137,7 @@ import { useTheme } from "@mui/material/styles";
 import RefreshIcon from "@mui/icons-material/Refresh";
 
 import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader, workspaceEyebrow } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import { pipelineStore, type PipelineJob } from "../../sync/pipelineStore";
@@ -438,7 +439,6 @@ const LANES: LaneKey[] = ["lit", "sim"];
 export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenProps) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
-  const ACCENT = dark ? INSPIRE : INSPIRE_DEEP;
 
   const isAdmin = role === "admin";
 
@@ -862,27 +862,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
   return (
     <AdminDesk current="workflow">
-      {/* .admin-head from the artifact — eyebrow · h1 · sub. */}
-      <Box sx={{ mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            fontWeight: 700,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: ACCENT,
-          }}
-        >
-          {cfg ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}` : "Workspace"}
-        </Typography>
-        <Typography variant="h5" component="h1" sx={{ mt: 0.25, letterSpacing: "-0.02em" }}>
-          Workflow
-        </Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5, fontSize: "0.875rem" }}>
-          How book packages move from draft to publish, and the machinery underneath them.
-        </Typography>
-      </Box>
+      <AdminPageHeader
+        eyebrow={workspaceEyebrow(cfg)}
+        title="Workflow"
+        subtitle="How book packages move from draft to publish, and the machinery underneath them."
+      />
 
       {/* ── The 8 steps — descriptive chrome only (no step-state backend) ── */}
       <Panel

@@ -14,9 +14,18 @@
 // - Approve is always rendered, disabled with a real explanation when
 //   translation_state is NULL (§2.14 — the server 404s /validate on a
 //   null-state row, which is every untouched unit in a fresh seed).
-// - The mockup's "no client-side role gate" note is carried over as-is: grep
-//   found no admin/editor check on this route, so this screen doesn't invent
-//   one either.
+// - The mockup's "no client-side role gate" note used to be carried over
+//   as-is here. Issue #186 folded this screen into the AdminDesk shell
+//   (#/curate URL unchanged) and closed that gap: it now gets the same
+//   admin-only gate as the other seven desk pages (see `!isAdmin` below).
+//
+// Layout note (#186): as a standalone screen this used a full-viewport-height
+// Stack with independently scrolling rail/editor panes. AdminDesk is a
+// single-scroll page (the desk, not each child, owns the scrollbar — see
+// AdminDesk.tsx), so that no longer has a real height to fill. The rail's
+// template list gets a bounded `maxHeight` instead of `flex:1` so it still
+// scrolls on its own rather than growing to list length; the editor flows
+// normally and the whole page scrolls with it, same as every other desk page.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -35,7 +44,8 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SearchIcon from "@mui/icons-material/Search";
 
-import { FlowNav } from "./FlowNav";
+import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader, workspaceEyebrow } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import { CurateEditor, curateStateChipKind, curateStateLabel } from "./CurateEditor";
 import type { FlowScreenContext } from "./types";
@@ -61,6 +71,8 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
 
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
+  const isAdmin = role === "admin";
+  const eyebrow = workspaceEyebrow(cfg);
   const { units, loading, error, refetch } = useTemplates(isTranslation);
 
   const [search, setSearch] = useState("");
@@ -161,17 +173,28 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
     return failed > 0 ? `${drafted} drafted, ${failed} failed.` : `${drafted} drafted.`;
   }, [bulkResult]);
 
+  // Same honest admin-only convention as the other seven desk pages (issue
+  // #186 — this route previously had no client-side gate at all).
+  if (!isAdmin) {
+    return (
+      <AdminDesk current="templates">
+        <AdminPageHeader eyebrow={eyebrow} title="Templates" />
+        <Alert severity="info">Templates is admin-only. Your current role is {role}.</Alert>
+      </AdminDesk>
+    );
+  }
+
   if (!isTranslation) {
     return (
-      <Stack sx={{ height: "100%", minHeight: 0 }}>
-        <FlowNav current="curate" role={role} />
-        <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, px: 4 }} spacing={1}>
+      <AdminDesk current="templates">
+        <AdminPageHeader eyebrow={eyebrow} title="Templates" />
+        <Stack alignItems="center" justifyContent="center" sx={{ px: 4, py: 6 }} spacing={1}>
           <Typography variant="h6">Curate note templates</Typography>
           <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
             Note templates are only editable on gateway-language projects.
           </Typography>
         </Stack>
-      </Stack>
+      </AdminDesk>
     );
   }
 
@@ -179,27 +202,27 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
   const showEditor = isDesktop || mobileView === "editor";
 
   return (
-    <Stack sx={{ height: "100%", minHeight: 0 }}>
-      <FlowNav current="curate" role={role} />
+    <AdminDesk current="templates">
+      <AdminPageHeader
+        eyebrow={eyebrow}
+        title="Templates"
+        subtitle="Curate the note templates AI drafts and translators fill in — search, draft with AI, and approve."
+      />
 
-      {/* Mirrored from the mockup, not invented for this screen: grep found no
-          admin/editor gate on this route (TemplateWorkspace.tsx). */}
-      <Alert severity="info" icon={false} sx={{ mx: 2, mt: 1.5, fontSize: 12, py: 0.25 }}>
-        This route has no client-side role gate today — any signed-in user who can reach #/curate can edit here.
-      </Alert>
-
-      <Box sx={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden", mt: 1.5, gap: 2, px: { xs: 0, md: 2 } }}>
+      {/* Rail+editor split, bounded rather than viewport-filled now that this
+          lives inside AdminDesk's single-scroll page (see file header) — the
+          template list scrolls within maxHeight, the editor flows normally. */}
+      <Box sx={{ display: "flex", flexDirection: { xs: "column", md: "row" }, gap: 2 }}>
         {showRail && (
           <Box
             sx={{
-              width: isDesktop ? 280 : "100%",
+              width: { xs: "100%", md: 280 },
               flexShrink: 0,
               display: "flex",
               flexDirection: "column",
-              minHeight: 0,
-              border: { xs: "none", md: "1px solid" },
+              border: "1px solid",
               borderColor: "divider",
-              borderRadius: { md: 1 },
+              borderRadius: 1,
               overflow: "hidden",
             }}
           >
@@ -262,7 +285,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
               </Typography>
             </Box>
 
-            <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }} role="list" aria-label="Template list">
+            <Box sx={{ maxHeight: 480, overflowY: "auto" }} role="list" aria-label="Template list">
               {loading && units.length === 0 ? (
                 <Stack alignItems="center" sx={{ p: 3 }}>
                   <CircularProgress size={20} />
@@ -356,7 +379,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
         )}
 
         {showEditor && (
-          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
             {templateId ? (
               <CurateEditor
                 key={`${templateId}#${editorReload}`}
@@ -369,7 +392,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                 onBack={isDesktop ? undefined : backToRail}
               />
             ) : (
-              <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }}>
+              <Stack alignItems="center" justifyContent="center" sx={{ px: 4, py: 6 }}>
                 <Typography variant="body2" color="text.secondary">
                   {loading ? "Loading templates…" : total === 0 ? "No templates found for this workspace." : "Select a template from the list."}
                 </Typography>
@@ -378,6 +401,6 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
           </Box>
         )}
       </Box>
-    </Stack>
+    </AdminDesk>
   );
 }

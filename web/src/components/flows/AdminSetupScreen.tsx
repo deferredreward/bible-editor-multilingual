@@ -131,6 +131,7 @@ import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
 import { bookName } from "../../lib/bookNames";
 import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader, workspaceEyebrow } from "./AdminPageHeader";
 import type { FlowScreenContext } from "./types";
 
 const INSPIRE = "#31ADE3";
@@ -884,28 +885,12 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
 
   return (
     <AdminDesk current="setup">
+      <AdminPageHeader
+        eyebrow={workspaceEyebrow(cfg)}
+        title="Setup & preferences"
+        subtitle="Configure sources and lanes, and the memory AI drafts are written from."
+      />
       <Stack spacing={2}>
-        <Box>
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "text.secondary",
-            }}
-          >
-            {cfg?.languageTitle ?? cfg?.languageName ?? "Workspace"}
-          </Typography>
-          <Typography variant="h5" sx={{ lineHeight: 1.25 }}>
-            Setup &amp; preferences
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, maxWidth: 640 }}>
-            Configure sources and lanes, and the memory AI drafts are written from.
-          </Typography>
-        </Box>
-
         {!admin ? (
           // Honest admin-only gate — nothing fabricated in its place (same
           // stance as flows/SetupScreen.tsx:75-95).

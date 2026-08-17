@@ -53,7 +53,8 @@ import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
-import { FlowNav } from "./FlowNav";
+import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader, workspaceEyebrow } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import {
@@ -64,6 +65,7 @@ import {
   type PipelineJobRow,
   type PipelineQueueSummary,
 } from "../../sync/api";
+import { useProjectConfig } from "../../hooks/useProjectConfig";
 import { getWorkspaceSlug } from "../../sync/workspace";
 
 export interface ObserveScreenProps extends FlowScreenContext {}
@@ -375,6 +377,8 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const [poolBusyMessage, setPoolBusyMessage] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
+  const cfg = useProjectConfig();
+  const eyebrow = workspaceEyebrow(cfg);
 
   const loadContextPack = useCallback(() => {
     if (!isAdmin) {
@@ -547,9 +551,9 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     // Honest admin-only state — same convention as SetupScreen: no dashboard
     // content leaks to a non-admin role, and nothing is fabricated in its place.
     return (
-      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-        <FlowNav current="observe" role={role} />
-        <Paper variant="outlined" sx={{ p: 3, mt: 3 }}>
+      <AdminDesk current="observe">
+        <AdminPageHeader eyebrow={eyebrow} title="Dashboard" />
+        <Paper variant="outlined" sx={{ p: 3 }}>
           <Typography variant="subtitle1" gutterBottom>
             Admin only
           </Typography>
@@ -566,7 +570,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
             Back to home
           </Button>
         </Paper>
-      </Box>
+      </AdminDesk>
     );
   }
 
@@ -584,24 +588,12 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         : "—";
 
   return (
-    <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-      <FlowNav current="observe" role={role} />
-
-      <Box component="header" sx={{ mt: 2, mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{ display: "block", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "text.secondary" }}
-        >
-          Trust &amp; observe
-        </Typography>
-        <Typography variant="h5" sx={{ mt: 0.25 }}>
-          Dashboard
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, maxWidth: 640 }}>
-          Export runs, AI pipeline jobs, service health, and the context-pack that
-          steers every AI draft.
-        </Typography>
-      </Box>
+    <AdminDesk current="observe">
+      <AdminPageHeader
+        eyebrow={eyebrow}
+        title="Dashboard"
+        subtitle="Export runs, AI pipeline jobs, service health, and the context-pack that steers every AI draft."
+      />
 
       {/* Stat row */}
       <Box
@@ -978,7 +970,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         onRegister={registerSlot}
         onClaim={claimSlot}
       />
-    </Box>
+    </AdminDesk>
   );
 }
 

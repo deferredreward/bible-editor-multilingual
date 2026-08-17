@@ -101,6 +101,7 @@ import { useTheme } from "@mui/material/styles";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 
 import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader, workspaceEyebrow } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import {
@@ -112,6 +113,7 @@ import {
   type PipelineJobRow,
 } from "../../sync/api";
 import { bookName, BOOKS } from "../../lib/bookNames";
+import { useProjectConfig } from "../../hooks/useProjectConfig";
 
 export interface AdminProgressScreenProps extends FlowScreenContext {}
 
@@ -292,6 +294,8 @@ const FEED_LIMIT = 12;
 
 export default function AdminProgressScreen({ role }: AdminProgressScreenProps) {
   const isAdmin = role === "admin";
+  const cfg = useProjectConfig();
+  const eyebrow = workspaceEyebrow(cfg);
 
   const [books, setBooks] = useState<BookListEntry[] | null>(null);
   const [booksError, setBooksError] = useState<string | null>(null);
@@ -462,31 +466,12 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
 
   return (
     <AdminDesk current="progress">
+      <AdminPageHeader
+        eyebrow={eyebrow}
+        title="Progress"
+        subtitle="Every number here is real: book content counts, export runs, and AI pipeline activity. Approval progress has no book-level endpoint yet, so no percent-complete is shown — a bar with no data behind it would be an invented number."
+      />
       <Stack spacing={2}>
-        <Box component="header">
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              fontWeight: 700,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              color: "text.secondary",
-            }}
-          >
-            Admin
-          </Typography>
-          <Typography component="h1" sx={{ fontSize: "1.5rem", fontWeight: 700, m: 0, marginBlockStart: 0.25 }}>
-            Progress
-          </Typography>
-          <Typography variant="body2" color="text.secondary" component="p" sx={{ m: 0, marginBlockStart: 0.25, maxWidth: 640 }}>
-            Every number here is real: book content counts, export runs, and AI
-            pipeline activity. Approval progress has no book-level endpoint yet,
-            so no percent-complete is shown — a bar with no data behind it would
-            be an invented number.
-          </Typography>
-        </Box>
-
         {/* KPI tiles — content counts, not completion. */}
         <Box
           sx={{
