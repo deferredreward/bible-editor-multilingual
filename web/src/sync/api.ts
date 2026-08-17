@@ -1464,6 +1464,21 @@ export interface PipelineQueueSummary {
   queuedCount: number;
 }
 
+// One row from GET /api/exports — a nightly (or manual) export snapshot.
+// Mirrors the SELECT in api/src/exports.ts's GET / handler field-for-field.
+export interface ExportSnapshot {
+  id: number;
+  book: string;
+  resource: string;
+  branch: string | null;
+  commit_sha: string | null;
+  committed_at: number;
+  rows_exported: number;
+  error: string | null;
+  pr_number: number | null;
+  pr_error: string | null;
+}
+
 // Per-project source configuration (api/src/projectConfig.ts). Drives UI
 // labels, direction, the language-pair switcher, and — via translationSource —
 // whether translation-mode UI is shown at all. The English root project has
@@ -2170,6 +2185,30 @@ export const api = {
     request<{ ok: boolean; changed: number }>(
       `/api/pipelines/${encodeURIComponent(jobId)}/notified`,
       { method: "POST", signal },
+    ),
+
+  // ── Nightly export admin surface (api/src/exports.ts) ──
+  // Previously hand-rolled per admin screen (ObserveScreen.tsx's observeFetch,
+  // AdminProgressScreen.tsx's adminGet, AdminWorkflowScreen.tsx's adminFetch)
+  // with duplicated CSRF logic and none of request()'s silent 401-refresh —
+  // see issue #166.
+  exportsList: (limit?: number, signal?: AbortSignal) =>
+    request<{ snapshots: ExportSnapshot[] }>(
+      limit != null ? `/api/exports?limit=${limit}` : `/api/exports`,
+      { signal },
+    ),
+
+  exportsRun: (shrinkOverride?: boolean, signal?: AbortSignal) =>
+    request<{ id: string; status: string }>(`/api/exports/run`, {
+      method: "POST",
+      body: JSON.stringify(shrinkOverride === undefined ? {} : { shrinkOverride }),
+      signal,
+    }),
+
+  exportsInstance: (id: string, signal?: AbortSignal) =>
+    request<{ id: string; status: unknown }>(
+      `/api/exports/instance/${encodeURIComponent(id)}`,
+      { signal },
     ),
 
   getPendingImports: (book: string, chapter: number, signal?: AbortSignal) =>

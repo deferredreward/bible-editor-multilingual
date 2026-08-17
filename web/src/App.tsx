@@ -48,7 +48,14 @@ type Location =
   | { view: "books" }
   | { view: "team" }
   | { view: "observe" }
-  | { view: "verse"; book: string; chapter: number; verse: number };
+  | { view: "verse"; book: string; chapter: number; verse: number }
+  | { view: "notes"; book: string; chapter: number }
+  | { view: "questions"; book: string; chapter: number }
+  | { view: "package"; book: string }
+  | { view: "translateWords"; book: string }
+  | { view: "translateScripture"; book: string; chapter: number }
+  | { view: "translateAlign"; book: string; chapter: number; verse: number; mode: "single" | "dual" }
+  | { view: "admin"; section: "team" | "setup" | "workflow" | "progress" };
 
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
@@ -65,6 +72,16 @@ const BooksScreen = lazy(() => import("./components/flows/BooksScreen"));
 const TeamScreen = lazy(() => import("./components/flows/TeamScreen"));
 const ObserveScreen = lazy(() => import("./components/flows/ObserveScreen"));
 const VerseScreen = lazy(() => import("./components/flows/VerseScreen"));
+const TranslateNotesScreen = lazy(() => import("./components/flows/TranslateNotesScreen"));
+const TranslateQuestionsScreen = lazy(() => import("./components/flows/TranslateQuestionsScreen"));
+const TranslateScriptureScreen = lazy(() => import("./components/flows/TranslateScriptureScreen"));
+const TranslateWordsScreen = lazy(() => import("./components/flows/TranslateWordsScreen"));
+const PackageHubScreen = lazy(() => import("./components/flows/PackageHubScreen"));
+const TranslateAlignScreen = lazy(() => import("./components/flows/TranslateAlignScreen"));
+const AdminTeamScreen = lazy(() => import("./components/flows/AdminTeamScreen"));
+const AdminSetupScreen = lazy(() => import("./components/flows/AdminSetupScreen"));
+const AdminWorkflowScreen = lazy(() => import("./components/flows/AdminWorkflowScreen"));
+const AdminProgressScreen = lazy(() => import("./components/flows/AdminProgressScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
 // Loads faster than ZEC on a cold cache and keeps the default landing page
@@ -116,6 +133,14 @@ function parseHash(): Location {
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
   }
+  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  if (nt) {
+    return { view: "notes", book: nt[1].toUpperCase(), chapter: nt[2] ? parseInt(nt[2], 10) : 1 };
+  }
+  const qn = location.hash.match(/^#\/questions\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  if (qn) {
+    return { view: "questions", book: qn[1].toUpperCase(), chapter: qn[2] ? parseInt(qn[2], 10) : 1 };
+  }
   // Flow screens (docs/flows port). Parameterless routes are single reserved
   // tokens; none collide with 3-letter USFM book codes in the catch-all below.
   if (/^#\/home$/.test(location.hash)) return { view: "home" };
@@ -129,6 +154,44 @@ function parseHash(): Location {
   const cu = location.hash.match(/^#\/curate(?:\/(.+))?$/);
   if (cu) {
     return { view: "curate", templateId: decodeURIComponent(cu[1] ?? "") || null };
+  }
+  // Titus-redesign routes. These deliberately claim the short arities of
+  // #/scripture and #/words ahead of the fv catch-all below: the 1–2 segment
+  // forms open the new translate screens, while the 3-segment (verse-level)
+  // forms still open the old flows screens until those are retired.
+  const pk = location.hash.match(/^#\/package\/([A-Za-z0-9]+)$/);
+  if (pk) {
+    return { view: "package", book: pk[1].toUpperCase() };
+  }
+  const wb = location.hash.match(/^#\/words\/([A-Za-z0-9]+)$/);
+  if (wb) {
+    return { view: "translateWords", book: wb[1].toUpperCase() };
+  }
+  const ts = location.hash.match(/^#\/scripture\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  if (ts) {
+    return {
+      view: "translateScripture",
+      book: ts[1].toUpperCase(),
+      chapter: ts[2] ? parseInt(ts[2], 10) : 1,
+    };
+  }
+  // Redesigned admin desk (#/admin/{section}); AdminDesk renders the rail.
+  const ad = location.hash.match(/^#\/admin\/(team|setup|workflow|progress)$/);
+  if (ad) {
+    return { view: "admin", section: ad[1] as "team" | "setup" | "workflow" | "progress" };
+  }
+  // #/alignment (redesign) is distinct from the old 3-segment #/align, which
+  // still flows to the fv catch-all below. Must sit above the final book-code
+  // catch-all, which is unanchored and would swallow "alignment" as a book.
+  const al = location.hash.match(/^#\/alignment\/([A-Za-z0-9]+)\/(\d+)(?:\/(\d+))?(\/dual)?$/);
+  if (al) {
+    return {
+      view: "translateAlign",
+      book: al[1].toUpperCase(),
+      chapter: parseInt(al[2], 10),
+      verse: al[3] ? parseInt(al[3], 10) : 1,
+      mode: al[4] ? "dual" : "single",
+    };
   }
   const fv = location.hash.match(
     /^#\/(scripture|align|words|verse)(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/,
@@ -651,6 +714,13 @@ export function App() {
           loc.view === "books" ||
           loc.view === "team" ||
           loc.view === "observe" ||
+          loc.view === "notes" ||
+          loc.view === "questions" ||
+          loc.view === "package" ||
+          loc.view === "translateWords" ||
+          loc.view === "translateScripture" ||
+          loc.view === "translateAlign" ||
+          loc.view === "admin" ||
           loc.view === "verse" ? (
           <Suspense
             fallback={
@@ -683,6 +753,28 @@ export function App() {
               <TeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.view === "notes" ? (
+              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+            ) : loc.view === "questions" ? (
+              <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+            ) : loc.view === "package" ? (
+              <PackageHubScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
+            ) : loc.view === "translateWords" ? (
+              <TranslateWordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
+            ) : loc.view === "translateScripture" ? (
+              <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+            ) : loc.view === "translateAlign" ? (
+              <TranslateAlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} mode={loc.mode} />
+            ) : loc.view === "admin" ? (
+              loc.section === "team" ? (
+                <AdminTeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              ) : loc.section === "setup" ? (
+                <AdminSetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              ) : loc.section === "workflow" ? (
+                <AdminWorkflowScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              ) : (
+                <AdminProgressScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              )
             ) : (
               <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
             )}
