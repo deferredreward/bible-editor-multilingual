@@ -378,11 +378,6 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const [draftValue, setDraftValue] = useState("");
   const baselineRef = useRef("");
   const hydratedKeyRef = useRef<string | null>(null);
-  // The row key the stash effect has actually caught up with. Declared (and
-  // updated) after the stash effect below, so during a row-change commit it
-  // still holds the *outgoing* row's key while the stash effect runs — see
-  // the guard there and issue #167.
-  const stashedKeyRef = useRef<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editing, setEditing] = useState(false);
   // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
@@ -408,55 +403,49 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setNotice({ text, severity });
   }, []);
 
-  // Hydrate the editor on card change: a persisted draft (unsaved typing from
-  // this browser) wins over the row's own content.
+  // Hydrate the editor on card change (a persisted draft wins over the row's
+  // own content), and stash every keystroke thereafter. Nothing leaves the
+  // browser here — the draft store is what makes "no save on blur, no save
+  // on unmount" safe.
+  //
+  // Hydration and stashing are deliberately one effect, not two (issue #167).
+  // A two-effect split — a hydrate effect plus a separate stash effect that
+  // detects "did hydration just run this row" via a ref lagging one commit
+  // behind — is fragile: React skips the follow-up render (and thus the
+  // stash effect's next pass) whenever setDraftValue(fallback) receives a
+  // value that's already equal to current state, e.g. the new row's raw
+  // content coincidentally matching the outgoing row's leftover text. A
+  // lagging ref never gets the "catch up" pass it depends on in that case.
+  // Deciding synchronously, within the same pass that detects a row change,
+  // has no dependency on whether a follow-up render actually happens.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tn", book, row.id);
     const nonceKey = `${key}#${reloadNonce}`;
-    if (hydratedKeyRef.current === nonceKey) return;
-    hydratedKeyRef.current = nonceKey;
-    const fallback = unescapeNewlines(row.note);
-    baselineRef.current = fallback;
-    setDraftValue(fallback);
-    setEditing(false);
-    let cancelled = false;
-    void drafts.get(key).then((rec) => {
-      if (cancelled || hydratedKeyRef.current !== nonceKey) return;
-      const payload = rec?.payload as
-        | { patch?: Record<string, unknown>; baseline?: Record<string, unknown> }
-        | undefined;
-      const patchVal = payload?.patch?.note;
-      if (typeof patchVal === "string") setDraftValue(unescapeNewlines(patchVal));
-      const baselineVal = payload?.baseline?.note;
-      if (typeof baselineVal === "string") baselineRef.current = unescapeNewlines(baselineVal);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.id, book, reloadNonce]);
-
-  const hasDiff = draftValue !== baselineRef.current;
-
-  // Stash every keystroke. Nothing leaves the browser here — the draft store is
-  // what makes "no save on blur, no save on unmount" safe.
-  //
-  // Guarded against a same-commit race (issue #167): on a row change, the
-  // hydration effect above runs first and synchronously repoints baselineRef
-  // at the *new* row, but draftValue in this closure is still the *outgoing*
-  // row's text until the pending setDraftValue(fallback) flushes on the next
-  // render. Without the guard, this effect would read that stale draftValue
-  // against the already-swapped baseline and stash the old card's text under
-  // the new row's key. stashedKeyRef (updated by the effect below, declared
-  // after this one) still holds the outgoing row's key during this exact
-  // commit, so the mismatch skips the write; the next commit — once
-  // draftValue has actually caught up — runs this effect again with a
-  // consistent (row, draftValue) pair.
-  useEffect(() => {
-    if (!row) return;
-    const key = rowKey("tn", book, row.id);
-    if (stashedKeyRef.current !== key) return;
+    if (hydratedKeyRef.current !== nonceKey) {
+      hydratedKeyRef.current = nonceKey;
+      const fallback = unescapeNewlines(row.note);
+      baselineRef.current = fallback;
+      setDraftValue(fallback);
+      setEditing(false);
+      let cancelled = false;
+      void drafts.get(key).then((rec) => {
+        if (cancelled || hydratedKeyRef.current !== nonceKey) return;
+        const payload = rec?.payload as
+          | { patch?: Record<string, unknown>; baseline?: Record<string, unknown> }
+          | undefined;
+        const patchVal = payload?.patch?.note;
+        if (typeof patchVal === "string") setDraftValue(unescapeNewlines(patchVal));
+        const baselineVal = payload?.baseline?.note;
+        if (typeof baselineVal === "string") baselineRef.current = unescapeNewlines(baselineVal);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    // Already hydrated for this row/reloadNonce — this pass is a real
+    // keystroke or a resolved draft fetch, safe to compare against the
+    // (settled) baseline.
     if (draftValue !== baselineRef.current) {
       void drafts.set(
         key,
@@ -468,11 +457,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       void drafts.clear(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftValue, row?.id, row?.version, book]);
+  }, [draftValue, row?.id, row?.version, book, reloadNonce]);
 
-  useEffect(() => {
-    stashedKeyRef.current = row ? rowKey("tn", book, row.id) : null;
-  }, [row?.id, book]);
+  const hasDiff = draftValue !== baselineRef.current;
 
   useUnsavedGuard(hasDiff);
 
