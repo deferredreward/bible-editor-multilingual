@@ -32,7 +32,7 @@ import {
   type StringRow,
 } from "../i18n/overrides";
 import { useLocalizationMode, setLocalizationModeEnabled } from "../i18n/localizationMode";
-import { useSaveState } from "./PreferencesWorkspace";
+import { useSaveState } from "./useSaveState";
 
 // ── Localization editor (admin-only; migration 0052) ────────────────────────
 // Edits the CURRENTLY-selected UI language against the English source. English

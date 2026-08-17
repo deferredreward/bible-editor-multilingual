@@ -715,8 +715,9 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
     ? [
         "wizard",
         ...(memoryAvailable
-          ? (["brief", "instructions", "commonIssues", "terminology", "examples", "aiService"] as SectionKey[])
+          ? (["brief", "instructions", "commonIssues", "terminology", "examples"] as SectionKey[])
           : []),
+        "aiService",
         "overrides",
         "localization",
       ]
@@ -833,11 +834,16 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
                   <TerminologySection direction={cfg?.direction ?? "ltr"} />
                 </SectionPanel>
                 <ExamplesPanel enabled={memoryAvailable} />
-                <SectionPanel id="aiService" title="AI service" sub="Provider, model, and API key AI drafts and checks run on.">
-                  <AiServiceSection />
-                </SectionPanel>
               </>
             )}
+
+            {/* AI service is org-wide admin config (provider/model/key), not a
+                translation-memory feature — gate on admin only, matching
+                classic Preferences, so admins on source-language or read-only
+                workspaces can still reach it. */}
+            <SectionPanel id="aiService" title="AI service" sub="Provider, model, and API key AI drafts and checks run on.">
+              <AiServiceSection />
+            </SectionPanel>
 
             <OverridesPanel initialBook={me?.lastBook ?? null} />
 

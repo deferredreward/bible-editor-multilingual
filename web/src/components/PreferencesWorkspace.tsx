@@ -64,6 +64,7 @@ import { AiServiceSection } from "./AiServiceSection";
 import { UiLanguageControl } from "./TopBar";
 import { LocalizationSection } from "./LocalizationSection";
 import { TerminologySection } from "./TerminologySection";
+import { useSaveState } from "./useSaveState";
 
 const EXPORT_STATUS_I18N_KEY: Record<string, string> = {
   running: "preferences.exportStatus.running",
@@ -1059,12 +1060,6 @@ function ContextPackStatusControls() {
   );
 }
 
-// ── Shared save-state helper ───────────────────────────────────────────────
-export function useSaveState() {
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  return { saving, setSaving, msg, setMsg, clear: () => setMsg(null) };
-}
 
 
 // Shared shape returned by the single useTranslationPrefs() lifted to

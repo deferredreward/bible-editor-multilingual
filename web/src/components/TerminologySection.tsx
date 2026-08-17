@@ -29,7 +29,7 @@ import {
   type TermStatus,
 } from "../sync/api";
 import { useTerms } from "../hooks/useTranslationMemory";
-import { useSaveState } from "./PreferencesWorkspace";
+import { useSaveState } from "./useSaveState";
 
 // Term-status → semantic palette (design §10). Not the violet AI identity —
 // status is not an AI-draft state.
