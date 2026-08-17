@@ -144,6 +144,7 @@ The fetch client in `web/src/sync/api.ts` is the only thing that talks to `/api/
 - Routing is hash-based: `#/{book}/{chapter}/{verse}` (see `parseHash` in `App.tsx`). `useBook` is hoisted in `App.tsx` so its chapter cache survives chapter navigation.
 - USFM ↔ JSON via `usfm-js`. Word alignment data is part of the per-verse JSON tree; `\zaln-s`/`\zaln-e` round-trip losslessly. `web/src/lib/alignment.ts` and `web/src/lib/replace.ts` handle smart text edits that preserve alignments when word counts line up.
 - Hebrew Unicode: UHB stores combining marks in legacy "consonant-dagesh-vowel" order; milestones from ZEC/LAM come out NFC. Every Hebrew↔Hebrew compare must go through `nfc()` from `web/src/lib/hebrew.ts` (see `docs/handoff.md` for measured impact).
+- Admin UI has two surfaces in flight — classic (`#/preferences`, `PreferencesWorkspace.tsx`) and the new desk (`#/admin/*` + `AdminDesk`). `web/src/adminSurfaceMap.ts` is the source of truth for which admin feature exists on which surface; `adminSurfaceMap.test.mjs` fails the build if a section/nav entry is added to either UI without a corresponding map entry (or an explicit gap citing an issue number). Adding an admin-facing section or page? Register it there first.
 
 ### Edit engine (`web/src/lib/replace.ts`) — the alignment-preservation claim
 
