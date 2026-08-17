@@ -153,12 +153,16 @@ PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
 # so it must stay pointed at the DB binding — that keeps a cookie-less request
 # behaving exactly as it did before workspaces existed.
 WORKSPACES = '[{"slug":"bsoj","label":"BSOJ (العربية)","org":"BSOJ","binding":"DB"},{"slug":"mltest","label":"BibleEditorMLTest","org":"BibleEditorMLTest","binding":"DB_MLTEST"}]'
+# Empty on purpose — this block DEPLOYS to the public dev worker, and
+# `SUPER_ADMINS = "dev"` there would hand every-workspace admin to whoever
+# registers the (currently unclaimed) username `dev` on git.door43.org.
+# For LOCAL `wrangler dev`, set it in api/.dev.vars instead (never deployed):
+#   SUPER_ADMINS=dev
 # "dev" is the username `/api/auth/dev` mints, which has no DCS access token
-# and therefore no checkable org membership — without this, local dev-auth can
-# never switch workspaces. Signing in through real Door43 OAuth doesn't need
-# it: membership in the org is what grants the switch. Dev only; production
-# below keeps this empty.
-SUPER_ADMINS = "dev"
+# and therefore no checkable org membership — without that line, local
+# dev-auth can't switch workspaces (default-workspace admin still works;
+# mintDevToken self-grants it). Real Door43 OAuth doesn't need it.
+SUPER_ADMINS = ""
 
 # ── PRODUCTION ENV ──────────────────────────────────────────────────────────
 # Activated by `wrangler deploy --env production` (which is what `npm run

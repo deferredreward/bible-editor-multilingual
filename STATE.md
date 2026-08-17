@@ -146,6 +146,19 @@ Highlights that bite repeatedly:
   applies to anything else handed to a Workflow/Queue/alarm rather than a request closure — re-point `this.env`
   explicitly from params at the top of the handler.
 
+- **The deployed dev worker is public — its config is deliberately hardened, don't undo it.**
+  `SUPER_ADMINS` is empty in wrangler.toml's default env (local dev sets `SUPER_ADMINS=dev` in
+  `api/.dev.vars` instead, which never deploys — existing checkouts/worktrees must add that line
+  or workspace switching to mltest and the `/api/workspaces/pool` routes silently 403 locally);
+  `DCS_SERVICE_TOKEN` is intentionally absent from the dev worker's secrets so exports fail
+  closed (`no_service_token`) rather than writing to the real `BibleEditorService` DCS org
+  (`DCS_EXPORT_OWNER` is the same in both envs). Known consequence: the pool routes are
+  super-admin-only, so on the *deployed* dev worker they 403 for everyone — pool flows are
+  local-dev-only until that's revisited (#81/#182). One accepted risk, decided 2026-08-17
+  (PR #180 review, issue #182): `ALLOWED_ORIGINS=""` on the dev worker falls back to localhost
+  credentialed CORS — accepted because the SPA is same-origin and the double-submit CSRF check
+  limits it, and splitting the var would complicate local dev.
+
 ## Stop conditions / goals
 
 - No standing automated loop is wired to this file yet. When one is, record its goal here, e.g.:

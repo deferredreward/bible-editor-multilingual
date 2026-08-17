@@ -39,6 +39,17 @@ foreach ($t in $legacy) {
     }
 }
 
+# Copy api/.dev.vars from the main checkout. It's gitignored, so a fresh
+# worktree lacks it — without it `wrangler dev` has no JWT_SIGNING_KEY (auth
+# 500s) and no SUPER_ADMINS=dev (workspace switching silently 403s; the toml
+# default is deliberately empty because it deploys to the public dev worker).
+$devVarsSrc = Join-Path $mainRoot "api\.dev.vars"
+$devVarsDst = Join-Path $worktreeRoot "api\.dev.vars"
+if ((Test-Path $devVarsSrc) -and -not (Test-Path $devVarsDst)) {
+    Copy-Item $devVarsSrc $devVarsDst
+    Write-Host "copied api/.dev.vars from main checkout"
+}
+
 if (Test-Path (Join-Path $worktreeRoot "node_modules")) {
     Write-Host "node_modules already present (real install) - skipping. Delete it to force a reinstall."
     exit 0

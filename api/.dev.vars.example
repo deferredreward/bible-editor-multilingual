@@ -22,3 +22,10 @@ BT_API_TOKEN=
 # In production set with:
 #   wrangler secret put AI_KEY_WRAPPING_KEY
 AI_KEY_WRAPPING_KEY=
+
+# Local-only super-admin list. "dev" is the username /api/auth/dev mints;
+# granting it super-admin here lets local dev-auth switch to any workspace
+# (mltest etc.). Deliberately NOT set in wrangler.toml — that block deploys
+# to the public dev worker, where a registrable DCS username must not be a
+# super-admin. .dev.vars is read only by `wrangler dev`, never deployed.
+SUPER_ADMINS=dev
