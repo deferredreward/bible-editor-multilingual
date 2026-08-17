@@ -53,6 +53,15 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **The deployed dev worker is public — its config is deliberately hardened, don't undo it.**
+  `SUPER_ADMINS` is empty in wrangler.toml's default env (local dev sets `SUPER_ADMINS=dev` in
+  `api/.dev.vars` instead, which never deploys); `DCS_SERVICE_TOKEN` is intentionally absent from
+  the dev worker's secrets so exports fail closed (`no_service_token`) rather than writing to the
+  real `BibleEditorService` DCS org (`DCS_EXPORT_OWNER` is the same in both envs). One accepted
+  risk, decided 2026-08-17 (PR #180 review, issue #182): `ALLOWED_ORIGINS=""` on the dev worker
+  falls back to localhost credentialed CORS — accepted because the SPA is same-origin and the
+  double-submit CSRF check limits it, and splitting the var would complicate local dev.
+
 - **`user_roles` is prod's live access gate, and migrations can't skip prod.** `callbackDcsAuth`
   checks `user_roles` *before* upserting into `users`, so deleting a row revokes that account's
   ability to mint a JWT and write. Production does **not** yet have the Door43 org-roles
