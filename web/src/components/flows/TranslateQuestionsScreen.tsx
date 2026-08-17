@@ -485,7 +485,14 @@ export default function TranslateQuestionsScreen({
   // One value + one baseline per field; one drafts record for the pair.
   const [values, setValues] = useState<Record<Field, string>>({ question: "", response: "" });
   const baselineRef = useRef<Record<Field, string>>({ question: "", response: "" });
+  // "Hydration for this key has started" — set synchronously, guards against
+  // re-entering the hydrate branch and against a stale async lookup landing
+  // after a newer row change.
   const hydratedKeyRef = useRef<string | null>(null);
+  // "Hydration for this key has FULLY settled" (sync setup *and* the async
+  // drafts.get() lookup resolved) — deliberately React state, not a ref. See
+  // issue #167 and the comment on the hydrate/stash effects below.
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editingField, setEditingField] = useState<Field | null>(null);
   // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
@@ -505,42 +512,28 @@ export default function TranslateQuestionsScreen({
     setNotice({ text, severity });
   }, []);
 
-  // Hydrate both fields on card change (a persisted draft wins over the
-  // row's own content), and stash every keystroke thereafter. Nothing leaves
-  // the browser here — the draft store is what makes "no save on blur, no
-  // save on unmount" safe. Only the dirty fields go into the patch, matching
-  // the shape ReviewQueue writes under this key (ReviewQueue.tsx:390-422) so
-  // the two never mis-read each other's records.
-  //
-  // Hydration and stashing are deliberately one effect, not two (issue #167,
-  // same fix as TranslateNotesScreen.tsx). `setValues` always receives a
-  // fresh object literal here, so React's identical-value render bailout
-  // doesn't literally apply to this file the way it does to Notes' plain
-  // string state — but a two-effect split with a lagging "did hydration run"
-  // ref is still the wrong shape to depend on: it's fragile by construction,
-  // coupled to render-timing rather than to the hydration event itself.
-  // Deciding synchronously, within the same pass that detects a row change,
-  // has no such dependency, and keeps both editors on one proven pattern.
+  // Hydrate both fields on card change: a persisted draft (unsaved typing
+  // from this browser) wins over the row's own content.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tq", book, row.id);
     const nonceKey = `${key}#${reloadNonce}`;
-    if (hydratedKeyRef.current !== nonceKey) {
-      hydratedKeyRef.current = nonceKey;
-      const fallback: Record<Field, string> = {
-        question: unescapeNewlines(row.question),
-        response: unescapeNewlines(row.response),
-      };
-      baselineRef.current = { ...fallback };
-      setValues(fallback);
-      setEditingField(null);
-      let cancelled = false;
-      void drafts.get(key).then((rec) => {
-        if (cancelled || hydratedKeyRef.current !== nonceKey) return;
-        const payload = rec?.payload as
-          | { patch?: Record<string, unknown>; baseline?: Record<string, unknown> }
-          | undefined;
-        if (!payload) return;
+    if (hydratedKeyRef.current === nonceKey) return;
+    hydratedKeyRef.current = nonceKey;
+    const fallback: Record<Field, string> = {
+      question: unescapeNewlines(row.question),
+      response: unescapeNewlines(row.response),
+    };
+    baselineRef.current = { ...fallback };
+    setValues(fallback);
+    setEditingField(null);
+    let cancelled = false;
+    void drafts.get(key).then((rec) => {
+      if (cancelled || hydratedKeyRef.current !== nonceKey) return;
+      const payload = rec?.payload as
+        | { patch?: Record<string, unknown>; baseline?: Record<string, unknown> }
+        | undefined;
+      if (payload) {
         const nextValues = { ...fallback };
         const nextBaseline = { ...fallback };
         for (const f of FIELDS) {
@@ -551,14 +544,61 @@ export default function TranslateQuestionsScreen({
         }
         baselineRef.current = nextBaseline;
         setValues(nextValues);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    // Already hydrated for this row/reloadNonce — this pass is a real
-    // keystroke or a resolved draft fetch, safe to compare against the
-    // (settled) baseline.
+      }
+      // Mark this key fully settled — sync setup AND the async lookup have
+      // both landed — whether or not a persisted draft was found. This is
+      // STATE, not a ref: setting it is guaranteed to produce a render/effect
+      // pass, so the stash effect below is never left waiting on a pass that
+      // depends on some *other* setState call happening to fire too. See
+      // issue #167 (two separate bugs fixed by this split, both documented
+      // on the stash effect).
+      setSettledKey(nonceKey);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.id, book, reloadNonce]);
+
+  const dirtyFields = FIELDS.filter((f) => values[f] !== baselineRef.current[f]);
+  const hasDiff = dirtyFields.length > 0;
+
+  // Stash every keystroke. Nothing leaves the browser here — the draft store
+  // is what makes "no save on blur, no save on unmount" safe. Only the dirty
+  // fields go into the patch, matching the shape ReviewQueue writes under
+  // this key (ReviewQueue.tsx:390-422) so the two never mis-read each
+  // other's records.
+  //
+  // Guarded on settledKey, not merely on "hydration started" (issue #167,
+  // two related bugs found in review):
+  //
+  // 1. A guard based on a REF that lags one commit behind row?.id (the
+  //    original attempt) assumed the hydration effect's setValues always
+  //    produces a follow-up render for the lagging ref to catch up on —
+  //    which held for this file (setValues always gets a fresh object
+  //    literal) but not for TranslateNotesScreen.tsx's plain string state,
+  //    so both files were moved off that shape together.
+  // 2. A guard based on hydratedKeyRef ALONE (set synchronously the instant
+  //    hydration *starts*, the second attempt) is worse: it treats the
+  //    hydrate effect's own synchronous setValues(fallback) commit as
+  //    "already hydrated," so this effect can run — and call drafts.clear()
+  //    — before the async drafts.get() lookup has resolved. Concretely: row
+  //    change to B (which has a persisted draft) → hydrate branch sets
+  //    baseline=fallback, calls setValues(fallback) (a REAL render, fresh
+  //    object) → THIS effect re-runs in the very next commit, sees
+  //    values === baseline field-for-field (both "fallback," since the
+  //    async lookup hasn't overwritten it yet) → clears the persisted draft
+  //    in IndexedDB before it was ever read.
+  //
+  // settledKey is set only from inside the async lookup's .then(), so it
+  // can't go true until the read has actually completed — independent of
+  // whichever setState calls happen to fire along the way, in either
+  // effect.
+  useEffect(() => {
+    if (!row) return;
+    const key = rowKey("tq", book, row.id);
+    const nonceKey = `${key}#${reloadNonce}`;
+    if (settledKey !== nonceKey) return;
     const patch: Record<string, string> = {};
     const baseline: Record<string, string> = {};
     for (const f of FIELDS) {
@@ -579,10 +619,7 @@ export default function TranslateQuestionsScreen({
       void drafts.clear(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [values, row?.id, row?.version, book, reloadNonce]);
-
-  const dirtyFields = FIELDS.filter((f) => values[f] !== baselineRef.current[f]);
-  const hasDiff = dirtyFields.length > 0;
+  }, [values, row?.id, row?.version, book, reloadNonce, settledKey]);
 
   useUnsavedGuard(hasDiff);
 

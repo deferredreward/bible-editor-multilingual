@@ -377,7 +377,14 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // ── editor state ─────────────────────────────────────────────────────────
   const [draftValue, setDraftValue] = useState("");
   const baselineRef = useRef("");
+  // "Hydration for this key has started" — set synchronously, guards against
+  // re-entering the hydrate branch and against a stale async lookup landing
+  // after a newer row change.
   const hydratedKeyRef = useRef<string | null>(null);
+  // "Hydration for this key has FULLY settled" (sync setup *and* the async
+  // drafts.get() lookup resolved) — deliberately React state, not a ref. See
+  // issue #167 and the comment on the hydrate/stash effects below.
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editing, setEditing] = useState(false);
   // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
@@ -403,49 +410,78 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setNotice({ text, severity });
   }, []);
 
-  // Hydrate the editor on card change (a persisted draft wins over the row's
-  // own content), and stash every keystroke thereafter. Nothing leaves the
-  // browser here — the draft store is what makes "no save on blur, no save
-  // on unmount" safe.
-  //
-  // Hydration and stashing are deliberately one effect, not two (issue #167).
-  // A two-effect split — a hydrate effect plus a separate stash effect that
-  // detects "did hydration just run this row" via a ref lagging one commit
-  // behind — is fragile: React skips the follow-up render (and thus the
-  // stash effect's next pass) whenever setDraftValue(fallback) receives a
-  // value that's already equal to current state, e.g. the new row's raw
-  // content coincidentally matching the outgoing row's leftover text. A
-  // lagging ref never gets the "catch up" pass it depends on in that case.
-  // Deciding synchronously, within the same pass that detects a row change,
-  // has no dependency on whether a follow-up render actually happens.
+  // Hydrate the editor on card change: a persisted draft (unsaved typing from
+  // this browser) wins over the row's own content.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tn", book, row.id);
     const nonceKey = `${key}#${reloadNonce}`;
-    if (hydratedKeyRef.current !== nonceKey) {
-      hydratedKeyRef.current = nonceKey;
-      const fallback = unescapeNewlines(row.note);
-      baselineRef.current = fallback;
-      setDraftValue(fallback);
-      setEditing(false);
-      let cancelled = false;
-      void drafts.get(key).then((rec) => {
-        if (cancelled || hydratedKeyRef.current !== nonceKey) return;
-        const payload = rec?.payload as
-          | { patch?: Record<string, unknown>; baseline?: Record<string, unknown> }
-          | undefined;
-        const patchVal = payload?.patch?.note;
-        if (typeof patchVal === "string") setDraftValue(unescapeNewlines(patchVal));
-        const baselineVal = payload?.baseline?.note;
-        if (typeof baselineVal === "string") baselineRef.current = unescapeNewlines(baselineVal);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    // Already hydrated for this row/reloadNonce — this pass is a real
-    // keystroke or a resolved draft fetch, safe to compare against the
-    // (settled) baseline.
+    if (hydratedKeyRef.current === nonceKey) return;
+    hydratedKeyRef.current = nonceKey;
+    const fallback = unescapeNewlines(row.note);
+    baselineRef.current = fallback;
+    setDraftValue(fallback);
+    setEditing(false);
+    let cancelled = false;
+    void drafts.get(key).then((rec) => {
+      if (cancelled || hydratedKeyRef.current !== nonceKey) return;
+      const payload = rec?.payload as
+        | { patch?: Record<string, unknown>; baseline?: Record<string, unknown> }
+        | undefined;
+      const patchVal = payload?.patch?.note;
+      if (typeof patchVal === "string") setDraftValue(unescapeNewlines(patchVal));
+      const baselineVal = payload?.baseline?.note;
+      if (typeof baselineVal === "string") baselineRef.current = unescapeNewlines(baselineVal);
+      // Mark this key fully settled — sync setup AND the async lookup have
+      // both landed — whether or not a persisted draft was found. This is
+      // STATE, not a ref: setting it is guaranteed to produce a render/effect
+      // pass, so the stash effect below is never left waiting on a pass that
+      // depends on some *other* setState call happening to fire too. See
+      // issue #167 (two separate bugs fixed by this split, both documented
+      // on the stash effect).
+      setSettledKey(nonceKey);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.id, book, reloadNonce]);
+
+  const hasDiff = draftValue !== baselineRef.current;
+
+  // Stash every keystroke. Nothing leaves the browser here — the draft store
+  // is what makes "no save on blur, no save on unmount" safe.
+  //
+  // Guarded on settledKey, not merely on "hydration started" (issue #167,
+  // two related bugs found in review):
+  //
+  // 1. A guard based on a REF that lags one commit behind row?.id (the
+  //    original attempt) assumed the hydration effect's setDraftValue always
+  //    produces a follow-up render for the lagging ref to catch up on. React
+  //    skips that render when the new row's raw content happens to be
+  //    Object.is-equal to the outgoing row's leftover text, silently
+  //    breaking the guard for that row.
+  // 2. A guard based on hydratedKeyRef ALONE (set synchronously the instant
+  //    hydration *starts*, the second attempt) is worse: it treats the
+  //    hydrate effect's own synchronous setDraftValue(fallback) commit as
+  //    "already hydrated," so this effect can run — and call drafts.clear()
+  //    — before the async drafts.get() lookup has resolved. Concretely: row
+  //    change to B (which has a persisted draft) → hydrate branch sets
+  //    baseline=fallback, calls setDraftValue(fallback) (a REAL render,
+  //    since B's fallback differs from the outgoing row's text) → THIS
+  //    effect re-runs in the very next commit, sees draftValue === baseline
+  //    (both "fallback," since the async lookup hasn't overwritten it yet)
+  //    → clears the persisted draft in IndexedDB before it was ever read.
+  //
+  // settledKey is set only from inside the async lookup's .then(), so it
+  // can't go true until the read has actually completed — independent of
+  // whichever setState calls happen to fire along the way, in either
+  // effect.
+  useEffect(() => {
+    if (!row) return;
+    const key = rowKey("tn", book, row.id);
+    const nonceKey = `${key}#${reloadNonce}`;
+    if (settledKey !== nonceKey) return;
     if (draftValue !== baselineRef.current) {
       void drafts.set(
         key,
@@ -457,9 +493,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       void drafts.clear(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftValue, row?.id, row?.version, book, reloadNonce]);
-
-  const hasDiff = draftValue !== baselineRef.current;
+  }, [draftValue, row?.id, row?.version, book, reloadNonce, settledKey]);
 
   useUnsavedGuard(hasDiff);
 
