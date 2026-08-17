@@ -147,8 +147,6 @@ import {
   type ExportSnapshot,
   type LanePublicState,
   type LaneReplacementJobResponse,
-  type PipelineState,
-  type PipelineType,
   type ProjectConfig,
 } from "../../sync/api";
 
@@ -160,62 +158,10 @@ const OCEAN = "#014263";
 
 // ── formatting helpers ───────────────────────────────────────────────────────
 
-function timeAgo(unixSeconds: number | null | undefined): string {
-  if (!unixSeconds) return "—";
-  const deltaMs = Date.now() - unixSeconds * 1000;
-  const mins = Math.round(deltaMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} hr${hrs === 1 ? "" : "s"} ago`;
-  return `${Math.round(hrs / 24)} day(s) ago`;
-}
-
 function fmtDateTime(unixSeconds: number | null | undefined): string {
   if (!unixSeconds) return "—";
   const d = new Date(unixSeconds * 1000);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
-}
-
-// Real backend enum labels — mirrors AiScreen.tsx:65-70 (same limitation
-// documented there: PipelineJobRow carries no resourceType, so every
-// "translate" job gets the one generic label).
-const TYPE_LABEL: Record<PipelineType, string> = {
-  generate: "Generate ULT + UST",
-  notes: "Write translation notes",
-  tqs: "Write translation questions",
-  translate: "Translate chapter",
-};
-
-function scopeOf(job: PipelineJob): string {
-  if (!job.book) return "Articles"; // article (tw/ta) translate jobs carry no book/chapter
-  return job.start_chapter === job.end_chapter
-    ? `${job.book} ${job.start_chapter}`
-    : `${job.book} ${job.start_chapter}–${job.end_chapter}`;
-}
-
-function stateChipKind(state: PipelineState): "ok" | "warn" | "skip" {
-  if (state === "done") return "ok";
-  if (state === "failed") return "warn";
-  return "skip"; // queued / dispatching / running / paused_* / cancelled
-}
-
-const STATE_LABEL: Record<PipelineState, string> = {
-  queued: "Queued",
-  dispatching: "Dispatching",
-  running: "Running",
-  paused_for_outage: "Paused · outage",
-  paused_for_usage_limit: "Paused · usage limit",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  done: "Done",
-};
-
-function progressText(job: PipelineJob): string {
-  if (job.state === "queued") {
-    return job.queue_position != null ? `#${job.queue_position} in line` : "queued";
-  }
-  return job.current_status || job.current_skill || job.state;
 }
 
 // ── the 8 steps (descriptive only — no backend state, see header) ───────────
@@ -436,7 +382,7 @@ const BOOK_FAILED_STATUSES = new Set(["retryable_error", "failed"]);
 type LaneKey = "lit" | "sim";
 const LANES: LaneKey[] = ["lit", "sim"];
 
-export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenProps) {
+export default function AdminWorkflowScreen({ role }: AdminWorkflowScreenProps) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
 
@@ -448,7 +394,6 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
   const [jobs, setJobs] = useState<PipelineJob[]>([]);
   const [pipelineRefreshing, setPipelineRefreshing] = useState(false);
-  const [cancelling, setCancelling] = useState<string | null>(null);
 
   const [laneJobs, setLaneJobs] = useState<Partial<Record<LaneKey, LaneReplacementJobResponse>>>({});
   const [laneBusy, setLaneBusy] = useState<LaneKey | null>(null);
@@ -560,18 +505,6 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   }, [isAdmin, litJobId, simJobId]);
 
   // ── verbs ──
-
-  const handleCancelJob = async (job: PipelineJob) => {
-    setCancelling(job.job_id);
-    try {
-      const res = await pipelineStore.cancel(job.job_id);
-      setMsg(res.ok ? "Job cancelled." : `Too late to cancel — the job is already ${res.state ?? "moving"}.`);
-    } catch (e) {
-      setMsg(e instanceof ApiError ? `Cancel failed (HTTP ${e.status})` : "Cancel failed");
-    } finally {
-      setCancelling(null);
-    }
-  };
 
   const handleToggleConfirmed = async () => {
     if (!confirmToggle || !cfg?.laneState) return;
@@ -957,90 +890,14 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             Refresh
           </Button>
         }
-        flush
-        foot={
-          <>
-            <Typography variant="caption" sx={{ fontVariantNumeric: "tabular-nums" }}>
-              {jobCounts.running} running · {jobCounts.queued} queued · {jobCounts.paused} paused ·{" "}
-              {jobCounts.failed} failed · {jobCounts.done} done
-            </Typography>
-            <Box sx={{ marginInlineStart: "auto" }} />
-            <Typography variant="caption">
-              Retrying a failed run lives on the AI screen; only your own queued jobs can be cancelled.
-            </Typography>
-          </>
-        }
       >
-        {jobs.length === 0 ? (
-          <Box sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              No pipeline jobs right now. Runs started from the editor (or the AI screen) appear here.
-            </Typography>
-          </Box>
-        ) : (
-          <Box sx={{ overflowX: "auto" }}>
-            <Table size="small" sx={{ minWidth: 720 }}>
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={thSx}>Scope</TableCell>
-                  <TableCell sx={thSx}>Type</TableCell>
-                  <TableCell sx={thSx}>State</TableCell>
-                  <TableCell sx={thSx}>Progress</TableCell>
-                  <TableCell sx={thSx}>Started</TableCell>
-                  <TableCell sx={thSx}>Requested by</TableCell>
-                  <TableCell sx={thSx} />
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {jobs.map((j) => {
-                  const mine = me != null && j.user_id === me.userId;
-                  return (
-                    <TableRow key={j.job_id} hover>
-                      <TableCell sx={{ ...tdSx, fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {scopeOf(j)}
-                      </TableCell>
-                      <TableCell sx={tdSx}>{TYPE_LABEL[j.pipeline_type] ?? j.pipeline_type}</TableCell>
-                      <TableCell sx={tdSx}>
-                        <FlowStatusChip kind={stateChipKind(j.state)} label={STATE_LABEL[j.state] ?? j.state} />
-                      </TableCell>
-                      <TableCell sx={{ ...tdSx, color: "text.secondary", maxWidth: 260 }}>
-                        <Typography variant="body2" noWrap title={progressText(j)}>
-                          {progressText(j)}
-                        </Typography>
-                        {j.state === "failed" && j.error_kind && (
-                          <Typography
-                            variant="caption"
-                            sx={{ color: theme.palette.flows.warn.ink, display: "block" }}
-                          >
-                            {j.error_kind}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell sx={{ ...tdSx, whiteSpace: "nowrap", color: "text.secondary" }}>
-                        {timeAgo(j.created_at)}
-                      </TableCell>
-                      <TableCell sx={{ ...tdSx, color: "text.secondary" }}>
-                        {mine ? "You" : (j.started_by_username ?? "—")}
-                      </TableCell>
-                      <TableCell sx={{ ...tdSx, whiteSpace: "nowrap" }}>
-                        {j.state === "queued" && mine && (
-                          <Button
-                            size="small"
-                            color="warning"
-                            disabled={cancelling === j.job_id}
-                            onClick={() => void handleCancelJob(j)}
-                          >
-                            Cancel
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </Box>
-        )}
+        <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
+          {jobCounts.running} running · {jobCounts.queued} queued · {jobCounts.paused} paused ·{" "}
+          {jobCounts.failed} failed · {jobCounts.done} done
+        </Typography>
+        <Link component="button" type="button" variant="body2" onClick={() => { location.hash = "#/ai"; }} sx={{ mt: 1, display: "inline-block" }}>
+          Open AI studio
+        </Link>
       </Panel>
 
       {/* ── Scripture source — real lane state, conservative verbs ── */}

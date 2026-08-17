@@ -18,8 +18,6 @@
 //     live data (there's no "list registered crons" endpoint)
 //   - Spare workspace pool  -> GET  /api/workspaces/pool (super-admin only;
 //     a plain admin gets an honest 403, not an empty table)
-//   - Workflow stages       -> no backend (docs/flows/02-architecture.md D2);
-//     up/down reorder buttons only, no native drag-and-drop, no persistence
 //
 // GET/POST /api/exports* are wrapped in sync/api.ts (api.exportsList/
 // exportsRun/exportsInstance — issue #166), so they get the same silent
@@ -42,6 +40,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
@@ -52,7 +51,6 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import { useTheme } from "@mui/material/styles";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
@@ -64,7 +62,6 @@ import {
   type ContextExportStatus,
   type ExportSnapshot,
   type PipelineJobRow,
-  type PipelineQueueSummary,
 } from "../../sync/api";
 import { getWorkspaceSlug } from "../../sync/workspace";
 
@@ -159,17 +156,6 @@ const CONTEXT_PACK_LABELS: Record<string, string> = {
   shrink_refused: "Refused (shrink guard)",
 };
 
-const JOB_STATE_CHIP: Record<PipelineJobRow["state"], { kind: "draft" | "approved" | "edited" | "trashed" | "warn"; label: string }> = {
-  queued: { kind: "draft", label: "queued" },
-  dispatching: { kind: "edited", label: "dispatching" },
-  running: { kind: "edited", label: "running" },
-  paused_for_outage: { kind: "warn", label: "paused (outage)" },
-  paused_for_usage_limit: { kind: "warn", label: "paused (usage limit)" },
-  failed: { kind: "warn", label: "failed" },
-  cancelled: { kind: "trashed", label: "cancelled" },
-  done: { kind: "approved", label: "done" },
-};
-
 // ── Small presentational helpers ────────────────────────────────────────────
 
 function Panel({ title, subtitle, action, children, foot }: {
@@ -232,116 +218,6 @@ function StatTile({ label, value, sub }: { label: string; value: ReactNode; sub?
   );
 }
 
-// ── Workflow stages preview (no backend — D2) ───────────────────────────────
-
-const INITIAL_STAGES = [
-  "Draft",
-  "Peer check",
-  "Source check",
-  "Align",
-  "Translate resources",
-  "Harmonize",
-  "Final validation",
-  "Publish",
-];
-
-function WorkflowStagesCard() {
-  const theme = useTheme();
-  const [stages, setStages] = useState<string[]>(INITIAL_STAGES);
-
-  function move(i: number, dir: -1 | 1) {
-    const j = i + dir;
-    if (j < 0 || j >= stages.length) return;
-    setStages((prev) => {
-      const next = prev.slice();
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
-  }
-
-  return (
-    <Panel
-      title="Workflow stages"
-      subtitle="A preview of a future stage-sequence editor. Fixed backbone steps, reordered with up/down buttons — never native drag-and-drop, per the known hit-testing trap."
-      action={<Chip size="small" label="No backend yet" sx={{ bgcolor: theme.palette.flows.skip.soft, color: theme.palette.flows.skip.ink, fontWeight: 600 }} />}
-      foot={
-        <Typography variant="caption" color="text.secondary">
-          Stage configuration has no backend today — reordering here is local to this tab and is not persisted anywhere.
-        </Typography>
-      }
-    >
-      <Box role="list" aria-label="Workflow stages (preview only)" sx={{ display: "flex", gap: 1, overflowX: "auto", pb: 0.5 }}>
-        {stages.map((name, i) => (
-          <Box
-            key={name}
-            role="listitem"
-            sx={{
-              flex: "none",
-              minWidth: 168,
-              border: "1.5px solid",
-              borderColor: "divider",
-              bgcolor: "action.hover",
-              borderRadius: 1.5,
-              p: 1.25,
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.75,
-            }}
-          >
-            <Stack direction="row" alignItems="center" gap={0.75}>
-              <Box
-                aria-hidden="true"
-                sx={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: "50%",
-                  bgcolor: "primary.main",
-                  color: "#fff",
-                  fontSize: "0.68rem",
-                  fontWeight: 700,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flex: "none",
-                }}
-              >
-                {i + 1}
-              </Box>
-              <Typography sx={{ fontWeight: 700, fontSize: "0.85rem", flex: 1 }}>{name}</Typography>
-            </Stack>
-            <Stack direction="row" gap={0.5}>
-              <Chip size="small" variant="outlined" label="Literal" />
-              <Chip size="small" variant="outlined" label="Notes" />
-            </Stack>
-            <Stack direction="row" gap={0.5}>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => move(i, -1)}
-                disabled={i === 0}
-                aria-label={`Move ${name} up`}
-                sx={{ minWidth: 32, minHeight: 32, p: 0 }}
-              >
-                ▲
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => move(i, 1)}
-                disabled={i === stages.length - 1}
-                aria-label={`Move ${name} down`}
-                sx={{ minWidth: 32, minHeight: 32, p: 0 }}
-              >
-                ▼
-              </Button>
-            </Stack>
-          </Box>
-        ))}
-      </Box>
-    </Panel>
-  );
-}
-
 // ── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenProps) {
@@ -359,16 +235,10 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const [contextPackError, setContextPackError] = useState<string | null>(null);
 
   const [jobs, setJobs] = useState<PipelineJobRow[] | null>(null);
-  const [jobsQueue, setJobsQueue] = useState<PipelineQueueSummary | null>(null);
   const [jobsError, setJobsError] = useState<string | null>(null);
-  const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
 
   const [snapshots, setSnapshots] = useState<ExportSnapshot[] | null>(null);
   const [exportsError, setExportsError] = useState<string | null>(null);
-  const [runningExport, setRunningExport] = useState(false);
-  const [activeRun, setActiveRun] = useState<{ id: string; status: string } | null>(null);
-  const [runStatus, setRunStatus] = useState<unknown>(null);
-  const [checkingRunStatus, setCheckingRunStatus] = useState(false);
 
   const [pool, setPool] = useState<PoolStatus | null>(null);
   const [poolError, setPoolError] = useState<{ status: number; message: string } | null>(null);
@@ -407,7 +277,6 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .pipelineList()
       .then((res) => {
         setJobs(res.jobs);
-        setJobsQueue(res.queue ?? null);
       })
       .catch((err) => setJobsError(err instanceof Error ? err.message : "load failed"));
   }, [isAdmin]);
@@ -468,51 +337,6 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
           body: err instanceof ApiError ? err.body ?? { error: err.message } : { error: "network error" },
         });
       });
-  }
-
-  async function handleCancelJob(jobId: string) {
-    setCancelingJobId(jobId);
-    try {
-      await api.pipelineCancel(jobId);
-      loadJobs();
-    } catch {
-      /* best-effort — loadJobs() below will reflect the real state either way */
-      loadJobs();
-    } finally {
-      setCancelingJobId(null);
-    }
-  }
-
-  async function runExport(shrinkOverride: boolean) {
-    setRunningExport(true);
-    setActiveRun(null);
-    setRunStatus(null);
-    try {
-      const res = await api.exportsRun(shrinkOverride);
-      setActiveRun(res);
-    } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}`
-          : "Failed to start export.";
-      setActiveRun({ id: "", status: message });
-    } finally {
-      setRunningExport(false);
-      loadExports();
-    }
-  }
-
-  async function checkRunStatus() {
-    if (!activeRun?.id) return;
-    setCheckingRunStatus(true);
-    try {
-      const res = await api.exportsInstance(activeRun.id);
-      setRunStatus(res.status);
-    } catch (err) {
-      setRunStatus(err instanceof ApiError ? err.body : { error: "load failed" });
-    } finally {
-      setCheckingRunStatus(false);
-    }
   }
 
   async function registerSlot(binding: string) {
@@ -617,7 +441,14 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         <StatTile
           label="Pipeline jobs"
           value={jobs ? `${running} / ${queued} / ${failed}` : jobsError ? "—" : <Skeleton width={40} />}
-          sub="running / queued / failed"
+          sub={
+            <>
+              running / queued / failed —{" "}
+              <Link component="button" type="button" variant="caption" onClick={() => { location.hash = "#/ai"; }}>
+                Open AI studio
+              </Link>
+            </>
+          }
         />
         <StatTile
           label="Last nightly export"
@@ -632,46 +463,11 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
           title="Nightly export runs"
           subtitle="The single status-check route covers both the 05:30 UTC nightly cron and any manual/context-only run."
           foot={
-            <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
-              <Typography variant="caption" color="text.secondary">
-                Listed via <code>GET /api/exports?limit=&amp;book=</code>
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              <Button size="small" variant="outlined" disabled={runningExport} onClick={() => runExport(false)}>
-                Run export now
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="warning"
-                disabled={runningExport}
-                onClick={() => runExport(true)}
-                title="Escape hatch when the shrink-guard refused a legitimate content drop"
-              >
-                Export (force)
-              </Button>
-            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              Listed via <code>GET /api/exports?limit=&amp;book=</code>
+            </Typography>
           }
         >
-          {activeRun && (
-            <Alert severity={activeRun.id ? "info" : "error"} sx={{ mb: 1.5 }}>
-              {activeRun.id ? (
-                <>
-                  Export queued: <code>{activeRun.id}</code> ({activeRun.status}).{" "}
-                  <Button size="small" onClick={checkRunStatus} disabled={checkingRunStatus} sx={{ ml: 1 }}>
-                    {checkingRunStatus ? "Checking…" : "Check status"}
-                  </Button>
-                  {runStatus !== null && (
-                    <Box component="pre" sx={{ mt: 1, fontSize: "0.72rem", whiteSpace: "pre-wrap", overflowX: "auto" }}>
-                      {JSON.stringify(runStatus, null, 2)}
-                    </Box>
-                  )}
-                </>
-              ) : (
-                activeRun.status
-              )}
-            </Alert>
-          )}
           {exportsError && <Alert severity="error">Failed to load export runs: {exportsError}</Alert>}
           {!exportsError && snapshots === null && <Skeleton variant="rounded" height={80} />}
           {!exportsError && snapshots !== null && snapshots.length === 0 && (
@@ -709,84 +505,6 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
               call that endpoint with for a historical row. The "Check status"
               button above uses the id POST /api/exports/run actually returns,
               which is the one case this endpoint can be called correctly from. */}
-        </Panel>
-
-        {/* Pipeline jobs */}
-        <Panel
-          title="Pipeline jobs"
-          subtitle="Shared queue view — every user's active jobs plus your own not-yet-notified ones. The */5 cron advances this even with no tab open."
-          foot={
-            <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
-              <Typography variant="caption" color="text.secondary">
-                Loaded via <code>GET /api/pipelines</code>
-                {jobsQueue ? ` · queue: active ${jobsQueue.activeJob ? "yes" : "no"}, ${jobsQueue.queuedCount} queued` : ""}
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              <Typography variant="caption" color="text.secondary">
-                Cancel only works on your own still-queued jobs
-              </Typography>
-            </Stack>
-          }
-        >
-          {jobsError && <Alert severity="error">Failed to load: {jobsError}</Alert>}
-          {!jobsError && jobs === null && <Skeleton variant="rounded" height={120} />}
-          {!jobsError && jobs !== null && jobs.length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              No pipeline jobs — queue is empty.
-            </Typography>
-          )}
-          {!jobsError && jobs && jobs.length > 0 && (
-            <Box sx={{ overflowX: "auto" }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Book·Ch</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell>State</TableCell>
-                    <TableCell>Requested by</TableCell>
-                    <TableCell>Current step</TableCell>
-                    <TableCell />
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {jobs.map((j) => {
-                    const stateChip = JOB_STATE_CHIP[j.state];
-                    // Ownership is decided from j.user_id vs. the caller's own
-                    // identity — not from started_by_username, which is only
-                    // populated for OTHER users' jobs (api/src's list route)
-                    // and is absent (not necessarily "mine") on some rows.
-                    const isOwnQueued = j.state === "queued" && me != null && j.user_id === me.userId;
-                    return (
-                      <TableRow key={j.job_id}>
-                        <TableCell>
-                          {j.book} {j.start_chapter}
-                          {j.end_chapter !== j.start_chapter ? `–${j.end_chapter}` : ""}
-                        </TableCell>
-                        <TableCell>{j.pipeline_type}</TableCell>
-                        <TableCell>
-                          <FlowStatusChip kind={stateChip.kind} label={stateChip.label} />
-                        </TableCell>
-                        <TableCell>{j.started_by_username ?? "you"}</TableCell>
-                        <TableCell>{j.current_status ?? j.current_skill ?? "—"}</TableCell>
-                        <TableCell>
-                          {isOwnQueued && (
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={cancelingJobId === j.job_id}
-                              onClick={() => handleCancelJob(j.job_id)}
-                            >
-                              {cancelingJobId === j.job_id ? "Cancelling…" : "Cancel"}
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </Box>
-          )}
         </Panel>
 
         {/* Health check + Context pack status */}
@@ -963,8 +681,6 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
             </>
           )}
         </Panel>
-
-        <WorkflowStagesCard />
       </Stack>
 
       <PoolActionDialog

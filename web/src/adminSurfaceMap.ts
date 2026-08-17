@@ -70,7 +70,7 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     classic: { section: "terminology", file: PREFS },
     desk: { page: "setup", file: ADMIN_SETUP, anchor: "<TerminologySection" },
     notes:
-      "Desk mounts the full editor (#190). A third editor on StyleScreen is slated for removal in #187.",
+      "Desk mounts the full editor (#190). StyleScreen's duplicate terminology editor was removed in #187.",
   },
   {
     id: "examples",
@@ -127,7 +127,7 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     label: "Style (context pack / QA rules)",
     classic: null,
     desk: { page: "style", file: "src/components/flows/StyleScreen.tsx", anchor: "function StyleScreen" },
-    notes: "Carries duplicate memory-section editors slated for removal (#187).",
+    notes: "Memory-section editors removed in #187; StyleScreen now owns only style-specific surfaces (QA rules, template coverage, context-pack export).",
   },
   {
     id: "templates",
@@ -140,6 +140,6 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     label: "Observe (health / exports / crons)",
     classic: null,
     desk: { page: "observe", file: "src/components/flows/ObserveScreen.tsx", anchor: "function ObserveScreen" },
-    notes: "Duplicate export/pipeline/stage views tracked in #187.",
+    notes: "Post-#187: workflow-stages preview + export triggers removed; keeps read-only export history and a pipeline count linking to AI studio.",
   },
 ];
