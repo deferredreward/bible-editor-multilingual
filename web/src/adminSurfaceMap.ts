@@ -68,9 +68,9 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     id: "terminology",
     label: "Terminology",
     classic: { section: "terminology", file: PREFS },
-    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<TerminologyPanel" },
+    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<TerminologySection" },
     notes:
-      "Desk copy is read-only and deep-links back to classic; full editor port is #190. A third editor on StyleScreen is slated for removal in #187.",
+      "Desk mounts the full editor (#190). A third editor on StyleScreen is slated for removal in #187.",
   },
   {
     id: "examples",
@@ -89,8 +89,7 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     id: "localization",
     label: "Localization (UI string overrides)",
     classic: { section: "localization", file: PREFS },
-    desk: null,
-    gapIssue: 189,
+    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<LocalizationSection" },
   },
   {
     id: "users",
@@ -103,8 +102,7 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     id: "aiService",
     label: "AI service (provider / model / API key)",
     classic: { section: "aiService", file: PREFS },
-    desk: null,
-    gapIssue: 188,
+    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<AiServiceSection" },
   },
   {
     id: "progress",
