@@ -590,6 +590,8 @@
     "partSubTitle": "Kichwa kidogo",
     "partBody": "Kiini",
     "backToScripture": "Rudi kwa Maandiko",
+    "hideList": "Ficha orodha ya makala",
+    "showList": "Onyesha orodha ya makala",
     "searchPlaceholder": "Tafuta makala",
     "addArticle": "Ongeza \"{{id}}\"",
     "addUnknownId": "Haikuweza kupata \"{{id}}\" kwenye chanzo.",

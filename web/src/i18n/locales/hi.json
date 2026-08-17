@@ -591,6 +591,8 @@
     "partSubTitle": "उपशीर्षक",
     "partBody": "मुख्य भाग",
     "backToScripture": "धर्मशास्त्र पर वापस जाएँ",
+    "hideList": "लेख सूची छिपाएँ",
+    "showList": "लेख सूची दिखाएँ",
     "searchPlaceholder": "लेख खोजें",
     "addArticle": "\"{{id}}\" जोड़ें",
     "addUnknownId": "स्रोत में \"{{id}}\" नहीं मिला।",

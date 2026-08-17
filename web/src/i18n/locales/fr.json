@@ -604,6 +604,8 @@
     "partSubTitle": "Sous-titre",
     "partBody": "Corps",
     "backToScripture": "Retour à l’Écriture",
+    "hideList": "Masquer la liste des articles",
+    "showList": "Afficher la liste des articles",
     "searchPlaceholder": "Rechercher des articles",
     "addArticle": "Ajouter « {{id}} »",
     "addUnknownId": "Impossible de trouver « {{id}} » à la source.",
