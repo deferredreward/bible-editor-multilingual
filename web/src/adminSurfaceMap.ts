@@ -43,40 +43,41 @@ export type AdminSurfaceEntry = {
 
 const PREFS = "src/components/PreferencesWorkspace.tsx";
 const ADMIN_SETUP = "src/components/flows/AdminSetupScreen.tsx";
+const STYLE = "src/components/flows/StyleScreen.tsx";
 
 export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
   {
     id: "brief",
     label: "Brief (audience / purpose / register)",
     classic: { section: "brief", file: PREFS },
-    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<BriefPanel" },
+    desk: { page: "style", file: STYLE, anchor: "<BriefPanel" },
   },
   {
     id: "instructions",
     label: "Instructions (AI prompt guidance)",
     classic: { section: "instructions", file: PREFS },
-    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<MarkdownPrefPanel" },
+    desk: { page: "style", file: STYLE, anchor: "<MarkdownPrefPanel" },
   },
   {
     id: "commonIssues",
     label: "Common issues",
     classic: { section: "commonIssues", file: PREFS },
-    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<MarkdownPrefPanel" },
-    notes: "Both markdown prefs share MarkdownPrefPanel on the desk side.",
+    desk: { page: "style", file: STYLE, anchor: "<MarkdownPrefPanel" },
+    notes: "Both markdown prefs share MarkdownPrefPanel on the desk side (Style).",
   },
   {
     id: "terminology",
     label: "Terminology",
     classic: { section: "terminology", file: PREFS },
-    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<TerminologySection" },
+    desk: { page: "style", file: STYLE, anchor: "<TerminologySection" },
     notes:
-      "Desk mounts the full editor (#190). StyleScreen's duplicate terminology editor was removed in #187.",
+      "Desk mounts the full shared editor (#190). Home is the Style page as of the post-#187 IA move (Setup is config-only).",
   },
   {
     id: "examples",
     label: "Examples (validated few-shot memory)",
     classic: { section: "examples", file: PREFS },
-    desk: { page: "setup", file: ADMIN_SETUP, anchor: "<ExamplesPanel" },
+    desk: { page: "style", file: STYLE, anchor: "<ExamplesPanel" },
   },
   {
     id: "setupWizard",
@@ -126,8 +127,8 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     id: "style",
     label: "Style (context pack / QA rules)",
     classic: null,
-    desk: { page: "style", file: "src/components/flows/StyleScreen.tsx", anchor: "function StyleScreen" },
-    notes: "Memory-section editors removed in #187; StyleScreen now owns only style-specific surfaces (QA rules, template coverage, context-pack export).",
+    desk: { page: "style", file: STYLE, anchor: "function StyleScreen" },
+    notes: "Post-#187 IA move: Style is the desk home for the 'teach the AI' memory sections (Brief/Instructions/Common issues/Terminology/Examples) plus its own QA rules, template coverage, and context-pack export.",
   },
   {
     id: "templates",
