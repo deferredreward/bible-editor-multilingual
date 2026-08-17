@@ -575,6 +575,48 @@ async function fetchAquiferRangeNotes(
   });
 }
 
+// Pre-wipe scan (issue #126 cold-review follow-up): a row id repeated WITHIN
+// one source file (the base file or a single range file) is a malformed TSV,
+// not a legitimate cross-source collision, and must still abort — it is NOT
+// safe to let insertMergedNotes' cross-file remap below absorb it. Threading
+// one `usedIds` Set through every row of a single file's own insert() call
+// means that Set can't otherwise distinguish "this id belongs to another
+// file" from "this file used its own id twice"; without this scan the second
+// occurrence would be silently re-minted (data loss: the note's own id is
+// discarded) instead of the abort a malformed file deserves. Mirrors
+// insertMergedNotes' exact chapter partitioning so it predicts the real
+// per-file insert set, but — unlike the old (pre-#126) mergedNoteIdCollision
+// this replaces — resets `seen` per file, since a cross-file repeat is now
+// the legitimate, intentionally-remapped case, not a duplicate to reject.
+function mergedNoteSameFileDuplicate(
+  baseRaw: string | null,
+  ranges: ResolvedSourceRange[],
+  rangeFiles: Array<{ range: ResolvedSourceRange; raw: string }>,
+): string | null {
+  if (ranges.length === 0) return null;
+  const covered = (ch: number) => ranges.some((r) => ch >= r.chapter_start && ch <= r.chapter_end);
+  const scanOneFile = (raw: string | null, include: (ch: number) => boolean): string | null => {
+    if (!raw) return null;
+    const seen = new Set<string>();
+    for (const r of parseTsv(raw).rows) {
+      const id = r["ID"];
+      if (!id) continue;
+      const [ch] = refParts(r["Reference"] ?? "");
+      if (!include(ch)) continue;
+      if (seen.has(id)) return id;
+      seen.add(id);
+    }
+    return null;
+  };
+  const baseDup = scanOneFile(baseRaw, (ch) => !covered(ch));
+  if (baseDup) return baseDup;
+  for (const { range, raw } of rangeFiles) {
+    const dup = scanOneFile(raw, (ch) => ch >= range.chapter_start && ch <= range.chapter_end);
+    if (dup) return dup;
+  }
+  return null;
+}
+
 // Merge multiple per-chapter source files into one book's note rows (issue #103
 // Tier 2). The base file contributes only chapters NOT covered by any range;
 // each range file contributes only its own chapters. With no ranges this is a
@@ -587,9 +629,10 @@ async function fetchAquiferRangeNotes(
 // every range file in insertion order, so the base file always keeps its ids and
 // a later range file's colliding id is re-minted via the same `pickId`/`mintId`
 // primitive `insertAquiferRangeNotes` already uses for inherited en_tn ids. A
-// single file's own internal duplicate ids are unaffected — they still hit the
-// pre-existing (book, id) PK bare-INSERT failure, since `usedIds` is only
-// threaded through on the multi-source merge path below.
+// single file's own internal duplicate ids are a DIFFERENT concern — caller
+// rejects those pre-wipe via `mergedNoteSameFileDuplicate` above, since letting
+// this function's shared `usedIds` absorb them would silently re-mint (not
+// reject) a malformed file's repeated id.
 async function insertMergedNotes(
   insert: (raw: string | null, filter?: (ch: number) => boolean, usedIds?: Set<string>) => Promise<number>,
   baseRaw: string | null,
@@ -838,7 +881,22 @@ async function importBookFromDcs(
   // Cross-source ID collisions (issue #103's original concern — two source
   // files reusing the same row id for DIFFERENT chapters of the merged book) no
   // longer need a pre-wipe abort: `insertMergedNotes` remaps the colliding id at
-  // insert time (issue #126), so the merge always lands cleanly.
+  // insert time (issue #126), so the merge always lands cleanly. A row id
+  // repeated WITHIN one source file is a different, still-fatal case (cold-review
+  // follow-up to #126) — that stays a pre-wipe abort so a malformed file is a
+  // clean no-op rather than a silently re-minted id.
+  for (const [resource, baseRaw, ranges, files] of [
+    ["tn", tnRaw, tnPlan.ranges, tnRangeFiles],
+    ["tq", tqRaw, tqPlan.ranges, tqRangeFiles],
+  ] as const) {
+    const dup = mergedNoteSameFileDuplicate(baseRaw, ranges, files);
+    if (dup) {
+      throw new Error(
+        `merge source ${resource} duplicate id: '${dup}' appears more than once within the same source file for ` +
+          `${book}; fix the malformed source file before importing (no changes were made)`,
+      );
+    }
+  }
 
   // Re-check lane state AFTER the (potentially slow) DCS fetches. Then couple
   // the destructive wipe to a transactional lane-state predicate: DELETE only
