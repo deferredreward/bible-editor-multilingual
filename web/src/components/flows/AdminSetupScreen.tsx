@@ -40,17 +40,13 @@
 //    PreferencesWorkspace.tsx:1491-1492): instructions_md 20000,
 //    common_issues_md 50000.
 //
-//  * Terminology — REAL data (useTerms + api.getTermsCount, hooks/
-//    useTranslationMemory.ts:103, sync/api.ts:1999-2006) rendered as the
-//    artifact's dense read-only table (Concept / Source term / Rendering /
-//    Status / Use instead / Note) with the real Term row shape (sync/api.ts
-//    :1108-1122: concept_id, source_term, target_term, status, replacement,
-//    comment). Status colors mirror statusColor (PreferencesWorkspace.tsx
-//    :150-163). Inline editing is NOT wired: the real editor is ~800 lines of
-//    concept-grouping, per-row If-Match PATCH, duplicate detection and TSV
-//    import (PreferencesWorkspace.tsx:1700-2452) — re-presenting that state
-//    machine here would be a drift-prone second copy, so edits link out to
-//    #/preferences/terminology instead. Never a fake save.
+//  * Terminology — the full editor, extracted out of PreferencesWorkspace into
+//    its own component (TerminologySection.tsx) and mounted here directly
+//    (issue #190). No more read-only mirror or deep-link back to classic.
+//
+//  * AI service (#188) and Localization (#189) — same pattern: AiServiceSection
+//    and LocalizationSection were already standalone components and are
+//    mounted here directly, no re-implementation.
 //
 //  * Examples — re-presentation of ExamplesSection (PreferencesWorkspace.tsx
 //    :2454-2580): read-only browse via useExamples, tn/tq toggle, debounced
@@ -106,22 +102,18 @@ import {
 import { alpha } from "@mui/material/styles";
 import SaveIcon from "@mui/icons-material/Save";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import {
   api,
   ApiError,
   isReadOnly,
   REGISTERS,
   type Register,
-  type Term,
-  type TermStatus,
   type TranslationPrefs,
 } from "../../sync/api";
 import { currentPrefsFromConflict } from "../../sync/prefsConflict";
 import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectConfig";
 import {
   useTranslationPrefs,
-  useTerms,
   useExamples,
   useContextExportStatus,
 } from "../../hooks/useTranslationMemory";
@@ -129,8 +121,12 @@ import { MarkdownView } from "../MarkdownView";
 import { SetupWizard } from "../SetupWizard";
 import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
+import { AiServiceSection } from "../AiServiceSection";
+import { LocalizationSection } from "../LocalizationSection";
+import { TerminologySection } from "../TerminologySection";
 import { bookName } from "../../lib/bookNames";
 import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader } from "./AdminPageHeader";
 import type { FlowScreenContext } from "./types";
 
 const INSPIRE = "#31ADE3";
@@ -144,7 +140,9 @@ type SectionKey =
   | "commonIssues"
   | "terminology"
   | "examples"
-  | "overrides";
+  | "aiService"
+  | "overrides"
+  | "localization";
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   wizard: "Setup wizard",
@@ -153,7 +151,9 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   commonIssues: "Common issues",
   terminology: "Terminology",
   examples: "Examples",
+  aiService: "AI service",
   overrides: "Source overrides",
+  localization: "Localization",
 };
 
 function scrollToSection(key: SectionKey) {
@@ -161,31 +161,6 @@ function scrollToSection(key: SectionKey) {
     .getElementById(`admin-setup-sec-${key}`)
     ?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
-
-// Term-status → semantic palette. Mirror of PreferencesWorkspace.tsx:150-163
-// (statusColor) — status is a semantic state, not the violet AI identity.
-function termStatusColor(status: TermStatus): string {
-  switch (status) {
-    case "preferred":
-      return "success.main";
-    case "admitted":
-      return "info.main";
-    case "forbidden":
-      return "error.main";
-    case "do_not_translate":
-      return "text.primary";
-    default:
-      return "text.secondary"; // deprecated
-  }
-}
-
-const TERM_STATUS_LABELS: Record<TermStatus, string> = {
-  preferred: "Preferred",
-  admitted: "Admitted",
-  deprecated: "Deprecated",
-  forbidden: "Forbidden",
-  do_not_translate: "Do not translate",
-};
 
 // Per-panel save feedback, mirror of useSaveState (PreferencesWorkspace.tsx
 // :1081-1085).
@@ -530,142 +505,6 @@ function MarkdownPrefPanel({
   );
 }
 
-// ── Terminology (read-only table + link out) ────────────────────────────────
-function TerminologyPanel({ enabled, direction }: { enabled: boolean; direction: "ltr" | "rtl" }) {
-  const { terms, loading, error } = useTerms(enabled, {});
-  // True total from the count endpoint — GET /terms caps its result set
-  // (server default limit), so terms.length alone can under-report (see the
-  // cap note at PreferencesWorkspace.tsx:1659-1663).
-  const [total, setTotal] = useState<number | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    api
-      .getTermsCount()
-      .then((res) => {
-        if (!cancelled) setTotal(res.count);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled]);
-
-  const openEditor = () => {
-    location.hash = "#/preferences/terminology";
-  };
-
-  return (
-    <SectionPanel
-      id="terminology"
-      title="Terminology"
-      sub="Concept-level term decisions every AI draft and reviewer check must respect. Read-only here — the full editor (add, edit, import) lives in Preferences."
-      flush
-      foot={
-        total !== null
-          ? `${total.toLocaleString()} terms${terms.length < total ? ` · showing first ${terms.length}` : ""}`
-          : `${terms.length} terms`
-      }
-      footAction={
-        <Button size="small" endIcon={<OpenInNewIcon />} onClick={openEditor}>
-          Edit in Preferences
-        </Button>
-      }
-    >
-      {loading && terms.length === 0 ? (
-        <Box sx={{ p: 2 }}>
-          <CircularProgress size={22} />
-        </Box>
-      ) : error ? (
-        <Alert severity="error" sx={{ m: 2 }}>
-          Couldn't load terminology.
-        </Alert>
-      ) : terms.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-          No terms yet. Add the first one in Preferences.
-        </Typography>
-      ) : (
-        // Wide table scrolls inside its own wrapper; the page never scrolls
-        // sideways.
-        <Box sx={{ overflowX: "auto" }}>
-          <Box
-            component="table"
-            sx={{
-              width: "100%",
-              minWidth: 640,
-              borderCollapse: "collapse",
-              fontSize: "0.85rem",
-              "& th": {
-                textAlign: "start",
-                fontSize: "0.68rem",
-                fontWeight: 700,
-                letterSpacing: "0.07em",
-                textTransform: "uppercase",
-                color: "text.secondary",
-                paddingInline: 1.75,
-                paddingBlock: 1,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                whiteSpace: "nowrap",
-              },
-              "& td": {
-                paddingInline: 1.75,
-                paddingBlock: 1.1,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                verticalAlign: "top",
-              },
-              "& tbody tr:last-child td": { borderBottom: "none" },
-            }}
-          >
-            <thead>
-              <tr>
-                <th>Concept</th>
-                <th>Source term</th>
-                <th>Rendering</th>
-                <th>Status</th>
-                <th>Use instead</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {terms.map((term: Term) => (
-                <tr key={term.id}>
-                  <td>{term.concept_id}</td>
-                  <td>{term.source_term}</td>
-                  <td>
-                    {/* dir attribute, not CSS direction — sx direction gets
-                        flipped by the RTL stylis plugin under an Arabic UI. */}
-                    <span dir={direction}>{term.target_term ?? "—"}</span>
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    <Chip
-                      label={TERM_STATUS_LABELS[term.status]}
-                      size="small"
-                      variant="outlined"
-                      sx={{
-                        height: 18,
-                        fontSize: 10,
-                        fontWeight: 600,
-                        color: termStatusColor(term.status),
-                        borderColor: termStatusColor(term.status),
-                      }}
-                    />
-                  </td>
-                  <td>
-                    <span dir={direction}>{term.replacement ?? "—"}</span>
-                  </td>
-                  <td>{term.comment ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </Box>
-        </Box>
-      )}
-    </SectionPanel>
-  );
-}
-
 // ── Examples ────────────────────────────────────────────────────────────────
 function ExamplesPanel({ enabled }: { enabled: boolean }) {
   const [resource, setResource] = useState<"tn" | "tq">("tn");
@@ -878,33 +717,20 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
         ...(memoryAvailable
           ? (["brief", "instructions", "commonIssues", "terminology", "examples"] as SectionKey[])
           : []),
+        "aiService",
         "overrides",
+        "localization",
       ]
     : [];
 
   return (
     <AdminDesk current="setup">
       <Stack spacing={2}>
-        <Box>
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "text.secondary",
-            }}
-          >
-            {cfg?.languageTitle ?? cfg?.languageName ?? "Workspace"}
-          </Typography>
-          <Typography variant="h5" sx={{ lineHeight: 1.25 }}>
-            Setup &amp; preferences
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, maxWidth: 640 }}>
-            Configure sources and lanes, and the memory AI drafts are written from.
-          </Typography>
-        </Box>
+        <AdminPageHeader
+          eyebrow={cfg ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}` : "Workspace"}
+          title="Setup & preferences"
+          subtitle="Configure sources and lanes, and the memory AI drafts are written from."
+        />
 
         {!admin ? (
           // Honest admin-only gate — nothing fabricated in its place (same
@@ -999,12 +825,31 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
                   maxChars={50000}
                   prefsState={prefsState}
                 />
-                <TerminologyPanel enabled={memoryAvailable} direction={cfg?.direction ?? "ltr"} />
+                <SectionPanel
+                  id="terminology"
+                  title="Terminology"
+                  sub="Concept-level term decisions every AI draft and reviewer check must respect."
+                  flush
+                >
+                  <TerminologySection direction={cfg?.direction ?? "ltr"} />
+                </SectionPanel>
                 <ExamplesPanel enabled={memoryAvailable} />
               </>
             )}
 
+            {/* AI service is org-wide admin config (provider/model/key), not a
+                translation-memory feature — gate on admin only, matching
+                classic Preferences, so admins on source-language or read-only
+                workspaces can still reach it. */}
+            <SectionPanel id="aiService" title="AI service" sub="Provider, model, and API key AI drafts and checks run on.">
+              <AiServiceSection />
+            </SectionPanel>
+
             <OverridesPanel initialBook={me?.lastBook ?? null} />
+
+            <SectionPanel id="localization" title="Localization" sub="UI string overrides for this workspace.">
+              <LocalizationSection />
+            </SectionPanel>
           </>
         )}
       </Stack>

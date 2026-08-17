@@ -53,9 +53,11 @@ import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
-import { FlowNav } from "./FlowNav";
+import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
+import { useProjectConfig } from "../../hooks/useProjectConfig";
 import {
   api,
   ApiError,
@@ -375,6 +377,10 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const [poolBusyMessage, setPoolBusyMessage] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
+  const cfg = useProjectConfig();
+  const eyebrow = cfg
+    ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
+    : "Workspace";
 
   const loadContextPack = useCallback(() => {
     if (!isAdmin) {
@@ -547,26 +553,27 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     // Honest admin-only state — same convention as SetupScreen: no dashboard
     // content leaks to a non-admin role, and nothing is fabricated in its place.
     return (
-      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-        <FlowNav current="observe" role={role} />
-        <Paper variant="outlined" sx={{ p: 3, mt: 3 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Admin only
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            This dashboard shows export runs, AI pipeline jobs, service health, and
-            the context-pack that steers every AI draft — only an admin can see it.
-            Your role is <strong>{role}</strong>.
-          </Typography>
-          <Button
-            variant="outlined"
-            sx={{ mt: 2 }}
-            onClick={() => onNavigate(me?.lastBook || "OBA", me?.lastChapter || 1, me?.lastVerse || 1)}
-          >
-            Back to home
-          </Button>
-        </Paper>
-      </Box>
+      <AdminDesk current="observe">
+        <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
+          <Paper variant="outlined" sx={{ p: 3, mt: 3 }}>
+            <Typography variant="subtitle1" gutterBottom>
+              Admin only
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              This dashboard shows export runs, AI pipeline jobs, service health, and
+              the context-pack that steers every AI draft — only an admin can see it.
+              Your role is <strong>{role}</strong>.
+            </Typography>
+            <Button
+              variant="outlined"
+              sx={{ mt: 2 }}
+              onClick={() => onNavigate(me?.lastBook || "OBA", me?.lastChapter || 1, me?.lastVerse || 1)}
+            >
+              Back to home
+            </Button>
+          </Paper>
+        </Box>
+      </AdminDesk>
     );
   }
 
@@ -584,24 +591,13 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         : "—";
 
   return (
+    <AdminDesk current="observe">
     <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-      <FlowNav current="observe" role={role} />
-
-      <Box component="header" sx={{ mt: 2, mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{ display: "block", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "text.secondary" }}
-        >
-          Trust &amp; observe
-        </Typography>
-        <Typography variant="h5" sx={{ mt: 0.25 }}>
-          Dashboard
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, maxWidth: 640 }}>
-          Export runs, AI pipeline jobs, service health, and the context-pack that
-          steers every AI draft.
-        </Typography>
-      </Box>
+      <AdminPageHeader
+        eyebrow={eyebrow}
+        title="Observe"
+        subtitle="Export runs, AI pipeline jobs, service health, and the context-pack that steers every AI draft."
+      />
 
       {/* Stat row */}
       <Box
@@ -979,6 +975,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         onClaim={claimSlot}
       />
     </Box>
+    </AdminDesk>
   );
 }
 

@@ -91,6 +91,7 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import RefreshIcon from "@mui/icons-material/Refresh";
 
 import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader } from "./AdminPageHeader";
 import type { FlowScreenContext } from "./types";
 import {
   api,
@@ -536,27 +537,11 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
 
   return (
     <AdminDesk current="team">
-      {/* .admin-head from the artifact — eyebrow · h1 · sub. */}
-      <Box sx={{ mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            fontWeight: 700,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: ACCENT,
-          }}
-        >
-          {orgMembers?.org ? `Door43 org · ${orgMembers.org}` : "Workspace access"}
-        </Typography>
-        <Typography variant="h5" component="h1" sx={{ mt: 0.25, letterSpacing: "-0.02em" }}>
-          Team &amp; roles
-        </Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5, fontSize: "0.875rem" }}>
-          Who has access here, where their role comes from, and how Door43 teams take precedence.
-        </Typography>
-      </Box>
+      <AdminPageHeader
+        eyebrow={orgMembers?.org ? `Door43 org · ${orgMembers.org}` : "Workspace access"}
+        title="Team & roles"
+        subtitle="Who has access here, where their role comes from, and how Door43 teams take precedence."
+      />
 
       {/* ── People ─────────────────────────────────────────────────────── */}
       <Panel

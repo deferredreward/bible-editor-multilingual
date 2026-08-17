@@ -40,9 +40,11 @@ function parseClassicSections() {
   return ids;
 }
 
-// Known limitation (accepted): only literal `hash: "#/…"` rail entries are seen,
-// so a future entry built from a constant or template would escape coverage.
-// Keep More-tools entries literal, or extend this parser when that changes.
+// Every AdminDesk rail entry (both the top-4 admin sections and the four
+// former-FlowNav "More tools" pages, unified onto AdminSection in #186) is now
+// keyed by one AdminSection member — the union is the single source of nav
+// identities. Each still routes to its own hash (#/admin/progress, #/ai, …),
+// but that's a routing detail, not a separate coverage identity.
 function parseDeskPages() {
   const src = readStripped("src/components/flows/AdminDesk.tsx");
   const um = src.match(/export type AdminSection =([^;]*);/);
@@ -51,13 +53,8 @@ function parseDeskPages() {
     "Parser rot: `export type AdminSection =` not found in AdminDesk.tsx — update adminSurfaceMap.test.mjs to match the new shape",
   );
   const sections = [...um[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-  const hashes = [...src.matchAll(/hash:\s*"(#\/[^"]+)"/g)].map((x) => x[1]);
   assert.ok(sections.length >= 1, "Parser rot: AdminSection union parse found no keys");
-  assert.ok(
-    hashes.length >= 1,
-    "Parser rot: no `hash: \"#/...\"` More-tools entries found in AdminDesk.tsx — if the rail changed shape, update this parser",
-  );
-  return { sections, hashes };
+  return { sections };
 }
 
 test("every classic Preferences section is registered in the admin surface map", () => {
@@ -71,9 +68,9 @@ test("every classic Preferences section is registered in the admin surface map",
 });
 
 test("every AdminDesk nav destination is registered in the admin surface map", () => {
-  const { sections, hashes } = parseDeskPages();
+  const { sections } = parseDeskPages();
   const registered = new Set(ADMIN_SURFACES.map((e) => e.desk?.page).filter(Boolean));
-  for (const page of [...sections, ...hashes]) {
+  for (const page of sections) {
     assert.ok(
       registered.has(page),
       `AdminDesk nav destination "${page}" has no adminSurfaceMap entry. ${REGISTER_HINT}`,
@@ -83,8 +80,8 @@ test("every AdminDesk nav destination is registered in the admin surface map", (
 
 test("map entries point at real code and declare their gaps", () => {
   const classicIds = new Set(parseClassicSections());
-  const { sections, hashes } = parseDeskPages();
-  const deskPages = new Set([...sections, ...hashes]);
+  const { sections } = parseDeskPages();
+  const deskPages = new Set(sections);
 
   const seen = new Set();
   for (const e of ADMIN_SURFACES) {
@@ -111,7 +108,7 @@ test("map entries point at real code and declare their gaps", () => {
       );
       assert.ok(
         deskPages.has(e.desk.page),
-        `Entry "${e.id}" claims desk page "${e.desk.page}", which is not in AdminDesk's nav (sections: ${[...sections]}, tools: ${[...hashes]}) — stale map entry? Update or remove it.`,
+        `Entry "${e.id}" claims desk page "${e.desk.page}", which is not in AdminDesk's nav (sections: ${[...sections]}) — stale map entry? Update or remove it.`,
       );
       const src = readStripped(e.desk.file);
       assert.ok(
