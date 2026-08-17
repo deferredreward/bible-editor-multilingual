@@ -42,6 +42,27 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Keep the remote dev databases in step with the code being deployed —
+      # a deploy carrying an unapplied migration otherwise 500s with "no such
+      # table". wrangler auto-confirms in non-interactive contexts (CI=true).
+      #
+      # SAFETY NOTE: what keeps these commands off production is the DATABASE
+      # NAME, not the absent --env. Wrangler falls back to an account-wide
+      # lookup for names missing from the config, so `d1 migrations apply
+      # bible_editor --remote` WOULD reach the prod DB. Never put the prod
+      # name here. Also: Cloudflare's D1 token permission is account-wide
+      # (no per-database scoping), so the token this step needs can write
+      # prod D1 too — keep its Workers-Scripts scope dev-only and treat the
+      # token itself as prod-sensitive.
+      - name: Apply D1 migrations (dev databases)
+        working-directory: api
+        run: |
+          npx wrangler d1 migrations apply bible_editor_dev --remote
+          npx wrangler d1 migrations apply bible_editor_mltest_dev --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       # Uses the wrangler pinned in api/devDependencies (not a separate action)
       # so CI matches a local `wrangler deploy`. NO --env: the default env in
       # wrangler.toml is the dev worker (`bible-editor-api-dev`, no crons, dev
@@ -54,20 +75,6 @@ jobs:
       # script, or the deploy succeeds and sign-in fails at runtime. Leave
       # DCS_SERVICE_TOKEN unset unless you want the dev worker able to write to
       # the real DCS org — DCS_EXPORT_OWNER is the same in both envs.
-
-      # Keep the remote dev databases in step with the code being deployed —
-      # a deploy carrying an unapplied migration otherwise 500s with "no such
-      # table". A plain --remote (no --env production) targets the DEV
-      # databases only; wrangler auto-confirms in non-interactive contexts.
-      - name: Apply D1 migrations (dev databases)
-        working-directory: api
-        run: |
-          npx wrangler d1 migrations apply bible_editor_dev --remote
-          npx wrangler d1 migrations apply bible_editor_mltest_dev --remote
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
       - name: Deploy Worker + SPA (dev)
         working-directory: api
         run: npx wrangler deploy
