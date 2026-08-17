@@ -161,6 +161,64 @@ function typeLabelOf(slug: string): string {
   return slug.replace(/^(?:figs|translate|writing|grammar)-/, "").replace(/-/g, " ");
 }
 
+interface LaneProps {
+  label: string;
+  text: string | null;
+  selection: string;
+  labelFontFamily: string | undefined;
+  mark: (text: string | null, selection: string) => ReactNode;
+}
+
+// Read-only scripture reference lane (ULT/UST) above a note card, with the
+// note's quote highlighted via `mark`.
+//
+// Hoisted to module scope (2026-08-16, nested-component audit, issue #172):
+// declaring this inside TranslateNotesScreen's body gave it a new function
+// identity on every parent render, so React remounted the whole subtree on
+// every hub/screen re-render rather than just when its own props changed.
+// `theme.typography.fontFamily` and the `mark` highlighter are now explicit
+// props instead of closed-over values, following the QaPair hoist pattern in
+// TranslateQuestionsScreen.tsx.
+function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
+  return (
+    <Box
+      sx={{
+        bgcolor: "action.hover",
+        borderRadius: "9px",
+        paddingBlock: 1.25,
+        paddingInline: 1.5,
+        fontFamily: SCRIPTURE_FONT_STACK,
+        fontSize: "1.03rem",
+        lineHeight: 1.55,
+        "& + &": { mt: 1 },
+      }}
+    >
+      <Box
+        component="span"
+        sx={{
+          display: "block",
+          fontFamily: labelFontFamily,
+          fontSize: "0.656rem",
+          fontWeight: 700,
+          letterSpacing: "0.08em",
+          color: "text.secondary",
+          mb: 0.375,
+        }}
+      >
+        {label}
+      </Box>
+      {text ? (
+        mark(text, selection)
+      ) : (
+        <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
+          No {label} text exists for this verse in this workspace. That is normal in a
+          translation-mode workspace whose target lanes have not been drafted yet.
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 export default function TranslateNotesScreen({ book, chapter }: TranslateNotesScreenProps) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
@@ -874,46 +932,6 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
       </Box>
     ) : null;
 
-  function Lane({ label, text, selection }: { label: string; text: string | null; selection: string }) {
-    return (
-      <Box
-        sx={{
-          bgcolor: "action.hover",
-          borderRadius: "9px",
-          paddingBlock: 1.25,
-          paddingInline: 1.5,
-          fontFamily: SCRIPTURE_FONT_STACK,
-          fontSize: "1.03rem",
-          lineHeight: 1.55,
-          "& + &": { mt: 1 },
-        }}
-      >
-        <Box
-          component="span"
-          sx={{
-            display: "block",
-            fontFamily: theme.typography.fontFamily,
-            fontSize: "0.656rem",
-            fontWeight: 700,
-            letterSpacing: "0.08em",
-            color: "text.secondary",
-            mb: 0.375,
-          }}
-        >
-          {label}
-        </Box>
-        {text ? (
-          mark(text, selection)
-        ) : (
-          <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
-            No {label} text exists for this verse in this workspace. That is normal in a
-            translation-mode workspace whose target lanes have not been drafted yet.
-          </Box>
-        )}
-      </Box>
-    );
-  }
-
   // Everything inside the reading column — identical at every width; only the
   // container differs (phone: the centred column; md+: the detail pane).
   const detailBody = (
@@ -1069,8 +1087,20 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
                   ? `${book} ${row.chapter} intro`
                   : `${book} ${row.chapter}:${row.verse}`}
               </Typography>
-              <Lane label={litLabel} text={ultText} selection={ultSelection} />
-              <Lane label={simLabel} text={ustText} selection={ustSelection} />
+              <Lane
+                label={litLabel}
+                text={ultText}
+                selection={ultSelection}
+                labelFontFamily={theme.typography.fontFamily}
+                mark={mark}
+              />
+              <Lane
+                label={simLabel}
+                text={ustText}
+                selection={ustSelection}
+                labelFontFamily={theme.typography.fontFamily}
+                mark={mark}
+              />
             </Box>
 
             {/* English source note */}

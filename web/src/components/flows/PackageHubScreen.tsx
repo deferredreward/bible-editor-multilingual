@@ -106,6 +106,139 @@ const COLUMN_PX = 480;
 // The four chapter-scoped surfaces expand in place; words navigates directly.
 type ExpandableSurface = "scripture" | "notes" | "questions" | "alignment";
 
+interface HubChapterSummary {
+  chapter: number;
+  verses: number;
+  tn: number;
+  tq: number;
+}
+
+interface SurfaceRowProps {
+  title: string;
+  subText: string;
+  onClick: () => void;
+  cardSx: object;
+  expanded?: boolean;
+  expandable?: boolean;
+  disabled?: boolean;
+}
+
+// One tappable surface row: title + sub + chevron, the artifact's .listitem
+// translated to MUI. `expanded` rotates the chevron; `disabled` rows state
+// their reason in the sub instead of pretending to lead anywhere.
+//
+// Hoisted to module scope (2026-08-16, nested-component audit, issue #172):
+// declaring this inside PackageHubScreen's body gave it a new function
+// identity on every parent render, so React remounted the whole subtree
+// (and, for ChapterList below, reset its scroll position) on every hub
+// re-render rather than just when its own props changed. All parent-closure
+// state it used to read directly (`cardSx`) is now an explicit prop, same
+// pattern as QaPair in TranslateQuestionsScreen.tsx.
+function SurfaceRow({ title, subText, onClick, cardSx, expanded, expandable, disabled }: SurfaceRowProps) {
+  return (
+    <ButtonBase
+      onClick={onClick}
+      disabled={disabled}
+      aria-expanded={expandable ? expanded : undefined}
+      sx={{
+        ...cardSx,
+        display: "flex",
+        alignItems: "center",
+        gap: 1.5,
+        width: "100%",
+        textAlign: "start",
+        justifyContent: "flex-start",
+        paddingBlock: 1.5,
+        paddingInline: 1.75,
+        opacity: disabled ? 0.55 : 1,
+        "&:hover": disabled ? undefined : { borderColor: "#31ADE3" },
+      }}
+    >
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography sx={{ fontWeight: 600, fontSize: "0.97rem", m: 0 }}>{title}</Typography>
+        <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+          {subText}
+        </Typography>
+      </Box>
+      <ChevronRightIcon
+        fontSize="small"
+        sx={{
+          color: "text.secondary",
+          flex: "none",
+          transition: "transform 0.15s ease",
+          transform: expanded ? "rotate(90deg)" : "none",
+        }}
+      />
+    </ButtonBase>
+  );
+}
+
+interface ChapterListProps {
+  countOf: (c: HubChapterSummary) => number;
+  unit: string;
+  href: (chapter: number) => string;
+  wide: boolean;
+  chapters: HubChapterSummary[];
+}
+
+// Inline chapter list under an expanded surface row. Every entry is a row
+// from the one BookSummary response; `count === 0` disables the entry.
+//
+// Hoisted to module scope alongside SurfaceRow (issue #172) — `wide` and
+// `chapters` (formerly the closed-over `realChapters`) are now explicit
+// props.
+function ChapterList({ countOf, unit, href, wide, chapters }: ChapterListProps) {
+  return (
+    <Stack
+      spacing={0.75}
+      sx={{
+        paddingInlineStart: 2,
+        paddingBlockStart: 0.75,
+        // At md+ the list lives inside one grid cell — a long book scrolls
+        // within the cell instead of growing it unbounded.
+        ...(wide ? { maxHeight: 420, overflowY: "auto" } : {}),
+      }}
+    >
+      {chapters.map((c) => {
+        const n = countOf(c);
+        const empty = n === 0;
+        return (
+          <ButtonBase
+            key={c.chapter}
+            disabled={empty}
+            onClick={() => {
+              location.hash = href(c.chapter);
+            }}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1.5,
+              width: "100%",
+              textAlign: "start",
+              justifyContent: "flex-start",
+              bgcolor: "action.hover",
+              borderRadius: "9px",
+              paddingBlock: 1,
+              paddingInline: 1.5,
+              opacity: empty ? 0.55 : 1,
+            }}
+          >
+            <Typography sx={{ fontWeight: 600, fontSize: "0.9rem", flex: "none" }}>
+              Chapter {c.chapter}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 0 }}>
+              {empty ? `No ${unit}` : `${n} ${unit}`}
+            </Typography>
+            {!empty && (
+              <ChevronRightIcon fontSize="small" sx={{ color: "text.secondary", flex: "none" }} />
+            )}
+          </ButtonBase>
+        );
+      })}
+    </Stack>
+  );
+}
+
 export default function PackageHubScreen({ book, role }: PackageHubScreenProps) {
   const theme = useTheme();
   const { skip } = theme.palette.flows;
@@ -185,127 +318,6 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
     color: "text.secondary",
     m: 0,
   };
-
-  // One tappable surface row: title + sub + chevron, the artifact's .listitem
-  // translated to MUI. `expanded` rotates the chevron; `disabled` rows state
-  // their reason in the sub instead of pretending to lead anywhere.
-  function SurfaceRow({
-    title,
-    subText,
-    onClick,
-    expanded,
-    expandable,
-    disabled,
-  }: {
-    title: string;
-    subText: string;
-    onClick: () => void;
-    expanded?: boolean;
-    expandable?: boolean;
-    disabled?: boolean;
-  }) {
-    return (
-      <ButtonBase
-        onClick={onClick}
-        disabled={disabled}
-        aria-expanded={expandable ? expanded : undefined}
-        sx={{
-          ...cardSx,
-          display: "flex",
-          alignItems: "center",
-          gap: 1.5,
-          width: "100%",
-          textAlign: "start",
-          justifyContent: "flex-start",
-          paddingBlock: 1.5,
-          paddingInline: 1.75,
-          opacity: disabled ? 0.55 : 1,
-          "&:hover": disabled ? undefined : { borderColor: "#31ADE3" },
-        }}
-      >
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 600, fontSize: "0.97rem", m: 0 }}>{title}</Typography>
-          <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
-            {subText}
-          </Typography>
-        </Box>
-        <ChevronRightIcon
-          fontSize="small"
-          sx={{
-            color: "text.secondary",
-            flex: "none",
-            transition: "transform 0.15s ease",
-            transform: expanded ? "rotate(90deg)" : "none",
-          }}
-        />
-      </ButtonBase>
-    );
-  }
-
-  // Inline chapter list under an expanded surface row. Every entry is a row
-  // from the one BookSummary response; `count === 0` disables the entry.
-  function ChapterList({
-    countOf,
-    unit,
-    href,
-  }: {
-    countOf: (c: { verses: number; tn: number; tq: number }) => number;
-    unit: string;
-    href: (chapter: number) => string;
-  }) {
-    return (
-      <Stack
-        spacing={0.75}
-        sx={{
-          paddingInlineStart: 2,
-          paddingBlockStart: 0.75,
-          // At md+ the list lives inside one grid cell — a long book scrolls
-          // within the cell instead of growing it unbounded.
-          ...(wide ? { maxHeight: 420, overflowY: "auto" } : {}),
-        }}
-      >
-        {realChapters.map((c) => {
-          const n = countOf(c);
-          const empty = n === 0;
-          return (
-            <ButtonBase
-              key={c.chapter}
-              disabled={empty}
-              onClick={() => {
-                location.hash = href(c.chapter);
-              }}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1.5,
-                width: "100%",
-                textAlign: "start",
-                justifyContent: "flex-start",
-                bgcolor: "action.hover",
-                borderRadius: "9px",
-                paddingBlock: 1,
-                paddingInline: 1.5,
-                opacity: empty ? 0.55 : 1,
-              }}
-            >
-              <Typography sx={{ fontWeight: 600, fontSize: "0.9rem", flex: "none" }}>
-                Chapter {c.chapter}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 0 }}>
-                {empty ? `No ${unit}` : `${n} ${unit}`}
-              </Typography>
-              {!empty && (
-                <ChevronRightIcon
-                  fontSize="small"
-                  sx={{ color: "text.secondary", flex: "none" }}
-                />
-              )}
-            </ButtonBase>
-          );
-        })}
-      </Stack>
-    );
-  }
 
   const toggle = (id: ExpandableSurface) => setOpen((cur) => (cur === id ? null : id));
 
@@ -415,6 +427,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
             <Box sx={cellSx}>
               <SurfaceRow
+                cardSx={cardSx}
                 title="Scripture"
                 subText={`${totals.chapters} ${totals.chapters === 1 ? "chapter" : "chapters"} · ${totals.verses} verses`}
                 expandable
@@ -423,6 +436,8 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               />
               {open === "scripture" && (
                 <ChapterList
+                  wide={wide}
+                  chapters={realChapters}
                   countOf={(c) => c.verses}
                   unit="verses"
                   href={(ch) => `#/scripture/${book}/${ch}`}
@@ -432,6 +447,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
             <Box sx={cellSx}>
               <SurfaceRow
+                cardSx={cardSx}
                 title="Notes"
                 subText={totals.tn === 0 ? `No notes in ${name}` : `${totals.tn} notes`}
                 expandable
@@ -441,6 +457,8 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               />
               {open === "notes" && (
                 <ChapterList
+                  wide={wide}
+                  chapters={realChapters}
                   countOf={(c) => c.tn}
                   unit="notes"
                   href={(ch) => `#/notes/${book}/${ch}`}
@@ -450,6 +468,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
             <Box sx={cellSx}>
               <SurfaceRow
+                cardSx={cardSx}
                 title="Questions"
                 subText={totals.tq === 0 ? `No questions in ${name}` : `${totals.tq} questions`}
                 expandable
@@ -459,6 +478,8 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               />
               {open === "questions" && (
                 <ChapterList
+                  wide={wide}
+                  chapters={realChapters}
                   countOf={(c) => c.tq}
                   unit="questions"
                   href={(ch) => `#/questions/${book}/${ch}`}
@@ -471,6 +492,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
                 descriptive and chapter rows reuse BookSummary.verses. */}
             <Box sx={cellSx}>
               <SurfaceRow
+                cardSx={cardSx}
                 title="Alignment"
                 subText="Connect translated words to the source text"
                 expandable
@@ -479,6 +501,8 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               />
               {open === "alignment" && (
                 <ChapterList
+                  wide={wide}
+                  chapters={realChapters}
                   countOf={(c) => c.verses}
                   unit="verses"
                   href={(ch) => `#/alignment/${book}/${ch}`}
@@ -494,6 +518,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
             <Box sx={cellSx}>
               <SurfaceRow
+                cardSx={cardSx}
                 title="Words & Articles"
                 subText="Key terms and academy articles"
                 onClick={() => {
