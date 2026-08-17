@@ -37,6 +37,11 @@ test-results/
 /docs/ai-alignment-unicode-fix.md
 scratch/
 
+# Per-session git worktrees created by Agent tool isolation ("worktree" mode)
+# and scripts/worktree-init.ps1. Each is its own git checkout with a nested
+# .git file — never meant to be tracked content of the parent repo.
+.claude/worktrees/
+
 # USFM files anywhere — ad-hoc fetches for re-generating per-book SQL
 # patches (e.g. the chapter-front verse-0 backfill) shouldn't show up in
 # git status. The originally-seeded samples (ZEC/LAM/OBA + ISA-ust under
