@@ -49,7 +49,7 @@ type Location =
   | { view: "team" }
   | { view: "observe" }
   | { view: "verse"; book: string; chapter: number; verse: number }
-  | { view: "notes"; book: string; chapter: number }
+  | { view: "notes"; book: string; chapter: number; verse: number | null }
   | { view: "questions"; book: string; chapter: number }
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
@@ -84,9 +84,10 @@ const AdminWorkflowScreen = lazy(() => import("./components/flows/AdminWorkflowS
 const AdminProgressScreen = lazy(() => import("./components/flows/AdminProgressScreen"));
 
 // OBA (Obadiah) is the shortest book in the canon — one chapter, 21 verses.
-// Loads faster than ZEC on a cold cache and keeps the default landing page
-// snappy. Bookmarks / direct links still win because parseHash only falls
-// back to this when no hash is present.
+// Used as the fallback book code for partial routes (e.g. a hash with a
+// chapter/verse but no book) and as the initial book for useBook before a
+// chapter view is active. The default landing page is Books (#/books), not
+// a chapter view, so this no longer controls landing-page load weight.
 const DEFAULT_BOOK = "OBA";
 
 // Set when the user explicitly clicks "Sign out". Read at boot to suppress
@@ -133,9 +134,14 @@ function parseHash(): Location {
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
   }
-  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
   if (nt) {
-    return { view: "notes", book: nt[1].toUpperCase(), chapter: nt[2] ? parseInt(nt[2], 10) : 1 };
+    return {
+      view: "notes",
+      book: nt[1].toUpperCase(),
+      chapter: nt[2] ? parseInt(nt[2], 10) : 1,
+      verse: nt[3] ? parseInt(nt[3], 10) : null,
+    };
   }
   const qn = location.hash.match(/^#\/questions\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
   if (qn) {
@@ -205,17 +211,13 @@ function parseHash(): Location {
     };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
-  if (!m) return { view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 };
+  if (!m) return { view: "books" };
   return {
     view: "chapter",
     book: m[1].toUpperCase(),
     chapter: m[2] ? parseInt(m[2], 10) : 1,
     verse: m[3] ? parseInt(m[3], 10) : 1,
   };
-}
-
-function isDefaultLoc(l: Location): boolean {
-  return l.view === "chapter" && l.book === DEFAULT_BOOK && l.chapter === 1 && l.verse === 1;
 }
 
 // Auth gate. The API requires a valid Access cookie for every write, so we
@@ -375,8 +377,8 @@ export function App() {
   };
 
   // Remember the last scripture location so leaving preferences/articles
-  // returns here instead of the default landing book (Obadiah). Only tracks
-  // chapter views; a fresh load straight into preferences keeps the default.
+  // returns here instead of the default landing book. Only tracks chapter
+  // views; a fresh load straight into preferences keeps the default.
   const lastScriptureRef = useRef<{ book: string; chapter: number; verse: number }>({
     book: DEFAULT_BOOK,
     chapter: 1,
@@ -390,19 +392,21 @@ export function App() {
     navigate(book, chapter, verse);
   };
 
-  // Hydrate from server-side last-position. Fires once per auth session,
-  // only when `loc` is the default book — a bookmarked deep link (which
-  // makes `loc` non-default on mount) always wins. Reset on sign-out so the
-  // next sign-in re-hydrates instead of stranding the user on the default.
-  const hydratedRef = useRef(false);
+  // Live in-session position for the Books screen's Continue card. `auth.me`
+  // is fetched once at boot and never refreshed, so without this the card
+  // would keep showing the *previous* session's position after the user
+  // edits in this session and navigates back to #/books. Unlike
+  // lastScriptureRef above (a ref, so it can't trigger a re-render), this is
+  // state — BooksScreen needs to actually re-render when it changes.
+  const [livePosition, setLivePosition] = useState<{ book: string; chapter: number; verse: number } | null>(null);
   useEffect(() => {
-    if (auth.kind !== "ready" || hydratedRef.current) return;
-    hydratedRef.current = true;
-    const me = auth.me;
-    if (!me?.lastBook || me.lastChapter === null || me.lastVerse === null) return;
-    if (!isDefaultLoc(loc)) return;
-    navigate(me.lastBook, me.lastChapter, me.lastVerse);
-  }, [auth, loc]);
+    if (loc.view !== "chapter") return;
+    setLivePosition((prev) =>
+      prev && prev.book === loc.book && prev.chapter === loc.chapter && prev.verse === loc.verse
+        ? prev
+        : { book: loc.book, chapter: loc.chapter, verse: loc.verse },
+    );
+  }, [loc]);
 
   // Workspace reconciliation. The server's be_ws cookie is the source of
   // truth for which org's D1 database we're talking to; localStorage is just
@@ -559,10 +563,9 @@ export function App() {
     // Strip the URL hash too: leaving #/JON/3 around would confuse the next
     // boot into thinking the user requested a specific verse. Mirror that
     // into React state (replaceState doesn't fire hashchange) so the next
-    // sign-in's hydration sees loc=default and pulls from the server.
+    // sign-in lands on the default Books screen instead of a stale deep link.
     history.replaceState(null, "", location.pathname);
-    setLoc({ view: "chapter", book: DEFAULT_BOOK, chapter: 1, verse: 1 });
-    hydratedRef.current = false;
+    setLoc({ view: "books" });
     setAuth({ kind: "missing" });
   };
 
@@ -748,13 +751,23 @@ export function App() {
             ) : loc.view === "setup" ? (
               <SetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "books" ? (
-              <BooksScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              <BooksScreen
+                role={auth.role}
+                me={auth.me}
+                onNavigate={navigate}
+                lastPosition={
+                  livePosition ??
+                  (auth.me?.lastBook && auth.me.lastChapter != null && auth.me.lastVerse != null
+                    ? { book: auth.me.lastBook, chapter: auth.me.lastChapter, verse: auth.me.lastVerse }
+                    : null)
+                }
+              />
             ) : loc.view === "team" ? (
               <TeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "notes" ? (
-              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} />
             ) : loc.view === "questions" ? (
               <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : loc.view === "package" ? (

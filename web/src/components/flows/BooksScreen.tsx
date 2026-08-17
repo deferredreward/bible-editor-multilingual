@@ -1,14 +1,20 @@
 // TODO(i18n) — flow screens ship English literals until the i18n sweep.
 //
-// a2-import: Admin — Import books. Port of docs/flows/ui/a2-import.html.
+// a2-import: All roles — the default landing screen. Port of docs/flows/ui/a2-import.html.
 //
 // 2026-08-11 (Benjamin): this screen is the redesign's top-level entry, and two
 // decisions landed together: (1) the old FlowNav pill bar (which pointed at the
 // retired flows routes) is replaced by the redesign's own sticky topbar idiom
-// (see PackageHubScreen) — title, org/language sub, admin-only Tune button to
-// #/admin/progress; (2) the per-book source-overrides editor was duplicated
+// (see PackageHubScreen) — title, org/language sub, Tune button opening a menu
+// shown to every role; (2) the per-book source-overrides editor was duplicated
 // between here and the admin Setup screen — it now lives on Admin → Setup ONLY,
 // and this screen's copy is removed in favor of a caption link to #/admin/setup.
+//
+// Non-admins (editor/viewer) get a read-only version of the book grid: no
+// import/re-pull/AI-translate actions, no Bundle B import framing, and Open is
+// offered only once a book actually has content. Touching authorization logic
+// here means touching both roles' branches — check for `isAdmin`/`role ===
+// "admin"` before assuming a change is admin-only.
 //
 // Real data only. The book grid's imported/not-imported state comes from
 // GET /api/books; a FAILED list load renders an explicit error + retry and
@@ -33,6 +39,10 @@ import {
   CircularProgress,
   IconButton,
   Link,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Popover,
   Stack,
   TextField,
@@ -44,6 +54,9 @@ import {
 import { useTheme } from "@mui/material/styles";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import TuneIcon from "@mui/icons-material/Tune";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
+import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
+import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import {
   api,
   ApiError,
@@ -52,6 +65,7 @@ import {
   type BookListEntry,
   type BookSummary,
   type ImportHasLocalEditsBody,
+  type Role,
 } from "../../sync/api";
 import { BOOKS, bookName } from "../../lib/bookNames";
 import {
@@ -72,7 +86,12 @@ import { BooksActivityPanel, BooksPendingPanel } from "./BooksActivityPanels";
 import { BooksLanePanel } from "./BooksLanePanel";
 import type { FlowScreenContext } from "./types";
 
-export interface BooksScreenProps extends FlowScreenContext {}
+export interface BooksScreenProps extends FlowScreenContext {
+  // Live in-session position for the Continue card, preferring the current
+  // session's navigation over the (potentially stale) `me.lastBook` snapshot
+  // fetched once at boot. `null` when there is no last position at all.
+  lastPosition: { book: string; chapter: number; verse: number } | null;
+}
 
 const OT_COUNT = 39;
 const OT = BOOKS.slice(0, OT_COUNT).map((b) => b.code);
@@ -317,14 +336,17 @@ function LintBadge({ book }: { book: string }) {
 function BookDetailPanel({
   book,
   imported,
+  role,
   onImported,
   onOpenBook,
 }: {
   book: string;
   imported: boolean;
+  role: Role;
   onImported: () => Promise<void> | void;
   onOpenBook: (book: string) => void;
 }) {
+  const isAdmin = role === "admin";
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
 
@@ -448,89 +470,105 @@ function BookDetailPanel({
           }
         />
         <PanelBody>
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              color: "text.secondary",
-              mb: 0.75,
-            }}
-          >
-            Intent
-          </Typography>
-          <ToggleButtonGroup
-            exclusive
-            size="small"
-            value={intent}
-            onChange={(_, v) => {
-              if (v) setIntent(v as ImportIntent);
-            }}
-            sx={{ flexWrap: "wrap" }}
-          >
-            <ToggleButton value="translate" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-              Translate a new book
-            </ToggleButton>
-            <ToggleButton value="load" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-              Load my existing work
-            </ToggleButton>
-          </ToggleButtonGroup>
-
-          <Stack direction="row" spacing={1.5} sx={{ mt: 2, flexWrap: "wrap", rowGap: 1 }}>
-            {action.kind === "import" ? (
-              <Button
-                variant="contained"
-                disabled={busy}
-                onClick={() => void runImport(action.translateFromSource)}
-                startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
-                sx={{ minHeight: 40 }}
-              >
-                {busy ? `Importing ${book}…` : `Import ${book}`}
-              </Button>
-            ) : (
-              <>
+          {!isAdmin ? (
+            effectiveImported ? (
+              <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", rowGap: 1 }}>
                 <Button variant="contained" onClick={() => onOpenBook(book)} sx={{ minHeight: 40 }}>
                   Open {book}
                 </Button>
-                <Button variant="outlined" onClick={() => setRepullOpen(true)} sx={{ minHeight: 40 }}>
-                  Re-pull…
-                </Button>
-              </>
-            )}
-            {effectiveImported && isTranslation && (
-              <Button
-                variant="outlined"
-                color="secondary"
-                disabled={aiBusy}
-                onClick={() => void runAiTranslate()}
-                startIcon={aiBusy ? <CircularProgress size={16} color="inherit" /> : undefined}
-                sx={{ minHeight: 40 }}
+              </Stack>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Nothing to open yet — an administrator brings books into the editor.
+              </Typography>
+            )
+          ) : (
+            <>
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  color: "text.secondary",
+                  mb: 0.75,
+                }}
               >
-                AI Translate whole book
-              </Button>
-            )}
-          </Stack>
+                Intent
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={intent}
+                onChange={(_, v) => {
+                  if (v) setIntent(v as ImportIntent);
+                }}
+                sx={{ flexWrap: "wrap" }}
+              >
+                <ToggleButton value="translate" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
+                  Translate a new book
+                </ToggleButton>
+                <ToggleButton value="load" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
+                  Load my existing work
+                </ToggleButton>
+              </ToggleButtonGroup>
 
-          {busy && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-              Importing a book runs server-side and can take up to a minute for a large book. Leaving
-              this screen does not cancel it.
-            </Typography>
+              <Stack direction="row" spacing={1.5} sx={{ mt: 2, flexWrap: "wrap", rowGap: 1 }}>
+                {action.kind === "import" ? (
+                  <Button
+                    variant="contained"
+                    disabled={busy}
+                    onClick={() => void runImport(action.translateFromSource)}
+                    startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
+                    sx={{ minHeight: 40 }}
+                  >
+                    {busy ? `Importing ${book}…` : `Import ${book}`}
+                  </Button>
+                ) : (
+                  <>
+                    <Button variant="contained" onClick={() => onOpenBook(book)} sx={{ minHeight: 40 }}>
+                      Open {book}
+                    </Button>
+                    <Button variant="outlined" onClick={() => setRepullOpen(true)} sx={{ minHeight: 40 }}>
+                      Re-pull…
+                    </Button>
+                  </>
+                )}
+                {effectiveImported && isTranslation && (
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    disabled={aiBusy}
+                    onClick={() => void runAiTranslate()}
+                    startIcon={aiBusy ? <CircularProgress size={16} color="inherit" /> : undefined}
+                    sx={{ minHeight: 40 }}
+                  >
+                    AI Translate whole book
+                  </Button>
+                )}
+              </Stack>
+
+              {busy && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+                  Importing a book runs server-side and can take up to a minute for a large book. Leaving
+                  this screen does not cancel it.
+                </Typography>
+              )}
+
+              <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
+                Import pulls ULT/UST/tN/tQ/TWL from this project's configured source. A fresh, unedited
+                book is safe to re-pull; a populated one carries more risk on the nightly re-import.
+              </Alert>
+
+              {/* 2026-08-11: the per-book source-overrides editor that used to sit
+                  here (duplicated with the admin Setup screen) now lives on
+                  Admin → Setup only. */}
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
+                Source overrides moved to <Link href="#/admin/setup">Admin → Setup</Link>.
+              </Typography>
+            </>
           )}
-
-          <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-            Import pulls ULT/UST/tN/tQ/TWL from this project's configured source. A fresh, unedited
-            book is safe to re-pull; a populated one carries more risk on the nightly re-import.
-          </Alert>
-
-          {/* 2026-08-11: the per-book source-overrides editor that used to sit
-              here (duplicated with the admin Setup screen) now lives on
-              Admin → Setup only. */}
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
-            Source overrides moved to <Link href="#/admin/setup">Admin → Setup</Link>.
-          </Typography>
 
           {message && (
             <Alert severity="success" sx={{ mt: 2 }} onClose={() => setMessage(null)}>
@@ -551,28 +589,31 @@ function BookDetailPanel({
         <PanelFoot state={effectiveImported ? "Imported" : "Not yet imported"} />
       </Panel>
 
-      <BooksActivityPanel book={book} />
+      {isAdmin && <BooksActivityPanel book={book} />}
 
-      <ImportFromDoor43Dialog
-        open={repullOpen}
-        onClose={() => setRepullOpen(false)}
-        book={book}
-        currentChapter={1}
-        initialRef={repullDefaultRange(chapterNumbers)}
-        onMessage={(m) => setMessage(m)}
-        onImported={() => {
-          void onImported();
-          void loadSummary();
-        }}
-      />
+      {isAdmin && (
+        <ImportFromDoor43Dialog
+          open={repullOpen}
+          onClose={() => setRepullOpen(false)}
+          book={book}
+          currentChapter={1}
+          initialRef={repullDefaultRange(chapterNumbers)}
+          onMessage={(m) => setMessage(m)}
+          onImported={() => {
+            void onImported();
+            void loadSummary();
+          }}
+        />
+      )}
     </Stack>
   );
 }
 
-export default function BooksScreen({ role }: BooksScreenProps) {
+export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScreenProps) {
   const theme = useTheme();
   const { skip } = theme.palette.flows;
   const gridView = useMediaQuery(theme.breakpoints.up("tablet"));
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   // Shared app-wide config cache (BookDetailPanel below already subscribes to
   // it) — read here only to label the topbar; no new fetch.
   const projectConfig = useProjectConfig();
@@ -619,11 +660,8 @@ export default function BooksScreen({ role }: BooksScreenProps) {
   }, [setStatus]);
 
   useEffect(() => {
-    // Non-admins hit the role gate below and never see this data — skip the
-    // fetch entirely rather than firing a request whose result is discarded.
-    if (role !== "admin") return;
     void refetchBooks();
-  }, [refetchBooks, role]);
+  }, [refetchBooks]);
 
   const importedSet = useMemo(() => new Set(books.map((b) => b.book)), [books]);
   const query = search.trim();
@@ -662,36 +700,55 @@ export default function BooksScreen({ role }: BooksScreenProps) {
             </Typography>
           </Box>
           <Box sx={{ flex: 1 }} />
-          {role === "admin" && (
-            <IconButton
-              aria-label="Open the admin desk"
-              title="Admin"
+          <IconButton
+            aria-label="Open the books menu"
+            title="Menu"
+            aria-haspopup="menu"
+            aria-expanded={Boolean(menuAnchor)}
+            aria-controls={menuAnchor ? "books-screen-menu" : undefined}
+            onClick={(e) => setMenuAnchor(e.currentTarget)}
+            sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
+          >
+            <TuneIcon fontSize="small" />
+          </IconButton>
+          <Menu id="books-screen-menu" anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+            <MenuItem
               onClick={() => {
-                location.hash = "#/admin/progress";
+                setMenuAnchor(null);
+                // Same live position the Continue card uses — `me` is a
+                // boot-time snapshot, so reading it here would send the user
+                // to last session's verse while the card above showed this
+                // session's.
+                onNavigate(
+                  lastPosition?.book ?? "OBA",
+                  lastPosition?.chapter ?? 1,
+                  lastPosition?.verse ?? 1,
+                );
               }}
-              sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
             >
-              <TuneIcon fontSize="small" />
-            </IconButton>
-          )}
+              <ListItemIcon>
+                <MenuBookIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>Classic editor</ListItemText>
+            </MenuItem>
+            {role === "admin" && (
+              <MenuItem
+                onClick={() => {
+                  setMenuAnchor(null);
+                  location.hash = "#/admin/progress";
+                }}
+              >
+                <ListItemIcon>
+                  <AdminPanelSettingsIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Admin</ListItemText>
+              </MenuItem>
+            )}
+          </Menu>
         </Stack>
       </Box>
     </Box>
   );
-
-  if (role !== "admin") {
-    return (
-      <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
-        {topbar}
-        <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-          <Alert severity="info" sx={{ mt: 1 }}>
-            Importing books is an administrator task. Your account doesn't have the admin role in this
-            workspace, so this screen has nothing to show you.
-          </Alert>
-        </Box>
-      </Box>
-    );
-  }
 
   const listPane =
     booksStatus === "loading" ? (
@@ -854,6 +911,7 @@ export default function BooksScreen({ role }: BooksScreenProps) {
         key={selected}
         book={selected}
         imported={importedSet.has(selected)}
+        role={role}
         onImported={refetchBooks}
         // Redesign entry point: opening a book lands on its package hub
         // (#/package/{book}), not the classic chapter view. Classic remains
@@ -869,29 +927,87 @@ export default function BooksScreen({ role }: BooksScreenProps) {
     <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
       {topbar}
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
+      {lastPosition && (
+        <Box sx={{ mb: 2.5 }}>
+          <Panel>
+            {/* One compact row — this sits above the canon grid on the landing
+                screen, so it states where you were and offers the two jumps
+                without pushing the books below the fold. */}
+            <Stack
+              direction="row"
+              alignItems="center"
+              sx={{ gap: 1.5, flexWrap: "wrap", paddingBlock: 1.5, paddingInline: 2 }}
+            >
+              <Box sx={{ flex: "1 1 200px", minWidth: 0 }}>
+                <Typography
+                  component="h2"
+                  sx={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.06em", color: "text.secondary" }}
+                >
+                  CONTINUE
+                </Typography>
+                <Typography sx={{ fontSize: "1rem", fontWeight: 600 }}>
+                  {`${bookName(lastPosition.book)} ${lastPosition.chapter}:${lastPosition.verse}`}
+                </Typography>
+              </Box>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={() => {
+                  location.hash = `#/package/${lastPosition.book}`;
+                }}
+              >
+                Open {lastPosition.book}
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                endIcon={
+                  <ArrowForwardIcon
+                    fontSize="small"
+                    sx={theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined}
+                  />
+                }
+                onClick={() => {
+                  location.hash = `#/notes/${lastPosition.book}/${lastPosition.chapter}/${lastPosition.verse}`;
+                }}
+              >
+                Notes
+              </Button>
+            </Stack>
+          </Panel>
+        </Box>
+      )}
       <Box sx={{ mt: 0, mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            fontWeight: 700,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "primary.main",
-          }}
-        >
-          Bundle B · Bring in a book
-        </Typography>
-        <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
-          Import
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {booksStatus === "loaded"
-            ? `${books.length}/${BOOKS.length} imported`
-            : booksStatus === "error"
-              ? "Import counts unavailable — the book list failed to load."
-              : "Counting imported books…"}
-        </Typography>
+        {role === "admin" ? (
+          <>
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                fontWeight: 700,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "primary.main",
+              }}
+            >
+              Bundle B · Bring in a book
+            </Typography>
+            <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
+              Import
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {booksStatus === "loaded"
+                ? `${books.length}/${BOOKS.length} imported`
+                : booksStatus === "error"
+                  ? "Import counts unavailable — the book list failed to load."
+                  : "Counting imported books…"}
+            </Typography>
+          </>
+        ) : (
+          <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
+            Browse books
+          </Typography>
+        )}
       </Box>
 
       <Box
@@ -938,13 +1054,17 @@ export default function BooksScreen({ role }: BooksScreenProps) {
         <Box sx={{ minWidth: 0 }}>{detailPane}</Box>
       </Box>
 
-      <Box sx={{ mt: 2.5 }}>
-        <BooksPendingPanel book={selected} />
-      </Box>
+      {role === "admin" && (
+        <Box sx={{ mt: 2.5 }}>
+          <BooksPendingPanel book={selected} />
+        </Box>
+      )}
 
-      <Box sx={{ mt: 2.5 }}>
-        <BooksLanePanel />
-      </Box>
+      {role === "admin" && (
+        <Box sx={{ mt: 2.5 }}>
+          <BooksLanePanel />
+        </Box>
+      )}
       </Box>
     </Box>
   );

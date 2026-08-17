@@ -128,6 +128,11 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 export interface TranslateNotesScreenProps extends FlowScreenContext {
   book: string;
   chapter: number;
+  // Optional deep-link verse (e.g. from the Books "Continue" card). Seeds the
+  // queue cursor once, on mount/chapter change, to the first queue entry at
+  // or after this verse — never re-seeks on later renders or re-navigation
+  // within the same chapter.
+  verse?: number;
 }
 
 // A card is terminal in exactly two ways — the two verbs that finish it.
@@ -219,7 +224,7 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
   );
 }
 
-export default function TranslateNotesScreen({ book, chapter }: TranslateNotesScreenProps) {
+export default function TranslateNotesScreen({ book, chapter, verse }: TranslateNotesScreenProps) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   // --hl from docs/flows/ui/_tokens.css: the quote highlight in scripture, and
@@ -292,10 +297,25 @@ export default function TranslateNotesScreen({ book, chapter }: TranslateNotesSc
     setQueue({ key: chapterKey, ids: ordered.map((r) => r.id) });
     setStatuses(seed);
     setEditedIds(new Set());
-    setCursor(firstOpen < 0 ? 0 : firstOpen);
-    setView(ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
+    if (verse != null) {
+      // A verse past the last note's verse has no >= match (-1); clamp to the
+      // last card instead of falling back to index 0, which would jump to the
+      // top of the chapter instead of near where the user asked to look.
+      const seekIdx = ordered.findIndex((r) => r.verse >= verse);
+      setCursor(seekIdx < 0 ? (ordered.length > 0 ? ordered.length - 1 : 0) : seekIdx);
+    } else {
+      setCursor(firstOpen < 0 ? 0 : firstOpen);
+    }
+    // A deep-linked verse always lands on the card view, even if every note
+    // in the chapter is already approved — "done" would otherwise discard
+    // the requested verse.
+    setView(verse != null ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
+    // `verse` deliberately not a dep beyond this — the `queue?.key === chapterKey`
+    // guard above already limits this effect to once per mount/chapter change,
+    // which is exactly the seek-once semantics wanted here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, book, chapter, queue, chapterKey]);
 
   const rowById = useMemo(() => {
