@@ -2,11 +2,14 @@
 //
 // AdminSetupScreen — the redesigned admin "Setup" desk screen (#/admin/setup),
 // rendered inside the shared AdminDesk chrome. Desktop-first presentation of
-// the "Setup & Preferences" mockup (artifact a5d4a223: rail groups Setup
-// [5 wizard steps] + Preferences [Brief / Instructions / Common issues /
-// Terminology / Examples / Source overrides]) over the REAL systems that
-// already exist. Nothing here fakes a save; every write goes through the same
-// api methods the classic PreferencesWorkspace uses.
+// the "Setup & Preferences" mockup (artifact a5d4a223) over the REAL systems
+// that already exist. Nothing here fakes a save; every write goes through the
+// same api methods the classic PreferencesWorkspace uses.
+//
+// Configuration-only, per Benjamin's post-review IA decision: the "teach the
+// AI" memory sections (Brief / Instructions / Common issues / Terminology /
+// Examples) moved to the Style screen (StyleScreen.tsx) — this screen keeps
+// only the setup wizard, AI service, source overrides, and localization.
 //
 // Reality mapping (decisions + evidence):
 //
@@ -22,39 +25,9 @@
 //    (WorkspaceChoiceDialog, web/src/components/WorkspaceChoiceDialog.tsx:61 —
 //    picking an org actually switches and reloads; the caption says so).
 //
-//  * Brief / Instructions / Common issues — re-presented here with EXACTLY the
-//    semantics of PreferencesWorkspace's BriefSection (PreferencesWorkspace.tsx
-//    :1376-1488) and MarkdownPrefSection (:1493-1610):
-//      - ONE shared useTranslationPrefs hook for all three sections
-//        (PreferencesWorkspace.tsx:186-190) so every save reads the same
-//        prefs.version for If-Match and a sibling's save can't leave another
-//        section self-409ing;
-//      - seed-once drafts (setDraft(d => d ?? prefs)) so a sibling's apply()
-//        never clobbers unsaved typing (:1382-1389, :1510-1523);
-//      - api.putTranslationPrefs(prefs.version, patch) sends only the fields
-//        each section owns; the server partial-merges (sync/api.ts:1977-1982);
-//      - 409 → currentPrefsFromConflict(e.body) → apply(current) (refetch only
-//        if the body carried no row), draft untouched (:1407-1418);
-//      - 403 → forbidden message; 400 → too-long message (markdown fields).
-//    Char caps mirror the server (api/src/translationMemory.ts via the note at
-//    PreferencesWorkspace.tsx:1491-1492): instructions_md 20000,
-//    common_issues_md 50000.
-//
-//  * Terminology — the full editor, extracted out of PreferencesWorkspace into
-//    its own component (TerminologySection.tsx) and mounted here directly
-//    (issue #190). No more read-only mirror or deep-link back to classic.
-//
 //  * AI service (#188) and Localization (#189) — same pattern: AiServiceSection
 //    and LocalizationSection were already standalone components and are
 //    mounted here directly, no re-implementation.
-//
-//  * Examples — re-presentation of ExamplesSection (PreferencesWorkspace.tsx
-//    :2454-2580): read-only browse via useExamples, tn/tq toggle, debounced
-//    search, and the one real action — revoke — via api.validateNote /
-//    api.validateQuestion(id, book, false) (sync/api.ts:1847-1861). React keys
-//    and the busy token are `book:id` because 4-char row IDs are only unique
-//    per book (comment at :2469-2471). "Feeding AI" chip from
-//    useContextExportStatus (:2460, :2486).
 //
 //  * Source overrides — the artifact's per-book tN/tQ override table maps to a
 //    REAL backend (issue #103: api.getBookSources / setBookSource /
@@ -64,23 +37,15 @@
 //    book selector fed by api.getBooks() — overrides are per-book, so the
 //    artifact's book-less table needed that one addition to be honest.
 //
-//  * Omitted from the artifact: nothing. Every mockup section has a real
-//    backing. The artifact's five separate wizard rail entries collapse to one
-//    section (see above), and its inline-editable terminology grid degrades to
-//    read-only + link-out (see above) — both deliberate.
-//
 // Inner navigation: AdminDesk owns the desk rail (Progress / Workflow / Team /
 // Setup), so this screen's section nav is a sticky horizontal jump strip above
 // the stacked panels — plain scrollIntoView against in-page anchors
 // (admin-setup-sec-*), the same pattern PreferencesWorkspace uses for its rail
 // (:169-171). No extra hash segments, so back/forward stay owned by the desk.
+// Hidden below md — the jump strip is a desktop convenience only.
 //
 // Gating: admin-only overall (honest no-content gate like SetupScreen.tsx
-// :75-95 — hooks still run above the gate so hook order never varies). The
-// memory sections additionally require a translation project + write access
-// (memoryAvailable = isTranslationProject(cfg) && !isReadOnly(), mirroring
-// PreferencesWorkspace.tsx:183-184); a gateway-language or read-only workspace
-// sees an honest explanation instead.
+// :75-95 — hooks still run above the gate so hook order never varies).
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -88,42 +53,21 @@ import {
   Box,
   Button,
   ButtonBase,
-  Chip,
   CircularProgress,
   MenuItem,
   Paper,
-  Snackbar,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
-import SaveIcon from "@mui/icons-material/Save";
-import VisibilityIcon from "@mui/icons-material/Visibility";
-import {
-  api,
-  ApiError,
-  isReadOnly,
-  REGISTERS,
-  type Register,
-  type TranslationPrefs,
-} from "../../sync/api";
-import { currentPrefsFromConflict } from "../../sync/prefsConflict";
-import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectConfig";
-import {
-  useTranslationPrefs,
-  useExamples,
-  useContextExportStatus,
-} from "../../hooks/useTranslationMemory";
-import { MarkdownView } from "../MarkdownView";
+import { api } from "../../sync/api";
+import { useProjectConfig } from "../../hooks/useProjectConfig";
 import { SetupWizard } from "../SetupWizard";
 import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
 import { AiServiceSection } from "../AiServiceSection";
 import { LocalizationSection } from "../LocalizationSection";
-import { TerminologySection } from "../TerminologySection";
 import { bookName } from "../../lib/bookNames";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
@@ -131,26 +75,10 @@ import type { FlowScreenContext } from "./types";
 
 const INSPIRE = "#31ADE3";
 
-type PrefsState = ReturnType<typeof useTranslationPrefs>;
-
-type SectionKey =
-  | "wizard"
-  | "brief"
-  | "instructions"
-  | "commonIssues"
-  | "terminology"
-  | "examples"
-  | "aiService"
-  | "overrides"
-  | "localization";
+type SectionKey = "wizard" | "aiService" | "overrides" | "localization";
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   wizard: "Setup wizard",
-  brief: "Brief",
-  instructions: "Instructions",
-  commonIssues: "Common issues",
-  terminology: "Terminology",
-  examples: "Examples",
   aiService: "AI service",
   overrides: "Source overrides",
   localization: "Localization",
@@ -160,14 +88,6 @@ function scrollToSection(key: SectionKey) {
   document
     .getElementById(`admin-setup-sec-${key}`)
     ?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-// Per-panel save feedback, mirror of useSaveState (PreferencesWorkspace.tsx
-// :1081-1085).
-function useSaveState() {
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  return { saving, setSaving, msg, setMsg, clear: () => setMsg(null) };
 }
 
 // ── Panel chrome ────────────────────────────────────────────────────────────
@@ -258,378 +178,6 @@ function WizardPanel() {
   );
 }
 
-// ── Brief ───────────────────────────────────────────────────────────────────
-// Faithful re-presentation of BriefSection (PreferencesWorkspace.tsx:1376-1488):
-// same fields, same seed-once draft, same PUT field set (audience / purpose /
-// register / script_notes / notes — instructions/assisted omitted so the
-// server merges them), same 409/403 handling.
-function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
-  const { prefs, loading, apply, refetch } = prefsState;
-  const [draft, setDraft] = useState<TranslationPrefs | null>(null);
-  const save = useSaveState();
-
-  // Seed once — a sibling section's save PUTs only its own fields, so it can't
-  // change anything Brief owns; re-seeding on every prefs change would clobber
-  // in-progress typing (see PreferencesWorkspace.tsx:1382-1386).
-  useEffect(() => {
-    setDraft((d) => d ?? prefs);
-  }, [prefs]);
-
-  const onSave = async () => {
-    if (!draft || !prefs) return;
-    save.setSaving(true);
-    try {
-      const res = await api.putTranslationPrefs(prefs.version, {
-        audience: draft.audience,
-        purpose: draft.purpose,
-        register: draft.register,
-        script_notes: draft.script_notes,
-        notes: draft.notes,
-      });
-      apply(res.prefs);
-      save.setMsg("Saved.");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        // Someone else saved first. Adopt the fresh row from the 409 body so
-        // the next save carries the right If-Match; the local draft is kept.
-        const current = currentPrefsFromConflict(e.body);
-        if (current) apply(current);
-        else refetch();
-        save.setMsg("Someone else saved first — your edits are kept; save again to apply them.");
-      } else if (e instanceof ApiError && e.status === 403) {
-        save.setMsg("Only an admin can save preferences.");
-      } else {
-        save.setMsg("Save failed — check your connection and try again.");
-      }
-    } finally {
-      save.setSaving(false);
-    }
-  };
-
-  return (
-    <SectionPanel
-      id="brief"
-      title="Brief"
-      sub="Sets the audience and tone every AI draft is written for."
-      foot={prefs ? `Version ${prefs.version}` : undefined}
-      footAction={
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<SaveIcon />}
-          onClick={onSave}
-          disabled={save.saving || !draft}
-        >
-          Save
-        </Button>
-      }
-    >
-      {loading && !draft ? (
-        <CircularProgress size={22} />
-      ) : !draft ? null : (
-        <Stack spacing={2}>
-          <TextField
-            label="Audience"
-            value={draft.audience ?? ""}
-            onChange={(e) => setDraft({ ...draft, audience: e.target.value || null })}
-            multiline
-            minRows={2}
-            fullWidth
-            size="small"
-          />
-          <TextField
-            label="Purpose"
-            value={draft.purpose ?? ""}
-            onChange={(e) => setDraft({ ...draft, purpose: e.target.value || null })}
-            multiline
-            minRows={2}
-            fullWidth
-            size="small"
-          />
-          <TextField
-            select
-            label="Register"
-            value={draft.register}
-            onChange={(e) => setDraft({ ...draft, register: e.target.value as Register })}
-            sx={{ maxWidth: 240 }}
-            size="small"
-            helperText="The level of formality AI drafts aim for."
-          >
-            {REGISTERS.map((r) => (
-              <MenuItem key={r} value={r}>
-                {r === "default" ? "Default (auto)" : r === "formal" ? "Formal" : "Informal"}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            label="Script / direction notes"
-            value={draft.script_notes ?? ""}
-            onChange={(e) => setDraft({ ...draft, script_notes: e.target.value || null })}
-            multiline
-            minRows={2}
-            fullWidth
-            size="small"
-          />
-        </Stack>
-      )}
-      <Snackbar open={!!save.msg} autoHideDuration={4000} onClose={save.clear} message={save.msg ?? ""} />
-    </SectionPanel>
-  );
-}
-
-// ── Instructions / Common issues (shared markdown editor) ───────────────────
-// Faithful re-presentation of MarkdownPrefSection (PreferencesWorkspace.tsx
-// :1493-1610). Server caps (keep in sync with PutPrefsBody in
-// api/src/translationMemory.ts): instructions_md 20000, common_issues_md 50000.
-function MarkdownPrefPanel({
-  id,
-  field,
-  title,
-  sub,
-  placeholder,
-  maxChars,
-  prefsState,
-}: {
-  id: SectionKey;
-  field: "instructions_md" | "common_issues_md";
-  title: string;
-  sub: string;
-  placeholder: string;
-  maxChars: number;
-  prefsState: PrefsState;
-}) {
-  const { prefs, error, apply, refetch } = prefsState;
-  // null = not yet seeded (loading gate below). Seed ONLY once prefs actually
-  // loaded — coalescing null prefs into "" would render empty over saved
-  // content, and a Save from that state would null the field on the server
-  // (see PreferencesWorkspace.tsx:1517-1523).
-  const [value, setValue] = useState<string | null>(null);
-  const [preview, setPreview] = useState(false);
-  const save = useSaveState();
-
-  useEffect(() => {
-    if (prefs) setValue((v) => v ?? (prefs[field] ?? ""));
-  }, [prefs, field]);
-
-  const overLimit = (value ?? "").length > maxChars;
-
-  const onSave = async () => {
-    if (!prefs || value === null) return;
-    save.setSaving(true);
-    try {
-      const res = await api.putTranslationPrefs(prefs.version, { [field]: value || null });
-      apply(res.prefs);
-      save.setMsg("Saved.");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        const current = currentPrefsFromConflict(e.body);
-        if (current) apply(current);
-        else refetch();
-        save.setMsg("Someone else saved first — your edits are kept; save again to apply them.");
-      } else if (e instanceof ApiError && e.status === 403) {
-        save.setMsg("Only an admin can save preferences.");
-      } else if (e instanceof ApiError && e.status === 400) {
-        save.setMsg("Too long — trim the text under the character limit and save again.");
-      } else {
-        save.setMsg("Save failed — check your connection and try again.");
-      }
-    } finally {
-      save.setSaving(false);
-    }
-  };
-
-  return (
-    <SectionPanel
-      id={id}
-      title={title}
-      sub={sub}
-      foot={
-        value === null
-          ? undefined
-          : overLimit
-            ? `${value.length.toLocaleString()} / ${maxChars.toLocaleString()} characters — over the limit`
-            : `${value.length.toLocaleString()} / ${maxChars.toLocaleString()} characters`
-      }
-      footAction={
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<SaveIcon />}
-          onClick={onSave}
-          disabled={save.saving || overLimit || value === null}
-        >
-          Save
-        </Button>
-      }
-    >
-      {value === null ? (
-        error ? (
-          <Alert severity="error">Couldn't load preferences — reload to try again.</Alert>
-        ) : (
-          <CircularProgress size={22} />
-        )
-      ) : (
-        <Stack spacing={1.5}>
-          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
-            <ToggleButton
-              size="small"
-              value="preview"
-              selected={preview}
-              onChange={() => setPreview((p) => !p)}
-              sx={{ textTransform: "none", py: 0.25 }}
-            >
-              <VisibilityIcon fontSize="small" sx={{ marginInlineEnd: 0.5 }} />
-              Preview
-            </ToggleButton>
-          </Box>
-          {preview ? (
-            <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, minHeight: 180 }}>
-              <MarkdownView markdown={value || "_Empty._"} />
-            </Box>
-          ) : (
-            <TextField
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              multiline
-              minRows={8}
-              fullWidth
-              placeholder={placeholder}
-              error={overLimit}
-              slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
-            />
-          )}
-        </Stack>
-      )}
-      <Snackbar open={!!save.msg} autoHideDuration={4000} onClose={save.clear} message={save.msg ?? ""} />
-    </SectionPanel>
-  );
-}
-
-// ── Examples ────────────────────────────────────────────────────────────────
-function ExamplesPanel({ enabled }: { enabled: boolean }) {
-  const [resource, setResource] = useState<"tn" | "tq">("tn");
-  const [query, setQuery] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  const { examples, loading, refetch } = useExamples(enabled, {
-    resource,
-    q: debouncedQ || undefined,
-    limit: 200,
-  });
-  const { status } = useContextExportStatus(enabled);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const save = useSaveState();
-
-  useEffect(() => {
-    const h = setTimeout(() => setDebouncedQ(query.trim()), 300);
-    return () => clearTimeout(h);
-  }, [query]);
-
-  // 4-char row IDs are only unique per book — busy token and React key must be
-  // `book:id` (PreferencesWorkspace.tsx:2469-2471).
-  const revoke = async (id: string, book: string) => {
-    setBusyId(`${book}:${id}`);
-    try {
-      if (resource === "tn") await api.validateNote(id, book, false);
-      else await api.validateQuestion(id, book, false);
-      refetch();
-    } catch {
-      save.setMsg("Couldn't revoke — try again.");
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const feedingAi = status?.status === "success" && !!status.sha;
-
-  return (
-    <SectionPanel
-      id="examples"
-      title="Examples"
-      sub="Validated notes and questions the AI is shown as style references. Revoking returns an item to the edited state."
-      foot={`${examples.length} validated example${examples.length === 1 ? "" : "s"}`}
-      footAction={
-        <Chip
-          size="small"
-          label={feedingAi ? "Feeding AI drafts" : "Not feeding AI yet"}
-          color={feedingAi ? "success" : "default"}
-          variant="outlined"
-          sx={{ height: 18, fontSize: 10, fontWeight: 600 }}
-        />
-      }
-    >
-      <Stack spacing={1.5}>
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <ToggleButtonGroup size="small" exclusive value={resource} onChange={(_, v) => v && setResource(v)}>
-            <ToggleButton value="tn" sx={{ textTransform: "none", py: 0.25 }}>
-              Notes
-            </ToggleButton>
-            <ToggleButton value="tq" sx={{ textTransform: "none", py: 0.25 }}>
-              Questions
-            </ToggleButton>
-          </ToggleButtonGroup>
-          <TextField
-            size="small"
-            placeholder="Search…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            sx={{ minWidth: 220 }}
-          />
-        </Stack>
-
-        {loading && examples.length === 0 ? (
-          <CircularProgress size={22} />
-        ) : examples.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            No validated examples yet — validate notes or questions in the editor to feed the AI.
-          </Typography>
-        ) : (
-          <Stack spacing={1}>
-            {examples.map((ex) => (
-              <Box
-                key={`${ex.book}:${ex.id}`}
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  p: 1.25,
-                  borderInlineStart: "3px solid",
-                  borderInlineStartColor: "success.main",
-                  bgcolor: (theme) => alpha(theme.palette.success.main, 0.05),
-                }}
-              >
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <Chip
-                    label={`${bookName(ex.book)} ${ex.ref_raw}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ height: 20, fontSize: 11 }}
-                  />
-                  {ex.support_reference && (
-                    <Chip label={ex.support_reference} size="small" sx={{ height: 20, fontSize: 10 }} />
-                  )}
-                  <Box sx={{ flex: 1 }} />
-                  <Button
-                    size="small"
-                    color="inherit"
-                    onClick={() => revoke(ex.id, ex.book)}
-                    disabled={busyId === `${ex.book}:${ex.id}`}
-                  >
-                    Revoke
-                  </Button>
-                </Stack>
-                <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: "pre-wrap" }}>
-                  {resource === "tn" ? ex.note : `${ex.question ?? ""}\n${ex.response ?? ""}`}
-                </Typography>
-              </Box>
-            ))}
-          </Stack>
-        )}
-      </Stack>
-      <Snackbar open={!!save.msg} autoHideDuration={4000} onClose={save.clear} message={save.msg ?? ""} />
-    </SectionPanel>
-  );
-}
-
 // ── Source overrides ────────────────────────────────────────────────────────
 // Overrides are stored per book (api/src/bookSource.ts), so the reused
 // BookSourceOverridesPanel needs a book context the artifact's mockup didn't
@@ -703,25 +251,9 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
   // or config (a mid-body early return above hooks is the Shell.tsx crash
   // pattern this repo has been burned by).
   const cfg = useProjectConfig();
-  const isTranslation = isTranslationProject(cfg);
   const admin = role === "admin";
-  const memoryAvailable = admin && isTranslation && !isReadOnly();
-  // ONE shared prefs hook for Brief / Instructions / Common issues — all three
-  // save against the same TranslationPrefs row/version, so a shared hook keeps
-  // every save's If-Match current (PreferencesWorkspace.tsx:185-190).
-  const prefsState = useTranslationPrefs(memoryAvailable);
 
-  const sections: SectionKey[] = admin
-    ? [
-        "wizard",
-        ...(memoryAvailable
-          ? (["brief", "instructions", "commonIssues", "terminology", "examples"] as SectionKey[])
-          : []),
-        "aiService",
-        "overrides",
-        "localization",
-      ]
-    : [];
+  const sections: SectionKey[] = admin ? ["wizard", "aiService", "overrides", "localization"] : [];
 
   return (
     <AdminDesk current="setup">
@@ -729,7 +261,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
         <AdminPageHeader
           eyebrow={cfg ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}` : "Workspace"}
           title="Setup & preferences"
-          subtitle="Configure sources and lanes, and the memory AI drafts are written from."
+          subtitle="Configure where this project pulls from and how it's set up."
         />
 
         {!admin ? (
@@ -761,7 +293,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
                 position: "sticky",
                 insetBlockStart: 0,
                 zIndex: 5,
-                display: "flex",
+                display: { xs: "none", md: "flex" },
                 gap: 0.5,
                 overflowX: "auto",
                 bgcolor: "background.paper",
@@ -792,50 +324,6 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
             </Box>
 
             <WizardPanel />
-
-            {cfg === null ? (
-              <CircularProgress size={22} />
-            ) : !isTranslation ? (
-              <Alert severity="info" variant="outlined">
-                Translation preferences (brief, instructions, terminology, examples) apply to
-                translation projects only — this workspace is a source project.
-              </Alert>
-            ) : !memoryAvailable ? (
-              <Alert severity="info" variant="outlined">
-                This workspace is read-only here, so translation preferences can't be edited.
-              </Alert>
-            ) : (
-              <>
-                <BriefPanel prefsState={prefsState} />
-                <MarkdownPrefPanel
-                  id="instructions"
-                  field="instructions_md"
-                  title="Instructions"
-                  sub="Free markdown, injected into every AI drafting and checking prompt for this project."
-                  placeholder="e.g. Prefer clause-first word order; keep second-person plural distinct…"
-                  maxChars={20000}
-                  prefsState={prefsState}
-                />
-                <MarkdownPrefPanel
-                  id="commonIssues"
-                  field="common_issues_md"
-                  title="Common issues"
-                  sub="Free markdown describing recurring problems reviewers keep flagging."
-                  placeholder="e.g. - Translators default to a forbidden rendering for…"
-                  maxChars={50000}
-                  prefsState={prefsState}
-                />
-                <SectionPanel
-                  id="terminology"
-                  title="Terminology"
-                  sub="Concept-level term decisions every AI draft and reviewer check must respect."
-                  flush
-                >
-                  <TerminologySection direction={cfg?.direction ?? "ltr"} />
-                </SectionPanel>
-                <ExamplesPanel enabled={memoryAvailable} />
-              </>
-            )}
 
             {/* AI service is org-wide admin config (provider/model/key), not a
                 translation-memory feature — gate on admin only, matching

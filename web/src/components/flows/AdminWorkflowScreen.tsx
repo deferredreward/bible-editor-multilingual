@@ -805,18 +805,18 @@ export default function AdminWorkflowScreen({ role }: AdminWorkflowScreenProps) 
       <Panel
         title="The 8 steps"
         chip={<FlowStatusChip kind="skip" label="Descriptive" />}
-        sub="Every book package — literal and simplified text, translationNotes, Word links, Questions, and every referenced translationWords / translationAcademy article — moves through these steps in order. The app doesn't track step state yet, so this rail describes the model without pretending to measure it."
+        sub="How a book package moves from draft to publish. No step-state backend yet, so no counts."
         foot={
           <Typography variant="caption">
-            No live counts here on purpose — there's no step-state data to show, and fake numbers would
-            be worse than none.
+            No community-check step here (that's downstream); a package isn't done until every
+            referenced article is translated too.
           </Typography>
         }
       >
         <Box
           role="list"
           aria-label="Workflow steps"
-          sx={{ display: "flex", gap: 1.25, overflowX: "auto", paddingBlockEnd: 0.5 }}
+          sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}
         >
           {STEPS.map((s, i) => (
             <Box
@@ -824,29 +824,28 @@ export default function AdminWorkflowScreen({ role }: AdminWorkflowScreenProps) 
               role="listitem"
               sx={{
                 flex: "none",
-                minWidth: 172,
-                maxWidth: 210,
-                border: "1.5px solid",
+                width: { xs: "100%", sm: "calc(50% - 4px)", md: "calc(25% - 6px)" },
+                border: "1px solid",
                 borderColor: "divider",
                 bgcolor: "action.hover",
-                borderRadius: "14px",
-                paddingBlock: 1.5,
-                paddingInline: 1.625,
+                borderRadius: "9px",
+                paddingBlock: 0.75,
+                paddingInline: 1,
                 display: "flex",
                 flexDirection: "column",
-                gap: 0.5,
+                gap: 0.25,
               }}
             >
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                 <Box
                   aria-hidden
                   sx={{
-                    width: 22,
-                    height: 22,
+                    width: 16,
+                    height: 16,
                     borderRadius: "50%",
                     bgcolor: dark ? INSPIRE_DEEP : OCEAN,
                     color: "#fff",
-                    fontSize: "0.75rem",
+                    fontSize: "0.625rem",
                     fontWeight: 700,
                     display: "inline-flex",
                     alignItems: "center",
@@ -857,19 +856,14 @@ export default function AdminWorkflowScreen({ role }: AdminWorkflowScreenProps) 
                 >
                   {i + 1}
                 </Box>
-                <Typography sx={{ fontSize: "0.9rem", fontWeight: 700, letterSpacing: "-0.01em" }}>
+                <Typography sx={{ fontSize: "0.8125rem", fontWeight: 700, letterSpacing: "-0.01em" }}>
                   {s.name}
                 </Typography>
               </Box>
-              <Typography sx={{ fontSize: "0.78rem", color: "text.secondary" }}>{s.blurb}</Typography>
+              <Typography sx={{ fontSize: "0.72rem", color: "text.secondary" }}>{s.blurb}</Typography>
             </Box>
           ))}
         </Box>
-        <Typography sx={{ mt: 1.5, fontSize: "0.8125rem", color: "text.secondary" }}>
-          There is deliberately no community-check step here — that happens downstream, outside this
-          tool, once a package is published. And a package isn't done just because the text is drafted:
-          it isn't finished until every referenced article is also translated.
-        </Typography>
       </Panel>
 
       {/* ── AI pipeline — live jobs from the shared store ── */}
