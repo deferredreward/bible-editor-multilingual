@@ -1,0 +1,65 @@
+name: Deploy to dev
+
+# Manual-only: click "Run workflow" on the Actions tab to ship.
+# No push trigger, so a merge to main never auto-deploys.
+#
+# This repo is the dev fork — it deploys the DEV worker only. The production
+# deploy (`wrangler deploy --env production`, worker `bible-editor-api`) is
+# intentionally not wired up here; ship prod by hand from a checkout that
+# should be touching prod.
+#
+# The file is named deploy-dev.yml, not deploy.yml, on purpose. A dispatch runs
+# the workflow file as it exists ON THE REF YOU PICK, and ~111 older branches in
+# this fork still carry the old prod-deploying deploy.yml. Under a new filename,
+# those branches can't be selected for this button (the file doesn't exist on
+# them). That is a speed bump, not a wall: the durable fix is scoping
+# CLOUDFLARE_API_TOKEN to the bible-editor-api-dev script only.
+on:
+  workflow_dispatch:
+
+# Avoid two concurrent dev deploys racing each other.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # api typecheck (tsc --noEmit) + web vite build -> web/dist.
+      # wrangler deploy below reads ../web/dist as the SPA assets, so this
+      # must run first.
+      - name: Build
+        run: npm run build
+
+      # Uses the wrangler pinned in api/devDependencies (not a separate action)
+      # so CI matches a local `wrangler deploy`. NO --env: the default env in
+      # wrangler.toml is the dev worker (`bible-editor-api-dev`, no crons, dev
+      # D1). Adding `--env production` here would ship prod — don't.
+      #
+      # Worker secrets are NOT touched here, and they are per-script: the ones
+      # uploaded to `bible-editor-api` do not carry over to the dev worker.
+      # JWT_SIGNING_KEY / DCS_CLIENT_ID / DCS_CLIENT_SECRET / BT_API_TOKEN etc.
+      # each need a `wrangler secret put <NAME>` (no --env) against the dev
+      # script, or the deploy succeeds and sign-in fails at runtime. Leave
+      # DCS_SERVICE_TOKEN unset unless you want the dev worker able to write to
+      # the real DCS org — DCS_EXPORT_OWNER is the same in both envs.
+      #
+      # This job does NOT run D1 migrations; apply them separately with
+      # `wrangler d1 migrations apply bible_editor_dev --remote`.
+      - name: Deploy Worker + SPA (dev)
+        working-directory: api
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -200,4 +200,6 @@ Run order:
 
 Single command from repo root: `npm run deploy` builds `web/dist` then runs `wrangler deploy --env production` from `api/`. The Worker serves both `/api/*` and the SPA. See [`docs/deploy.md`](docs/deploy.md) for first-time provisioning (D1 create, R2 bucket, secrets `JWT_SIGNING_KEY` / `DCS_CLIENT_ID` / `DCS_CLIENT_SECRET` / `DCS_SERVICE_TOKEN` / `BT_API_TOKEN`).
 
+**From GitHub Actions:** the only deploy workflow in this fork is `.github/workflows/deploy-dev.yml` ("Deploy to dev"), manual-only via *Run workflow*, and it ships the **dev** worker (flagless `wrangler deploy`). There is deliberately no prod deploy button here. Two caveats: a dispatch runs the workflow file from whichever ref you select, and older branches still carry the pre-rename prod-deploying `deploy.yml` — so keep `CLOUDFLARE_API_TOKEN` scoped to the dev script. And the job deploys code only: **run D1 migrations yourself** (`wrangler d1 migrations apply bible_editor_dev --remote`), and note that worker secrets are per-script, so `bible-editor-api-dev` needs its own `wrangler secret put`.
+
 Prod-only vars (`ALLOWED_ORIGINS`, `DEV_AUTH_ENABLED=false`) live in `[env.production.vars]` so the default env stays dev-friendly. Don't put prod values at the top level — that broke local dev once already.
