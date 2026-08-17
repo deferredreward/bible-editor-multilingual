@@ -169,6 +169,24 @@ editors missing this and were wired up in the same way. Both are book-agnostic,
 so their `DraftMeta` variants carry no book/chapter/verse — any consumer that
 switches on `meta.kind` must special-case them rather than reading `m.book`.
 
+### Admin surfaces — classic ↔ new desk parity
+
+Two admin UIs coexist: classic `#/preferences` (`PreferencesWorkspace.tsx`) and the
+new admin desk (`#/admin/*` plus the desk rail's More-tools pages).
+`web/src/adminSurfaceMap.ts` is the registry linking them — one entry per
+admin-facing feature, naming its home on each side (or an explicit gap with the
+GitHub issue that tracks the port). **When you add, move, or remove an
+admin-facing feature or section in either UI, update the map.** The guard
+(`web/src/lib/adminSurfaceMap.test.mjs`, part of `npm --workspace web run test`)
+cross-checks the map against `PreferencesWorkspace`'s `Section` union and
+`AdminDesk`'s nav lists, so an unregistered section or nav destination fails the
+suite with instructions. Enforcement is section/page-granular — a feature added
+*inside* an existing section is on your honor plus this rule, not the test.
+Don't build an admin feature in one UI without either wiring it
+into the other or filing the gap issue the map demands. Classic may retire later
+(#173); when it does, classic pointers get deleted entry-by-entry and the map
+remains the desk's feature inventory.
+
 ### Concurrency tests (`tests/concurrency/`)
 
 One Playwright worker, no test-level parallelism — every test shares the seeded ZEC fixture and races multiple `browserContext`s *inside* one test (the parallelism is per-test, not across tests). Running tests in parallel would cross the streams.
