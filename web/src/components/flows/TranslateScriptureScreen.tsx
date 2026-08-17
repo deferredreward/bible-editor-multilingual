@@ -318,6 +318,42 @@ export default function TranslateScriptureScreen({
   // — this is always false there.
   const [laneFocused, setLaneFocused] = useState(false);
   const focusMode = !wide && laneFocused;
+  // Deferred-blur handle: blurring one lane field to focus the sibling lane
+  // field (ULT <-> UST) would otherwise transiently drop laneFocused between
+  // the two events, flashing the topbar/pager back in for one frame mid-tap
+  // (Codex review, PR #171 finding 2). onFocus cancels a pending clear before
+  // it fires; the deferred macrotask lets the sibling's focus event (which
+  // fires synchronously right after blur, same interaction) win the race.
+  const laneBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearLaneBlurTimeout = useCallback(() => {
+    if (laneBlurTimeoutRef.current != null) {
+      clearTimeout(laneBlurTimeoutRef.current);
+      laneBlurTimeoutRef.current = null;
+    }
+  }, []);
+  const handleLaneFocus = useCallback(() => {
+    clearLaneBlurTimeout();
+    setLaneFocused(true);
+  }, [clearLaneBlurTimeout]);
+  const handleLaneBlur = useCallback(() => {
+    clearLaneBlurTimeout();
+    laneBlurTimeoutRef.current = setTimeout(() => {
+      laneBlurTimeoutRef.current = null;
+      setLaneFocused(false);
+    }, 0);
+  }, [clearLaneBlurTimeout]);
+  useEffect(() => clearLaneBlurTimeout, [clearLaneBlurTimeout]);
+  // Belt-and-suspenders reset (Codex review, PR #171 finding 1): swiping away
+  // from the last open verse calls setView("done") without changing cursor,
+  // so verseNum — and therefore the lane TextField — doesn't change, meaning
+  // it never unmounts and never blurs on its own. Force focus mode closed the
+  // moment the done view opens, regardless of whether blur fired.
+  useEffect(() => {
+    if (view === "done") {
+      clearLaneBlurTimeout();
+      setLaneFocused(false);
+    }
+  }, [view, clearLaneBlurTimeout]);
 
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -509,11 +545,16 @@ export default function TranslateScriptureScreen({
   // Horizontal touch swipe pages the queue. rtl is the TARGET-language
   // direction (the content being paged), not the UI chrome's. The hook
   // ignores touches starting in the lane textareas; disabled on the done
-  // view, whose verbs are Continue/Review, not paging.
+  // view, whose verbs are Continue/Review, not paging. Also disabled during
+  // phone focus mode (Codex review, PR #171 finding 1) — same convention as
+  // TranslateNotesScreen.tsx's swipe gate — so a swipe can't page away from
+  // a focused lane and leave focus mode stuck (belt-and-suspenders with the
+  // view==="done" reset above, which covers the case where paging away
+  // doesn't change verseNum at all).
   const swipe = useSwipeNav({
     onPrev: goPrev,
     onNext: goNext,
-    enabled: view !== "done",
+    enabled: view !== "done" && !focusMode,
     rtl: versionIsRtl(projectConfig, "ULT"),
   });
 
@@ -791,8 +832,8 @@ export default function TranslateScriptureScreen({
           value={values[bv]}
           disabled={!canEdit}
           onChange={(e) => handleLaneChange(bv, e.target.value)}
-          onFocus={() => setLaneFocused(true)}
-          onBlur={() => setLaneFocused(false)}
+          onFocus={handleLaneFocus}
+          onBlur={handleLaneBlur}
           inputProps={{
             dir: targetRtl ? "rtl" : "ltr",
             spellCheck: false,
