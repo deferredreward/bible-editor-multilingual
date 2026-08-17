@@ -377,8 +377,8 @@ export function App() {
   };
 
   // Remember the last scripture location so leaving preferences/articles
-  // returns here instead of the default landing book (Obadiah). Only tracks
-  // chapter views; a fresh load straight into preferences keeps the default.
+  // returns here instead of the default landing book. Only tracks chapter
+  // views; a fresh load straight into preferences keeps the default.
   const lastScriptureRef = useRef<{ book: string; chapter: number; verse: number }>({
     book: DEFAULT_BOOK,
     chapter: 1,
@@ -391,6 +391,22 @@ export function App() {
     const { book, chapter, verse } = lastScriptureRef.current;
     navigate(book, chapter, verse);
   };
+
+  // Live in-session position for the Books screen's Continue card. `auth.me`
+  // is fetched once at boot and never refreshed, so without this the card
+  // would keep showing the *previous* session's position after the user
+  // edits in this session and navigates back to #/books. Unlike
+  // lastScriptureRef above (a ref, so it can't trigger a re-render), this is
+  // state — BooksScreen needs to actually re-render when it changes.
+  const [livePosition, setLivePosition] = useState<{ book: string; chapter: number; verse: number } | null>(null);
+  useEffect(() => {
+    if (loc.view !== "chapter") return;
+    setLivePosition((prev) =>
+      prev && prev.book === loc.book && prev.chapter === loc.chapter && prev.verse === loc.verse
+        ? prev
+        : { book: loc.book, chapter: loc.chapter, verse: loc.verse },
+    );
+  }, [loc]);
 
   // Workspace reconciliation. The server's be_ws cookie is the source of
   // truth for which org's D1 database we're talking to; localStorage is just
@@ -735,7 +751,17 @@ export function App() {
             ) : loc.view === "setup" ? (
               <SetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "books" ? (
-              <BooksScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+              <BooksScreen
+                role={auth.role}
+                me={auth.me}
+                onNavigate={navigate}
+                lastPosition={
+                  livePosition ??
+                  (auth.me?.lastBook && auth.me.lastChapter != null && auth.me.lastVerse != null
+                    ? { book: auth.me.lastBook, chapter: auth.me.lastChapter, verse: auth.me.lastVerse }
+                    : null)
+                }
+              />
             ) : loc.view === "team" ? (
               <TeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "observe" ? (

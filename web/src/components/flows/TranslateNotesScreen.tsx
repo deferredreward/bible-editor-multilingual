@@ -298,12 +298,18 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setStatuses(seed);
     setEditedIds(new Set());
     if (verse != null) {
+      // A verse past the last note's verse has no >= match (-1); clamp to the
+      // last card instead of falling back to index 0, which would jump to the
+      // top of the chapter instead of near where the user asked to look.
       const seekIdx = ordered.findIndex((r) => r.verse >= verse);
-      setCursor(seekIdx < 0 ? 0 : seekIdx);
+      setCursor(seekIdx < 0 ? (ordered.length > 0 ? ordered.length - 1 : 0) : seekIdx);
     } else {
       setCursor(firstOpen < 0 ? 0 : firstOpen);
     }
-    setView(ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
+    // A deep-linked verse always lands on the card view, even if every note
+    // in the chapter is already approved — "done" would otherwise discard
+    // the requested verse.
+    setView(verse != null ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
     // `verse` deliberately not a dep beyond this — the `queue?.key === chapterKey`

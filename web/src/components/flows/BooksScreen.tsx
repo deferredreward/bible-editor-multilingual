@@ -1,14 +1,20 @@
 // TODO(i18n) — flow screens ship English literals until the i18n sweep.
 //
-// a2-import: Admin — Import books. Port of docs/flows/ui/a2-import.html.
+// a2-import: All roles — the default landing screen. Port of docs/flows/ui/a2-import.html.
 //
 // 2026-08-11 (Benjamin): this screen is the redesign's top-level entry, and two
 // decisions landed together: (1) the old FlowNav pill bar (which pointed at the
 // retired flows routes) is replaced by the redesign's own sticky topbar idiom
-// (see PackageHubScreen) — title, org/language sub, admin-only Tune button to
-// #/admin/progress; (2) the per-book source-overrides editor was duplicated
+// (see PackageHubScreen) — title, org/language sub, Tune button opening a menu
+// shown to every role; (2) the per-book source-overrides editor was duplicated
 // between here and the admin Setup screen — it now lives on Admin → Setup ONLY,
 // and this screen's copy is removed in favor of a caption link to #/admin/setup.
+//
+// Non-admins (editor/viewer) get a read-only version of the book grid: no
+// import/re-pull/AI-translate actions, no Bundle B import framing, and Open is
+// offered only once a book actually has content. Touching authorization logic
+// here means touching both roles' branches — check for `isAdmin`/`role ===
+// "admin"` before assuming a change is admin-only.
 //
 // Real data only. The book grid's imported/not-imported state comes from
 // GET /api/books; a FAILED list load renders an explicit error + retry and
@@ -80,7 +86,12 @@ import { BooksActivityPanel, BooksPendingPanel } from "./BooksActivityPanels";
 import { BooksLanePanel } from "./BooksLanePanel";
 import type { FlowScreenContext } from "./types";
 
-export interface BooksScreenProps extends FlowScreenContext {}
+export interface BooksScreenProps extends FlowScreenContext {
+  // Live in-session position for the Continue card, preferring the current
+  // session's navigation over the (potentially stale) `me.lastBook` snapshot
+  // fetched once at boot. `null` when there is no last position at all.
+  lastPosition: { book: string; chapter: number; verse: number } | null;
+}
 
 const OT_COUNT = 39;
 const OT = BOOKS.slice(0, OT_COUNT).map((b) => b.code);
@@ -460,11 +471,17 @@ function BookDetailPanel({
         />
         <PanelBody>
           {!isAdmin ? (
-            <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", rowGap: 1 }}>
-              <Button variant="contained" onClick={() => onOpenBook(book)} sx={{ minHeight: 40 }}>
-                Open {book}
-              </Button>
-            </Stack>
+            effectiveImported ? (
+              <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+                <Button variant="contained" onClick={() => onOpenBook(book)} sx={{ minHeight: 40 }}>
+                  Open {book}
+                </Button>
+              </Stack>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Nothing to open yet — an administrator brings books into the editor.
+              </Typography>
+            )
           ) : (
             <>
               <Typography
@@ -574,23 +591,25 @@ function BookDetailPanel({
 
       {isAdmin && <BooksActivityPanel book={book} />}
 
-      <ImportFromDoor43Dialog
-        open={repullOpen}
-        onClose={() => setRepullOpen(false)}
-        book={book}
-        currentChapter={1}
-        initialRef={repullDefaultRange(chapterNumbers)}
-        onMessage={(m) => setMessage(m)}
-        onImported={() => {
-          void onImported();
-          void loadSummary();
-        }}
-      />
+      {isAdmin && (
+        <ImportFromDoor43Dialog
+          open={repullOpen}
+          onClose={() => setRepullOpen(false)}
+          book={book}
+          currentChapter={1}
+          initialRef={repullDefaultRange(chapterNumbers)}
+          onMessage={(m) => setMessage(m)}
+          onImported={() => {
+            void onImported();
+            void loadSummary();
+          }}
+        />
+      )}
     </Stack>
   );
 }
 
-export default function BooksScreen({ role, me, onNavigate }: BooksScreenProps) {
+export default function BooksScreen({ role, me, onNavigate, lastPosition }: BooksScreenProps) {
   const theme = useTheme();
   const { skip } = theme.palette.flows;
   const gridView = useMediaQuery(theme.breakpoints.up("tablet"));
@@ -682,14 +701,17 @@ export default function BooksScreen({ role, me, onNavigate }: BooksScreenProps) 
           </Box>
           <Box sx={{ flex: 1 }} />
           <IconButton
-            aria-label="Menu"
+            aria-label="Open the books menu"
             title="Menu"
+            aria-haspopup="menu"
+            aria-expanded={Boolean(menuAnchor)}
+            aria-controls={menuAnchor ? "books-screen-menu" : undefined}
             onClick={(e) => setMenuAnchor(e.currentTarget)}
             sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
           >
             <TuneIcon fontSize="small" />
           </IconButton>
-          <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+          <Menu id="books-screen-menu" anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
             <MenuItem
               onClick={() => {
                 setMenuAnchor(null);
@@ -897,7 +919,7 @@ export default function BooksScreen({ role, me, onNavigate }: BooksScreenProps) 
     <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
       {topbar}
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-      {me?.lastBook && me.lastChapter != null && me.lastVerse != null && (
+      {lastPosition && (
         <Box sx={{ mb: 2.5 }}>
           <Panel>
             {/* One compact row — this sits above the canon grid on the landing
@@ -916,24 +938,29 @@ export default function BooksScreen({ role, me, onNavigate }: BooksScreenProps) 
                   CONTINUE
                 </Typography>
                 <Typography sx={{ fontSize: "1rem", fontWeight: 600 }}>
-                  {`${bookName(me.lastBook)} ${me.lastChapter}:${me.lastVerse}`}
+                  {`${bookName(lastPosition.book)} ${lastPosition.chapter}:${lastPosition.verse}`}
                 </Typography>
               </Box>
               <Button
                 variant="contained"
                 size="small"
                 onClick={() => {
-                  location.hash = `#/package/${me.lastBook}`;
+                  location.hash = `#/package/${lastPosition.book}`;
                 }}
               >
-                Open {me.lastBook}
+                Open {lastPosition.book}
               </Button>
               <Button
                 variant="outlined"
                 size="small"
-                endIcon={<ArrowForwardIcon fontSize="small" />}
+                endIcon={
+                  <ArrowForwardIcon
+                    fontSize="small"
+                    sx={theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined}
+                  />
+                }
                 onClick={() => {
-                  location.hash = `#/notes/${me.lastBook}/${me.lastChapter}/${me.lastVerse}`;
+                  location.hash = `#/notes/${lastPosition.book}/${lastPosition.chapter}/${lastPosition.verse}`;
                 }}
               >
                 Notes
@@ -943,28 +970,36 @@ export default function BooksScreen({ role, me, onNavigate }: BooksScreenProps) 
         </Box>
       )}
       <Box sx={{ mt: 0, mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            fontWeight: 700,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "primary.main",
-          }}
-        >
-          Bundle B · Bring in a book
-        </Typography>
-        <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
-          Import
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {booksStatus === "loaded"
-            ? `${books.length}/${BOOKS.length} imported`
-            : booksStatus === "error"
-              ? "Import counts unavailable — the book list failed to load."
-              : "Counting imported books…"}
-        </Typography>
+        {role === "admin" ? (
+          <>
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                fontWeight: 700,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "primary.main",
+              }}
+            >
+              Bundle B · Bring in a book
+            </Typography>
+            <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
+              Import
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {booksStatus === "loaded"
+                ? `${books.length}/${BOOKS.length} imported`
+                : booksStatus === "error"
+                  ? "Import counts unavailable — the book list failed to load."
+                  : "Counting imported books…"}
+            </Typography>
+          </>
+        ) : (
+          <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
+            Browse books
+          </Typography>
+        )}
       </Box>
 
       <Box
