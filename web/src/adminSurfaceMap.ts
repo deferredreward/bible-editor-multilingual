@@ -1,114 +1,136 @@
-// Admin surface parity map — the single cross-reference between the classic
-// admin UI (#/preferences, PreferencesWorkspace.tsx) and the new admin desk
-// (#/admin/*, #/ai, #/style, #/curate, #/observe — AdminDesk.tsx + screens).
-//
-// Why this exists: nav/section lists for the two UIs are hand-written
-// independently (AdminDesk.tsx's two nav arrays, PreferencesWorkspace.tsx's
-// ALL_SECTIONS). Nothing used to tell anyone the other surface exists, which
-// is exactly how the AI service and Localization sections ended up
-// classic-only, and how Style grew a third terminology editor (see #191).
+// Registry of every admin-facing feature and where it lives across the two
+// admin UIs: classic Preferences (`#/preferences`, PreferencesWorkspace.tsx)
+// and the new admin desk (`#/admin/*` + AdminDesk.tsx's "more tools" links).
+// See issue #191.
 //
 // This file is documentation-as-data — nothing imports it at runtime.
-// adminSurfaceMap.test.mjs enforces that it stays honest: every classic
-// section and every desk nav entry must have an entry here, and every
-// pointer below must actually resolve in the file it claims to. Adding a
-// section/route to either UI without registering it here fails that suite.
-//
-// When classic retires (#173), delete its `classic` pointers entry-by-entry;
-// this map keeps working as the desk's own feature inventory.
+// adminSurfaceMap.test.mjs verifies it against the real source: every
+// section id in PreferencesWorkspace.tsx's `Section` union and every nav
+// entry in AdminDesk.tsx's `AdminSection` union / "more tools" array must
+// have a matching entry here, and every entry's `file`/`anchor` must
+// actually exist in that file's source. Adding a section/nav entry to
+// either UI without registering (or explicitly gapping) it here fails that
+// test, on purpose — that's exactly the class of drift that let the AI
+// service and Localization sections go classic-only, and let Style grow a
+// third terminology editor (see #187, #188, #189, #190).
 
-export interface SurfacePointer {
-  /** Literal id/key/hash that must appear (as a quoted string) verbatim in `file`. */
-  id: string;
-  /** Repo-relative path. */
+export interface AdminSurfaceRef {
+  /** Path relative to web/src/ of the file that renders this surface. */
   file: string;
-}
-
-export interface SurfaceGap {
-  side: "classic" | "desk";
-  issue: number;
+  /**
+   * The literal string (section id, AdminSection key, or #/hash route) that
+   * identifies this surface inside `file`. Must appear verbatim in the
+   * file's source — checked by a plain substring search, not an AST parse.
+   */
+  anchor: string;
+  /** Optional note on how complete this surface is relative to its sibling. */
   note?: string;
 }
 
 export interface AdminSurfaceEntry {
-  feature: string;
+  /** Stable key for this admin-facing feature. */
+  key: string;
   label: string;
-  classic?: SurfacePointer;
-  desk?: SurfacePointer;
-  gap?: SurfaceGap;
+  /** The classic Preferences surface, if this feature has one. */
+  classic?: AdminSurfaceRef;
+  /** The new admin-desk surface, if this feature has one. */
+  desk?: AdminSurfaceRef;
+  /**
+   * Set when one side is intentionally or temporarily absent (not when a
+   * feature simply never had a classic equivalent — e.g. Progress/Workflow
+   * are desk-native pages, not gaps). Must cite the tracking issue.
+   */
+  gapIssue?: number;
 }
 
-const PREFS = "web/src/components/PreferencesWorkspace.tsx";
-const ADMIN_DESK = "web/src/components/flows/AdminDesk.tsx";
-const ADMIN_SETUP = "web/src/components/flows/AdminSetupScreen.tsx";
+const PREFS_FILE = "components/PreferencesWorkspace.tsx";
+const DESK_FILE = "components/flows/AdminDesk.tsx";
+const SETUP_SCREEN_FILE = "components/flows/AdminSetupScreen.tsx";
 
 export const ADMIN_SURFACE_MAP: AdminSurfaceEntry[] = [
-  // ── Preferences ALL_SECTIONS ↔ Admin Setup desk sections ──────────────────
   {
-    feature: "brief",
+    key: "brief",
     label: "Brief",
-    classic: { id: "brief", file: PREFS },
-    desk: { id: "brief", file: ADMIN_SETUP },
+    classic: { file: PREFS_FILE, anchor: "brief" },
+    desk: { file: SETUP_SCREEN_FILE, anchor: "brief" },
   },
   {
-    feature: "instructions",
+    key: "instructions",
     label: "Instructions",
-    classic: { id: "instructions", file: PREFS },
-    desk: { id: "instructions", file: ADMIN_SETUP },
+    classic: { file: PREFS_FILE, anchor: "instructions" },
+    desk: { file: SETUP_SCREEN_FILE, anchor: "instructions" },
   },
   {
-    feature: "commonIssues",
+    key: "commonIssues",
     label: "Common issues",
-    classic: { id: "commonIssues", file: PREFS },
-    desk: { id: "commonIssues", file: ADMIN_SETUP },
+    classic: { file: PREFS_FILE, anchor: "commonIssues" },
+    desk: { file: SETUP_SCREEN_FILE, anchor: "commonIssues" },
   },
   {
-    feature: "terminology",
+    key: "terminology",
     label: "Terminology",
-    classic: { id: "terminology", file: PREFS },
-    desk: { id: "terminology", file: ADMIN_SETUP },
-    gap: {
-      side: "desk",
-      issue: 190,
-      note: "desk copy (AdminSetupScreen's TerminologyPanel) is read-only; the full add/edit/status/CSV-import editor still lives only in classic",
-    },
+    classic: { file: PREFS_FILE, anchor: "terminology", note: "full editor: add/edit/status/CSV import+export" },
+    desk: { file: SETUP_SCREEN_FILE, anchor: "terminology", note: "read-only table, links out to classic to edit" },
+    gapIssue: 190,
   },
   {
-    feature: "examples",
+    key: "examples",
     label: "Examples",
-    classic: { id: "examples", file: PREFS },
-    desk: { id: "examples", file: ADMIN_SETUP },
+    classic: { file: PREFS_FILE, anchor: "examples" },
+    desk: { file: SETUP_SCREEN_FILE, anchor: "examples" },
   },
   {
-    feature: "setup",
+    key: "setup",
     label: "Setup wizard",
-    classic: { id: "setup", file: PREFS },
-    desk: { id: "setup", file: ADMIN_DESK },
+    classic: { file: PREFS_FILE, anchor: "setup" },
+    desk: { file: DESK_FILE, anchor: "setup" },
   },
   {
-    feature: "localization",
+    key: "localization",
     label: "Localization (UI string overrides)",
-    classic: { id: "localization", file: PREFS },
-    gap: { side: "desk", issue: 189, note: "no desk equivalent yet — still classic-only" },
+    classic: { file: PREFS_FILE, anchor: "localization" },
+    gapIssue: 189,
   },
   {
-    feature: "users",
+    key: "users",
     label: "Team & roles",
-    classic: { id: "users", file: PREFS },
-    desk: { id: "team", file: ADMIN_DESK },
+    classic: { file: PREFS_FILE, anchor: "users", note: "classic key is \"users\"" },
+    desk: { file: DESK_FILE, anchor: "team", note: "desk key is \"team\" — same feature, different literal" },
   },
   {
-    feature: "aiService",
+    key: "aiService",
     label: "AI service (provider/model/API key)",
-    classic: { id: "aiService", file: PREFS },
-    gap: { side: "desk", issue: 188, note: "no desk equivalent yet — still classic-only" },
+    classic: { file: PREFS_FILE, anchor: "aiService" },
+    gapIssue: 188,
   },
-
-  // ── Desk-only surfaces (no classic Preferences analog expected) ───────────
-  { feature: "workflow", label: "Workflow", desk: { id: "workflow", file: ADMIN_DESK } },
-  { feature: "progress", label: "Progress", desk: { id: "progress", file: ADMIN_DESK } },
-  { feature: "aiStudio", label: "AI studio", desk: { id: "#/ai", file: ADMIN_DESK } },
-  { feature: "style", label: "Style", desk: { id: "#/style", file: ADMIN_DESK } },
-  { feature: "templates", label: "Templates", desk: { id: "#/curate", file: ADMIN_DESK } },
-  { feature: "observe", label: "Observe", desk: { id: "#/observe", file: ADMIN_DESK } },
+  {
+    key: "progress",
+    label: "Progress",
+    desk: { file: DESK_FILE, anchor: "progress", note: "desk-native page, no classic equivalent" },
+  },
+  {
+    key: "workflow",
+    label: "Workflow",
+    desk: { file: DESK_FILE, anchor: "workflow", note: "desk-native page, no classic equivalent" },
+  },
+  {
+    key: "aiStudio",
+    label: "AI studio",
+    desk: { file: DESK_FILE, anchor: "#/ai", note: "\"more tools\" link, not yet inside the desk shell (#186)" },
+  },
+  {
+    key: "style",
+    label: "Style",
+    desk: { file: DESK_FILE, anchor: "#/style", note: "\"more tools\" link, not yet inside the desk shell (#186)" },
+  },
+  {
+    key: "templates",
+    label: "Templates",
+    desk: { file: DESK_FILE, anchor: "#/curate", note: "\"more tools\" link, not yet inside the desk shell (#186)" },
+  },
+  {
+    key: "observe",
+    label: "Observe",
+    desk: { file: DESK_FILE, anchor: "#/observe", note: "\"more tools\" link, not yet inside the desk shell (#186)" },
+  },
 ];
