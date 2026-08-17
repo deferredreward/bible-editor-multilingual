@@ -129,6 +129,7 @@ import { MarkdownView } from "../MarkdownView";
 import { SetupWizard } from "../SetupWizard";
 import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
+import { LocalizationSection } from "../LocalizationSection";
 import { bookName } from "../../lib/bookNames";
 import { AdminDesk } from "./AdminDesk";
 import type { FlowScreenContext } from "./types";
@@ -144,7 +145,8 @@ type SectionKey =
   | "commonIssues"
   | "terminology"
   | "examples"
-  | "overrides";
+  | "overrides"
+  | "localization";
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   wizard: "Setup wizard",
@@ -154,6 +156,7 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   terminology: "Terminology",
   examples: "Examples",
   overrides: "Source overrides",
+  localization: "Localization",
 };
 
 function scrollToSection(key: SectionKey) {
@@ -856,6 +859,19 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
   );
 }
 
+// ── Localization ─────────────────────────────────────────────────────────
+// Org-wide admin UI-string override editor (issue #189), wholesale re-use of
+// the section extracted out of classic PreferencesWorkspace — same component,
+// same search/Inspect-mode/save/export behavior, just mounted here too. Rarely
+// used, so it sits after Source overrides in render order.
+function LocalizationPanel() {
+  return (
+    <SectionPanel id="localization" title="Localization">
+      <LocalizationSection />
+    </SectionPanel>
+  );
+}
+
 // ── Screen ──────────────────────────────────────────────────────────────────
 export interface AdminSetupScreenProps extends FlowScreenContext {}
 
@@ -879,6 +895,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
           ? (["brief", "instructions", "commonIssues", "terminology", "examples"] as SectionKey[])
           : []),
         "overrides",
+        "localization",
       ]
     : [];
 
@@ -1005,6 +1022,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
             )}
 
             <OverridesPanel initialBook={me?.lastBook ?? null} />
+            <LocalizationPanel />
           </>
         )}
       </Stack>
