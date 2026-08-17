@@ -23,16 +23,38 @@ import GroupsIcon from "@mui/icons-material/Groups";
 import TuneIcon from "@mui/icons-material/Tune";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import InsightsIcon from "@mui/icons-material/Insights";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import PaletteIcon from "@mui/icons-material/Palette";
+import ArticleIcon from "@mui/icons-material/Article";
+import VisibilityIcon from "@mui/icons-material/Visibility";
 
 const INSPIRE = "#31ADE3";
 
-export type AdminSection = "team" | "setup" | "workflow" | "progress";
+export type AdminSection =
+  | "team"
+  | "setup"
+  | "workflow"
+  | "progress"
+  | "ai"
+  | "style"
+  | "templates"
+  | "observe";
 
 const SECTIONS: Array<{ key: AdminSection; label: string; icon: ReactNode }> = [
   { key: "progress", label: "Progress", icon: <InsightsIcon fontSize="small" /> },
   { key: "workflow", label: "Workflow", icon: <AccountTreeIcon fontSize="small" /> },
   { key: "team", label: "Team & roles", icon: <GroupsIcon fontSize="small" /> },
   { key: "setup", label: "Setup", icon: <TuneIcon fontSize="small" /> },
+];
+
+// More-tools sections — same first-class rail treatment as SECTIONS above,
+// but each keeps its own pre-existing hash (#/ai etc.) rather than the
+// #/admin/{key} pattern, so bookmarks and links into these pages keep working.
+const TOOLS: Array<{ key: AdminSection; label: string; icon: ReactNode; hash: string }> = [
+  { key: "ai", label: "AI studio", icon: <AutoAwesomeIcon fontSize="small" />, hash: "#/ai" },
+  { key: "style", label: "Style", icon: <PaletteIcon fontSize="small" />, hash: "#/style" },
+  { key: "templates", label: "Templates", icon: <ArticleIcon fontSize="small" />, hash: "#/curate" },
+  { key: "observe", label: "Observe", icon: <VisibilityIcon fontSize="small" />, hash: "#/observe" },
 ];
 
 export function AdminDesk({ current, children }: { current: AdminSection; children: ReactNode }) {
@@ -132,8 +154,9 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
         );
       })}
       {/* Admin surfaces that predate the desk redesign, kept reachable here
-          since FlowNav is retiring (Benjamin 2026-08-11). Each moves into the
-          desk when its own redesign lands. */}
+          since FlowNav is retiring (Benjamin 2026-08-11). Now rendered as
+          first-class sections (icons + selected state), same as SECTIONS
+          above — only the hash they navigate to differs (#186). */}
       {wide && (
         <Typography
           variant="caption"
@@ -150,38 +173,37 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
           More tools
         </Typography>
       )}
-      {(
-        [
-          { hash: "#/ai", label: "AI studio" },
-          { hash: "#/style", label: "Style" },
-          { hash: "#/curate", label: "Templates" },
-          { hash: "#/observe", label: "Observe" },
-        ] as const
-      ).map((l) => (
-        <ButtonBase
-          key={l.hash}
-          onClick={() => {
-            location.hash = l.hash;
-          }}
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-start",
-            gap: 1.25,
-            textAlign: "start",
-            fontSize: "0.875rem",
-            fontWeight: 600,
-            color: "text.secondary",
-            borderRadius: "9px",
-            paddingBlock: 1,
-            paddingInline: 1.5,
-            whiteSpace: "nowrap",
-            "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-          }}
-        >
-          {l.label}
-        </ButtonBase>
-      ))}
+      {TOOLS.map((t) => {
+        const active = t.key === current;
+        return (
+          <ButtonBase
+            key={t.key}
+            aria-current={active ? "page" : undefined}
+            onClick={() => {
+              location.hash = t.hash;
+            }}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              gap: 1.25,
+              textAlign: "start",
+              fontSize: "0.875rem",
+              fontWeight: 600,
+              color: active ? "text.primary" : "text.secondary",
+              bgcolor: active ? alpha(INSPIRE, dark ? 0.16 : 0.1) : "transparent",
+              borderRadius: "9px",
+              paddingBlock: 1,
+              paddingInline: 1.5,
+              whiteSpace: "nowrap",
+              "&:hover": { bgcolor: active ? alpha(INSPIRE, dark ? 0.16 : 0.1) : "action.hover" },
+            }}
+          >
+            {t.icon}
+            {t.label}
+          </ButtonBase>
+        );
+      })}
     </Box>
   );
 

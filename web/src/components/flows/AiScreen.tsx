@@ -37,12 +37,14 @@ import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
-import { FlowNav } from "./FlowNav";
+import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader } from "./AdminPageHeader";
 import { LockBanner, ReadyBanner } from "./FlowBanners";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import { PipelineMenu } from "../PipelineMenu";
 import { pipelineStore, type PipelineJob } from "../../sync/pipelineStore";
+import { useProjectConfig } from "../../hooks/useProjectConfig";
 import {
   api,
   ApiError,
@@ -123,6 +125,11 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
   const book = me?.lastBook || DEFAULT_BOOK;
   const chapter = me?.lastChapter || DEFAULT_CHAPTER;
   const verse = me?.lastVerse || 1;
+
+  const cfg = useProjectConfig();
+  const eyebrow = cfg
+    ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
+    : "Workspace";
 
   const [books, setBooks] = useState<BookListEntry[] | null>(null);
   const [booksError, setBooksError] = useState(false);
@@ -298,39 +305,25 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
 
   if (role === "viewer") {
     return (
-      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-        <FlowNav current="ai" book={book} chapter={chapter} verse={verse} role={role} />
-        <Typography variant="h5" sx={{ mt: 3, fontSize: "1.25rem" }}>
-          Run AI pipelines
-        </Typography>
-        <Typography color="text.secondary" sx={{ mt: 1 }}>
-          AI pipeline status isn't visible for your role.
-        </Typography>
-      </Box>
+      <AdminDesk current="ai">
+        <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
+          <AdminPageHeader eyebrow={eyebrow} title="AI studio" />
+          <Typography color="text.secondary" sx={{ mt: 1 }}>
+            AI pipeline status isn't visible for your role.
+          </Typography>
+        </Box>
+      </AdminDesk>
     );
   }
 
   return (
-    <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-      <FlowNav current="ai" book={book} chapter={chapter} verse={verse} role={role} />
-
-      <Stack
-        direction="row"
-        alignItems="flex-start"
-        flexWrap="wrap"
-        spacing={1.5}
-        sx={{ mt: 2.5, mb: 2 }}
-      >
-        <Box sx={{ flex: "1 1 260px", minWidth: 0 }}>
-          <Typography variant="h5" sx={{ fontSize: "1.25rem", mb: 0.5 }}>
-            Run AI pipelines
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Bulk-draft a chapter's ULT/UST, translation notes, or translation questions. A run locks
-            the chapter for editing while it's in progress.
-          </Typography>
-        </Box>
-      </Stack>
+    <AdminDesk current="ai">
+      <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
+        <AdminPageHeader
+          eyebrow={eyebrow}
+          title="AI studio"
+          subtitle="Bulk-draft a chapter's ULT/UST, translation notes, or translation questions. A run locks the chapter for editing while it's in progress."
+        />
 
       <Stack spacing={1} sx={{ mb: 2 }}>
         {aiDisabled && (
@@ -560,7 +553,8 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       </Box>
 
       <Snackbar open={Boolean(notice)} autoHideDuration={6000} onClose={() => setNotice(null)} message={notice ?? ""} />
-    </Box>
+      </Box>
+    </AdminDesk>
   );
 }
 

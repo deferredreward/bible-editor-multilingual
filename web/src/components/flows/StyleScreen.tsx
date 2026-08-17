@@ -44,7 +44,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 import SaveIcon from "@mui/icons-material/Save";
 import UploadIcon from "@mui/icons-material/Upload";
 
-import { FlowNav } from "./FlowNav";
+import { AdminDesk } from "./AdminDesk";
+import { AdminPageHeader } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
 import type { FlowScreenContext } from "./types";
 import {
@@ -209,11 +210,19 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
 
   const onConflict = useCallback(() => setConflict(true), []);
 
-  return (
-    <Box sx={{ pb: 8 }}>
-      <FlowNav current="style" role={role} />
+  const eyebrow = cfg
+    ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
+    : "Workspace";
 
+  return (
+    <AdminDesk current="style">
+    <Box sx={{ pb: 8 }}>
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2 }}>
+        <AdminPageHeader
+          eyebrow={eyebrow}
+          title="Style"
+          subtitle="Teach the AI our style — context pack, memory sections, and QA rules every AI draft is written against."
+        />
         <PackStatusBar role={role} />
 
         {/* A real 409 from the shared prefs row. Never auto-dismissed: the user
@@ -361,6 +370,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
         </Box>
       </Box>
     </Box>
+    </AdminDesk>
   );
 }
 

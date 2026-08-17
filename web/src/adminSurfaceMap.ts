@@ -20,8 +20,9 @@ export type ClassicSurface = {
 
 export type DeskSurface = {
   /**
-   * AdminDesk nav identity: an `AdminSection` key ("progress", "setup", …) or
-   * a More-tools hash ("#/ai", "#/style", …).
+   * AdminDesk nav identity: an `AdminSection` key — every rail entry (the top
+   * 4 admin sections and the four former-FlowNav "More tools" pages) is one
+   * since #186 unified them onto the same union ("progress", "setup", "ai", …).
    */
   page: string;
   /** web/-relative file that renders the feature on the desk side. */
@@ -121,28 +122,26 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     id: "aiPipelines",
     label: "AI studio (run AI pipelines)",
     classic: null,
-    desk: { page: "#/ai", file: "src/components/flows/AiScreen.tsx", anchor: "function AiScreen" },
-    notes: "Still old FlowNav chrome; desk-shell unification is #186.",
+    desk: { page: "ai", file: "src/components/flows/AiScreen.tsx", anchor: "function AiScreen" },
   },
   {
     id: "style",
     label: "Style (context pack / QA rules)",
     classic: null,
-    desk: { page: "#/style", file: "src/components/flows/StyleScreen.tsx", anchor: "function StyleScreen" },
-    notes: "Still old FlowNav chrome (#186); carries duplicate memory-section editors slated for removal (#187).",
+    desk: { page: "style", file: "src/components/flows/StyleScreen.tsx", anchor: "function StyleScreen" },
+    notes: "Carries duplicate memory-section editors slated for removal (#187).",
   },
   {
     id: "templates",
     label: "Templates (note template curation)",
     classic: null,
-    desk: { page: "#/curate", file: "src/components/flows/CurateScreen.tsx", anchor: "function CurateScreen" },
-    notes: "Still old FlowNav chrome; #186 also adds the missing admin role gate.",
+    desk: { page: "templates", file: "src/components/flows/CurateScreen.tsx", anchor: "function CurateScreen" },
   },
   {
     id: "observe",
     label: "Observe (health / exports / crons)",
     classic: null,
-    desk: { page: "#/observe", file: "src/components/flows/ObserveScreen.tsx", anchor: "function ObserveScreen" },
-    notes: "Still old FlowNav chrome (#186); duplicate export/pipeline/stage views tracked in #187.",
+    desk: { page: "observe", file: "src/components/flows/ObserveScreen.tsx", anchor: "function ObserveScreen" },
+    notes: "Duplicate export/pipeline/stage views tracked in #187.",
   },
 ];
