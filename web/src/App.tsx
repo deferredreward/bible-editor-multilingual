@@ -785,7 +785,7 @@ export function App() {
                 bgcolor: "background.paper",
               }}
             >
-              <WorkspaceSwitcher variant="menu" />
+              {loc.view !== "team" && <WorkspaceSwitcher variant="menu" />}
               <UiLanguageControl />
             </Stack>
             <Box sx={{ flex: 1, minHeight: 0 }}>
