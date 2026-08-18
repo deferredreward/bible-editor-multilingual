@@ -150,6 +150,7 @@ import { countUnalignedTargetWords } from "../../lib/alignment";
 import { analyzeAlignmentDelta, guardBlocksSave } from "../../lib/alignmentDelta";
 import { smartEditVerse } from "../../lib/replace";
 import { isHebrewBook } from "../../lib/sourceSearch";
+import { realChapters } from "../../lib/bookSummary";
 import { extractEditableText, extractPlainText, normalizeEditable } from "../../lib/usfm";
 import { buildVerseIndex } from "../../lib/verseRange";
 import { versionIsRtl, versionLabel } from "../../lib/versionLabels";
@@ -213,7 +214,7 @@ export default function TranslateScriptureScreen({
 
   const { status, data, applyLocalVerse, applyLocalVerseStatus } = useChapter(book, chapter);
   const { summary } = useBook(book, true);
-  const chapterCount = summary?.chapters.length ?? null;
+  const chapterCount = summary ? realChapters(summary).length : null;
 
   // ── verse indexing ───────────────────────────────────────────────────────
   // Every per-verse read goes through buildVerseIndex so a `\v 6-9` range row

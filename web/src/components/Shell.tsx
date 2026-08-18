@@ -1314,6 +1314,8 @@ export function Shell({
   const bookChapterList = useMemo(
     () =>
       bookHook && mode === "book"
+        // Chapter 0 included on purpose — BookView renders it as the book
+        // front matter block.
         ? (bookHook.summary?.chapters ?? []).map((c) => c.chapter)
         : undefined,
     [bookHook, mode, bookHook?.summary],

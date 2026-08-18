@@ -101,6 +101,7 @@ import { useSourceQuestions } from "../../hooks/useSourceQuestions";
 import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
 import { buildVerseIndex } from "../../lib/verseRange";
+import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
 import { onOutboxResult, outbox } from "../../sync/outbox";
 import { api, ApiError, type ChapterLockedBody, type TqRow } from "../../sync/api";
@@ -439,7 +440,7 @@ export default function TranslateQuestionsScreen({
     chapter,
   );
   const { summary } = useBook(book, true);
-  const chapterCount = summary?.chapters.length ?? null;
+  const chapterCount = summary ? realChapters(summary).length : null;
 
   // ── queue ────────────────────────────────────────────────────────────────
   // Frozen once per chapter so the denominator ("3 of 8") and the progress bar

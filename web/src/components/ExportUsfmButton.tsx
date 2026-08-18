@@ -22,6 +22,7 @@ import { api, type VerseDto } from "../sync/api";
 import { buildUsfmFromVerses } from "../lib/exportUsfm";
 import { useProjectConfig } from "../hooks/useProjectConfig";
 import { versionLabel } from "../lib/versionLabels";
+import { realChapters } from "../lib/bookSummary";
 
 interface Props {
   book: string;
@@ -113,7 +114,7 @@ export const ExportUsfmButton = forwardRef<ExportUsfmButtonHandle, Props>(functi
     // The summary can list chapter 0 (book-intro notes live there), but the
     // verses table has no chapter-0 scripture, so skip it — no verse rows to
     // fetch and it would never contribute to the export.
-    const chapters = summary.chapters.filter((c) => c.chapter > 0);
+    const chapters = realChapters(summary);
     const payloads = await mapLimit(chapters, FETCH_CONCURRENCY, (c) => api.getChapter(book, c.chapter));
     const out: VerseDto[] = [];
     for (const p of payloads) {

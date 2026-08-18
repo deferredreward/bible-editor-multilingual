@@ -95,6 +95,7 @@ import type { FlowScreenContext } from "./types";
 import { useBook } from "../../hooks/useBook";
 import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectConfig";
 import { bookName } from "../../lib/bookNames";
+import { realChapters } from "../../lib/bookSummary";
 
 export interface PackageHubScreenProps extends FlowScreenContext {
   book: string;
@@ -258,22 +259,19 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
   // 14-chapter book). The hub shows real chapters only: intro rows are not
   // reachable through the chapter-scoped translate screens, so counting them
   // here would advertise work this screen can't open.
-  const realChapters = useMemo(
-    () => (summary?.chapters ?? []).filter((c) => c.chapter >= 1),
-    [summary],
-  );
+  const chapters = useMemo(() => realChapters(summary), [summary]);
 
   const totals = useMemo(() => {
     let verses = 0;
     let tn = 0;
     let tq = 0;
-    for (const c of realChapters) {
+    for (const c of chapters) {
       verses += c.verses;
       tn += c.tn;
       tq += c.tq;
     }
-    return { chapters: realChapters.length, verses, tn, tq };
-  }, [realChapters]);
+    return { chapters: chapters.length, verses, tn, tq };
+  }, [chapters]);
 
   const name = bookName(book);
   const sub = translationMode
@@ -437,7 +435,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               {open === "scripture" && (
                 <ChapterList
                   wide={wide}
-                  chapters={realChapters}
+                  chapters={chapters}
                   countOf={(c) => c.verses}
                   unit="verses"
                   href={(ch) => `#/scripture/${book}/${ch}`}
@@ -458,7 +456,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               {open === "notes" && (
                 <ChapterList
                   wide={wide}
-                  chapters={realChapters}
+                  chapters={chapters}
                   countOf={(c) => c.tn}
                   unit="notes"
                   href={(ch) => `#/notes/${book}/${ch}`}
@@ -479,7 +477,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               {open === "questions" && (
                 <ChapterList
                   wide={wide}
-                  chapters={realChapters}
+                  chapters={chapters}
                   countOf={(c) => c.tq}
                   unit="questions"
                   href={(ch) => `#/questions/${book}/${ch}`}
@@ -502,7 +500,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               {open === "alignment" && (
                 <ChapterList
                   wide={wide}
-                  chapters={realChapters}
+                  chapters={chapters}
                   countOf={(c) => c.verses}
                   unit="verses"
                   href={(ch) => `#/alignment/${book}/${ch}`}

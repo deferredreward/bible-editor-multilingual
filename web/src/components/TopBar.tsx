@@ -459,6 +459,9 @@ export function TopBar({
     location.hash = parts.join("/");
   };
 
+  // Front matter included on purpose: chapter 0 renders as "Intro" in the
+  // selector below and must stay reachable by prev/next. See
+  // web/src/lib/bookSummary.ts for where chapter 0 IS filtered out.
   const chapterList = (summary?.chapters ?? []).map((c) => c.chapter);
   const idx = chapterList.indexOf(chapter);
   const canPrev = idx > 0;

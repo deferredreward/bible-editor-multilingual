@@ -165,6 +165,7 @@ import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../../syn
 import { drafts as draftStore, articleKey, type DraftRecord } from "../../sync/drafts";
 import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
 import { MarkdownView } from "../MarkdownView";
+import { realChapterNumbers } from "../../lib/bookSummary";
 
 export interface TranslateWordsScreenProps extends FlowScreenContext {
   book: string;
@@ -368,7 +369,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   useEffect(() => {
     if (!summary) return;
     let cancelled = false;
-    const queue = summary.chapters.map((c) => c.chapter);
+    const queue = realChapterNumbers(summary);
     const waitForSettled = (ch: number) =>
       new Promise<void>((resolve) => {
         const check = () => {
@@ -399,7 +400,8 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
     };
   }, [summary, loadChapter]);
 
-  const chapterTotal = summary?.chapters.length ?? 0;
+  // Must match the queue above (real chapters only) or scanning never ends.
+  const chapterTotal = realChapterNumbers(summary).length;
   let chaptersReady = 0;
   let chaptersFailed = 0;
   for (const st of chapters.values()) {
