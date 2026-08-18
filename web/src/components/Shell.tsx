@@ -61,7 +61,6 @@ import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder
 import { resolveSpanToSource } from "../lib/twlResolve";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { nfc } from "../lib/hebrew";
-import { realChapterNumbers } from "../lib/bookSummary";
 import { TimelineRail, type VerseTile, type VerseTileLane } from "./TimelineRail";
 import { ScriptureColumn, type ScriptureMode } from "./ScriptureColumn";
 import { ResourceColumn, type AlignmentTabProps, type PanelMode, type ReorderPreview, type ResourceCheckoff, type ResourceColumnProps, type ResourceLane, type ResourceTab } from "./ResourceColumn";
@@ -1315,7 +1314,9 @@ export function Shell({
   const bookChapterList = useMemo(
     () =>
       bookHook && mode === "book"
-        ? realChapterNumbers(bookHook.summary)
+        // Chapter 0 included on purpose — BookView renders it as the book
+        // front matter block.
+        ? (bookHook.summary?.chapters ?? []).map((c) => c.chapter)
         : undefined,
     [bookHook, mode, bookHook?.summary],
   );

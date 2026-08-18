@@ -9,7 +9,11 @@ import type { BookSummary } from "../sync/api";
  * as "2 chapter(s) loaded", and fed chapter 0 into chapter navigation, the
  * re-pull default range, and whole-book AI translate.
  *
- * Anything that counts, lists, or navigates chapters goes through these.
+ * Anything that COUNTS chapters, or lists them for a chapter-scoped screen,
+ * goes through these. Two deliberate exceptions, because chapter 0 is a real
+ * destination there and filtering it broke both once already:
+ *   • TopBar's chapter selector / prev-next — renders chapter 0 as "Intro".
+ *   • Shell's book-mode chapter list — BookView has a chapter-0 "front" block.
  * Row totals (notes/questions) are deliberately NOT filtered here — intro notes
  * are real notes; only screens that can't open chapter 0 exclude them.
  */

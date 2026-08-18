@@ -400,7 +400,8 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
     };
   }, [summary, loadChapter]);
 
-  const chapterTotal = summary?.chapters.length ?? 0;
+  // Must match the queue above (real chapters only) or scanning never ends.
+  const chapterTotal = realChapterNumbers(summary).length;
   let chaptersReady = 0;
   let chaptersFailed = 0;
   for (const st of chapters.values()) {

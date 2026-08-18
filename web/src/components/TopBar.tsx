@@ -66,7 +66,6 @@ import { api, isAdmin, type BookListEntry, type BookSummary, type BookLintIssue 
 import type { LayoutSpec } from "../lib/layoutSpec";
 import { BOOKS, bookName, bookAbbr, resolveBook } from "../lib/bookNames";
 import { parseReference } from "../lib/referenceParser";
-import { realChapterNumbers } from "../lib/bookSummary";
 import {
   ThemeModeContext,
   FontScaleContext,
@@ -460,7 +459,10 @@ export function TopBar({
     location.hash = parts.join("/");
   };
 
-  const chapterList = realChapterNumbers(summary);
+  // Front matter included on purpose: chapter 0 renders as "Intro" in the
+  // selector below and must stay reachable by prev/next. See
+  // web/src/lib/bookSummary.ts for where chapter 0 IS filtered out.
+  const chapterList = (summary?.chapters ?? []).map((c) => c.chapter);
   const idx = chapterList.indexOf(chapter);
   const canPrev = idx > 0;
   const canNext = idx >= 0 && idx < chapterList.length - 1;
