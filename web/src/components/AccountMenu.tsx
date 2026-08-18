@@ -28,6 +28,7 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import RemoveIcon from "@mui/icons-material/Remove";
 import { useTranslation } from "react-i18next";
 import { useProjectConfig } from "../hooks/useProjectConfig";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import {
   FontScaleContext,
   FONT_SCALE_MAX,
@@ -90,6 +91,10 @@ export function AccountMenu({ username, onLogout }: Props) {
           </Box>
         )}
         {(username || orgLanguageLabel) && <Divider />}
+
+        <Box sx={{ px: 1, py: 0.25 }}>
+          <WorkspaceSwitcher variant="menu" />
+        </Box>
 
         <MenuItem onClick={toggleTheme}>
           <ListItemIcon>
