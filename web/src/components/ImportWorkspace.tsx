@@ -53,6 +53,7 @@ import {
   type BooksFetchStatus,
 } from "../lib/importIntent";
 import { startBookAiTranslate } from "../lib/aiTranslate";
+import { realChapterNumbers } from "../lib/bookSummary";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "./ImportFromDoor43Dialog";
 import { BookSourceOverridesPanel } from "./BookSourceOverridesPanel";
@@ -378,10 +379,10 @@ function BookImportPane({ book, imported, target, onImported, onOpenBook }: Pane
   const runAiTranslate = useCallback(async () => {
     // Prefer loaded chapters; if the summary hasn't landed yet (e.g. a fresh
     // deep-link), fetch it fresh rather than reporting "nothing to translate".
-    let chapters = (summary?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+    let chapters = realChapterNumbers(summary);
     if (chapters.length === 0) {
       const fresh = await loadSummary();
-      chapters = (fresh?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+      chapters = realChapterNumbers(fresh);
     }
     if (chapters.length === 0) {
       setMessage(t("import.aiTranslateNone"));
@@ -406,11 +407,8 @@ function BookImportPane({ book, imported, target, onImported, onOpenBook }: Pane
     }
   }, [book, summary, loadSummary, t]);
 
-  const chapterNumbers = useMemo(
-    () => (summary?.chapters ?? []).map((c) => c.chapter),
-    [summary],
-  );
-  const chapterCount = summary?.chapters.length ?? 0;
+  const chapterNumbers = useMemo(() => realChapterNumbers(summary), [summary]);
+  const chapterCount = chapterNumbers.length;
   const tnTotal = summary?.chapters.reduce((s, c) => s + c.tn, 0) ?? 0;
   const tqTotal = summary?.chapters.reduce((s, c) => s + c.tq, 0) ?? 0;
   // Available for ANY imported, translation-eligible book — not just the one

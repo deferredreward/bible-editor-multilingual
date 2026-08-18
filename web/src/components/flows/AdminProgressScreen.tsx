@@ -113,6 +113,7 @@ import {
   type PipelineJobRow,
 } from "../../sync/api";
 import { bookName, BOOKS } from "../../lib/bookNames";
+import { realChapters } from "../../lib/bookSummary";
 import { useProjectConfig } from "../../hooks/useProjectConfig";
 
 export interface AdminProgressScreenProps extends FlowScreenContext {}
@@ -128,11 +129,6 @@ interface BookTotals {
   tn: number;
   tq: number;
   twl: number;
-}
-
-// Real chapters only — chapter 0 is book front matter (see file header).
-function realChapters(s: BookSummary): BookSummary["chapters"] {
-  return s.chapters.filter((c) => c.chapter >= 1);
 }
 
 function totalsOf(s: BookSummary): BookTotals {

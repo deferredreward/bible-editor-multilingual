@@ -66,6 +66,7 @@ import { api, isAdmin, type BookListEntry, type BookSummary, type BookLintIssue 
 import type { LayoutSpec } from "../lib/layoutSpec";
 import { BOOKS, bookName, bookAbbr, resolveBook } from "../lib/bookNames";
 import { parseReference } from "../lib/referenceParser";
+import { realChapterNumbers } from "../lib/bookSummary";
 import {
   ThemeModeContext,
   FontScaleContext,
@@ -459,7 +460,7 @@ export function TopBar({
     location.hash = parts.join("/");
   };
 
-  const chapterList = (summary?.chapters ?? []).map((c) => c.chapter);
+  const chapterList = realChapterNumbers(summary);
   const idx = chapterList.indexOf(chapter);
   const canPrev = idx > 0;
   const canNext = idx >= 0 && idx < chapterList.length - 1;

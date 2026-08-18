@@ -78,6 +78,7 @@ import {
   type ImportIntent,
 } from "../../lib/importIntent";
 import { startBookAiTranslate } from "../../lib/aiTranslate";
+import { realChapterNumbers } from "../../lib/bookSummary";
 import { isTranslationProject, useProjectConfig } from "../../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "../ImportFromDoor43Dialog";
 import { FlowStatusChip } from "./FlowStatusChip";
@@ -413,10 +414,10 @@ function BookDetailPanel({
   };
 
   const runAiTranslate = async () => {
-    let chapters = (summary?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+    let chapters = realChapterNumbers(summary);
     if (chapters.length === 0) {
       const fresh = await loadSummary();
-      chapters = (fresh?.chapters ?? []).map((c) => c.chapter).sort((a, b) => a - b);
+      chapters = realChapterNumbers(fresh);
     }
     if (chapters.length === 0) {
       setMessage("Nothing to translate — this book has no chapters loaded.");
@@ -444,8 +445,8 @@ function BookDetailPanel({
     }
   };
 
-  const chapterNumbers = useMemo(() => (summary?.chapters ?? []).map((c) => c.chapter), [summary]);
-  const chapterCount = summary?.chapters.length ?? 0;
+  const chapterNumbers = useMemo(() => realChapterNumbers(summary), [summary]);
+  const chapterCount = chapterNumbers.length;
   const tnTotal = summary?.chapters.reduce((s, c) => s + c.tn, 0) ?? 0;
   const tqTotal = summary?.chapters.reduce((s, c) => s + c.tq, 0) ?? 0;
 

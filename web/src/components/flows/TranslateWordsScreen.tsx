@@ -165,6 +165,7 @@ import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../../syn
 import { drafts as draftStore, articleKey, type DraftRecord } from "../../sync/drafts";
 import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
 import { MarkdownView } from "../MarkdownView";
+import { realChapterNumbers } from "../../lib/bookSummary";
 
 export interface TranslateWordsScreenProps extends FlowScreenContext {
   book: string;
@@ -368,7 +369,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   useEffect(() => {
     if (!summary) return;
     let cancelled = false;
-    const queue = summary.chapters.map((c) => c.chapter);
+    const queue = realChapterNumbers(summary);
     const waitForSettled = (ch: number) =>
       new Promise<void>((resolve) => {
         const check = () => {

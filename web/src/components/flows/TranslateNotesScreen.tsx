@@ -113,6 +113,7 @@ import { buildVerseIndex } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { extractTargetSelectionText } from "../../lib/highlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
+import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
 import { onOutboxResult, outbox } from "../../sync/outbox";
 import {
@@ -268,7 +269,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // Chapter count for "Continue to chapter N+1" — summary only; the per-chapter
   // payloads stay lazy.
   const { summary } = useBook(book, true);
-  const chapterCount = summary?.chapters.length ?? null;
+  const chapterCount = summary ? realChapters(summary).length : null;
 
   // ── queue ────────────────────────────────────────────────────────────────
   // Frozen once per chapter so the denominator ("3 of 8") and the progress bar
