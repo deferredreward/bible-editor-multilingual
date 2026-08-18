@@ -25,8 +25,12 @@
 import { useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import WrapTextIcon from "@mui/icons-material/WrapText";
 
 import {
   clearGroup,
@@ -75,6 +79,13 @@ export function AlignTapView({
   onDismissGhost,
 }: AlignTapViewProps) {
   const theme = useTheme();
+  // >=560 matches AlignScreen's own "tablet" band (docs/flows/04-mobile-alignment):
+  // the reporter's stated preference is wrap on tablet/desktop, scroll on phone.
+  // This is plain component state — deliberately not persisted — so the icon
+  // button below just lets someone flip it to compare both while iterating on
+  // the "feel" themselves (issue #202).
+  const isTabletUp = useMediaQuery(theme.breakpoints.up("tablet"));
+  const [wrapRibbon, setWrapRibbon] = useState(isTabletUp);
   const [selection, setSelection] = useState<Selection>(NO_SELECTION);
   // Suggestions the user stepped past this session. Skipping only hides the
   // card; it never edits the verse. Ghost ids are groupId+text and so are only
@@ -351,10 +362,22 @@ export function AlignTapView({
       </Box>
 
       {/* ── source ribbon: one card per source word/group, always visible ── */}
+      <Box sx={{ display: "flex", justifyContent: "flex-end", marginBlockEnd: 0.5 }}>
+        <Tooltip title={wrapRibbon ? "Scroll word list instead of wrapping" : "Wrap word list instead of scrolling"}>
+          <IconButton
+            size="small"
+            aria-label="Toggle source word list wrapping"
+            aria-pressed={wrapRibbon}
+            onClick={() => setWrapRibbon((v) => !v)}
+          >
+            <WrapTextIcon fontSize="small" color={wrapRibbon ? "primary" : "inherit"} />
+          </IconButton>
+        </Tooltip>
+      </Box>
       <Box
         dir={sourceRtl ? "rtl" : "ltr"}
         sx={{
-          overflowX: "auto",
+          ...(wrapRibbon ? {} : { overflowX: "auto" }),
           border: "1px solid",
           borderColor: "divider",
           borderRadius: "12px",
@@ -365,7 +388,12 @@ export function AlignTapView({
         <Box
           role="list"
           aria-label="Source word groups"
-          sx={{ display: "flex", gap: 1.25, padding: 1.5, minWidth: "min-content" }}
+          sx={{
+            display: "flex",
+            gap: 1.25,
+            padding: 1.5,
+            ...(wrapRibbon ? { flexWrap: "wrap" } : { minWidth: "min-content" }),
+          }}
         >
           {cards.map((card) => {
             const isSelected = selection.side === "source" && selection.ids.includes(card.id);
