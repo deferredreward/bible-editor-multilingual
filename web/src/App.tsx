@@ -4,6 +4,7 @@ import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TopBar, UiLanguageControl } from "./components/TopBar";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { AccountMenu } from "./components/AccountMenu";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
 import { ReviewQueue } from "./components/ReviewQueue";
@@ -763,12 +764,14 @@ export function App() {
           loc.view === "admin" ||
           loc.view === "verse" ? (
           // The new-UI flow screens replaced the classic Shell/TopBar, which
-          // carried the org (workspace) switcher and the UI-language switcher.
-          // Re-mount both here, once, as a slim global chrome strip above every
-          // flow screen — so changing org or interface language no longer means
-          // dropping back into classic mode. WorkspaceSwitcher renders nothing
-          // for a single-org install; justify-end keeps the controls on the
-          // inline-end corner in both LTR and RTL.
+          // carried the org (workspace) switcher, the UI-language switcher and
+          // the account menu (identity, dark mode, reading text size, sign
+          // out). Re-mount all three here, once, as a slim global chrome strip
+          // above every flow screen — so changing org or interface language,
+          // or signing out, no longer means dropping back into classic mode.
+          // WorkspaceSwitcher renders nothing for a single-org install;
+          // justify-end keeps the controls on the inline-end corner in both
+          // LTR and RTL.
           <Stack sx={{ height: "100%", minHeight: 0 }}>
             <Stack
               direction="row"
@@ -787,6 +790,10 @@ export function App() {
             >
               <WorkspaceSwitcher variant="menu" />
               <UiLanguageControl />
+              <AccountMenu
+                username={auth.kind === "ready" ? auth.me?.username ?? null : null}
+                onLogout={handleSignOut}
+              />
             </Stack>
             <Box sx={{ flex: 1, minHeight: 0 }}>
           <Suspense
