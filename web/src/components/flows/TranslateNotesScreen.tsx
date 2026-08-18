@@ -129,10 +129,11 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 export interface TranslateNotesScreenProps extends FlowScreenContext {
   book: string;
   chapter: number;
-  // Optional deep-link verse (e.g. from the Books "Continue" card). Seeds the
-  // queue cursor once, on mount/chapter change, to the first queue entry at
-  // or after this verse — never re-seeks on later renders or re-navigation
-  // within the same chapter.
+  // Optional deep-link verse (e.g. from the Books "Continue" card, a manual
+  // URL edit, or browser Back/Forward). Seeds the queue cursor to the first
+  // queue entry at or after this verse on mount/chapter change, and re-seeks
+  // it again on any later change to this prop within the same chapter (see
+  // the dedicated seek effect below) — without rebuilding the queue itself.
   verse?: number;
 }
 
@@ -313,9 +314,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setView(verse != null ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
-    // `verse` deliberately not a dep beyond this — the `queue?.key === chapterKey`
-    // guard above already limits this effect to once per mount/chapter change,
-    // which is exactly the seek-once semantics wanted here.
+    // `verse` deliberately not a dep beyond this — this effect only builds the
+    // queue and seeds its cursor once per mount/chapter change (the
+    // `queue?.key === chapterKey` guard above). Re-seeking on a later,
+    // same-chapter change to `verse` is handled by the dedicated effect below,
+    // which does not rebuild the queue or reset statuses/editedIds/typeFilter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, book, chapter, queue, chapterKey]);
 
@@ -330,6 +333,27 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const currentId = queueIds && cursor < queueIds.length ? queueIds[cursor] : null;
   const row = currentId ? (rowById.get(currentId) ?? null) : null;
   const statusedCount = queueIds ? queueIds.filter((id) => statuses[id]).length : 0;
+
+  // Re-seek the cursor when `verse` changes while the queue is already built
+  // for the current chapter — e.g. editing the URL from #/notes/RUT/1 to
+  // #/notes/RUT/1/9, or Back/Forward between two verses of the same chapter
+  // (issue #201). Cross-chapter deep links are handled above, by the queue
+  // rebuild itself. Guarded on an actual change of `verse` (via the ref, not
+  // just its presence in the dep array) so this never fires on plain cursor
+  // navigation (Prev/Next) or unrelated re-renders — only a real prop change
+  // moves the cursor here. Uses the same setCursor/setView("cards") pair the
+  // list pane's row click uses, so drafts stash/hydrate exactly as they do
+  // for a manual row click — no queue rebuild, no reset of statuses/
+  // editedIds/typeFilter.
+  const prevVerseRef = useRef(verse);
+  useEffect(() => {
+    if (prevVerseRef.current === verse) return;
+    prevVerseRef.current = verse;
+    if (verse == null || !queueIds || queueIds.length === 0) return;
+    const seekIdx = queueIds.findIndex((id) => (rowById.get(id)?.verse ?? -Infinity) >= verse);
+    setCursor(seekIdx < 0 ? queueIds.length - 1 : seekIdx);
+    setView("cards");
+  }, [verse, queueIds, rowById]);
 
   // ── article-type filter (2026-08-10) ─────────────────────────────────────
   // Distinct types present in THIS chapter's queue, with counts — the filter
