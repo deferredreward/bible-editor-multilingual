@@ -60,6 +60,7 @@ import { ChapterBoard } from "../ChapterBoard";
 import { VerseHistoryDialog } from "../VerseHistoryDialog";
 import { FindReplaceOverlay } from "../FindReplaceOverlay";
 import { ExportUsfmButton } from "../ExportUsfmButton";
+import { LogosSyncToggle, useLogosSyncVisible } from "../LogosSyncToggle";
 import type { VerseTile, VerseTileLane } from "../TimelineRail";
 
 import { useChapter } from "../../hooks/useChapter";
@@ -143,6 +144,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
     applyLocalLaneCheck,
   } = useChapter(book, chapter);
   const projectConfig = useProjectConfig();
+  const [logosVisible] = useLogosSyncVisible();
 
   const [lock, setLock] = useState<ChapterLockedBody | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -654,6 +656,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
             {unsavedHere > 0 && <FlowStatusChip kind="warn" label={`${unsavedHere} unsaved`} />}
             {isDesktop && (
               <>
+                {logosVisible && <LogosSyncToggle book={book} chapter={chapter} verse={verse ?? 1} />}
                 <Button size="small" variant="outlined" sx={{ minHeight: 44 }} onClick={() => setFindOpen(true)}>
                   Find/Replace
                 </Button>

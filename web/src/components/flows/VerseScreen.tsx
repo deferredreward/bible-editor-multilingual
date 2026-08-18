@@ -61,6 +61,7 @@ import {
 } from "./VerseSpineModel";
 import type { FlowScreenContext } from "./types";
 
+import { LogosSyncToggle, useLogosSyncVisible } from "../LogosSyncToggle";
 import { useChapter } from "../../hooks/useChapter";
 import { useLexicon } from "../../hooks/useLexicon";
 import { useProjectConfig } from "../../hooks/useProjectConfig";
@@ -139,6 +140,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
   // System bands only (web/src/lib/layoutBands.ts): tablet=560, md=900.
   const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
   const isTablet = useMediaQuery(theme.breakpoints.up("tablet"));
+  const [logosVisible] = useLogosSyncVisible();
 
   const { status, data, error, refetch } = useChapter(book, chapter);
   const projectConfig = useProjectConfig();
@@ -394,6 +396,10 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       </Select>
 
       <Box sx={{ flex: 1 }} />
+
+      {logosVisible && isDesktop && (
+        <LogosSyncToggle book={book} chapter={chapter} verse={verse ?? 1} />
+      )}
 
       <ToggleButtonGroup
         size="small"
