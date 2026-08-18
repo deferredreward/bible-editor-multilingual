@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
-import { TopBar } from "./components/TopBar";
+import { TopBar, UiLanguageControl } from "./components/TopBar";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
 import { ReviewQueue } from "./components/ReviewQueue";
@@ -761,6 +762,33 @@ export function App() {
           loc.view === "translateAlign" ||
           loc.view === "admin" ||
           loc.view === "verse" ? (
+          // The new-UI flow screens replaced the classic Shell/TopBar, which
+          // carried the org (workspace) switcher and the UI-language switcher.
+          // Re-mount both here, once, as a slim global chrome strip above every
+          // flow screen — so changing org or interface language no longer means
+          // dropping back into classic mode. WorkspaceSwitcher renders nothing
+          // for a single-org install; justify-end keeps the controls on the
+          // inline-end corner in both LTR and RTL.
+          <Stack sx={{ height: "100%", minHeight: 0 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="flex-end"
+              spacing={0.5}
+              sx={{
+                flex: "none",
+                minHeight: 44,
+                paddingInline: 1.5,
+                paddingBlock: 0.5,
+                borderBlockEnd: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.paper",
+              }}
+            >
+              <WorkspaceSwitcher variant="menu" />
+              <UiLanguageControl />
+            </Stack>
+            <Box sx={{ flex: 1, minHeight: 0 }}>
           <Suspense
             fallback={
               <Stack alignItems="center" justifyContent="center" sx={{ height: "100%" }}>
@@ -828,6 +856,8 @@ export function App() {
               <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
             )}
           </Suspense>
+            </Box>
+          </Stack>
         ) : (
           <Shell
             key={loc.book}

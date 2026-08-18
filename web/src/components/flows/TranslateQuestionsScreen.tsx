@@ -143,6 +143,9 @@ interface QaPairProps {
   // md+ vs phone: governs both the reveal-scroll behavior below and (via the
   // caller) whether the on-screen-keyboard focus mode applies at all.
   wide: boolean;
+  // Target reading direction (RTL for e.g. Arabic) — applied to the drafted
+  // target text, not the UI chrome, via the dir attribute (PR #53).
+  targetRtl: boolean;
   targetLabel: string;
   sourceLangLabel: string;
   translationMode: boolean;
@@ -173,6 +176,7 @@ function QaPair({
   value,
   editing,
   wide,
+  targetRtl,
   targetLabel,
   sourceLangLabel,
   translationMode,
@@ -278,6 +282,7 @@ function QaPair({
               minRows={3}
               value={value}
               onChange={(e) => onChange(e.target.value)}
+              inputProps={{ dir: targetRtl ? "rtl" : "ltr" }}
               sx={{
                 "& .MuiOutlinedInput-root": {
                   bgcolor: "action.hover",
@@ -305,6 +310,7 @@ function QaPair({
             <Box
               role="button"
               tabIndex={0}
+              dir={targetRtl ? "rtl" : "ltr"}
               onClick={onStartEdit}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -322,6 +328,7 @@ function QaPair({
                 fontSize: "0.97rem",
                 lineHeight: 1.55,
                 whiteSpace: "pre-wrap",
+                textAlign: "start",
                 "&:hover": { background: hl },
               }}
             >
@@ -1126,6 +1133,7 @@ export default function TranslateQuestionsScreen({
                 value={values.question}
                 editing={editingField === "question"}
                 wide={wide}
+                targetRtl={targetRtl}
                 targetLabel={targetLabel}
                 sourceLangLabel={sourceLangLabel}
                 translationMode={translationMode}
@@ -1158,6 +1166,7 @@ export default function TranslateQuestionsScreen({
                 value={values.response}
                 editing={editingField === "response"}
                 wide={wide}
+                targetRtl={targetRtl}
                 targetLabel={targetLabel}
                 sourceLangLabel={sourceLangLabel}
                 translationMode={translationMode}
