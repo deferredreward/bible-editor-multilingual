@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   api,
   type Term,
@@ -6,6 +6,7 @@ import {
   type TranslationExample,
   type ContextExportStatus,
 } from "../sync/api";
+import { createContextExportStatusStore } from "./contextExportStatusStore";
 
 // Preferences singleton (brief + instructions + register + assisted flag).
 // `enabled === false` yields an idle result so the caller can gate on the
@@ -56,6 +57,12 @@ export function useTranslationPrefs(enabled: boolean): {
   return { prefs, loading, error, refetch, apply };
 }
 
+// ── Context-export status: shared cache (issue #206) ────────────────────────
+// The dedupe/broadcast store lives in `./contextExportStatusStore.ts` (kept
+// dependency-free so it's separately unit-testable — see that file's header
+// for why). This is the one production singleton every call site shares.
+const exportStatusStore = createContextExportStatusStore(() => api.getContextExportStatus());
+
 /** Latest context-pack export status — gates the assisted-mode toggle. */
 export function useContextExportStatus(enabled: boolean): {
   status: ContextExportStatus | null;
@@ -63,40 +70,34 @@ export function useContextExportStatus(enabled: boolean): {
   error: Error | null;
   refetch: () => void;
 } {
-  const [status, setStatus] = useState<ContextExportStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-  const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
+  // Every call site subscribes to the same store regardless of `enabled` —
+  // a disabled instance (e.g. a viewer role, or `memoryAvailable === false`)
+  // must not itself trigger a fetch, but should still pick up whatever an
+  // enabled instance elsewhere already fetched or refetched.
+  const state = useSyncExternalStore(
+    exportStatusStore.subscribe,
+    exportStatusStore.getSnapshot,
+    exportStatusStore.getSnapshot,
+  );
 
   useEffect(() => {
-    if (!enabled) {
-      setStatus(null);
-      setError(null);
-      setLoading(false);
-      return;
+    if (!enabled) return;
+    // Only kick off a fetch if nobody has data yet (covers both "nothing has
+    // ever fetched" and "the last fetch errored" — status stays null either
+    // way, so a later mount naturally retries). `store.fetch()` itself
+    // collapses concurrent callers onto one in-flight promise, so two panels
+    // mounting in the same tick (ExamplesPanel + PackStatusBar on
+    // StyleScreen) still only issue one GET.
+    if (exportStatusStore.getSnapshot().status === null) {
+      void exportStatusStore.fetch();
     }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    api
-      .getContextExportStatus()
-      .then((res) => {
-        if (cancelled) return;
-        setStatus(res);
-        setLoading(false);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e : new Error(String(e)));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, reloadKey]);
+  }, [enabled]);
 
-  return { status, loading, error, refetch };
+  const refetch = useCallback(() => {
+    void exportStatusStore.fetch();
+  }, []);
+
+  return { status: state.status, loading: state.loading, error: state.error, refetch };
 }
 
 // Terminology list, filterable by status / free-text query.
