@@ -4,6 +4,8 @@ import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TopBar, UiLanguageControl } from "./components/TopBar";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { SyncStatusBar } from "./components/SyncStatusBar";
+import { PipelineStatusBar } from "./components/PipelineStatusBar";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
 import { ReviewQueue } from "./components/ReviewQueue";
@@ -763,12 +765,26 @@ export function App() {
           loc.view === "admin" ||
           loc.view === "verse" ? (
           // The new-UI flow screens replaced the classic Shell/TopBar, which
-          // carried the org (workspace) switcher and the UI-language switcher.
-          // Re-mount both here, once, as a slim global chrome strip above every
-          // flow screen — so changing org or interface language no longer means
-          // dropping back into classic mode. WorkspaceSwitcher renders nothing
-          // for a single-org install; justify-end keeps the controls on the
-          // inline-end corner in both LTR and RTL.
+          // carried the org (workspace) switcher, the UI-language switcher, and
+          // the global sync/pipeline status (queue, conflicts, failed-op
+          // discard, AI-pipeline progress). Re-mount all of them here, once, as
+          // a slim global chrome strip above every flow screen — so changing
+          // org or interface language, or seeing/discarding a stuck save, no
+          // longer means dropping back into classic mode (issue #212).
+          // WorkspaceSwitcher renders nothing for a single-org install;
+          // justify-end keeps the controls on the inline-end corner in both
+          // LTR and RTL. SyncStatusBar/PipelineStatusBar render nothing when
+          // there is no queued/failed op or pipeline job (own null-render
+          // guards), so the strip stays empty-quiet on the common case.
+          //
+          // The "N unsaved drafts" reminder (UnsavedToasts) is intentionally
+          // NOT mounted here — it requires a `book` in scope (Shell resolves it
+          // via its own useChapter instance), but most flow views (home,
+          // books, team, setup, style, curate, ai, observe, package, admin)
+          // have no book/chapter in `loc` at all. Hoisting it needs either new
+          // data plumbing or a redesign of its in-place Save action — scoped
+          // as a separate follow-up rather than risking a silent no-op or a
+          // half-working Save button on those screens.
           <Stack sx={{ height: "100%", minHeight: 0 }}>
             <Stack
               direction="row"
@@ -785,6 +801,8 @@ export function App() {
                 bgcolor: "background.paper",
               }}
             >
+              <SyncStatusBar onNavigate={navigate} />
+              <PipelineStatusBar />
               <WorkspaceSwitcher variant="menu" />
               <UiLanguageControl />
             </Stack>
