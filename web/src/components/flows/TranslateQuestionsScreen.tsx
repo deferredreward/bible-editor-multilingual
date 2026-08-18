@@ -514,19 +514,46 @@ export default function TranslateQuestionsScreen({
 
   // Hydrate both fields on card change: a persisted draft (unsaved typing
   // from this browser) wins over the row's own content.
+  //
+  // Third issue-#167 fix, this one for React StrictMode (web/src/main.tsx —
+  // enabled): on a component's first mount, StrictMode runs this effect,
+  // immediately runs its cleanup (cancelled = true), then re-runs the effect
+  // body — simulating a fast unmount/remount, dev-only. The re-run used to
+  // bail out at `if (hydratedKeyRef.current === nonceKey) return;` alone
+  // (already true, set synchronously by the first run) and do nothing else;
+  // meanwhile the first run's own drafts.get() eventually resolves but bails
+  // at its `cancelled` check, so setSettledKey never fires for that row —
+  // the initially-mounted card could never persist a draft, since the stash
+  // effect's settledKey guard stayed permanently unmet for it.
+  //
+  // Fix: only skip entirely once BOTH hydratedKeyRef and settledKey already
+  // match this nonceKey. When hydratedKeyRef matches but settledKey doesn't
+  // (StrictMode's second invocation, or any other race that left a lookup
+  // stranded), skip re-running the *synchronous* setup — values/baseline are
+  // already right, no need to reset them — but still start a *fresh*,
+  // independently-cancellable lookup. Only one of the two invocations' async
+  // callbacks can ever be live (the other's cleanup already flipped its own
+  // `cancelled`), so exactly one settles the key; a data-application race
+  // between overlapping lookups still can't happen, since that's guarded by
+  // each callback's own `cancelled` closure exactly as before. `fallback` is
+  // computed unconditionally (cheap, pure) so it's available to the .then()
+  // below on either path — it's only the setValues/baselineRef/setEditingField
+  // side effects that must not re-run on the retry path.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tq", book, row.id);
     const nonceKey = `${key}#${reloadNonce}`;
-    if (hydratedKeyRef.current === nonceKey) return;
-    hydratedKeyRef.current = nonceKey;
+    if (hydratedKeyRef.current === nonceKey && settledKey === nonceKey) return;
     const fallback: Record<Field, string> = {
       question: unescapeNewlines(row.question),
       response: unescapeNewlines(row.response),
     };
-    baselineRef.current = { ...fallback };
-    setValues(fallback);
-    setEditingField(null);
+    if (hydratedKeyRef.current !== nonceKey) {
+      hydratedKeyRef.current = nonceKey;
+      baselineRef.current = { ...fallback };
+      setValues(fallback);
+      setEditingField(null);
+    }
     let cancelled = false;
     void drafts.get(key).then((rec) => {
       if (cancelled || hydratedKeyRef.current !== nonceKey) return;
@@ -550,15 +577,15 @@ export default function TranslateQuestionsScreen({
       // STATE, not a ref: setting it is guaranteed to produce a render/effect
       // pass, so the stash effect below is never left waiting on a pass that
       // depends on some *other* setState call happening to fire too. See
-      // issue #167 (two separate bugs fixed by this split, both documented
-      // on the stash effect).
+      // issue #167 (three separate bugs fixed by this split and the guard
+      // above, all documented here and on the stash effect).
       setSettledKey(nonceKey);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.id, book, reloadNonce]);
+  }, [row?.id, book, reloadNonce, settledKey]);
 
   const dirtyFields = FIELDS.filter((f) => values[f] !== baselineRef.current[f]);
   const hasDiff = dirtyFields.length > 0;
