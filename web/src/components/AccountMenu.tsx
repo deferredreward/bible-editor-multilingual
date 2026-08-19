@@ -5,8 +5,13 @@
 // out in particular had no replacement anywhere in the new UI, so a user could
 // not leave the session without clearing storage by hand. This is the same set
 // of controls TopBar's avatar menu carries, minus the ones the new UI already
-// hosts elsewhere (workspace switcher and interface language sit beside this
-// button in the strip; editor/translator mode lives on the Style screen).
+// hosts elsewhere (interface language sits beside this button in the strip;
+// editor/translator mode lives on the Style screen).
+//
+// The org switcher is in here too, in its interactive "menu" variant — NOT the
+// "menuItem" variant TopBar uses, which only links to classic Preferences and
+// would drop a new-UI user back into the old interface. Either variant renders
+// nothing on a single-org install.
 import { useContext, useState } from "react";
 import {
   Box,
@@ -54,7 +59,7 @@ export function AccountMenu({ username, onLogout }: Props) {
 
   return (
     <>
-      <Tooltip title={username ? `@${username}` : t("shell.signOut")}>
+      <Tooltip title={username ? `@${username}` : ""}>
         <IconButton
           size="small"
           onClick={(e) => setAnchor(e.currentTarget)}
