@@ -340,20 +340,38 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // (issue #201). Cross-chapter deep links are handled above, by the queue
   // rebuild itself. Guarded on an actual change of `verse` (via the ref, not
   // just its presence in the dep array) so this never fires on plain cursor
-  // navigation (Prev/Next) or unrelated re-renders — only a real prop change
-  // moves the cursor here. Uses the same setCursor/setView("cards") pair the
-  // list pane's row click uses, so drafts stash/hydrate exactly as they do
-  // for a manual row click — no queue rebuild, no reset of statuses/
-  // editedIds/typeFilter.
+  // navigation (Prev/Next), a status change, or unrelated re-renders — only a
+  // real prop change moves the cursor here. Uses the same setCursor/setView
+  // pair the list pane's row click uses, so drafts stash/hydrate exactly as
+  // they do for a manual row click — no queue rebuild, no reset of statuses/
+  // editedIds.
   const prevVerseRef = useRef(verse);
   useEffect(() => {
     if (prevVerseRef.current === verse) return;
     prevVerseRef.current = verse;
-    if (verse == null || !queueIds || queueIds.length === 0) return;
+    if (!queueIds || queueIds.length === 0) return;
+    // Honoring a same-chapter verse change always overrides an active type
+    // filter (issue #226, gap 2). The requested verse's note may be a different
+    // type — hidden by the filter — and the filter effect below would otherwise
+    // immediately yank the cursor to the first visible row, so the URL never
+    // lands on the requested verse. Clearing the filter first (batched with the
+    // setCursor) lets that effect early-return instead of fighting this one, and
+    // mirrors what the queue-build path does on a cross-chapter deep link.
+    setTypeFilter(null);
+    if (verse == null) {
+      // The verse segment was dropped (e.g. #/notes/RUT/1/9 → #/notes/RUT/1 via
+      // Back/Forward or a manual URL edit). Restore the same no-verse init the
+      // mount/queue-build path uses: first still-open card, or the done view
+      // when every card in the chapter is already statused (issue #226, gap 1).
+      const firstOpen = queueIds.findIndex((id) => !statuses[id]);
+      setCursor(firstOpen < 0 ? 0 : firstOpen);
+      setView(firstOpen < 0 ? "done" : "cards");
+      return;
+    }
     const seekIdx = queueIds.findIndex((id) => (rowById.get(id)?.verse ?? -Infinity) >= verse);
     setCursor(seekIdx < 0 ? queueIds.length - 1 : seekIdx);
     setView("cards");
-  }, [verse, queueIds, rowById]);
+  }, [verse, queueIds, rowById, statuses]);
 
   // ── article-type filter (2026-08-10) ─────────────────────────────────────
   // Distinct types present in THIS chapter's queue, with counts — the filter
