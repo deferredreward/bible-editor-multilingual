@@ -7,6 +7,10 @@
 //   • "menuItem" (TopBar Account menu) — same non-interactive
 //     navigate-to-Preferences behavior as "indicator", styled as a MenuItem row
 //     instead of a chip so it sits naturally inside another menu.
+//   • "submenuItem" (new-UI account menu) — an interactive MenuItem that opens
+//     the org list as a submenu. Unlike "menuItem" it switches org in place
+//     rather than linking to classic Preferences, and unlike "menu" it is a real
+//     MenuItem, so the parent menu's arrow-key roving focus can reach it.
 //   • "menu" (legacy default) — the old top-bar dropdown; retained for safety.
 // The switch flow (guard pending outbox ops → api.switchWorkspace → persist →
 // full reload) is identical across variants — see handleSelect below.
@@ -35,7 +39,7 @@ import { api, ApiError, type WorkspaceInfo } from "../sync/api";
 import { outbox, isOpPending } from "../sync/outbox";
 import { getWorkspaceSlug, setWorkspaceSlug, setWorkspaceIsFallback } from "../sync/workspace";
 
-type Variant = "menu" | "indicator" | "expanded" | "menuItem";
+type Variant = "menu" | "indicator" | "expanded" | "menuItem" | "submenuItem";
 
 export function WorkspaceSwitcher({ variant = "menu" }: { variant?: Variant }) {
   const { t } = useTranslation();
@@ -161,6 +165,74 @@ export function WorkspaceSwitcher({ variant = "menu" }: { variant?: Variant }) {
           secondary={`${currentWorkspace?.label ?? current} · ${t("topbar.account.switchHint")}`}
         />
       </MenuItem>
+    );
+  }
+
+  // ── Account-menu row that switches in place (new UI) ──────────────────────
+  // A MenuItem (not a bare Button in a Box): MUI's roving focus only visits
+  // MenuItem children, so a non-MenuItem row is unreachable by arrow keys and
+  // the control ends up pointer-only. Its submenu anchors to the row itself,
+  // the same shape TopBar uses for the interface-language submenu.
+  if (variant === "submenuItem") {
+    if (!multiOrg) return null;
+    return (
+      <>
+        <MenuItem onClick={(e) => setAnchorEl(e.currentTarget)} disabled={switching}>
+          <ListItemIcon>
+            <BusinessIcon fontSize="small" sx={{ color: "text.secondary" }} />
+          </ListItemIcon>
+          <ListItemText
+            primary={t("workspace.title")}
+            secondary={currentWorkspace?.label ?? current}
+          />
+        </MenuItem>
+        <Menu
+          anchorEl={anchorEl}
+          open={Boolean(anchorEl)}
+          onClose={() => setAnchorEl(null)}
+          // React propagates events through the portal to the parent menu, so
+          // without this the account menu's own MenuList also handles each
+          // arrow key and focus bounces off this list between presses.
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {membershipUnknown && (
+            <>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ px: 2, py: 0.5, display: "block", maxWidth: 280 }}
+              >
+                {t("workspace.membershipUnknownHint")}
+              </Typography>
+              <Divider />
+            </>
+          )}
+          {workspaces.map((w) => {
+            const item = (
+              <MenuItem
+                key={w.slug}
+                selected={w.slug === current}
+                disabled={!w.allowed}
+                onClick={() => void handleSelect(w.slug)}
+              >
+                <ListItemIcon sx={{ visibility: w.slug === current ? "visible" : "hidden" }}>
+                  <CheckIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>{w.label}</ListItemText>
+              </MenuItem>
+            );
+            return w.allowed ? (
+              item
+            ) : (
+              <Tooltip key={w.slug} title={t("workspace.notMemberTooltip")}>
+                {/* span wrapper so the tooltip still fires on a disabled MenuItem */}
+                <span>{item}</span>
+              </Tooltip>
+            );
+          })}
+        </Menu>
+        {errorSnackbar}
+      </>
     );
   }
 

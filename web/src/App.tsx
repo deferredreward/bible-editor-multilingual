@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TopBar, UiLanguageControl } from "./components/TopBar";
-import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { SyncStatusBar } from "./components/SyncStatusBar";
 import { PipelineStatusBar } from "./components/PipelineStatusBar";
+import { AccountMenu } from "./components/AccountMenu";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
 import { ReviewQueue } from "./components/ReviewQueue";
@@ -363,6 +364,7 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
 }
 
 export function App() {
+  const { t } = useTranslation();
   const [loc, setLoc] = useState<Location>(() => parseHash());
   // ?_choose_ws=1: the OAuth callback matched this account to SEVERAL Door43
   // orgs with no usable history and landed the session in the first match —
@@ -765,25 +767,28 @@ export function App() {
           loc.view === "admin" ||
           loc.view === "verse" ? (
           // The new-UI flow screens replaced the classic Shell/TopBar, which
-          // carried the org (workspace) switcher, the UI-language switcher, and
-          // the global sync/pipeline status (queue, conflicts, failed-op
-          // discard, AI-pipeline progress). Re-mount all of them here, once, as
-          // a slim global chrome strip above every flow screen — so changing
-          // org or interface language, or seeing/discarding a stuck save, no
-          // longer means dropping back into classic mode (issue #212).
-          // WorkspaceSwitcher renders nothing for a single-org install;
-          // justify-end keeps the controls on the inline-end corner in both
-          // LTR and RTL. SyncStatusBar/PipelineStatusBar render nothing when
-          // there is no queued/failed op or pipeline job (own null-render
-          // guards), so the strip stays empty-quiet on the common case.
+          // carried the org (workspace) switcher, the UI-language switcher, the
+          // account menu (identity, dark mode, reading text size, sign out), and
+          // the global sync/pipeline status (queue, conflicts, failed-op discard,
+          // AI-pipeline progress). Re-mount all of it here, once, as a slim
+          // global chrome strip above every flow screen — so changing org or
+          // interface language, signing out, or seeing/discarding a stuck save no
+          // longer means dropping back into classic mode (#212). The org switcher
+          // sits inside AccountMenu (it is account-scoped, and keeping it out of
+          // the strip leaves the Team screen's own expanded switcher as the only
+          // org control visible there — #209). SyncStatusBar/PipelineStatusBar
+          // render nothing when there is no queued/failed op or pipeline job (own
+          // null-render guards), so the strip stays empty-quiet on the common
+          // case. justify-end keeps the controls on the inline-end corner in both
+          // LTR and RTL.
           //
-          // The "N unsaved drafts" reminder (UnsavedToasts) is intentionally
-          // NOT mounted here — it requires a `book` in scope (Shell resolves it
-          // via its own useChapter instance), but most flow views (home,
-          // books, team, setup, style, curate, ai, observe, package, admin)
-          // have no book/chapter in `loc` at all. Hoisting it needs either new
-          // data plumbing or a redesign of its in-place Save action — scoped
-          // as a separate follow-up rather than risking a silent no-op or a
+          // The "N unsaved drafts" reminder (UnsavedToasts) is intentionally NOT
+          // mounted here — it requires a `book` in scope (Shell resolves it via
+          // its own useChapter instance), but most flow views (home, books, team,
+          // setup, style, curate, ai, observe, package, admin) have no
+          // book/chapter in `loc` at all. Hoisting it needs either new data
+          // plumbing or a redesign of its in-place Save action — scoped as a
+          // separate follow-up rather than risking a silent no-op or a
           // half-working Save button on those screens.
           <Stack sx={{ height: "100%", minHeight: 0 }}>
             <Stack
@@ -791,6 +796,8 @@ export function App() {
               alignItems="center"
               justifyContent="flex-end"
               spacing={0.5}
+              role="toolbar"
+              aria-label={t("topbar.chromeStrip.ariaLabel")}
               sx={{
                 flex: "none",
                 minHeight: 44,
@@ -803,8 +810,11 @@ export function App() {
             >
               <SyncStatusBar onNavigate={navigate} />
               <PipelineStatusBar />
-              <WorkspaceSwitcher variant="menu" />
               <UiLanguageControl />
+              <AccountMenu
+                username={auth.kind === "ready" ? auth.me?.username ?? null : null}
+                onLogout={handleSignOut}
+              />
             </Stack>
             <Box sx={{ flex: 1, minHeight: 0 }}>
           <Suspense
