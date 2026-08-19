@@ -973,7 +973,7 @@ export function TopBar({
           </Stack>
         </Box>
 
-        <MenuItem onClick={toggleTheme}>
+        <MenuItem autoFocus onClick={toggleTheme}>
           <ListItemIcon>
             <DarkModeIcon fontSize="small" sx={{ color: "text.secondary" }} />
           </ListItemIcon>
@@ -1068,6 +1068,7 @@ export function TopBar({
         {modeControl}
         <WorkspaceSwitcher variant="menuItem" />
         <MenuItem
+          autoFocus
           onClick={() => {
             setAccountAnchor(null);
             location.hash = "#/preferences";
