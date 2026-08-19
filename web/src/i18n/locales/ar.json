@@ -171,6 +171,9 @@
     "toggleColorMode": "تبديل وضع الألوان",
     "uiLanguage": "لغة الواجهة",
     "layouts": "التخطيطات",
+    "chromeStrip": {
+      "ariaLabel": "المؤسسة واللغة"
+    },
     "mode": {
       "editor": "محرر",
       "translator": "مترجم"
