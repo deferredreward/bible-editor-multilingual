@@ -8,10 +8,11 @@
 // hosts elsewhere (interface language sits beside this button in the strip;
 // editor/translator mode lives on the Style screen).
 //
-// The org switcher is in here too, in its interactive "menu" variant — NOT the
-// "menuItem" variant TopBar uses, which only links to classic Preferences and
-// would drop a new-UI user back into the old interface. Either variant renders
-// nothing on a single-org install.
+// The org switcher is in here too, as WorkspaceSwitcher's "submenuItem"
+// variant: it switches in place (TopBar's "menuItem" variant only links to
+// classic Preferences, which would drop a new-UI user back into the old
+// interface) and it is a real MenuItem, so arrow keys can reach it. Either
+// variant renders nothing on a single-org install.
 import { useContext, useState } from "react";
 import {
   Box,
@@ -97,11 +98,15 @@ export function AccountMenu({ username, onLogout }: Props) {
         )}
         {(username || orgLanguageLabel) && <Divider />}
 
-        <Box sx={{ px: 1, py: 0.25 }}>
-          <WorkspaceSwitcher variant="menu" />
-        </Box>
+        <WorkspaceSwitcher variant="submenuItem" />
 
-        <MenuItem onClick={toggleTheme}>
+        {/* autoFocus establishes the menu's roving focus. MUI only sets it up
+            from a focusable MenuItem child, and this menu opens with a plain
+            identity Box first — without this, arrow keys move nothing and the
+            whole menu is pointer-only (the same defect classic's account menu
+            still has, #224). The org row above is a MenuItem too, so ArrowUp
+            reaches it; it renders nothing on a single-org install. */}
+        <MenuItem autoFocus onClick={toggleTheme}>
           <ListItemIcon>
             <DarkModeIcon fontSize="small" sx={{ color: "text.secondary" }} />
           </ListItemIcon>
