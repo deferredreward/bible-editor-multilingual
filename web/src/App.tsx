@@ -4,6 +4,8 @@ import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TopBar, UiLanguageControl } from "./components/TopBar";
+import { SyncStatusBar } from "./components/SyncStatusBar";
+import { PipelineStatusBar } from "./components/PipelineStatusBar";
 import { AccountMenu } from "./components/AccountMenu";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
 import { ImportWorkspace } from "./components/ImportWorkspace";
@@ -765,16 +767,29 @@ export function App() {
           loc.view === "admin" ||
           loc.view === "verse" ? (
           // The new-UI flow screens replaced the classic Shell/TopBar, which
-          // carried the org (workspace) switcher, the UI-language switcher and
-          // the account menu (identity, dark mode, reading text size, sign
-          // out). Re-mount all of it here, once, as a slim global chrome strip
-          // above every flow screen — so changing org or interface language,
-          // or signing out, no longer means dropping back into classic mode.
-          // The org switcher sits inside AccountMenu (it is account-scoped, and
-          // keeping it out of the strip leaves the Team screen's own expanded
-          // switcher as the only org control visible there — #209).
-          // justify-end keeps the controls on the inline-end corner in both
+          // carried the org (workspace) switcher, the UI-language switcher, the
+          // account menu (identity, dark mode, reading text size, sign out), and
+          // the global sync/pipeline status (queue, conflicts, failed-op discard,
+          // AI-pipeline progress). Re-mount all of it here, once, as a slim
+          // global chrome strip above every flow screen — so changing org or
+          // interface language, signing out, or seeing/discarding a stuck save no
+          // longer means dropping back into classic mode (#212). The org switcher
+          // sits inside AccountMenu (it is account-scoped, and keeping it out of
+          // the strip leaves the Team screen's own expanded switcher as the only
+          // org control visible there — #209). SyncStatusBar/PipelineStatusBar
+          // render nothing when there is no queued/failed op or pipeline job (own
+          // null-render guards), so the strip stays empty-quiet on the common
+          // case. justify-end keeps the controls on the inline-end corner in both
           // LTR and RTL.
+          //
+          // The "N unsaved drafts" reminder (UnsavedToasts) is intentionally NOT
+          // mounted here — it requires a `book` in scope (Shell resolves it via
+          // its own useChapter instance), but most flow views (home, books, team,
+          // setup, style, curate, ai, observe, package, admin) have no
+          // book/chapter in `loc` at all. Hoisting it needs either new data
+          // plumbing or a redesign of its in-place Save action — scoped as a
+          // separate follow-up rather than risking a silent no-op or a
+          // half-working Save button on those screens.
           <Stack sx={{ height: "100%", minHeight: 0 }}>
             <Stack
               direction="row"
@@ -793,6 +808,8 @@ export function App() {
                 bgcolor: "background.paper",
               }}
             >
+              <SyncStatusBar onNavigate={navigate} />
+              <PipelineStatusBar />
               <UiLanguageControl />
               <AccountMenu
                 username={auth.kind === "ready" ? auth.me?.username ?? null : null}
