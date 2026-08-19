@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
@@ -361,6 +362,7 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
 }
 
 export function App() {
+  const { t } = useTranslation();
   const [loc, setLoc] = useState<Location>(() => parseHash());
   // ?_choose_ws=1: the OAuth callback matched this account to SEVERAL Door43
   // orgs with no usable history and landed the session in the first match —
@@ -779,6 +781,8 @@ export function App() {
               alignItems="center"
               justifyContent="flex-end"
               spacing={0.5}
+              role="toolbar"
+              aria-label={t("topbar.chromeStrip.ariaLabel")}
               sx={{
                 flex: "none",
                 minHeight: 44,
