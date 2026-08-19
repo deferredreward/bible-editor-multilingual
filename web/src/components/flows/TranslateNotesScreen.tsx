@@ -129,10 +129,11 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 export interface TranslateNotesScreenProps extends FlowScreenContext {
   book: string;
   chapter: number;
-  // Optional deep-link verse (e.g. from the Books "Continue" card). Seeds the
-  // queue cursor once, on mount/chapter change, to the first queue entry at
-  // or after this verse — never re-seeks on later renders or re-navigation
-  // within the same chapter.
+  // Optional deep-link verse (e.g. from the Books "Continue" card, a manual
+  // URL edit, or browser Back/Forward). Seeds the queue cursor to the first
+  // queue entry at or after this verse on mount/chapter change, and re-seeks
+  // it again on any later change to this prop within the same chapter (see
+  // the dedicated seek effect below) — without rebuilding the queue itself.
   verse?: number;
 }
 
@@ -313,9 +314,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setView(verse != null ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
-    // `verse` deliberately not a dep beyond this — the `queue?.key === chapterKey`
-    // guard above already limits this effect to once per mount/chapter change,
-    // which is exactly the seek-once semantics wanted here.
+    // `verse` deliberately not a dep beyond this — this effect only builds the
+    // queue and seeds its cursor once per mount/chapter change (the
+    // `queue?.key === chapterKey` guard above). Re-seeking on a later,
+    // same-chapter change to `verse` is handled by the dedicated effect below,
+    // which does not rebuild the queue or reset statuses/editedIds/typeFilter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, book, chapter, queue, chapterKey]);
 
@@ -330,6 +333,27 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const currentId = queueIds && cursor < queueIds.length ? queueIds[cursor] : null;
   const row = currentId ? (rowById.get(currentId) ?? null) : null;
   const statusedCount = queueIds ? queueIds.filter((id) => statuses[id]).length : 0;
+
+  // Re-seek the cursor when `verse` changes while the queue is already built
+  // for the current chapter — e.g. editing the URL from #/notes/RUT/1 to
+  // #/notes/RUT/1/9, or Back/Forward between two verses of the same chapter
+  // (issue #201). Cross-chapter deep links are handled above, by the queue
+  // rebuild itself. Guarded on an actual change of `verse` (via the ref, not
+  // just its presence in the dep array) so this never fires on plain cursor
+  // navigation (Prev/Next) or unrelated re-renders — only a real prop change
+  // moves the cursor here. Uses the same setCursor/setView("cards") pair the
+  // list pane's row click uses, so drafts stash/hydrate exactly as they do
+  // for a manual row click — no queue rebuild, no reset of statuses/
+  // editedIds/typeFilter.
+  const prevVerseRef = useRef(verse);
+  useEffect(() => {
+    if (prevVerseRef.current === verse) return;
+    prevVerseRef.current = verse;
+    if (verse == null || !queueIds || queueIds.length === 0) return;
+    const seekIdx = queueIds.findIndex((id) => (rowById.get(id)?.verse ?? -Infinity) >= verse);
+    setCursor(seekIdx < 0 ? queueIds.length - 1 : seekIdx);
+    setView("cards");
+  }, [verse, queueIds, rowById]);
 
   // ── article-type filter (2026-08-10) ─────────────────────────────────────
   // Distinct types present in THIS chapter's queue, with counts — the filter
@@ -378,7 +402,14 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // ── editor state ─────────────────────────────────────────────────────────
   const [draftValue, setDraftValue] = useState("");
   const baselineRef = useRef("");
+  // "Hydration for this key has started" — set synchronously, guards against
+  // re-entering the hydrate branch and against a stale async lookup landing
+  // after a newer row change.
   const hydratedKeyRef = useRef<string | null>(null);
+  // "Hydration for this key has FULLY settled" (sync setup *and* the async
+  // drafts.get() lookup resolved) — deliberately React state, not a ref. See
+  // issue #167 and the comment on the hydrate/stash effects below.
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editing, setEditing] = useState(false);
   // Phone focus mode (2026-08-15, mobile polish): with the on-screen keyboard
@@ -406,16 +437,40 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
 
   // Hydrate the editor on card change: a persisted draft (unsaved typing from
   // this browser) wins over the row's own content.
+  //
+  // Third issue-#167 fix, this one for React StrictMode (web/src/main.tsx —
+  // enabled): on a component's first mount, StrictMode runs this effect,
+  // immediately runs its cleanup (cancelled = true), then re-runs the effect
+  // body — simulating a fast unmount/remount, dev-only. The re-run used to
+  // bail out at `if (hydratedKeyRef.current === nonceKey) return;` alone
+  // (already true, set synchronously by the first run) and do nothing else;
+  // meanwhile the first run's own drafts.get() eventually resolves but bails
+  // at its `cancelled` check, so setSettledKey never fires for that row —
+  // the initially-mounted card could never persist a draft, since the stash
+  // effect's settledKey guard stayed permanently unmet for it.
+  //
+  // Fix: only skip entirely once BOTH hydratedKeyRef and settledKey already
+  // match this nonceKey. When hydratedKeyRef matches but settledKey doesn't
+  // (StrictMode's second invocation, or any other race that left a lookup
+  // stranded), skip re-running the *synchronous* setup — draftValue/baseline
+  // are already right, no need to reset them — but still start a *fresh*,
+  // independently-cancellable lookup. Only one of the two invocations' async
+  // callbacks can ever be live (the other's cleanup already flipped its own
+  // `cancelled`), so exactly one settles the key; a data-application race
+  // between overlapping lookups still can't happen, since that's guarded
+  // by each callback's own `cancelled` closure exactly as before.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tn", book, row.id);
     const nonceKey = `${key}#${reloadNonce}`;
-    if (hydratedKeyRef.current === nonceKey) return;
-    hydratedKeyRef.current = nonceKey;
-    const fallback = unescapeNewlines(row.note);
-    baselineRef.current = fallback;
-    setDraftValue(fallback);
-    setEditing(false);
+    if (hydratedKeyRef.current === nonceKey && settledKey === nonceKey) return;
+    if (hydratedKeyRef.current !== nonceKey) {
+      hydratedKeyRef.current = nonceKey;
+      const fallback = unescapeNewlines(row.note);
+      baselineRef.current = fallback;
+      setDraftValue(fallback);
+      setEditing(false);
+    }
     let cancelled = false;
     void drafts.get(key).then((rec) => {
       if (cancelled || hydratedKeyRef.current !== nonceKey) return;
@@ -426,20 +481,56 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       if (typeof patchVal === "string") setDraftValue(unescapeNewlines(patchVal));
       const baselineVal = payload?.baseline?.note;
       if (typeof baselineVal === "string") baselineRef.current = unescapeNewlines(baselineVal);
+      // Mark this key fully settled — sync setup AND the async lookup have
+      // both landed — whether or not a persisted draft was found. This is
+      // STATE, not a ref: setting it is guaranteed to produce a render/effect
+      // pass, so the stash effect below is never left waiting on a pass that
+      // depends on some *other* setState call happening to fire too. See
+      // issue #167 (three separate bugs fixed by this split and the guard
+      // above, all documented here and on the stash effect).
+      setSettledKey(nonceKey);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.id, book, reloadNonce]);
+  }, [row?.id, book, reloadNonce, settledKey]);
 
   const hasDiff = draftValue !== baselineRef.current;
 
-  // Stash every keystroke. Nothing leaves the browser here — the draft store is
-  // what makes "no save on blur, no save on unmount" safe.
+  // Stash every keystroke. Nothing leaves the browser here — the draft store
+  // is what makes "no save on blur, no save on unmount" safe.
+  //
+  // Guarded on settledKey, not merely on "hydration started" (issue #167,
+  // two related bugs found in review):
+  //
+  // 1. A guard based on a REF that lags one commit behind row?.id (the
+  //    original attempt) assumed the hydration effect's setDraftValue always
+  //    produces a follow-up render for the lagging ref to catch up on. React
+  //    skips that render when the new row's raw content happens to be
+  //    Object.is-equal to the outgoing row's leftover text, silently
+  //    breaking the guard for that row.
+  // 2. A guard based on hydratedKeyRef ALONE (set synchronously the instant
+  //    hydration *starts*, the second attempt) is worse: it treats the
+  //    hydrate effect's own synchronous setDraftValue(fallback) commit as
+  //    "already hydrated," so this effect can run — and call drafts.clear()
+  //    — before the async drafts.get() lookup has resolved. Concretely: row
+  //    change to B (which has a persisted draft) → hydrate branch sets
+  //    baseline=fallback, calls setDraftValue(fallback) (a REAL render,
+  //    since B's fallback differs from the outgoing row's text) → THIS
+  //    effect re-runs in the very next commit, sees draftValue === baseline
+  //    (both "fallback," since the async lookup hasn't overwritten it yet)
+  //    → clears the persisted draft in IndexedDB before it was ever read.
+  //
+  // settledKey is set only from inside the async lookup's .then(), so it
+  // can't go true until the read has actually completed — independent of
+  // whichever setState calls happen to fire along the way, in either
+  // effect.
   useEffect(() => {
     if (!row) return;
     const key = rowKey("tn", book, row.id);
+    const nonceKey = `${key}#${reloadNonce}`;
+    if (settledKey !== nonceKey) return;
     if (draftValue !== baselineRef.current) {
       void drafts.set(
         key,
@@ -451,7 +542,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       void drafts.clear(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftValue, row?.id, row?.version, book]);
+  }, [draftValue, row?.id, row?.version, book, reloadNonce, settledKey]);
 
   useUnsavedGuard(hasDiff);
 
