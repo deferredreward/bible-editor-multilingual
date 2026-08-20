@@ -322,7 +322,12 @@ export default function AlignScreen({ role, book, chapter, verse }: AlignScreenP
     dualLeftDirty || dualRightDirty || dualLeftReadingDirty || dualRightReadingDirty;
   // Full-page unloads (reload / tab close / external nav) bypass the in-app
   // gate below, so they get the browser's own confirm while work is unsaved.
-  useUnsavedGuard(dualDirty);
+  // Covers single-panel drag work too (dragDirty): tap edits are debounced to
+  // the drafts store (crash-safe), but an in-progress drag lives only in the
+  // panel until an explicit Save — so a hard reload (e.g. the new-UI
+  // "update available" chip in App.tsx, or plain F5) would otherwise discard
+  // it silently.
+  useUnsavedGuard(dualDirty || dragDirty);
 
   // Reactive lock banner. An alignment save ships through the outbox, so its
   // 409 `chapter_locked` arrives as an outbox result, not a throw here. The

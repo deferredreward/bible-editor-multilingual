@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Box, Button, CircularProgress, Link, Snackbar, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, CircularProgress, Link, Snackbar, Stack, Tooltip, Typography } from "@mui/material";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import { Shell } from "./components/Shell";
 import { ArticleWorkspace } from "./components/ArticleWorkspace";
 import { TopBar, UiLanguageControl } from "./components/TopBar";
@@ -14,6 +15,7 @@ import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as P
 import { LocalizationInspector } from "./components/LocalizationInspector";
 import { useBook } from "./hooks/useBook";
 import { useAlerts } from "./hooks/useAlerts";
+import { useAppVersion } from "./hooks/useAppVersion";
 import {
   authLogout,
   devSignIn,
@@ -365,6 +367,10 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
 
 export function App() {
   const { t } = useTranslation();
+  // Same signal StatusIndicator shows in the classic TopBar (see there for
+  // the sibling render) — surfaced here too so a tab left open in the new-UI
+  // flow screens still gets nudged to reload after a deploy.
+  const { updateAvailable } = useAppVersion();
   const [loc, setLoc] = useState<Location>(() => parseHash());
   // ?_choose_ws=1: the OAuth callback matched this account to SEVERAL Door43
   // orgs with no usable history and landed the session in the first match —
@@ -808,6 +814,23 @@ export function App() {
                 bgcolor: "background.paper",
               }}
             >
+              {updateAvailable && (
+                <Tooltip title={t("sync.updateAvailableTooltip")}>
+                  <Chip
+                    size="small"
+                    icon={<RefreshIcon sx={{ fontSize: 16 }} />}
+                    label={t("sync.updateAvailable")}
+                    onClick={() => window.location.reload()}
+                    sx={{
+                      color: "#E59D33",
+                      borderColor: "#E59D33",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    variant="outlined"
+                  />
+                </Tooltip>
+              )}
               <SyncStatusBar onNavigate={navigate} />
               <PipelineStatusBar />
               <UiLanguageControl />
