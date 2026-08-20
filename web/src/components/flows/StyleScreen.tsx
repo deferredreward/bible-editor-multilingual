@@ -38,6 +38,7 @@ import {
   ApiError,
   isReadOnly,
   REGISTERS,
+  type ContextExportStatus,
   type Register,
   type TranslationPrefs,
 } from "../../sync/api";
@@ -410,7 +411,13 @@ function MarkdownPrefPanel({
 }
 
 // ── Examples ────────────────────────────────────────────────────────────────
-function ExamplesPanel({ enabled }: { enabled: boolean }) {
+function ExamplesPanel({
+  enabled,
+  status,
+}: {
+  enabled: boolean;
+  status: ContextExportStatus | null;
+}) {
   const [resource, setResource] = useState<"tn" | "tq">("tn");
   const [query, setQuery] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -419,7 +426,6 @@ function ExamplesPanel({ enabled }: { enabled: boolean }) {
     q: debouncedQ || undefined,
     limit: 200,
   });
-  const { status } = useContextExportStatus(enabled);
   const [busyId, setBusyId] = useState<string | null>(null);
   const save = useSaveState();
 
@@ -544,6 +550,15 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
   // save against the same TranslationPrefs row/version, so a shared hook keeps
   // every save's If-Match current (PreferencesWorkspace.tsx:185-190).
   const prefsState = useTranslationPrefs(memoryAvailable);
+  // Lifted once (issue #206): PackStatusBar and ExamplesPanel both read
+  // context-export status. A hook call per consumer meant two GETs on mount
+  // and a stale "Feeding AI" chip in ExamplesPanel after PackStatusBar's own
+  // "Export now" refetched only its own instance. One call here, passed down
+  // as props, so both consumers share a single fetch/refetch. `enabled`
+  // reconciles the two original conditions (`role !== "viewer"` for
+  // PackStatusBar, `memoryAvailable` for ExamplesPanel) so the hook still
+  // fires whenever either consumer previously needed it.
+  const exportStatusState = useContextExportStatus(role !== "viewer" || memoryAvailable);
 
   const [current, setCurrent] = useState<SectionKey>("qa");
 
@@ -565,7 +580,13 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
           title="Style"
           subtitle="Teach the AI our style — context pack and QA rules every AI draft is written against."
         />
-        <PackStatusBar role={role} />
+        <PackStatusBar
+          role={role}
+          status={exportStatusState.status}
+          loading={exportStatusState.loading}
+          error={exportStatusState.error}
+          refetch={exportStatusState.refetch}
+        />
 
         <Box
           sx={{
@@ -673,7 +694,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
                 >
                   <TerminologySection direction={cfg?.direction ?? "ltr"} />
                 </Panel>
-                <ExamplesPanel enabled={memoryAvailable} />
+                <ExamplesPanel enabled={memoryAvailable} status={exportStatusState.status} />
               </>
             )}
 
@@ -698,9 +719,20 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
 // is no committed pack (the dev workspace reports
 // `status: "dry_run", failureReason: "no_service_token"`) we say exactly that
 // rather than implying the AI has a pack to read.
-function PackStatusBar({ role }: { role: "admin" | "editor" | "viewer" }) {
+function PackStatusBar({
+  role,
+  status,
+  loading,
+  error,
+  refetch,
+}: {
+  role: "admin" | "editor" | "viewer";
+  status: ContextExportStatus | null;
+  loading: boolean;
+  error: Error | null;
+  refetch: () => void;
+}) {
   const admin = role === "admin";
-  const { status, loading, error, refetch } = useContextExportStatus(role !== "viewer");
   const cfg = useProjectConfig();
   const [busy, setBusy] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);

@@ -171,6 +171,9 @@
     "toggleColorMode": "toggle color mode",
     "uiLanguage": "Interface language",
     "layouts": "Layouts",
+    "chromeStrip": {
+      "ariaLabel": "Workspace and language"
+    },
     "mode": {
       "editor": "Editor",
       "translator": "Translator"
