@@ -39,6 +39,7 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import CheckIcon from "@mui/icons-material/Check";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
 import { alpha, type Theme } from "@mui/material/styles";
 import { useTranslation } from "react-i18next";
 import type { TnRow } from "../sync/api";
@@ -48,6 +49,7 @@ import { useCatalogs } from "../hooks/useCatalogs";
 import { useNoteTemplates } from "../hooks/useNoteTemplates";
 import { CatalogPicker } from "./CatalogPicker";
 import { shortSupport } from "../lib/supportReference";
+import { taShort, parseTaRef } from "../lib/taArticle";
 import { TCM, buildSH } from "../lib/noteTemplates";
 import { getLockUnapprovedDrafts } from "../lib/editorPrefs";
 import { drafts, rowKey, draftDirtyBorderSx } from "../sync/drafts";
@@ -1178,6 +1180,20 @@ function NoteCardInner({
             }}
           />
         </Box>
+        {parseTaRef(supportRef) && (
+          <Tooltip title={t("noteCard.openArticle")}>
+            <IconButton
+              size="small"
+              component="a"
+              href={`#/articles/ta/${encodeURIComponent(taShort(supportRef))}`}
+              aria-label={t("noteCard.openArticle")}
+              onClick={(e) => e.stopPropagation()}
+              sx={{ p: 0.25, color: "text.secondary" }}
+            >
+              <MenuBookOutlinedIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        )}
         {onChangeVerse && verseOptions && verseOptions.length > 0 && !readOnly ? (
           <Tooltip title={t("noteCard.changeReference")}>
             <Chip

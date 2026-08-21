@@ -954,6 +954,7 @@
     "clickToEdit": "click to edit",
     "notApproved": "Not approved",
     "restoreToReorder": "restore to reorder",
+    "openArticle": "open the translationAcademy article for this support reference",
     "addSupportRef": "+ support ref",
     "supportRefPlaceholder": "figs-, translate-, writing-, …",
     "changeReference": "change reference",

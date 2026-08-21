@@ -455,6 +455,7 @@
   "noteCard": {
     "clickToEdit": "cliquer pour modifier",
     "restoreToReorder": "restaurer pour réordonner",
+    "openArticle": "ouvrir l’article translationAcademy pour cette référence de support",
     "addSupportRef": "+ réf. de support",
     "supportRefPlaceholder": "figs-, translate-, writing-, …",
     "changeReference": "changer la référence",
