@@ -47,6 +47,10 @@ export interface Env {
   JWT_TTL_SECONDS: string;
   ALLOWED_ORIGINS?: string;
   DEV_AUTH_ENABLED?: string;
+  // "true" only on deployments that register the nightly export cron (prod).
+  // Absent/other on the dev worker (crons = []) — the UI uses this to show the
+  // 05:30 schedule vs. a manual-exports notice (#240).
+  NIGHTLY_EXPORTS_ENABLED?: string;
   DCS_CLIENT_ID?: string;
   DCS_CLIENT_SECRET?: string;
   JWT_SIGNING_KEY?: string;

@@ -587,12 +587,23 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
           title="Cron schedule"
           subtitle="Not user-triggerable — shown here for observability only. Values are api/wrangler.toml's registered [env.production.triggers], not a live read (there's no list-crons endpoint)."
         >
+          {!me?.nightlyExportsEnabled && (
+            <Alert severity="info" sx={{ mb: 1.5 }}>
+              Automatic nightly exports are <strong>not enabled on this deployment</strong> — use{" "}
+              <strong>Run export now</strong> to publish. The schedule below is the production
+              configuration.
+            </Alert>
+          )}
           <Stack divider={<Box sx={{ borderBlockEnd: 1, borderColor: "divider" }} />}>
             <Stack direction="row" gap={1.5} alignItems="baseline" sx={{ py: 1 }}>
               <Typography sx={{ fontFamily: "monospace", fontWeight: 700, minWidth: 74 }}>05:30 UTC</Typography>
               <Typography variant="body2" component="div">
                 <strong>Export</strong> — DCS→D1 sync, render, commit to <code>live-snapshot</code>.{" "}
-                <FlowStatusChip kind="approved" label="live" />
+                {me?.nightlyExportsEnabled ? (
+                  <FlowStatusChip kind="approved" label="live" />
+                ) : (
+                  <FlowStatusChip kind="warn" label="not enabled on this deployment" />
+                )}
               </Typography>
             </Stack>
             <Stack direction="row" gap={1.5} alignItems="baseline" sx={{ py: 1 }}>

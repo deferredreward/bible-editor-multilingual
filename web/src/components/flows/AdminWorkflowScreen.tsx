@@ -382,7 +382,7 @@ const BOOK_FAILED_STATUSES = new Set(["retryable_error", "failed"]);
 type LaneKey = "lit" | "sim";
 const LANES: LaneKey[] = ["lit", "sim"];
 
-export default function AdminWorkflowScreen({ role }: AdminWorkflowScreenProps) {
+export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenProps) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
 
@@ -965,7 +965,11 @@ export default function AdminWorkflowScreen({ role }: AdminWorkflowScreenProps) 
                   : "No export history yet"}
             </Typography>
             <Box sx={{ marginInlineStart: "auto" }} />
-            <Typography variant="caption">Exports run automatically at 05:30 UTC</Typography>
+            <Typography variant="caption">
+              {me?.nightlyExportsEnabled
+                ? "Exports run automatically at 05:30 UTC"
+                : "Automatic nightly exports are not enabled on this deployment — use Run export now"}
+            </Typography>
           </>
         }
       >

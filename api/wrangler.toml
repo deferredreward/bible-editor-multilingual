@@ -231,6 +231,12 @@ JWT_ISSUER = "bible-editor"
 JWT_TTL_SECONDS = "1209600"
 ALLOWED_ORIGINS = "https://bible-editor-api.unfoldingword.workers.dev"
 DEV_AUTH_ENABLED = "false"
+# Set ONLY here (prod), never in the default [vars] block: production registers
+# the nightly export cron ([env.production.triggers] above), the dev worker does
+# not (crons = []). The UI reads this to show the 05:30 schedule vs. a
+# "use Run export now" notice, so a cron-less deployment doesn't imply exports
+# are silently failing (#240). Keep it in sync with the crons list above.
+NIGHTLY_EXPORTS_ENABLED = "true"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"

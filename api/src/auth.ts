@@ -868,6 +868,10 @@ export async function authMe(c: AppContext): Promise<Response> {
     lastVerse: row?.last_verse ?? null,
     workspace: currentWsSlug,
     workspaceIsFallback,
+    // Deployment-level: does this worker register the nightly export cron?
+    // Prod does; the public dev worker does not (crons = []). Lets the UI show
+    // the 05:30 schedule vs. a "use Run export now" notice (#240).
+    nightlyExportsEnabled: c.env.NIGHTLY_EXPORTS_ENABLED === "true",
   });
 }
 
