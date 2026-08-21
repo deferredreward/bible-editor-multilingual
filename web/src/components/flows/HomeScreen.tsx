@@ -15,6 +15,7 @@ import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import { FlowNav } from "./FlowNav";
 import { LockBanner, ReadyBanner } from "./FlowBanners";
+import { realChapters } from "../../lib/bookSummary";
 import type { FlowScreenContext } from "./types";
 import {
   api,
@@ -242,7 +243,10 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
     return pipelineJobs.filter((j) => j.state === "done" && j.notified_user_at === null && j.book === book);
   }, [pipelineJobs, book]);
 
-  const chapters = bookSummary?.chapters ?? [];
+  // Filter the phantom chapter 0 (front:intro) the same way every other
+  // BookSummary consumer does — HomeScreen was the lone hold-out, so it
+  // over-counted chapters and rolled chapter-0 rows into the totals (#230).
+  const chapters = realChapters(bookSummary);
   const totalVerses = chapters.reduce((s, c) => s + (c.verses || 0), 0);
   const totalTn = chapters.reduce((s, c) => s + (c.tn || 0), 0);
   const totalTq = chapters.reduce((s, c) => s + (c.tq || 0), 0);
