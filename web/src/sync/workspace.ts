@@ -56,3 +56,14 @@ export function setWorkspaceIsFallback(isFallback: boolean): void {
     /* private mode — nothing we can do, next boot re-derives from the server */
   }
 }
+
+// Derive a per-workspace IndexedDB name from a fixed base, applying the exact
+// fallback rule described above: the FALLBACK workspace keeps the legacy
+// unsuffixed base name (so pre-workspaces data is never orphaned), every other
+// workspace gets a "-{slug}" suffix. Every per-workspace store — the outbox
+// (outbox.ts) and BOTH drafts stores (drafts.ts, alignmentDrafts.ts) — must
+// route its DB name through here so a workspace switch can never surface one
+// org's queued edits or unsaved drafts in another (issue #228).
+export function workspaceDbName(base: string): string {
+  return getWorkspaceIsFallback() ? base : `${base}-${getWorkspaceSlug()}`;
+}

@@ -13,7 +13,12 @@ import { isReadOnly, type RowKind } from "./api";
 import { isLaneFrozen } from "./laneFreeze";
 import { onOutboxResult } from "./outbox";
 import { generationForSuccessfulOp } from "./draftSaveState";
+import { workspaceDbName } from "./workspace";
 
+// Base name; the actual per-workspace DB name is derived via workspaceDbName()
+// so drafts written in one Door43 org never surface in another (issue #228).
+// The fallback workspace keeps this unsuffixed name so pre-workspaces drafts
+// are not orphaned — same rule as the outbox.
 const DB_NAME = "bible-editor-drafts";
 const DB_VERSION = 1;
 const STORE = "drafts";
@@ -86,7 +91,7 @@ type Subscriber = (drafts: DraftRecord[]) => void;
 let dbp: Promise<IDBPDatabase> | null = null;
 function db() {
   if (!dbp) {
-    dbp = openDB(DB_NAME, DB_VERSION, {
+    dbp = openDB(workspaceDbName(DB_NAME), DB_VERSION, {
       upgrade(d) {
         if (!d.objectStoreNames.contains(STORE)) {
           d.createObjectStore(STORE, { keyPath: "key" });
