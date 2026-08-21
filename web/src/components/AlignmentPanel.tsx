@@ -999,6 +999,8 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
                 lexiconMap={lexiconMap}
                 verseNum={verseNum}
                 onTargetsDrop={handleTargetsDrop}
+                selectedWordIds={Array.from(selectedUnaligned)}
+                onClearSelection={handleClearSelection}
                 onSourceDrop={handleSourceDrop}
                 onExtractSource={handleExtractSource}
                 onClearGroup={handleClearGroup}
@@ -1526,6 +1528,8 @@ function AlignmentCards({
   lexiconMap,
   verseNum,
   onTargetsDrop,
+  selectedWordIds,
+  onClearSelection,
   onSourceDrop,
   onExtractSource,
   onClearGroup,
@@ -1545,6 +1549,9 @@ function AlignmentCards({
   lexiconMap: Map<string, LexiconEntry | null>;
   verseNum: number;
   onTargetsDrop: (dest: string, wordIds: string[]) => void;
+  /** Currently tap-selected unaligned word-bank chips (for the click-to-align path). */
+  selectedWordIds: string[];
+  onClearSelection: () => void;
   onSourceDrop: (destGroupId: string, sourceId: string) => void;
   onExtractSource: (sourceId: string) => void;
   onClearGroup: (groupId: string) => void;
@@ -1590,6 +1597,8 @@ function AlignmentCards({
           key={key}
           groupId={g.id}
           onTargetsDrop={(wordIds) => onTargetsDrop(`g:${g.id}`, wordIds)}
+          selectedWordIds={selectedWordIds}
+          onClearSelection={onClearSelection}
           onSourceDrop={(sourceId) => onSourceDrop(g.id, sourceId)}
           onMerge={(draggedId) => onMerge(g.id, draggedId)}
           draggingGroupId={draggingGroupId}
@@ -1698,6 +1707,8 @@ function AlignmentCards({
 function DropTargetCard({
   groupId,
   onTargetsDrop,
+  selectedWordIds,
+  onClearSelection,
   onSourceDrop,
   onMerge,
   draggingGroupId,
@@ -1707,6 +1718,8 @@ function DropTargetCard({
 }: {
   groupId: string;
   onTargetsDrop: (wordIds: string[]) => void;
+  selectedWordIds: string[];
+  onClearSelection: () => void;
   onSourceDrop: (sourceId: string) => void;
   onMerge: (draggedGroupId: string) => void;
   draggingGroupId: string | null;
@@ -1719,9 +1732,22 @@ function DropTargetCard({
   const isBeingDragged = draggingGroupId === groupId;
   const isMergeTarget = over && draggingGroupId !== null && !isBeingDragged;
   const showOver = over && !isMergeTarget && !isBeingDragged;
+  // Tap-to-align: when word-bank chips are tap-selected, a plain click on the
+  // card body aligns them here — the keyboard/trackpad/touch path that mirrors
+  // dragging, routed through the SAME onTargetsDrop as the drop handler. Guarded
+  // to a no-op when nothing is selected (so click behaviour is unchanged) and
+  // when the click lands on an inner control (× clear-group, unalign buttons),
+  // which keep their own handlers.
+  const hasSelection = selectedWordIds.length > 0;
   return (
     <Paper
       elevation={0}
+      onClick={(e) => {
+        if (!hasSelection) return;
+        if ((e.target as HTMLElement).closest("button")) return;
+        onTargetsDrop(selectedWordIds);
+        onClearSelection();
+      }}
       onDragOver={(e) => {
         e.preventDefault();
         setOver(true);
@@ -1749,8 +1775,15 @@ function DropTargetCard({
       dir="ltr"
       sx={{
         position: "relative",
+        // A tap-selection turns every card into a click target — signal it.
+        cursor: hasSelection ? "pointer" : "default",
         bgcolor: isMergeTarget || showOver ? "primary.50" : "background.paper",
-        borderColor: isMergeTarget || showOver ? "primary.main" : "divider",
+        borderColor:
+          isMergeTarget || showOver
+            ? "primary.main"
+            : hasSelection
+              ? "primary.light"
+              : "divider",
         borderWidth: 1,
         borderStyle: isMergeTarget ? "dashed" : "solid",
         borderRadius: 1.5,
