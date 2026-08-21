@@ -21,6 +21,12 @@ import {
 import { backoffMs } from "./backoff";
 import { classifyRowPatchConflict } from "./rowConflict";
 import { isLaneFrozen, laneFreezeReason } from "./laneFreeze";
+import {
+  MAX_ATTEMPTS_SENTINEL,
+  eligibleForVersionThread,
+  isMaxAttemptsBlocked,
+  targetKey,
+} from "./outboxTargeting.ts";
 import { getWorkspaceSlug, getWorkspaceIsFallback } from "./workspace";
 
 // Namespaced per workspace so switching Door43 orgs can never drain one org's
@@ -256,16 +262,11 @@ function noopOp(target: OpTarget, action: OpAction, patch: Record<string, unknow
   };
 }
 
-// Two ops belong to the same target iff they touch the same row/verse. A
-// conflict on one of them must not block ops to *other* targets — but it
-// must keep blocking siblings, since the user's expectedVersion is stale
-// for them too.
-function targetKey(t: OpTarget): string {
-  if (t.kind === "row") return `row:${t.rowKind}:${t.book}:${t.id}`;
-  if (t.kind === "verse_status") return `vstatus:${t.book}:${t.chapter}:${t.verse}`;
-  if (t.kind === "lane_check") return `lanecheck:${t.book}:${t.chapter}:${t.verse}:${t.lane}`;
-  return `verse:${t.book}:${t.chapter}:${t.verse}:${t.bibleVersion}`;
-}
+// targetKey / isMaxAttemptsBlocked / eligibleForVersionThread live in
+// outboxTargeting.ts, not here — that module has no dependency on api.ts (its
+// ApiError class uses a TS parameter-property constructor Node's strip-types
+// loader can't erase), so it can be `import()`ed directly by a plain Node
+// regression test. See outboxTargeting.test.mjs for the upstream-#487 coverage.
 
 export const outbox = {
   subscribe(fn: Subscriber): () => void {
@@ -577,6 +578,13 @@ export const outbox = {
       await tx.done;
       return;
     }
+    // Deliberately leave queuedAt/seq untouched. A max-attempts-failed op was
+    // holding its target's place in the FIFO (isMaxAttemptsBlocked); flipping
+    // status to "pending" forfeits that protection, so keeping its original
+    // queue position is what stops a sibling that queued while it sat failed
+    // from leapfrogging it, landing first, and getting silently reverted when
+    // this op drains after being threaded the sibling's fresh version
+    // (upstream #487 / PR #504). Do not "freshen" queuedAt/seq here.
     op.status = "pending";
     op.attempts = 0;
     op.hardAttempts = 0;
@@ -843,7 +851,8 @@ async function recoverInFlight(): Promise<number | undefined> {
 // apply). Thread the confirmed version into them — with several siblings
 // queued, each landing re-threads the rest. Skips `conflict` ops (those are
 // owned by the user-resolve flow: drain won't pick them up, and
-// resolveConflict overwrites expectedVersion anyway) and anything without a
+// resolveConflict overwrites expectedVersion anyway), max-attempts-failed ops
+// (see eligibleForVersionThread — upstream #487), and anything without a
 // numeric version in the response (verse_status upserts, row deletes).
 async function threadVersionToSiblings(done: OutboxOp, updated: unknown) {
   const version = (updated as { version?: unknown } | null | undefined)?.version;
@@ -860,7 +869,7 @@ async function threadVersionToSiblings(done: OutboxOp, updated: unknown) {
   for (const o of all) {
     if (
       targetKey(o.target) === key &&
-      (o.status === "pending" || o.status === "failed") &&
+      eligibleForVersionThread(o) &&
       o.expectedVersion !== version
     ) {
       o.expectedVersion = version;
@@ -892,9 +901,15 @@ async function drainPass() {
     if (typeof navigator !== "undefined" && navigator.onLine === false) break;
     const ops = await listAll();
     // Mark any target with a still-conflicted op as blocked, so we don't
-    // pick up sibling pending ops with stale expectedVersion either.
+    // pick up sibling pending ops with stale expectedVersion either. A
+    // max-attempts-failed op blocks the same way (isMaxAttemptsBlocked —
+    // upstream #487): it WILL auto-revive with a stale expectedVersion, so a
+    // younger pending sibling must not be allowed to land ahead of it and
+    // then get silently reverted when the older op re-arms. Fatal
+    // (non-revivable) failed ops are excluded from this — nothing will ever
+    // re-send them, so blocking on them would freeze the target forever.
     for (const o of ops) {
-      if (o.status === "conflict") blocked.add(targetKey(o.target));
+      if (o.status === "conflict" || isMaxAttemptsBlocked(o)) blocked.add(targetKey(o.target));
     }
     let next = ops.find(
       (o) => o.status === "pending" && !blocked.has(targetKey(o.target)),
@@ -1053,7 +1068,7 @@ async function drainPass() {
           if (capEligible) stored.hardAttempts = (stored.hardAttempts ?? 0) + 1;
           if (capEligible && (stored.hardAttempts ?? 0) >= MAX_ATTEMPTS) {
             stored.status = "failed";
-            stored.lastError = "max_attempts_exceeded";
+            stored.lastError = MAX_ATTEMPTS_SENTINEL;
           } else {
             stored.status = "pending";
             stored.lastError = result.reason;
@@ -1155,7 +1170,7 @@ async function reviveMaxAttemptsFailed() {
     .store.index("status")
     .getAll("failed")) as OutboxOp[];
   const revivable = failedOps.filter(
-    (o) => o.lastError === "max_attempts_exceeded",
+    (o) => o.lastError === MAX_ATTEMPTS_SENTINEL,
   );
   if (revivable.length === 0) return;
   const tx = idb.transaction(STORE, "readwrite");
