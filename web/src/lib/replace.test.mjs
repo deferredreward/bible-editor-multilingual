@@ -352,6 +352,56 @@ function milestoneCount(content) {
   );
 }
 
+// ─── Case 15c: RTL (Arabic) target edit round-trips USFM markers byte-identically ──
+// Regression for #257: editing RTL scripture (e.g. Arabic AR_AVD/AR_NAV) must
+// leave inline USFM markers (\p, \q1) byte-identical through the
+// extract → edit → save round-trip. The bidi reversal #257 reports (a \p
+// rendered as "p\" at the far edge of an RTL line) is display-only, but it
+// makes a translator far likelier to corrupt the marker while editing around
+// it — so this pins the DATA path: markers survive an RTL word edit intact,
+// independent of how they display. There was no RTL/bidi round-trip coverage
+// in this suite before (every prior marker case is LTR).
+{
+  console.log("\n[Case 15c] RTL Arabic edit preserves USFM markers byte-identically");
+  const p = () => ({ type: "paragraph", tag: "p" });
+  const q = (tag) => ({ type: "quote", tag });
+  // "\p كلمة الرب.\q1" — a leading paragraph marker and a trailing poetry
+  // marker bracketing two aligned Arabic words ("word of the-Lord").
+  const verse = {
+    verseObjects: [
+      p(),
+      zaln("H1", [w("كلمة")]), t(" "), zaln("H2", [w("الرب")]), t("."),
+      q("q1"),
+    ],
+  };
+  const old = extractEditableText(verse);
+  assert(
+    old === "\\p كلمة الرب.\\q1",
+    `baseline surfaces markers LTR beside RTL text (got ${JSON.stringify(old)})`,
+  );
+  // Translator edits the second Arabic word (الرب "the-Lord" -> الإله "God");
+  // both markers are left untouched in the edited text.
+  const r = smartEditVerse(verse, old, "\\p كلمة الإله.\\q1");
+  // Markers survive — exactly one of each, tags unchanged.
+  const paras = r.content.verseObjects.filter((n) => n.type === "paragraph").map((n) => n.tag);
+  const quotes = r.content.verseObjects.filter((n) => n.type === "quote").map((n) => n.tag);
+  assert(JSON.stringify(paras) === JSON.stringify(["p"]), `\\p preserved once, unchanged (got ${JSON.stringify(paras)})`);
+  assert(JSON.stringify(quotes) === JSON.stringify(["q1"]), `\\q1 preserved once, unchanged (got ${JSON.stringify(quotes)})`);
+  // Re-extracting the edited verse yields the SAME marker tokens in the SAME
+  // places — only the edited word differs. This is the byte-identical marker
+  // round-trip #257's success check asks for ("an RTL save round-trips markers
+  // byte-identically").
+  const after = extractEditableText(r.content);
+  assert(
+    after === "\\p كلمة الإله.\\q1",
+    `round-trip keeps markers byte-identical after an RTL edit (got ${JSON.stringify(after)})`,
+  );
+  // The untouched Arabic word stays aligned (the edit must not unalign words it
+  // didn't touch — the core replace.ts invariant, here under RTL content).
+  const words = alignedWords(r.content);
+  assert(words.find((x) => x.text === "كلمة")?.strongs.includes("H1"), "unchanged Arabic word keeps its \\zaln alignment");
+}
+
 // ─── Case 16: combined word edit + marker removal in one save ─────────────
 // A single debounced save changes a word AND deletes markers. Unedited words
 // must keep alignment; only the edited word unaligns; the markers are gone.
