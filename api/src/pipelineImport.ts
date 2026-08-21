@@ -9,6 +9,9 @@
 import type { Env } from "./index";
 import {
   collectSourceWords,
+  curlifyText,
+  curlifyVerseObjects,
+  extractPlainText,
   extractVersesForRange,
   dropDuplicateSourceMilestones,
   healReplacementChars,
@@ -19,17 +22,17 @@ import {
   stripOrphanAlignmentMarkers,
   type SourceWord,
   type VerseExtract,
-} from "./importParsers";
-import { canonizeAlignmentSource } from "./canonizeHebrew";
-import { assertLaneWritable, laneForBibleVersion } from "./scriptureLane";
-import { NT_BOOKS } from "./dcsSources";
+} from "./importParsers.ts";
+import { canonizeAlignmentSource } from "./canonizeHebrew.ts";
+import { assertLaneWritable, laneForBibleVersion } from "./scriptureLane.ts";
+import { NT_BOOKS } from "./dcsSources.ts";
 import type { ProjectConfig } from "./projectConfig";
-import { newRowId, isValidRowId } from "./rowId";
-import { tnContentKey } from "./tnDedup";
-import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim";
-import { nextPreDraftJson } from "./preDraftSnapshot";
-import { fetchBotOutputWith } from "./botOutput";
-import { rawUrlOriginError } from "./rawUrlPin";
+import { newRowId, isValidRowId, coerceRowId, deriveAltRowId } from "./rowId.ts";
+import { tnContentKey } from "./tnDedup.ts";
+import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim.ts";
+import { nextPreDraftJson } from "./preDraftSnapshot.ts";
+import { fetchBotOutputWith } from "./botOutput.ts";
+import { rawUrlOriginError } from "./rawUrlPin.ts";
 
 interface OutputEntry {
   type?: string;
@@ -128,7 +131,11 @@ interface StagedRow {
   payload: Record<string, unknown>;
 }
 
-function tnPayload(book: string, refRaw: string, row: Record<string, string>) {
+// tnPayload / tqPayload are exported for the direct regression tests in
+// pipelineImport.test.mjs, which assert on the quote-curling below (JER 32/33,
+// NUM 26:53 prod forensics — straight quotes in AI-generated note prose).
+// Not intended as a public API beyond that — same rationale as deleteUnkeptTns.
+export function tnPayload(book: string, refRaw: string, row: Record<string, string>) {
   const [ch, v] = refParts(refRaw);
   const occRaw = row["Occurrence"];
   const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
@@ -148,13 +155,19 @@ function tnPayload(book: string, refRaw: string, row: Record<string, string>) {
       // Collapse bp-assistant's double-space-after-punctuation artifact so the
       // stored note matches DCS master's normalized form (see
       // normalizeNoteWhitespace) — both apply paths (applyTnInsert and the hint
-      // expansion) and the edit_log audit read this same staged note.
-      note: row["Note"] ? normalizeNoteWhitespace(row["Note"]) : null,
+      // expansion) and the edit_log audit read this same staged note. Curl
+      // straight quotes with the SAME contextual rule verse text ingest uses
+      // (curlifyText, not tsvFormat.ts's educateQuotes — see the module
+      // comment above curlifyVerseObjects in importParsers.ts for why the two
+      // ingest paths must share one rule) so an AI-authored note never lands
+      // with straight ' / " and never disagrees with an AI-authored verse
+      // curled in the same run.
+      note: row["Note"] ? curlifyText(normalizeNoteWhitespace(row["Note"])) : null,
     },
   };
 }
 
-function tqPayload(book: string, refRaw: string, row: Record<string, string>) {
+export function tqPayload(book: string, refRaw: string, row: Record<string, string>) {
   const [ch, v] = refParts(refRaw);
   const occRaw = row["Occurrence"];
   const occurrence = occRaw === "" || occRaw == null ? null : parseInt(occRaw, 10) || 0;
@@ -170,8 +183,10 @@ function tqPayload(book: string, refRaw: string, row: Record<string, string>) {
       tags: row["Tags"] || null,
       quote: row["Quote"] || null,
       occurrence,
-      question: row["Question"] || null,
-      response: row["Response"] || null,
+      // Curl straight quotes in AI-generated question/response prose — same
+      // rationale (and same shared function) as tnPayload's note above.
+      question: row["Question"] ? curlifyText(row["Question"]) : null,
+      response: row["Response"] ? curlifyText(row["Response"]) : null,
     },
   };
 }
@@ -601,7 +616,18 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
         quote: string | null;
         note: string | null;
       }>();
-    for (const r of live.results ?? []) claimedTnKeys.add(tnContentKey(r));
+    // Normalize the LIVE row's note the same way tnPayload normalizes an
+    // incoming proposal's note (curlifyText) before keying it. Without this,
+    // a pre-fix straight-quote note that deleteUnkeptTns deliberately skips
+    // (preserve=1 / hint=1) keeps a RAW key built from its stored straight
+    // quotes, while a re-run's identical-content proposal is keyed from its
+    // NOW-curled `payload.note` — the two keys never match, so content-dedup
+    // silently fails to recognize the duplicate and a second copy gets
+    // inserted. `quote` is deliberately left untouched here, matching
+    // tnPayload — it must stay byte-exact for occurrence matching.
+    for (const r of live.results ?? []) {
+      claimedTnKeys.add(tnContentKey({ ...r, note: r.note ? curlifyText(r.note) : r.note }));
+    }
   }
 
   // sort_order assignment. Proposals arrive ordered (chapter, verse, id) where
@@ -670,11 +696,20 @@ async function applyJobOutput(env: Env, job: ImportContext): Promise<ApplyResult
     result.tnCreated += 1;
   }
 
+  // Ids this pass has already written. Two distinct proposed ids can hash to
+  // the same alternate (~1 in 786k per pair); without this, the second
+  // proposal would find the first's brand-new row at the same chapter+verse,
+  // read it as "mine from a previous run", and UPDATE over it — losing a
+  // question silently. Proposal order is stable (ORDER BY kind, chapter, verse,
+  // id), so which proposal wins the shared id is deterministic across re-runs
+  // and each keeps landing on the same row. TN has the same idea in
+  // claimedTnKeys, keyed on content rather than id.
+  const claimedTqIds = new Set<string>();
   for (const p of tqProposals) {
     const k = verseKey(p);
     const sortOrder = (tqCounters.get(k) ?? 0) + 100;
     tqCounters.set(k, sortOrder);
-    const action = await applyTqUpsert(env, p, userId, sortOrder);
+    const action = await applyTqUpsert(env, p, userId, sortOrder, claimedTqIds);
     affected.add(p.chapter);
     if (action === "created") result.tqCreated += 1;
     else result.tqUpdated += 1;
@@ -1382,19 +1417,62 @@ async function applyTqUpsert(
   p: PendingImportRow,
   userId: number,
   sortOrder: number,
+  claimedIds: Set<string>,
 ): Promise<"created" | "updated"> {
   const payload = JSON.parse(p.payload_json) as Record<string, unknown>;
-  const proposedId = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
+  const rawId = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
 
-  if (proposedId) {
-    // Try update first. Book-scoped to match the composite PK — a colliding
-    // proposed id in another book is a "not found here", not a stale match.
+  // Candidate-id chain. Attempt 0 is bp-assistant's proposed id (coerced if it
+  // violates the 4-char grammar); later attempts are DETERMINISTIC derivations
+  // of it. Determinism is the point: when the preferred id can't be used it
+  // stays unusable, so a re-run of this chapter walks the identical chain,
+  // finds the row the previous run created, and updates it. Minting randomly
+  // instead would insert a second copy of the same question on every re-run.
+  const seedId = rawId ? coerceRowId(rawId) : null;
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const id = seedId ? (attempt === 0 ? seedId : deriveAltRowId(seedId, attempt)) : newRowId();
+
+    // Book-scoped to match the composite PK — a colliding id in another book is
+    // a "not found here", not a stale match.
     const existing = await env.DB.prepare(
-      `SELECT version FROM tq_rows WHERE id = ?1 AND book = ?2 AND deleted_at IS NULL`,
+      `SELECT version, chapter, verse FROM tq_rows WHERE id = ?1 AND book = ?2 AND deleted_at IS NULL`,
     )
-      .bind(proposedId, p.book)
-      .first<{ version: number }>();
+      .bind(id, p.book)
+      .first<{ version: number; chapter: number; verse: number }>();
     if (existing) {
+      // The id is live. Whether that row is OURS depends on where the candidate
+      // came from, and guessing wrong overwrites someone else's question with
+      // this one — silent loss, since the proposal is then marked accepted.
+      //
+      //   attempt 0 with a seed — the id bp-assistant asserts owns this row.
+      //     Adopt it anywhere in this chapter; the update rewrites verse/ref_raw
+      //     so a question moved within the chapter stays consistent. A match in
+      //     a DIFFERENT chapter is a stale/reused id, not ours: TQ rows don't
+      //     migrate between chapters, and adopting would rewrite an unrelated
+      //     question while leaving it filed under its own chapter.
+      //
+      //   derived candidate (attempt >= 1) — not claimed by anyone; it's just
+      //     the next free slot in this seed's deterministic chain. A live row
+      //     here is ours ONLY if it's the row a previous run of this same chain
+      //     created, which sits at this same chapter AND verse. Two different
+      //     seeds can hash to the same alternate (~1 in 786k per pair); without
+      //     the verse check the second proposal would UPDATE over the first.
+      //
+      //   no seed (random mint) — the candidate asserts nothing at all, so a
+      //     live row is never ours. Step on. Without this, a random id that
+      //     happens to hit a live row in this chapter silently overwrites it.
+      //   ...and never a row THIS pass already wrote (claimedIds): that row
+      //     belongs to an earlier proposal in this same run, not to a previous
+      //     run of our chain, so adopting it would overwrite a question we just
+      //     created. This is the same-verse case the chapter/verse check alone
+      //     cannot separate.
+      const isOurs =
+        seedId !== null &&
+        existing.chapter === p.chapter &&
+        (attempt === 0 || existing.verse === p.verse) &&
+        !claimedIds.has(id);
+      if (!isOurs) continue;
       const newVersion = existing.version + 1;
       const now = Math.floor(Date.now() / 1000);
       const patch = {
@@ -1410,11 +1488,14 @@ async function applyTqUpsert(
           .prepare(
             // sort_order is refreshed too: TQ has no preserve/keep semantics —
             // each run fully reorders the verse to match the incoming file.
+            // `verse` is rewritten alongside ref_raw so a question the run
+            // moved to another verse of this chapter can't end up filed under
+            // its old verse while displaying the new reference.
             `UPDATE tq_rows
                 SET ref_raw = ?1, tags = ?2, quote = ?3, occurrence = ?4,
-                    question = ?5, response = ?6, sort_order = ?7,
-                    version = version + 1, updated_at = ?8, updated_by = ?9
-              WHERE id = ?10 AND book = ?11 AND deleted_at IS NULL`,
+                    question = ?5, response = ?6, sort_order = ?7, verse = ?8,
+                    version = version + 1, updated_at = ?9, updated_by = ?10
+              WHERE id = ?11 AND book = ?12 AND deleted_at IS NULL`,
           )
           .bind(
             patch.ref_raw,
@@ -1424,9 +1505,10 @@ async function applyTqUpsert(
             patch.question,
             patch.response,
             sortOrder,
+            p.verse,
             now,
             userId,
-            proposedId,
+            id,
             p.book,
           ),
         env.DB
@@ -1435,39 +1517,41 @@ async function applyTqUpsert(
                (kind, row_key, book, user_id, prev_version, new_version, action, payload_json, source)
              VALUES ('tq', ?1, ?2, ?3, ?4, ?5, 'update', ?6, ?7)`,
           )
-          .bind(proposedId, p.book, userId, existing.version, newVersion, JSON.stringify(patch), AI_SOURCE),
+          .bind(id, p.book, userId, existing.version, newVersion, JSON.stringify(patch), AI_SOURCE),
         env.DB
           .prepare(
             `UPDATE pending_imports SET accepted_at = unixepoch(), accepted_by = ?2 WHERE id = ?1`,
           )
           .bind(p.id, userId),
       ]);
+      claimedIds.add(id);
       return "updated";
     }
-  }
 
-  // New row — proposedId either absent or not in tq_rows. Use it as the
-  // sticky id when present (preserves AI-side correlation); otherwise mint
-  // a fresh id with the same retry pattern as TN insert.
-  if (proposedId) {
-    await insertTqAtId(env, p, payload, proposedId, userId, sortOrder);
-  } else {
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const fresh = newRowId();
-      try {
-        await insertTqAtId(env, p, payload, fresh, userId, sortOrder);
-        lastErr = null;
-        break;
-      } catch (e) {
-        lastErr = e;
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!/UNIQUE|PRIMARY KEY/i.test(msg)) throw e;
-      }
+    // No LIVE row at this id. It's either free, or held by a TOMBSTONE: the
+    // lookup above filters `deleted_at IS NULL` while the constraint the insert
+    // must satisfy is `PRIMARY KEY (book, id)`, which has no deleted_at
+    // component — so a soft-deleted row is invisible here yet owns its slot
+    // forever. Let the INSERT be the arbiter and step to the next candidate on
+    // collision. Stepping (rather than reusing the slot) is deliberate:
+    // overwriting a tombstone would silently resurrect a row a translator
+    // deleted, into whatever verse the new proposal belongs to.
+    //
+    // (1CH 23:7 proposed `hoig`, held by a hand-deleted 1CH 5:4 question. The
+    // previously unguarded insert threw out of applyJobOutput and killed the
+    // whole job, twice, terminally.)
+    try {
+      await insertTqAtId(env, p, payload, id, userId, sortOrder);
+      claimedIds.add(id);
+      return "created";
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/UNIQUE|PRIMARY KEY/i.test(msg)) throw e;
     }
-    if (lastErr) throw new Error(`tq id collision exhausted after 8 attempts`);
   }
-  return "created";
+  throw new Error(
+    `tq id collision exhausted after 8 attempts (book ${p.book}, ref ${p.chapter}:${p.verse}, proposed id ${rawId ?? "none"})`,
+  );
 }
 
 async function insertTqAtId(
@@ -1479,11 +1563,17 @@ async function insertTqAtId(
   sortOrder: number,
 ): Promise<void> {
   const cols = ["id", "book", "chapter", "verse", "ref_raw", "tags", "quote", "occurrence", "question", "response", "updated_by", "sort_order"];
+  // book/chapter/verse come from the pending_imports row, NOT the payload.
+  // `p.book` is the job's book and is what the caller's liveness lookup, the
+  // (book, id) collision guard, and the edit_log row below all key on; taking
+  // them from the payload instead would let a stray TSV cell insert the row
+  // into a different (book, id) space than the one just checked, leaving the
+  // audit row pointing at a row that doesn't exist there.
   const values = [
     id,
-    payload.book ?? null,
-    payload.chapter ?? null,
-    payload.verse ?? null,
+    p.book,
+    p.chapter,
+    p.verse,
     payload.ref_raw ?? null,
     payload.tags ?? null,
     payload.quote ?? null,
@@ -1584,7 +1674,10 @@ async function applyVerseUpdate(
   const uhbWords = sourceWordsForRange(uhbWordsByVerse, chapter, verse, verseEnd);
   const bibleVersion = String(payload.bible_version ?? p.bible_version ?? "");
   let contentJson = String(payload.content_json ?? "");
-  const plainText = (payload.plain_text as string | null) ?? null;
+  // Mutable: the AI-supplied value is the starting point, but every mutation
+  // pass below that can change `.text` or drop/rewrite a node makes it stale
+  // the moment it fires — see the re-derive after the ULT/UST self-heal block.
+  let plainText = (payload.plain_text as string | null) ?? null;
   const rowKey = `${book}/${chapter}/${verse}/${bibleVersion}`;
 
   // Scripture-lane guard: never let an AI pipeline write scripture into a lane
@@ -1683,11 +1776,38 @@ async function applyVerseUpdate(
         // nfc() compares become no-ops. Structure-preserving; no-op when nothing
         // matches or the source verse wasn't loaded. See canonizeHebrew.ts.
         canonizeAlignmentSource(parsed.verseObjects, uhbWords);
+        // Curl straight quotes bp-assistant wrote into verse text (JER 32/33,
+        // NUM 26:53 prod forensics) before it lands in D1 / exports to master.
+        // Structure-preserving — see curlifyVerseObjects: it only ever
+        // reassigns a `.text` string, never a `\zaln-s` source attribute, so
+        // this can't unalign a word or touch Hebrew/Greek. No-op on clean
+        // output. MUST run BEFORE recomputeTargetOccurrences: curling can make
+        // two `\w` nodes' text byte-identical (an already-curly "LORD’s" and an
+        // AI-written straight "LORD's" both become "LORD’s"), and occurrence
+        // numbering is keyed on exact text equality — recomputing first would
+        // stamp the two as distinct occurrences of what are now the same word,
+        // recreating the very `${text}|${occurrence}` collision that recompute
+        // exists to prevent. Curling first means the recompute below always
+        // sees the FINAL text.
+        curlifyVerseObjects(parsed.verseObjects);
         recomputeTargetOccurrences(parsed.verseObjects);
         contentJson = JSON.stringify(parsed);
+        // Re-derive plain_text from the FINAL corrected tree. Every pass
+        // above can change what plain_text should read — curlifyVerseObjects
+        // rewrites `.text`, stripOrphanAlignmentMarkers strips junk text,
+        // dropDuplicateSourceMilestones can drop a duplicated wrapper — so
+        // trusting the AI-supplied payload.plain_text past this point would
+        // store it stale. A stale plain_text breaks FindReplaceOverlay /
+        // source search (both match against plain_text) and, worse, makes
+        // the next nightly bookReimport compare master's freshly-extracted
+        // text against THIS stale value, see a false diff, and spuriously
+        // re-seed the verse every night. Cheap and always correct to
+        // recompute unconditionally here rather than tracking a changed-flag
+        // across the differently-shaped healers.
+        plainText = extractPlainText(parsed);
       }
     } catch {
-      /* leave contentJson as-is if it isn't parseable JSON */
+      /* leave contentJson/plainText as-is if it isn't parseable JSON */
     }
   }
 
@@ -1695,7 +1815,10 @@ async function applyVerseUpdate(
   // garbled multi-byte Hebrew, e.g. וּזְה❖❖בָם for "gold") before it lands in D1
   // — otherwise it shows as a broken aligner card and exports the garble to DCS.
   // Reconstruct from the parallel UHB/UGNT row; gated on the rare defect, and
-  // structure-preserving so no word unaligns. See healReplacementChars.
+  // structure-preserving so no word unaligns. See healReplacementChars. Does
+  // NOT re-derive plainText: it only ever reassigns a milestone's source
+  // attribute string (x-content/x-lemma/x-morph), never a node's `.text`, so
+  // plain_text (which concatenates `.text` only) cannot change here.
   if ((bibleVersion === "ULT" || bibleVersion === "UST") && contentJson.includes("�")) {
     try {
       const parsed = JSON.parse(contentJson) as { verseObjects?: unknown[] };

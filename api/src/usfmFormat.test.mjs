@@ -117,4 +117,83 @@ t("clean input passes through unchanged (no-op)", () => {
   assert.equal(norm(clean), clean);
 });
 
+// Issue #384: usfm-js can emit `\c` / `\p` / `\s1 Heading` (real ZEC 6 shape),
+// which is legal USFM but places the heading behind the paragraph marker, so a
+// naive front-matter scan looking backward from verse 1 hits the heading first
+// and never sees the \p behind it. The USFM manual orders a chapter-opening
+// section heading BEFORE the paragraph that introduces its first verse, so
+// reorderMarkerRuns now hoists \s-family headings above \p, same as it already
+// does for \ts\*/\c.
+t("issue #384: \\s1 heading is hoisted above a preceding \\p", () => {
+  const out = norm(`${HDR}\\c 6\n\\p\n\\s1 The vision of four chariots\n\\v 1 \\w I\\w*\n`);
+  const idxS1 = out.indexOf("\\s1 The vision");
+  const idxP = out.indexOf("\\p");
+  assert.ok(idxS1 >= 0 && idxP >= 0 && idxS1 < idxP, "\\s1 now precedes \\p");
+});
+
+t("issue #384: \\s1 already before \\p is left in order", () => {
+  const out = norm(`${HDR}\\c 6\n\\s1 A Heading\n\\p\n\\v 1 \\w a\\w*\n`);
+  const idxS1 = out.indexOf("\\s1 A Heading");
+  const idxP = out.indexOf("\\p");
+  assert.ok(idxS1 < idxP, "already-correct order is unchanged");
+});
+
+t("issue #384: bare \\s and \\s2-\\s5 all hoist above \\p", () => {
+  for (const tag of ["\\s", "\\s2", "\\s3", "\\s4", "\\s5"]) {
+    const out = norm(`${HDR}\\c 6\n\\p\n${tag} Heading text\n\\v 1 \\w a\\w*\n`);
+    const idxHeading = out.indexOf(`${tag} Heading text`);
+    const idxP = out.indexOf("\\p");
+    assert.ok(idxHeading < idxP, `${tag} precedes \\p`);
+  }
+});
+
+t("issue #384: full front-matter run \\b / \\ts\\* / \\c / \\p / \\s1 sorts into canonical order", () => {
+  const out = norm(`${HDR}\\b\n\\ts\\*\n\\c 6\n\\p\n\\s1 Heading\n\\v 1 \\w a\\w*\n`);
+  const order = ["\\b", "\\ts\\*", "\\c 6", "\\s1 Heading", "\\p"].map((m) => out.indexOf(m));
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(order[i - 1] < order[i], `${["\\b", "\\ts\\*", "\\c 6", "\\s1 Heading", "\\p"][i]} out of order`);
+  }
+});
+
+t("issue #384: \\sp (speaker) is NOT treated as a section heading", () => {
+  const out = norm(`${HDR}\\c 6\n\\p\n\\sp Paul\n\\v 1 \\w a\\w*\n`);
+  const idxSp = out.indexOf("\\sp Paul");
+  const idxP = out.indexOf("\\p");
+  assert.ok(idxP < idxSp, "\\p is unaffected by an unrelated \\sp marker");
+});
+
+t("issue #384: fix is idempotent on the ZEC 6 shape", () => {
+  const src = `${HDR}\\c 6\n\\p\n\\s1 The vision of four chariots\n\\v 1 \\w I\\w*\n`;
+  const once = norm(src);
+  assert.equal(norm(once), once, "second normalization pass is a no-op");
+});
+
+// ── Issue #431 idempotence pins (test-only; upstream 904eed1 / 8a5f895) ────
+// A content-less \q* stranded before \ts\*/\c across a chapter boundary must
+// stay idempotent under normalization, and both chapters' \p markers must
+// survive. Upstream's "FIX D" (dropping such a \q*) created a fresh \p/\ts\*
+// adjacency for the SECOND pass that reorderMarkerRuns had already run past
+// on the first — losing a \p and moving \ts\* across the chapter boundary.
+// Pinned so a future pass added to this pipeline can't reopen the same
+// "creates a run after reorder already ran" hazard unnoticed.
+const pCount = (s) => s.split("\n").filter((l) => l.trim() === "\\p").length;
+
+t("issue #431: idempotent on lone \\q1 before \\ts\\* at a chapter boundary", () => {
+  const src = `${HDR}\\c 9\n\\p\n\\q1\n\\ts\\*\n\\c 10\n\\p\n\\v 1 \\w text\\w*\n`;
+  const once = norm(src);
+  assert.equal(norm(once), once, "second normalization pass is a no-op");
+  assert.equal(pCount(once), 2, "both \\p markers survive");
+});
+
+t("issue #431: idempotent on the exact repro shape (\\ts\\* stays below \\c 9)", () => {
+  const src = `\\id HAB\n\\h Habakkuk\n\n\\c 9\n\\p\n\\q1\n\\ts\\*\n\\c 10\n\\p\n\\v 1 text\n`;
+  const once = norm(src);
+  const twice = norm(once);
+  assert.equal(twice, once, "second normalization pass must be a no-op");
+  assert.equal(pCount(once), 2, "both chapters' \\p markers must survive");
+  const c9Idx = once.split("\n").findIndex((l) => l.trim() === "\\c 9");
+  const tsIdx = once.split("\n").findIndex((l) => l.trim() === "\\ts\\*");
+  assert.ok(tsIdx > c9Idx, "\\ts\\* must not move above \\c 9");
+});
+
 console.log(`\n${passed} usfmFormat tests passed`);

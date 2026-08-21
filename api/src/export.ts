@@ -41,16 +41,25 @@ export function usfmFilename(book: string): string {
 // Book-specific export branch name: `{BOOK}-be-{user1}-{user2}-...`, where the
 // usernames are everyone who made a human edit to *this* resource of *this*
 // book, in first-edit order (see ExportWorkflow.contributorsFor). `be` = bible
-// editor. With no human contributors the name collapses to `{BOOK}-be`.
+// editor. With no human contributors the name is `{BOOK}-be-mechanical` — the
+// synthetic "mechanical" contributor stands in for machine-only changes (e.g. a
+// TWL reorder). It is NOT cosmetic: the DCS-side gates both test
+// `contains(head_ref, '-be-')` *with* the trailing dash, so a suffix-less
+// `{BOOK}-be` branch made every validate/merge step `skipped` — which Gitea
+// counts as a green combined status. Suffix-less branches were therefore never
+// validated and never auto-merged. Keep every export branch carrying `-be-`.
 //
 // usernames are sanitized to the git ref-safe set (alphanumerics, dot, dash,
 // underscore) so a stray character can't produce an unpushable branch. Our DCS
 // usernames are already in that set; this is just belt-and-suspenders.
+// Stand-in "username" for a machine-only export (no human contributors).
+export const MECHANICAL_CONTRIBUTOR = "mechanical";
+
 export function buildExportBranch(book: string, usernames: string[]): string {
   const safe = usernames
     .map((u) => u.replace(/[^A-Za-z0-9._-]/g, ""))
     .filter((u) => u.length > 0);
-  return safe.length === 0 ? `${book}-be` : `${book}-be-${safe.join("-")}`;
+  return `${book}-be-${safe.length === 0 ? MECHANICAL_CONTRIBUTOR : safe.join("-")}`;
 }
 
 // ── TSV builders ─────────────────────────────────────────────────────────────
@@ -315,6 +324,13 @@ function verseAlignStats(usfmText: string): Map<string, VerseAlignStat> | null {
 
 export interface AlignmentShrinkResult {
   refused: boolean;
+  // Master was FETCHED but did not PARSE, so nothing was compared per-verse.
+  // The ship decision stays refused:false (we can't prove loss), but the
+  // caller must NOT treat this as a clean measurement — an absent measurement
+  // must never be reported as "measured clean" (detail:"ok"). Latent today
+  // (usfm.toJSON doesn't throw on malformed strings), but the trap must stay
+  // closed for any future parser.
+  masterUnparseable?: boolean;
   // Each offending verse names the words that lost their \zaln source so the
   // alert is actionable (which word to re-align), not just a whole-verse aligned
   // count that reads oddly when a verse simultaneously loses one word's source
@@ -356,9 +372,10 @@ export function usfmAlignmentShrinkRefused(
   }
   // An unparseable MASTER (but a parseable render) leaves us with no baseline to
   // compare against — lower risk (we can't prove loss), so we don't refuse on it,
-  // but we must not crash. Treat as no comparison data.
+  // but we must not crash. Treat as no comparison data — and FLAG it, so the
+  // caller can't mistake "nothing was measured" for "measured clean".
   if (master === null) {
-    return { refused: false, offenders: [] };
+    return { refused: false, masterUnparseable: true, offenders: [] };
   }
   // The reachable fail-open: usfm.toJSON does NOT throw on a malformed USFM
   // *string* (only on non-string input), so an empty or garbled render surfaces
@@ -440,6 +457,57 @@ function recomputeTargetOccurrences(verseObjects: unknown[]): void {
   }
 }
 
+// Drop a junk marker node whose whole content is `\w` ATTRIBUTE RESIDUE.
+//
+// Second line of defence for issue #481. A `\w` on master whose attribute
+// section carries a stray backslash — `\w Judah.”|\x-occurrence="1"
+// x-occurrences="1"\w*` — used to parse (usfm-js reads the `\x` as a marker
+// opener) into a junk sibling `{tag:"x", content:"-occurrence=\"1\"
+// x-occurrences=\"1\""}` next to the word. Rendering that node back out emits
+// a REAL cross-reference (`\x -occurrence="1" x-occurrences="1"\x*`), which is
+// how four invalid `\x` markers reached en_ust/24-JER.usfm master.
+// importParsers.sanitizeWordAttributes now repairs the raw USFM before it is
+// ever parsed, so no new junk node can be created — but rows already stored in
+// D1 from an earlier ingest still hold one, and export is the last gate before
+// master. Drop them here too.
+//
+// Deliberately narrow: only a childless, text-less marker node whose ENTIRE
+// content is a `key="value"` attribute list. Real `\x` / `\f` content always
+// carries its own inner markers (`\xo`, `\xt`, `\ft`), and real character-style
+// content is prose — neither matches. Word, text and milestone nodes are never
+// candidates, so this cannot touch alignment: the surviving `\w` keeps its
+// occurrence numbers from recomputeTargetOccurrences, which runs first.
+const ATTR_RESIDUE_RE = /^[A-Za-z-]*=\s*"[^"]*"(?:\s+[A-Za-z][\w-]*\s*=\s*"[^"]*")*$/;
+
+function isWordAttrResidue(node: unknown): boolean {
+  if (!node || typeof node !== "object") return false;
+  const o = node as Record<string, unknown>;
+  if (typeof o["tag"] !== "string") return false;
+  if (o["type"] === "text" || o["type"] === "word" || o["type"] === "milestone") return false;
+  if (Array.isArray(o["children"]) || typeof o["text"] === "string") return false;
+  return typeof o["content"] === "string" && ATTR_RESIDUE_RE.test(o["content"]);
+}
+
+// Returns the number of residue nodes removed. Mutates `verseObjects` in place
+// (children arrays keep their identity, so nested milestones are still walked).
+function dropWordAttrResidue(verseObjects: unknown[]): number {
+  if (!Array.isArray(verseObjects)) return 0;
+  let dropped = 0;
+  for (let i = verseObjects.length - 1; i >= 0; i--) {
+    const node = verseObjects[i];
+    if (isWordAttrResidue(node)) {
+      verseObjects.splice(i, 1);
+      dropped++;
+      continue;
+    }
+    if (node && typeof node === "object") {
+      const children = (node as Record<string, unknown>)["children"];
+      if (Array.isArray(children)) dropped += dropWordAttrResidue(children);
+    }
+  }
+  return dropped;
+}
+
 export function buildUsfm(input: UsfmInputs): string {
   // Group verses by chapter, parsing the stored JSON. Corrupt content fails
   // the export; a partial book is worse than no nightly snapshot.
@@ -455,7 +523,12 @@ export function buildUsfm(input: UsfmInputs): string {
     const bv = input.bibleVersion.toUpperCase();
     if ((bv === "ULT" || bv === "UST") && parsed && typeof parsed === "object") {
       const vos = (parsed as { verseObjects?: unknown[] }).verseObjects;
-      if (Array.isArray(vos)) recomputeTargetOccurrences(vos);
+      if (Array.isArray(vos)) {
+        recomputeTargetOccurrences(vos);
+        // Never ship `\w` attribute residue back to master as a fake `\x`
+        // cross-reference (issue #481). No-op on clean verses.
+        dropWordAttrResidue(vos);
+      }
     }
     const ch = String(v.chapter);
     if (!chapters[ch]) chapters[ch] = {};
@@ -1102,11 +1175,27 @@ function dcsPrHeaders(token: string): Record<string, string> {
   };
 }
 
-// Exact lookup: GET /repos/{owner}/{repo}/pulls/{base}/{head}. (Replaces
-// paging /pulls?state=open — DCS caps the page at 50, so an existing PR could
-// fall off page 1, after which the create 409s every night.) 404 = no PR for
-// this base/head. A 200 can be a closed or merged PR — the endpoint doesn't
-// filter by state — so only an "open" one counts.
+// Exact lookup: GET /repos/{owner}/{repo}/pulls/{base}/{head}. Fast path for
+// the common case, but door43 has a confirmed quirk: this endpoint returns
+// the OLDEST PR ever opened for a given base/head pair, regardless of state —
+// not the open one. A branch that has had multiple PRs over its life (closed,
+// reopened under a new PR, etc.) makes the exact lookup return a closed PR
+// while a real open PR exists further back in history. Live evidence:
+// DAN-be-justplainjane47 had 6 PRs (7347, 7351, 7357, 7365, 7375, 7382); the
+// exact lookup returned #7347 (closed, oldest) while #7382 was open. When
+// that happens, ensureDcsPr's create 409s/422s ("already exists"), the
+// re-lookup hits the same stale result, and the export silently treats the
+// branch as having no PR (never rebasing it, never running conflict
+// recovery) with no alert ever written.
+//
+// So: use the exact lookup as the fast path, and only fall back to a paged
+// scan of /pulls?state=open (matching on head ref) when the exact lookup
+// 404s or returns a non-open PR. The paged scan is intentionally NOT the
+// default path — it was the original approach and got replaced because DCS
+// caps each page at 50, so an existing PR could fall off page 1 and the
+// create would 409 every night; paging bounded to 20 pages (1000 open PRs,
+// far beyond real usage) plus running it only as a fallback keeps that
+// subrequest cost negligible.
 export async function findDcsOpenPr(config: DcsPrConfig): Promise<number | null> {
   const base = config.base ?? config.baseRef ?? "master";
   const apiBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
@@ -1114,10 +1203,68 @@ export async function findDcsOpenPr(config: DcsPrConfig): Promise<number | null>
     `${apiBase}/pulls/${encodeURIComponent(base)}/${encodeURIComponent(config.branch)}`,
     { method: "GET", headers: dcsPrHeaders(config.token) },
   );
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`dcs_pull_lookup_failed: ${res.status} ${await res.text()}`);
-  const pr = (await res.json()) as { number?: number; state?: string };
-  return pr.state === "open" && typeof pr.number === "number" ? pr.number : null;
+  if (res.ok) {
+    const pr = (await res.json()) as { number?: number; state?: string };
+    if (pr.state === "open" && typeof pr.number === "number") return pr.number;
+  } else if (res.status !== 404) {
+    throw new Error(`dcs_pull_lookup_failed: ${res.status} ${await res.text()}`);
+  }
+
+  // Fallback: paged scan of open PRs, matching on head ref, base ref, and
+  // same-repo head (see below). Gitea clamps the requested `limit` to an
+  // instance-configurable MaxResponseItems, so a page is NOT guaranteed to
+  // come back with exactly `limit` items even when more pages remain —
+  // measured against door43 2026-08-03: `?state=all&limit=10/50/100`
+  // returned 10/50/100 respectively, i.e. its clamp is at least 100 today,
+  // but we don't rely on that holding. Terminate only on a genuinely empty
+  // page; `maxPages` is the real backstop against an unbounded loop.
+  const limit = 50;
+  const maxPages = 20;
+  const sameRepo = `${config.owner}/${config.repo}`;
+  for (let page = 1; page <= maxPages; page++) {
+    const listRes = await fetch(
+      `${apiBase}/pulls?state=open&limit=${limit}&page=${page}`,
+      { method: "GET", headers: dcsPrHeaders(config.token) },
+    );
+    if (!listRes.ok) {
+      throw new Error(`dcs_pull_list_failed: ${listRes.status} ${await listRes.text()}`);
+    }
+    let items: Array<{
+      number?: number;
+      state?: string;
+      head?: { ref?: string; repo?: { full_name?: string } };
+      base?: { ref?: string };
+    }>;
+    try {
+      items = await listRes.json();
+    } catch {
+      throw new Error(`dcs_pull_list_failed: non_array_body (JSON parse error)`);
+    }
+    if (!Array.isArray(items)) {
+      throw new Error(`dcs_pull_list_failed: non_array_body`);
+    }
+    // Same-repo guard: `?state=open` on this repo's /pulls endpoint also
+    // returns PRs opened FROM forks, whose `head.ref` is the bare branch
+    // name — the exact lookup could never do this (Gitea requires a
+    // `user:branch` head for cross-repo PRs there), so this is a new
+    // exposure introduced by the fallback. Without this guard, a
+    // same-named branch in any contributor's fork would match and we'd
+    // return a stranger's PR number, then run writes (close/update/rebase)
+    // against it. A missing/undefined head.repo is NOT a match (fail closed).
+    // Parity with the fast path above, which requires state === "open" before
+    // trusting a number — not a demonstrated door43 defect, just matching the
+    // same guard here since `?state=open` is a request filter, not a promise.
+    const match = items.find(
+      (pr) =>
+        pr.state === "open" &&
+        pr.head?.ref === config.branch &&
+        pr.base?.ref === base &&
+        pr.head?.repo?.full_name === sameRepo,
+    );
+    if (match && typeof match.number === "number") return match.number;
+    if (items.length === 0) break;
+  }
+  return null;
 }
 
 export async function ensureDcsPr(

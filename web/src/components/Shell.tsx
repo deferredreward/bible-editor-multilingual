@@ -40,6 +40,7 @@ import {
 } from "../lib/laneChecks";
 import { ChapterBoard } from "./ChapterBoard";
 import { drafts, verseKey } from "../sync/drafts";
+import { generationForSavedPlain } from "../sync/draftSaveState";
 import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
 import {
   clearLaneFrozen,
@@ -2238,6 +2239,10 @@ export function Shell({
     // confirm-commit below (text_edit) so a deferred "Save anyway" updates the
     // cache too.
     onConfirmedApply?: () => void,
+    // Exact draft generation this save captured (see draftSaveState.ts) —
+    // rides on the op so the eventual 200 clears only that draft, never newer
+    // typing that landed while the request was in flight.
+    draftGeneration?: string,
   ): boolean => {
     const delta = analyzeAlignmentDelta(base.content, content);
     // Block any save that collaterally de-aligns untouched words. The enforced
@@ -2269,7 +2274,7 @@ export function Shell({
               bibleVersion,
               expectedVersion,
               { content, plain_text: plainText, alignment_intent: "alignment_edit" },
-              { sourceGeneration: base.source_generation },
+              { sourceGeneration: base.source_generation, draftGeneration },
             );
             onConfirmedApply?.();
           },
@@ -2298,7 +2303,7 @@ export function Shell({
       bibleVersion,
       expectedVersion,
       { content, plain_text: plainText, alignment_intent: intent },
-      { sourceGeneration: base.source_generation },
+      { sourceGeneration: base.source_generation, draftGeneration },
     );
     return true;
   }, [book, pushPipelineToast, t]);
@@ -2673,7 +2678,19 @@ export function Shell({
     // leaves an orphaned draft (dirty border + SyncStatusBar entry + "unsaved
     // edits" toast whose Save button re-hits this guard and never resolves).
     if (oldEditable === normalizeEditable(plain)) {
-      void drafts.clear(verseKey(book, chapterNum, verseNum, bibleVersion));
+      // Generation-fenced: only clear the draft whose payload is the exact
+      // text this no-op save examined. If the user typed again between the
+      // Save click and this line, the newer draft must survive.
+      const key = verseKey(book, chapterNum, verseNum, bibleVersion);
+      void drafts
+        .get(key)
+        .then((draft) => {
+          const generation = generationForSavedPlain(draft, plain);
+          if (generation) void drafts.clearGeneration(key, generation);
+        })
+        .catch(() => {
+          /* conservative: leave an unreadable draft in place */
+        });
       return;
     }
     const result = smartEditVerse(base.content, oldEditable, plain);
@@ -2717,10 +2734,24 @@ export function Shell({
       bookHook?.applyLocalVerse(newDto);
       if (chapterNum === chapter) applyLocalVerse(newDto);
     };
-    if (!enqueueVerseSafely(chapterNum, verseNum, bibleVersion, base, result.content, newPlainText, "text_edit", base.version, applyLocal)) {
-      return;
-    }
-    applyLocal();
+    const key = verseKey(book, chapterNum, verseNum, bibleVersion);
+    // Resolve the durable draft before queueing so the outbox records the exact
+    // generation represented by `plain`. If the user typed again after clicking
+    // Save, generationForSavedPlain refuses to associate that newer draft with
+    // this older payload, so the eventual 200 cannot clear the new work.
+    const enqueueCapturedSave = (draftGeneration?: string) => {
+      if (!enqueueVerseSafely(chapterNum, verseNum, bibleVersion, base, result.content, newPlainText, "text_edit", base.version, applyLocal, draftGeneration)) {
+        return;
+      }
+      applyLocal();
+    };
+    void drafts
+      .get(key)
+      .then((draft) => enqueueCapturedSave(generationForSavedPlain(draft, plain)))
+      // Draft lookup is cleanup metadata, not a prerequisite for durability.
+      // If IndexedDB is temporarily unreadable, still queue the user's save;
+      // the draft simply remains available for a conservative manual cleanup.
+      .catch(() => enqueueCapturedSave());
   };
 
   // Restore a previously-saved verse version (from the history dialog). Unlike

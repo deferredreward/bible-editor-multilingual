@@ -1269,6 +1269,7 @@ async function insertTnRows(
   let expected = 0;
   let landed = 0;
   const nextSort = makeVerseSortOrder();
+  const seen = new Set<string>();
   let batch: D1PreparedStatement[] = [];
   const flush = async () => {
     if (batch.length === 0) return;
@@ -1295,6 +1296,19 @@ async function insertTnRows(
     // base always wins and a later range file's collision is what gets remapped.
     // Without usedIds (Tier 1 / no cross-source ranges) ids pass through as-is,
     // unchanged from before.
+    //
+    // Duplicate ID within this one file (master TSVs really do ship these —
+    // the ISA 48 delete+duplicate, the AI TN doubling): first-in wins,
+    // matching the reimport path's skipped_dup semantics. Without the skip
+    // the second copy's INSERT violates the (book, id) PK and hard-fails the
+    // whole book AFTER the wipe already ran — and every retry hits the same
+    // wall until master is fixed. Skipped BEFORE the batch so the paired
+    // edit_log 'create' row, `expected`, and the returned count stay truthful.
+    // (The Tier 2 merge path separately rejects in-file duplicates pre-wipe
+    // via mergedNoteSameFileDuplicate; this covers the Tier 1 single-file
+    // path, where that scan deliberately doesn't run.)
+    if (seen.has(rawId)) continue; // duplicate ID in master's file — first-in wins
+    seen.add(rawId);
     const id = usedIds ? pickId(rawId, usedIds) : rawId;
     if (id !== rawId) {
       console.warn("import: cross-source tn id collision remapped", { book, from: rawId, to: id });
@@ -1439,6 +1453,7 @@ async function insertTqRows(
   let expected = 0;
   let landed = 0;
   const nextSort = makeVerseSortOrder();
+  const seen = new Set<string>();
   let batch: D1PreparedStatement[] = [];
   const flush = async () => {
     if (batch.length === 0) return;
@@ -1457,6 +1472,10 @@ async function insertTqRows(
     // Per-chapter-range merge (issue #103 Tier 2) — see insertTnRows. Checked
     // BEFORE any id remap so a skipped row never consumes a usedIds slot.
     if (chapterFilter && !chapterFilter(ch)) continue;
+    // Duplicate-ID tolerance: see insertTnRows (first-in wins so a malformed
+    // master file can't PK-collide and hard-fail the book post-wipe).
+    if (seen.has(rawId)) continue; // duplicate ID in master's file — first-in wins
+    seen.add(rawId);
     // Cross-source id remap (issue #126) — see insertTnRows.
     const id = usedIds ? pickId(rawId, usedIds) : rawId;
     if (id !== rawId) {
@@ -1519,6 +1538,7 @@ async function insertTwlRows(
   let expected = 0;
   let landed = 0;
   const nextSort = makeVerseSortOrder();
+  const seen = new Set<string>();
   let batch: D1PreparedStatement[] = [];
   const flush = async () => {
     if (batch.length === 0) return;
@@ -1532,6 +1552,10 @@ async function insertTwlRows(
   for (const r of rows) {
     const id = r["ID"];
     if (!id) continue;
+    // Duplicate-ID tolerance: see insertTnRows (first-in wins so a malformed
+    // master file can't PK-collide and hard-fail the book post-wipe).
+    if (seen.has(id)) continue; // duplicate ID in master's file — first-in wins
+    seen.add(id);
     const refRaw = r["Reference"] ?? "";
     const [ch, v] = refParts(refRaw);
     const occRaw = r["Occurrence"];
