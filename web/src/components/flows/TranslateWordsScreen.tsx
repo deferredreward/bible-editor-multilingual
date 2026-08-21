@@ -492,6 +492,18 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
     ? [...termItems, ...taItems].find((i) => i.resource === selected.resource && i.id === selected.id) ?? null
     : null;
 
+  // After an approve, advance to the next populated entry in list order (tW
+  // terms then tA articles), mirroring the notes flow's auto-advance. On the
+  // last entry there's nothing after it, so fall back to clearing selection
+  // (returns to the list / empty pane) — the pre-existing end-of-queue state.
+  const goToNextEntry = useCallback(() => {
+    if (!selected) return;
+    const ordered = [...termItems, ...taItems].filter((i) => i.populated);
+    const idx = ordered.findIndex((i) => i.resource === selected.resource && i.id === selected.id);
+    const next = idx >= 0 ? ordered[idx + 1] : undefined;
+    setSelected(next ? { resource: next.resource, id: next.id } : null);
+  }, [selected, termItems, taItems]);
+
   const [toast, setToast] = useState<string | null>(null);
   const say = useCallback((msg: string) => setToast(msg), []);
 
@@ -577,6 +589,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           targetLabel={targetLabel}
           direction={direction}
           onBack={() => setSelected(null)}
+          onApproved={goToNextEntry}
           onServerChange={refetchMetas}
           onToast={say}
         />
@@ -960,6 +973,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
                 targetLabel={targetLabel}
                 direction={direction}
                 onBack={() => setSelected(null)}
+                onApproved={goToNextEntry}
                 onServerChange={refetchMetas}
                 onToast={say}
               />
@@ -1018,6 +1032,10 @@ interface ArticleDetailProps {
    * pane's bottom instead of the viewport). */
   variant: "page" | "pane";
   onBack: () => void;
+  /** Called after a successful Approve. The parent advances selection to the
+   * next entry (matching the notes flow), instead of clearing it back to the
+   * empty "select a word or article" state. */
+  onApproved: () => void;
   onServerChange: () => void;
   onToast: (msg: string) => void;
 }
@@ -1033,6 +1051,7 @@ function ArticleDetail({
   direction,
   variant,
   onBack,
+  onApproved,
   onServerChange,
   onToast,
 }: ArticleDetailProps) {
@@ -1314,7 +1333,7 @@ function ArticleDetail({
       onServerChange();
       if (!anyFail) {
         onToast("Approved");
-        onBack();
+        onApproved();
       }
     } finally {
       setBusy(false);
@@ -1736,8 +1755,8 @@ function ArticleDetail({
                 aria-label="Language"
                 sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
               >
-                {segButton("target", targetLabel)}
-                {segButton("source", sourceLangLabel)}
+                {segButton("target", `Target · ${targetLabel}`)}
+                {segButton("source", `Source · ${sourceLangLabel}`)}
                 {segButton("both", "Both")}
               </Stack>
             )}
