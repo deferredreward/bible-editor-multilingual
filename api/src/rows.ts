@@ -10,6 +10,7 @@ import { reopenLaneChecks } from "./laneReopen.ts";
 import { refParts, coveredVersesFromRef } from "./importParsers.ts";
 import { contentPatchClearClauses } from "./contentPatchClauses.ts";
 import { normalizeBookCode, CHAPTER_EXISTS_SQL } from "./rowsCreateGuard.ts";
+import { boundHistoryToLastCreate } from "./rowHistoryBoundary.ts";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -419,16 +420,19 @@ rows.get("/:kind/:id/history", requireEditor, async (c) => {
       full_name: string | null;
     }>();
 
-  const logEntries = rs.results ?? [];
+  // Bound to the latest 'create' onward: a reclaimed slot (issue #427 option
+  // 1, bookReimport.ts) hosts a completely different logical row than the dead
+  // tombstoned one whose (kind, book, id) it reuses — surfacing the old row's
+  // entries here would let a translator "restore" unrelated content into it.
+  // A no-op for every non-reclaimed row (their only create is at version 1).
+  const logEntries = boundHistoryToLastCreate(rs.results ?? []);
   const fields = HISTORY_FIELDS[kind];
 
-  // Always anchor the list with a v1 entry. If a real `create` exists at
-  // version 1, use it; otherwise synthesize one from the current row.
-  const hasCreateAtV1 = logEntries.some(
-    (e) => e.action === "create" && e.version === 1,
-  );
+  // Always anchor the list with a v1 entry. If a real `create` survived
+  // bounding above, use it; otherwise synthesize one from the current row.
+  const hasCreate = logEntries.some((e) => e.action === "create");
   type Entry = (typeof logEntries)[number] & { synthetic?: boolean };
-  const entries: Entry[] = hasCreateAtV1
+  const entries: Entry[] = hasCreate
     ? logEntries
     : [
         {

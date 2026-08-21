@@ -40,6 +40,7 @@ function counts(overrides = {}) {
     skipped_dup: 0,
     conflict_skipped: 0,
     tombstone_blocked: 0,
+    tombstone_reclaimed: 0,
     resurrected: 0,
     source_attr_reconciled: 0,
     source_attr_divergent: 0,
@@ -114,6 +115,34 @@ eq(
   false,
   "counts_incomplete taint (a folded-in chunk was missing these fields, or a write's row count was unreported) → withhold even though the aggregate's own fields read zero",
 );
+
+console.log("\n[issue #427, option 1: a LANDED reclaim does not gate]");
+// tombstone_reclaimed — a landed reclaim means master's content IS now in D1,
+// so it must NOT withhold on its own; only the lost-CAS fallback (which still
+// counts tombstone_blocked, exercised above) does. This is a shape test: the
+// gate's decision must be identical whether or not tombstone_reclaimed is
+// present, and a nonzero tombstone_reclaimed alongside a clean tombstone_blocked
+// still stamps.
+eq(
+  shouldRecordResourceSync(counts({ tombstone_reclaimed: 5, tombstone_blocked: 0 })),
+  true,
+  "tombstone_reclaimed > 0 with a clean tombstone_blocked → stamp (the reclaim landed master's content)",
+);
+eq(
+  shouldRecordResourceSync(counts({ tombstone_reclaimed: 5, tombstone_blocked: 1 })),
+  false,
+  "…but a lost-CAS fallback alongside landed reclaims still withholds",
+);
+{
+  const withField = counts({ tombstone_reclaimed: 0 });
+  const withoutField = counts();
+  delete withoutField.tombstone_reclaimed;
+  eq(
+    shouldRecordResourceSync(withField),
+    shouldRecordResourceSync(withoutField),
+    "decision is identical whether or not tombstone_reclaimed is present — the field never enters the gate",
+  );
+}
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);

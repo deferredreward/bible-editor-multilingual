@@ -60,9 +60,14 @@
 //      an unmeasured write must not be laundered into either a conflict or a
 //      success; see tryInsertTsvRow's "unknown" outcome.)
 //
-// This gate does NOT fix the drop — reclaiming a reissued id is issue #427's
-// option 1, and sweeping obsolete tombstones is option 3. It makes the drop
-// visible and stops the run from claiming the resource is current.
+// Issue #427's option 1 (reclaim a reissued id) has since SHIPPED — see the
+// tombstone branch / "Batch the reclaims" write site in bookReimport.ts. A
+// LANDED reclaim (`tombstone_reclaimed`) deliberately does NOT gate this
+// decision: master's content IS now in D1, so there is nothing left to
+// withhold for. Only the lost-CAS fallback — which still increments
+// `tombstone_blocked` — withholds, and the gate's decision must be identical
+// whether or not `tombstone_reclaimed` is present on the counts object (see
+// reimportSyncGate.test.mjs's shape cases).
 //
 // `apply_incomplete` (a write batch that THREW, so content this run staged is
 // known-absent from D1) is deliberately a SIBLING condition checked at the
