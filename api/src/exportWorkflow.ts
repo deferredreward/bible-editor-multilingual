@@ -343,8 +343,36 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     for (const resource of resources) {
       for (const book of books) {
         // Aquifer- / English-source-sourced tn/tq, or English-source-sourced
-        // ult/ust/twl: not exported yet (see above, issue #142).
-        if (heldOutNotes.has(`${book}:${resource}`)) continue;
+        // ult/ust/twl: not exported yet (see above, issue #142). Emit a skipped
+        // StepResult + snapshot instead of a bare `continue` so admins can see
+        // WHY a (book, resource) is absent from the run rather than it silently
+        // vanishing (indistinguishable from "never attempted") — issue #236.
+        // This only adds observability; nothing is committed to DCS for a
+        // held-out pair.
+        if (heldOutNotes.has(`${book}:${resource}`)) {
+          const heldReason = `held_out:${resource}`;
+          try {
+            await step.do(`export-${book}-${resource}-held-out`, async () =>
+              this.recordSnapshot(book, resource, null, null, 0, heldReason),
+            );
+          } catch {
+            /* recording the skip is best-effort; never let it abort the run */
+          }
+          results.push({
+            book,
+            resource,
+            rowCount: 0,
+            bytes: 0,
+            r2Key: null,
+            branch: null,
+            dcsCommitSha: null,
+            dcsChanged: false,
+            dcsSkippedReason: heldReason,
+            prNumber: null,
+            prReason: null,
+          });
+          continue;
+        }
         const stepName = `export-${book}-${resource}`;
         try {
           const result = await step.do(
