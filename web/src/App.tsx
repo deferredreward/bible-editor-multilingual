@@ -831,7 +831,7 @@ export function App() {
                   />
                 </Tooltip>
               )}
-              <SyncStatusBar onNavigate={navigate} />
+              <SyncStatusBar onNavigate={navigate} flowRouting />
               <PipelineStatusBar />
               <UiLanguageControl />
               <AccountMenu

@@ -175,9 +175,15 @@ interface Props {
   // for tests/back-compat) still renders everything, as before.
   hideInlineChip?: boolean;
   hideFloating?: boolean;
+  // Set only at the new-UI (flow-screen) mount. When true, verse/row drafts in
+  // the jump menu navigate to the new-UI flow hashes (#/scripture/…, #/notes/…)
+  // instead of calling onNavigate — whose un-prefixed #/{book}/{chapter} hash
+  // resolves to the classic Shell catch-all and ejects the user out of the new
+  // UI (#229). Classic mounts leave this unset and keep the onNavigate path.
+  flowRouting?: boolean;
 }
 
-export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Props = {}) {
+export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRouting }: Props = {}) {
   const { t } = useTranslation();
   const { pending, conflicts, failed, effectivelyOffline, online, draftCount, activeDrafts, quarantinedDrafts } =
     useSyncSummary();
@@ -379,8 +385,16 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
       // route to the template's own hash instead of calling onNavigate with
       // book/chapter/verse this variant does not carry.
       location.hash = `#/templates/${encodeURIComponent(m.templateId)}`;
+    } else if (m.kind === "verse") {
+      // In the new UI, onNavigate emits the un-prefixed #/{book}/{chapter} hash
+      // which resolves to the classic Shell catch-all — route to the new-UI
+      // scripture flow hash instead (#229).
+      if (flowRouting) location.hash = `#/scripture/${m.book}/${m.chapter}/${m.verse}`;
+      else onNavigate?.(m.book, m.chapter, m.verse);
     } else {
-      onNavigate?.(m.book, m.chapter, m.verse);
+      // Row draft (the only remaining kind). Same reasoning as verse above.
+      if (flowRouting) location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}`;
+      else onNavigate?.(m.book, m.chapter, m.verse);
     }
     setDraftMenuEl(null);
   };
@@ -457,9 +471,25 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
             <MenuItem key={d.key} onClick={() => navigateToDraft(d.meta)} dense>
               <ListItemText
                 primaryTypographyProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
+                sx={{ mr: 1 }}
               >
                 {formatDraftMeta(d.meta)}
               </ListItemText>
+              <Tooltip title={t("sync.discardThisEdit")}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  edge="end"
+                  onClick={(e) => {
+                    // Stop the MenuItem's navigate onClick from also firing.
+                    e.stopPropagation();
+                    void drafts.clear(d.key);
+                  }}
+                  sx={{ p: 0.25 }}
+                >
+                  <DeleteOutlineIcon fontSize="inherit" />
+                </IconButton>
+              </Tooltip>
             </MenuItem>
           ))}
         </Menu>
