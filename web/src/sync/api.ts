@@ -679,6 +679,11 @@ export interface MeResponse {
   // getWorkspaceIsFallback / outbox.ts's outboxDbName. Absent alongside
   // `workspace` on an older/cached response.
   workspaceIsFallback?: boolean;
+  // Whether this deployment registers the nightly export cron (prod does; the
+  // public dev worker does not — crons = []). Drives showing the 05:30 schedule
+  // vs. a manual-exports notice (#240). Absent on older/cached responses →
+  // treat as not enabled.
+  nightlyExportsEnabled?: boolean;
 }
 
 // One org-per-D1 workspace the switcher can offer. For non-super-admins the
