@@ -1283,10 +1283,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                     minRows={4}
                     value={draftValue}
                     onChange={(e) => setDraftValue(e.target.value)}
-                    // Target draft reads in the target language's direction, not
-                    // the UI chrome's — dir attribute + start-alignment, never an
-                    // sx `direction` (stylis inverts it under an RTL UI; PR #53).
-                    inputProps={{ dir: targetRtl ? "rtl" : "ltr" }}
+                    // Direction follows the *content*, not the project language:
+                    // dir="auto" lets first-strong-character detection pick RTL for
+                    // genuine Arabic and LTR for English placeholder text, so LTR
+                    // content in an RTL-target project no longer bidi-mangles (#256).
+                    // Never an sx `direction` (stylis inverts it under an RTL UI; PR #53).
+                    inputProps={{ dir: "auto" }}
                     sx={{
                       "& .MuiOutlinedInput-root": {
                         bgcolor: "action.hover",
@@ -1317,9 +1319,10 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   <Box
                     role="button"
                     tabIndex={0}
-                    // dir follows the target language so an RTL draft aligns and
-                    // orders correctly (see the editor TextField above; PR #53).
-                    dir={targetRtl ? "rtl" : "ltr"}
+                    // dir follows the *content* (dir="auto") so a genuinely Arabic
+                    // draft renders RTL while English placeholder text renders LTR
+                    // instead of bidi-mangling (see the editor TextField above; #256).
+                    dir="auto"
                     onClick={() => setEditing(true)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {

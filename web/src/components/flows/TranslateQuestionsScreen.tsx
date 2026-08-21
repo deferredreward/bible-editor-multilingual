@@ -144,9 +144,6 @@ interface QaPairProps {
   // md+ vs phone: governs both the reveal-scroll behavior below and (via the
   // caller) whether the on-screen-keyboard focus mode applies at all.
   wide: boolean;
-  // Target reading direction (RTL for e.g. Arabic) — applied to the drafted
-  // target text, not the UI chrome, via the dir attribute (PR #53).
-  targetRtl: boolean;
   targetLabel: string;
   sourceLangLabel: string;
   translationMode: boolean;
@@ -177,7 +174,6 @@ function QaPair({
   value,
   editing,
   wide,
-  targetRtl,
   targetLabel,
   sourceLangLabel,
   translationMode,
@@ -283,7 +279,10 @@ function QaPair({
               minRows={3}
               value={value}
               onChange={(e) => onChange(e.target.value)}
-              inputProps={{ dir: targetRtl ? "rtl" : "ltr" }}
+              // dir="auto" follows the *content*, not the project language, so
+              // English placeholder text renders LTR while genuine Arabic renders
+              // RTL — no bidi-mangling of LTR content in an RTL project (#256).
+              inputProps={{ dir: "auto" }}
               sx={{
                 "& .MuiOutlinedInput-root": {
                   bgcolor: "action.hover",
@@ -311,7 +310,8 @@ function QaPair({
             <Box
               role="button"
               tabIndex={0}
-              dir={targetRtl ? "rtl" : "ltr"}
+              // Content-driven direction (see the editor TextField above; #256).
+              dir="auto"
               onClick={onStartEdit}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -1206,7 +1206,6 @@ export default function TranslateQuestionsScreen({
                 value={values.question}
                 editing={editingField === "question"}
                 wide={wide}
-                targetRtl={targetRtl}
                 targetLabel={targetLabel}
                 sourceLangLabel={sourceLangLabel}
                 translationMode={translationMode}
@@ -1239,7 +1238,6 @@ export default function TranslateQuestionsScreen({
                 value={values.response}
                 editing={editingField === "response"}
                 wide={wide}
-                targetRtl={targetRtl}
                 targetLabel={targetLabel}
                 sourceLangLabel={sourceLangLabel}
                 translationMode={translationMode}
