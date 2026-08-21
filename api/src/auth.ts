@@ -993,13 +993,21 @@ export async function mintDevToken(c: AppContext, username: string): Promise<Res
   )
     .bind(userId)
     .first<{ last_book: string | null; last_chapter: number | null; last_verse: number | null }>();
+  const currentWsSlug = c.env.WORKSPACE_SLUG ?? "default";
+  const workspaceIsFallback = currentWsSlug === (listWorkspaces(c.env)[0]?.slug ?? "default");
   return c.json({
     userId,
     username,
     role,
+    // Same MeResponse shape as authMe — local DEV uses this body via
+    // devSignIn() without a follow-up /me, so superAdmin must be here too
+    // or Observe shows the locked-out pool UI for allowlisted users (#241).
+    superAdmin: !!username && isSuperAdmin(c.env, username),
     lastBook: loc?.last_book ?? null,
     lastChapter: loc?.last_chapter ?? null,
     lastVerse: loc?.last_verse ?? null,
+    workspace: currentWsSlug,
+    workspaceIsFallback,
   });
 }
 

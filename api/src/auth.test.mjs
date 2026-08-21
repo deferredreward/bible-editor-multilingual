@@ -502,6 +502,25 @@ console.log("[authMe] identity echo, 401 without a token");
     body.userId === 1 && body.username === "alice" && body.role === "editor" && body.lastBook === "ZEC",
     "/me echoes claims + stored location",
   );
+  assert(body.superAdmin === false, "/me superAdmin false when username not in SUPER_ADMINS");
+
+  const adminEnv = { ...env, SUPER_ADMINS: "alice,bob" };
+  const adminRes = await app.request(
+    "/api/auth/me",
+    { headers: { cookie: `be_access=${await makeToken({})}` } },
+    adminEnv,
+  );
+  assert(adminRes.status === 200, "authed /me with SUPER_ADMINS -> 200");
+  const adminBody = await adminRes.json();
+  assert(adminBody.superAdmin === true, "/me superAdmin true when username is allowlisted");
+
+  const otherRes = await app.request(
+    "/api/auth/me",
+    { headers: { cookie: `be_access=${await makeToken({ username: "carol" })}` } },
+    adminEnv,
+  );
+  assert((await otherRes.json()).superAdmin === false, "/me superAdmin false for non-allowlisted username");
+
 }
 
 // ── ensureWorkspaceUser: mirrors the shared user row into a workspace's
