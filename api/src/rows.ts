@@ -8,6 +8,7 @@ import { broadcastChapter } from "./wsEvents.ts";
 import { newRowId } from "./rowId.ts";
 import { reopenLaneChecks } from "./laneReopen.ts";
 import { refParts, coveredVersesFromRef } from "./importParsers.ts";
+import { contentPatchClearClauses } from "./contentPatchClauses.ts";
 import { normalizeBookCode, CHAPTER_EXISTS_SQL } from "./rowsCreateGuard.ts";
 
 export const rows = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
@@ -708,12 +709,15 @@ rows.patch("/:kind/:id", requireEditor, async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const setClauses = fields.map((f, i) => `${f} = ?${i + 1}`);
   // Any TN content edit clears a pending review flag (the adapted-note verify
-  // queue). Literal NULLs — no bind params, so positional indices below are
-  // unaffected. The reorder-only fast path above returns before here, so a
-  // drag never clears a flag.
+  // queue) and also UN-trashes the row — a versioned edit landing on a trashed
+  // row must not be silently tombstoned by the 05:30 nightly finalize (see
+  // contentPatchClauses.ts for the full rationale and the SQL-backed
+  // regression test trashedRowPatch.test.mjs). Literal NULLs — no bind params,
+  // so positional indices below are unaffected. The reorder-only fast path
+  // above returns before here, so a drag never clears a flag or revives a
+  // trashed note.
+  setClauses.push(...contentPatchClearClauses(kind));
   if (kind === "tn") {
-    setClauses.push("review_kind = NULL");
-    setClauses.push("review_reason = NULL");
     // Translation-mode: a human content edit demotes an AI draft (or a
     // previously-validated row) to 'edited' — it must be re-approved before it
     // re-enters the validated-example export. Literal CASE, no bind param, so
