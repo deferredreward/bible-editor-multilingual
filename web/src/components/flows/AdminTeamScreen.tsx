@@ -876,7 +876,13 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                             {m.teamRole ?? "—"}
                           </Box>
                           <Box component="td" sx={{ ...tdSx, color: "text.secondary" }}>
-                            {here ? (here.role === "admin" ? "Admin" : "Editor") : "Viewer (read-only)"}
+                            {here
+                              ? here.role === "admin"
+                                ? "Admin"
+                                : "Editor"
+                              : m.teamRole
+                                ? `Hasn't signed in yet — will be ${m.teamRole === "admin" ? "Admin" : "Editor"} on first sign-in`
+                                : "Viewer (read-only)"}
                           </Box>
                         </Box>
                       );
