@@ -198,6 +198,13 @@ export const PRESETS: Record<string, Omit<ProjectConfig, "mode">> = {
     glBibles: [],
     translationSource: UW_SOURCE,
     reposVerified: true,
+    // BSOJ translates its own content (translationSource != null), so per the
+    // exportOwnerFromConfig rule it must export to its own org — never the
+    // shared DCS_EXPORT_OWNER service account, whose ar_* repos don't exist.
+    // The scripture lanes already resolve owner "BSOJ" from lane config; this
+    // aligns the TSV path (twl/tn/tq) with them instead of falling through to
+    // BibleEditorService. See #237.
+    exportOwnerFromConfig: true,
   },
   // Verified live 2026-07-15: BibleEditorMLTest has the full English GL set.
   "en-bible-editor-ml-test": {

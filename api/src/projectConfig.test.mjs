@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PRESETS, presetForOrg, writeProjectConfig, getProjectConfig, clearProjectConfigCache } from "./projectConfig.ts";
+import { PRESETS, presetForOrg, writeProjectConfig, getProjectConfig, clearProjectConfigCache, exportOwnerFor } from "./projectConfig.ts";
 
 test("preset catalog identifies authoring and translation projects", () => {
   assert.equal(PRESETS["en-unfoldingword"].translationSource, null);
@@ -32,6 +32,19 @@ test("BibleEditorMLTest preset targets its verified English GL repositories", ()
     twl: "en_twl", tw: "en_tw", ta: "en_ta",
   });
   assert.equal(preset.reposVerified, true);
+});
+
+test("ar-bsoj exports to its own org, not the DCS_EXPORT_OWNER service account (#237)", () => {
+  const preset = PRESETS["ar-bsoj"];
+  // BSOJ translates its own content, so it must own its export destination.
+  assert.equal(preset.translationSource?.languageCode, "en");
+  assert.equal(preset.exportOwnerFromConfig, true);
+  // Even when the env names the shared service account, the TSV/verse export
+  // owner resolves to BSOJ's own org — matching the scripture lanes.
+  assert.equal(
+    exportOwnerFor({ DCS_EXPORT_OWNER: "BibleEditorService" }, preset),
+    "BSOJ",
+  );
 });
 
 // Fake D1: `.first()` returns the pre-seeded row (the preserve path reads
