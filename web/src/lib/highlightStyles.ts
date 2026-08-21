@@ -107,6 +107,11 @@ function paragraphLayoutSx(mode: Mode) {
       border: `1px solid ${tokenBorder}`,
       borderRadius: "3px",
       verticalAlign: "0.08em",
+      // Markers are LTR (`\p`, `\q1`). Isolate the chip's own bidi context so
+      // its neutral backslash doesn't reorder against a Latin letter under an
+      // RTL editable (e.g. Arabic scripture), which rendered "\p" as "p\" (#257).
+      direction: "ltr",
+      unicodeBidi: "isolate",
       // Selectable + caret-targetable so users can backspace through
       // a chip's text (e.g. \q1 → \q2) instead of having to remove and
       // re-insert the marker.
