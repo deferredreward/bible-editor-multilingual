@@ -22,6 +22,7 @@ import {
   ApiError,
   dismissAlert,
   fetchAlerts,
+  type BookListEntry,
   type BookSummary,
   type ChapterPayload,
   type ContextExportStatus,
@@ -117,12 +118,52 @@ function QueueCard({ eyebrow, title, count, description, footer, href, progress,
 }
 
 export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
-  // Real last-visited location from GET /api/auth/me; falls back to the same
-  // default the rest of the flow screens use when there's no signed-in user
-  // or the field is unset. Never fabricated.
-  const book = me?.lastBook || DEFAULT_BOOK;
-  const chapter = me?.lastChapter || DEFAULT_CHAPTER;
-  const verse = me?.lastVerse || DEFAULT_VERSE;
+  // The workspace's imported books (GET /api/books is scoped to the current
+  // workspace). Needed to validate the stored last-location below.
+  const [importedBooks, setImportedBooks] = useState<BookListEntry[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getBooks()
+      .then((res) => {
+        if (!cancelled) setImportedBooks(res.books);
+      })
+      .catch(() => {
+        if (!cancelled) setImportedBooks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Real last-visited location from GET /api/auth/me — but lastBook is stored
+  // per-user, NOT per-workspace, so after an admin switches orgs it can point
+  // at a book this workspace never imported (#255). Resolve it against the
+  // workspace's imported set: keep lastBook if imported, else fall back to the
+  // workspace's first imported book, else the shared default. `null` until the
+  // imported list loads, so we never fire a doomed fetch for a foreign book.
+  const location = useMemo<{ book: string; chapter: number; verse: number } | null>(() => {
+    if (importedBooks == null) return null;
+    const imported = new Set(importedBooks.map((b) => b.book));
+    const lastBook = me?.lastBook;
+    if (lastBook && imported.has(lastBook)) {
+      return {
+        book: lastBook,
+        chapter: me?.lastChapter || DEFAULT_CHAPTER,
+        verse: me?.lastVerse || DEFAULT_VERSE,
+      };
+    }
+    if (importedBooks.length > 0) {
+      return { book: importedBooks[0].book, chapter: DEFAULT_CHAPTER, verse: DEFAULT_VERSE };
+    }
+    return { book: DEFAULT_BOOK, chapter: DEFAULT_CHAPTER, verse: DEFAULT_VERSE };
+  }, [importedBooks, me?.lastBook, me?.lastChapter, me?.lastVerse]);
+
+  // Falls back to the default only while the imported list is still loading
+  // (the book-data fetch below is gated on `location` so nothing fires yet).
+  const book = location?.book ?? DEFAULT_BOOK;
+  const chapter = location?.chapter ?? DEFAULT_CHAPTER;
+  const verse = location?.verse ?? DEFAULT_VERSE;
 
   const [queueStatus, setQueueStatus] = useState<"loading" | "ready" | "error">("loading");
   const [bookSummary, setBookSummary] = useState<BookSummary | null>(null);
@@ -139,9 +180,12 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
   const [contextPackUnavailable, setContextPackUnavailable] = useState(false);
 
   useEffect(() => {
+    // Wait for the last-location to resolve against the imported set before
+    // fetching, so we never request a book this workspace doesn't have (#255).
+    if (!location) return;
     let cancelled = false;
     setQueueStatus("loading");
-    Promise.all([api.getBookSummary(book), api.getChapter(book, chapter)])
+    Promise.all([api.getBookSummary(location.book), api.getChapter(location.book, location.chapter)])
       .then(([summary, chapterPayload]) => {
         if (cancelled) return;
         setBookSummary(summary);
@@ -155,7 +199,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
     return () => {
       cancelled = true;
     };
-  }, [book, chapter]);
+  }, [location]);
 
   useEffect(() => {
     let cancelled = false;
