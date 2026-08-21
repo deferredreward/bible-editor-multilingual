@@ -665,6 +665,21 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   }, [refetchBooks]);
 
   const importedSet = useMemo(() => new Set(books.map((b) => b.book)), [books]);
+
+  // The stored last-location comes from the per-user (NOT per-workspace) lastBook,
+  // so after an admin switches orgs it can point at a book this workspace never
+  // imported — the Continue chip and Classic-editor jump would then target a
+  // missing book (#255). Once the workspace's imported books load, resolve it:
+  // keep it if imported, else fall back to this workspace's first imported book,
+  // else drop it (hide the chip). Before load we optimistically trust it (correct
+  // for the common single-workspace case; corrected once books arrive).
+  const resolvedLastPosition = useMemo<{ book: string; chapter: number; verse: number } | null>(() => {
+    if (booksStatus !== "loaded") return lastPosition;
+    if (lastPosition && importedSet.has(lastPosition.book)) return lastPosition;
+    if (books.length > 0) return { book: books[0].book, chapter: 1, verse: 1 };
+    return null;
+  }, [lastPosition, importedSet, books, booksStatus]);
+
   const query = search.trim();
 
   const toggleGroup = (key: string) =>
@@ -721,9 +736,9 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                 // to last session's verse while the card above showed this
                 // session's.
                 onNavigate(
-                  lastPosition?.book ?? "OBA",
-                  lastPosition?.chapter ?? 1,
-                  lastPosition?.verse ?? 1,
+                  resolvedLastPosition?.book ?? "OBA",
+                  resolvedLastPosition?.chapter ?? 1,
+                  resolvedLastPosition?.verse ?? 1,
                 );
               }}
             >
@@ -928,7 +943,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
     <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
       {topbar}
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-      {lastPosition && (
+      {resolvedLastPosition && (
         <Box sx={{ mb: 2.5 }}>
           <Panel>
             {/* One compact row — this sits above the canon grid on the landing
@@ -947,17 +962,17 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                   CONTINUE
                 </Typography>
                 <Typography sx={{ fontSize: "1rem", fontWeight: 600 }}>
-                  {`${bookName(lastPosition.book)} ${lastPosition.chapter}:${lastPosition.verse}`}
+                  {`${bookName(resolvedLastPosition.book)} ${resolvedLastPosition.chapter}:${resolvedLastPosition.verse}`}
                 </Typography>
               </Box>
               <Button
                 variant="contained"
                 size="small"
                 onClick={() => {
-                  location.hash = `#/package/${lastPosition.book}`;
+                  location.hash = `#/package/${resolvedLastPosition.book}`;
                 }}
               >
-                Open {lastPosition.book}
+                Open {resolvedLastPosition.book}
               </Button>
               <Button
                 variant="outlined"
@@ -969,7 +984,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                   />
                 }
                 onClick={() => {
-                  location.hash = `#/notes/${lastPosition.book}/${lastPosition.chapter}/${lastPosition.verse}`;
+                  location.hash = `#/notes/${resolvedLastPosition.book}/${resolvedLastPosition.chapter}/${resolvedLastPosition.verse}`;
                 }}
               >
                 Notes
