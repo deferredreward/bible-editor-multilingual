@@ -34,8 +34,13 @@ function installLocalStorage() {
 }
 
 const data = installLocalStorage();
-const { getWorkspaceSlug, setWorkspaceSlug, getWorkspaceIsFallback, setWorkspaceIsFallback } =
-  await import("./workspace.ts");
+const {
+  getWorkspaceSlug,
+  setWorkspaceSlug,
+  getWorkspaceIsFallback,
+  setWorkspaceIsFallback,
+  workspaceDbName,
+} = await import("./workspace.ts");
 
 // ── fresh install: nothing persisted yet ────────────────────────────────────
 
@@ -84,6 +89,38 @@ setWorkspaceSlug("default");
 assert(
   getWorkspaceIsFallback() === true,
   "unknown fallback flag + literal slug 'default' -> assumed fallback (today's pre-workspaces behavior)",
+);
+
+// ── issue #228: workspaceDbName() applies the same fallback rule to EVERY
+// per-workspace IndexedDB store (outbox + both drafts stores), so switching
+// orgs can never surface one org's unsaved drafts in another ────────────────
+
+// Fallback workspace -> legacy unsuffixed base name (pre-workspaces data safe).
+setWorkspaceSlug("bsoj");
+setWorkspaceIsFallback(true);
+assert(
+  workspaceDbName("bible-editor-drafts") === "bible-editor-drafts",
+  "fallback workspace: drafts DB keeps the legacy unsuffixed base name (not orphaned)",
+);
+assert(
+  workspaceDbName("bible-editor-outbox") === "bible-editor-outbox",
+  "fallback workspace: outbox DB name matches outboxDbName()'s legacy output",
+);
+
+// Non-fallback workspace -> "-{slug}" suffix, keyed off the real slug.
+setWorkspaceSlug("org2");
+setWorkspaceIsFallback(false);
+assert(
+  workspaceDbName("bible-editor-drafts") === "bible-editor-drafts-org2",
+  "non-fallback workspace: drafts DB is suffixed with the slug",
+);
+assert(
+  workspaceDbName("bible-editor-alignment-drafts") === "bible-editor-alignment-drafts-org2",
+  "non-fallback workspace: alignment-drafts DB is suffixed with the slug",
+);
+assert(
+  workspaceDbName("bible-editor-outbox") === "bible-editor-outbox-org2",
+  "non-fallback workspace: outbox DB is suffixed identically to the drafts stores",
 );
 
 console.log("\nAll workspace smoke checks passed.");

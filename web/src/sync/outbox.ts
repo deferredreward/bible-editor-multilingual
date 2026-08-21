@@ -27,7 +27,7 @@ import {
   isMaxAttemptsBlocked,
   targetKey,
 } from "./outboxTargeting.ts";
-import { getWorkspaceSlug, getWorkspaceIsFallback } from "./workspace";
+import { workspaceDbName } from "./workspace";
 
 // Namespaced per workspace so switching Door43 orgs can never drain one org's
 // queued edits into another org's D1 database — without this, an edit queued
@@ -43,10 +43,11 @@ import { getWorkspaceSlug, getWorkspaceIsFallback } from "./workspace";
 // WORKSPACES is first configured, the fallback workspace gets a real slug
 // (e.g. "bsoj"), and keying off the literal string would strand any edits
 // queued before that deploy in a database no longer reachable by any slug.
-// Only non-fallback slugs get the "-{slug}" suffix.
+// Only non-fallback slugs get the "-{slug}" suffix. The fallback rule itself
+// lives in workspace.ts's workspaceDbName(), shared verbatim with the drafts
+// stores (drafts.ts, alignmentDrafts.ts) — see issue #228.
 function outboxDbName(): string {
-  const slug = getWorkspaceSlug();
-  return getWorkspaceIsFallback() ? "bible-editor-outbox" : `bible-editor-outbox-${slug}`;
+  return workspaceDbName("bible-editor-outbox");
 }
 
 const DB_VERSION = 1;
