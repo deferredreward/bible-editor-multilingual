@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Merged draft-OK — verify &amp; decide</title>
+  <style>
+    :root {
+      --bg: #f7f4ef;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --line: #d6d3d1;
+      --panel: #fffcf8;
+      --accent: #0f766e;
+      --accent-soft: #ccfbf1;
+      --warn: #9a3412;
+      --warn-soft: #ffedd5;
+      --skip: #44403c;
+      --skip-soft: #e7e5e4;
+      --ok: #166534;
+      --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+      --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 100% 0%, #e7f5f2 0%, transparent 55%),
+        var(--bg);
+      line-height: 1.45;
+    }
+
+    header {
+      padding: 2.5rem 1.5rem 1.25rem;
+      max-width: 52rem;
+      margin: 0 auto;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.5rem;
+    }
+    header p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 40rem;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+      margin-top: 1rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    main {
+      max-width: 52rem;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+    }
+
+    section {
+      margin-top: 2rem;
+    }
+    section > h2 {
+      font-size: 0.7rem;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.75rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .item {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 1rem 1.1rem 1.1rem;
+      margin-bottom: 0.75rem;
+    }
+    .item.done {
+      opacity: 0.55;
+    }
+    .item-top {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+    }
+    .item-top input[type="checkbox"] {
+      width: 1.15rem;
+      height: 1.15rem;
+      margin-top: 0.15rem;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }
+    .item-body { flex: 1; min-width: 0; }
+    .item-title {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.4rem 0.65rem;
+      font-weight: 600;
+      font-size: 1rem;
+    }
+    .pr {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .pr:hover { text-decoration: underline; }
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.15rem 0.4rem;
+      border-radius: 2px;
+    }
+    .badge.decide { background: var(--warn-soft); color: var(--warn); }
+    .badge.click { background: var(--accent-soft); color: var(--accent); }
+    .badge.defer { background: var(--skip-soft); color: var(--skip); }
+
+    .item p {
+      margin: 0.45rem 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .steps {
+      margin: 0.75rem 0 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: step;
+    }
+    .steps li {
+      position: relative;
+      padding: 0.45rem 0 0.45rem 1.75rem;
+      border-top: 1px dashed var(--line);
+      font-size: 0.88rem;
+      counter-increment: step;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0.5rem;
+      width: 1.25rem;
+      height: 1.25rem;
+      border-radius: 2px;
+      background: var(--ink);
+      color: var(--panel);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .steps code, .expect code {
+      font-family: var(--mono);
+      font-size: 0.82em;
+      background: var(--skip-soft);
+      padding: 0.05rem 0.3rem;
+      border-radius: 2px;
+    }
+    .expect {
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.7rem;
+      background: #ecfdf5;
+      border-left: 3px solid var(--ok);
+      font-size: 0.85rem;
+      color: var(--ok);
+    }
+    .expect strong { font-weight: 650; color: var(--ink); }
+
+    .hash {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: space-between;
+      align-items: center;
+    }
+    button.reset {
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      padding: 0.35rem 0.7rem;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    button.reset:hover { border-color: var(--ink); color: var(--ink); }
+
+    .progress {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+    }
+
+    @media (max-width: 560px) {
+      header, main { padding-left: 1rem; padding-right: 1rem; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;650&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <header>
+    <h1>Merged draft-OK — verify &amp; decide</h1>
+    <p>
+      Checklist from the PR review pass. These drafts already landed on
+      <code>main</code>; what’s left is product confirmation and click-through
+      smoke. Arabic / RTL visual localization is deferred until the Arabic
+      partner session next week.
+    </p>
+    <div class="meta">
+      <span>Base: localhost:5173</span>
+      <span>Fork PRs #243–#261 (ex #248)</span>
+      <span class="progress" id="progress">0 / 0 done</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>Decide (human)</h2>
+
+      <article class="item" data-id="261">
+        <div class="item-top">
+          <input type="checkbox" id="c-261" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/261" target="_blank" rel="noreferrer">#261</a>
+              <span>ar-bsoj export owner → BSOJ org</span>
+              <span class="badge decide">decide</span>
+            </div>
+            <p>
+              Code routes TSV/verse export through <code>exportOwnerFromConfig</code>
+              so owner is <code>BSOJ</code> (matching scripture lanes), not
+              <code>DCS_EXPORT_OWNER</code> / service-account forks.
+            </p>
+            <ul class="steps">
+              <li>Confirm prod BSOJ should own nightly/manual exports (not BibleEditorService forks).</li>
+              <li>Confirm BSOJ <code>ar_*</code> repos exist and the service token can write them.</li>
+              <li>Confirm no workspace <code>export_owner</code> override was meant to win on this path.</li>
+            </ul>
+            <div class="expect"><strong>Pass:</strong> you are OK shipping exports straight into the BSOJ org.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="249-advance">
+        <div class="item-top">
+          <input type="checkbox" id="c-249-advance" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/249" target="_blank" rel="noreferrer">#249</a>
+              <span>Words approve: advance past already-approved?</span>
+              <span class="badge decide">decide</span>
+            </div>
+            <p>
+              Shipped behavior advances to the <em>next populated</em> entry,
+              including already-approved ones. Notes skip already-statused.
+            </p>
+            <ul class="steps">
+              <li>If “queue like notes” is desired → file a follow-up to skip approved.</li>
+              <li>If predictable “next in list” is fine → check this off.</li>
+            </ul>
+            <div class="expect"><strong>Pass:</strong> intentional product choice recorded (no code change required either way for now).</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="251">
+        <div class="item-top">
+          <input type="checkbox" id="c-251" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/251" target="_blank" rel="noreferrer">#251</a>
+              <span>Workflow CONTEXT·ctx legend still open</span>
+              <span class="badge decide">decide</span>
+            </div>
+            <p>
+              Four partner-facing copy swaps merged; PR body was softened to
+              <em>Partial for #232</em>. Export-history <code>CONTEXT · ctx</code>
+              still needs a legend/tooltip (not a string swap).
+            </p>
+            <ul class="steps">
+              <li>Confirm #232 stays open / has a follow-up for the Workflow legend.</li>
+              <li>Or schedule a tiny legend PR yourself.</li>
+            </ul>
+            <div class="expect"><strong>Pass:</strong> #232 (or a child issue) still tracks the CONTEXT legend.</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section>
+      <h2>Click through (you or Chrome agent)</h2>
+      <p style="margin:0 0 0.75rem;color:var(--muted);font-size:0.9rem">
+        Assumes <code>npm run dev</code> on main. Prefer BSOJ / mltest workspaces
+        with real imports. Clear stale auth if needed:
+        <code>localStorage.removeItem('bible-editor.auth.token'); location.reload()</code>.
+      </p>
+
+      <article class="item" data-id="243">
+        <div class="item-top">
+          <input type="checkbox" id="c-243" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/243" target="_blank" rel="noreferrer">#243</a>
+              <span>Book summary: no phantom ch0 / v0</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Open <span class="hash">http://localhost:5173/#/home</span> (or Books) on a workspace with Obadiah imported.</li>
+              <li>Check OBA chapter / verse counts on Home hub and progress chips.</li>
+              <li>Spot-check ZEC if handy (should not inflate by +1 verse).</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> OBA → <strong>1 chapter / 21 verses</strong> (intro notes may still be in note totals).</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="244">
+        <div class="item-top">
+          <input type="checkbox" id="c-244" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/244" target="_blank" rel="noreferrer">#244</a>
+              <span>Home: Alignment / Articles not “unavailable”</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Open <span class="hash">http://localhost:5173/#/home</span></li>
+              <li>Read Alignment + Articles queue cards.</li>
+              <li>Click each card — should navigate into a working surface.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> copy says progress tracking “coming soon”, <em>not</em> “not available in this preview”; cards remain clickable.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="245">
+        <div class="item-top">
+          <input type="checkbox" id="c-245" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/245" target="_blank" rel="noreferrer">#245</a>
+              <span>Team: pending Door43 admins</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Open <span class="hash">http://localhost:5173/#/admin/team</span> as super-admin / admin.</li>
+              <li>Find a Door43 BE-Admins member who has never signed into the editor.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> role shows pending / hasn’t-signed-in wording, <em>not</em> “Viewer (read-only)”.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="246">
+        <div class="item-top">
+          <input type="checkbox" id="c-246" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/246" target="_blank" rel="noreferrer">#246</a>
+              <span>Drafts scoped per workspace</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>In workspace A, type an unsaved note draft (don’t Save).</li>
+              <li>Confirm “N unsaved” / drafts menu shows it.</li>
+              <li>Switch to workspace B → drafts count should not include A’s draft.</li>
+              <li>Switch back to A → draft returns.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> no cross-org draft leakage for new writes.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="260">
+        <div class="item-top">
+          <input type="checkbox" id="c-260" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/260" target="_blank" rel="noreferrer">#260</a>
+              <span>Last-location vs imported books</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>On mltest (or a workspace with OBA-only / different catalog), visit a book.</li>
+              <li>Switch to BSOJ (or the other workspace with different imports).</li>
+              <li>Land on Home, then Books Continue chip.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> Continue / Home open an <em>imported</em> book with real counts — not a foreign book / 0-of-0 / phantom OBA if OBA isn’t imported.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="249">
+        <div class="item-top">
+          <input type="checkbox" id="c-249" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/249" target="_blank" rel="noreferrer">#249</a>
+              <span>Words tabs + approve advances</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Open <span class="hash">http://localhost:5173/#/words/OBA</span> (or any book with tW).</li>
+              <li>Check segmented control labels: Target · {lang} / Source · {code} / Both.</li>
+              <li>Approve an entry (phone page + desktop pane if both layouts available).</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> selection advances to next populated entry; last entry clears selection. Labels are not “EN / English” ambiguous.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="258">
+        <div class="item-top">
+          <input type="checkbox" id="c-258" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/258" target="_blank" rel="noreferrer">#258</a>
+              <span>Notes/questions draft panes — LTR in RTL project</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <p>English / Latin placeholder check only for now (Arabic draft direction deferred).</p>
+            <ul class="steps">
+              <li>On an RTL project (BSOJ), open Notes or Questions for a verse with an empty English draft / placeholder.</li>
+              <li>Confirm Latin text isn’t bidi-mangled (punctuation/order looks normal).</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> English draft text reads LTR-correct inside the pane.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="253">
+        <div class="item-top">
+          <input type="checkbox" id="c-253" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/253" target="_blank" rel="noreferrer">#253</a>
+              <span>Manual-exports notice when no nightly cron</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Local / dev worker (no nightly cron): open Workflow + Observe.</li>
+              <li>Prod (after deploy with <code>NIGHTLY_EXPORTS_ENABLED</code>): confirm notice is <em>absent</em> / chip shows nightly.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> cron-less deploys show the manual-exports notice; prod with the var does not scare partners.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="247">
+        <div class="item-top">
+          <input type="checkbox" id="c-247" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/247" target="_blank" rel="noreferrer">#247</a>
+              <span>Observe spare-pool gated on super-admin</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>DEV: silent mint as <code>dev</code> with <code>SUPER_ADMINS=dev</code> in <code>api/.dev.vars</code>.</li>
+              <li>Open Observe — pool should load (Network: <code>/api/workspaces/pool</code>).</li>
+              <li>As a plain admin (non-allowlisted): no pool fetch; locked explanatory panel.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> only super-admins hit <code>/pool</code> and see action buttons.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="252">
+        <div class="item-top">
+          <input type="checkbox" id="c-252" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/252" target="_blank" rel="noreferrer">#252</a>
+              <span>Drafts jump menu: discard + rowKind routes</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Create unsaved drafts from Notes, Questions, and Words (new UI).</li>
+              <li>Open the drafts jump menu in the chrome strip.</li>
+              <li>Jump each item — land on the matching flow.</li>
+              <li>Discard one active draft via the per-item control.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> tn → <code>#/notes/…</code>, tq → <code>#/questions/…</code>, twl → <code>#/words/…</code>; discard removes it; stay in new-UI chrome.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="250">
+        <div class="item-top">
+          <input type="checkbox" id="c-250" />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/250" target="_blank" rel="noreferrer">#250</a>
+              <span>Held-out pairs visible in export results</span>
+              <span class="badge click">chrome</span>
+            </div>
+            <ul class="steps">
+              <li>Trigger a manual export on a workspace with held-out (book, resource) pairs (e.g. mltest).</li>
+              <li>Inspect run results / export history.</li>
+            </ul>
+            <div class="expect"><strong>Expect:</strong> held-out pairs appear with reason like <code>held_out:tn</code> (not silently omitted).</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section>
+      <h2>Deferred — Arabic partner next week</h2>
+
+      <article class="item" data-id="259-ar">
+        <div class="item-top">
+          <input type="checkbox" id="c-259-ar" disabled />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/259" target="_blank" rel="noreferrer">#259</a>
+              <span>USFM marker chips under RTL</span>
+              <span class="badge defer">next week</span>
+            </div>
+            <p>
+              Eyeball JOL 1:1 AR_AVD (or similar): marker chips like <code>\p</code> should
+              read LTR (<code>\p</code>), not reversed (<code>p\</code>).
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="item" data-id="258-ar">
+        <div class="item-top">
+          <input type="checkbox" id="c-258-ar" disabled />
+          <div class="item-body">
+            <div class="item-title">
+              <a class="pr" href="https://github.com/deferredreward/bible-editor-multilingual/pull/258" target="_blank" rel="noreferrer">#258</a>
+              <span>Genuine Arabic draft still RTL</span>
+              <span class="badge defer">next week</span>
+            </div>
+            <p>
+              With a real Arabic note/question draft, pane direction should stay
+              RTL-correct (complement to the English placeholder check above).
+            </p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <footer>
+      <span>Checks persist in localStorage · open this file in Chrome beside the app</span>
+      <button type="button" class="reset" id="reset">Reset checks</button>
+    </footer>
+  </main>
+
+  <script>
+    const KEY = "bem.verify-merged-drafts.v1";
+    const boxes = [...document.querySelectorAll('.item input[type="checkbox"]:not([disabled])')];
+    const progress = document.getElementById("progress");
+
+    function load() {
+      try { return JSON.parse(localStorage.getItem(KEY) || "{}"); }
+      catch { return {}; }
+    }
+    function save(state) {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    }
+    function refresh() {
+      const state = load();
+      let done = 0;
+      for (const box of boxes) {
+        const id = box.closest(".item").dataset.id;
+        box.checked = !!state[id];
+        box.closest(".item").classList.toggle("done", box.checked);
+        if (box.checked) done++;
+      }
+      progress.textContent = `${done} / ${boxes.length} done`;
+    }
+
+    for (const box of boxes) {
+      box.addEventListener("change", () => {
+        const state = load();
+        const id = box.closest(".item").dataset.id;
+        state[id] = box.checked;
+        save(state);
+        refresh();
+      });
+    }
+
+    document.getElementById("reset").addEventListener("click", () => {
+      localStorage.removeItem(KEY);
+      refresh();
+    });
+
+    refresh();
+  </script>
+</body>
+</html>
