@@ -156,6 +156,15 @@ const CONTEXT_PACK_LABELS: Record<string, string> = {
   shrink_refused: "Refused (shrink guard)",
 };
 
+// A nightly-export snapshot under book "CONTEXT" is the translation-context pack
+// (exportWorkflow.ts), not a published book; show a human label instead of the
+// raw "CONTEXT · ctx".
+const CONTEXT_SNAPSHOT_BOOK = "CONTEXT";
+const CONTEXT_SNAPSHOT_LABEL = "Context pack";
+function snapshotTargetLabel(book: string, resource: string, sep = " · "): string {
+  return book === CONTEXT_SNAPSHOT_BOOK ? CONTEXT_SNAPSHOT_LABEL : `${book}${sep}${resource}`;
+}
+
 // ── Small presentational helpers ────────────────────────────────────────────
 
 function Panel({ title, subtitle, action, children, foot }: {
@@ -460,7 +469,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         <StatTile
           label="Last nightly export"
           value={latestSnapshot ? fmtTime(latestSnapshot.committed_at) : snapshots ? "none" : exportsError ? "—" : <Skeleton width={80} />}
-          sub={latestSnapshot ? `${latestSnapshot.book}·${latestSnapshot.resource}${latestSnapshot.error ? ` — ${latestSnapshot.error}` : ` — ${latestSnapshot.rows_exported} rows`}` : "—"}
+          sub={latestSnapshot ? `${snapshotTargetLabel(latestSnapshot.book, latestSnapshot.resource, "·")}${latestSnapshot.error ? ` — ${latestSnapshot.error}` : ` — ${latestSnapshot.rows_exported} rows`}` : "—"}
         />
       </Box>
 
@@ -490,7 +499,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
                   <Box key={r.id} sx={{ py: 1.125 }}>
                     <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {r.book} · {r.resource} — {fmtTime(r.committed_at)}
+                        {snapshotTargetLabel(r.book, r.resource)} — {fmtTime(r.committed_at)}
                       </Typography>
                       <FlowStatusChip kind={hasError ? "warn" : "approved"} label={hasError ? "needs attention" : "committed"} />
                     </Stack>
