@@ -43,6 +43,40 @@ function formatTarget(t: OpTarget): string {
   return `${t.bibleVersion} ${t.book} ${t.chapter}:${t.verse}`;
 }
 
+// Label for the confirm-before-discard dialogs and their clipboard copy — one
+// definition so what the user reads on screen always matches what they paste.
+// A delete op carries no content (patch is {}), so say what the intent was.
+function formatOpLabel(op: OutboxOp): string {
+  return `${formatTarget(op.target)}${op.action === "delete" ? " (delete)" : ""}`;
+}
+
+// Clipboard write for a discard dialog's "copy" button. This is the user's
+// last copy of the edit — the caller must never flip to "copied" unless the
+// write actually landed. Clipboard API needs a focused document; fall back to
+// the textarea trick when it rejects. Returns whether a copy landed.
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch {
+      /* both copy paths failed — keep the label "copy edits" rather than
+         claim a copy that never landed */
+      return false;
+    }
+  }
+}
+
 function formatDraftMeta(m: DraftMeta): string {
   if (m.kind === "verse") return `${m.bibleVersion} ${m.book} ${m.chapter}:${m.verse}`;
   if (m.kind === "article") {
@@ -152,22 +186,89 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
   // explicit confirm so it can't be a one-misclick data loss.
   const [confirmDiscardAll, setConfirmDiscardAll] = useState(false);
 
+  // Single-op "discard this edit" confirm — same one-misclick protection as
+  // "discard all". Snapshot of the op at click time; the dialog auto-closes
+  // if the op leaves the failed list (retry / auto-revival).
+  const [confirmDropOp, setConfirmDropOp] = useState<OutboxOp | null>(null);
+  const [copiedDropOp, setCopiedDropOp] = useState(false);
+  const closeDropOp = () => {
+    setConfirmDropOp(null);
+    setCopiedDropOp(false);
+  };
+  const liveDropOp =
+    confirmDropOp && failed.some((f) => f.id === confirmDropOp.id) ? confirmDropOp : null;
+  useEffect(() => {
+    if (confirmDropOp && !liveDropOp) setConfirmDropOp(null);
+  }, [confirmDropOp, liveDropOp]);
+
+  // Conflicts whose 409 body carried no current row/version: resolve can't
+  // re-arm them, and dropping deletes the edit — same one-misclick data-loss
+  // stakes as "discard all", so they get the same confirm gate. Snapshot of
+  // the ops at resolve-click time.
+  const [unresolvableOps, setUnresolvableOps] = useState<OutboxOp[]>([]);
+  const [copiedUnresolvable, setCopiedUnresolvable] = useState(false);
+  const closeUnresolvable = () => {
+    setUnresolvableOps([]);
+    setCopiedUnresolvable(false);
+  };
+
+  // Live view of that snapshot: an op that has since left conflict status in
+  // this tab (a same-target resolve re-armed it, or it was dropped elsewhere)
+  // falls out of the dialog's count/list/copy/discard, so the user only ever
+  // confirms what will actually be deleted. Cross-tab changes never reach
+  // this tab's subscription — outbox.drop's onlyIfStatus guard is the
+  // backstop there.
+  const conflictIds = new Set(conflicts.map((c) => c.id));
+  const liveUnresolvable = unresolvableOps.filter((op) => conflictIds.has(op.id));
+  const oneUnresolvable = liveUnresolvable.length === 1;
+
   // Anchor for the "N unsaved" jump menu (only used when onNavigate is wired).
   const [draftMenuEl, setDraftMenuEl] = useState<null | HTMLElement>(null);
 
   const resolveAllConflicts = async () => {
+    // The 409 response includes the server's current row in op.conflictCurrent —
+    // re-queue against its version so the next dispatch sails through. The
+    // user's local patch overwrites the upstream change (last-edit-wins).
+    // If the server didn't return a current row we can't re-arm, and dropping
+    // deletes the user's edit — never do that silently; route it through the
+    // confirm dialog below (with copy-to-clipboard) instead. Partition and
+    // surface the dialog BEFORE any awaits: if a resolveConflict below throws,
+    // the unresolvable ops must still get their dialog rather than vanish
+    // until the next click.
+    const unresolvable: OutboxOp[] = [];
+    const fresh: Array<{ id: string; version: number }> = [];
     for (const op of conflicts) {
-      // The 409 response includes the server's current row in op.conflictCurrent —
-      // re-queue against its version so the next dispatch sails through. The
-      // user's local patch overwrites the upstream change (last-edit-wins).
-      // If the server didn't return a current row, drop the op rather than
-      // strand it forever.
       if (isFreshRow(op.conflictCurrent)) {
-        await outbox.resolveConflict(op.id, op.conflictCurrent.version);
+        fresh.push({ id: op.id, version: op.conflictCurrent.version });
       } else {
-        await outbox.drop(op.id);
+        unresolvable.push(op);
       }
     }
+    // Set unconditionally — an empty result must also clear any stale
+    // snapshot left from an earlier click.
+    setUnresolvableOps(unresolvable);
+    setCopiedUnresolvable(false);
+    for (const f of fresh) {
+      await outbox.resolveConflict(f.id, f.version);
+    }
+  };
+
+  const copyUnresolvable = async () => {
+    const text = liveUnresolvable
+      .map((op) => `${formatOpLabel(op)}\n${JSON.stringify(op.patch, null, 2)}`)
+      .join("\n\n");
+    if (await copyToClipboard(text)) setCopiedUnresolvable(true);
+  };
+
+  const discardUnresolvable = async () => {
+    // onlyIfStatus: another tab may have re-armed one of these ops to pending
+    // (about to save) since the dialog opened — a plain drop would delete
+    // that live edit. Only ops still in conflict are dropped; anything else
+    // stays queued and remains visible via the normal chips.
+    for (const op of liveUnresolvable) {
+      await outbox.drop(op.id, { onlyIfStatus: "conflict" });
+    }
+    closeUnresolvable();
   };
 
   // Priority: conflicts > failed > offline > saving > saved.
@@ -469,7 +570,10 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
                       <IconButton
                         size="small"
                         color="error"
-                        onClick={() => void outbox.drop(op.id)}
+                        onClick={() => {
+                          setConfirmDropOp(op);
+                          setCopiedDropOp(false);
+                        }}
                         sx={{ p: 0.25 }}
                       >
                         <DeleteOutlineIcon fontSize="inherit" />
@@ -589,6 +693,10 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
         // auto-revival) — nothing left to discard.
         open={!hideFloating && confirmDiscardAll && failed.length > 0}
         onClose={() => setConfirmDiscardAll(false)}
+        // The floating action panel sits at zIndex.snackbar and stays mounted
+        // while this dialog is open (its ops are still failed) — lift the
+        // dialog above it so the panel can't cover the buttons.
+        sx={{ zIndex: (theme) => theme.zIndex.snackbar + 1 }}
       >
         <DialogTitle>
           {t("sync.discardConfirmTitle", { count: failed.length })}
@@ -604,11 +712,119 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating }: Prop
             color="error"
             variant="contained"
             onClick={async () => {
-              for (const op of failed) await outbox.drop(op.id);
+              // onlyIfStatus: a cross-tab retry may have moved an op from
+              // "failed" to "pending" (about to save) since this dialog
+              // opened — a plain drop would delete that live edit.
+              for (const op of failed) await outbox.drop(op.id, { onlyIfStatus: "failed" });
               setConfirmDiscardAll(false);
             }}
           >
             {t("sync.discardAll")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={!hideFloating && liveDropOp !== null}
+        onClose={closeDropOp}
+        sx={{ zIndex: (theme) => theme.zIndex.snackbar + 1 }}
+      >
+        {liveDropOp && (
+          <>
+            <DialogTitle>
+              {t("sync.discardOneConfirmTitle", "Discard this edit?")}
+            </DialogTitle>
+            <DialogContent>
+              <DialogContentText>
+                {t(
+                  "sync.discardOneConfirmBody",
+                  "This edit never reached the server. Discarding deletes it from this device permanently — copy it first if you want to keep the text.",
+                )}
+              </DialogContentText>
+              <Typography
+                variant="caption"
+                sx={{ fontFamily: "monospace", display: "block", mt: 1 }}
+              >
+                {formatOpLabel(liveDropOp)}
+              </Typography>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                onClick={async () => {
+                  const text = `${formatOpLabel(liveDropOp)}\n${JSON.stringify(liveDropOp.patch, null, 2)}`;
+                  if (await copyToClipboard(text)) setCopiedDropOp(true);
+                }}
+              >
+                {copiedDropOp ? t("sync.copied", "copied") : t("sync.copyEdit", "copy edit")}
+              </Button>
+              <Button onClick={closeDropOp}>{t("sync.cancel")}</Button>
+              <Button
+                color="error"
+                variant="contained"
+                onClick={async () => {
+                  // onlyIfStatus: a cross-tab retry may have re-armed this op
+                  // to pending since the dialog opened — never delete an edit
+                  // that's about to save.
+                  await outbox.drop(liveDropOp.id, { onlyIfStatus: "failed" });
+                  closeDropOp();
+                }}
+              >
+                {t("sync.discard", "discard")}
+              </Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+      <Dialog
+        // liveUnresolvable already filters the snapshot against current
+        // conflicts, so this auto-closes when every op has left conflict
+        // status in this tab — mirrors the discard-all dialog above.
+        open={!hideFloating && liveUnresolvable.length > 0}
+        onClose={closeUnresolvable}
+        // The floating action panel sits at zIndex.snackbar and stays mounted
+        // while this dialog is open (its ops are still conflicts) — lift the
+        // dialog above it so the panel can't cover the buttons.
+        sx={{ zIndex: (theme) => theme.zIndex.snackbar + 1 }}
+      >
+        <DialogTitle>
+          {t("sync.unresolvableConfirmTitle", {
+            count: liveUnresolvable.length,
+            defaultValue: "Discard {{count}} unresolvable conflict?",
+            defaultValue_other: "Discard {{count}} unresolvable conflicts?",
+          })}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {t("sync.unresolvableConfirmBody", {
+              count: liveUnresolvable.length,
+              defaultValue:
+                "The server did not send back its current version for this edit, so it cannot be retried automatically. Discarding deletes it from this device permanently — copy it first if you want to keep the text.",
+              defaultValue_other:
+                "The server did not send back its current version for these edits, so they cannot be retried automatically. Discarding deletes them from this device permanently — copy them first if you want to keep the text.",
+            })}
+          </DialogContentText>
+          <Stack spacing={0.25} sx={{ mt: 1 }}>
+            {liveUnresolvable.map((op) => (
+              <Typography
+                key={op.id}
+                variant="caption"
+                sx={{ fontFamily: "monospace", display: "block" }}
+              >
+                {formatOpLabel(op)}
+              </Typography>
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => void copyUnresolvable()}>
+            {copiedUnresolvable
+              ? t("sync.copied", "copied")
+              : oneUnresolvable
+                ? t("sync.copyEdit", "copy edit")
+                : t("sync.copyEdits", "copy edits")}
+          </Button>
+          <Button onClick={closeUnresolvable}>{t("sync.cancel")}</Button>
+          <Button color="error" variant="contained" onClick={() => void discardUnresolvable()}>
+            {t("sync.discard", "discard")}
           </Button>
         </DialogActions>
       </Dialog>

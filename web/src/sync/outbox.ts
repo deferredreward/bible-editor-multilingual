@@ -21,6 +21,12 @@ import {
 import { backoffMs } from "./backoff";
 import { classifyRowPatchConflict } from "./rowConflict";
 import { isLaneFrozen, laneFreezeReason } from "./laneFreeze";
+import {
+  MAX_ATTEMPTS_SENTINEL,
+  eligibleForVersionThread,
+  isMaxAttemptsBlocked,
+  targetKey,
+} from "./outboxTargeting.ts";
 import { getWorkspaceSlug, getWorkspaceIsFallback } from "./workspace";
 
 // Namespaced per workspace so switching Door43 orgs can never drain one org's
@@ -147,6 +153,11 @@ export interface OutboxOp {
   // The source_generation the verse was loaded under. Sent as X-Source-Generation
   // so the server can reject edits against a superseded generation.
   sourceGeneration?: number;
+  // Exact local text-draft generation captured by this save. Used only for
+  // generation-safe cleanup after a successful verse PATCH (see
+  // draftSaveState.ts). Unrelated to sourceGeneration above (a server-side
+  // lane concept).
+  draftGeneration?: string;
   // Set when a scripture lane freezes for replacement. Quarantined ops stay in
   // IDB as failed recovery copies — a late 200 from an in-flight dispatch must
   // not delete them (see drainPass).
@@ -256,16 +267,11 @@ function noopOp(target: OpTarget, action: OpAction, patch: Record<string, unknow
   };
 }
 
-// Two ops belong to the same target iff they touch the same row/verse. A
-// conflict on one of them must not block ops to *other* targets — but it
-// must keep blocking siblings, since the user's expectedVersion is stale
-// for them too.
-function targetKey(t: OpTarget): string {
-  if (t.kind === "row") return `row:${t.rowKind}:${t.book}:${t.id}`;
-  if (t.kind === "verse_status") return `vstatus:${t.book}:${t.chapter}:${t.verse}`;
-  if (t.kind === "lane_check") return `lanecheck:${t.book}:${t.chapter}:${t.verse}:${t.lane}`;
-  return `verse:${t.book}:${t.chapter}:${t.verse}:${t.bibleVersion}`;
-}
+// targetKey / isMaxAttemptsBlocked / eligibleForVersionThread live in
+// outboxTargeting.ts, not here — that module has no dependency on api.ts (its
+// ApiError class uses a TS parameter-property constructor Node's strip-types
+// loader can't erase), so it can be `import()`ed directly by a plain Node
+// regression test. See outboxTargeting.test.mjs for the upstream-#487 coverage.
 
 export const outbox = {
   subscribe(fn: Subscriber): () => void {
@@ -338,7 +344,7 @@ export const outbox = {
     bibleVersion: string,
     expectedVersion: number,
     patch: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
-    opts?: { sourceGeneration?: number },
+    opts?: { sourceGeneration?: number; draftGeneration?: string },
   ): Promise<OutboxOp> {
     if (isReadOnly()) {
       return noopOp(
@@ -381,6 +387,7 @@ export const outbox = {
       attempts: 0,
       status: "pending",
       ...(opts?.sourceGeneration != null ? { sourceGeneration: opts.sourceGeneration } : {}),
+      ...(opts?.draftGeneration ? { draftGeneration: opts.draftGeneration } : {}),
     };
     await (await db()).put(STORE, op);
     void notify();
@@ -530,7 +537,9 @@ export const outbox = {
     void drain();
   },
 
-  async drop(opId: string) {
+  // onlyIfStatus excludes "in_flight": the unconditional in_flight guard below
+  // returns first, so that value could never match — don't promise it.
+  async drop(opId: string, opts?: { onlyIfStatus?: Exclude<OpStatus, "in_flight"> }) {
     // Guard against dropping an op the drain just flipped to in_flight (same
     // race the drain itself guards at the listAll → fresh re-read). A request
     // is already on the wire; deleting the record here would race the 200
@@ -543,6 +552,19 @@ export const outbox = {
     const op = (await tx.store.get(opId)) as OutboxOp | undefined;
     if (op && op.status === "in_flight") {
       await tx.done;
+      return;
+    }
+    // A caller acting on a snapshot (the confirm-before-discard dialogs) may
+    // be stale: another tab can re-arm a conflict/failed op to pending between
+    // snapshot and click, and deleting it then destroys an edit that's about
+    // to save. onlyIfStatus makes the check-and-delete atomic inside this tx.
+    if (op && opts?.onlyIfStatus && op.status !== opts.onlyIfStatus) {
+      await tx.done;
+      // The mismatch means this tab just observed state it may not know about
+      // (cross-tab writes never reach this tab's notify) — broadcast so the
+      // UI catches up, and drain in case the op is now pending.
+      void notify();
+      void drain();
       return;
     }
     await tx.store.delete(opId);
@@ -577,6 +599,13 @@ export const outbox = {
       await tx.done;
       return;
     }
+    // Deliberately leave queuedAt/seq untouched. A max-attempts-failed op was
+    // holding its target's place in the FIFO (isMaxAttemptsBlocked); flipping
+    // status to "pending" forfeits that protection, so keeping its original
+    // queue position is what stops a sibling that queued while it sat failed
+    // from leapfrogging it, landing first, and getting silently reverted when
+    // this op drains after being threaded the sibling's fresh version
+    // (upstream #487 / PR #504). Do not "freshen" queuedAt/seq here.
     op.status = "pending";
     op.attempts = 0;
     op.hardAttempts = 0;
@@ -632,7 +661,21 @@ export const outbox = {
 // ---------- drain ----------
 
 let draining = false;
+// Set when drain() is called while a drain is already active — mirrors
+// notify()'s notifyPendingRerun. An enqueue whose IDB put commits after the
+// running pass's final listAll() snapshot, and whose drain() call lands
+// before `draining` flips false, is neither seen by that pass nor able to
+// start a new one; without this flag the op sits pending until an unrelated
+// trigger (focus/online/next enqueue). The active drain consumes the flag by
+// re-running drainPass before it finishes.
+let drainRequested = false;
 let drainTimer: ReturnType<typeof setTimeout> | null = null;
+// Wall-clock deadline of the pending drainTimer, 0 when none. scheduleDrain
+// only replaces the timer when the new deadline is EARLIER — with a single
+// shared timer, a long reschedule (young in-flight recovery, up to the 60s
+// recovery age) would otherwise clobber a short due retry (~250ms backoff)
+// and an op due in 250ms could wait the full recovery age.
+let drainTimerAt = 0;
 
 type Result =
   | { kind: "ok"; updated: unknown }
@@ -843,7 +886,8 @@ async function recoverInFlight(): Promise<number | undefined> {
 // apply). Thread the confirmed version into them — with several siblings
 // queued, each landing re-threads the rest. Skips `conflict` ops (those are
 // owned by the user-resolve flow: drain won't pick them up, and
-// resolveConflict overwrites expectedVersion anyway) and anything without a
+// resolveConflict overwrites expectedVersion anyway), max-attempts-failed ops
+// (see eligibleForVersionThread — upstream #487), and anything without a
 // numeric version in the response (verse_status upserts, row deletes).
 async function threadVersionToSiblings(done: OutboxOp, updated: unknown) {
   const version = (updated as { version?: unknown } | null | undefined)?.version;
@@ -860,7 +904,7 @@ async function threadVersionToSiblings(done: OutboxOp, updated: unknown) {
   for (const o of all) {
     if (
       targetKey(o.target) === key &&
-      (o.status === "pending" || o.status === "failed") &&
+      eligibleForVersionThread(o) &&
       o.expectedVersion !== version
     ) {
       o.expectedVersion = version;
@@ -880,10 +924,14 @@ function isSortOrderOnlyPatch(patch: Record<string, unknown>): boolean {
 
 async function drainPass() {
   const youngInFlightEligibleAt = await recoverInFlight();
-  // Targets with an unresolved conflict are skipped for *this* pass but
-  // we keep draining other targets so a single hot row doesn't freeze
-  // the entire queue.
-  const blocked = new Set<string>();
+  // Targets this pass has itself just parked as conflict/retry-backoff
+  // (below) — must stay blocked for the rest of the pass regardless of what
+  // a later snapshot shows, since the backoff hasn't elapsed yet. This is
+  // distinct from the per-iteration recompute below: unlike a live status
+  // check, nothing will flip these back to pending mid-pass, so pinning is
+  // correct here and doesn't reintroduce upstream issue #515. Blocking is
+  // per-target either way, so a single hot row doesn't freeze the queue.
+  const pinnedBlocked = new Set<string>();
   while (true) {
     // Offline — nothing can leave the machine, so dispatching would only
     // burn attempts against guaranteed failures. Park the queue (mirrors
@@ -892,9 +940,26 @@ async function drainPass() {
     if (typeof navigator !== "undefined" && navigator.onLine === false) break;
     const ops = await listAll();
     // Mark any target with a still-conflicted op as blocked, so we don't
-    // pick up sibling pending ops with stale expectedVersion either.
+    // pick up sibling pending ops with stale expectedVersion either. A
+    // max-attempts-failed op blocks the same way (isMaxAttemptsBlocked —
+    // upstream #487): it WILL auto-revive with a stale expectedVersion, so a
+    // younger pending sibling must not be allowed to land ahead of it and
+    // then get silently reverted when the older op re-arms. Fatal
+    // (non-revivable) failed ops are excluded from this — nothing will ever
+    // re-send them, so blocking on them would freeze the target forever.
+    //
+    // Recomputed fresh from this iteration's snapshot every time (seeded
+    // from pinnedBlocked, not accumulated into it) — upstream issue #515: if
+    // retry() or reviveMaxAttemptsFailed() flips a blocking op back to
+    // pending while this pass is running, their own drain() call is a
+    // no-op (a pass is already active), so this loop is the only thing
+    // that will ever notice. A blocked set that only ever grew would keep
+    // treating that target as blocked for the rest of the pass even after
+    // its live status no longer justifies it, stranding the revived op
+    // until some unrelated trigger fires.
+    const blocked = new Set(pinnedBlocked);
     for (const o of ops) {
-      if (o.status === "conflict") blocked.add(targetKey(o.target));
+      if (o.status === "conflict" || isMaxAttemptsBlocked(o)) blocked.add(targetKey(o.target));
     }
     let next = ops.find(
       (o) => o.status === "pending" && !blocked.has(targetKey(o.target)),
@@ -1039,7 +1104,7 @@ async function drainPass() {
             stored.status = "conflict";
             stored.conflictCurrent = result.current;
             stored.lastError = "version_mismatch";
-            blocked.add(targetKey(stored.target));
+            pinnedBlocked.add(targetKey(stored.target));
           }
           return "put";
         });
@@ -1053,12 +1118,12 @@ async function drainPass() {
           if (capEligible) stored.hardAttempts = (stored.hardAttempts ?? 0) + 1;
           if (capEligible && (stored.hardAttempts ?? 0) >= MAX_ATTEMPTS) {
             stored.status = "failed";
-            stored.lastError = "max_attempts_exceeded";
+            stored.lastError = MAX_ATTEMPTS_SENTINEL;
           } else {
             stored.status = "pending";
             stored.lastError = result.reason;
             scheduleDrain(backoffMs(stored.attempts));
-            blocked.add(targetKey(stored.target));
+            pinnedBlocked.add(targetKey(stored.target));
           }
           return "put";
         });
@@ -1106,7 +1171,13 @@ async function drainPass() {
 }
 
 export async function drain() {
-  if (draining) return;
+  if (draining) {
+    // A pass is active. Request a re-run instead of dropping the wakeup —
+    // the running pass's final listAll() may already have resolved, so the
+    // op that prompted this call could be invisible to it.
+    drainRequested = true;
+    return;
+  }
   draining = true;
   try {
     // Cross-tab mutual exclusion. Two tabs share one IndexedDB store; both
@@ -1120,6 +1191,12 @@ export async function drain() {
         async (lock) => {
           if (!lock) return false;
           await drainPass();
+          // Consume queued wakeups while the lock is still held, so the
+          // re-pass keeps the cross-tab exclusion drainPass relies on.
+          while (drainRequested) {
+            drainRequested = false;
+            await drainPass();
+          }
           return true;
         },
       );
@@ -1127,17 +1204,37 @@ export async function drain() {
     } else {
       // No Web Locks (very old browser) — fall back to single-tab behavior.
       await drainPass();
+      while (drainRequested) {
+        drainRequested = false;
+        await drainPass();
+      }
     }
   } finally {
     draining = false;
     void notify();
+    // A wakeup can still land in the awaits between the re-pass loop above
+    // and this line (lock release, promise resolution). `draining` is false
+    // again now, so a fresh drain() re-acquires the lock and handles it.
+    if (drainRequested) {
+      drainRequested = false;
+      void drain();
+    }
   }
 }
 
 function scheduleDrain(ms: number) {
-  if (drainTimer) clearTimeout(drainTimer);
+  const at = Date.now() + ms;
+  if (drainTimer) {
+    // Keep the pending timer when it fires no later than the new request —
+    // clearing it unconditionally let a longer reschedule silently push out
+    // an already-due retry (see drainTimerAt).
+    if (at >= drainTimerAt) return;
+    clearTimeout(drainTimer);
+  }
+  drainTimerAt = at;
   drainTimer = setTimeout(() => {
     drainTimer = null;
+    drainTimerAt = 0;
     void drain();
   }, ms);
 }
@@ -1148,17 +1245,23 @@ function scheduleDrain(ms: number) {
 // forever (drain only picks up `pending`), one discard click from gone.
 async function reviveMaxAttemptsFailed() {
   const idb = await db();
+  // Read AND write inside ONE readwrite tx (same shape as resolveConflict).
+  // The old two-step (index read in a readonly tx, puts in a new tx) raced
+  // drop(): a user's Discard could delete the record in the gap, and the put
+  // here would RE-CREATE it as pending — a user-discarded edit saving to the
+  // server. Re-check status + the revivable sentinel on the freshly-read
+  // records inside the tx so we only revive ops still parked as failed.
+  const tx = idb.transaction(STORE, "readwrite");
   // Only `failed` ops are candidates — query the status index rather than
   // scanning the whole store.
-  const failedOps = (await idb
-    .transaction(STORE, "readonly")
-    .store.index("status")
-    .getAll("failed")) as OutboxOp[];
+  const failedOps = (await tx.store.index("status").getAll("failed")) as OutboxOp[];
   const revivable = failedOps.filter(
-    (o) => o.lastError === "max_attempts_exceeded",
+    (o) => o.status === "failed" && o.lastError === MAX_ATTEMPTS_SENTINEL,
   );
-  if (revivable.length === 0) return;
-  const tx = idb.transaction(STORE, "readwrite");
+  if (revivable.length === 0) {
+    await tx.done;
+    return;
+  }
   for (const o of revivable) {
     o.status = "pending";
     o.attempts = 0;
