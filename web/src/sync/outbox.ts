@@ -153,6 +153,11 @@ export interface OutboxOp {
   // The source_generation the verse was loaded under. Sent as X-Source-Generation
   // so the server can reject edits against a superseded generation.
   sourceGeneration?: number;
+  // Exact local text-draft generation captured by this save. Used only for
+  // generation-safe cleanup after a successful verse PATCH (see
+  // draftSaveState.ts). Unrelated to sourceGeneration above (a server-side
+  // lane concept).
+  draftGeneration?: string;
   // Set when a scripture lane freezes for replacement. Quarantined ops stay in
   // IDB as failed recovery copies — a late 200 from an in-flight dispatch must
   // not delete them (see drainPass).
@@ -339,7 +344,7 @@ export const outbox = {
     bibleVersion: string,
     expectedVersion: number,
     patch: { content: unknown; plain_text?: string | null; alignment_intent?: AlignmentIntent },
-    opts?: { sourceGeneration?: number },
+    opts?: { sourceGeneration?: number; draftGeneration?: string },
   ): Promise<OutboxOp> {
     if (isReadOnly()) {
       return noopOp(
@@ -382,6 +387,7 @@ export const outbox = {
       attempts: 0,
       status: "pending",
       ...(opts?.sourceGeneration != null ? { sourceGeneration: opts.sourceGeneration } : {}),
+      ...(opts?.draftGeneration ? { draftGeneration: opts.draftGeneration } : {}),
     };
     await (await db()).put(STORE, op);
     void notify();
