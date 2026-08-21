@@ -104,3 +104,86 @@ export function isReimportableRow(r: ReimportableRow): boolean {
   if (r.updated_by == null) return true; // pristine
   return r.latestSource === AI_SOURCE; // AI-only, never human-edited
 }
+
+// ── Reissued-tombstone discriminator (issue #427, options 1 and 2) ──────────
+//
+// A soft-deleted tn/tq/twl row keeps its `(book, id)` PRIMARY KEY slot forever
+// — the row stays, only `deleted_at` is stamped. So when master's TSV carries
+// that same id, the reimport's tombstone branch (bookReimport.ts's applyTsvRows)
+// declines to apply master's row, and its `INSERT ... ON CONFLICT(id, book) DO
+// NOTHING` would refuse it too. Both outcomes are silent: master's row simply
+// never lands in D1.
+//
+// That silence is CORRECT for one of the two cases and WRONG for the other, and
+// this function is the discriminator (the same one upstream's 2026-08-10
+// production sweep used to classify all 10,645 live tombstones):
+//
+//   - master carries the id at the SAME reference → the row is a delete that
+//     hasn't been exported to Door43 yet. Skipping is exactly what preserves
+//     that pending deletion; reapplying master's copy would resurrect it on
+//     every nightly run. Returns false. (4 AMO rows were in this state during
+//     the sweep.)
+//   - master carries the id at a DIFFERENT reference → the id has been reissued
+//     to a genuinely different row (bp-assistant mints ids from a repeating
+//     sequence, so collisions recur). Master's row is real, new, and being
+//     dropped. Returns true. This is the 1CH 23 tQ case: six ids tombstoned at
+//     1CH 5:x were reissued at 1CH 23:x and vanished, and the book's watermark
+//     was stamped in-sync anyway.
+//
+// Deliberately compares the REFERENCE, not the content: a reissued id points at
+// different scripture, which is the only signal available without reading the
+// whole book. `ref_raw` is the authoritative comparison (it is what the master
+// TSV's Reference column literally holds, including verse bridges like "1:2-3"
+// and "front:intro"); (chapter, verse) is the fallback when a row's ref_raw is
+// empty.
+//
+// KNOWN FALSE POSITIVE, and its cost is not small — read before touching this.
+// The reference test cannot separate "the id was re-minted for a different row"
+// (real loss) from "the SAME row, deleted in-app, whose Reference a Door43
+// maintainer then corrected" — a re-anchor to 1:3, or a bridge widened to
+// "1:2-3". The second loses nothing; the row is deleted and the delete is merely
+// pending export. This function reports both as reissued.
+//
+// Do NOT reason about that as "worst case, a delayed export." A true positive
+// here now drives an ACTUAL WRITE — see bookReimport.ts's tombstone branch,
+// which reclaims the slot (issue #427, option 1): it clears deleted_at and
+// overwrites the row with master's incoming content at the new reference.
+// So a false positive no longer just freezes the export until a human
+// intervenes (the pre-option-1 behavior); it silently un-deletes a row a
+// translator explicitly deleted, at whatever reference the maintainer's
+// correction happens to name. The direction is still deliberate — the
+// alternative to reclaiming is leaving a D1 that is short of master, which
+// (on export) DELETES rows from Door43 that master genuinely still carries,
+// the original 1CH failure — but this is the sharper edge of that tradeoff,
+// not a free one. When the reclaim instead LOSES its version-CAS race
+// (something touched the tombstoned row between the read and the write), the
+// caller falls back to `tombstone_blocked` and raiseTombstoneBlockAlert makes
+// that visible; see the caller for why that residual case is expected to
+// self-heal on the next sync.
+//
+// The 2026-08-10 production sweep found 0 reissued across 10,645 tombstones,
+// which bounds how often this fires today — but it is a point-in-time shape,
+// not a bound on the false-positive rate going forward.
+//
+// This function does NOT itself write anything — it only decides whether
+// master's row should be reclaimed. Issue #427's option 1 (id reclaim) has
+// SHIPPED and is the caller (bookReimport.ts's applyTsvRows) that acts on this
+// verdict; this function is unchanged by that — it still only answers "same
+// reference or different?", exactly as before.
+//
+// Pure (no D1) so it is regression-testable — see reimportClassify.test.mjs.
+export interface TombstoneRef {
+  refRaw?: string | null;
+  chapter: number;
+  verse: number;
+}
+
+function normalizeRef(r: TombstoneRef): string {
+  const raw = (r.refRaw ?? "").trim().replace(/\s+/g, "");
+  if (raw !== "") return raw;
+  return `${r.chapter}:${r.verse}`;
+}
+
+export function isReissuedTombstone(stored: TombstoneRef, incoming: TombstoneRef): boolean {
+  return normalizeRef(stored) !== normalizeRef(incoming);
+}
