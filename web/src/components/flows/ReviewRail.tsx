@@ -204,9 +204,36 @@ export function ReviewRail({
                 {activeKind === "tn" ? "N" : "Q"}
               </Box>
               <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="body2" fontWeight={600} noWrap>
-                  {item.ref}
-                </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    fontWeight={600}
+                    noWrap
+                    sx={{ textDecoration: item.trashed ? "line-through" : "none", minWidth: 0 }}
+                  >
+                    {item.ref}
+                  </Typography>
+                  {item.trashed && (
+                    <Box
+                      component="span"
+                      sx={{
+                        flex: "none",
+                        fontSize: "0.6rem",
+                        fontWeight: 700,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        color: "text.secondary",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 0.5,
+                        px: 0.5,
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      Trashed
+                    </Box>
+                  )}
+                </Box>
                 <Typography variant="caption" color="text.secondary" noWrap component="div">
                   {item.secondary}
                 </Typography>
