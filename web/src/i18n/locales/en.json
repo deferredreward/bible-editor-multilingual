@@ -310,7 +310,7 @@
     },
     "aiService": {
       "title": "AI service",
-      "intro": "Choose which AI runs this org's translation pipeline jobs (translating notes, questions, words, and articles) — the shared unfoldingWord subscription, or your own provider with your own API key. Other AI features, like note generation and quick drafts, always use the shared unfoldingWord subscription regardless of this setting. Important: once you save a key here it cannot be viewed again, only replaced or cleared.",
+      "intro": "Choose which AI provider runs this org's translation pipeline jobs (translating notes, questions, words, and articles). Gemini is the recommended starting point — enter your own API key to use it. Other AI features, like note generation and quick drafts, always use the shared unfoldingWord subscription regardless of this setting. Important: once you save a key here it cannot be viewed again, only replaced or cleared.",
       "providerLabel": "Provider",
       "provider": {
         "default": "Default (uW subscription)",
@@ -326,7 +326,7 @@
       "replace": "Replace",
       "clear": "Clear",
       "clearConfirmTitle": "Clear the API key?",
-      "clearConfirmBody": "This removes the stored key and switches this org back to the default (uW subscription) provider.",
+      "clearConfirmBody": "This removes the stored key. You'll need to choose a provider and enter a new API key before pipeline jobs can run with a BYO key again.",
       "clearConfirmConfirm": "Clear key",
       "encryptionUnavailable": "Bringing your own AI key isn't enabled on this deployment yet — an admin needs to set the AI_KEY_WRAPPING_KEY secret.",
       "notMigrated": "This organization's database is behind on migrations — an admin needs to apply the AI provider migration before a key can be saved.",

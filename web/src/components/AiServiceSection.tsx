@@ -26,7 +26,11 @@ import SaveIcon from "@mui/icons-material/Save";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type AiProviderSettings } from "../sync/api";
 
-const PROVIDER_ORDER = ["default", "claude", "openai", "gemini", "xai"] as const;
+// Temporary: hide the shared uW subscription ("default") from the picker and
+// steer orgs toward Gemini (bsoj has a key; Gemini/Grok have been strongest for
+// translation). Backend still accepts provider=default / Clear → default.
+const PROVIDER_ORDER = ["gemini", "xai", "claude", "openai"] as const;
+const UI_DEFAULT_PROVIDER = "gemini" as const;
 
 // Same shape/contract as prefsConflict.ts's currentPrefsFromConflict, just for
 // the ai-provider row instead of TranslationPrefs — kept local since that
@@ -57,20 +61,31 @@ export function AiServiceSection() {
   const save = useSaveState();
 
   // Draft form state, seeded from `settings` once loaded.
-  const [draftProvider, setDraftProvider] = useState<string>("default");
+  const [draftProvider, setDraftProvider] = useState<string>(UI_DEFAULT_PROVIDER);
   const [draftModel, setDraftModel] = useState<string>("");
   const [apiKey, setApiKey] = useState("");
   const [replacing, setReplacing] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
 
+  // Map a server row into draft fields. provider=default is no longer selectable,
+  // so treat it as an empty slate pre-filled with Gemini + its first model.
+  const applySettingsToDraft = (res: AiProviderSettings) => {
+    if (res.provider === "default") {
+      setDraftProvider(UI_DEFAULT_PROVIDER);
+      setDraftModel(res.catalog.models[UI_DEFAULT_PROVIDER]?.[0] ?? "");
+    } else {
+      setDraftProvider(res.provider);
+      setDraftModel(res.model ?? "");
+    }
+  };
+
   const load = async () => {
     setLoadError(false);
     try {
       const res = await api.getAiProvider();
       setSettings(res);
-      setDraftProvider(res.provider);
-      setDraftModel(res.model ?? "");
+      applySettingsToDraft(res);
     } catch {
       setLoadError(true);
     }
@@ -98,27 +113,23 @@ export function AiServiceSection() {
   }
 
   const catalog = settings.catalog;
-  const modelsForProvider = draftProvider === "default" ? [] : catalog.models[draftProvider] ?? [];
+  const modelsForProvider = catalog.models[draftProvider] ?? [];
   const encryptionAvailable = settings.encryptionAvailable;
   // A stored key applies to `draftProvider` only when the draft hasn't been
   // switched away from the saved provider — an OpenAI key is meaningless to
   // Gemini (same reasoning as the server's applyWrite carry-over guard).
   const hasStoredKeyForDraft = settings.configured && settings.provider === draftProvider;
-  const canEditKey = draftProvider !== "default";
-  const showKeyField = canEditKey && (!hasStoredKeyForDraft || replacing);
+  const showKeyField = !hasStoredKeyForDraft || replacing;
   const keyRequired = showKeyField && apiKey.trim() === "";
-  // Only the key field and Replace need the wrapping secret — an org that
-  // lost it must still be able to switch providers/models or revert to
-  // Default (Clear, and Save-with-default) without it.
+  // Key field and Replace need the wrapping secret; Clear still works without it
+  // (server-side Clear wipes the key without needing to encrypt a new one).
   const keyActionsDisabled = !encryptionAvailable;
 
   const handleProviderChange = (next: string) => {
     setDraftProvider(next);
     setReplacing(false);
     setApiKey("");
-    if (next === "default") {
-      setDraftModel("");
-    } else if (next === settings.provider && settings.model) {
+    if (next === settings.provider && settings.model) {
       setDraftModel(settings.model);
     } else {
       const models = catalog.models[next] ?? [];
@@ -131,8 +142,7 @@ export function AiServiceSection() {
       const current = currentFromConflict(e.body);
       if (current) {
         setSettings(current);
-        setDraftProvider(current.provider);
-        setDraftModel(current.model ?? "");
+        applySettingsToDraft(current);
         setApiKey("");
         setReplacing(false);
       }
@@ -159,16 +169,12 @@ export function AiServiceSection() {
   const onSave = async () => {
     save.setSaving(true);
     try {
-      const body =
-        draftProvider === "default"
-          ? ({ provider: "default" } as const)
-          : apiKey.trim()
-            ? { provider: draftProvider, model: draftModel, apiKey: apiKey.trim() }
-            : { provider: draftProvider, model: draftModel };
+      const body = apiKey.trim()
+        ? { provider: draftProvider, model: draftModel, apiKey: apiKey.trim() }
+        : { provider: draftProvider, model: draftModel };
       const res = await api.putAiProvider(settings.version, body);
       setSettings(res);
-      setDraftProvider(res.provider);
-      setDraftModel(res.model ?? "");
+      applySettingsToDraft(res);
       setApiKey("");
       setReplacing(false);
       save.setMsg(t("preferences.saved"));
@@ -184,8 +190,7 @@ export function AiServiceSection() {
     try {
       const res = await api.clearAiProvider(settings.version);
       setSettings(res);
-      setDraftProvider(res.provider);
-      setDraftModel(res.model ?? "");
+      applySettingsToDraft(res);
       setApiKey("");
       setReplacing(false);
       save.setMsg(t("preferences.saved"));
@@ -197,7 +202,7 @@ export function AiServiceSection() {
     }
   };
 
-  const saveDisabled = save.saving || (!encryptionAvailable && draftProvider !== "default") || keyRequired;
+  const saveDisabled = save.saving || !encryptionAvailable || keyRequired;
 
   return (
     <Box component="section" aria-labelledby="ai-service-heading">
@@ -229,23 +234,21 @@ export function AiServiceSection() {
           ))}
         </TextField>
 
-        {draftProvider !== "default" && (
-          <TextField
-            select
-            size="small"
-            label={t("preferences.aiService.model")}
-            value={draftModel}
-            onChange={(e) => setDraftModel(e.target.value)}
-          >
-            {modelsForProvider.map((m) => (
-              <MenuItem key={m} value={m}>
-                {m}
-              </MenuItem>
-            ))}
-          </TextField>
-        )}
+        <TextField
+          select
+          size="small"
+          label={t("preferences.aiService.model")}
+          value={draftModel}
+          onChange={(e) => setDraftModel(e.target.value)}
+        >
+          {modelsForProvider.map((m) => (
+            <MenuItem key={m} value={m}>
+              {m}
+            </MenuItem>
+          ))}
+        </TextField>
 
-        {canEditKey && !showKeyField && (
+        {!showKeyField && (
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" gap={1}>
             <Typography variant="body2">
               {t("preferences.aiService.configured", { hint: settings.keyHint ?? "" })}
