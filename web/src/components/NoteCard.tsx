@@ -487,6 +487,10 @@ function NoteCardInner({
   }, [isValidated]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [aiConfirmOpen, setAiConfirmOpen] = useState(false);
+  // Guards the destructive note-level discard (Undo): reverting drops every
+  // unsaved keystroke since the last save, so the one-click control opens a
+  // confirm dialog instead of reverting inline.
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   // Template dropdown anchor (only used when a support ref has >1 variant) and
   // the body staged for the "replace existing note?" confirm dialog.
   const [templateMenuAnchor, setTemplateMenuAnchor] = useState<HTMLElement | null>(null);
@@ -1141,6 +1145,7 @@ function NoteCardInner({
             <IconButton
               size="small"
               data-reorder-arrow="up"
+              aria-label={t("words.moveUp")}
               onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
               disabled={!onMoveUp}
               sx={{ p: 0.25, color: "text.disabled", ...(flashArrow === "up" ? reorderFlashSx : null) }}
@@ -1154,6 +1159,7 @@ function NoteCardInner({
             <IconButton
               size="small"
               data-reorder-arrow="down"
+              aria-label={t("words.moveDown")}
               onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
               disabled={!onMoveDown}
               sx={{ p: 0.25, color: "text.disabled", ...(flashArrow === "down" ? reorderFlashSx : null) }}
@@ -1295,36 +1301,11 @@ function NoteCardInner({
             />
           </Tooltip>
         )}
-        {/* Gated on hasRowDiff alone (not `active`): a dirty note must show
-            its Undo button whether or not the card is focused. Tying it to
-            `active` made the button appear only after the activating click,
-            and clicking Save on an inactive-but-dirty card (the catch-up
-            save) would activate the card mid-click, inject this Undo button
-            to Save's left, and shove Save out from under the cursor — so the
-            first click landed on nothing and a second was needed. */}
-        {hasRowDiff && (
-          <Tooltip
-            title={
-              savePendingVersion !== null
-                ? t("noteCard.cantDiscardInFlight")
-                : t("noteCard.discardUnsaved")
-            }
-          >
-            <span>
-              <IconButton
-                size="small"
-                onClick={handleUndo}
-                disabled={savePendingVersion !== null}
-                sx={{
-                  p: 0.25,
-                  color: savePendingVersion !== null ? "action.disabled" : "warning.main",
-                }}
-              >
-                <UndoIcon fontSize="inherit" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        )}
+        {/* Save is rendered BEFORE Undo so its slot stays stable: a note
+            going dirty appends the Undo control to Save's RIGHT rather than
+            inserting it to Save's left and shoving Save out from under the
+            cursor (the old order cost a click, and — worse — put an unlabeled
+            one-click discard exactly where the user was aiming for Save). */}
         <Tooltip
           title={
             savePendingVersion !== null
@@ -1337,6 +1318,7 @@ function NoteCardInner({
           <span>
             <IconButton
               size="small"
+              aria-label={t("noteCard.savePending")}
               onClick={flushPending}
               disabled={!hasRowDiff || savePendingVersion !== null || readOnly}
               sx={{
@@ -1351,15 +1333,43 @@ function NoteCardInner({
             </IconButton>
           </span>
         </Tooltip>
+        {/* Gated on hasRowDiff alone (not `active`): a dirty note must show
+            its Undo button whether or not the card is focused. The discard is
+            destructive (drops every unsaved keystroke) and reachable in one
+            click, so it opens a confirm dialog rather than reverting inline. */}
+        {hasRowDiff && (
+          <Tooltip
+            title={
+              savePendingVersion !== null
+                ? t("noteCard.cantDiscardInFlight")
+                : t("noteCard.discardUnsaved")
+            }
+          >
+            <span>
+              <IconButton
+                size="small"
+                aria-label={t("noteCard.discardUnsaved")}
+                onClick={() => setDiscardConfirmOpen(true)}
+                disabled={savePendingVersion !== null}
+                sx={{
+                  p: 0.25,
+                  color: savePendingVersion !== null ? "action.disabled" : "warning.main",
+                }}
+              >
+                <UndoIcon fontSize="inherit" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        )}
         {!readOnly && (
           <>
             <Tooltip title={t("noteCard.addNoteAfter")}>
-              <IconButton size="small" onClick={onInsertAfter} color="success" sx={{ p: 0.25 }}>
+              <IconButton size="small" aria-label={t("noteCard.addNoteAfter")} onClick={onInsertAfter} color="success" sx={{ p: 0.25 }}>
                 <AddIcon fontSize="inherit" />
               </IconButton>
             </Tooltip>
             <Tooltip title={t("noteCard.deleteNote")}>
-              <IconButton size="small" onClick={handleDelete} color="error" sx={{ p: 0.25 }}>
+              <IconButton size="small" aria-label={t("noteCard.deleteNote")} onClick={handleDelete} color="error" sx={{ p: 0.25 }}>
                 <DeleteOutlineIcon fontSize="inherit" />
               </IconButton>
             </Tooltip>
@@ -1375,7 +1385,7 @@ function NoteCardInner({
               sx={{ height: 22, fontSize: 11, color: "text.secondary", borderColor: "divider" }}
             />
             <Tooltip title={t("noteCard.restoreNote")}>
-              <IconButton size="small" onClick={onRestore} color="primary" sx={{ p: 0.25 }}>
+              <IconButton size="small" aria-label={t("noteCard.restoreNote")} onClick={onRestore} color="primary" sx={{ p: 0.25 }}>
                 <RestoreFromTrashIcon fontSize="inherit" />
               </IconButton>
             </Tooltip>
@@ -1919,6 +1929,25 @@ function NoteCardInner({
             variant="contained"
           >
             {t("noteCard.replace")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={discardConfirmOpen} onClose={() => setDiscardConfirmOpen(false)}>
+        <DialogTitle>{t("noteCard.discardConfirmTitle")}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>{t("noteCard.discardConfirmBody")}</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDiscardConfirmOpen(false)}>{t("common.cancel")}</Button>
+          <Button
+            onClick={() => {
+              setDiscardConfirmOpen(false);
+              handleUndo();
+            }}
+            color="warning"
+            variant="contained"
+          >
+            {t("noteCard.discardConfirmAction")}
           </Button>
         </DialogActions>
       </Dialog>
