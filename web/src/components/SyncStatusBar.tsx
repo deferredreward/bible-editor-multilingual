@@ -386,15 +386,27 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
       // book/chapter/verse this variant does not carry.
       location.hash = `#/templates/${encodeURIComponent(m.templateId)}`;
     } else if (m.kind === "verse") {
-      // In the new UI, onNavigate emits the un-prefixed #/{book}/{chapter} hash
-      // which resolves to the classic Shell catch-all — route to the new-UI
-      // scripture flow hash instead (#229).
+      // Deliberately use 3-segment #/scripture/B/C/V for chrome: App.tsx's
+      // 1–2 segment #/scripture form opens translateScripture (no verse), while
+      // the verse-level form still lands on the scripture chrome that can seek
+      // to the draft's verse (#229).
       if (flowRouting) location.hash = `#/scripture/${m.book}/${m.chapter}/${m.verse}`;
       else onNavigate?.(m.book, m.chapter, m.verse);
     } else {
-      // Row draft (the only remaining kind). Same reasoning as verse above.
-      if (flowRouting) location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}`;
-      else onNavigate?.(m.book, m.chapter, m.verse);
+      // Row draft — branch by rowKind so tq/twl don't land on Translate Notes.
+      if (flowRouting) {
+        if (m.rowKind === "tn") {
+          location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}`;
+        } else if (m.rowKind === "tq") {
+          // Questions hash is chapter-scoped (no verse segment in parseHash).
+          location.hash = `#/questions/${m.book}/${m.chapter}`;
+        } else {
+          // Words & Articles is book-scoped (#/words/{book} -> translateWords).
+          location.hash = `#/words/${m.book}`;
+        }
+      } else {
+        onNavigate?.(m.book, m.chapter, m.verse);
+      }
     }
     setDraftMenuEl(null);
   };
