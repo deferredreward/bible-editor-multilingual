@@ -373,7 +373,7 @@ chapters.get("/:book", async (c) => {
               SUM(CASE WHEN kind='tq' THEN 1 ELSE 0 END) AS tq,
               SUM(CASE WHEN kind='twl' THEN 1 ELSE 0 END) AS twl
        FROM (
-         SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2
+         SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2 AND verse > 0
          UNION ALL
          SELECT chapter, 'tn' FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
          UNION ALL
