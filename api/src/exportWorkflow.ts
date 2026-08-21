@@ -29,6 +29,7 @@ import {
   deleteDcsBranch,
   ensureDcsPr,
   exportTsvShrinkRefused,
+  classifyMasterRead,
   findDcsOpenPr,
   recreateExportBranchFromMaster,
   updateDcsPrBranch,
@@ -61,7 +62,7 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
-import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
+import { dcsRawUrl, dcsResourceFile, fetchText, fetchTextWithStatus, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
 import { listRangeHeldOutKeys } from "./bookSource.ts";
 import {
@@ -1879,14 +1880,23 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const raw = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
-    if (raw == null) return { ok: false, detail: "master_unreadable", masterRows: null };
+    // Status-aware read so a 404 ("file doesn't exist on master yet") is a
+    // first-export bootstrap rather than an unverifiable read — and so a private
+    // org's raw endpoint gets the DCS service token (fetchText sent none). Any
+    // other non-200 / network error / truncated body still fails closed.
+    const decision = classifyMasterRead(
+      await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
+    );
+    if (decision.kind === "unreadable") return { ok: false, detail: "master_unreadable", masterRows: null };
+    const raw = decision.kind === "content" ? decision.text : "";
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
+    // A bootstrap (404) reads as empty → masterRows 0 → an empty master never
+    // refuses (see exportTsvShrinkRefused), so the first export is allowed.
     const masterRows = Math.max(0, raw.split(/\r?\n/).filter((l) => l.length > 0).length - 1);
     if (exportTsvShrinkRefused(renderedRows, masterRows)) {
       return { ok: false, detail: `shrink_${masterRows - renderedRows}_of_${masterRows}`, masterRows };
     }
-    return { ok: true, detail: "ok", masterRows };
+    return { ok: true, detail: decision.kind === "bootstrap" ? "bootstrap" : "ok", masterRows };
   }
 
   // Fetch destination master's current USFM and decide whether this ULT/UST
@@ -1903,8 +1913,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
-    const masterUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
-    if (masterUsfm == null) return { ok: false, detail: "master_unreadable" };
+    // Same first-export bootstrap as checkTsvShrink: a 404 means there is no
+    // master USFM to lose alignment against yet (compare against empty), while a
+    // transient/truncated read still fails closed as master_unreadable.
+    const decision = classifyMasterRead(
+      await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
+    );
+    if (decision.kind === "unreadable") return { ok: false, detail: "master_unreadable" };
+    const masterUsfm = decision.kind === "content" ? decision.text : "";
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);
     if (result.refused) {
       const sample = result.offenders
@@ -1918,7 +1934,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         .join("; ");
       return { ok: false, detail: `align_loss_${result.offenders.length}:${sample}` };
     }
-    return { ok: true, detail: "ok" };
+    return { ok: true, detail: decision.kind === "bootstrap" ? "bootstrap" : "ok" };
   }
 
   /** Non-alignment body must match destination for textReadOnly lanes. */

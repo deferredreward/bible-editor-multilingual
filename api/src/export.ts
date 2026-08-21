@@ -192,6 +192,38 @@ export function exportTsvShrinkRefused(renderedRows: number, masterRows: number)
   return shrinkRefused(renderedRows, masterRows);
 }
 
+// ── First-export bootstrap decision for the shrink/alignment guards ──────────
+// How a shrink/alignment guard should treat the result of reading the
+// destination master file. Split out (and pure) so the 404-bootstrap vs
+// fail-closed decision is unit-tested rather than buried in the workflow's
+// private methods.
+//
+//   • "content"    — a COMPLETE body was read (200, not truncated) → compare it.
+//   • "bootstrap"  — the file does not exist on master yet (HTTP 404). A
+//                    brand-new file cannot shrink or lose alignment, so the guard
+//                    treats master as empty (0 rows / no alignments) and allows the
+//                    commit. The "stale D1 must never overwrite master" invariant
+//                    is untouched — there is nothing to overwrite.
+//   • "unreadable" — any other non-200, a network error (status 0), or a truncated
+//                    read → FAIL CLOSED. We cannot prove master's size, so we must
+//                    not risk clobbering a populated file (the twl_PSA data-loss
+//                    class). This discrimination MUST be exact: a transient 5xx or
+//                    truncated read must never be mistaken for a bootstrap.
+export type MasterReadDecision =
+  | { kind: "content"; text: string }
+  | { kind: "bootstrap" }
+  | { kind: "unreadable" };
+
+export function classifyMasterRead(res: {
+  status: number;
+  text: string | null;
+  truncated?: boolean;
+}): MasterReadDecision {
+  if (res.status === 200 && res.text != null && !res.truncated) return { kind: "content", text: res.text };
+  if (res.status === 404) return { kind: "bootstrap" };
+  return { kind: "unreadable" };
+}
+
 // ── Export alignment-shrink guard (ULT/UST verse backstop) ───────────────────
 // The TSV shrink guard above protects row counts; this protects \zaln word
 // alignment on the scripture (verse) resources, where the row==line model

@@ -5,7 +5,7 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
+import { buildTnTsv, buildTwlTsv, buildUsfm, classifyMasterRead, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
 import { CorruptContentJsonError } from "./contentJson.ts";
 
 function assert(cond, msg) {
@@ -536,6 +536,29 @@ function utf8Base64(s) {
   assert(exportTsvShrinkRefused(0, 0) === false, `empty master never refuses`);
   // A render to zero rows against a populated master is the strongest signal.
   assert(exportTsvShrinkRefused(0, 4000) === true, `render-to-empty against populated master refused`);
+}
+
+// --- classifyMasterRead: first-export bootstrap vs fail-closed (issue #235) ---
+// The shrink/alignment guards must let a brand-new org/book land its FIRST
+// export (the target file 404s because it doesn't exist on master yet) WITHOUT
+// ever mistaking a transient 5xx / network / truncated read for a bootstrap and
+// clobbering a populated master (the twl_PSA data-loss class).
+{
+  // 200 with a complete body → compare it normally.
+  const content = classifyMasterRead({ status: 200, text: "a\tb\n1\t2\n" });
+  assert(content.kind === "content" && content.text === "a\tb\n1\t2\n", `200 + body → content`);
+  // 404 → bootstrap: file does not exist on master yet → treat as empty, allow.
+  assert(classifyMasterRead({ status: 404, text: null }).kind === "bootstrap", `404 → bootstrap (first export allowed)`);
+  // A truncated 200 (short body vs Content-Length) is NEVER content — fail closed.
+  assert(classifyMasterRead({ status: 200, text: null, truncated: true }).kind === "unreadable", `truncated 200 → unreadable (fail closed)`);
+  // Auth / server / network failures all fail closed, never bootstrap.
+  assert(classifyMasterRead({ status: 401, text: null }).kind === "unreadable", `401 → unreadable (fail closed)`);
+  assert(classifyMasterRead({ status: 403, text: null }).kind === "unreadable", `403 → unreadable (fail closed)`);
+  assert(classifyMasterRead({ status: 500, text: null }).kind === "unreadable", `500 → unreadable (fail closed)`);
+  assert(classifyMasterRead({ status: 0, text: null }).kind === "unreadable", `network error (status 0) → unreadable (fail closed)`);
+  // Bootstrap chains into the pure guards as an empty master → never refuses.
+  assert(exportTsvShrinkRefused(0, 0) === false, `bootstrap (0 master rows) never refuses the TSV guard`);
+  assert(usfmAlignmentShrinkRefused("", "").refused === false, `bootstrap (empty master USFM) never refuses the alignment guard`);
 }
 
 // --- usfmAlignmentShrinkRefused: ULT/UST verse alignment backstop ---
