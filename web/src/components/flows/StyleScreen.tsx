@@ -896,9 +896,9 @@ function QaRulesSection() {
     <Panel
       id="qa"
       title="QA rules"
-      intro="Deterministic checks with severities. The structural note checks (quote / ID / reference integrity) already run when a draft is applied; this screen for enabling, tuning, and adding rules is designed but not built."
-      headerExtra={<FlowStatusChip kind="edited" label="Design-complete, build-deferred" />}
-      footState="No API exists for this section yet"
+      intro="Deterministic checks with severities. The structural note checks (quote / ID / reference integrity) already run when a draft is applied; this screen for enabling, tuning, and adding rules is coming soon."
+      headerExtra={<FlowStatusChip kind="edited" label="Coming soon" />}
+      footState="Coming soon"
     >
       <Stack spacing={1}>
         {QA_RULES.map((rule) => (

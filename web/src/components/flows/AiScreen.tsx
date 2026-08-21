@@ -533,16 +533,15 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
             API-triggered runs
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Future: pipelines will also be startable and queryable via API tokens, for automation
-            outside this UI.
+            Coming soon: start and query pipelines via API tokens, for automation outside this UI.
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ p: 1.5, borderTop: 1, borderColor: "divider" }}>
           <Typography variant="caption" color="text.secondary">
-            Not built yet
+            Coming soon
           </Typography>
           <Box sx={{ flex: 1 }} />
-          <Tooltip title="No backend for API tokens exists yet">
+          <Tooltip title="API token management is coming soon">
             <span>
               <Button size="small" disabled>
                 Manage API tokens

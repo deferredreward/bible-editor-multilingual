@@ -268,7 +268,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
           </ToggleButton>
         </ToggleButtonGroup>
         <Typography variant="caption" color="text.secondary">
-          Two focused views, not a shared tab bar — tW and tA never share one content region.
+          Switch between translationWords and translationAcademy — each opens in its own focused view.
         </Typography>
       </Stack>
 
