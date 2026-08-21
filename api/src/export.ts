@@ -192,6 +192,24 @@ export function exportTsvShrinkRefused(renderedRows: number, masterRows: number)
   return shrinkRefused(renderedRows, masterRows);
 }
 
+// ── Master-fetch gate (shared by both export shrink guards) ──────────────────
+// Classifies the authenticated read of the export destination's master file.
+// A clean 404 means the file does not exist yet — the first export of a new
+// org/book into skeleton repos (issue #235): nothing can shrink or lose
+// alignment, so the guards may allow the commit. Every OTHER failure (401,
+// 5xx, truncated read, network error) stays fail-closed: we could not VERIFY
+// master, which is not the same as knowing it's absent.
+export function masterFetchGate(res: {
+  status: number;
+  text: string | null;
+}): { kind: "content"; text: string } | { kind: "bootstrap" } | { kind: "unreadable" } {
+  if (res.status === 404) return { kind: "bootstrap" };
+  // Content requires BOTH a 200 and a body: an error status carrying an error
+  // body must never be compared against the render as if it were master.
+  if (res.status === 200 && res.text != null) return { kind: "content", text: res.text };
+  return { kind: "unreadable" };
+}
+
 // ── Export alignment-shrink guard (ULT/UST verse backstop) ───────────────────
 // The TSV shrink guard above protects row counts; this protects \zaln word
 // alignment on the scripture (verse) resources, where the row==line model

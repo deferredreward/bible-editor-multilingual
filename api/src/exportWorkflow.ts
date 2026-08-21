@@ -30,6 +30,7 @@ import {
   ensureDcsPr,
   exportTsvShrinkRefused,
   findDcsOpenPr,
+  masterFetchGate,
   recreateExportBranchFromMaster,
   updateDcsPrBranch,
   usfmAlignmentShrinkRefused,
@@ -61,7 +62,7 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
-import { dcsRawUrl, dcsResourceFile, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
+import { dcsRawUrl, dcsResourceFile, fetchText, fetchTextWithStatus, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
 import { listRangeHeldOutKeys } from "./bookSource.ts";
 import {
@@ -1879,8 +1880,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const raw = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
-    if (raw == null) return { ok: false, detail: "master_unreadable", masterRows: null };
+    const gate = masterFetchGate(
+      await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
+    );
+    // First export of a new org/book: master has no file yet, so there is
+    // nothing to shrink — allow the commit (#235). Any non-404 failure stays
+    // fail-closed below.
+    if (gate.kind === "bootstrap") {
+      // Callers only read `detail` on refusal, so log the pass — it's the only
+      // trace that this commit skipped the shrink comparison legitimately.
+      console.log("shrink guard: bootstrap (no master file yet)", { book, resource, destOwner, destRepo });
+      return { ok: true, detail: "bootstrap_new_file", masterRows: null };
+    }
+    if (gate.kind === "unreadable") return { ok: false, detail: "master_unreadable", masterRows: null };
+    const raw = gate.text;
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
     const masterRows = Math.max(0, raw.split(/\r?\n/).filter((l) => l.length > 0).length - 1);
     if (exportTsvShrinkRefused(renderedRows, masterRows)) {
@@ -1903,8 +1916,16 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const cfg = await getProjectConfig(this.env);
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
-    const masterUsfm = await fetchText(dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef));
-    if (masterUsfm == null) return { ok: false, detail: "master_unreadable" };
+    const gate = masterFetchGate(
+      await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
+    );
+    // First export of a new org/book: no master file, no alignments to lose (#235).
+    if (gate.kind === "bootstrap") {
+      console.log("alignment guard: bootstrap (no master file yet)", { book, resource, destOwner, destRepo });
+      return { ok: true, detail: "bootstrap_new_file" };
+    }
+    if (gate.kind === "unreadable") return { ok: false, detail: "master_unreadable" };
+    const masterUsfm = gate.text;
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);
     if (result.refused) {
       const sample = result.offenders
