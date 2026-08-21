@@ -5,7 +5,7 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
+import { buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
 import { CorruptContentJsonError } from "./contentJson.ts";
 
 function assert(cond, msg) {
@@ -536,6 +536,24 @@ function utf8Base64(s) {
   assert(exportTsvShrinkRefused(0, 0) === false, `empty master never refuses`);
   // A render to zero rows against a populated master is the strongest signal.
   assert(exportTsvShrinkRefused(0, 4000) === true, `render-to-empty against populated master refused`);
+}
+
+// --- masterFetchGate: first-export bootstrap vs fail-closed (#235) ---
+// A clean 404 on the destination master file means "file doesn't exist yet"
+// (new org / newly imported book into skeleton repos) — the shrink guards may
+// allow the commit. Every other failure must stay fail-closed as unreadable.
+{
+  const gate = masterFetchGate;
+  assert(gate({ status: 404, text: null }).kind === "bootstrap", `404 → bootstrap (first export allowed)`);
+  assert(gate({ status: 200, text: "a\tb\nc\td" }).kind === "content", `200 with body → content`);
+  assert(gate({ status: 200, text: "a\tb\nc\td" }).text === "a\tb\nc\td", `content carries the body through`);
+  assert(gate({ status: 401, text: null }).kind === "unreadable", `401 (bad token) stays fail-closed`);
+  assert(gate({ status: 403, text: null }).kind === "unreadable", `403 stays fail-closed`);
+  assert(gate({ status: 500, text: null }).kind === "unreadable", `500 stays fail-closed`);
+  assert(gate({ status: 0, text: null }).kind === "unreadable", `network error (status 0) stays fail-closed`);
+  // fetchTextWithStatus reports a truncated read as {status:200, text:null} —
+  // that must NOT look like content or bootstrap.
+  assert(gate({ status: 200, text: null }).kind === "unreadable", `truncated 200 stays fail-closed`);
 }
 
 // --- usfmAlignmentShrinkRefused: ULT/UST verse alignment backstop ---
