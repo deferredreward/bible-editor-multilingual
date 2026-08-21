@@ -455,7 +455,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
           {/* No activity/audit-log endpoint exists yet (see docs/flows/00b-api-inventory.md) —
               honest empty state rather than fabricated entries. */}
           <Typography variant="body2" color="text.secondary">
-            No activity feed yet — this workspace has no audit-log endpoint to read from.
+            No activity feed yet — recent activity will appear here once it's available.
           </Typography>
         </Box>
       </Box>
