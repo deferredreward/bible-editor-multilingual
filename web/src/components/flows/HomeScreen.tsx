@@ -15,8 +15,8 @@ import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import { FlowNav } from "./FlowNav";
 import { LockBanner, ReadyBanner } from "./FlowBanners";
-import { realChapters } from "../../lib/bookSummary";
 import type { FlowScreenContext } from "./types";
+import { realChapters } from "../../lib/bookSummary";
 import {
   api,
   ApiError,
@@ -243,10 +243,13 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
     return pipelineJobs.filter((j) => j.state === "done" && j.notified_user_at === null && j.book === book);
   }, [pipelineJobs, book]);
 
-  // Filter the phantom chapter 0 (front:intro) the same way every other
-  // BookSummary consumer does — HomeScreen was the lone hold-out, so it
-  // over-counted chapters and rolled chapter-0 rows into the totals (#230).
-  const chapters = realChapters(bookSummary);
+  const chapters = bookSummary?.chapters ?? [];
+  // Chapter *count* excludes the chapter-0 front-matter entry (realChapters),
+  // so a one-chapter book like OBA reports "1 chapter" not "2" (issue #230).
+  // Row totals stay computed over the full array — intro notes are real notes
+  // (see bookSummary.ts) — so tN/tQ counts are unchanged.
+  const realChapterCount = realChapters(bookSummary).length;
+  const chapterLabel = `${realChapterCount} ${realChapterCount === 1 ? "chapter" : "chapters"}`;
   const totalVerses = chapters.reduce((s, c) => s + (c.verses || 0), 0);
   const totalTn = chapters.reduce((s, c) => s + (c.tn || 0), 0);
   const totalTq = chapters.reduce((s, c) => s + (c.tq || 0), 0);
@@ -385,7 +388,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
                 title={bookSummary?.book ?? book}
                 count={`${doneInChapter} of ${versesInChapter} verses done in chapter ${chapter}`}
                 description="ULT → GLT (literal) and UST → GST (simplified), verse by verse."
-                footer={`${chapters.length} chapters, ${totalVerses} verses total`}
+                footer={`${chapterLabel}, ${totalVerses} verses total`}
                 href={`#/scripture/${book}/${chapter}/${verse}`}
                 progress={versesInChapter ? (doneInChapter / versesInChapter) * 100 : 0}
               />
@@ -394,7 +397,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
                 title="Translation notes"
                 count={`${tnApproved} of ${tnRows.length} approved in chapter ${chapter}`}
                 description="AI-drafted translation notes, one card at a time."
-                footer={`${totalTn} notes across ${chapters.length} chapters`}
+                footer={`${totalTn} notes across ${chapterLabel}`}
                 href={`#/review/${book}/${chapter}`}
                 progress={tnRows.length ? (tnApproved / tnRows.length) * 100 : 0}
                 progressTone="ok"
@@ -404,7 +407,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
                 title="Questions"
                 count={`${tqApproved} of ${tqRows.length} approved in chapter ${chapter}`}
                 description="AI-drafted translation questions, one card at a time."
-                footer={`${totalTq} questions across ${chapters.length} chapters`}
+                footer={`${totalTq} questions across ${chapterLabel}`}
                 href={`#/review/${book}/${chapter}`}
                 progress={tqRows.length ? (tqApproved / tqRows.length) * 100 : 0}
                 progressTone="ok"
