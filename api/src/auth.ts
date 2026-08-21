@@ -863,6 +863,12 @@ export async function authMe(c: AppContext): Promise<Response> {
     userId,
     username: username ?? null,
     role: role ?? null,
+    // Super-admin is otherwise invisible to the client: effectiveRole collapses
+    // a super-admin down to "admin", indistinguishable from a plain workspace
+    // admin. The Observe screen needs this flag so it can skip the super-admin-
+    // only /api/workspaces/pool call (a guaranteed 403 for everyone else) and
+    // hide the pool controls that non-super-admins can't use — see issue #241.
+    superAdmin: !!username && isSuperAdmin(c.env, username),
     lastBook: row?.last_book ?? null,
     lastChapter: row?.last_chapter ?? null,
     lastVerse: row?.last_verse ?? null,

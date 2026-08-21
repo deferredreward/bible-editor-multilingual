@@ -247,6 +247,11 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const [poolBusyMessage, setPoolBusyMessage] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
+  // Pool routes (/api/workspaces/pool*) are super-admin only — a plain workspace
+  // admin gets an honest 403. `role` collapses super-admin to "admin", so we
+  // key the pool call and controls off the dedicated superAdmin flag (issue
+  // #241) to avoid firing a guaranteed-403 request and rendering dead buttons.
+  const isSuperAdmin = !!me?.superAdmin;
   const cfg = useProjectConfig();
   const eyebrow = cfg
     ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
@@ -295,7 +300,9 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   }, [isAdmin]);
 
   const loadPool = useCallback(() => {
-    if (!isAdmin) return;
+    // Only super-admins can read the pool; skip the request entirely for
+    // everyone else so we don't fire a guaranteed 403 (issue #241).
+    if (!isSuperAdmin) return;
     setPoolError(null);
     observeFetch<PoolStatus>("/api/workspaces/pool")
       .then((res) => setPool(res))
@@ -309,7 +316,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
           setPoolError({ status: 0, message: "Failed to load." });
         }
       });
-  }, [isAdmin]);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     loadContextPack();
@@ -612,7 +619,19 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
           </Stack>
         </Panel>
 
-        {/* Spare workspace pool */}
+        {/* Spare workspace pool — super-admin only. Non-super-admins see just an
+            explanatory note instead of a doomed fetch and dead action buttons. */}
+        {!isSuperAdmin ? (
+          <Panel
+            title="Spare workspace pool"
+            subtitle="Pre-provisioned D1 bindings, claimed on demand when a new org needs a database."
+            action={<Chip size="small" label="Super-admin" color="primary" variant="outlined" />}
+          >
+            <Typography variant="body2" color="text.secondary">
+              Managing the spare workspace pool needs super-admin access, so it isn't shown here.
+            </Typography>
+          </Panel>
+        ) : (
         <Panel
           title="Spare workspace pool"
           subtitle="Pre-provisioned D1 bindings, claimed on demand when a new org needs a database."
@@ -681,6 +700,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
             </>
           )}
         </Panel>
+        )}
       </Stack>
 
       <PoolActionDialog

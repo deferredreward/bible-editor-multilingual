@@ -660,6 +660,11 @@ export interface MeResponse {
   userId: number;
   username: string | null;
   role: Role | null;
+  // Whether this account is a super-admin (SUPER_ADMINS env allowlist). The
+  // `role` above collapses super-admin to "admin", so this is the only signal
+  // that distinguishes the two client-side. Absent on an older/cached response
+  // — callers treat that as "not a super-admin". See issue #241 / ObserveScreen.
+  superAdmin?: boolean;
   // Persisted last-visited location. Used to restore the view after sign-in
   // (which round-trips through DCS OAuth and loses the URL hash).
   lastBook: string | null;
