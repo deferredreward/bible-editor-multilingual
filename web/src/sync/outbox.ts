@@ -889,10 +889,14 @@ function isSortOrderOnlyPatch(patch: Record<string, unknown>): boolean {
 
 async function drainPass() {
   const youngInFlightEligibleAt = await recoverInFlight();
-  // Targets with an unresolved conflict are skipped for *this* pass but
-  // we keep draining other targets so a single hot row doesn't freeze
-  // the entire queue.
-  const blocked = new Set<string>();
+  // Targets this pass has itself just parked as conflict/retry-backoff
+  // (below) — must stay blocked for the rest of the pass regardless of what
+  // a later snapshot shows, since the backoff hasn't elapsed yet. This is
+  // distinct from the per-iteration recompute below: unlike a live status
+  // check, nothing will flip these back to pending mid-pass, so pinning is
+  // correct here and doesn't reintroduce upstream issue #515. Blocking is
+  // per-target either way, so a single hot row doesn't freeze the queue.
+  const pinnedBlocked = new Set<string>();
   while (true) {
     // Offline — nothing can leave the machine, so dispatching would only
     // burn attempts against guaranteed failures. Park the queue (mirrors
@@ -908,6 +912,17 @@ async function drainPass() {
     // then get silently reverted when the older op re-arms. Fatal
     // (non-revivable) failed ops are excluded from this — nothing will ever
     // re-send them, so blocking on them would freeze the target forever.
+    //
+    // Recomputed fresh from this iteration's snapshot every time (seeded
+    // from pinnedBlocked, not accumulated into it) — upstream issue #515: if
+    // retry() or reviveMaxAttemptsFailed() flips a blocking op back to
+    // pending while this pass is running, their own drain() call is a
+    // no-op (a pass is already active), so this loop is the only thing
+    // that will ever notice. A blocked set that only ever grew would keep
+    // treating that target as blocked for the rest of the pass even after
+    // its live status no longer justifies it, stranding the revived op
+    // until some unrelated trigger fires.
+    const blocked = new Set(pinnedBlocked);
     for (const o of ops) {
       if (o.status === "conflict" || isMaxAttemptsBlocked(o)) blocked.add(targetKey(o.target));
     }
@@ -1054,7 +1069,7 @@ async function drainPass() {
             stored.status = "conflict";
             stored.conflictCurrent = result.current;
             stored.lastError = "version_mismatch";
-            blocked.add(targetKey(stored.target));
+            pinnedBlocked.add(targetKey(stored.target));
           }
           return "put";
         });
@@ -1073,7 +1088,7 @@ async function drainPass() {
             stored.status = "pending";
             stored.lastError = result.reason;
             scheduleDrain(backoffMs(stored.attempts));
-            blocked.add(targetKey(stored.target));
+            pinnedBlocked.add(targetKey(stored.target));
           }
           return "put";
         });
