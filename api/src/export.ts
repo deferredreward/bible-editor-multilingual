@@ -203,8 +203,11 @@ export function masterFetchGate(res: {
   status: number;
   text: string | null;
 }): { kind: "content"; text: string } | { kind: "bootstrap" } | { kind: "unreadable" } {
-  if (res.text != null) return { kind: "content", text: res.text };
-  return res.status === 404 ? { kind: "bootstrap" } : { kind: "unreadable" };
+  if (res.status === 404) return { kind: "bootstrap" };
+  // Content requires BOTH a 200 and a body: an error status carrying an error
+  // body must never be compared against the render as if it were master.
+  if (res.status === 200 && res.text != null) return { kind: "content", text: res.text };
+  return { kind: "unreadable" };
 }
 
 // ── Export alignment-shrink guard (ULT/UST verse backstop) ───────────────────

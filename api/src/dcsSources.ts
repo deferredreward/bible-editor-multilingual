@@ -409,6 +409,12 @@ function repoForResource(cfg: ProjectConfig, resource: ReimportResource): string
 // {repo, in-repo path} for a (book, resource). Mirror of dcsUrls()'s shape; null
 // for an unknown book. Keep in sync with dcsUrls — the path formulas are
 // identical (USFM `${num}-${BOOK}.usfm`, TSV `${res}_${BOOK}.tsv`).
+//
+// ALSO keep in sync with resourceTargetsFor's path() in export.ts: the export
+// shrink guards READ master at this path while the commit WRITES the target
+// path. Since #235 a 404 on the read is treated as "file doesn't exist yet"
+// (bootstrap-allow), so a drift between the two formulas would silently bypass
+// the guards instead of failing closed.
 export function dcsResourceFile(
   cfg: ProjectConfig,
   book: string,

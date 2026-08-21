@@ -1886,7 +1886,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // First export of a new org/book: master has no file yet, so there is
     // nothing to shrink — allow the commit (#235). Any non-404 failure stays
     // fail-closed below.
-    if (gate.kind === "bootstrap") return { ok: true, detail: "bootstrap_new_file", masterRows: null };
+    if (gate.kind === "bootstrap") {
+      // Callers only read `detail` on refusal, so log the pass — it's the only
+      // trace that this commit skipped the shrink comparison legitimately.
+      console.log("shrink guard: bootstrap (no master file yet)", { book, resource, destOwner, destRepo });
+      return { ok: true, detail: "bootstrap_new_file", masterRows: null };
+    }
     if (gate.kind === "unreadable") return { ok: false, detail: "master_unreadable", masterRows: null };
     const raw = gate.text;
     // Data rows = non-empty lines minus the header (mirrors parseTsv's model).
@@ -1915,7 +1920,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
     );
     // First export of a new org/book: no master file, no alignments to lose (#235).
-    if (gate.kind === "bootstrap") return { ok: true, detail: "bootstrap_new_file" };
+    if (gate.kind === "bootstrap") {
+      console.log("alignment guard: bootstrap (no master file yet)", { book, resource, destOwner, destRepo });
+      return { ok: true, detail: "bootstrap_new_file" };
+    }
     if (gate.kind === "unreadable") return { ok: false, detail: "master_unreadable" };
     const masterUsfm = gate.text;
     const result = usfmAlignmentShrinkRefused(renderedUsfm, masterUsfm);

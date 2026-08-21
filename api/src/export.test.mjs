@@ -554,6 +554,9 @@ function utf8Base64(s) {
   // fetchTextWithStatus reports a truncated read as {status:200, text:null} —
   // that must NOT look like content or bootstrap.
   assert(gate({ status: 200, text: null }).kind === "unreadable", `truncated 200 stays fail-closed`);
+  // Self-defense: an error status carrying an error BODY (proxy/maintenance
+  // page) must never be compared against the render as if it were master.
+  assert(gate({ status: 500, text: "<html>maintenance</html>" }).kind === "unreadable", `500 with body stays fail-closed`);
 }
 
 // --- usfmAlignmentShrinkRefused: ULT/UST verse alignment backstop ---
