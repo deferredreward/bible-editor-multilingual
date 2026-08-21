@@ -62,7 +62,7 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
-import { dcsRawUrl, dcsResourceFile, fetchText, fetchTextWithStatus, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
+import { dcsRawUrl, dcsResourceFile, fetchDcsMasterText, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
 import { listRangeHeldOutKeys } from "./bookSource.ts";
 import {
@@ -1199,18 +1199,24 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
       const commit = await commitToDcs(dcsCfg, filename, built.content, message);
       if (!commit.branchTouched) {
-        const lingering = await findDcsOpenPr(dcsCfg);
-        if (lingering != null) {
-          try {
+        // Rendered content matches master — nothing to merge. Close any open PR
+        // lingering from an earlier night so empty (0-diff) PRs don't pile up.
+        // The whole lookup+close is opportunistic hygiene: a transient door43
+        // 429/500/502 (or an HTML gateway page) during findDcsOpenPr must not
+        // fail the export step on the routine unchanged-book path, so the
+        // lookup lives INSIDE the try alongside the close.
+        try {
+          const lingering = await findDcsOpenPr(dcsCfg);
+          if (lingering != null) {
             // Closing a stale PR mutates DCS — re-verify ownership first.
             await this.assertFencingOrThrow(lane, fencingToken);
             await closeDcsPr(dcsCfg, lingering);
-          } catch (e) {
-            console.error("export close-stale-PR failed", {
-              book, resource, repo: dcsRepo, pr: lingering,
-              error: e instanceof Error ? e.message : String(e),
-            });
           }
+        } catch (e) {
+          console.error("export close-stale-PR failed", {
+            book, resource, repo: dcsRepo,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
       dcsCommitSha = commit.commitSha || null;
@@ -1868,7 +1874,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
   // Fetch destination master's current TSV row count and decide whether this
   // render would shrink it dangerously (see export.ts exportTsvShrinkRefused).
-  // Always reads the SAME owner/repo the commit will target.
+  // Always reads the SAME owner/repo the commit will target. The read goes
+  // through fetchDcsMasterText, which verifies completeness independently of
+  // Content-Length (cross-checking the Gitea contents API's own size for the
+  // file; see issue #494 — relying on Content-Length alone left a
+  // no-Content-Length truncated fetch reading as a legitimately smaller
+  // master, which a D1 partial from the SAME correlated truncation could then
+  // wave through as "no shrink"), so a short read lands on the fail-closed
+  // "unreadable" branch below instead of being compared as content.
   private async checkTsvShrink(
     book: string,
     resource: Resource,
@@ -1881,7 +1894,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file", masterRows: null };
     const gate = masterFetchGate(
-      await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
+      await fetchDcsMasterText(this.env, destOwner, destRepo, file.path, baseRef),
     );
     // First export of a new org/book: master has no file yet, so there is
     // nothing to shrink — allow the commit (#235). Any non-404 failure stays
@@ -1904,7 +1917,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
   // Fetch destination master's current USFM and decide whether this ULT/UST
   // render would silently drop \zaln word alignment. Always reads the SAME
-  // owner/repo/ref the commit will target.
+  // owner/repo/ref the commit will target. Fail closed when master can't be
+  // read — the fetch is verified independently of Content-Length the same way
+  // checkTsvShrink's is (see issue #494 and fetchDcsMasterText in
+  // dcsSources.ts), and an unverifiable master must block rather than let an
+  // unchecked render through.
   private async checkUsfmAlignmentShrink(
     book: string,
     resource: Resource,
@@ -1917,7 +1934,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { ok: true, detail: "no_file" };
     const gate = masterFetchGate(
-      await fetchTextWithStatus(this.env, dcsRawUrl(this.env, destOwner, destRepo, file.path, baseRef)),
+      await fetchDcsMasterText(this.env, destOwner, destRepo, file.path, baseRef),
     );
     // First export of a new org/book: no master file, no alignments to lose (#235).
     if (gate.kind === "bootstrap") {
@@ -1938,6 +1955,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         })
         .join("; ");
       return { ok: false, detail: `align_loss_${result.offenders.length}:${sample}` };
+    }
+    // Master fetched but did not parse: nothing was compared, so this must
+    // not surface as detail:"ok" — an absent measurement must never read as
+    // "measured clean". Ship decision unchanged (ok:true, as designed for an
+    // unprovable loss); only the clean-measurement claim goes.
+    if (result.masterUnparseable) {
+      return { ok: true, detail: "master_unparseable" };
     }
     return { ok: true, detail: "ok" };
   }

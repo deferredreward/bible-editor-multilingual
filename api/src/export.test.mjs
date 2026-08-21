@@ -5,8 +5,9 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
+import { buildExportBranch, buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, findDcsOpenPr, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
 import { CorruptContentJsonError } from "./contentJson.ts";
+import { extractVersesForRange } from "./importParsers.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -137,6 +138,72 @@ function utf8Base64(s) {
   assert(uhb.includes('x-occurrence="2" x-occurrences="1"'), `UHB export leaves source occurrence verbatim`);
 }
 
+// --- export never writes a fake \x cross-reference built from `\w` attribute
+// residue (issue #481: four invalid \x markers reached en_ust/24-JER.usfm) ---
+{
+  // The exact malformed master line (JER 30:3): the attribute section after the
+  // `|` starts with a spurious backslash, and the trailing `.”` is trapped
+  // inside the word. usfm-js reads that `\x` as a marker opener, so before the
+  // fix the attribute residue left the word as a junk `{tag:"x"}` node and
+  // export rendered it as a REAL `\x -occurrence="1" x-occurrences="1"\x*`.
+  const malformed =
+    '\\id JER\n\\c 30\n\\p\n\\v 3 \\zaln-s |x-strong="H3063" x-lemma="l" x-morph="He" ' +
+    'x-occurrence="1" x-occurrences="1" x-content="Judah"\\*' +
+    '\\w Judah.”|\\x-occurrence="1" x-occurrences="1"\\w*\\zaln-e\\*\n';
+
+  const ingested = extractVersesForRange(malformed, 30, 30).find((v) => v.verse === 3);
+  const out = buildUsfm({
+    book: "JER",
+    bibleVersion: "UST",
+    headers: null,
+    verses: [{
+      book: "JER", chapter: 30, verse: 3, verse_end: null, bible_version: "UST",
+      content_json: ingested.contentJson, plain_text: ingested.plainText,
+      version: 1, updated_by: null, updated_at: 0,
+    }],
+  });
+  assert(!/\\x[ *]/.test(out), `no \\x cross-reference marker in the exported USFM (got ${JSON.stringify(out.split("\n").find((l) => l.startsWith("\\v 3")))})`);
+  assert(out.includes('\\w Judah|x-occurrence="1" x-occurrences="1"\\w*.”'), `word/punctuation split still happens: \\w Judah\\w* then .” outside`);
+  assert(out.includes("\\zaln-e\\*"), `the enclosing alignment milestone survives`);
+
+  // Second line of defence: a row ALREADY stored in D1 from a pre-fix ingest
+  // still carries the junk node. Export must drop it, not re-emit it.
+  const stale = {
+    book: "JER", chapter: 30, verse: 10, verse_end: null, bible_version: "UST",
+    content_json: JSON.stringify({
+      verseObjects: [{
+        type: "milestone", tag: "zaln", strong: "H3063", lemma: "l", morph: "He",
+        occurrence: "1", occurrences: "1", content: "Judah",
+        children: [
+          { type: "word", tag: "w", text: "Judah" },
+          { type: "text", text: ".”" },
+          { tag: "x", content: '-occurrence="1" x-occurrences="1"', nesting: 1 },
+        ],
+        endTag: "zaln-e\\*",
+      }],
+    }),
+    plain_text: "Judah.”", version: 1, updated_by: null, updated_at: 0,
+  };
+  const staleOut = buildUsfm({ book: "JER", bibleVersion: "UST", headers: null, verses: [stale] });
+  assert(!/\\x[ *]/.test(staleOut), `stored attribute residue is dropped, not exported as \\x`);
+  assert(staleOut.includes("\\w Judah|"), `the word itself survives the residue drop`);
+  assert(staleOut.includes(".”"), `the punctuation text node survives the residue drop`);
+
+  // A REAL cross-reference is prose with its own inner markers — never dropped.
+  const realXref = {
+    book: "JER", chapter: 30, verse: 11, verse_end: null, bible_version: "UST",
+    content_json: JSON.stringify({
+      verseObjects: [
+        { type: "word", tag: "w", text: "word", occurrence: "1", occurrences: "1" },
+        { tag: "x", content: "+ \\xo 30:11 \\xt Isa 2:2", nesting: 1, endTag: "x*" },
+      ],
+    }),
+    plain_text: "word", version: 1, updated_by: null, updated_at: 0,
+  };
+  const xrefOut = buildUsfm({ book: "JER", bibleVersion: "UST", headers: null, verses: [realXref] });
+  assert(xrefOut.includes("\\xt Isa 2:2"), `a genuine \\x cross-reference is preserved`);
+}
+
 // --- tsvCell escapes bare \r (and \r\n) instead of leaking it into the TSV ---
 {
   const row = (note) => ({
@@ -147,6 +214,20 @@ function utf8Base64(s) {
   assert(!out.includes("\r"), `no raw carriage returns in TSV output`);
   assert(out.includes("alpha\\nbeta"), `bare \\r escapes to the literal \\n`);
   assert(out.includes("gamma\\ndelta"), `CRLF collapses to one literal \\n`);
+}
+
+// --- every export branch carries `-be-` so the DCS gates don't skip it ---
+{
+  // The DCS workflows gate on contains(head_ref, '-be-') WITH the trailing
+  // dash; a suffix-less `LAM-be` made every step `skipped`, which Gitea reports
+  // as a green combined status. Machine-only exports get "mechanical".
+  assert(buildExportBranch("LAM", []) === "LAM-be-mechanical", `no contributors → {BOOK}-be-mechanical`);
+  assert(buildExportBranch("AMO", ["", "  "]) === "AMO-be-mechanical", `sanitized-to-empty usernames → mechanical`);
+  assert(buildExportBranch("NUM", ["stephenwunrow"]) === "NUM-be-stephenwunrow", `single contributor unchanged`);
+  assert(buildExportBranch("ISA", ["a", "b"]) === "ISA-be-a-b", `multiple contributors joined`);
+  for (const b of [buildExportBranch("LAM", []), buildExportBranch("NUM", ["x"])]) {
+    assert(b.includes("-be-"), `${b} contains "-be-" (DCS gate literal)`);
+  }
 }
 
 // --- OL-quote occurrence invariant: Hebrew/Greek quote forces Occurrence >= 1 ---
@@ -434,25 +515,29 @@ function utf8Base64(s) {
     const r1 = await ensureDcsPr(cfg, "t", "b");
     assert(r1.number === 42 && !r1.created && r1.reason === "existing", `ensureDcsPr reuses an open PR via exact lookup`);
 
-    // Lookup returns a CLOSED PR (the endpoint doesn't filter by state) →
-    // not reusable → create a fresh one.
+    // Lookup returns a CLOSED PR (the endpoint doesn't filter by state) and
+    // the paged fallback finds no open PR for this head either → create a
+    // fresh one.
     let posted = false;
+    const isList = (u, m) => u.includes("/pulls?state=open") && m === "GET";
     globalThis.fetch = async (url, init = {}) => {
       const u = String(url);
       const m = init.method ?? "GET";
       if (isLookup(u, m)) return okJson({ number: 41, state: "closed" });
+      if (isList(u, m)) return okJson([]);
       if (u.endsWith("/pulls") && m === "POST") { posted = true; return okJson({ number: 99 }, 201); }
       throw new Error(`unexpected ${m} ${u}`);
     };
     const r2 = await ensureDcsPr(cfg, "t", "b");
-    assert(posted && r2.number === 99 && r2.created && r2.reason === "created", `closed PR is not reused; a new one is created`);
+    assert(posted && r2.number === 99 && r2.created && r2.reason === "created", `closed PR with no open match anywhere is not reused; a new one is created`);
 
-    // No PR at all (404) → create one.
+    // No PR at all (404) and no open PR in the paged fallback → create one.
     posted = false;
     globalThis.fetch = async (url, init = {}) => {
       const u = String(url);
       const m = init.method ?? "GET";
       if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) return okJson([]);
       if (u.endsWith("/pulls") && m === "POST") { posted = true; return okJson({ number: 100 }, 201); }
       throw new Error(`unexpected ${m} ${u}`);
     };
@@ -469,6 +554,7 @@ function utf8Base64(s) {
         lookups++;
         return lookups === 1 ? okJson({ message: "Not Found" }, 404) : okJson({ number: 7, state: "open" });
       }
+      if (isList(u, m)) return okJson([]);
       if (u.endsWith("/pulls") && m === "POST") return okJson({ message: "pull request already exists" }, 409);
       throw new Error(`unexpected ${m} ${u}`);
     };
@@ -480,6 +566,7 @@ function utf8Base64(s) {
       const u = String(url);
       const m = init.method ?? "GET";
       if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) return okJson([]);
       if (u.endsWith("/pulls") && m === "POST") return okJson({ message: "no commits between" }, 422);
       throw new Error(`unexpected ${m} ${u}`);
     };
@@ -489,6 +576,230 @@ function utf8Base64(s) {
     // Head == base is a guarded no-op (no network at all).
     const r6 = await ensureDcsPr({ ...cfg, branch: "master" }, "t", "b");
     assert(!r6.created && r6.reason === "head_equals_base", `ensureDcsPr skips when head == base`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// --- findDcsOpenPr: paged fallback when the exact lookup misses an open PR ---
+// Regression coverage for the DAN-be-justplainjane47 bug: the exact lookup
+// returns the OLDEST PR for a base/head pair regardless of state, so a closed
+// PR can shadow a real open one. door43 had 6 PRs for that head (7347, 7351,
+// 7357, 7365, 7375, 7382); the exact lookup returned closed #7347 while #7382
+// was open.
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "DAN-be-justplainjane47" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  const isLookup = (u, m) => u.includes("/pulls/master/DAN-be-justplainjane47") && m === "GET";
+  const isList = (u, m) => u.includes("/pulls?state=open") && m === "GET";
+  const pageOf = (u) => Number(new URL(u).searchParams.get("page"));
+  try {
+    // Exact lookup returns an OPEN PR → its number is returned, and the
+    // paged fallback is never called.
+    let listCalled = false;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ number: 42, state: "open" });
+      if (isList(u, m)) { listCalled = true; return okJson([]); }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found1 = await findDcsOpenPr(cfg);
+    assert(found1 === 42 && !listCalled, `open PR from the exact lookup is returned without ever calling the paged fallback`);
+
+    // DAN regression: exact lookup returns a CLOSED PR (the oldest for this
+    // head), but an open PR for the same head exists in the paged fallback.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ number: 7347, state: "closed" });
+      if (isList(u, m)) {
+        // The list endpoint is itself queried with ?state=open, so every
+        // item it returns is already open — the only filtering left to do
+        // client-side is matching the head/base refs (and same-repo head).
+        return okJson([
+          { number: 6501, state: "open", head: { ref: "OTHER-be-someone", repo: { full_name: "o/r" } }, base: { ref: "master" } },
+          { number: 7382, state: "open", head: { ref: "DAN-be-justplainjane47", repo: { full_name: "o/r" } }, base: { ref: "master" } },
+        ]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found2 = await findDcsOpenPr(cfg);
+    assert(found2 === 7382, `DAN regression: a closed PR from the exact lookup no longer shadows the real open PR found via paged fallback`);
+
+    // Exact lookup 404s and no open PR matches anywhere → null.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) return okJson([]);
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found3 = await findDcsOpenPr(cfg);
+    assert(found3 === null, `404 exact lookup with no open PR anywhere returns null`);
+
+    // Open PR for this head sits on page 2 of the paged fallback.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) {
+        const page = pageOf(u);
+        if (page === 1) {
+          const items = Array.from({ length: 50 }, (_, i) => ({
+            number: i + 1,
+            state: "open",
+            head: { ref: `other-branch-${i}`, repo: { full_name: "o/r" } },
+            base: { ref: "master" },
+          }));
+          return okJson(items);
+        }
+        if (page === 2) {
+          return okJson([{ number: 999, state: "open", head: { ref: "DAN-be-justplainjane47", repo: { full_name: "o/r" } }, base: { ref: "master" } }]);
+        }
+        return okJson([]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found4 = await findDcsOpenPr(cfg);
+    assert(found4 === 999, `an open PR on page 2 of the paged fallback is still found`);
+
+    // Server clamps the page size below the requested `limit` (Gitea's
+    // MaxResponseItems) — page 1 returns only 30 of the requested 50, well
+    // short of `limit`, yet an open PR still exists on page 2. This is the
+    // finding-1 regression case: it fails against `if (items.length < limit)
+    // break`, which would have stopped after page 1 and never found it.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) {
+        const page = pageOf(u);
+        if (page === 1) {
+          const items = Array.from({ length: 30 }, (_, i) => ({
+            number: i + 1,
+            state: "open",
+            head: { ref: `other-branch-${i}`, repo: { full_name: "o/r" } },
+            base: { ref: "master" },
+          }));
+          return okJson(items);
+        }
+        if (page === 2) {
+          return okJson([{ number: 4242, state: "open", head: { ref: "DAN-be-justplainjane47", repo: { full_name: "o/r" } }, base: { ref: "master" } }]);
+        }
+        return okJson([]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found5 = await findDcsOpenPr(cfg);
+    assert(found5 === 4242, `a clamped page 1 (fewer items than the requested limit) still continues to page 2 and finds the open PR`);
+
+    // State guard (parity with the fast path): the list endpoint is queried
+    // with `?state=open`, so this should never happen in practice, but a
+    // matching head/base/repo item whose own `state` field isn't "open"
+    // (e.g. a stale/inconsistent server response) must NOT be matched.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) {
+        return okJson([
+          { number: 8888, state: "closed", head: { ref: "DAN-be-justplainjane47", repo: { full_name: "o/r" } }, base: { ref: "master" } },
+        ]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const foundStateGuard = await findDcsOpenPr(cfg);
+    assert(foundStateGuard === null, `state guard: a matching head/base/repo item whose own state isn't "open" is not matched`);
+
+    // Fork-head guard: a PR with the same head.ref and base.ref, but whose
+    // head repo is a contributor's fork (not this repo), must NOT match —
+    // matching it would return a stranger's PR number and cause writes
+    // (close/update/rebase) against someone else's pull request.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) {
+        return okJson([
+          { number: 5555, state: "open", head: { ref: "DAN-be-justplainjane47", repo: { full_name: "someforker/r" } }, base: { ref: "master" } },
+        ]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found6 = await findDcsOpenPr(cfg);
+    assert(found6 === null, `same-repo guard: a fork-head PR with a matching head.ref/base.ref is not matched`);
+
+    // A non-OK list response throws rather than silently returning null —
+    // a silent null is exactly what hid the DAN bug for a week.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) return new Response("server error", { status: 500 });
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    let threw = false;
+    try {
+      await findDcsOpenPr(cfg);
+    } catch (e) {
+      threw = /dcs_pull_list_failed/.test(String(e.message));
+    }
+    assert(threw, `a non-OK paged list response throws dcs_pull_list_failed instead of returning null`);
+
+    // A 200 list response whose body is not an array (e.g. a Gitea error
+    // object shaped like the pulls list, or a gateway page) throws a labeled
+    // error rather than a bare TypeError from items.find(...).
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) return okJson({ message: "not actually a list" });
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    let threwNonArray = false;
+    try {
+      await findDcsOpenPr(cfg);
+    } catch (e) {
+      threwNonArray = /dcs_pull_list_failed/.test(String(e.message));
+    }
+    assert(threwNonArray, `a non-array 200 list body throws a labeled dcs_pull_list_failed error`);
+
+    // Empty first page terminates the scan immediately — the `if
+    // (items.length === 0) break` line has the same return value with or
+    // without the break (both paths fall through to `return null`), so only
+    // a request-count assertion can pin that it actually breaks rather than
+    // looping to maxPages.
+    let listCalls1 = 0;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) { listCalls1++; return okJson([]); }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found7 = await findDcsOpenPr(cfg);
+    assert(found7 === null && listCalls1 === 1, `an empty first page terminates the scan after exactly one list call`);
+
+    // maxPages backstop: every page is non-empty but never matches, so the
+    // loop must run all 20 pages (not loop forever, not stop early).
+    let listCalls2 = 0;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) {
+        listCalls2++;
+        return okJson([
+          { number: 1, state: "open", head: { ref: "never-matches", repo: { full_name: "o/r" } }, base: { ref: "master" } },
+        ]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found8 = await findDcsOpenPr(cfg);
+    assert(found8 === null && listCalls2 === 20, `a never-matching, never-empty page set runs all 20 pages before giving up`);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -694,6 +1005,22 @@ function utf8Base64(s) {
   // master actually having aligned verses.
   const r8freshboth = usfmAlignmentShrinkRefused("", "");
   assert(r8freshboth.refused === false, `empty render + empty master never refuses`);
+
+  // (8c) Master fetched but UNPARSEABLE (usfm.toJSON throws — reachable today
+  // only via non-string input, but the trap must stay closed). The ship
+  // decision stays refused:false (loss unprovable), but the result must carry
+  // masterUnparseable so the workflow maps it to its own detail
+  // ("master_unparseable") instead of "ok" — an absent measurement must never
+  // read as "measured clean".
+  const r8masterNull = usfmAlignmentShrinkRefused(master, null);
+  assert(r8masterNull.refused === false, `unparseable master: ship decision stays refused:false`);
+  assert(
+    r8masterNull.masterUnparseable === true,
+    `unparseable master: flagged masterUnparseable so it can never map to detail:"ok"`,
+  );
+  // A normally-compared clean run must NOT carry the flag — the only path
+  // allowed to report a clean measurement.
+  assert(r2.masterUnparseable === undefined, `a real clean comparison carries no masterUnparseable flag`);
 
   // (9) TOTAL WIPE of a single verse. The render still PARSES and still contains
   // the verse (so neither the zero-verse fail-closed above nor the "absent from
