@@ -895,3 +895,61 @@ await withMockedClock(async () => {
 });
 
 console.log("pipelineImport (claim guard): all assertions passed");
+
+// ─── tnPayload / tqPayload quote curling (AI-pipeline note/question/response) ──
+// Upstream JER 32/33 / NUM 26:53 prod forensics found straight quotes in
+// AI-pipeline output that exported verbatim to Door43 master. Verse text is
+// curled in applyVerseUpdate's self-heal block (curlifyVerseObjects); these
+// pin the sibling fix for note/question/response PROSE, which must use the
+// SAME shared curlifyText (importParsers.ts) as verse text — not
+// tsvFormat.ts's educateQuotes — so a straight quote curls identically in an
+// AI-drafted verse and an AI-drafted note from the same run.
+// Ported from upstream unfoldingWord/bible-editor 7a535ea (#445).
+{
+  const { tnPayload, tqPayload } = await import("./pipelineImport.ts");
+
+  const tn = tnPayload("ZEC", "1:1", {
+    ID: "ab12",
+    Tags: "",
+    SupportReference: "",
+    Quote: 'don׳t "touch" me', // Quote must stay byte-exact — never curled
+    Occurrence: "1",
+    Note: `The word "glory" means God's weighty presence.`,
+  });
+  assert(
+    tn.payload.note === "The word “glory” means God’s weighty presence.",
+    `tnPayload curls straight quotes in Note prose (got ${JSON.stringify(tn.payload.note)})`,
+  );
+  assert(
+    tn.payload.quote === 'don׳t "touch" me',
+    "tnPayload leaves Quote byte-exact (occurrence matching depends on it)",
+  );
+
+  const tq = tqPayload("ZEC", "1:2", {
+    ID: "cd34",
+    Tags: "",
+    Quote: '"as-is"',
+    Occurrence: "1",
+    Question: `What does "return" mean?`,
+    Response: `It means to turn back to Yahweh's ways.`,
+  });
+  assert(
+    tq.payload.question === "What does “return” mean?",
+    `tqPayload curls straight quotes in Question (got ${JSON.stringify(tq.payload.question)})`,
+  );
+  assert(
+    tq.payload.response === "It means to turn back to Yahweh’s ways.",
+    `tqPayload curls the apostrophe in Response (got ${JSON.stringify(tq.payload.response)})`,
+  );
+  assert(tq.payload.quote === '"as-is"', "tqPayload leaves Quote byte-exact");
+
+  // Empty fields stay null — curling must not turn "" into a non-null value.
+  const tnEmpty = tnPayload("ZEC", "1:3", { ID: "ef56", Occurrence: "" });
+  assert(tnEmpty.payload.note === null, "tnPayload: absent Note stays null after the curl wiring");
+  const tqEmpty = tqPayload("ZEC", "1:4", { ID: "gh78", Occurrence: "" });
+  assert(
+    tqEmpty.payload.question === null && tqEmpty.payload.response === null,
+    "tqPayload: absent Question/Response stay null after the curl wiring",
+  );
+  console.log("pipelineImport (payload quote curling): all assertions passed");
+}
