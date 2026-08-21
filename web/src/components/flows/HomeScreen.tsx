@@ -415,20 +415,20 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
               <QueueCard
                 eyebrow="Word alignment"
                 title="Alignment"
-                count="Not available in this preview"
+                count="Open to align — progress tracking coming soon"
                 description="Link target words to the Hebrew/Greek source, verse by verse."
                 footer={null}
                 href={`#/align/${book}/${chapter}/${verse}`}
-                progress={0}
+                progress={null}
               />
               <QueueCard
                 eyebrow="tW / tA articles"
                 title="Articles"
-                count="Not available in this preview"
+                count="Open articles — progress tracking coming soon"
                 description="Key-term and translation-academy articles referenced from this book."
                 footer={null}
                 href="#/articles"
-                progress={0}
+                progress={null}
               />
             </>
           )}
