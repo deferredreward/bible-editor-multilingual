@@ -1006,6 +1006,22 @@ function utf8Base64(s) {
   const r8freshboth = usfmAlignmentShrinkRefused("", "");
   assert(r8freshboth.refused === false, `empty render + empty master never refuses`);
 
+  // (8c) Master fetched but UNPARSEABLE (usfm.toJSON throws — reachable today
+  // only via non-string input, but the trap must stay closed). The ship
+  // decision stays refused:false (loss unprovable), but the result must carry
+  // masterUnparseable so the workflow maps it to its own detail
+  // ("master_unparseable") instead of "ok" — an absent measurement must never
+  // read as "measured clean".
+  const r8masterNull = usfmAlignmentShrinkRefused(master, null);
+  assert(r8masterNull.refused === false, `unparseable master: ship decision stays refused:false`);
+  assert(
+    r8masterNull.masterUnparseable === true,
+    `unparseable master: flagged masterUnparseable so it can never map to detail:"ok"`,
+  );
+  // A normally-compared clean run must NOT carry the flag — the only path
+  // allowed to report a clean measurement.
+  assert(r2.masterUnparseable === undefined, `a real clean comparison carries no masterUnparseable flag`);
+
   // (9) TOTAL WIPE of a single verse. The render still PARSES and still contains
   // the verse (so neither the zero-verse fail-closed above nor the "absent from
   // render → skip" rule applies) — but the verse body is flat text: every \zaln

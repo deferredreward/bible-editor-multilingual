@@ -324,6 +324,13 @@ function verseAlignStats(usfmText: string): Map<string, VerseAlignStat> | null {
 
 export interface AlignmentShrinkResult {
   refused: boolean;
+  // Master was FETCHED but did not PARSE, so nothing was compared per-verse.
+  // The ship decision stays refused:false (we can't prove loss), but the
+  // caller must NOT treat this as a clean measurement — an absent measurement
+  // must never be reported as "measured clean" (detail:"ok"). Latent today
+  // (usfm.toJSON doesn't throw on malformed strings), but the trap must stay
+  // closed for any future parser.
+  masterUnparseable?: boolean;
   // Each offending verse names the words that lost their \zaln source so the
   // alert is actionable (which word to re-align), not just a whole-verse aligned
   // count that reads oddly when a verse simultaneously loses one word's source
@@ -365,9 +372,10 @@ export function usfmAlignmentShrinkRefused(
   }
   // An unparseable MASTER (but a parseable render) leaves us with no baseline to
   // compare against — lower risk (we can't prove loss), so we don't refuse on it,
-  // but we must not crash. Treat as no comparison data.
+  // but we must not crash. Treat as no comparison data — and FLAG it, so the
+  // caller can't mistake "nothing was measured" for "measured clean".
   if (master === null) {
-    return { refused: false, offenders: [] };
+    return { refused: false, masterUnparseable: true, offenders: [] };
   }
   // The reachable fail-open: usfm.toJSON does NOT throw on a malformed USFM
   // *string* (only on non-string input), so an empty or garbled render surfaces

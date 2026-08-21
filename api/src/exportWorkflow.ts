@@ -1956,6 +1956,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         .join("; ");
       return { ok: false, detail: `align_loss_${result.offenders.length}:${sample}` };
     }
+    // Master fetched but did not parse: nothing was compared, so this must
+    // not surface as detail:"ok" — an absent measurement must never read as
+    // "measured clean". Ship decision unchanged (ok:true, as designed for an
+    // unprovable loss); only the clean-measurement claim goes.
+    if (result.masterUnparseable) {
+      return { ok: true, detail: "master_unparseable" };
+    }
     return { ok: true, detail: "ok" };
   }
 
