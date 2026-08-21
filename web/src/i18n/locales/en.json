@@ -700,7 +700,7 @@
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
-    "membershipUnknownHint": "Couldn't confirm your Door43 org memberships — this list may be incomplete. Sign in again to refresh.",
+    "membershipUnknownHint": "This list of organizations you can switch to may be incomplete — we couldn't confirm your Door43 memberships. Sign in again to refresh.",
     "notMemberTooltip": "you need Door43 membership in this org to switch to it",
     "notAMember": "You're not a member of that organization.",
     "noLongerAvailable": "That workspace is no longer available.",
