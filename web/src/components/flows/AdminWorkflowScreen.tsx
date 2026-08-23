@@ -123,6 +123,7 @@ import {
   DialogTitle,
   FormControlLabel,
   Link,
+  MenuItem,
   Snackbar,
   Switch,
   Table,
@@ -130,6 +131,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -144,11 +146,13 @@ import { pipelineStore, type PipelineJob } from "../../sync/pipelineStore";
 import {
   api,
   ApiError,
+  type BookListEntry,
   type ExportSnapshot,
   type LanePublicState,
   type LaneReplacementJobResponse,
   type ProjectConfig,
 } from "../../sync/api";
+import { bookName } from "../../lib/bookNames";
 
 export interface AdminWorkflowScreenProps extends FlowScreenContext {}
 
@@ -413,6 +417,8 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const [confirmActivate, setConfirmActivate] = useState<{ lane: LaneKey; jobId: string } | null>(null);
   const [activateAck, setActivateAck] = useState(false);
   const [confirmRun, setConfirmRun] = useState(false);
+  const [exportBook, setExportBook] = useState<string>("all");
+  const [exportBooks, setExportBooks] = useState<BookListEntry[] | null>(null);
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -567,10 +573,21 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     }
   };
 
+  const handleOpenRunConfirm = () => {
+    setExportBook("all");
+    setConfirmRun(true);
+    // Refetch on every open: a failed or stale list would otherwise stick
+    // until remount (imports elsewhere add books while this screen is up).
+    api
+      .getBooks()
+      .then((res) => setExportBooks(res.books))
+      .catch(() => setExportBooks((cur) => cur ?? []));
+  };
+
   const handleRunConfirmed = async () => {
     setRunBusy(true);
     try {
-      const res = await api.exportsRun();
+      const res = await api.exportsRun(exportBook !== "all" ? { book: exportBook } : undefined);
       setRunInfo(res);
       setInstanceStatus(null);
       setMsg(`Export queued (run ${res.id}).`);
@@ -974,7 +991,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
         }
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", mb: 2 }}>
-          <Button variant="contained" size="small" disabled={runBusy} onClick={() => setConfirmRun(true)}>
+          <Button variant="contained" size="small" disabled={runBusy} onClick={handleOpenRunConfirm}>
             Run export now…
           </Button>
           {runInfo && (
@@ -1142,6 +1159,25 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             Renders every book and resource to TSV + USFM and commits to the Door43 export branch —
             the same work the 05:30 UTC nightly does, except a manual run never auto-merges. Safe to
             run, but it takes several minutes and commits real snapshots.
+          </Typography>
+          <TextField
+            select
+            fullWidth
+            size="small"
+            label="Export scope"
+            value={exportBook}
+            onChange={(e) => setExportBook(e.target.value)}
+            sx={{ mt: 2 }}
+          >
+            <MenuItem value="all">All books</MenuItem>
+            {(exportBooks ?? []).map((b) => (
+              <MenuItem key={b.book} value={b.book}>
+                {bookName(b.book)}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+            Scoping to one book exports just that book's files and skips the shared articles export.
           </Typography>
         </DialogContent>
         <DialogActions>
