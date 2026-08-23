@@ -68,7 +68,7 @@ import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
 import { AiServiceSection } from "../AiServiceSection";
 import { LocalizationSection } from "../LocalizationSection";
-import { bookName } from "../../lib/bookNames";
+import { bookName, BOOKS } from "../../lib/bookNames";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
 import type { FlowScreenContext } from "./types";
@@ -195,7 +195,10 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
         if (cancelled) return;
         const codes = res.books.map((b) => b.book);
         setBooks(codes);
-        setBook((cur) => (cur && codes.includes(cur) ? cur : (codes[0] ?? null)));
+        const canonCodes = new Set(BOOKS.map((b) => b.code));
+        setBook((cur) =>
+          cur && canonCodes.has(cur) ? cur : (codes[0] ?? BOOKS[0].code)
+        );
       })
       .catch(() => {
         if (!cancelled) setLoadError(true);
@@ -209,17 +212,13 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
     <SectionPanel
       id="overrides"
       title="Source overrides (advanced)"
-      sub="Per-book overrides for where notes and questions come from. A per-book override wins over the project source."
+      sub="Per-book overrides for where notes and questions come from. A per-book override wins over the project source. Set an override before a book's first import to have it apply right away — an already-imported book needs a full re-import to pick up a new override."
       foot={book ? `Editing overrides for ${bookName(book)}` : undefined}
     >
       {loadError ? (
         <Alert severity="error">Couldn't load the book list.</Alert>
       ) : books === null ? (
         <CircularProgress size={22} />
-      ) : books.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          No books imported yet — import a book first, then set its source overrides here.
-        </Typography>
       ) : (
         <Stack spacing={2}>
           <TextField
@@ -230,9 +229,10 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
             onChange={(e) => setBook(e.target.value)}
             sx={{ maxWidth: 260 }}
           >
-            {books.map((b) => (
-              <MenuItem key={b} value={b}>
-                {bookName(b)}
+            {BOOKS.map(({ code }) => (
+              <MenuItem key={code} value={code}>
+                {bookName(code)}
+                {!books.includes(code) && " — not imported"}
               </MenuItem>
             ))}
           </TextField>
