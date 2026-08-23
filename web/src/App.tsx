@@ -21,6 +21,7 @@ import {
   devSignIn,
   fetchAuthMe,
   onAuthError,
+  onAuthRefreshed,
   setReadOnly,
   setIsAdmin,
   updateLastLocation,
@@ -405,6 +406,12 @@ export function App() {
   }, []);
 
   useEffect(() => onAuthError(() => setSessionExpired(true)), []);
+  // Clear the banner once a subsequent auth attempt succeeds — a silent
+  // refresh, or (in dev) the first-load silent mint that lands after the
+  // initial /api/auth/me + /api/auth/refresh 401s already raised it. Both
+  // fire onAuthRefreshed, so the banner no longer sticks until a manual
+  // reload (issue #283).
+  useEffect(() => onAuthRefreshed(() => setSessionExpired(false)), []);
 
   const navigate = (book: string, chapter: number, verse?: number) => {
     location.hash =
