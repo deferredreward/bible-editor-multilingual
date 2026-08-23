@@ -379,7 +379,13 @@ function Lane({ label, text, labelFontFamily }: LaneProps) {
       <Box component="span" sx={{ ...langTagSx, fontFamily: labelFontFamily, mb: 0.375 }}>
         {label}
       </Box>
-      {text ?? (
+      {text != null ? (
+        // dir="auto" follows the *content*: Arabic lane text lays out RTL with
+        // trailing punctuation on the correct side, English stays LTR.
+        <Box component="span" dir="auto" sx={{ display: "block", textAlign: "start" }}>
+          {text}
+        </Box>
+      ) : (
         <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
           No {label} text exists for this verse in this workspace. That is normal in a
           translation-mode workspace whose target lanes have not been drafted yet.

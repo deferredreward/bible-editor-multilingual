@@ -215,7 +215,12 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
         {label}
       </Box>
       {text ? (
-        mark(text, selection)
+        // dir="auto" follows the *content*: Arabic lane text lays out RTL with
+        // trailing punctuation on the correct side, English stays LTR. The
+        // label above keeps the container's direction.
+        <Box component="span" dir="auto" sx={{ display: "block", textAlign: "start" }}>
+          {mark(text, selection)}
+        </Box>
       ) : (
         <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
           No {label} text exists for this verse in this workspace. That is normal in a
