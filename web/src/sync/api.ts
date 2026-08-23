@@ -2208,12 +2208,16 @@ export const api = {
       { signal },
     ),
 
-  exportsRun: (shrinkOverride?: boolean, signal?: AbortSignal) =>
-    request<{ id: string; status: string }>(`/api/exports/run`, {
+  exportsRun: (opts?: { shrinkOverride?: boolean; book?: string }, signal?: AbortSignal) => {
+    const body: { shrinkOverride?: boolean; book?: string } = {};
+    if (opts?.shrinkOverride !== undefined) body.shrinkOverride = opts.shrinkOverride;
+    if (opts?.book) body.book = opts.book;
+    return request<{ id: string; status: string }>(`/api/exports/run`, {
       method: "POST",
-      body: JSON.stringify(shrinkOverride === undefined ? {} : { shrinkOverride }),
+      body: JSON.stringify(body),
       signal,
-    }),
+    });
+  },
 
   exportsInstance: (id: string, signal?: AbortSignal) =>
     request<{ id: string; status: unknown }>(
