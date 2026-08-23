@@ -46,7 +46,7 @@
 //
 // Gating: admin-only overall (honest no-content gate like SetupScreen.tsx
 // :75-95 — hooks still run above the gate so hook order never varies).
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Alert,
@@ -68,7 +68,8 @@ import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 import { BookSourceOverridesPanel } from "../BookSourceOverridesPanel";
 import { AiServiceSection } from "../AiServiceSection";
 import { LocalizationSection } from "../LocalizationSection";
-import { bookName } from "../../lib/bookNames";
+import { BOOKS, bookName } from "../../lib/bookNames";
+import { bookOverrideOptions, defaultOverrideBook } from "../../lib/bookOverrideOptions";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
 import type { FlowScreenContext } from "./types";
@@ -181,11 +182,21 @@ function WizardPanel() {
 // ── Source overrides ────────────────────────────────────────────────────────
 // Overrides are stored per book (api/src/bookSource.ts), so the reused
 // BookSourceOverridesPanel needs a book context the artifact's mockup didn't
-// draw: a plain selector over the imported books.
+// draw: a book selector.
+//
+// The picker offers ALL 66 canonical books, not just imported ones (issue #282).
+// `PUT /api/books/:book/sources` accepts un-imported books, and range overrides
+// only take effect on a book's next FULL import — so an admin setting up a
+// mixed-source book (e.g. Aquifer ch1-12 + DCS en_tn ch13-16) must be able to
+// configure it BEFORE the first import. Un-imported books are annotated so it's
+// clear the override applies on next import. Same idiom as the TopBar book picker
+// (web/src/components/TopBar.tsx) — imported set + canonical order.
 function OverridesPanel({ initialBook }: { initialBook: string | null }) {
-  const [books, setBooks] = useState<string[] | null>(null);
+  const [importedCodes, setImportedCodes] = useState<string[] | null>(null);
   const [book, setBook] = useState<string | null>(initialBook);
   const [loadError, setLoadError] = useState(false);
+
+  const allCodes = useMemo(() => BOOKS.map((b) => b.code), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,8 +205,8 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
       .then((res) => {
         if (cancelled) return;
         const codes = res.books.map((b) => b.book);
-        setBooks(codes);
-        setBook((cur) => (cur && codes.includes(cur) ? cur : (codes[0] ?? null)));
+        setImportedCodes(codes);
+        setBook((cur) => defaultOverrideBook(cur, allCodes, codes));
       })
       .catch(() => {
         if (!cancelled) setLoadError(true);
@@ -203,23 +214,24 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [allCodes]);
+
+  const options = useMemo(
+    () => (importedCodes === null ? [] : bookOverrideOptions(allCodes, importedCodes)),
+    [allCodes, importedCodes],
+  );
 
   return (
     <SectionPanel
       id="overrides"
       title="Source overrides (advanced)"
-      sub="Per-book overrides for where notes and questions come from. A per-book override wins over the project source."
+      sub="Per-book overrides for where notes and questions come from. A per-book override wins over the project source. You can configure a book before importing it — the override takes effect on its next full import."
       foot={book ? `Editing overrides for ${bookName(book)}` : undefined}
     >
       {loadError ? (
         <Alert severity="error">Couldn't load the book list.</Alert>
-      ) : books === null ? (
+      ) : importedCodes === null ? (
         <CircularProgress size={22} />
-      ) : books.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          No books imported yet — import a book first, then set its source overrides here.
-        </Typography>
       ) : (
         <Stack spacing={2}>
           <TextField
@@ -228,11 +240,12 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
             size="small"
             value={book ?? ""}
             onChange={(e) => setBook(e.target.value)}
-            sx={{ maxWidth: 260 }}
+            sx={{ maxWidth: 320 }}
           >
-            {books.map((b) => (
-              <MenuItem key={b} value={b}>
-                {bookName(b)}
+            {options.map((o) => (
+              <MenuItem key={o.code} value={o.code}>
+                {bookName(o.code)}
+                {o.imported ? "" : " — not imported (applies on next import)"}
               </MenuItem>
             ))}
           </TextField>
