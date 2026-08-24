@@ -83,6 +83,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import {
   Alert,
   Box,
@@ -321,12 +322,14 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         setSummaries(new Map(sorted.map((b) => [b.book, { kind: "loading" } as SummaryState])));
       })
       .catch((err) => {
-        if (!cancelled) setBooksError(err instanceof Error ? err.message : t("adminPages.common.loadFailed"));
+        // i18n.t (singleton), not the hook's t: t's identity changes per
+        // language and must not refire this fetch via the dep array.
+        if (!cancelled) setBooksError(err instanceof Error ? err.message : i18n.t("adminPages.common.loadFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, t]);
+  }, [isAdmin]);
 
   // Summaries for books present in the workspace ONLY — never the whole
   // canon. Four workers drain the queue so a big workspace doesn't fire all
@@ -366,11 +369,13 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         if (!cancelled) setSnapshots(res.snapshots);
       })
       .catch((err) => {
+        // i18n.t (singleton), not the hook's t: t's identity changes per
+        // language and must not refire these fetches via the dep array.
         if (!cancelled)
           setExportsError(
             err instanceof ApiError
               ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}`
-              : t("adminPages.common.loadFailed"),
+              : i18n.t("adminPages.common.loadFailed"),
           );
       });
     api
@@ -379,12 +384,12 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         if (!cancelled) setJobs(res.jobs);
       })
       .catch((err) => {
-        if (!cancelled) setJobsError(err instanceof Error ? err.message : t("adminPages.common.loadFailed"));
+        if (!cancelled) setJobsError(err instanceof Error ? err.message : i18n.t("adminPages.common.loadFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, t]);
+  }, [isAdmin]);
 
   const kpis = useMemo(() => {
     let loaded = 0;

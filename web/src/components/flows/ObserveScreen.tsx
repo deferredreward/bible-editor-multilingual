@@ -50,6 +50,7 @@ import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
@@ -241,7 +242,10 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const [exportsError, setExportsError] = useState<string | null>(null);
 
   const [pool, setPool] = useState<PoolStatus | null>(null);
-  const [poolError, setPoolError] = useState<{ status: number; message: string } | null>(null);
+  // Stored as i18n key + params, translated at render — keeps the message
+  // live on language switch without `loadPool` depending on `t` (whose
+  // identity changes per language and must not refire the fetch).
+  const [poolError, setPoolError] = useState<{ status: number; key: string; params?: Record<string, unknown> } | null>(null);
   const [poolDialog, setPoolDialog] = useState<null | "register" | "claim">(null);
   const [poolBusy, setPoolBusy] = useState(false);
   const [poolBusyMessage, setPoolBusyMessage] = useState<{ severity: "success" | "error"; text: string } | null>(null);
@@ -270,10 +274,12 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         if (err instanceof ApiError && err.status === 403) {
           setContextPackUnavailable(true);
         } else {
-          setContextPackError(err instanceof Error ? err.message : t("moreTools.observe.loadFailedShort"));
+          // i18n.t (singleton), not the hook's t: t's identity changes per
+          // language and must not refire this fetch via the dep array.
+          setContextPackError(err instanceof Error ? err.message : i18n.t("moreTools.observe.loadFailedShort"));
         }
       });
-  }, [isAdmin, t]);
+  }, [isAdmin]);
 
   const loadJobs = useCallback(() => {
     if (!isAdmin) return;
@@ -283,8 +289,10 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .then((res) => {
         setJobs(res.jobs);
       })
-      .catch((err) => setJobsError(err instanceof Error ? err.message : t("moreTools.observe.loadFailedShort")));
-  }, [isAdmin, t]);
+      // i18n.t (singleton), not the hook's t: t's identity changes per
+      // language and must not refire this fetch via the dep array.
+      .catch((err) => setJobsError(err instanceof Error ? err.message : i18n.t("moreTools.observe.loadFailedShort")));
+  }, [isAdmin]);
 
   const loadExports = useCallback(() => {
     if (!isAdmin) return;
@@ -293,11 +301,13 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .exportsList()
       .then((res) => setSnapshots(res.snapshots))
       .catch((err) => {
+        // i18n.t (singleton), not the hook's t: t's identity changes per
+        // language and must not refire this fetch via the dep array.
         setExportsError(
-          err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : t("moreTools.observe.loadFailedShort"),
+          err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : i18n.t("moreTools.observe.loadFailedShort"),
         );
       });
-  }, [isAdmin, t]);
+  }, [isAdmin]);
 
   const loadPool = useCallback(() => {
     // Only super-admins can read the pool; skip the request entirely for
@@ -308,15 +318,16 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .then((res) => setPool(res))
       .catch((err) => {
         if (err instanceof ApiError) {
-          setPoolError({
-            status: err.status,
-            message: err.status === 403 ? t("moreTools.observe.poolNotSuperAdmin") : t("moreTools.observe.poolLoadFailedHttp", { status: err.status }),
-          });
+          setPoolError(
+            err.status === 403
+              ? { status: err.status, key: "moreTools.observe.poolNotSuperAdmin" }
+              : { status: err.status, key: "moreTools.observe.poolLoadFailedHttp", params: { status: err.status } },
+          );
         } else {
-          setPoolError({ status: 0, message: t("moreTools.observe.poolLoadFailed") });
+          setPoolError({ status: 0, key: "moreTools.observe.poolLoadFailed" });
         }
       });
-  }, [isSuperAdmin, t]);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     loadContextPack();
@@ -671,7 +682,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
               {poolBusyMessage.text}
             </Alert>
           )}
-          {poolError && <Alert severity={poolError.status === 403 ? "info" : "error"}>{poolError.message}</Alert>}
+          {poolError && <Alert severity={poolError.status === 403 ? "info" : "error"}>{t(poolError.key, poolError.params)}</Alert>}
           {!poolError && pool === null && <Skeleton variant="rounded" height={100} />}
           {!poolError && pool && (
             <>

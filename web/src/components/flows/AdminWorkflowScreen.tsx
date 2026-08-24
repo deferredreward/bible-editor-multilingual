@@ -404,6 +404,15 @@ const BOOK_FAILED_STATUSES = new Set(["retryable_error", "failed"]);
 type LaneKey = "lit" | "sim";
 const LANES: LaneKey[] = ["lit", "sim"];
 
+// Load errors are stored as i18n key + params and translated at render, so
+// (a) the message live-updates on language switch and (b) the load callbacks
+// don't depend on `t` — t's identity changes per language, and having it in
+// the dep arrays refired the fetches on every language switch.
+interface LoadErrorRef {
+  key: string;
+  params?: Record<string, unknown>;
+}
+
 export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -413,7 +422,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
   // ── state ──
   const [cfg, setCfg] = useState<ProjectConfig | null>(null);
-  const [cfgError, setCfgError] = useState<string | null>(null);
+  const [cfgError, setCfgError] = useState<LoadErrorRef | null>(null);
 
   const [jobs, setJobs] = useState<PipelineJob[]>([]);
   const [pipelineRefreshing, setPipelineRefreshing] = useState(false);
@@ -422,7 +431,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const [laneBusy, setLaneBusy] = useState<LaneKey | null>(null);
 
   const [snapshots, setSnapshots] = useState<ExportSnapshot[] | null>(null);
-  const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
+  const [snapshotsError, setSnapshotsError] = useState<LoadErrorRef | null>(null);
   const [runInfo, setRunInfo] = useState<{ id: string; status: string } | null>(null);
   const [runBusy, setRunBusy] = useState(false);
   const [instanceStatus, setInstanceStatus] = useState<string | null>(null);
@@ -451,11 +460,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     } catch (e) {
       setCfgError(
         e instanceof ApiError
-          ? t("adminPages.workflow.configLoadFailedHttp", { status: e.status })
-          : t("adminPages.workflow.configLoadFailed"),
+          ? { key: "adminPages.workflow.configLoadFailedHttp", params: { status: e.status } }
+          : { key: "adminPages.workflow.configLoadFailed" },
       );
     }
-  }, [t]);
+  }, []);
 
   const loadSnapshots = useCallback(async () => {
     try {
@@ -466,11 +475,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       setSnapshots(null);
       setSnapshotsError(
         e instanceof ApiError && e.status === 403
-          ? t("adminPages.workflow.exportHistoryAdminOnly")
-          : t("adminPages.workflow.exportHistoryLoadFailed"),
+          ? { key: "adminPages.workflow.exportHistoryAdminOnly" }
+          : { key: "adminPages.workflow.exportHistoryLoadFailed" },
       );
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -996,7 +1005,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
               </Button>
             }
           >
-            {cfgError}
+            {t(cfgError.key, cfgError.params)}
           </Alert>
         ) : !cfg ? (
           <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
@@ -1078,7 +1087,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
               </Button>
             }
           >
-            {snapshotsError}
+            {t(snapshotsError.key, snapshotsError.params)}
           </Alert>
         ) : snapshots === null ? (
           <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
