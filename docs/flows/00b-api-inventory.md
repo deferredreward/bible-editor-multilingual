@@ -119,6 +119,7 @@ Mounts: `/api/books` (`bookImport.ts`), `/api/pending-imports` (`pendingImports.
 - **GET `/api/books`** — no auth; `200 {books:[{book, imported_at}]}`. `bookImport.ts:86`.
 - **GET `/api/books/:book/lint`** — requireAuth; `200 {book, total, flagCount, escalateCount, issues[]}` (read-only across tn/ult/ust). `bookImport.ts:97`.
 - **POST `/api/books/:book/aquifer-drafts`** — requireAdmin; merges Aquifer notes as unapproved drafts, **never** overwrites `validated`/`edited` rows. `409 book_not_imported`/`import_in_progress`, `502` on Aquifer/EN-tN fetch failure, `200 {ok, approved, inserted, replaced, skippedApproved, report}`. Writes `tn_rows`, `edit_log`, stamps `book_imports.tn_source`. `bookImport.ts:130` → `aquiferImport.ts:82`.
+- **POST `/api/books/:book/aquifer-repair`** — requireAdmin; rewrites the markdown formatting of notes already imported from Aquifer (stray `****` runs, swallowed spaces), for the approved/edited rows the import itself protects. Only rows whose text still matches the pre-fix render byte for byte are touched; anything a human changed is reported as `humanEdited`. `?dryRun=1` reports without writing. `200 {ok, applied, aquiferRows, repaired, alreadyClean, humanEdited, noSource, otherLang}`, `500 repair_partial` carries `applied`. Writes `tn_rows`, `edit_log` (payload keeps the before-text). `bookImport.ts:136` → `aquiferRepair.ts:29`.
 - **GET `/api/books/:book/sources`** — requireAuth; lists per-book/chapter-range source overrides (feeds C's export hold-out logic too). `bookImport.ts:138`.
 - **PUT `/api/books/:book/sources`** — requireAdmin; set/clear a resource's source override (whole book, chapter range, or Aquifer-tn range); `409 overlapping_range`. Existence of the pasted repo is **not** re-checked here (caller must use `GET /api/orgs/verify-source` first). `bookImport.ts:153`.
 - **POST `/api/books/:book/import`** — requireEditor (`force:true` additionally requires admin — destructive, wipes tn/tq/twl/verses/book_usfm_meta); `409 has_local_edits` (force without `confirmDiscardEdits`), `409 in_progress` (cross-isolate `book_import_locks`), `422/502 import_failed`, `200 {ok, ...counts, forced?, alreadyImported?, recovered?}`. Fetches ULT/UST/orig/tn/tq/twl from DCS in parallel, wipes+reinserts, seeds SHA watermarks, schedules tW/tA article backfill. `bookImport.ts:262`.
@@ -315,6 +316,7 @@ All routes `api/src/translationMemory.ts:104-752`.
 | GET | /api/books | none | B | imported-book list |
 | GET | /api/books/:book/lint | requireAuth | B | lint feed |
 | POST | /api/books/:book/aquifer-drafts | requireAdmin | B | Aquifer draft merge |
+| POST | /api/books/:book/aquifer-repair | requireAdmin | B | Aquifer formatting repair |
 | GET | /api/books/:book/sources | requireAuth | B | source overrides list |
 | PUT | /api/books/:book/sources | requireAdmin | B | source override set/clear |
 | POST | /api/books/:book/import | requireEditor (+admin for force) | B | book import action |
