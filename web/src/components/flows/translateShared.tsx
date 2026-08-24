@@ -11,6 +11,22 @@ export function unescapeNewlines(text: string | null | undefined): string {
   return (text ?? "").replace(/\\n/g, "\n");
 }
 
+// Distinct provenance: a row whose draft text came from an Aquifer import
+// (draft_meta_json.source === "aquifer"), not from the AI translate bot. Kept in
+// draft_meta_json so it survives the D1 round-trip. This is provenance ONLY — it
+// does not encode the row's translation_state; callers combine it with their own
+// state check. The single implementation shared by the classic NoteCard badge
+// and the flow translate screens so the two can't drift (issue #295).
+export function isAquiferDraftRow(
+  row: { draft_meta_json?: string | null } | null | undefined,
+): boolean {
+  try {
+    return JSON.parse(row?.draft_meta_json ?? "null")?.source === "aquifer";
+  } catch {
+    return false;
+  }
+}
+
 // Wait for one outbox op to settle. "retry" is not a settlement — the op is
 // still in flight and will be dispatched again. Resolves null on timeout (a
 // read-only/frozen lane returns a no-op op that never settles), so the caller

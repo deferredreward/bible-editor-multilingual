@@ -1081,7 +1081,11 @@
     "extendThrough": "توسيع الآية {{verse}} حتى:",
     "back": "← رجوع",
     "spanMultiple": "امتداد عبر عدة آيات…",
-    "defaultTemplate": "افتراضي"
+    "defaultTemplate": "افتراضي",
+    "discardConfirmTitle": "تجاهل التعديلات غير المحفوظة؟",
+    "discardConfirmBody": "سيعيد هذا الاقتباس والملاحظة إلى آخر نسخة محفوظة، ويُسقط كل تغيير أجريته منذ ذلك الحين. لا يمكن التراجع عن هذا.",
+    "discardConfirmAction": "تجاهل",
+    "openArticle": "افتح مقالة translationAcademy الخاصة بهذا المرجع الداعم"
   },
   "aligner": {
     "noAlignmentData": "لا توجد بيانات محاذاة لهذه الآية — إما أن المصدر لا يحتوي على علامات `\\zaln-s`، أو أن الآية حُرِّرت مؤخرًا وأُزيلت المحاذاة.",
@@ -1692,6 +1696,7 @@
     "authoringWorkspace": "تؤلَّف الملاحظات في مساحة العمل هذه بالإنجليزية بدلًا من ترجمتها، لذا لا يوجد مصدر منفصل.",
     "targetDraft": "مسودة {{target}}",
     "targetDraftAi": "مسودة {{target}} · ذكاء اصطناعي",
+    "targetDraftAquifer": "مسودة {{target}} · أكوافير",
     "emptyDraftTap": "لم تتم صياغة شيء بعد — انقر لكتابة هذه الملاحظة بلغة {{target}}.",
     "tapToEdit": "انقر على النص لتحريره",
     "done": "تم",
@@ -1740,7 +1745,8 @@
       "trashed": "في المهملات",
       "ok": "سليم",
       "needsAttention": "بحاجة إلى انتباه",
-      "skipped": "تم التخطي"
+      "skipped": "تم التخطي",
+      "aquiferImport": "استيراد أكوافير"
     },
     "pipeline": {
       "generate": "توليد بالذكاء الاصطناعي",
@@ -1848,12 +1854,13 @@
       "nothingToOpen": "لا شيء لفتحه بعد — المسؤول هو من يُحضر الأسفار إلى المحرر.",
       "intent": "الغرض",
       "importBook": "استيراد {{book}}",
+      "bringInBook": "إحضار {{book}}…",
       "importingBook": "جارٍ استيراد {{book}}…",
       "repull": "إعادة السحب…",
       "aiTranslateWholeBook": "ترجمة السفر بأكمله بالذكاء الاصطناعي",
       "importRunsServerSide": "يجري استيراد السفر على الخادم وقد يستغرق حتى دقيقة للسفر الكبير. مغادرة هذه الشاشة لا تُلغيه.",
       "importInfo": "يسحب الاستيراد ULT/UST/tN/tQ/TWL من المصدر المُهيَّأ لهذا المشروع. السفر الجديد غير المحرَّر يمكن إعادة سحبه بأمان؛ أما السفر المملوء فيحمل خطرًا أكبر عند إعادة الاستيراد الليلية.",
-      "sourceOverridesMovedPrefix": "انتقلت تجاوزات المصادر إلى",
+      "sourceOverridesMovedPrefix": "تُختار المصادر عند إحضار السفر؛ وبعد الاستيراد، حرّر التجاوزات في",
       "adminSetup": "المسؤول ← الإعداد",
       "importedFrom": "تم استيراد {{book}} من {{sources}}.",
       "importedBook": "تم استيراد {{book}}.",
@@ -1870,6 +1877,26 @@
       "aiStarted_other": "بدأت {{count}} عملية ذكاء اصطناعي.",
       "aiStartedSkipped": "بدأت {{started}} من عمليات الذكاء الاصطناعي، و{{skipped}} قيد التشغيل بالفعل.",
       "notYetImported": "لم يُستورد بعد"
+    },
+    "sheet": {
+      "title": "إحضار {{book}}",
+      "intro": "اختر من أين يأتي محتوى الملاحظات والأسئلة. الوضع الافتراضي للمشروع لا يحتاج إلى أي إعداد — لمعظم الأسفار، استورد مباشرة.",
+      "sourceDefault": "افتراضي المشروع (مستودعاته الخاصة)",
+      "addRange": "إضافة نطاق",
+      "existingHeading": "تجاوزات موجودة",
+      "existingNote": "محفوظة بالفعل — تُطبَّق عند الاستيراد. حرّرها في المسؤول ← الإعداد.",
+      "badRange": "يجب أن تكون الأصحاحات أعدادًا صحيحة، والبداية ≤ النهاية.",
+      "aquiferTnOnly": "يتوفر Aquifer للملاحظات (tN) فقط.",
+      "urlRequired": "الصق رابط مستودع Door43.",
+      "urlVerifyFailed": "تعذّر التحقق من رابط Door43 هذا. تحقق من العنوان وحاول مجددًا.",
+      "overlapSheet": "يتداخل هذا النطاق مع صف آخر لنفس المورد.",
+      "savingSources": "جارٍ حفظ تجاوزات المصادر…",
+      "confirm": "إحضار {{book}}",
+      "alreadyImportedSources": "سبق استيراد {{book}}، لذا حُفظت خيارات المصادر دون تطبيقها — فهي لا تسري إلا مع إعادة استيراد كاملة تتخلص من المحتوى الحالي.",
+      "forceReimport": "فرض إعادة الاستيراد…",
+      "discardBody": "يحمل {{book}} تعديلات محلية: {{tn}} ملاحظات، {{tq}} أسئلة، {{twl}} روابط كلمات، {{verses}} تعديلات آيات. إعادة الاستيراد ستتخلص منها جميعًا نهائيًا وتعيد تحميل السفر من المصادر المختارة.",
+      "discardIrreversible": "لا يمكن التراجع عن هذا. لا تُكمل إلا إذا كنت متأكدًا أن أحدًا لا يحتاج إلى هذا العمل.",
+      "discardConfirm": "التخلص من {{n}} تعديلًا وإعادة الاستيراد"
     },
     "pending": {
       "title": "الاستيرادات المعلّقة",
@@ -2874,7 +2901,7 @@
       "activateButton": "تفعيل…",
       "publishingTitle": "النشر",
       "publishingSub": "يصيّر التصدير الليلي قاعدة البيانات إلى TSV + USFM ويودعها في فرع على Door43. السجل أدناه حقيقي؛ أما الجدولة فهي إعدادات (crons في api/wrangler.toml) وليست بيانات حية — لا توجد نقطة نهاية تسرد المهام المجدولة.",
-      "latestCommit": "آخر إيداع: {{book}} · {{resource}} — {{date}}",
+      "latestCommit": "آخر إيداع: {{target}} — {{date}}",
       "historyUnavailable": "السجل غير متاح",
       "noExportHistory": "لا سجل تصدير بعد",
       "exportsRunAutomatically": "تعمل التصديرات تلقائيًا في 05:30 بالتوقيت العالمي",
@@ -2932,7 +2959,9 @@
       "msgExportStartFailedHttp": "فشل بدء التصدير (HTTP {{status}})",
       "msgExportStartFailed": "فشل بدء التصدير",
       "exportHistoryAdminOnly": "سجل التصدير للمسؤولين فقط.",
-      "exportHistoryLoadFailed": "فشل تحميل سجل التصدير."
+      "exportHistoryLoadFailed": "فشل تحميل سجل التصدير.",
+      "contextSnapshotLabel": "حزمة السياق",
+      "contextSnapshotHint": "حزمة سياق الترجمة التي يبنيها التصدير الليلي لتوجيه مسودات الذكاء الاصطناعي — وليست كتابًا منشورًا."
     }
   },
   "widgets": {
@@ -3264,7 +3293,8 @@
       "trash": "سلة المهملات",
       "restoreTooltip": "إعادة هذه الملاحظة من سلة المهملات",
       "trashTooltip": "نقل هذه الملاحظة إلى سلة المهملات الظاهرة والقابلة للاستعادة",
-      "deleteQuestionTooltip": "تُحذف الأسئلة نهائيًا — لا توجد سلة مهملات للأسئلة"
+      "deleteQuestionTooltip": "تُحذف الأسئلة نهائيًا — لا توجد سلة مهملات للأسئلة",
+      "approveTrashedTooltip": "هذه الملاحظة في سلة المهملات — استعِدها قبل اعتمادها."
     },
     "conflictNotice": {
       "rowGone": "لم يعد هذا الصف موجودًا في هذا الأصحاح — ربما حذفه المحرر الآخر.",
@@ -3972,6 +4002,42 @@
         "questions_many": "{{count}} سؤالًا",
         "questions_other": "{{count}} سؤال"
       }
+    },
+    "lifecycle": {
+      "title": "دورة حياة السفر",
+      "notesApproved": "الملاحظات المعتمدة",
+      "questionsApproved": "الأسئلة المعتمدة",
+      "versesDone": "الآيات المنجزة",
+      "ofTotal": "{{done}} من {{total}}",
+      "publishButton": "نشر هذا السفر",
+      "confirmTitle": "نشر {{book}}؟",
+      "confirmBody": "يعرض هذا الإجراء المحتوى المعتمد من {{book}} ويفتح طلبات السحب على Door43 لكل مورد أو يحدّثها. الصفوف التي لا تزال قيد المراجعة تُستبعد تلقائيًا وتبقى هنا دون نشر.",
+      "confirmRun": "نشر",
+      "queuedMsg": "بدأت عملية النشر",
+      "runningLine": "جارٍ النشر — {{status}}",
+      "alreadyRunning": "هناك عملية تصدير قيد التنفيذ بالفعل. حاول مرة أخرى بعد بضع دقائق.",
+      "startFailed": "تعذر بدء عملية النشر",
+      "startFailedHttp": "تعذر بدء عملية النشر (HTTP {{status}})",
+      "doneMsg": "اكتملت عملية النشر",
+      "failedMsg": "لم تكتمل عملية النشر بنجاح — راجع شاشة سير العمل للمسؤول.",
+      "timeoutMsg": "لا تزال عملية النشر جارية — ستظهر النتائج هنا عند اكتمالها.",
+      "latestResults": "أحدث نتائج النشر",
+      "notPublished": "لم يُنشر بعد",
+      "historyLoadFailed": "تعذر تحميل نتائج النشر",
+      "chipHeld": "قيد المراجعة",
+      "chipUpToDate": "محدّث",
+      "rowsCommitted_zero": "لا صفوف منشورة",
+      "rowsCommitted_one": "صف واحد منشور",
+      "rowsCommitted_two": "صفان منشوران",
+      "rowsCommitted_few": "{{count}} صفوف منشورة",
+      "rowsCommitted_many": "{{count}} صفًا منشورًا",
+      "rowsCommitted_other": "{{count}} صف منشور",
+      "heldRows_zero": "لا صفوف بانتظار المراجعة",
+      "heldRows_one": "صف واحد بانتظار المراجعة",
+      "heldRows_two": "صفان بانتظار المراجعة",
+      "heldRows_few": "{{count}} صفوف بانتظار المراجعة",
+      "heldRows_many": "{{count}} صفًا بانتظار المراجعة",
+      "heldRows_other": "{{count}} صف بانتظار المراجعة"
     }
   },
   "messages": {

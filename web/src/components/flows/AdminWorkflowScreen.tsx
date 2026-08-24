@@ -399,6 +399,15 @@ function LifecycleStrip({ status }: { status: string }) {
 const BOOK_OK_STATUSES = new Set(["artifact_ok", "carried_forward", "absent_authorized"]);
 const BOOK_FAILED_STATUSES = new Set(["retryable_error", "failed"]);
 
+// The nightly export records one synthetic snapshot per run under book/resource
+// "CONTEXT"/"ctx" (exportWorkflow.ts) — the translation-context pack that seeds
+// AI drafting, not a published book. Rendered raw it reads as "CONTEXT · ctx",
+// which means nothing to a partner; give it a human label instead.
+const CONTEXT_SNAPSHOT_BOOK = "CONTEXT";
+function snapshotTargetLabel(book: string, resource: string, contextLabel: string): string {
+  return book === CONTEXT_SNAPSHOT_BOOK ? contextLabel : `${book} · ${resource}`;
+}
+
 // ── screen ───────────────────────────────────────────────────────────────────
 
 type LaneKey = "lit" | "sim";
@@ -1039,8 +1048,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             <Typography variant="caption">
               {lastCommitted
                 ? t("adminPages.workflow.latestCommit", {
-                    book: lastCommitted.book,
-                    resource: lastCommitted.resource,
+                    target: snapshotTargetLabel(
+                      lastCommitted.book,
+                      lastCommitted.resource,
+                      t("adminPages.workflow.contextSnapshotLabel"),
+                    ),
                     date: fmtDateTime(lastCommitted.committed_at),
                   })
                 : snapshotsError
@@ -1115,7 +1127,13 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                   return (
                     <TableRow key={s.id} hover>
                       <TableCell sx={{ ...tdSx, fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {s.book} · {s.resource}
+                        {s.book === CONTEXT_SNAPSHOT_BOOK ? (
+                          <Tooltip title={t("adminPages.workflow.contextSnapshotHint")}>
+                            <span>{t("adminPages.workflow.contextSnapshotLabel")}</span>
+                          </Tooltip>
+                        ) : (
+                          `${s.book} · ${s.resource}`
+                        )}
                       </TableCell>
                       <TableCell sx={tdSx}>
                         <FlowStatusChip

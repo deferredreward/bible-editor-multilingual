@@ -387,9 +387,38 @@ export function ReviewRail({
               </Box>
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={600} noWrap sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    fontWeight={600}
+                    noWrap
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      textDecoration: item.trashed ? "line-through" : "none",
+                    }}
+                  >
                     {item.ref}
                   </Typography>
+                  {item.trashed && (
+                    <Box
+                      component="span"
+                      sx={{
+                        flex: "none",
+                        fontSize: "0.6rem",
+                        fontWeight: 700,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        color: "text.secondary",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 0.5,
+                        px: 0.5,
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      {t("flowTranslate.status.trashed")}
+                    </Box>
+                  )}
                   {item.typeLabel && (
                     // Quiet read-only pill naming the note's tA article type —
                     // classification, not status, so it uses the muted skip
