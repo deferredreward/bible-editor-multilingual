@@ -748,7 +748,9 @@ export function BooksLanePanel() {
               </Box>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
                 {t("flowBooks.lane.selectionSummary", {
-                  replace: affectedBooks.filter((b) => selectedBooks.has(b)).length,
+                  // NOT `replace`: that is i18next's reserved substitution-data
+                  // option, and a truthy value silently blanks every placeholder.
+                  replacing: affectedBooks.filter((b) => selectedBooks.has(b)).length,
                   kept: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
                 })}
               </Typography>

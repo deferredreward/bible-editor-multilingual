@@ -537,7 +537,7 @@
       "confirmBooksSelectLead": "اختر أي الأسفار ({{count}}) سيتم استبداله من المصدر الجديد. الأسفار التي تتركها غير محددة تبقى دون تغيير (تُرحَّل كما هي):",
       "confirmBooksSelectAll": "استبدال الكل",
       "confirmBooksSelectNone": "الاحتفاظ بالكل",
-      "confirmBooksSummary": "استبدال {{replace}} · الاحتفاظ بـ {{keep}}",
+      "confirmBooksSummary": "استبدال {{replacing}} · الاحتفاظ بـ {{keep}}",
       "confirmBooksEditedHint": "تشير ✎ إلى الأسفار التي تحتوي على آيات عدّلتها. تبدأ غير محددة حفاظًا على عملك (يُرحَّل كما هو) — لا تحدد سفرًا منها إلا إذا أردت استبداله من المصدر الجديد.",
       "bookStatTip": "{{verses}} آية · {{edited}} معدَّلة",
       "confirmNoBookList": "تعذّر سرد الأسفار المتأثرة، لكن سيتم استبدال كل سفر مستورد في هذا المسار.",
@@ -1263,7 +1263,7 @@
     "replacementConfirmBooksSelectLead": "اختر أيًّا من الأسفار البالغ عددها {{count}} تريد استبداله من المصدر الجديد. الأسفار التي تتركها غير محددة تبقى دون تغيير (تُرحَّل):",
     "replacementConfirmBooksSelectAll": "استبدال الكل",
     "replacementConfirmBooksSelectNone": "الإبقاء على الكل",
-    "replacementConfirmBooksSummary": "استبدال {{replace}} · الإبقاء على {{keep}}",
+    "replacementConfirmBooksSummary": "استبدال {{replacing}} · الإبقاء على {{keep}}",
     "replacementConfirmBooksEditedHint": "✎ تُعلِّم الأسفار التي تحتوي على آيات حرّرتها. تبدأ غير محددة حتى يُحفظ عملك (يُرحَّل) — حدد أحدها فقط إن أردت الكتابة فوقه من المصدر الجديد.",
     "replacementConfirmBookStatTip": "{{verses}} آية · {{edited}} محرَّرة",
     "replacementConfirmNoBookList": "تعذّر سرد الأسفار المتأثرة، لكن سيُستبدل كل سفر مستورد في هذا المسار.",
@@ -1987,7 +1987,7 @@
       "selectAll": "تحديد الكل",
       "selectNone": "إلغاء تحديد الكل",
       "bookStats": "{{verses}} آيات، منها {{edited}} تحمل تعديلات المترجمين",
-      "selectionSummary": "{{replace}} للاستبدال، و{{kept}} يُحتفَظ بها.",
+      "selectionSummary": "{{replacing}} للاستبدال، و{{kept}} يُحتفَظ بها.",
       "ackLabel": "أفهم أن الأسفار المحددة ستُستبدل بمحتوى المصدر الجديد.",
       "selectAtLeastOne": "حدد سفرًا واحدًا على الأقل لاستبداله."
     }

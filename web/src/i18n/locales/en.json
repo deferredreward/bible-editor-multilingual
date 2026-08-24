@@ -521,7 +521,7 @@
       "confirmBooksSelectLead": "Choose which of the {{count}} book(s) to replace from the new source. Books you leave unselected are kept unchanged (carried forward):",
       "confirmBooksSelectAll": "Replace all",
       "confirmBooksSelectNone": "Keep all",
-      "confirmBooksSummary": "Replacing {{replace}} · keeping {{keep}}",
+      "confirmBooksSummary": "Replacing {{replacing}} · keeping {{keep}}",
       "confirmBooksEditedHint": "✎ marks books with verses you've edited. They start unselected so your work is kept (carried forward) — select one only if you want to overwrite it from the new source.",
       "bookStatTip": "{{verses}} verses · {{edited}} edited",
       "confirmNoBookList": "The affected books couldn't be listed, but every imported book in this lane will be replaced.",
@@ -1179,7 +1179,7 @@
     "replacementConfirmBooksSelectLead": "Choose which of the {{count}} book(s) to replace from the new source. Books you leave unselected are kept unchanged (carried forward):",
     "replacementConfirmBooksSelectAll": "Replace all",
     "replacementConfirmBooksSelectNone": "Keep all",
-    "replacementConfirmBooksSummary": "Replacing {{replace}} · keeping {{keep}}",
+    "replacementConfirmBooksSummary": "Replacing {{replacing}} · keeping {{keep}}",
     "replacementConfirmBooksEditedHint": "✎ marks books with verses you've edited. They start unselected so your work is kept (carried forward) — select one only if you want to overwrite it from the new source.",
     "replacementConfirmBookStatTip": "{{verses}} verses · {{edited}} edited",
     "replacementConfirmNoBookList": "The affected books couldn't be listed, but every imported book in this lane will be replaced.",
@@ -1839,7 +1839,7 @@
       "selectAll": "Select all",
       "selectNone": "Select none",
       "bookStats": "{{verses}} verses, {{edited}} with translator edits",
-      "selectionSummary": "{{replace}} to replace, {{kept}} kept.",
+      "selectionSummary": "{{replacing}} to replace, {{kept}} kept.",
       "ackLabel": "I understand the selected books will be overwritten from the new source.",
       "selectAtLeastOne": "Select at least one book to replace."
     }
