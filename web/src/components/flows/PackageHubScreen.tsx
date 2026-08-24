@@ -40,16 +40,19 @@
 //     {book}, api.ts:1589-1590; useBook.ts:66-79). Every count on this screen
 //     is a sum or a row of that one response — no N+1, no per-chapter fetches.
 //
-//   * There is NO overall progress bar and NO status chips here, on purpose.
-//     Approval state (`translation_state === "validated"`) lives on individual
-//     rows inside ChapterPayload (api.ts:156-165) and verse statuses likewise —
-//     per-chapter payloads only. Computing "3 of 46 approved" for the book
-//     would mean fetching every chapter of every resource, which is exactly
-//     the request-per-chapter hammering this screen refuses. A verb or count
-//     with no backend is absent, not faked (Benjamin's 2026-08-07 precedent,
-//     TranslateQuestionsScreen header). If we want real progress here, the
-//     backend needs a book-level rollup — e.g. GET /api/chapters/{book}
-//     growing per-chapter `tnValidated` / `tqValidated` / `versesDone` counts.
+//   * Lifecycle card (2026-08-24, docs/ux-simplification.md A4): the rollup
+//     this header used to ask for now exists — GET /api/chapters/{book} grew
+//     per-chapter `tnValidated` / `tqValidated` / `versesDone` (A2), still ONE
+//     request via the same useBook summary fetch. So the card at the top shows
+//     honest aggregate review progress (notes/questions approved, verses done)
+//     plus, for admins, "Publish this book" (POST /api/exports/run {book},
+//     #287 plumbing) and the latest per-resource publish outcomes with Door43
+//     PR links (GET /api/exports?book=…, admin-only endpoint — non-admins see
+//     the progress numbers only). The old rule still holds for everything
+//     else: a verb or count with no backend is absent, not faked (Benjamin's
+//     2026-08-07 precedent) — which is why the progress section hides itself
+//     entirely when the API build predates the rollup fields (see
+//     lib/packageLifecycle.ts reviewProgress).
 //
 //   * The Words & Articles row carries NO count. BookSummary.twl counts
 //     word-LINK rows (occurrences in the text), but the Words screen lists
@@ -72,14 +75,22 @@
 // from the same one-column plumbing: useBook for the summary, useProjectConfig
 // for the "{source} to {target}" sub-line (TranslateNotesScreen:547-549).
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
+  Button,
   ButtonBase,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
+  LinearProgress,
+  Link,
+  Snackbar,
   Stack,
   Typography,
 } from "@mui/material";
@@ -90,10 +101,20 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import TuneIcon from "@mui/icons-material/Tune";
 
 import type { FlowScreenContext } from "./types";
+import { api, ApiError, type BookSummary, type ExportSnapshot } from "../../sync/api";
 import { useBook } from "../../hooks/useBook";
 import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectConfig";
 import { bookName } from "../../lib/bookNames";
 import { realChapters } from "../../lib/bookSummary";
+import {
+  classifySnapshot,
+  isTerminalRunStatus,
+  latestPerResource,
+  progressPercent,
+  reviewProgress,
+  type ProgressPair,
+} from "../../lib/packageLifecycle";
+import { FlowStatusChip } from "./FlowStatusChip";
 
 export interface PackageHubScreenProps extends FlowScreenContext {
   book: string;
@@ -246,6 +267,318 @@ function ChapterList({ countOf, unit, href, wide, chapters }: ChapterListProps) 
   );
 }
 
+// One compact progress line on the lifecycle card: label, "x of y", and a
+// thin determinate bar. Module scope like SurfaceRow/ChapterList (issue #172).
+function ProgressLine({ label, pair }: { label: string; pair: ProgressPair }) {
+  const { t } = useTranslation();
+  return (
+    <Box sx={{ minWidth: 0 }}>
+      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 0 }}>
+          {label}
+        </Typography>
+        <Typography
+          variant="caption"
+          sx={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
+        >
+          {t("flowVerse.lifecycle.ofTotal", { done: pair.done, total: pair.total })}
+        </Typography>
+      </Box>
+      <LinearProgress
+        variant="determinate"
+        value={progressPercent(pair)}
+        sx={{ height: 4, borderRadius: 2, marginBlockStart: 0.5 }}
+      />
+    </Box>
+  );
+}
+
+// Latest publish outcome for one resource: resource code, status chip
+// (AdminWorkflowScreen's committed / needs-attention vocabulary plus the A1
+// held_for_review state), a detail caption, and the Door43 PR link when the
+// server could derive one (ExportSnapshot.prUrl) — otherwise plain PR #n text.
+function OutcomeRow({ snapshot }: { snapshot: ExportSnapshot }) {
+  const { t } = useTranslation();
+  const outcome = classifySnapshot(snapshot);
+
+  let chip: ReactNode;
+  let detail: string | null = null;
+  switch (outcome.kind) {
+    case "committed":
+      chip = <FlowStatusChip kind="ok" label={t("adminPages.workflow.chipCommitted")} />;
+      detail = t("flowVerse.lifecycle.rowsCommitted", { count: outcome.rows });
+      if (outcome.prProblem) detail += ` · ${outcome.prProblem}`;
+      break;
+    case "held":
+      chip = <FlowStatusChip kind="draft" label={t("flowVerse.lifecycle.chipHeld")} />;
+      detail = t("flowVerse.lifecycle.heldRows", { count: outcome.count });
+      break;
+    case "unchanged":
+      chip = <FlowStatusChip kind="skip" label={t("flowVerse.lifecycle.chipUpToDate")} />;
+      break;
+    case "skipped":
+      chip = <FlowStatusChip kind="skip" />;
+      detail = outcome.reason;
+      break;
+    case "error":
+      chip = <FlowStatusChip kind="warn" label={t("adminPages.workflow.chipNeedsAttention")} />;
+      detail = outcome.detail;
+      break;
+  }
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", minWidth: 0 }}>
+      <Typography
+        component="span"
+        sx={{ fontWeight: 700, fontSize: "0.75rem", textTransform: "uppercase", inlineSize: 34, flex: "none" }}
+      >
+        {snapshot.resource}
+      </Typography>
+      {chip}
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ flex: 1, minWidth: 120, overflowWrap: "anywhere" }}
+      >
+        {detail ?? ""}
+      </Typography>
+      {snapshot.prUrl ? (
+        <Link
+          href={snapshot.prUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          variant="caption"
+          sx={{ fontWeight: 600, whiteSpace: "nowrap", flex: "none" }}
+        >
+          {t("adminPages.workflow.prNumber", { number: snapshot.pr_number })}
+        </Link>
+      ) : snapshot.pr_number != null ? (
+        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap", flex: "none" }}>
+          {t("adminPages.workflow.prNumber", { number: snapshot.pr_number })}
+          {snapshot.branch ? ` · ${snapshot.branch}` : ""}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+
+interface LifecycleCardProps {
+  book: string;
+  name: string;
+  chapters: BookSummary["chapters"];
+  admin: boolean;
+  wide: boolean;
+  cardSx: object;
+}
+
+// The lifecycle header card (docs/ux-simplification.md §1.3 / A4): aggregate
+// review progress for everyone; publish button + latest per-resource publish
+// outcomes for admins. GET /api/exports is requireAdmin, so non-admins never
+// fetch it. Polling after a publish: exportsInstance every 5s until the
+// Workflow reports a terminal status (complete/errored/terminated) or 60
+// attempts (~5 min) pass, then the book-filtered snapshot list reloads.
+function LifecycleCard({ book, name, chapters, admin, wide, cardSx }: LifecycleCardProps) {
+  const { t } = useTranslation();
+
+  const progress = useMemo(() => reviewProgress(chapters), [chapters]);
+
+  const [snapshots, setSnapshots] = useState<ExportSnapshot[] | null>(null);
+  const [snapshotsError, setSnapshotsError] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [runBusy, setRunBusy] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const pollAttempts = useRef(0);
+
+  const loadSnapshots = useCallback(async () => {
+    try {
+      // 25 rows ≈ 5 runs × 5 resources — enough that the latest row per
+      // resource is present even after a couple of partial runs.
+      const res = await api.exportsList({ book, limit: 25 });
+      setSnapshots(res.snapshots);
+      setSnapshotsError(false);
+    } catch {
+      setSnapshots(null);
+      setSnapshotsError(true);
+    }
+  }, [book]);
+
+  useEffect(() => {
+    if (!admin) return;
+    setSnapshots(null);
+    setSnapshotsError(false);
+    void loadSnapshots();
+  }, [admin, loadSnapshots]);
+
+  // Poll the Workflow instance after a publish. Interval-based like
+  // AdminWorkflowScreen's lane-job poll; stops on terminal status or timeout.
+  useEffect(() => {
+    if (!runId) return;
+    let alive = true;
+    pollAttempts.current = 0;
+    const timer = setInterval(() => {
+      pollAttempts.current += 1;
+      void (async () => {
+        let status: string | null = null;
+        try {
+          const res = await api.exportsInstance(runId);
+          const s = res.status as { status?: string } | null;
+          status = typeof s?.status === "string" ? s.status : null;
+        } catch {
+          /* transient — keep polling until timeout */
+        }
+        if (!alive) return;
+        if (status) setRunStatus(status);
+        if (isTerminalRunStatus(status)) {
+          clearInterval(timer);
+          setRunId(null);
+          setMsg(
+            status === "complete"
+              ? t("flowVerse.lifecycle.doneMsg")
+              : t("flowVerse.lifecycle.failedMsg"),
+          );
+          void loadSnapshots();
+        } else if (pollAttempts.current >= 60) {
+          clearInterval(timer);
+          setRunId(null);
+          setMsg(t("flowVerse.lifecycle.timeoutMsg"));
+          void loadSnapshots();
+        }
+      })();
+    }, 5000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [runId, loadSnapshots, t]);
+
+  const handlePublishConfirmed = async () => {
+    setRunBusy(true);
+    try {
+      const res = await api.exportsRun({ book });
+      setRunId(res.id);
+      setRunStatus(res.status);
+      setMsg(t("flowVerse.lifecycle.queuedMsg"));
+    } catch (e) {
+      const body = e instanceof ApiError ? (e.body as { error?: string } | null) : null;
+      setMsg(
+        body?.error === "workflow_create_failed"
+          ? t("flowVerse.lifecycle.alreadyRunning")
+          : e instanceof ApiError
+            ? t("flowVerse.lifecycle.startFailedHttp", { status: e.status })
+            : t("flowVerse.lifecycle.startFailed"),
+      );
+    } finally {
+      setRunBusy(false);
+      setConfirmOpen(false);
+    }
+  };
+
+  const latest = useMemo(() => (snapshots ? latestPerResource(snapshots) : []), [snapshots]);
+  const publishing = runId != null;
+
+  return (
+    <Box
+      sx={{
+        ...cardSx,
+        paddingBlock: 1.75,
+        paddingInline: 1.75,
+        minWidth: 0,
+        ...(wide ? { gridColumn: "1 / -1" } : {}),
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+        <Typography component="h2" sx={{ fontWeight: 700, fontSize: "0.97rem", m: 0, flex: 1, minWidth: 0 }}>
+          {t("flowVerse.lifecycle.title")}
+        </Typography>
+        {admin && (
+          <Button
+            variant="contained"
+            size="small"
+            disabled={publishing || runBusy}
+            onClick={() => setConfirmOpen(true)}
+            sx={{ flex: "none" }}
+          >
+            {t("flowVerse.lifecycle.publishButton")}
+          </Button>
+        )}
+      </Box>
+
+      {publishing && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, marginBlockStart: 1 }}>
+          <CircularProgress size={14} />
+          <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+            {t("flowVerse.lifecycle.runningLine", { status: runStatus ?? "queued" })}
+          </Typography>
+        </Box>
+      )}
+
+      {progress && (
+        <Box
+          sx={{
+            marginBlockStart: 1.5,
+            display: "grid",
+            gap: wide ? 2 : 1.25,
+            // Three columns on the wide desk, stacked on phones.
+            gridTemplateColumns: wide ? "repeat(3, minmax(0, 1fr))" : "1fr",
+          }}
+        >
+          <ProgressLine label={t("flowVerse.lifecycle.notesApproved")} pair={progress.notes} />
+          <ProgressLine label={t("flowVerse.lifecycle.questionsApproved")} pair={progress.questions} />
+          <ProgressLine label={t("flowVerse.lifecycle.versesDone")} pair={progress.verses} />
+        </Box>
+      )}
+
+      {admin && (
+        <Box sx={{ marginBlockStart: 1.5 }}>
+          <Typography
+            variant="caption"
+            component="p"
+            sx={{ fontWeight: 700, color: "text.secondary", m: 0, marginBlockEnd: 0.75 }}
+          >
+            {t("flowVerse.lifecycle.latestResults")}
+          </Typography>
+          {snapshotsError ? (
+            <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+              {t("flowVerse.lifecycle.historyLoadFailed")}
+            </Typography>
+          ) : snapshots === null ? (
+            <CircularProgress size={16} />
+          ) : latest.length === 0 ? (
+            <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
+              {t("flowVerse.lifecycle.notPublished")}
+            </Typography>
+          ) : (
+            <Stack spacing={0.75}>
+              {latest.map((s) => (
+                <OutcomeRow key={s.resource} snapshot={s} />
+              ))}
+            </Stack>
+          )}
+        </Box>
+      )}
+
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+        <DialogTitle>{t("flowVerse.lifecycle.confirmTitle", { book: name })}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {t("flowVerse.lifecycle.confirmBody", { book: name })}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmOpen(false)}>{t("adminPages.workflow.notNow")}</Button>
+          <Button variant="contained" disabled={runBusy} onClick={() => void handlePublishConfirmed()}>
+            {t("flowVerse.lifecycle.confirmRun")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar open={msg != null} autoHideDuration={6000} onClose={() => setMsg(null)} message={msg ?? ""} />
+    </Box>
+  );
+}
+
 export default function PackageHubScreen({ book, role }: PackageHubScreenProps) {
   const theme = useTheme();
   const { t } = useTranslation();
@@ -388,8 +721,8 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               </IconButton>
             )}
           </Stack>
-          {/* No progress bar: the API has no book-level approval rollup, and a
-              bar with no data behind it would be an invented number. */}
+          {/* Progress lives on the lifecycle card below (A4), fed by the A2
+              rollup — not duplicated in this topbar. */}
         </Box>
       </Box>
 
@@ -427,6 +760,15 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
           </Stack>
         ) : (
           <>
+            <LifecycleCard
+              book={book}
+              name={name}
+              chapters={chapters}
+              admin={role === "admin"}
+              wide={wide}
+              cardSx={cardSx}
+            />
+
             <Box sx={sectionHeadSx}>
               <Typography component="h2" sx={sectionTitleSx}>
                 {t("flowVerse.hub.sectionChapters")}
