@@ -172,17 +172,24 @@ export function ReviewRail({
   const effectiveTypeFilter =
     activeKind === "tn" && typeOptions.some((o) => o.slug === typeFilter) ? typeFilter : "all";
 
+  // "Trashed" is a notes-only status, and its menu item isn't rendered for
+  // questions. Heal it the same way: without this, picking Trashed in the notes
+  // queue and switching to questions leaves the select showing nothing and
+  // filters away every question, so the rail just looks empty.
+  const effectiveStatusFilter =
+    statusFilter === "trashed" && activeKind !== "tn" ? "all" : statusFilter;
+
   const visibleItems = useMemo(
     () =>
       items.filter((it) => {
-        if (statusFilter !== "all" && it.status !== statusFilter) return false;
+        if (effectiveStatusFilter !== "all" && it.status !== effectiveStatusFilter) return false;
         if (effectiveTypeFilter !== "all" && it.typeSlug !== effectiveTypeFilter) return false;
         return true;
       }),
-    [items, statusFilter, effectiveTypeFilter],
+    [items, effectiveStatusFilter, effectiveTypeFilter],
   );
 
-  const filtersActive = statusFilter !== "all" || effectiveTypeFilter !== "all";
+  const filtersActive = effectiveStatusFilter !== "all" || effectiveTypeFilter !== "all";
 
   return (
     <Box
@@ -291,7 +298,7 @@ export function ReviewRail({
         <Select
           size="small"
           fullWidth
-          value={statusFilter}
+          value={effectiveStatusFilter}
           onChange={(e) => setStatusFilter(e.target.value as ReviewStatusFilter)}
           aria-label={
             activeKind === "tn"
