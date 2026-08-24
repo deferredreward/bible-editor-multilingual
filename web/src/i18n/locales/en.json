@@ -1588,6 +1588,7 @@
     "authoringWorkspace": "This workspace authors notes in English rather than translating them, so there is no separate source.",
     "targetDraft": "{{target}} draft",
     "targetDraftAi": "{{target}} draft · AI",
+    "targetDraftAquifer": "{{target}} draft · Aquifer",
     "emptyDraftTap": "Nothing drafted yet — tap to write this note in {{target}}.",
     "tapToEdit": "Tap the text to edit",
     "done": "Done",
@@ -1636,7 +1637,8 @@
       "trashed": "Trashed",
       "ok": "OK",
       "needsAttention": "Needs attention",
-      "skipped": "Skipped"
+      "skipped": "Skipped",
+      "aquiferImport": "Aquifer import"
     },
     "pipeline": {
       "generate": "AI generate",
