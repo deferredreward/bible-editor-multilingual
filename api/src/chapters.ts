@@ -370,43 +370,72 @@ chapters.get("/:book", async (c) => {
   await ensureLaneState(c.env);
   const litState = await requireLaneState(c.env, "lit");
   const litGen = litState.replacement_required ? -1 : litState.active_generation;
-  const summary = await db
-    .prepare(
-      `SELECT chapter,
-              SUM(CASE WHEN kind='verse' THEN 1 ELSE 0 END) AS verses,
-              SUM(CASE WHEN kind='tn' THEN 1 ELSE 0 END) AS tn,
-              SUM(CASE WHEN kind='tq' THEN 1 ELSE 0 END) AS tq,
-              SUM(CASE WHEN kind='twl' THEN 1 ELSE 0 END) AS twl,
-              SUM(CASE WHEN kind='tn_validated' THEN 1 ELSE 0 END) AS tnValidated,
-              SUM(CASE WHEN kind='tq_validated' THEN 1 ELSE 0 END) AS tqValidated,
-              SUM(CASE WHEN kind='verse_done' THEN 1 ELSE 0 END) AS versesDone
-       FROM (
-         SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2 AND verse > 0
-         UNION ALL
-         SELECT chapter, 'tn' FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
-         UNION ALL
-         SELECT chapter, 'tq' FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
-         UNION ALL
-         SELECT chapter, 'twl' FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
-         UNION ALL
-         SELECT chapter, 'tn_validated' FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL AND translation_state = 'validated'
-         UNION ALL
-         SELECT chapter, 'tq_validated' FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL AND translation_state = 'validated'
-         UNION ALL
-         SELECT chapter, 'verse_done' FROM verse_statuses WHERE book = ?1 AND done = 1 AND verse > 0
-       )
-       GROUP BY chapter ORDER BY chapter`,
-    )
-    .bind(book, litGen)
-    .all<{
-      chapter: number;
-      verses: number;
-      tn: number;
-      tq: number;
-      twl: number;
-      tnValidated: number;
-      tqValidated: number;
-      versesDone: number;
-    }>();
-  return c.json({ book, chapters: summary.results });
+  // Two compound queries batched together: D1 caps the number of terms in a
+  // compound SELECT well below stock SQLite (a 7-arm UNION ALL fails at
+  // runtime with "too many terms in compound SELECT" — caught against real
+  // workerd; node:sqlite happily runs it), so the review-rollup arms live in
+  // their own statement and are merged per chapter in JS.
+  const [summary, rollup] = await db.batch<{
+    chapter: number;
+    verses?: number;
+    tn?: number;
+    tq?: number;
+    twl?: number;
+    tnValidated?: number;
+    tqValidated?: number;
+    versesDone?: number;
+  }>([
+    db
+      .prepare(
+        `SELECT chapter,
+                SUM(CASE WHEN kind='verse' THEN 1 ELSE 0 END) AS verses,
+                SUM(CASE WHEN kind='tn' THEN 1 ELSE 0 END) AS tn,
+                SUM(CASE WHEN kind='tq' THEN 1 ELSE 0 END) AS tq,
+                SUM(CASE WHEN kind='twl' THEN 1 ELSE 0 END) AS twl
+         FROM (
+           SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2 AND verse > 0
+           UNION ALL
+           SELECT chapter, 'tn' FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
+           UNION ALL
+           SELECT chapter, 'tq' FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
+           UNION ALL
+           SELECT chapter, 'twl' FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+         )
+         GROUP BY chapter ORDER BY chapter`,
+      )
+      .bind(book, litGen),
+    db
+      .prepare(
+        `SELECT chapter,
+                SUM(CASE WHEN kind='tn_validated' THEN 1 ELSE 0 END) AS tnValidated,
+                SUM(CASE WHEN kind='tq_validated' THEN 1 ELSE 0 END) AS tqValidated,
+                SUM(CASE WHEN kind='verse_done' THEN 1 ELSE 0 END) AS versesDone
+         FROM (
+           SELECT chapter, 'tn_validated' AS kind FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL AND translation_state = 'validated'
+           UNION ALL
+           SELECT chapter, 'tq_validated' FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL AND translation_state = 'validated'
+           UNION ALL
+           SELECT chapter, 'verse_done' FROM verse_statuses WHERE book = ?1 AND done = 1 AND verse > 0
+         )
+         GROUP BY chapter`,
+      )
+      .bind(book),
+  ]);
+  const rollupByChapter = new Map(
+    (rollup.results ?? []).map((r) => [r.chapter, r]),
+  );
+  const merged = (summary.results ?? []).map((row) => {
+    const r = rollupByChapter.get(row.chapter);
+    return {
+      chapter: row.chapter,
+      verses: row.verses ?? 0,
+      tn: row.tn ?? 0,
+      tq: row.tq ?? 0,
+      twl: row.twl ?? 0,
+      tnValidated: r?.tnValidated ?? 0,
+      tqValidated: r?.tqValidated ?? 0,
+      versesDone: r?.versesDone ?? 0,
+    };
+  });
+  return c.json({ book, chapters: merged });
 });
