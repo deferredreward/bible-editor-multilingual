@@ -702,7 +702,7 @@
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
-    "membershipUnknownHint": "Couldn't confirm your Door43 org memberships — this list may be incomplete. Sign in again to refresh.",
+    "membershipUnknownHint": "This list of organizations you can switch to may be incomplete — we couldn't confirm your Door43 memberships. Sign in again to refresh.",
     "notMemberTooltip": "you need Door43 membership in this org to switch to it",
     "notAMember": "You're not a member of that organization.",
     "noLongerAvailable": "That workspace is no longer available.",
@@ -956,6 +956,7 @@
     "clickToEdit": "click to edit",
     "notApproved": "Not approved",
     "restoreToReorder": "restore to reorder",
+    "openArticle": "open the translationAcademy article for this support reference",
     "addSupportRef": "+ support ref",
     "supportRefPlaceholder": "figs-, translate-, writing-, …",
     "changeReference": "change reference",
@@ -2644,7 +2645,7 @@
       "activateButton": "Activate…",
       "publishingTitle": "Publishing",
       "publishingSub": "The nightly export renders the database to TSV + USFM and commits to a Door43 branch. History below is real; the schedule is configuration (api/wrangler.toml crons), not live data — there's no endpoint that lists registered crons.",
-      "latestCommit": "Latest commit: {{book}} · {{resource}} — {{date}}",
+      "latestCommit": "Latest commit: {{target}} — {{date}}",
       "historyUnavailable": "History unavailable",
       "noExportHistory": "No export history yet",
       "exportsRunAutomatically": "Exports run automatically at 05:30 UTC",
@@ -2702,7 +2703,9 @@
       "msgExportStartFailedHttp": "Export start failed (HTTP {{status}})",
       "msgExportStartFailed": "Export start failed",
       "exportHistoryAdminOnly": "Export history is admin-only.",
-      "exportHistoryLoadFailed": "Failed to load export history."
+      "exportHistoryLoadFailed": "Failed to load export history.",
+      "contextSnapshotLabel": "Context pack",
+      "contextSnapshotHint": "The translation-context pack the nightly export builds to guide AI drafting — not a published book."
     }
   },
   "widgets": {
