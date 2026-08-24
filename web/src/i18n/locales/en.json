@@ -2644,7 +2644,7 @@
       "activateButton": "Activate…",
       "publishingTitle": "Publishing",
       "publishingSub": "The nightly export renders the database to TSV + USFM and commits to a Door43 branch. History below is real; the schedule is configuration (api/wrangler.toml crons), not live data — there's no endpoint that lists registered crons.",
-      "latestCommit": "Latest commit: {{book}} · {{resource}} — {{date}}",
+      "latestCommit": "Latest commit: {{target}} — {{date}}",
       "historyUnavailable": "History unavailable",
       "noExportHistory": "No export history yet",
       "exportsRunAutomatically": "Exports run automatically at 05:30 UTC",
@@ -2702,7 +2702,9 @@
       "msgExportStartFailedHttp": "Export start failed (HTTP {{status}})",
       "msgExportStartFailed": "Export start failed",
       "exportHistoryAdminOnly": "Export history is admin-only.",
-      "exportHistoryLoadFailed": "Failed to load export history."
+      "exportHistoryLoadFailed": "Failed to load export history.",
+      "contextSnapshotLabel": "Context pack",
+      "contextSnapshotHint": "The translation-context pack the nightly export builds to guide AI drafting — not a published book."
     }
   },
   "widgets": {

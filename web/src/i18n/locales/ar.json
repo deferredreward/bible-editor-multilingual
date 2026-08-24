@@ -2876,7 +2876,7 @@
       "activateButton": "تفعيل…",
       "publishingTitle": "النشر",
       "publishingSub": "يصيّر التصدير الليلي قاعدة البيانات إلى TSV + USFM ويودعها في فرع على Door43. السجل أدناه حقيقي؛ أما الجدولة فهي إعدادات (crons في api/wrangler.toml) وليست بيانات حية — لا توجد نقطة نهاية تسرد المهام المجدولة.",
-      "latestCommit": "آخر إيداع: {{book}} · {{resource}} — {{date}}",
+      "latestCommit": "آخر إيداع: {{target}} — {{date}}",
       "historyUnavailable": "السجل غير متاح",
       "noExportHistory": "لا سجل تصدير بعد",
       "exportsRunAutomatically": "تعمل التصديرات تلقائيًا في 05:30 بالتوقيت العالمي",
@@ -2934,7 +2934,9 @@
       "msgExportStartFailedHttp": "فشل بدء التصدير (HTTP {{status}})",
       "msgExportStartFailed": "فشل بدء التصدير",
       "exportHistoryAdminOnly": "سجل التصدير للمسؤولين فقط.",
-      "exportHistoryLoadFailed": "فشل تحميل سجل التصدير."
+      "exportHistoryLoadFailed": "فشل تحميل سجل التصدير.",
+      "contextSnapshotLabel": "حزمة السياق",
+      "contextSnapshotHint": "حزمة سياق الترجمة التي يبنيها التصدير الليلي لتوجيه مسودات الذكاء الاصطناعي — وليست كتابًا منشورًا."
     }
   },
   "widgets": {
