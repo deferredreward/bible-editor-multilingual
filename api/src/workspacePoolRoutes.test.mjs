@@ -18,6 +18,12 @@ import { attachAuth, requireCsrf } from "./auth.ts";
 import { blockViewerWrites } from "./viewerGuard.ts";
 import { workspaceRoutes } from "./workspaceRoutes.ts";
 
+// The POST /pool/claim route canonicalizes org via DCS GET /api/v1/orgs/{org}
+// (orgCanonical.ts). Stub fetch to a non-200 so canonicalOrgName fails open to
+// the org as typed — keeps these route tests hermetic and network-free; the
+// claim assertions below expect the org echoed back unchanged.
+globalThis.fetch = async () => ({ ok: false, status: 404 });
+
 function assert(cond, msg) {
   if (!cond) {
     console.error(`FAIL: ${msg}`);
@@ -222,6 +228,38 @@ console.log("[super-admin] claim validation and pool exhaustion");
   const exhausted = await req(app, env, "POST", "/api/workspaces/pool/claim", { token: tok, body: { org: "OkOrg", label: "Ok" } });
   assert(exhausted.status === 503, "no available slots -> 503 pool_exhausted");
   assert((await exhausted.json()).error === "pool_exhausted", "503 body error is pool_exhausted");
+}
+
+// ── org canonicalization on claim (issue #306) ──────────────────────────────
+
+console.log("[super-admin] a claim persists DCS canonical org casing, not as-typed");
+{
+  const db = freshDb();
+  seedUser(db, { id: 4, username: "ada" });
+  const app = buildApp();
+  const env = baseEnv(db);
+  const tok = await makeToken({ sub: "4", username: "ada" });
+
+  await req(app, env, "POST", "/api/workspaces/pool", { token: tok, body: { binding: "DB_POOL1" } });
+
+  // DCS resolves the mis-cased "bsoj" to canonical "BSOJ".
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/api/v1/orgs/")) return { ok: true, json: async () => ({ username: "BSOJ" }) };
+    return prevFetch(url);
+  };
+  try {
+    const claim = await req(app, env, "POST", "/api/workspaces/pool/claim", { token: tok, body: { org: "bsoj", label: "BSOJ" } });
+    assert(claim.status === 201, "claim for 'bsoj' -> 201");
+    assert((await claim.json()).org === "BSOJ", "claim body echoes canonical 'BSOJ', not the typed 'bsoj'");
+    assert(db.prepare("SELECT org FROM workspaces WHERE slug='pool1'").get().org === "BSOJ", "persisted workspaces.org is canonical 'BSOJ'");
+
+    // A second claim typed as 'BSOJ' short-circuits to the same slot (idempotent).
+    const again = await req(app, env, "POST", "/api/workspaces/pool/claim", { token: tok, body: { org: "BSOJ", label: "BSOJ" } });
+    assert(again.status === 200 && (await again.json()).alreadyClaimed === true, "re-claim as 'BSOJ' -> 200 alreadyClaimed (NOCASE lookup)");
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 }
 
 console.log("workspacePoolRoutes: all assertions passed");

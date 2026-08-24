@@ -277,8 +277,13 @@ async function invalidateAndReprime(env: Env): Promise<void> {
 async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<Workspace | null> {
   const row = await db
     .prepare(
+      // COLLATE NOCASE so the idempotency check AND the claimWorkspace catch-block
+      // recovery both find a pre-existing claim regardless of the case the admin
+      // typed — matching the NOCASE UNIQUE index on workspaces.org (migration
+      // 0068). Without it, a fail-open cross-case re-claim (canonicalOrgName
+      // couldn't reach DCS) would trip the UNIQUE index and then fail to recover.
       `SELECT slug, label, org, binding, export_owner AS exportOwner
-         FROM workspaces WHERE org = ?1 AND status = 'claimed' LIMIT 1`,
+         FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed' LIMIT 1`,
     )
     .bind(org)
     .first<WorkspaceRow>();
@@ -315,6 +320,12 @@ export async function claimWorkspace(
   opts: { org: string; label: string; exportOwner?: string },
 ): Promise<ClaimResult | null> {
   const db = sharedDb(env);
+  // Callers pass an already-canonicalized org: the sole production caller (the
+  // POST /api/workspaces/pool/claim route) resolves DCS canonical casing before
+  // calling in, keeping this function free of network I/O. claimWorkspace stays
+  // defensive regardless — findClaimedByOrg below is COLLATE NOCASE, so a
+  // pre-existing claim under different casing (e.g. a fail-open where DCS was
+  // unreachable) is still found rather than duplicated.
   const org = opts.org.trim();
   const label = opts.label.trim();
   if (!isIdent(org)) throw new Error(`claimWorkspace: invalid org ${JSON.stringify(opts.org)}`);

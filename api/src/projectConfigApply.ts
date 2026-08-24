@@ -401,6 +401,13 @@ export async function applyProjectConfig(
   const beforeCfg = materialize(currentPreset, beforeRow?.overrides_json ?? null);
 
   const overridesIntent = resolveOverridesIntent(currentPreset, preset, requestOverrides);
+  // NOTE: org-name canonicalization on this path is deliberately NOT done here.
+  // The tenancy guard below keys off dataExportIdentity, which compares `org`
+  // case-SENSITIVELY (`org=${cfg.org}`). Canonicalizing a stored mis-cased org
+  // (e.g. "bsoj"→"BSOJ") on a re-apply would register as an identity change and
+  // trip the project_not_empty 409 on a populated project. Canonicalizing here
+  // safely requires first making dataExportIdentity case-insensitive for
+  // org/exportOwner — tracked as follow-up on issue #306.
   const overridesJsonForWrite =
     overridesIntent === undefined
       ? (beforeRow?.overrides_json ?? null)

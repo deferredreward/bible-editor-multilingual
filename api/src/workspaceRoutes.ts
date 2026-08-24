@@ -18,6 +18,7 @@ import {
 } from "./workspaces.ts";
 import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
 import { isIdent } from "./repoUrl.ts";
+import { canonicalOrgName } from "./orgCanonical.ts";
 
 type WorkspaceEnv = {
   Bindings: Env;
@@ -197,10 +198,17 @@ workspaceRoutes.post("/pool/claim", async (c) => {
   const label = typeof body?.label === "string" ? body.label.trim() : "";
   if (!isIdent(org)) return c.json({ error: "invalid_org" }, 400);
   if (label.length === 0 || label.length > 64) return c.json({ error: "invalid_label" }, 400);
+  // Canonicalize org casing to DCS's before persisting (issue #306): the claimed
+  // workspaces.org row becomes VIEWER_ORG for every downstream comparison, so it
+  // must match DCS rather than whatever case the admin typed. Best-effort —
+  // canonicalOrgName fails open to `org` on any DCS non-200 / network error, so
+  // a lookup hiccup never blocks a claim; the COLLATE NOCASE index + lookup keep
+  // that fail-open from producing a duplicate-cased row.
+  const canonicalOrg = await canonicalOrgName(c.env, org);
   // Genuine DB errors propagate to a 500 on purpose — a half-completed claim
   // must never be reported as success.
   const result = await claimWorkspace(c.env, {
-    org,
+    org: canonicalOrg,
     label,
     exportOwner: typeof body?.exportOwner === "string" ? body.exportOwner : undefined,
   });
