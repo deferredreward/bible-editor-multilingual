@@ -2502,5 +2502,67 @@
       "exportHistoryAdminOnly": "Export history is admin-only.",
       "exportHistoryLoadFailed": "Failed to load export history."
     }
+  },
+  "widgets": {
+    "toasts": {
+      "review": "Review",
+      "collapse": "collapse",
+      "dismiss": "dismiss",
+      "view": "View",
+      "unsavedOffscreen_one": "{{count}} unsaved edit off-screen",
+      "unsavedOffscreen_other": "{{count}} unsaved edits off-screen",
+      "saveVerseRef": "Save {{book}} {{chapter}}:{{verse}} {{version}}?",
+      "aiDraftReady": "AI draft ready · v{{verse}}"
+    },
+    "errorBoundary": {
+      "updateNeeded": "Update needed",
+      "somethingWrong": "Something went wrong",
+      "chunkBody": "A newer version of the editor has been deployed. Reload to load it — your queued edits are saved in this browser and will sync after reload.",
+      "genericBody": "The editor hit an unexpected error. Your queued edits are saved in this browser. Reload to continue.",
+      "reload": "Reload"
+    },
+    "lexBox": {
+      "copyLemma": "copy lexical form",
+      "close": "close"
+    },
+    "copyChapter": {
+      "copied": "Copied!",
+      "failed": "Copy failed",
+      "tooltip": "Copy chapter (for Word)",
+      "ariaLabel": "copy chapter"
+    },
+    "sourceTooltip": {
+      "doubleClickToPin": "double-click to pin",
+      "grammar": "Grammar",
+      "attachedPronoun": "+ attached pronoun",
+      "noLexiconEntry": "no lexicon entry — stub in source resource",
+      "section": {
+        "meaning": "Meaning",
+        "usage": "Usage",
+        "source": "Source",
+        "compare": "Compare"
+      }
+    },
+    "align": {
+      "hasUnalignedWords": "{{tooltip}} — has unaligned words"
+    },
+    "docColumn": {
+      "readOnly": "read-only",
+      "editing": "editing"
+    },
+    "verse": {
+      "alignVerse": "align verse {{verse}}",
+      "textCheck": "Text — {{attribution}}",
+      "undoVerse": "undo edits to verse {{verse}}",
+      "saveVerse": "save verse {{verse}}"
+    },
+    "bookView": {
+      "roSuffix": " (ro)",
+      "chapterLoading": "chapter {{chapter}} loading…",
+      "chapterScrollToLoad": "chapter {{chapter}} (scroll to load)",
+      "chapterFailed": "chapter {{chapter}} failed to load: {{error}}",
+      "bookFront": "{{book}} front",
+      "bookChapter": "{{book}} chapter {{chapter}}"
+    }
   }
 }

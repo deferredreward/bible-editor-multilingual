@@ -2932,5 +2932,71 @@
       "exportHistoryAdminOnly": "سجل التصدير للمسؤولين فقط.",
       "exportHistoryLoadFailed": "فشل تحميل سجل التصدير."
     }
+  },
+  "widgets": {
+    "toasts": {
+      "review": "مراجعة",
+      "collapse": "طيّ",
+      "dismiss": "تجاهل",
+      "view": "عرض",
+      "unsavedOffscreen_zero": "{{count}} تعديل غير محفوظ خارج الشاشة",
+      "unsavedOffscreen_one": "تعديل واحد غير محفوظ خارج الشاشة",
+      "unsavedOffscreen_two": "تعديلان غير محفوظين خارج الشاشة",
+      "unsavedOffscreen_few": "{{count}} تعديلات غير محفوظة خارج الشاشة",
+      "unsavedOffscreen_many": "{{count}} تعديلًا غير محفوظ خارج الشاشة",
+      "unsavedOffscreen_other": "{{count}} تعديل غير محفوظ خارج الشاشة",
+      "saveVerseRef": "حفظ {{book}} {{chapter}}:{{verse}} {{version}}؟",
+      "aiDraftReady": "مسودة الذكاء الاصطناعي جاهزة · الآية {{verse}}"
+    },
+    "errorBoundary": {
+      "updateNeeded": "التحديث مطلوب",
+      "somethingWrong": "حدث خطأ ما",
+      "chunkBody": "تم نشر إصدار أحدث من المحرر. أعد التحميل للحصول عليه — تعديلاتك المصطفّة محفوظة في هذا المتصفح وستتم مزامنتها بعد إعادة التحميل.",
+      "genericBody": "واجه المحرر خطأً غير متوقع. تعديلاتك المصطفّة محفوظة في هذا المتصفح. أعد التحميل للمتابعة.",
+      "reload": "إعادة التحميل"
+    },
+    "lexBox": {
+      "copyLemma": "نسخ الصيغة المعجمية",
+      "close": "إغلاق"
+    },
+    "copyChapter": {
+      "copied": "تم النسخ!",
+      "failed": "فشل النسخ",
+      "tooltip": "نسخ الأصحاح (لـ Word)",
+      "ariaLabel": "نسخ الأصحاح"
+    },
+    "sourceTooltip": {
+      "doubleClickToPin": "انقر نقرًا مزدوجًا للتثبيت",
+      "grammar": "النحو",
+      "attachedPronoun": "+ ضمير متصل",
+      "noLexiconEntry": "لا يوجد مدخل معجمي — مدخل مبدئي في المصدر",
+      "section": {
+        "meaning": "المعنى",
+        "usage": "الاستخدام",
+        "source": "المصدر",
+        "compare": "قارن"
+      }
+    },
+    "align": {
+      "hasUnalignedWords": "{{tooltip}} — توجد كلمات غير مُحاذاة"
+    },
+    "docColumn": {
+      "readOnly": "للقراءة فقط",
+      "editing": "قيد التحرير"
+    },
+    "verse": {
+      "alignVerse": "محاذاة الآية {{verse}}",
+      "textCheck": "النص — {{attribution}}",
+      "undoVerse": "التراجع عن تعديلات الآية {{verse}}",
+      "saveVerse": "حفظ الآية {{verse}}"
+    },
+    "bookView": {
+      "roSuffix": " (للقراءة فقط)",
+      "chapterLoading": "جارٍ تحميل الأصحاح {{chapter}}…",
+      "chapterScrollToLoad": "الأصحاح {{chapter}} (مرّر للتحميل)",
+      "chapterFailed": "فشل تحميل الأصحاح {{chapter}}: {{error}}",
+      "bookFront": "{{book}} المقدمة",
+      "bookChapter": "{{book}} الأصحاح {{chapter}}"
+    }
   }
 }
