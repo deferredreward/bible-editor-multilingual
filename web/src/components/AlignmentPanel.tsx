@@ -1739,19 +1739,26 @@ function DropTargetCard({
   // when the click lands on an inner control (× clear-group, unalign buttons,
   // the ghost-suggestion chip), which keep their own handlers.
   //
-  // The guard has to match role="button" as well as <button>: MUI renders a
-  // clickable Chip through ButtonBase with component="div" (Chip.js:408,421 —
-  // ButtonBase.js then sets role="button" rather than emitting a <button>), so
-  // a bare closest("button") misses GhostChip. Without this, accepting a ghost
-  // suggestion while words are tap-selected ALSO ran this handler and aligned
-  // the selection to the card instead — a silent wrong alignment.
+  // The guard can't just be closest("button") — almost nothing inside the card
+  // is a real <button>, so every one of these would otherwise ALSO run this
+  // handler and silently align the pending selection to the card:
+  //   role="button"      GhostChip. MUI renders a clickable Chip through
+  //                      ButtonBase with component="div" (Chip.js:408,421), and
+  //                      ButtonBase sets role="button" instead of emitting a
+  //                      <button> (ButtonBase.js:230).
+  //   draggable          the target chips (a plain Chip -> a div, whose
+  //                      onDoubleClick unaligns — and a double-click delivers a
+  //                      click first), the Hebrew source spans (onDoubleClick
+  //                      extracts), and the bottom merge grip.
+  // The card's own Paper is not draggable, so matching [draggable] here narrows
+  // the click target to the card background without disabling the feature.
   const hasSelection = selectedWordIds.length > 0;
   return (
     <Paper
       elevation={0}
       onClick={(e) => {
         if (!hasSelection) return;
-        if ((e.target as HTMLElement).closest('button,[role="button"]')) return;
+        if ((e.target as HTMLElement).closest('button,[role="button"],[draggable="true"]')) return;
         onTargetsDrop(selectedWordIds);
         onClearSelection();
       }}
