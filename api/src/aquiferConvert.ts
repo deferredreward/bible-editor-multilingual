@@ -182,20 +182,26 @@ export function htmlToMarkdown(html: string, opts?: { isIntro?: boolean }): stri
 // HTML by embeddedQuote and by the quote-paragraph strip, both of which run
 // earlier) so adjacent emphasis runs become literally adjacent and can merge.
 function unwrapSpans(s: string): string {
-  return s.replace(/<\/?span[^>]*>/gi, "");
+  return s.replace(/<\/?span\b[^>]*>/gi, "");
 }
 
-// Collapse emphasis that wraps only whitespace back to plain whitespace, then
+// Collapse emphasis that wraps only whitespace back to that whitespace, then
 // merge same-kind runs separated by nothing but whitespace.
+//
+// Every open-tag pattern here needs `\b` after the name: without it `b` also
+// matches `<br>` (and `i` matches `<img>`), so a line break between two bold
+// runs would be swallowed into the merge — the same word-gluing bug this file
+// exists to fix, one tag over. An EMPTY tag collapses to nothing, not to a
+// space: `foo<strong></strong>bar` is one word in the source and must stay one.
 function normalizeEmphasis(s: string): string {
   let prev: string;
   do {
     prev = s;
     s = s
-      .replace(/<(strong|b|em|i)[^>]*>((?:\s|&nbsp;)*)<\/\1>/gi, (_m, _tag, ws) =>
-        String(ws).replace(/&nbsp;/gi, " ") || " ")
-      .replace(/<\/(?:strong|b)>(\s*)<(?:strong|b)[^>]*>/gi, (_m, gap) => gap)
-      .replace(/<\/(?:em|i)>(\s*)<(?:em|i)[^>]*>/gi, (_m, gap) => gap);
+      .replace(/<(strong|b|em|i)\b[^>]*>((?:\s|&nbsp;)*)<\/\1>/gi, (_m, _tag, ws) =>
+        String(ws).replace(/&nbsp;/gi, " "))
+      .replace(/<\/(?:strong|b)>(\s*)<(?:strong|b)\b[^>]*>/gi, (_m, gap) => gap)
+      .replace(/<\/(?:em|i)>(\s*)<(?:em|i)\b[^>]*>/gi, (_m, gap) => gap);
   } while (s !== prev);
   return s;
 }
@@ -212,8 +218,8 @@ function emphasize(marker: string, inner: string): string {
 
 function inline(s: string): string {
   return s
-    .replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, t) => emphasize("**", t))
-    .replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, t) => emphasize("*", t));
+    .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, t) => emphasize("**", t))
+    .replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, t) => emphasize("*", t));
 }
 function strip(s: string): string {
   return decodeEntities(inline(s).replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
@@ -354,6 +360,7 @@ export type NoteRepair = {
   id: string;
   version: number;
   note: string; // corrected markdown
+  before: string; // the damaged text, recorded in the audit row so this is reversible
   preDraftJson: string | null; // rewritten approval snapshot, or null to leave it
 };
 
@@ -361,39 +368,82 @@ export type RepairReport = {
   aquiferRows: number;
   repaired: number;
   alreadyClean: number;
-  humanEdited: number; // wording differs — never rewritten, needs a human
+  // Text is neither the old nor the new machine render: a human changed it, or
+  // Aquifer changed it upstream. Never rewritten — needs a person to look.
+  humanEdited: number;
   noSource: number; // no Aquifer item for the stored content id
+  otherLang: number; // imported from a different Aquifer language edition
 };
 
-// Same words, ignoring emphasis markers and whitespace. This is the proof that a
-// stored note is still the converter's own output: a note whose wording a
-// translator changed will not match, so the repair leaves it alone.
-export function sameWords(a: string | null, b: string | null): boolean {
-  const bare = (s: string | null) => (s || "").replace(/[*\s]/g, "");
-  return bare(a) === bare(b);
+// FROZEN. A byte-exact copy of htmlToMarkdown as it stood BEFORE the emphasis
+// fix — the code that wrote the damaged text now sitting in D1. It exists for
+// one purpose: proving that a stored note is still untouched machine output, by
+// reproducing it exactly. Never "improve" it, and never call it from the import
+// path. Delete it once no damaged rows remain.
+//
+// Exact equality is the proof, deliberately, rather than a looser
+// same-words-ignoring-asterisks comparison: formatting is exactly what a
+// translator may have changed on purpose (moving a bold, splitting a
+// paragraph), and a loose comparison would silently revert that work. It also
+// makes upstream drift safe — if Aquifer has since edited the note at all, the
+// legacy render no longer matches and the row is left for a human.
+export function legacyHtmlToMarkdown(html: string, opts?: { isIntro?: boolean }): string {
+  let s = html || "";
+  const isIntro = opts?.isIntro ?? false;
+  const legacyInline = (x: string): string =>
+    x
+      .replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, t) => `**${legacyStrip(t).trim()}**`)
+      .replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, t) => `*${legacyStrip(t).trim()}*`);
+  function legacyStrip(x: string): string {
+    return decodeEntities(legacyInline(x).replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+  }
+
+  if (!isIntro) {
+    s = s.replace(/^\s*<p>\s*(?:<strong>)?\s*<span[^>]*direction:\s*(?:ltr|rtl)[\s\S]*?<\/span>\s*(?:<\/strong>)?\s*<\/p>/i, "");
+    let prev: string;
+    do {
+      prev = s;
+      s = s.replace(/<p>(?:(?!<\/p>)[\s\S])*?data-bnType="resourceReference"(?:(?!<\/p>)[\s\S])*?<\/p>\s*$/i, "");
+    } while (s !== prev);
+  }
+
+  s = s
+    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, (_m, t) => `\n# ${legacyStrip(t)}\n\n`)
+    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (_m, t) => `\n## ${legacyStrip(t)}\n\n`)
+    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, (_m, t) => `\n### ${legacyStrip(t)}\n\n`)
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m, t) => `- ${legacyStrip(t)}\n`)
+    .replace(/<\/(?:ol|ul)>/gi, "\n")
+    .replace(/<(?:ol|ul)[^>]*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<p[^>]*>/gi, "");
+
+  s = legacyInline(s);
+  s = decodeEntities(s.replace(/<[^>]+>/g, ""));
+  return s.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // The approval snapshot holds its own copy of the damaged text for rows the
 // import auto-approved, and a revert would restore it. Rewrite it under the same
-// proof; leave anything else (including the empty snapshot the importer writes)
-// alone.
-function repairPreDraft(preDraftJson: string | null, fresh: string): string | null {
+// exact-match proof; leave anything else (including the empty snapshot the
+// importer writes, and any non-string the column may hold) alone.
+function repairPreDraft(preDraftJson: string | null, legacy: string, fresh: string): string | null {
   if (!preDraftJson) return null;
-  let parsed: { note?: string | null } | null = null;
+  let parsed: { note?: unknown } | null = null;
   try {
     parsed = JSON.parse(preDraftJson);
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object") return null;
-  const note = parsed.note ?? "";
-  if (!note || note === fresh || !sameWords(note, fresh)) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  if (typeof parsed.note !== "string" || parsed.note !== legacy) return null;
   return JSON.stringify({ ...parsed, note: fresh });
 }
 
 export function planFormattingRepair(
   rows: StoredAquiferRow[],
   aqItems: AquiferItem[],
+  aqLang?: string,
 ): { repairs: NoteRepair[]; report: RepairReport } {
   const byContentId = new Map<string, AquiferItem>();
   for (const it of aqItems) {
@@ -402,10 +452,12 @@ export function planFormattingRepair(
   }
 
   const repairs: NoteRepair[] = [];
-  const report: RepairReport = { aquiferRows: 0, repaired: 0, alreadyClean: 0, humanEdited: 0, noSource: 0 };
+  const report: RepairReport = {
+    aquiferRows: 0, repaired: 0, alreadyClean: 0, humanEdited: 0, noSource: 0, otherLang: 0,
+  };
 
   for (const row of rows) {
-    let meta: { source?: string; aquiferContentId?: string | null } | null = null;
+    let meta: { source?: string; aqLang?: string; aquiferContentId?: string | null } | null = null;
     try {
       meta = row.draftMetaJson ? JSON.parse(row.draftMetaJson) : null;
     } catch {
@@ -414,19 +466,31 @@ export function planFormattingRepair(
     if (!meta || meta.source !== "aquifer") continue;
     report.aquiferRows++;
 
+    // A row imported from another Aquifer language edition would be compared
+    // against the wrong text — it would fail the match and be miscounted as
+    // human-edited. Count it honestly instead.
+    if (aqLang && meta.aqLang && meta.aqLang !== aqLang) {
+      report.otherLang++;
+      continue;
+    }
+
     const item = meta.aquiferContentId ? byContentId.get(String(meta.aquiferContentId)) : undefined;
     if (!item) {
       report.noSource++;
       continue;
     }
 
-    const fresh = htmlToMarkdown(item.content || "", { isIntro: aquiferRef(item)?.isIntro ?? false });
+    const isIntro = aquiferRef(item)?.isIntro ?? false;
+    const fresh = htmlToMarkdown(item.content || "", { isIntro });
     const stored = row.note ?? "";
     if (stored === fresh) {
       report.alreadyClean++;
       continue;
     }
-    if (!sameWords(stored, fresh)) {
+    // The only rewritable case: the stored text is EXACTLY what the pre-fix
+    // converter produced from this same source, so nothing human is in it.
+    const legacy = legacyHtmlToMarkdown(item.content || "", { isIntro });
+    if (stored !== legacy) {
       report.humanEdited++;
       continue;
     }
@@ -435,7 +499,8 @@ export function planFormattingRepair(
       id: row.id,
       version: row.version,
       note: fresh,
-      preDraftJson: repairPreDraft(row.preDraftJson, fresh),
+      before: stored,
+      preDraftJson: repairPreDraft(row.preDraftJson, legacy, fresh),
     });
     report.repaired++;
   }

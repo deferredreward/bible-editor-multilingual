@@ -16,6 +16,7 @@ import {
   htmlToMarkdown,
   nfc,
   planFormattingRepair,
+  legacyHtmlToMarkdown,
 } from "./aquiferConvert.ts";
 
 const en = (Reference, ID, SupportReference, Quote, Occurrence, Note) => ({
@@ -178,6 +179,22 @@ test("intro note attaches to front:intro / N:intro rows without a flag", () => {
   assert.equal(report.flagged, 0);
 });
 
+// Regression: `<(?:strong|b)[^>]*>` also matches `<br>` (and `<(?:em|i)…>`
+// matches `<img>`), so the emphasis merge used to swallow a line break between
+// two bold runs — re-creating the very word-gluing this file fixes.
+test("htmlToMarkdown keeps a line break between emphasis runs", () => {
+  assert.equal(htmlToMarkdown("<p><strong>Title</strong><br>body text</p>"), "**Title**\nbody text");
+  assert.equal(
+    htmlToMarkdown("<p><strong>Title</strong><br>body <strong>x</strong> end</p>"),
+    "**Title**\nbody **x** end",
+  );
+});
+
+test("htmlToMarkdown drops an empty emphasis tag without inserting a space", () => {
+  assert.equal(htmlToMarkdown("<p>foo<strong></strong>bar</p>"), "foobar");
+  assert.equal(htmlToMarkdown("<p>a<em></em>b</p>"), "ab");
+});
+
 // ---------- formatting repair of already-imported rows ----------
 
 // The real arb MRK 3:1 markup (Aquifer note 197002): a bold gloss whose quote
@@ -192,51 +209,69 @@ const REPAIR_ITEM = {
   content: REPAIR_HTML,
   associations: { passage: [{ start_ref_usfm: "MRK 3:1", end_ref_usfm: "MRK 3:1" }] },
 };
-// What the pre-fix converter wrote into D1 for that note.
+// What the pre-fix converter wrote into D1 for that note, and what it should be.
 const DAMAGED = '**"****then****"**\n\nMark introduces the next event. You may leave****then untranslated.';
 const FIXED = '**"then"**\n\nMark introduces the next event. You may leave then untranslated.';
-const aqMeta = (contentId) => JSON.stringify({ source: "aquifer", aqLang: "arb", aquiferContentId: contentId, joinMethod: "quote" });
-const storedRow = (over) => ({ id: "bm6z", version: 3, note: DAMAGED, draftMetaJson: aqMeta("197002"), preDraftJson: null, ...over });
+const aqMeta = (over) => JSON.stringify({ source: "aquifer", aqLang: "arb", aquiferContentId: "197002", joinMethod: "quote", ...over });
+const storedRow = (over) => ({ id: "bm6z", version: 3, note: DAMAGED, draftMetaJson: aqMeta(), preDraftJson: null, ...over });
 
-test("planFormattingRepair rewrites a row whose text is still the converter's own output", () => {
-  const { repairs, report } = planFormattingRepair([storedRow()], [REPAIR_ITEM]);
+// The frozen legacy render is the repair's whole safety proof — if it ever
+// drifts from what actually went into D1, the repair stops matching (safe) or
+// matches something it shouldn't (not safe). Pin both renders.
+test("legacyHtmlToMarkdown still reproduces the damaged text the fix replaced", () => {
+  assert.equal(legacyHtmlToMarkdown(REPAIR_HTML), DAMAGED);
+  assert.equal(htmlToMarkdown(REPAIR_HTML), FIXED);
+});
+
+test("planFormattingRepair rewrites a row that is still the old converter's exact output", () => {
+  const { repairs, report } = planFormattingRepair([storedRow()], [REPAIR_ITEM], "arb");
   assert.equal(report.repaired, 1);
   assert.equal(repairs[0].id, "bm6z");
   assert.equal(repairs[0].version, 3, "carries the version for the CAS guard");
   assert.equal(repairs[0].note, FIXED);
+  assert.equal(repairs[0].before, DAMAGED, "damaged text travels to the audit row");
 });
 
-test("planFormattingRepair never touches a note a human reworded", () => {
+test("planFormattingRepair never touches a note a human changed", () => {
   const reworded = DAMAGED.replace("next event", "following event");
-  const { repairs, report } = planFormattingRepair([storedRow({ note: reworded })], [REPAIR_ITEM]);
-  assert.deepEqual(repairs, []);
-  assert.equal(report.humanEdited, 1);
-  assert.equal(report.repaired, 0);
+  const worded = planFormattingRepair([storedRow({ note: reworded })], [REPAIR_ITEM], "arb");
+  assert.deepEqual(worded.repairs, []);
+  assert.equal(worded.report.humanEdited, 1);
+
+  // Formatting-only human edits count too: moving a bold or splitting a
+  // paragraph is deliberate work, and an asterisk-blind comparison would
+  // silently revert it.
+  const remphasised = DAMAGED.replace('**"****then****"**', 'then is emphasised **here** instead');
+  assert.equal(planFormattingRepair([storedRow({ note: remphasised })], [REPAIR_ITEM], "arb").report.humanEdited, 1);
+  const resplit = DAMAGED.replace("the next event.", "the next event.\n\n");
+  assert.equal(planFormattingRepair([storedRow({ note: resplit })], [REPAIR_ITEM], "arb").report.humanEdited, 1);
 });
 
-test("planFormattingRepair skips clean rows, non-Aquifer rows, and unknown content ids", () => {
+test("planFormattingRepair skips clean, non-Aquifer, other-language, and unknown-source rows", () => {
   const { repairs, report } = planFormattingRepair([
     storedRow({ id: "aaaa", note: FIXED }),
     { id: "bbbb", version: 1, note: DAMAGED, draftMetaJson: JSON.stringify({ source: "ai" }), preDraftJson: null },
     { id: "cccc", version: 1, note: DAMAGED, draftMetaJson: null, preDraftJson: null },
-    storedRow({ id: "dddd", draftMetaJson: aqMeta("999999") }),
-  ], [REPAIR_ITEM]);
+    storedRow({ id: "dddd", draftMetaJson: aqMeta({ aquiferContentId: "999999" }) }),
+    storedRow({ id: "eeee", draftMetaJson: aqMeta({ aqLang: "hin" }) }),
+  ], [REPAIR_ITEM], "arb");
   assert.deepEqual(repairs, []);
-  assert.equal(report.aquiferRows, 2, "only rows stamped source=aquifer are considered");
+  assert.equal(report.aquiferRows, 3, "only rows stamped source=aquifer are considered");
   assert.equal(report.alreadyClean, 1);
   assert.equal(report.noSource, 1);
+  assert.equal(report.otherLang, 1);
 });
 
-test("planFormattingRepair repairs the approval snapshot but leaves the empty draft one", () => {
+test("planFormattingRepair repairs the approval snapshot, and survives a junk one", () => {
   const approved = planFormattingRepair(
     [storedRow({ preDraftJson: JSON.stringify({ note: DAMAGED, tags: null }) })],
-    [REPAIR_ITEM],
+    [REPAIR_ITEM], "arb",
   );
   assert.deepEqual(JSON.parse(approved.repairs[0].preDraftJson), { note: FIXED, tags: null });
 
-  const draft = planFormattingRepair(
-    [storedRow({ preDraftJson: JSON.stringify({ note: "", tags: null }) })],
-    [REPAIR_ITEM],
-  );
-  assert.equal(draft.repairs[0].preDraftJson, null, "empty snapshot is left alone");
+  for (const junk of [JSON.stringify({ note: "", tags: null }), JSON.stringify({ note: 42 }), "[]", "not json"]) {
+    const r = planFormattingRepair([storedRow({ preDraftJson: junk })], [REPAIR_ITEM], "arb");
+    assert.equal(r.repairs[0].preDraftJson, null, `snapshot left alone: ${junk}`);
+    assert.equal(r.repairs[0].note, FIXED, "the note itself is still repaired");
+  }
 });

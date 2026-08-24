@@ -77,7 +77,7 @@ export async function aquiferRepairFormatting(
       preDraftJson: r.pre_draft_json,
     }));
 
-    const { repairs, report } = planFormattingRepair(rows, aqItems as Parameters<typeof planFormattingRepair>[1]);
+    const { repairs, report } = planFormattingRepair(rows, aqItems as Parameters<typeof planFormattingRepair>[1], aqLang);
     const dryRun = c.req.query("dryRun") === "1";
     if (dryRun || repairs.length === 0) {
       return c.json({ ok: true, book, aqLang, dryRun, applied: 0, ...report });
@@ -87,11 +87,16 @@ export async function aquiferRepairFormatting(
     // The version guard is a CAS: if a translator saved between the SELECT and
     // this write, the UPDATE matches nothing and the audit row is skipped with
     // it — their save wins and the row is simply reported as not applied.
+    //
+    // `updated_by` is deliberately NOT touched (same rule as rows.ts): standing
+    // authorship is whoever wrote the note, and a machine formatting repair is
+    // not authorship. Leaving it alone also keeps a master-owned row (updated_by
+    // NULL) master-owned, so the nightly reimport keeps re-seeding it.
     const updateStmt = env.DB.prepare(
       `UPDATE tn_rows
           SET note = ?3, pre_draft_json = COALESCE(?4, pre_draft_json),
-              version = version + 1, updated_at = ?5, updated_by = ?6
-        WHERE book = ?1 AND id = ?2 AND deleted_at IS NULL AND version = ?7`,
+              version = version + 1, updated_at = ?5
+        WHERE book = ?1 AND id = ?2 AND deleted_at IS NULL AND version = ?6`,
     );
     // changes() reflects the statement immediately before it in the SAME batch,
     // so the audit row can never land without its write (or vice versa).
@@ -102,17 +107,30 @@ export async function aquiferRepairFormatting(
     );
 
     const pairs = repairs.map((r) => [
-      updateStmt.bind(book, r.id, r.note, r.preDraftJson, now, userId, r.version),
+      updateStmt.bind(book, r.id, r.note, r.preDraftJson, now, r.version),
       auditStmt.bind(
         r.id, book, userId, r.version, r.version + 1,
-        JSON.stringify({ repair: "formatting", aqLang }), AQUIFER_SOURCE,
+        JSON.stringify({ repair: "formatting", aqLang, note: r.note, before: r.before }), AQUIFER_SOURCE,
       ),
     ]);
 
+    // A D1 failure part-way through leaves the earlier batches committed, so the
+    // count has to travel with the error — otherwise the operator cannot tell a
+    // no-op failure from a half-done one. Re-running is safe either way: repaired
+    // rows come back as alreadyClean.
     let applied = 0;
     for (let i = 0; i < pairs.length; i += PAIRS_PER_BATCH) {
       const slice = pairs.slice(i, i + PAIRS_PER_BATCH);
-      const res = await env.DB.batch(slice.flat());
+      let res;
+      try {
+        res = await env.DB.batch(slice.flat());
+      } catch (e) {
+        return c.json({
+          error: "repair_partial", book, aqLang, applied,
+          detail: e instanceof Error ? e.message : String(e),
+          ...report,
+        }, 500);
+      }
       for (let j = 0; j < res.length; j += 2) applied += res[j].meta.changes ?? 0;
     }
 
