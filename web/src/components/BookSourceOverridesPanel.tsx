@@ -13,6 +13,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { api, ApiError, isAdmin, type BookSourceOverride } from "../sync/api";
 import { RepoRef } from "./SourceOverrideField";
+import { UW_UPSTREAM_ORG, upstreamSourceForResource } from "../lib/orgDraft";
 
 // Per-book resource source overrides (issue #103). Lives inside the Import
 // workspace's "Advanced" accordion. Lists the book's current tN/tQ overrides
@@ -60,6 +61,10 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
   // Add-form state.
   const [resource, setResource] = useState<Resource>("tn");
   const [sourceType, setSourceType] = useState<"dcs" | "aquifer">("dcs");
+  // For a Door43 source, choose the unfoldingWord upstream (repo derived from
+  // the resource) or paste an arbitrary Door43 URL (issue #289). "upstream" is
+  // the common case, so it's the default.
+  const [dcsPreset, setDcsPreset] = useState<"upstream" | "url">("upstream");
   const [fromCh, setFromCh] = useState("");
   const [toCh, setToCh] = useState("");
   const [url, setUrl] = useState("");
@@ -71,9 +76,14 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
   // source type flips to Aquifer.
   const isAquifer = sourceType === "aquifer";
 
+  // The repo the upstream preset resolves to, derived live from the resource so
+  // it tracks the tN/tQ selector.
+  const upstreamSource = upstreamSourceForResource(resource);
+
   const resetForm = () => {
     setResource("tn");
     setSourceType("dcs");
+    setDcsPreset("upstream");
     setFromCh("");
     setToCh("");
     setUrl("");
@@ -106,12 +116,18 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
           chapterEnd: Number(toCh),
         });
       } else {
-        // Verify the pasted URL → { org, repo } before the PUT; send org+repo.
-        const verified = await api.verifySource(url.trim());
+        // The unfoldingWord upstream preset resolves to a known-good { org, repo }
+        // with no round-trip (the URL path would just verify the same repo); the
+        // "Other Door43 repo" path verifies the pasted URL → { org, repo }. Either
+        // way we send org+repo, so the stored row is identical.
+        const { org, repo } =
+          dcsPreset === "upstream"
+            ? upstreamSourceForResource(resource)
+            : await api.verifySource(url.trim());
         await api.setBookSource(book, {
           resource,
-          org: verified.org,
-          repo: verified.repo,
+          org,
+          repo,
           ...(hasFrom && hasTo
             ? { chapterStart: Number(fromCh), chapterEnd: Number(toCh) }
             : {}),
@@ -136,7 +152,7 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
     } finally {
       setSaving(false);
     }
-  }, [book, resource, sourceType, isAquifer, fromCh, toCh, url, refetch, t]);
+  }, [book, resource, sourceType, isAquifer, dcsPreset, fromCh, toCh, url, refetch, t]);
 
   const handleRemove = useCallback(
     async (o: BookSourceOverride) => {
@@ -271,22 +287,53 @@ export function BookSourceOverridesPanel({ book }: { book: string }) {
               {t("import.sources.aquiferWholeBookHint")}
             </Typography>
           ) : (
-            <TextField
-              size="small"
-              fullWidth
-              sx={{ maxWidth: 480 }}
-              label={t("import.sources.urlLabel")}
-              placeholder="https://git.door43.org/BibleAquifer/ar_tn"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={saving}
-            />
+            <Stack spacing={1}>
+              {/* Source preset: the unfoldingWord upstream (repo derived from the
+                  resource) or a pasted Door43 URL for any other repo (issue #289). */}
+              <Select
+                size="small"
+                value={dcsPreset}
+                onChange={(e) => {
+                  setDcsPreset(e.target.value as "upstream" | "url");
+                  setFormError(null);
+                }}
+                disabled={saving}
+                sx={{ minWidth: 280, maxWidth: 480 }}
+              >
+                <MenuItem value="upstream">
+                  {t("import.sources.sourceUpstream", {
+                    org: UW_UPSTREAM_ORG,
+                    repo: upstreamSource.repo,
+                  })}
+                </MenuItem>
+                <MenuItem value="url">{t("import.sources.sourceOther")}</MenuItem>
+              </Select>
+              {dcsPreset === "upstream" ? (
+                <RepoRef org={upstreamSource.org} repo={upstreamSource.repo} />
+              ) : (
+                <TextField
+                  size="small"
+                  fullWidth
+                  sx={{ maxWidth: 480 }}
+                  label={t("import.sources.urlLabel")}
+                  placeholder="https://git.door43.org/BibleAquifer/ar_tn"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  disabled={saving}
+                />
+              )}
+            </Stack>
           )}
           <Stack direction="row" spacing={1} alignItems="center">
             <Button
               variant="contained"
               size="small"
-              disabled={saving || (isAquifer ? fromCh.trim() === "" || toCh.trim() === "" : url.trim() === "")}
+              disabled={
+                saving ||
+                (isAquifer
+                  ? fromCh.trim() === "" || toCh.trim() === ""
+                  : dcsPreset === "url" && url.trim() === "")
+              }
               startIcon={saving ? <CircularProgress size={14} color="inherit" /> : undefined}
               onClick={() => void handleAdd()}
             >

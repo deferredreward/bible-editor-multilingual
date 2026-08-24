@@ -256,7 +256,10 @@ export function PipelineMenu({ book, chapter, onMessage, onImported }: Props) {
   }, [confirm, book, chapter]);
 
   const genNothingSelected = !genOpts.ult && !genOpts.ust;
-  const refParsed = useMemo(() => parseChapterRange(refInput, book), [refInput, book]);
+  // `t` is a dep because parseChapterRange returns a translated error message;
+  // without it the message stays in the previous language after a switch. Safe
+  // here — pure derivation, no fetch.
+  const refParsed = useMemo(() => parseChapterRange(refInput, book), [refInput, book, t]);
 
   // "In progress" for the chapter = queued/dispatching/running/paused. A
   // failed or cancelled job covering the chapter must NOT disable the menu —

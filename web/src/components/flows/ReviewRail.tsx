@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Queue-at-a-glance rail, after .queue-panel / .approve-all-row /
 // .add-row-actions / .queue-list in docs/flows/ui/t2-review.html. Shown at
 // tablet and desktop; the phone band replaces it with card-to-card nav.
@@ -9,6 +6,7 @@
 // report intent upward so the one component that owns the chapter data also
 // owns the writes and their honest failure reporting.
 
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
@@ -80,12 +78,13 @@ export function ReviewRail({
   addDisabledReason,
   addPending,
 }: ReviewRailProps) {
+  const { t } = useTranslation();
   const unapproved = activeKind === "tn" ? unapprovedNotes : unapprovedQuestions;
   const approveLabel =
     activeKind === "tn"
-      ? `Approve all notes (${unapprovedNotes})`
-      : `Approve all questions (${unapprovedQuestions})`;
-  const addLabel = activeKind === "tn" ? "+ Note" : "+ Question";
+      ? t("flowReview.rail.approveAllNotes", { n: unapprovedNotes })
+      : t("flowReview.rail.approveAllQuestions", { n: unapprovedQuestions });
+  const addLabel = activeKind === "tn" ? t("flowReview.rail.addNote") : t("flowReview.rail.addQuestion");
 
   return (
     <Box
@@ -115,7 +114,7 @@ export function ReviewRail({
             mb: 1,
           }}
         >
-          Approve all
+          {t("common.approveAll")}
         </Typography>
         <Button
           fullWidth
@@ -131,7 +130,10 @@ export function ReviewRail({
         {approveProgress && (
           <Box sx={{ mt: 1 }}>
             <Typography variant="caption" color="text.secondary">
-              Approving {approveProgress.done} of {approveProgress.total}…
+              {t("flowReview.rail.approvingProgress", {
+                done: approveProgress.done,
+                total: approveProgress.total,
+              })}
             </Typography>
             <LinearProgress
               variant="determinate"
@@ -160,7 +162,7 @@ export function ReviewRail({
             title={addDisabled ? addDisabledReason : undefined}
             sx={{ borderStyle: "dashed", minHeight: 44 }}
           >
-            {addPending ? "Adding…" : addLabel}
+            {addPending ? t("flowReview.rail.adding") : addLabel}
           </Button>
         </Box>
       </Box>
@@ -168,7 +170,9 @@ export function ReviewRail({
       <Box sx={{ overflowY: "auto" }}>
         {items.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "start" }}>
-            No {activeKind === "tn" ? "notes" : "questions"} for this chapter.
+            {activeKind === "tn"
+              ? t("flowReview.queue.noNotes")
+              : t("flowReview.queue.noQuestions")}
           </Typography>
         ) : (
           items.map((item) => (
@@ -201,7 +205,9 @@ export function ReviewRail({
                 aria-hidden="true"
                 sx={{ width: 16, flex: "none", fontSize: "0.65rem", fontWeight: 700, color: "text.secondary" }}
               >
-                {activeKind === "tn" ? "N" : "Q"}
+                {activeKind === "tn"
+                  ? t("flowReview.rail.badgeNote")
+                  : t("flowReview.rail.badgeQuestion")}
               </Box>
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
@@ -230,7 +236,7 @@ export function ReviewRail({
                         lineHeight: 1.6,
                       }}
                     >
-                      Trashed
+                      {t("flowTranslate.status.trashed")}
                     </Box>
                   )}
                 </Box>

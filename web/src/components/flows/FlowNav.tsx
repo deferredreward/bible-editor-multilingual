@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Persona-grouped pill navigation across the flow screens, after .flow-nav in
 // docs/flows/ui/t1-home.html. Three groups — Translator / Lead / Admin — with
 // the Admin group shown only to admins.
@@ -10,6 +7,7 @@
 // is always reachable at every width.
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import ListSubheader from "@mui/material/ListSubheader";
@@ -36,48 +34,50 @@ const DEFAULT_BOOK = "OBA";
 const DEFAULT_CHAPTER = 1;
 const DEFAULT_VERSE = 1;
 
+// Labels are i18n keys, translated at render time — ids and hrefs stay
+// untouched so routing and current-item matching are unaffected.
 interface NavItem {
   id: string;
-  label: string;
+  labelKey: string;
   href: string;
 }
 
 interface NavGroup {
-  label: string;
+  labelKey: string;
   items: NavItem[];
 }
 
 function buildGroups(book: string, chapter: number, verse: number, role: FlowRole): NavGroup[] {
   const groups: NavGroup[] = [
     {
-      label: "Translator",
+      labelKey: "adminDesk.flowNav.groups.translator",
       items: [
-        { id: "home", label: "Home", href: "#/home" },
-        { id: "review", label: "Review", href: `#/review/${book}/${chapter}` },
-        { id: "scripture", label: "Scripture", href: `#/scripture/${book}/${chapter}/${verse}` },
-        { id: "verse", label: "Verse", href: `#/verse/${book}/${chapter}/${verse}` },
-        { id: "align", label: "Align", href: `#/align/${book}/${chapter}/${verse}` },
-        { id: "articles", label: "Articles", href: "#/articles" },
-        { id: "words", label: "Words", href: `#/words/${book}/${chapter}/${verse}` },
+        { id: "home", labelKey: "adminDesk.flowNav.items.home", href: "#/home" },
+        { id: "review", labelKey: "adminDesk.flowNav.items.review", href: `#/review/${book}/${chapter}` },
+        { id: "scripture", labelKey: "adminDesk.flowNav.items.scripture", href: `#/scripture/${book}/${chapter}/${verse}` },
+        { id: "verse", labelKey: "adminDesk.flowNav.items.verse", href: `#/verse/${book}/${chapter}/${verse}` },
+        { id: "align", labelKey: "adminDesk.flowNav.items.align", href: `#/align/${book}/${chapter}/${verse}` },
+        { id: "articles", labelKey: "adminDesk.flowNav.items.articles", href: "#/articles" },
+        { id: "words", labelKey: "adminDesk.flowNav.items.words", href: `#/words/${book}/${chapter}/${verse}` },
       ],
     },
     {
-      label: "Lead",
+      labelKey: "adminDesk.flowNav.groups.lead",
       items: [
-        { id: "ai", label: "AI", href: "#/ai" },
-        { id: "style", label: "Style", href: "#/style" },
-        { id: "curate", label: "Templates", href: "#/curate" },
+        { id: "ai", labelKey: "adminDesk.flowNav.items.ai", href: "#/ai" },
+        { id: "style", labelKey: "adminDesk.nav.style", href: "#/style" },
+        { id: "curate", labelKey: "adminDesk.nav.templates", href: "#/curate" },
       ],
     },
   ];
   if (role === "admin") {
     groups.push({
-      label: "Admin",
+      labelKey: "adminDesk.groups.admin",
       items: [
-        { id: "setup", label: "Setup", href: "#/setup" },
-        { id: "books", label: "Books", href: "#/books" },
-        { id: "team", label: "Team", href: "#/team" },
-        { id: "observe", label: "Observe", href: "#/observe" },
+        { id: "setup", labelKey: "adminDesk.nav.setup", href: "#/setup" },
+        { id: "books", labelKey: "adminDesk.nav.books", href: "#/books" },
+        { id: "team", labelKey: "adminDesk.flowNav.items.team", href: "#/team" },
+        { id: "observe", labelKey: "adminDesk.nav.observe", href: "#/observe" },
       ],
     });
   }
@@ -85,6 +85,7 @@ function buildGroups(book: string, chapter: number, verse: number, role: FlowRol
 }
 
 export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
+  const { t } = useTranslation();
   // The mockup's own failure point. Below it we collapse rather than hide.
   const collapsed = useMediaQuery("(max-width:699.95px)");
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -102,7 +103,7 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
     return (
       <Box
         component="nav"
-        aria-label="Screens"
+        aria-label={t("adminDesk.flowNav.screens")}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -121,12 +122,12 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
           aria-haspopup="menu"
           aria-expanded={anchorEl ? true : undefined}
         >
-          {currentItem?.label ?? "Screens"}
+          {currentItem ? t(currentItem.labelKey) : t("adminDesk.flowNav.screens")}
         </Button>
         <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
           {groups.flatMap((group) => [
-            <ListSubheader key={`h-${group.label}`} disableSticky>
-              {group.label}
+            <ListSubheader key={`h-${group.labelKey}`} disableSticky>
+              {t(group.labelKey)}
             </ListSubheader>,
             ...group.items.map((item) => (
               <MenuItem
@@ -138,7 +139,7 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
                 onClick={() => setAnchorEl(null)}
                 sx={{ minHeight: 44 }}
               >
-                {item.label}
+                {t(item.labelKey)}
               </MenuItem>
             )),
           ])}
@@ -150,7 +151,7 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
   return (
     <Box
       component="nav"
-      aria-label="Screens"
+      aria-label={t("adminDesk.flowNav.screens")}
       sx={{
         display: "flex",
         alignItems: "center",
@@ -164,7 +165,7 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
       }}
     >
       {groups.map((group) => (
-        <Box key={group.label} sx={{ display: "flex", alignItems: "center", gap: 0.75, flex: "none" }}>
+        <Box key={group.labelKey} sx={{ display: "flex", alignItems: "center", gap: 0.75, flex: "none" }}>
           <Typography
             variant="caption"
             sx={{
@@ -176,7 +177,7 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
               whiteSpace: "nowrap",
             }}
           >
-            {group.label}
+            {t(group.labelKey)}
           </Typography>
           {group.items.map((item) => {
             const isCurrent = item.id === current;
@@ -202,7 +203,7 @@ export function FlowNav({ current, book, chapter, verse, role }: FlowNavProps) {
                   "&:hover": { color: "text.primary" },
                 }}
               >
-                {item.label}
+                {t(item.labelKey)}
               </Box>
             );
           })}

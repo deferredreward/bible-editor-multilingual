@@ -1,5 +1,5 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
+// i18n: user-visible strings go through t() under the `flowScripture`
+// namespace (plus `common.*` for exact shared verbs).
 //
 // TranslateScriptureScreen — the verse-at-a-time scripture queue, built to the
 // approved "Scripture — Titus 1" mockup (the Titus-artifact minimal redesign)
@@ -114,6 +114,7 @@
 //     are Continue/Review, not paging.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -192,6 +193,7 @@ export default function TranslateScriptureScreen({
   book,
   chapter,
 }: TranslateScriptureScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   const INSPIRE = "#31ADE3";
@@ -209,7 +211,7 @@ export default function TranslateScriptureScreen({
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
-  const targetLabel = projectConfig?.languageName || "Target";
+  const targetLabel = projectConfig?.languageName || t("flowScripture.target");
   const canEditRole = role === "admin" || role === "editor";
 
   const { status, data, applyLocalVerse, applyLocalVerseStatus } = useChapter(book, chapter);
@@ -457,10 +459,20 @@ export default function TranslateScriptureScreen({
         if (result.kind === "fatal" && LANE_REPLACEMENT_REASONS.has(result.reason)) {
           setLaneReplacement((prev) => ({ ...prev, [target.bibleVersion]: result.reason }));
         } else if (result.kind === "fatal") {
-          say(`Save failed for ${versionLabel(projectConfig, target.bibleVersion)} (${result.reason}).`);
+          say(
+            t("flowScripture.saveFailed", {
+              lane: versionLabel(projectConfig, target.bibleVersion),
+              reason: result.reason,
+            }),
+          );
         } else if (result.kind === "conflict" && op.status === "conflict") {
           say(
-            `${book} ${target.chapter}:${target.verse} ${versionLabel(projectConfig, target.bibleVersion)} changed on the server — resolve the conflict from the sync bar.`,
+            t("flowScripture.verseConflict", {
+              book,
+              chapter: target.chapter,
+              verse: target.verse,
+              lane: versionLabel(projectConfig, target.bibleVersion),
+            }),
           );
         } else if (result.kind === "ok") {
           setLock(null);
@@ -475,7 +487,11 @@ export default function TranslateScriptureScreen({
       }
       if (target.kind === "verse_status" && target.book === book && result.kind === "fatal") {
         say(
-          `Approve didn't reach the server for ${target.chapter}:${target.verse} (${result.reason}) — the verse is not recorded as done.`,
+          t("flowScripture.approveNotRecorded", {
+            chapter: target.chapter,
+            verse: target.verse,
+            reason: result.reason,
+          }),
         );
         applyLocalVerseStatus(target.verse, false);
         setStatuses((prev) => {
@@ -488,7 +504,7 @@ export default function TranslateScriptureScreen({
         });
       }
     });
-  }, [book, projectConfig, say, applyLocalVerseStatus]);
+  }, [book, projectConfig, say, applyLocalVerseStatus, t]);
 
   // ── lane derivation (evidence-based, ported from ScriptureScreen:514-544) ─
   function laneInfo(bv: TargetLane) {
@@ -589,7 +605,13 @@ export default function TranslateScriptureScreen({
     );
     if (after - before > 0) {
       say(
-        `${after - before} word(s) in ${book} ${chapter}:${base.verse} ${versionLabel(projectConfig, bv)} are now unaligned — re-align them on the Align screen.`,
+        t("flowScripture.wordsUnaligned", {
+          count: after - before,
+          book,
+          chapter,
+          verse: base.verse,
+          lane: versionLabel(projectConfig, bv),
+        }),
         "info",
       );
     }
@@ -648,7 +670,7 @@ export default function TranslateScriptureScreen({
         ...prev,
         [verseNum]: prev[verseNum] === "approved" ? "approved" : "saved",
       }));
-      setToast("Draft saved");
+      setToast(t("flowScripture.toastDraftSaved"));
     } finally {
       setBusy(false);
     }
@@ -668,17 +690,22 @@ export default function TranslateScriptureScreen({
         if (r.kind !== "queued") continue;
         const settled = await waitForOp(r.opId);
         if (settled === null) {
-          say("Your edit is queued but the server hasn't confirmed it yet — the verse was not approved.");
+          say(t("flowScripture.approveQueuedNotConfirmed"));
           return;
         }
         if (settled.kind !== "ok") {
           if (settled.kind === "locked") {
             setLock(settled.lockBody);
-            say("An AI run holds this chapter — your edit was dropped rather than overwritten. Not approved.");
+            say(t("flowScripture.approveLocked"));
           } else if (settled.kind === "conflict") {
-            say("Another editor changed this verse while you were working on it. Not approved.");
+            say(t("flowScripture.approveConflict"));
           } else {
-            say(`Saving ${versionLabel(projectConfig, bv)} failed (${settled.reason}). Not approved.`);
+            say(
+              t("flowScripture.approveSaveFailed", {
+                lane: versionLabel(projectConfig, bv),
+                reason: settled.reason,
+              }),
+            );
           }
           return;
         }
@@ -687,7 +714,7 @@ export default function TranslateScriptureScreen({
       void outbox.enqueueVerseStatus(book, chapter, verseNum, true);
       prevStatusRef.current[verseNum] = statuses[verseNum];
       setStatuses((prev) => ({ ...prev, [verseNum]: "approved" }));
-      setToast("Verse approved");
+      setToast(t("flowScripture.toastVerseApproved"));
       advanceAfter(verseNum, "approved");
     } finally {
       setBusy(false);
@@ -698,9 +725,7 @@ export default function TranslateScriptureScreen({
   if (status === "error") {
     return (
       <Box sx={{ p: 3, maxWidth: COLUMN_PX, mx: "auto" }}>
-        <Alert severity="error">
-          Could not load {book} {chapter}.
-        </Alert>
+        <Alert severity="error">{t("flowScripture.loadError", { book, chapter })}</Alert>
       </Box>
     );
   }
@@ -721,20 +746,26 @@ export default function TranslateScriptureScreen({
   // (see the header — "AI draft" is unverifiable on a verse row).
   function laneChip(bv: TargetLane): { kind: FlowStatusKind; label: string } {
     if (verseNum != null && statuses[verseNum] === "approved") {
-      return { kind: "approved", label: "Approved" };
+      return { kind: "approved", label: t("flowScripture.chipApproved") };
     }
     const base = bases[bv];
-    if (!base) return { kind: "skip", label: "No data" };
-    if (laneDirty(bv) || base.updated_by != null) return { kind: "edited", label: "Edited" };
-    return { kind: "draft", label: "Imported" };
+    if (!base) return { kind: "skip", label: t("flowScripture.chipNoData") };
+    if (laneDirty(bv) || base.updated_by != null)
+      return { kind: "edited", label: t("flowScripture.chipEdited") };
+    return { kind: "draft", label: t("flowScripture.chipImported") };
   }
 
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
   const sub = translationMode
-    ? `${book} ${chapter} · ${(projectConfig?.translationSource?.languageCode ?? "en").toUpperCase()} to ${targetLabel}`
-    : `${book} ${chapter} · ${targetLabel}`;
+    ? t("flowScripture.subTranslation", {
+        book,
+        chapter,
+        source: (projectConfig?.translationSource?.languageCode ?? "en").toUpperCase(),
+        target: targetLabel,
+      })
+    : t("flowScripture.subPlain", { book, chapter, target: targetLabel });
 
   const cardSx = {
     bgcolor: "background.paper",
@@ -775,16 +806,16 @@ export default function TranslateScriptureScreen({
     // known (the distinction ScriptureScreen.tsx:729-749 draws).
     let disabledReason: string | null = null;
     if (info.pendingReplacement) {
-      disabledReason = `${display} is awaiting a source replacement — editing is off until it lands.`;
+      disabledReason = t("flowScripture.laneAwaitingReplacement", { lane: display });
     } else if (info.textReadOnly) {
-      disabledReason = `${display} is configured text-read-only in this project.`;
+      disabledReason = t("flowScripture.laneReadOnly", { lane: display });
     } else if (!canEditRole) {
-      disabledReason = "View-only access.";
+      disabledReason = t("flowScripture.viewOnly");
     } else if (!base) {
-      disabledReason = `No ${display} text exists for this verse in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet.`;
+      disabledReason = t("flowScripture.laneNoText", { lane: display });
     }
     return (
-      <Box component="section" aria-label={`${bv} lane`} sx={cardSx}>
+      <Box component="section" aria-label={t("flowScripture.laneAria", { lane: bv })} sx={cardSx}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
           <Typography component="p" sx={{ ...tagSx, m: 0 }}>
             {bv}
@@ -810,20 +841,20 @@ export default function TranslateScriptureScreen({
             {verseNum != null && (
               <Button
                 size="small"
-                title={`Open the Align screen at ${book} ${chapter}:${verseNum} — the lane is chosen there`}
+                title={t("flowScripture.alignTitle", { book, chapter, verse: verseNum })}
                 onClick={() => {
                   location.hash = `#/alignment/${book}/${chapter}/${verseNum}`;
                 }}
                 sx={{ minHeight: 32, paddingInline: 1, color: ACCENT, fontWeight: 700 }}
               >
-                Align
+                {t("flowScripture.align")}
               </Button>
             )}
             <FlowStatusChip kind={chip.kind} label={chip.label} />
           </Stack>
         </Stack>
         <Typography component="p" sx={{ ...tagSx, mt: 0, mb: 0.75 }}>
-          Your text · {display}
+          {t("flowScripture.yourText", { lane: display })}
         </Typography>
         <TextField
           multiline
@@ -838,7 +869,7 @@ export default function TranslateScriptureScreen({
           inputProps={{
             dir: targetRtl ? "rtl" : "ltr",
             spellCheck: false,
-            "aria-label": `${display} text for this verse`,
+            "aria-label": t("flowScripture.laneInputAria", { lane: display }),
           }}
           sx={{
             "& .MuiInputBase-root": {
@@ -938,7 +969,9 @@ export default function TranslateScriptureScreen({
         {st && (
           <FlowStatusChip
             kind={st === "approved" ? "approved" : "edited"}
-            label={st === "approved" ? "Approved" : "Draft saved"}
+            label={
+              st === "approved" ? t("flowScripture.chipApproved") : t("flowScripture.chipDraftSaved")
+            }
           />
         )}
       </Box>
@@ -991,7 +1024,9 @@ export default function TranslateScriptureScreen({
       >
         <Button
           disabled={busy || !canEditRole}
-          title={canEditRole ? "Save both lanes without approving" : "View-only access."}
+          title={
+            canEditRole ? t("flowScripture.saveDraftTitle") : t("flowScripture.viewOnly")
+          }
           onClick={() => void handleSave()}
           sx={{
             flex: 1,
@@ -1003,11 +1038,13 @@ export default function TranslateScriptureScreen({
             "&:hover": { bgcolor: skip.soft },
           }}
         >
-          Save draft
+          {t("flowScripture.saveDraft")}
         </Button>
         <Button
           disabled={busy || !canEditRole}
-          title={canEditRole ? "Save and mark this verse done" : "View-only access."}
+          title={
+            canEditRole ? t("flowScripture.approveVerseTitle") : t("flowScripture.viewOnly")
+          }
           onClick={() => void handleApprove()}
           startIcon={<CheckIcon />}
           sx={{
@@ -1020,7 +1057,7 @@ export default function TranslateScriptureScreen({
             "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
           }}
         >
-          Approve verse
+          {t("flowScripture.approveVerse")}
         </Button>
       </Stack>
     </Box>
@@ -1057,7 +1094,7 @@ export default function TranslateScriptureScreen({
           >
             <Stack direction="row" alignItems="center" spacing={1.25}>
               <IconButton
-                aria-label={`Back to ${book} package`}
+                aria-label={t("flowScripture.backToPackage", { book })}
                 onClick={() => {
                   location.hash = `#/package/${book}`;
                 }}
@@ -1067,7 +1104,7 @@ export default function TranslateScriptureScreen({
               </IconButton>
               <Box sx={{ minWidth: 0 }}>
                 <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                  Scripture
+                  {t("flowScripture.title")}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
                   {sub}
@@ -1083,14 +1120,16 @@ export default function TranslateScriptureScreen({
                   whiteSpace: "nowrap",
                 }}
               >
-                {done ? `${total} of ${total}` : `Verse ${Math.min(cursor + 1, total)} of ${total}`}
+                {done
+                  ? t("flowScripture.ofTotal", { n: total, total })
+                  : t("flowScripture.verseOfTotal", { n: Math.min(cursor + 1, total), total })}
               </Typography>
               {/* compact prev/next — the same cursor and disabled logic as the
                   bottom buttons (goPrev/goNext), also disabled on the done view
                   where the bottom pair doesn't render. */}
               <Stack direction="row" spacing={0.75} sx={{ flex: "none" }}>
                 <IconButton
-                  aria-label="Previous verse"
+                  aria-label={t("flowScripture.prevVerse")}
                   size="small"
                   disabled={done || busy || cursor === 0}
                   onClick={goPrev}
@@ -1099,7 +1138,7 @@ export default function TranslateScriptureScreen({
                   <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
                 </IconButton>
                 <IconButton
-                  aria-label="Next verse"
+                  aria-label={t("flowScripture.nextVerse")}
                   size="small"
                   disabled={done || busy || (cursor >= total - 1 && statusedCount < total)}
                   onClick={goNext}
@@ -1227,13 +1266,11 @@ export default function TranslateScriptureScreen({
             )}
 
             {!canEditRole && (
-              <Alert severity="info">
-                You have view-only access to this project, so the verse editors are read-only.
-              </Alert>
+              <Alert severity="info">{t("flowScripture.viewOnlyEditors")}</Alert>
             )}
 
             {total === 0 ? (
-              <Alert severity="info">No verses loaded for {`${book} ${chapter}`}.</Alert>
+              <Alert severity="info">{t("flowScripture.noVerses", { book, chapter })}</Alert>
             ) : done ? (
               <Box sx={{ ...cardSx, textAlign: "center", paddingBlock: 4.5 }}>
                 <Box
@@ -1256,15 +1293,17 @@ export default function TranslateScriptureScreen({
                   />
                 </Box>
                 <Typography component="h2" sx={{ fontSize: "1.375rem", fontWeight: 700, mt: 1.5 }}>
-                  {book} {chapter} scripture complete
+                  {t("flowScripture.completeTitle", { book, chapter })}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   {[
-                    approvedCount > 0 ? `${approvedCount} approved` : null,
-                    savedCount > 0 ? `${savedCount} draft saved` : null,
+                    approvedCount > 0
+                      ? t("flowScripture.approvedTally", { count: approvedCount })
+                      : null,
+                    savedCount > 0 ? t("flowScripture.savedTally", { count: savedCount }) : null,
                   ]
                     .filter(Boolean)
-                    .join(" · ") || `${total} verse(s)`}
+                    .join(" · ") || t("flowScripture.verseTally", { count: total })}
                 </Typography>
                 <Stack spacing={1}>
                   <Button
@@ -1283,8 +1322,8 @@ export default function TranslateScriptureScreen({
                     }}
                   >
                     {hasNextChapter
-                      ? `Continue to ${book} ${nextChapter}`
-                      : `${book} is complete — no chapter ${nextChapter}`}
+                      ? t("flowScripture.continueTo", { book, chapter: nextChapter })
+                      : t("flowScripture.bookComplete", { book, chapter: nextChapter })}
                   </Button>
                   <Button
                     onClick={() => {
@@ -1294,7 +1333,7 @@ export default function TranslateScriptureScreen({
                     }}
                     sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                   >
-                    Review again
+                    {t("flowScripture.reviewAgain")}
                   </Button>
                 </Stack>
               </Box>
@@ -1345,7 +1384,7 @@ export default function TranslateScriptureScreen({
                     >
                       {sourceDto?.plain_text ?? (
                         <Box component="em" sx={{ fontSize: "0.875rem", fontFamily: "inherit" }}>
-                          No {sourceLabel} source text loaded for this verse.
+                          {t("flowScripture.noSourceText", { source: sourceLabel })}
                         </Box>
                       )}
                     </Typography>
@@ -1364,7 +1403,7 @@ export default function TranslateScriptureScreen({
                     <Button
                       variant="outlined"
                       size="small"
-                      title={`Open the Align screen at ${book} ${chapter}:${verseNum} with both lanes side by side`}
+                      title={t("flowScripture.alignBothTitle", { book, chapter, verse: verseNum })}
                       onClick={() => {
                         location.hash = `#/alignment/${book}/${chapter}/${verseNum}/dual`;
                       }}
@@ -1377,7 +1416,7 @@ export default function TranslateScriptureScreen({
                         borderWidth: "1.5px",
                       }}
                     >
-                      Align both
+                      {t("flowScripture.alignBoth")}
                     </Button>
                   </Stack>
                 )}
@@ -1391,7 +1430,7 @@ export default function TranslateScriptureScreen({
                       onClick={goPrev}
                       sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                     >
-                      Previous
+                      {t("flowScripture.previous")}
                     </Button>
                     <Button
                       endIcon={<ChevronRightIcon sx={chevronFlip} />}
@@ -1399,7 +1438,7 @@ export default function TranslateScriptureScreen({
                       onClick={goNext}
                       sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                     >
-                      Next
+                      {t("flowScripture.next")}
                     </Button>
                   </Stack>
                 )}
@@ -1417,21 +1456,24 @@ export default function TranslateScriptureScreen({
       {/* alignment-loss confirm — the same decision ScriptureScreen puts to the
           user; typing is kept either way. */}
       <Dialog open={Boolean(pendingLoss)} onClose={() => setPendingLoss(null)}>
-        <DialogTitle>This save would unalign words it didn&rsquo;t touch</DialogTitle>
+        <DialogTitle>{t("flowScripture.lossTitle")}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Saving {pendingLoss?.ref} drops the alignment on {pendingLoss?.lostWords.length ?? 0}{" "}
-            word(s)
             {pendingLoss && pendingLoss.lostWords.length > 0
-              ? `: ${pendingLoss.lostWords.slice(0, 6).join(", ")}`
-              : ""}
-            . Your typing is kept either way — saving anyway leaves those words to re-align on the
-            Align screen.
+              ? t("flowScripture.lossBodyWithWords", {
+                  count: pendingLoss.lostWords.length,
+                  ref: pendingLoss.ref,
+                  words: pendingLoss.lostWords.slice(0, 6).join(", "),
+                })
+              : t("flowScripture.lossBody", {
+                  count: pendingLoss?.lostWords.length ?? 0,
+                  ref: pendingLoss?.ref ?? "",
+                })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingLoss(null)} sx={{ minHeight: 44 }}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             variant="contained"
@@ -1441,7 +1483,7 @@ export default function TranslateScriptureScreen({
               setPendingLoss(null);
             }}
           >
-            Save anyway
+            {t("flowScripture.saveAnyway")}
           </Button>
         </DialogActions>
       </Dialog>

@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // t2-review: the Notes/Questions review queue, ported faithfully from
 // docs/flows/ui/t2-review.html against the app's real data + save machinery.
 // Explicit-Save-only; drafts persist via web/src/sync/drafts.ts; saves go
@@ -29,6 +26,8 @@
 // is retried once — the merge prompt is never shown for it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Box,
@@ -76,6 +75,7 @@ import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder
 import { shortSupport } from "../lib/supportReference";
 import type { HighlightKey } from "../lib/highlight";
 import { SCRIPTURE_FONT_STACK } from "../theme";
+import i18n from "../i18n";
 import {
   api,
   ApiError,
@@ -100,29 +100,41 @@ function unescapeNewlines(text: string | null | undefined): string {
   return (text ?? "").replace(/\\n/g, "\n");
 }
 
-// Human labels for the row fields this screen can patch. Anything unmapped
-// falls back to the raw column name rather than being silently prettified into
-// something that might not match what the API actually changed.
-const FIELD_LABELS: Record<string, string> = {
-  note: "Note",
-  question: "Question",
-  response: "Answer",
-  quote: "Quote",
-  occurrence: "Occurrence",
-  verse: "Verse",
-  ref_raw: "Reference",
-  sort_order: "Order",
+// i18n keys for the row fields this screen can patch — the map stores KEY
+// NAMES, not display text, so it stays language-independent at module scope.
+// Anything unmapped falls back to the raw column name rather than being
+// silently prettified into something that might not match what the API
+// actually changed. `lower` is the sentence-inline form, supplied as its own
+// key rather than produced by lower-casing a translated string.
+const FIELD_LABEL_KEYS: Record<string, { label: string; lower: string }> = {
+  note: { label: "flowReview.field.note", lower: "flowReview.fieldLower.note" },
+  question: { label: "flowReview.field.question", lower: "flowReview.fieldLower.question" },
+  response: { label: "flowReview.field.response", lower: "flowReview.fieldLower.response" },
+  quote: { label: "flowReview.field.quote", lower: "flowReview.fieldLower.quote" },
+  occurrence: { label: "flowReview.field.occurrence", lower: "flowReview.fieldLower.occurrence" },
+  verse: { label: "flowReview.field.verse", lower: "flowReview.fieldLower.verse" },
+  ref_raw: { label: "flowReview.field.refRaw", lower: "flowReview.fieldLower.refRaw" },
+  sort_order: { label: "flowReview.field.sortOrder", lower: "flowReview.fieldLower.sortOrder" },
 };
 
-function fieldLabel(field: string): string {
-  return FIELD_LABELS[field] ?? field;
+function fieldLabel(t: TFunction, field: string): string {
+  const entry = FIELD_LABEL_KEYS[field];
+  return entry ? t(entry.label) : field;
+}
+
+function fieldLabelLower(t: TFunction, field: string): string {
+  const entry = FIELD_LABEL_KEYS[field];
+  return entry ? t(entry.lower) : field;
 }
 
 // "quote", "quote and occurrence" — names what conflicted, nothing more.
-function joinFieldLabels(labels: string[]): string {
-  if (labels.length === 0) return "queued";
+function joinFieldLabels(t: TFunction, labels: string[]): string {
+  if (labels.length === 0) return t("flowReview.common.queuedFallback");
   if (labels.length === 1) return labels[0];
-  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  return t("flowReview.common.listAnd", {
+    list: labels.slice(0, -1).join(t("flowReview.common.listSeparator")),
+    last: labels[labels.length - 1],
+  });
 }
 
 // Render any patch/row value as display text. Absent stays "" so the dialog can
@@ -160,6 +172,7 @@ function sortOrderAfter(list: QueueRow[], refId: string): number {
 }
 
 export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
+  const { t } = useTranslation();
   const { band } = useLayoutBand();
   const isPhone = band === "phone";
   const isDesktop = band === "desktop";
@@ -234,6 +247,10 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     setNotice(message);
     setNoticeSeverity(severity);
   }, []);
+
+  // "404" / "error" — the status token every failure notice interpolates.
+  const statusOf = (err: unknown): string =>
+    err instanceof ApiError ? String(err.status) : t("flowReview.common.errorWord");
 
   const rows = useMemo<QueueRow[]>(() => {
     if (!data) return [];
@@ -558,13 +575,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               const row = list.find((r) => r.id === id) ?? null;
               setConflictRow(row);
               if (!row) {
-                setConflictError(
-                  "That row is no longer in this chapter — the other editor may have deleted it.",
-                );
+                setConflictError(i18n.t("flowReview.conflictNotice.rowGone"));
               }
             } catch (e) {
               setConflictError(
-                `Couldn't read the other editor's version (${e instanceof ApiError ? e.status : "error"}).`,
+                i18n.t("flowReview.conflictNotice.readFailed", {
+                  status: e instanceof ApiError ? e.status : i18n.t("flowReview.common.errorWord"),
+                }),
               );
             } finally {
               setConflictLoading(false);
@@ -594,7 +611,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
           const baseline = op.baseline;
           const retryKey = `${rowKind}:${id}`;
           if (retried428Ref.current.has(retryKey)) {
-            say("A save was rejected twice for a missing precondition — it was not retried again.", "warning");
+            say(i18n.t("flowReview.queue.preconditionTwice"), "warning");
             return;
           }
           retried428Ref.current.add(retryKey);
@@ -610,15 +627,19 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               });
               await refetch();
             } catch {
-              say("A save was rejected for a missing precondition and could not be retried.", "warning");
+              say(i18n.t("flowReview.queue.preconditionRetryFailed"), "warning");
             }
           })();
           return;
         }
         if (result.kind === "fatal") {
-          say(`A save failed (${result.reason}) and is parked in the failed-ops queue.`, "warning");
+          say(i18n.t("flowReview.queue.saveParked", { reason: result.reason }), "warning");
         }
       }),
+    // `t` is deliberately NOT a dependency: react-i18next hands out a new `t`
+    // on every language change, which would tear down and re-register this
+    // outbox subscription (and its in-flight 428 retry) mid-save. The strings
+    // above go through i18n.t instead.
     [book, chapter, refetch, say],
   );
 
@@ -629,13 +650,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   // every delete ("no carve-out for tn here"). Gate it exactly like a tq save.
   const deleteLocked = locked;
   const createLocked = locked; // POST /api/rows is locked
-  const lockReasonSave = "Chapter is locked by an AI run — question edits are rejected until it finishes";
-  const lockReasonDelete = "Chapter is locked by an AI run — deletes are rejected for every kind";
-  const lockReasonCreate = "Chapter is locked by an AI run — new rows are rejected until it finishes";
+  const lockReasonSave = t("flowReview.lock.save");
+  const lockReasonDelete = t("flowReview.lock.delete");
+  const lockReasonCreate = t("flowReview.lock.create");
 
   // ── source-language lane (drives the quote strip's label + direction) ─────
   const hasHebrewSource = Boolean(data?.verses?.UHB);
-  const sourceLabel = hasHebrewSource ? "Hebrew" : "Greek";
+  const sourceLabel = hasHebrewSource ? t("flowTranslate.hebrew") : t("flowTranslate.greek");
   const sourceDir: "ltr" | "rtl" = hasHebrewSource ? "rtl" : "ltr";
 
   const sourceIndex = useMemo(
@@ -680,7 +701,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   function handleUndo() {
     if (!selectedRow || !hasDiff) return;
     setDraftValue(baselineRef.current);
-    say("Reverted to the last value loaded from the server.");
+    say(t("flowReview.queue.reverted"));
   }
 
   async function handleApprove() {
@@ -700,9 +721,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       applyLocalRowReplacement(activeKind, updated);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        say("Approve needs an AI draft first — this row hasn't been through the AI pipeline yet.", "warning");
+        say(t("flowReview.queue.approveNeedsDraft"), "warning");
       } else {
-        say(`Approve failed (${err instanceof ApiError ? err.status : "error"}).`, "warning");
+        say(t("flowReview.queue.approveFailed", { status: statusOf(err) }), "warning");
       }
     } finally {
       setApproving(false);
@@ -734,11 +755,21 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
         applyLocalRowReplacement(kind, updated);
         setApproveAllProgress({ done: i + 1, total: list.length });
       } catch (err) {
-        const st = err instanceof ApiError ? err.status : "error";
+        const st = err instanceof ApiError ? err.status : null;
         const extra =
-          st === 404 ? " That row has no AI draft to approve yet." : st === 409 ? " The chapter may be locked by an AI run." : "";
+          st === 404
+            ? t("flowReview.queue.approveAllExtraNoDraft")
+            : st === 409
+              ? t("flowReview.queue.approveAllExtraLocked")
+              : "";
         setApproveAllError(
-          `Stopped at ${refFor(book, row)} — approve failed (${st}).${extra} ${i} of ${list.length} approved; the rest were not attempted.`,
+          t("flowReview.queue.approveAllStopped", {
+            ref: refFor(book, row),
+            status: st ?? t("flowReview.common.errorWord"),
+            extra,
+            done: i,
+            total: list.length,
+          }),
         );
         break;
       }
@@ -760,9 +791,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       applyLocalRowInsert(kind, created);
       setActiveKind(kind);
       setSelectedId(created.id);
-      say(kind === "tn" ? "New note added." : "New question added.");
+      say(kind === "tn" ? t("flowReview.queue.noteAdded") : t("flowReview.queue.questionAdded"));
     } catch (err) {
-      say(`Could not add (${err instanceof ApiError ? err.status : "error"}).`, "warning");
+      say(t("flowReview.queue.addFailed", { status: statusOf(err) }), "warning");
     } finally {
       setAddPending(false);
     }
@@ -773,7 +804,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     if (deleteLocked) return;
     applyLocalRowDelete("tq", row.id);
     await outbox.enqueueDeleteRow("tq", row.id, row.version, book);
-    say(`Deleted ${refFor(book, row)}.`);
+    say(t("flowReview.queue.deleted", { ref: refFor(book, row) }));
   }
 
   async function handleToggleTrash() {
@@ -784,9 +815,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
         ? await api.restoreNote(row.id, book)
         : await api.trashNote(row.id, book);
       applyLocalRowReplacement("tn", updated);
-      say(row.trashed_at != null ? "Restored from trash." : "Moved to trash.");
+      say(
+        row.trashed_at != null
+          ? t("flowReview.queue.restoredFromTrash")
+          : t("flowReview.queue.movedToTrash"),
+      );
     } catch (err) {
-      say(`Could not change trash state (${err instanceof ApiError ? err.status : "error"}).`, "warning");
+      say(t("flowReview.queue.trashFailed", { status: statusOf(err) }), "warning");
     }
   }
 
@@ -796,7 +831,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     try {
       applyLocalRowReplacement("tn", await api.setPreserveNote(row.id, book, value));
     } catch {
-      say("Could not change Preserve.", "warning");
+      say(t("flowReview.queue.preserveFailed"), "warning");
     }
   }
 
@@ -811,7 +846,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     try {
       applyLocalRowReplacement("tn", await api.setHintNote(row.id, book, !row.hint));
     } catch {
-      say("Could not toggle Hint.", "warning");
+      say(t("flowReview.queue.hintFailed"), "warning");
     }
   }
 
@@ -823,12 +858,16 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const siblingPos = selectedRow ? verseSiblings.findIndex((r) => r.id === selectedRow.id) : -1;
 
   function reorderBlockedReason(delta: -1 | 1): string | null {
-    if (activeKind !== "tn") return "Reordering applies to notes only";
-    if (!selectedRow || siblingPos < 0) return "No note selected";
+    if (activeKind !== "tn") return t("flowReview.queue.reorderNotesOnly");
+    if (!selectedRow || siblingPos < 0) return t("flowReview.queue.noNoteSelected");
     const other = verseSiblings[siblingPos + delta];
-    if (!other) return delta === -1 ? "Already first in this verse" : "Already last in this verse";
+    if (!other) {
+      return delta === -1
+        ? t("flowReview.queue.alreadyFirst")
+        : t("flowReview.queue.alreadyLast");
+    }
     if (selectedRow.sort_order == null || other.sort_order == null) {
-      return "These notes have no sort order recorded yet — reorder needs one on both";
+      return t("flowReview.queue.noSortOrder");
     }
     return null;
   }
@@ -852,7 +891,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       book,
       baseline: { sort_order: b },
     });
-    say("Moved — sort order swapped.");
+    say(t("flowReview.queue.moved"));
   }
 
   async function handleInsertAfter() {
@@ -869,9 +908,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       });
       applyLocalRowInsert("tn", created, { afterId: selectedRow.id });
       setSelectedId(created.id);
-      say("Note inserted after this one.");
+      say(t("flowReview.queue.noteInserted"));
     } catch (err) {
-      say(`Could not insert (${err instanceof ApiError ? err.status : "error"}).`, "warning");
+      say(t("flowReview.queue.insertFailed", { status: statusOf(err) }), "warning");
     }
   }
 
@@ -879,7 +918,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     if (!selectedRow || activeKind !== "tn") return;
     const verse = Number.parseInt(retargetValue, 10);
     if (!Number.isFinite(verse) || verse < 0) {
-      say("Enter a verse number in this chapter.", "warning");
+      say(t("flowReview.queue.enterVerseNumber"), "warning");
       return;
     }
     setRetargetOpen(false);
@@ -888,16 +927,16 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     const baseline = { verse: selectedRow.verse, ref_raw: selectedRow.ref_raw };
     applyLocalRowPatch("tn", selectedRow.id, patch as Partial<TnRow & TqRow>);
     await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, patch, { book, baseline });
-    say(`Retargeted to ${book} ${chapter}:${verse}.`);
+    say(t("flowReview.queue.retargeted", { book, chapter, verse }));
   }
 
   // ── draft toolbar: Suggest (tn-quick) + Template ──────────────────────────
   const suggestBlockedReason = (() => {
-    if (activeKind !== "tn") return "AI suggestions are wired for notes only";
-    if (!selectedRow) return "No note selected";
+    if (activeKind !== "tn") return t("flowReview.queue.suggestNotesOnly");
+    if (!selectedRow) return t("flowReview.queue.noNoteSelected");
     const row = selectedRow as TnRow;
-    if (!row.support_reference) return "Pick a support reference first — the AI request is keyed by it";
-    if (!row.quote) return "Add a quote first — the AI request needs the phrase to explain";
+    if (!row.support_reference) return t("flowReview.queue.suggestNeedsSupportRef");
+    if (!row.quote) return t("flowReview.queue.suggestNeedsQuote");
     return null;
   })();
 
@@ -909,12 +948,12 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       if (!built.ok) {
         const msg =
           built.error.reason === "missing_ult_verse"
-            ? "ULT verse text unavailable for this verse."
+            ? t("flowReview.queue.missingUltVerse")
             : built.error.reason === "missing_ust_verse"
-              ? "UST verse text unavailable for this verse."
+              ? t("flowReview.queue.missingUstVerse")
               : built.error.reason === "hebrew_not_found"
-                ? "Couldn't match this quote to the ULT alignment — copy the support phrase exactly from ULT."
-                : "AI prerequisites missing.";
+                ? t("flowReview.queue.quoteNotAligned")
+                : t("flowReview.queue.aiPrereqMissing");
         say(msg, "warning");
         return;
       }
@@ -922,12 +961,12 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       setDraftValue(res.note);
       say(
         res.warnings.length > 0
-          ? `AI draft inserted — not saved. ${res.warnings.join(" ")}`
-          : "AI draft inserted into the editor — click Save to keep it.",
+          ? t("flowReview.queue.aiDraftWithWarnings", { warnings: res.warnings.join(" ") })
+          : t("flowReview.queue.aiDraftInserted"),
         res.warnings.length > 0 ? "warning" : "info",
       );
     } catch (err) {
-      say(`AI suggestion failed (${err instanceof ApiError ? err.status : "error"}).`, "warning");
+      say(t("flowReview.queue.aiSuggestFailed", { status: statusOf(err) }), "warning");
     } finally {
       setSuggesting(false);
     }
@@ -941,7 +980,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   function applyTemplate(bodyMd: string) {
     setTemplateAnchor(null);
     setDraftValue((prev) => (prev.trim().length === 0 ? bodyMd : `${prev}\n\n${bodyMd}`));
-    say("Template inserted into the editor — click Save to keep it.");
+    say(t("flowReview.queue.templateInserted"));
   }
 
   // ── quote builder ─────────────────────────────────────────────────────────
@@ -957,7 +996,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     const built = buildQuoteFromSelection(sourceVo, quoteKeys);
     setQuoteOpen(false);
     if (!built) {
-      say("No source words selected — the quote was left unchanged.", "warning");
+      say(t("flowReview.queue.noSourceWords"), "warning");
       return;
     }
     const row = selectedRow as TnRow;
@@ -965,7 +1004,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     const baseline = { quote: row.quote, occurrence: row.occurrence };
     applyLocalRowPatch("tn", selectedRow.id, patch as Partial<TnRow & TqRow>);
     await outbox.enqueueRow("tn", selectedRow.id, selectedRow.version, patch, { book, baseline });
-    say("Quote rebuilt from the source words.");
+    say(t("flowReview.queue.quoteRebuilt"));
   }
 
   // ── history restore ───────────────────────────────────────────────────────
@@ -1013,7 +1052,8 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
           : undefined;
         return {
           field,
-          label: fieldLabel(field),
+          label: fieldLabel(t, field),
+          labelLower: fieldLabelLower(t, field),
           mine: displayFieldValue(conflict.op.patch[field]),
           theirs: conflictRow ? displayFieldValue(theirsRaw) : null,
         };
@@ -1037,7 +1077,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     }
     await outbox.resolveConflict(conflict.op.id, conflictVersion);
     closeConflict();
-    say("Kept your version — re-sending it against the server's current version.");
+    say(t("flowReview.queue.keptMine"));
   }
 
   async function keepTheirs() {
@@ -1066,8 +1106,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     closeConflict();
     say(
       textual
-        ? "Kept their version — your edit was discarded."
-        : `Discarded your ${joinFieldLabels(conflictFields.map((f) => f.label.toLowerCase()))} change — the row now shows the server's values. Anything unsaved in the draft box was left alone.`,
+        ? t("flowReview.queue.keptTheirs")
+        : t("flowReview.queue.discardedMine", {
+            fields: joinFieldLabels(
+              t,
+              conflictFields.map((f) => f.labelLower),
+            ),
+          }),
     );
   }
 
@@ -1093,9 +1138,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       <Stack sx={{ height: "100%", minHeight: 0 }}>
         <TopBar book={book} chapter={chapter} showNavigation={false} onNavigate={onNavigate} />
         <Box sx={{ p: 3 }}>
-          <Alert severity="error">
-            Could not load {book} {chapter}.
-          </Alert>
+          <Alert severity="error">{t("flowScripture.loadError", { book, chapter })}</Alert>
         </Box>
       </Stack>
     );
@@ -1117,7 +1160,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const verseTwl = selectedRow ? data.twl.filter((w) => w.verse === selectedRow.verse) : [];
   const sourceText =
     selectedRow && activeKind === "tq"
-      ? `Q: ${(selectedRow as TqRow).question ?? ""}`
+      ? t("flowReview.queue.questionPrefix", { question: (selectedRow as TqRow).question ?? "" })
       : null;
 
   const showGrid = isAuthoringMode && activeKind === "tq" && gridView;
@@ -1152,7 +1195,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const actionButtons = (
     <>
       <Button variant="outlined" onClick={handleUndo} disabled={!hasDiff} sx={{ flex: 1, minHeight: 44 }}>
-        Undo
+        {t("common.undo")}
       </Button>
       <Tooltip title={saveLocked ? lockReasonSave : ""}>
         <span style={{ flex: 1, display: "flex" }}>
@@ -1163,11 +1206,11 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
             disabled={!hasDiff || saving || saveLocked}
             sx={{ flex: 1, minHeight: 44 }}
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? t("flowReview.common.saving") : t("common.save")}
           </Button>
         </span>
       </Tooltip>
-      <Tooltip title={isTrashed ? "This note is in the trash — restore it before approving." : ""}>
+      <Tooltip title={isTrashed ? t("flowReview.queue.approveTrashedTooltip") : ""}>
         <span style={{ flex: 1, display: "flex" }}>
           <Button
             variant="contained"
@@ -1176,7 +1219,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
             disabled={approving || isTrashed}
             sx={{ flex: 1, minHeight: 44 }}
           >
-            {approving ? "Approving…" : "Approve"}
+            {approving ? t("flowReview.common.approving") : t("common.approve")}
           </Button>
         </span>
       </Tooltip>
@@ -1213,8 +1256,8 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               if (val) setActiveKind(val);
             }}
           >
-            <ToggleButton value="tn">Notes</ToggleButton>
-            <ToggleButton value="tq">Questions</ToggleButton>
+            <ToggleButton value="tn">{t("flowReview.queue.tabNotes")}</ToggleButton>
+            <ToggleButton value="tq">{t("flowReview.queue.tabQuestions")}</ToggleButton>
           </ToggleButtonGroup>
         </Stack>
 
@@ -1252,23 +1295,23 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
             <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" sx={{ mb: 1.25 }}>
               <Typography variant="body2" fontWeight={600} color="text.secondary">
                 {rows.length === 0
-                  ? "0 of 0"
-                  : `${selectedIndex + 1} of ${rows.length}`}
+                  ? t("flowScripture.ofTotal", { n: 0, total: 0 })
+                  : t("flowScripture.ofTotal", { n: selectedIndex + 1, total: rows.length })}
               </Typography>
               {chapterDrafts.length > 0 && (
                 <Chip
                   size="small"
                   color="warning"
                   variant="outlined"
-                  label={`${chapterDrafts.length} unsaved`}
+                  label={t("flowReview.common.unsavedCount", { count: chapterDrafts.length })}
                   onClick={goToFirstUnsaved}
-                  title="Go to the first unsaved edit and focus Save"
+                  title={t("flowReview.queue.goToFirstUnsaved")}
                 />
               )}
               <Box sx={{ flex: 1 }} />
               {!isDesktop && (
                 <Button size="small" variant="outlined" onClick={() => (isPhone ? setSheetOpen(true) : setContextOpen((v) => !v))}>
-                  This verse
+                  {t("flowReview.queue.thisVerse")}
                 </Button>
               )}
               {isAuthoringMode && activeKind === "tq" && (
@@ -1278,7 +1321,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                   aria-pressed={gridView}
                   onClick={() => setGridView((v) => !v)}
                 >
-                  {gridView ? "Card view" : "Grid view"}
+                  {gridView ? t("flowReview.queue.cardView") : t("flowReview.queue.gridView")}
                 </Button>
               )}
               <Button
@@ -1287,19 +1330,19 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                 onClick={() => setHistoryOpen(true)}
                 disabled={!selectedRow}
               >
-                History
+                {t("flowReview.common.history")}
               </Button>
             </Stack>
 
             {isPhone && rows.length > 0 && (
               <Stack direction="row" alignItems="center" justifyContent="center" spacing={2} sx={{ mb: 1.5 }}>
-                <Button size="small" onClick={() => goCard(-1)} disabled={rows.length <= 1} aria-label="Previous card">
+                <Button size="small" onClick={() => goCard(-1)} disabled={rows.length <= 1} aria-label={t("flowReview.queue.previousCard")}>
                   ‹
                 </Button>
                 <Typography variant="body2" color="text.secondary">
-                  {selectedIndex + 1} of {rows.length}
+                  {t("flowScripture.ofTotal", { n: selectedIndex + 1, total: rows.length })}
                 </Typography>
-                <Button size="small" onClick={() => goCard(1)} disabled={rows.length <= 1} aria-label="Next card">
+                <Button size="small" onClick={() => goCard(1)} disabled={rows.length <= 1} aria-label={t("flowReview.queue.nextCard")}>
                   ›
                 </Button>
               </Stack>
@@ -1330,7 +1373,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
 
             {!selectedRow ? (
               <Alert severity="info">
-                No {activeKind === "tn" ? "notes" : "questions"} for this chapter.
+                {activeKind === "tn"
+                  ? t("flowReview.queue.noNotes")
+                  : t("flowReview.queue.noQuestions")}
               </Alert>
             ) : (
               <Box
@@ -1345,7 +1390,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               >
                 <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" sx={{ mb: 1.5 }}>
                   <Typography variant="overline" color="text.secondary">
-                    {activeKind === "tn" ? "Translation note" : "Translation question"}
+                    {activeKind === "tn"
+                      ? t("flowReview.queue.kindNote")
+                      : t("flowReview.queue.kindQuestion")}
                   </Typography>
                   <FlowStatusChip kind={chipKind} />
                   <Typography variant="caption" color="text.secondary">
@@ -1357,14 +1404,26 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                       {([-1, 1] as const).map((delta) => {
                         const reason = reorderBlockedReason(delta);
                         return (
-                          <Tooltip key={delta} title={reason ?? (delta === -1 ? "Move up" : "Move down")}>
+                          <Tooltip
+                            key={delta}
+                            title={
+                              reason ??
+                              (delta === -1
+                                ? t("flowReview.queue.moveUp")
+                                : t("flowReview.queue.moveDown"))
+                            }
+                          >
                             <span>
                               <Button
                                 size="small"
                                 variant="outlined"
                                 disabled={reason !== null}
                                 onClick={() => void handleReorder(delta)}
-                                aria-label={delta === -1 ? "Move up" : "Move down"}
+                                aria-label={
+                                  delta === -1
+                                    ? t("flowReview.queue.moveUp")
+                                    : t("flowReview.queue.moveDown")
+                                }
                                 sx={{ minWidth: 44, minHeight: 44 }}
                               >
                                 {delta === -1 ? "↑" : "↓"}
@@ -1373,21 +1432,23 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                           </Tooltip>
                         );
                       })}
-                      <Tooltip title={createLocked ? lockReasonCreate : "Insert note after this one"}>
+                      <Tooltip
+                        title={createLocked ? lockReasonCreate : t("flowReview.queue.insertAfter")}
+                      >
                         <span>
                           <Button
                             size="small"
                             variant="outlined"
                             disabled={createLocked}
                             onClick={() => void handleInsertAfter()}
-                            aria-label="Insert note after this one"
+                            aria-label={t("flowReview.queue.insertAfter")}
                             sx={{ minWidth: 44, minHeight: 44 }}
                           >
                             +
                           </Button>
                         </span>
                       </Tooltip>
-                      <Tooltip title="Retarget verse reference">
+                      <Tooltip title={t("flowReview.queue.retargetTitle")}>
                         <span>
                           <Button
                             size="small"
@@ -1396,7 +1457,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                               setRetargetValue(String(selectedRow.verse));
                               setRetargetOpen(true);
                             }}
-                            aria-label="Retarget verse reference"
+                            aria-label={t("flowReview.queue.retargetTitle")}
                             sx={{ minWidth: 44, minHeight: 44 }}
                           >
                             ⟳
@@ -1417,8 +1478,8 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                     onBuildFromSource={sourceVo ? openQuoteBuilder : undefined}
                     buildDisabledReason={
                       sourceVo
-                        ? "Pick source words to rebuild this note's quote"
-                        : `No ${sourceLabel} verse loaded for this chapter — nothing to build a quote from`
+                        ? t("flowReview.queue.pickSourceWords")
+                        : t("flowReview.queue.noSourceVerse", { label: sourceLabel })
                     }
                     buildButtonRef={quoteButtonRef}
                   />
@@ -1443,7 +1504,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                 )}
 
                 <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 1 }}>
-                  <Tooltip title={suggestBlockedReason ?? "Draft this note with AI"}>
+                  <Tooltip title={suggestBlockedReason ?? t("flowReview.queue.suggestTooltip")}>
                     <span>
                       <Button
                         size="small"
@@ -1452,17 +1513,19 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                         onClick={() => void handleSuggest()}
                         sx={{ borderRadius: 999, minHeight: 44 }}
                       >
-                        {suggesting ? "Drafting…" : "✨ Suggest"}
+                        {suggesting
+                          ? t("flowReview.queue.drafting")
+                          : t("flowReview.queue.suggest")}
                       </Button>
                     </span>
                   </Tooltip>
                   <Tooltip
                     title={
                       activeKind !== "tn"
-                        ? "Templates are keyed by a note's support reference"
+                        ? t("flowReview.queue.templatesNotesOnly")
                         : templateVariants.length === 0
-                          ? "No template recorded for this support reference"
-                          : "Insert a curated template"
+                          ? t("flowReview.queue.noTemplateForRef")
+                          : t("flowReview.queue.insertTemplate")
                     }
                   >
                     <span>
@@ -1474,7 +1537,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                         onClick={(e) => setTemplateAnchor(e.currentTarget)}
                         sx={{ borderRadius: 999, minHeight: 44 }}
                       >
-                        Template
+                        {t("translation.template")}
                       </Button>
                     </span>
                   </Tooltip>
@@ -1484,7 +1547,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                   multiline
                   fullWidth
                   minRows={4}
-                  label="Draft"
+                  label={t("translation.draftLabel")}
                   value={draftValue}
                   onChange={(e) => setDraftValue(e.target.value)}
                   disabled={saveLocked}
@@ -1494,38 +1557,38 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                 <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1.5 }}>
                   <Chip
                     size="small"
-                    label="Preserve"
+                    label={t("noteCard.preserve")}
                     variant={activeKind === "tn" && (selectedRow as TnRow).preserve ? "filled" : "outlined"}
                     color={activeKind === "tn" && (selectedRow as TnRow).preserve ? "primary" : "default"}
                     onClick={activeKind === "tn" ? handleTogglePreserve : undefined}
                     disabled={activeKind !== "tn"}
-                    title={activeKind !== "tn" ? "Preserve only applies to notes" : undefined}
+                    title={activeKind !== "tn" ? t("flowReview.queue.preserveNotesOnly") : undefined}
                   />
                   <Chip
                     size="small"
-                    label="Hint"
+                    label={t("noteCard.hint")}
                     variant={activeKind === "tn" && (selectedRow as TnRow).hint ? "filled" : "outlined"}
                     color={activeKind === "tn" && (selectedRow as TnRow).hint ? "primary" : "default"}
                     onClick={activeKind === "tn" ? handleToggleHint : undefined}
                     disabled={activeKind !== "tn"}
-                    title={activeKind !== "tn" ? "Hint only applies to notes" : undefined}
+                    title={activeKind !== "tn" ? t("flowReview.queue.hintNotesOnly") : undefined}
                   />
                   {activeKind === "tn" ? (
                     <Chip
                       size="small"
-                      label={isTrashed ? "Restore" : "Trash"}
+                      label={isTrashed ? t("flowReview.queue.restore") : t("flowReview.queue.trash")}
                       variant={isTrashed ? "filled" : "outlined"}
                       onClick={handleToggleTrash}
                       title={
                         isTrashed
-                          ? "Bring this note back out of the trash"
-                          : "Move this note to the visible, restorable trash"
+                          ? t("flowReview.queue.restoreTooltip")
+                          : t("flowReview.queue.trashTooltip")
                       }
                     />
                   ) : (
                     <Chip
                       size="small"
-                      label="Delete"
+                      label={t("common.delete")}
                       color="error"
                       variant="outlined"
                       disabled={deleteLocked}
@@ -1535,7 +1598,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                       title={
                         deleteLocked
                           ? lockReasonDelete
-                          : "Questions are deleted outright — there is no question trash"
+                          : t("flowReview.queue.deleteQuestionTooltip")
                       }
                     />
                   )}
@@ -1555,7 +1618,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               <Collapse in={contextOpen}>
                 <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1.5, mt: 2 }}>
                   <Typography variant="overline" color="text.secondary">
-                    This verse
+                    {t("flowReview.queue.thisVerse")}
                   </Typography>
                   <Box sx={{ mt: 1 }}>{contextBody}</Box>
                 </Box>
@@ -1579,7 +1642,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
               }}
             >
               <Typography variant="overline" color="text.secondary">
-                This verse
+                {t("flowReview.queue.thisVerse")}
               </Typography>
               <Box sx={{ mt: 1 }}>{contextBody}</Box>
             </Box>
@@ -1594,21 +1657,26 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       <Drawer anchor="bottom" open={sheetOpen} onClose={() => setSheetOpen(false)}>
         <Box sx={{ p: 2, maxHeight: "78vh", overflowY: "auto" }}>
           <Typography variant="subtitle1" sx={{ mb: 1 }}>
-            This verse — read-only context
+            {t("flowReview.queue.thisVerseSheet")}
           </Typography>
           {contextBody}
         </Box>
       </Drawer>
 
       <Menu anchorEl={templateAnchor} open={Boolean(templateAnchor)} onClose={() => setTemplateAnchor(null)}>
-        {templateVariants.map((t, i) => (
-          <MenuItem key={`${t.type}-${i}`} onClick={() => applyTemplate(t.body)} sx={{ maxWidth: 420 }}>
+        {/* `tpl`, not `t` — the outer `t` is the translation function. */}
+        {templateVariants.map((tpl, i) => (
+          <MenuItem
+            key={`${tpl.type}-${i}`}
+            onClick={() => applyTemplate(tpl.body)}
+            sx={{ maxWidth: 420 }}
+          >
             <Box sx={{ minWidth: 0 }}>
               <Typography variant="body2" fontWeight={600}>
-                {t.type}
+                {tpl.type}
               </Typography>
               <Typography variant="caption" color="text.secondary" noWrap component="div">
-                {t.body}
+                {tpl.body}
               </Typography>
             </Box>
           </MenuItem>
@@ -1653,22 +1721,22 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       />
 
       <Dialog open={retargetOpen} onClose={() => setRetargetOpen(false)}>
-        <DialogTitle>Retarget verse reference</DialogTitle>
+        <DialogTitle>{t("flowReview.queue.retargetTitle")}</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             fullWidth
             type="number"
             margin="dense"
-            label={`Verse number within ${book} ${chapter}`}
+            label={t("flowReview.queue.retargetFieldLabel", { book, chapter })}
             value={retargetValue}
             onChange={(e) => setRetargetValue(e.target.value)}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRetargetOpen(false)}>Cancel</Button>
+          <Button onClick={() => setRetargetOpen(false)}>{t("common.cancel")}</Button>
           <Button variant="contained" onClick={() => void handleRetarget()}>
-            Retarget
+            {t("flowReview.queue.retargetAction")}
           </Button>
         </DialogActions>
       </Dialog>

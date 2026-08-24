@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // K.4 original-language reference strip from docs/flows/ui/t6-words.html:
 // the verse's source words (UHB Hebrew / UGNT Greek) rendered as tappable
 // chips, each opening a small lexicon card for that word's own Strong's
@@ -12,11 +9,16 @@
 // so instead of showing an invented gloss.
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Popover from "@mui/material/Popover";
 import Typography from "@mui/material/Typography";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 import type { LexiconEntry } from "../../hooks/useLexicon";
+
+// Repo-relative path, not prose — kept out of the locale files so a translation
+// can never break the instruction.
+export const LEXICON_IMPORT_SCRIPT = "scripts/import-lexicon.mjs";
 
 export interface SourceWord {
   text: string;
@@ -63,6 +65,7 @@ export interface WordsLexiconStripProps {
 }
 
 export function WordsLexiconStrip({ words, rtl, label, lexicon }: WordsLexiconStripProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState<{ el: HTMLElement; word: SourceWord } | null>(null);
   const entry = open ? lexicon.get(open.word.strong) ?? null : null;
 
@@ -75,7 +78,7 @@ export function WordsLexiconStrip({ words, rtl, label, lexicon }: WordsLexiconSt
         flexWrap: "wrap",
         marginBlockEnd: 1.5,
       }}
-      aria-label="Original-language reference"
+      aria-label={t("flowVerse.lexStrip.aria")}
     >
       <Typography
         variant="caption"
@@ -91,7 +94,7 @@ export function WordsLexiconStrip({ words, rtl, label, lexicon }: WordsLexiconSt
       </Typography>
       {words.length === 0 ? (
         <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic" }}>
-          No original-language words loaded for this verse.
+          {t("flowVerse.lexStrip.noWords")}
         </Typography>
       ) : (
         // dir attribute (never a direction flip in sx) — MUI's emotion/stylis
@@ -146,7 +149,7 @@ export function WordsLexiconStrip({ words, rtl, label, lexicon }: WordsLexiconSt
         {open && (
           <Box sx={{ textAlign: "start" }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-              {open.word.strong || "(no Strong's number on this word)"}
+              {open.word.strong || t("flowVerse.lexStrip.noStrongOnWord")}
             </Typography>
             {open.word.strong ? (
               entry ? (
@@ -161,7 +164,7 @@ export function WordsLexiconStrip({ words, rtl, label, lexicon }: WordsLexiconSt
                     </Typography>
                   )}
                   <Typography variant="body2" color="text.secondary">
-                    {entry.gloss ?? "(entry found, no gloss field)"}
+                    {entry.gloss ?? t("flowVerse.lexStrip.noGlossField")}
                   </Typography>
                   {entry.part_of_speech && (
                     <Typography variant="caption" color="text.secondary" component="div">
@@ -176,9 +179,8 @@ export function WordsLexiconStrip({ words, rtl, label, lexicon }: WordsLexiconSt
                 </>
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  <em>No lexicon entry loaded for this Strong&rsquo;s number.</em> The local lexicon
-                  table is empty in some environments — <code>scripts/import-lexicon.mjs</code>{" "}
-                  populates UHAL/UGL.
+                  <em>{t("flowVerse.lexStrip.noEntryForStrong")}</em>{" "}
+                  {t("flowVerse.lexicon.emptyTable", { script: LEXICON_IMPORT_SCRIPT })}
                 </Typography>
               )
             ) : null}
