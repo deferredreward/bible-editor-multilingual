@@ -1,4 +1,5 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
+// i18n: user-visible strings use t() with keys under the `adminPages`
+// namespace (en/ar values pending merge into web/src/i18n/locales/*.json).
 //
 // AdminSetupScreen — the redesigned admin "Setup" desk screen (#/admin/setup),
 // rendered inside the shared AdminDesk chrome. Desktop-first presentation of
@@ -48,6 +49,7 @@
 // :75-95 — hooks still run above the gate so hook order never varies).
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -77,11 +79,12 @@ const INSPIRE = "#31ADE3";
 
 type SectionKey = "wizard" | "aiService" | "overrides" | "localization";
 
-const SECTION_LABELS: Record<SectionKey, string> = {
-  wizard: "Setup wizard",
-  aiService: "AI service",
-  overrides: "Source overrides",
-  localization: "Localization",
+// Key names only — translated at render via t().
+const SECTION_LABEL_KEYS: Record<SectionKey, string> = {
+  wizard: "adminPages.setup.navWizard",
+  aiService: "adminPages.setup.navAiService",
+  overrides: "adminPages.setup.navOverrides",
+  localization: "adminPages.setup.navLocalization",
 };
 
 function scrollToSection(key: SectionKey) {
@@ -155,23 +158,23 @@ function SectionPanel({
 function WizardPanel() {
   // Real workspace picker, exactly as flows/SetupScreen.tsx:41,102-111 — there
   // is no preview mode; choosing an org switches the workspace and reloads.
+  const { t } = useTranslation();
   const [wsPickerOpen, setWsPickerOpen] = useState(false);
   return (
     <SectionPanel
       id="wizard"
-      title="Setup wizard"
-      sub="Organization, sources to pull from, scripture lanes, review & apply. Applying writes the real project configuration."
-      foot="Changes apply to this workspace's live configuration."
+      title={t("adminPages.setup.navWizard")}
+      sub={t("adminPages.setup.wizardSub")}
+      foot={t("adminPages.setup.wizardFoot")}
       footAction={
         <Button variant="text" size="small" onClick={() => setWsPickerOpen(true)}>
-          Switch workspace…
+          {t("adminPages.setup.switchWorkspace")}
         </Button>
       }
     >
       <SetupWizard />
       <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1.5 }}>
-        Need a different organization? "Switch workspace" below is the real picker, not a preview:
-        choosing an organization switches the active workspace and reloads the app.
+        {t("adminPages.setup.wizardPickerHint")}
       </Typography>
       {wsPickerOpen && <WorkspaceChoiceDialog onClose={() => setWsPickerOpen(false)} />}
     </SectionPanel>
@@ -183,6 +186,7 @@ function WizardPanel() {
 // BookSourceOverridesPanel needs a book context the artifact's mockup didn't
 // draw: a plain selector over the imported books.
 function OverridesPanel({ initialBook }: { initialBook: string | null }) {
+  const { t } = useTranslation();
   const [books, setBooks] = useState<string[] | null>(null);
   const [book, setBook] = useState<string | null>(initialBook);
   const [loadError, setLoadError] = useState(false);
@@ -211,19 +215,19 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
   return (
     <SectionPanel
       id="overrides"
-      title="Source overrides (advanced)"
-      sub="Per-book overrides for where notes and questions come from. A per-book override wins over the project source. Set an override before a book's first import to have it apply right away — an already-imported book needs a full re-import to pick up a new override."
-      foot={book ? `Editing overrides for ${bookName(book)}` : undefined}
+      title={t("adminPages.setup.overridesTitle")}
+      sub={t("adminPages.setup.overridesSub")}
+      foot={book ? t("adminPages.setup.overridesFoot", { book: bookName(book) }) : undefined}
     >
       {loadError ? (
-        <Alert severity="error">Couldn't load the book list.</Alert>
+        <Alert severity="error">{t("adminPages.setup.bookListLoadError")}</Alert>
       ) : books === null ? (
         <CircularProgress size={22} />
       ) : (
         <Stack spacing={2}>
           <TextField
             select
-            label="Book"
+            label={t("adminPages.setup.bookLabel")}
             size="small"
             value={book ?? ""}
             onChange={(e) => setBook(e.target.value)}
@@ -232,7 +236,7 @@ function OverridesPanel({ initialBook }: { initialBook: string | null }) {
             {BOOKS.map(({ code }) => (
               <MenuItem key={code} value={code}>
                 {bookName(code)}
-                {!books.includes(code) && " — not imported"}
+                {!books.includes(code) && ` — ${t("adminPages.setup.notImported")}`}
               </MenuItem>
             ))}
           </TextField>
@@ -250,6 +254,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
   // All hooks run before any gate below — hook order must never depend on role
   // or config (a mid-body early return above hooks is the Shell.tsx crash
   // pattern this repo has been burned by).
+  const { t } = useTranslation();
   const cfg = useProjectConfig();
   const admin = role === "admin";
 
@@ -259,9 +264,13 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
     <AdminDesk current="setup">
       <Stack spacing={2}>
         <AdminPageHeader
-          eyebrow={cfg ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}` : "Workspace"}
-          title="Setup & preferences"
-          subtitle="Configure where this project pulls from and how it's set up."
+          eyebrow={
+            cfg
+              ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
+              : t("adminPages.common.workspace")
+          }
+          title={t("adminPages.setup.title")}
+          subtitle={t("adminPages.setup.subtitle")}
         />
 
         {!admin ? (
@@ -269,19 +278,18 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
           // stance as flows/SetupScreen.tsx:75-95).
           <Paper variant="outlined" sx={{ p: 3, borderRadius: "14px" }}>
             <Typography variant="subtitle1" gutterBottom>
-              Admin only
+              {t("adminPages.common.adminOnly")}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Setup and translation preferences configure where this project pulls from and what
-              every AI draft is told — only an admin can change that. Your role is{" "}
-              <strong>{role}</strong>. Ask a project admin, or continue with your regular work.
+              {t("adminPages.setup.adminOnlyBody")} {t("adminPages.common.yourRoleIs")}{" "}
+              <strong>{role}</strong>. {t("adminPages.setup.adminOnlyAsk")}
             </Typography>
             <Button
               variant="outlined"
               sx={{ mt: 2 }}
               onClick={() => onNavigate(me?.lastBook || "OBA", me?.lastChapter || 1, me?.lastVerse || 1)}
             >
-              Back to the editor
+              {t("adminPages.setup.backToEditor")}
             </Button>
           </Paper>
         ) : (
@@ -318,7 +326,7 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
                     "&:hover": { bgcolor: (theme) => alpha(INSPIRE, theme.palette.mode === "dark" ? 0.16 : 0.1), color: "text.primary" },
                   }}
                 >
-                  {SECTION_LABELS[s]}
+                  {t(SECTION_LABEL_KEYS[s])}
                 </ButtonBase>
               ))}
             </Box>
@@ -329,13 +337,21 @@ export default function AdminSetupScreen({ role, me, onNavigate }: AdminSetupScr
                 translation-memory feature — gate on admin only, matching
                 classic Preferences, so admins on source-language or read-only
                 workspaces can still reach it. */}
-            <SectionPanel id="aiService" title="AI service" sub="Provider, model, and API key AI drafts and checks run on.">
+            <SectionPanel
+              id="aiService"
+              title={t("adminPages.setup.navAiService")}
+              sub={t("adminPages.setup.aiServiceSub")}
+            >
               <AiServiceSection />
             </SectionPanel>
 
             <OverridesPanel initialBook={me?.lastBook ?? null} />
 
-            <SectionPanel id="localization" title="Localization" sub="UI string overrides for this workspace.">
+            <SectionPanel
+              id="localization"
+              title={t("adminPages.setup.navLocalization")}
+              sub={t("adminPages.setup.localizationSub")}
+            >
               <LocalizationSection />
             </SectionPanel>
           </>

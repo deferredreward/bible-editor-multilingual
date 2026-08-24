@@ -1,5 +1,5 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
+// i18n: user-visible strings use t() with keys under the `adminPages`
+// namespace (en/ar values pending merge into web/src/i18n/locales/*.json).
 //
 // AdminTeamScreen — the redesigned admin "Team & roles" screen, rendered inside
 // the coordinator-owned AdminDesk chrome (route #/admin/team). Desktop-first
@@ -68,6 +68,8 @@
 // marginInlineStart, textAlign:start). No physical left/right anywhere.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Box,
@@ -107,10 +109,11 @@ const INSPIRE = "#31ADE3";
 const INSPIRE_DEEP = "#1B84B8";
 
 // The allowlist holds exactly these two roles; viewer access comes from Door43
-// org membership, never from a user_roles row (api.ts:603-605).
-const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; label: string }> = [
-  { value: "editor", label: "Editor" },
-  { value: "admin", label: "Admin" },
+// org membership, never from a user_roles row (api.ts:603-605). Labels are
+// i18n key names, translated at render.
+const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; labelKey: string }> = [
+  { value: "editor", labelKey: "adminPages.common.roleEditor" },
+  { value: "admin", labelKey: "adminPages.common.roleAdmin" },
 ];
 
 // What each role can actually do — grounded in the real gating, not the
@@ -118,34 +121,33 @@ const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; label: string }> = [
 // viewer sessions get the global read-only banner and every mutating request
 // outside a small self-scoped allowlist is 403'd server-side
 // (blockViewerWrites — see the gating notes ported from TeamScreen.tsx:534-541).
-const ROLE_PERMS: Record<"admin" | "editor", string[]> = {
+// i18n key names, translated at render.
+const ROLE_PERM_KEYS: Record<"admin" | "editor", string[]> = {
   admin: [
-    "Everything an editor can do",
-    "Open Setup and change workspace configuration",
-    "Manage people on this screen — grant, change, or revoke roles",
+    "adminPages.team.permAdminEverything",
+    "adminPages.team.permAdminSetup",
+    "adminPages.team.permAdminManagePeople",
   ],
-  editor: [
-    "Write content across the workspace — scripture, notes, words, questions",
-    "Cannot open Setup or manage people",
-  ],
+  editor: ["adminPages.team.permEditorWrite", "adminPages.team.permEditorNoSetup"],
 };
 
-// Bare allowlist error codes (api/src/adminUserRoutes.ts) rendered as plain
-// English — same mapping as TeamScreen.tsx / UserManagementSection.tsx, kept
-// in sync by hand since none of these screens have i18n keys yet.
-function errorMessage(e: unknown): string {
+// Bare allowlist error codes (api/src/adminUserRoutes.ts) rendered as
+// translated text — same mapping as TeamScreen.tsx / UserManagementSection.tsx.
+function errorMessage(t: TFunction, e: unknown): string {
   const code = e instanceof ApiError ? (e.body as { error?: string } | undefined)?.error : undefined;
   switch (code) {
     case "invalid_username":
-      return "400 — invalid username";
+      return t("adminPages.team.errInvalidUsername");
     case "dcs_user_not_found":
-      return "404 — no such Door43 user";
+      return t("adminPages.team.errDcsUserNotFound");
     case "last_admin":
-      return "409 — can't do that to the only remaining admin";
+      return t("adminPages.team.errLastAdmin");
     case "not_found":
-      return "404 — not found";
+      return t("adminPages.team.errNotFound");
     default:
-      return e instanceof ApiError ? `${e.status} — ${code ?? "request failed"}` : "request failed";
+      return e instanceof ApiError
+        ? `${e.status} — ${code ?? t("adminPages.team.errRequestFailed")}`
+        : t("adminPages.team.errRequestFailed");
   }
 }
 
@@ -308,6 +310,7 @@ function PersonAvatar({ name, avatarUrl, size = 36 }: { name: string; avatarUrl?
 // ── screen ───────────────────────────────────────────────────────────────────
 
 export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   const { ok } = theme.palette.flows;
@@ -389,18 +392,18 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
     // Client-side courtesy for the server's last_admin 409
     // (adminUserRoutes.ts:493): explain instead of round-tripping a failure.
     if (u.role === "admin" && adminCount === 1) {
-      setMsg("Someone must stay admin — the only remaining admin can't be demoted.");
+      setMsg(t("adminPages.team.lastAdminExplain"));
       return;
     }
     const next = u.role === "admin" ? "editor" : "admin";
     setRowBusy(u.username);
     try {
       const res = await api.adminSetUserRole(u.username, next);
-      let text = `${u.username} is now ${next}`;
-      if (res.wasTeamManaged) text += " — their Door43 team wins this back at their next sign-in";
+      let text = t("adminPages.team.userNowRole", { username: u.username, role: next });
+      if (res.wasTeamManaged) text += ` ${t("adminPages.team.teamWinsBackSuffix")}`;
       setMsg(text);
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(t, e));
     } finally {
       setRowBusy(null);
     }
@@ -413,13 +416,13 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
     setAdding(true);
     try {
       const res = await api.adminSetUserRole(username, newRole);
-      let text = `Added ${username} as ${newRole}`;
-      if (!res.dcsVerified) text += " (unverified — Door43 lookup failed, added anyway)";
+      let text = t("adminPages.team.addedUserAs", { username, role: newRole });
+      if (!res.dcsVerified) text += ` ${t("adminPages.team.addedUnverifiedSuffix")}`;
       setMsg(text);
       setNewUsername("");
       setNewRole("editor");
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(t, e));
     } finally {
       setAdding(false);
     }
@@ -427,18 +430,18 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
   };
 
   const handleRemove = async (u: AdminUser) => {
-    if (!window.confirm(`Remove ${u.username} from this workspace's roles?`)) return;
+    if (!window.confirm(t("adminPages.team.removeConfirm", { username: u.username }))) return;
     setRowBusy(u.username);
     try {
       const res = await api.adminRemoveUser(u.username);
       setMsg(
         res.wasTeamDerived
-          ? `Removed ${u.username} — Door43 team sync re-adds them at their next sign-in`
-          : `Removed ${u.username}`,
+          ? t("adminPages.team.removedUserTeamDerived", { username: u.username })
+          : t("adminPages.team.removedUser", { username: u.username }),
       );
       if (selected?.toLowerCase() === u.username.toLowerCase()) setSelected(null);
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(t, e));
     } finally {
       setRowBusy(null);
     }
@@ -451,11 +454,11 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
       const res = await api.adminPurgeManualGrants();
       setMsg(
         res.kept.length
-          ? `Removed ${res.removed.length}; kept ${res.kept.join(", ")} (last-admin guard)`
-          : `Removed ${res.removed.length}`,
+          ? t("adminPages.team.purgeRemovedKept", { count: res.removed.length, kept: res.kept.join(", ") })
+          : t("adminPages.team.purgeRemoved", { count: res.removed.length }),
       );
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(t, e));
     } finally {
       setPurging(false);
       setPurgeOpen(false);
@@ -466,7 +469,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
   if (!isAdmin) {
     return (
       <AdminDesk current="team">
-        <Alert severity="info">Team &amp; roles is admin-only. Your current role is {role}.</Alert>
+        <Alert severity="info">{t("adminPages.team.adminOnlyAlert", { role })}</Alert>
       </AdminDesk>
     );
   }
@@ -476,10 +479,10 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
     const teamManaged = u.source === "dcs_team";
     const busy = rowBusy === u.username;
     const title = isLastAdmin
-      ? "Someone must stay admin"
+      ? t("adminPages.team.chipLastAdminTip")
       : teamManaged
-        ? "Click to change — their Door43 team takes it back at next sign-in"
-        : "Click to change role";
+        ? t("adminPages.team.chipTeamManagedTip")
+        : t("adminPages.team.chipChangeRoleTip");
     return (
       // The span keeps Tooltip working while the button is disabled (busy) —
       // MUI can't attach listeners to a disabled element directly.
@@ -511,7 +514,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
           }}
         >
           {busy && <CircularProgress size={12} color="inherit" />}
-          {u.role === "admin" ? "Admin" : "Editor"}
+          {u.role === "admin" ? t("adminPages.common.roleAdmin") : t("adminPages.common.roleEditor")}
         </ButtonBase>
         </Box>
       </Tooltip>
@@ -523,12 +526,12 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.375 }}>
         <Typography component="span" sx={{ fontSize: "0.8125rem" }}>
-          {teamManaged ? "Door43 team" : "Manual grant"}
-          {u.addedBy ? ` · by ${u.addedBy}` : ""}
+          {teamManaged ? t("adminPages.team.sourceDoor43Team") : t("adminPages.team.sourceManualGrant")}
+          {u.addedBy ? ` · ${t("adminPages.team.byUser", { name: u.addedBy })}` : ""}
         </Typography>
         {teamManaged && (
           <Typography component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, color: ACCENT }}>
-            Team wins — manual edits last until their next sign-in
+            {t("adminPages.team.teamWinsNote")}
           </Typography>
         )}
       </Box>
@@ -538,24 +541,28 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
   return (
     <AdminDesk current="team">
       <AdminPageHeader
-        eyebrow={orgMembers?.org ? `Door43 org · ${orgMembers.org}` : "Workspace access"}
-        title="Team & roles"
-        subtitle="Who has access here, where their role comes from, and how Door43 teams take precedence."
+        eyebrow={
+          orgMembers?.org
+            ? t("adminPages.team.eyebrowOrg", { org: orgMembers.org })
+            : t("adminPages.team.eyebrowFallback")
+        }
+        title={t("adminPages.team.title")}
+        subtitle={t("adminPages.team.subtitle")}
       />
 
       {/* ── People ─────────────────────────────────────────────────────── */}
       <Panel
-        title="People"
-        sub="Click a row to see what that role can do. Click the Role chip to switch admin/editor — Door43-team-sourced roles push back at the user's next sign-in."
+        title={t("adminPages.team.peopleTitle")}
+        sub={t("adminPages.team.peopleSub")}
         flush
         foot={
           <>
             <Typography variant="caption" sx={{ fontVariantNumeric: "tabular-nums" }}>
               {users === null
                 ? usersError
-                  ? "Load failed"
-                  : "Loading…"
-                : `${users.length} ${users.length === 1 ? "person" : "people"} · ${adminCount} admin${adminCount === 1 ? "" : "s"} · ${editorCount} editor${editorCount === 1 ? "" : "s"}`}
+                  ? t("adminPages.team.loadFailed")
+                  : t("common.loading")
+                : `${t("adminPages.team.peopleCount", { count: users.length })} · ${t("adminPages.team.adminCount", { count: adminCount })} · ${t("adminPages.team.editorCount", { count: editorCount })}`}
             </Typography>
             <Box sx={{ marginInlineStart: "auto" }} />
             <Button
@@ -565,7 +572,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
               onClick={() => setPurgeOpen(true)}
               disabled={manualUsers.length === 0}
             >
-              Purge manual grants…
+              {t("adminPages.team.purgeButton")}
             </Button>
           </>
         }
@@ -577,11 +584,11 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                 severity="error"
                 action={
                   <Button size="small" onClick={() => void loadAllowlist()}>
-                    Retry
+                    {t("common.retry")}
                   </Button>
                 }
               >
-                Failed to load the people list.
+                {t("adminPages.team.peopleLoadError")}
               </Alert>
             ) : (
               <CircularProgress size={22} />
@@ -589,8 +596,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
           </Box>
         ) : users.length === 0 ? (
           <Typography color="text.secondary" sx={{ p: 2 }}>
-            No one has an explicit role here yet. Add a person below, or let Door43 team sync
-            grant roles at sign-in.
+            {t("adminPages.team.peopleEmpty")}
           </Typography>
         ) : (
           <>
@@ -602,15 +608,15 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                 <Box component="thead">
                   <Box component="tr">
                     <Box component="th" sx={thSx}>
-                      Person
+                      {t("adminPages.team.colPerson")}
                     </Box>
                     <Box component="th" sx={thSx}>
-                      Role
+                      {t("adminPages.team.colRole")}
                     </Box>
                     <Box component="th" sx={thSx}>
-                      Source of role
+                      {t("adminPages.team.colSourceOfRole")}
                     </Box>
-                    <Box component="th" sx={thSx} aria-label="Actions" />
+                    <Box component="th" sx={thSx} aria-label={t("adminPages.team.colActions")} />
                   </Box>
                 </Box>
                 <Box component="tbody">
@@ -639,7 +645,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                             <Box sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                               <Typography component="span" sx={{ fontWeight: 700, fontSize: "0.9rem" }}>
                                 {u.username}
-                                {isMe ? " (you)" : ""}
+                                {isMe ? ` ${t("adminPages.team.youSuffix")}` : ""}
                               </Typography>
                               {rosterMatch?.fullName && rosterMatch.fullName !== u.username && (
                                 <Typography component="span" sx={{ fontSize: "0.78rem", color: "text.secondary" }}>
@@ -648,12 +654,12 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                               )}
                             </Box>
                             {notMember && (
-                              <Tooltip title="Not currently a member of the Door43 org">
+                              <Tooltip title={t("adminPages.team.notOrgMemberTip")}>
                                 <Chip
                                   size="small"
                                   variant="outlined"
                                   color="warning"
-                                  label="not org member"
+                                  label={t("adminPages.team.notOrgMemberChip")}
                                   sx={{ marginInlineStart: 0.5 }}
                                 />
                               </Tooltip>
@@ -676,7 +682,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                               void handleRemove(u);
                             }}
                           >
-                            Remove
+                            {t("adminPages.team.removeButton")}
                           </Button>
                         </Box>
                       </Box>
@@ -697,11 +703,18 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                 }}
               >
                 <Typography sx={{ fontWeight: 700, fontSize: "0.95rem" }}>
-                  {selectedUser.username} — {selectedUser.role === "admin" ? "Admin" : "Editor"}
+                  {selectedUser.username} —{" "}
+                  {selectedUser.role === "admin"
+                    ? t("adminPages.common.roleAdmin")
+                    : t("adminPages.common.roleEditor")}
                 </Typography>
                 <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mb: 1.5 }}>
-                  {selectedUser.source === "dcs_team" ? "Role from Door43 team membership" : "Manual grant"}
-                  {selectedUser.addedBy ? ` · added by ${selectedUser.addedBy}` : ""}
+                  {selectedUser.source === "dcs_team"
+                    ? t("adminPages.team.roleFromTeam")
+                    : t("adminPages.team.sourceManualGrant")}
+                  {selectedUser.addedBy
+                    ? ` · ${t("adminPages.team.addedByUser", { name: selectedUser.addedBy })}`
+                    : ""}
                   {formatAddedAt(selectedUser.addedAt) ? ` · ${formatAddedAt(selectedUser.addedAt)}` : ""}
                 </Typography>
                 <Typography
@@ -714,11 +727,13 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                     mb: 0.5,
                   }}
                 >
-                  What {selectedUser.role === "admin" ? "admins" : "editors"} can do
+                  {selectedUser.role === "admin"
+                    ? t("adminPages.team.whatAdminsCanDo")
+                    : t("adminPages.team.whatEditorsCanDo")}
                 </Typography>
                 <Box component="ul" sx={{ m: 0, paddingInlineStart: 2.25, fontSize: "0.84rem", lineHeight: 1.6 }}>
-                  {ROLE_PERMS[selectedUser.role === "admin" ? "admin" : "editor"].map((t) => (
-                    <li key={t}>{t}</li>
+                  {ROLE_PERM_KEYS[selectedUser.role === "admin" ? "admin" : "editor"].map((key) => (
+                    <li key={key}>{t(key)}</li>
                   ))}
                 </Box>
               </Box>
@@ -729,14 +744,14 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
 
       {/* ── Add a person ───────────────────────────────────────────────── */}
       <Panel
-        title="Add a person"
-        sub="Grants a manual role by Door43 username. An unverified username still gets added, with a note."
+        title={t("adminPages.team.addPersonTitle")}
+        sub={t("adminPages.team.addPersonSub")}
       >
         <Stack direction="row" spacing={1.5} alignItems="flex-end" flexWrap="wrap" useFlexGap>
           <TextField
             size="small"
-            label="Door43 username"
-            placeholder="e.g. maria_traductora"
+            label={t("adminPages.team.usernameLabel")}
+            placeholder={t("adminPages.team.usernamePlaceholder")}
             value={newUsername}
             onChange={(e) => setNewUsername(e.target.value)}
             sx={{ minWidth: 220 }}
@@ -744,14 +759,14 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
           <TextField
             select
             size="small"
-            label="Role"
+            label={t("adminPages.team.roleLabel")}
             value={newRole}
             onChange={(e) => setNewRole(e.target.value as "admin" | "editor")}
             sx={{ minWidth: 140 }}
           >
             {ROLE_OPTIONS.map((opt) => (
               <MenuItem key={opt.value} value={opt.value}>
-                {opt.label}
+                {t(opt.labelKey)}
               </MenuItem>
             ))}
           </TextField>
@@ -761,15 +776,15 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
             disabled={adding || !newUsername.trim()}
             startIcon={adding ? <CircularProgress size={16} color="inherit" /> : undefined}
           >
-            Add
+            {t("adminPages.team.addButton")}
           </Button>
         </Stack>
       </Panel>
 
       {/* ── Door43 org roster ──────────────────────────────────────────── */}
       <Panel
-        title="Door43 org roster"
-        sub="Live read-only view of the org on Door43 — never writes a role. Team membership grants roles automatically at each sign-in; org members without a role here sign in as viewers (read-only)."
+        title={t("adminPages.team.rosterTitle")}
+        sub={t("adminPages.team.rosterSub")}
         flush
         topAction={
           <Button
@@ -778,16 +793,16 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
             onClick={() => void loadRoster()}
             disabled={rosterRefreshing}
           >
-            Refresh
+            {t("adminPages.common.refresh")}
           </Button>
         }
         foot={
           <Typography variant="caption" sx={{ fontVariantNumeric: "tabular-nums" }}>
             {orgMembers === null
-              ? "Loading…"
+              ? t("common.loading")
               : orgMembers.error
-                ? `Degraded read: ${orgMembers.error}${orgMembers.partial ? " (partial roster)" : ""}`
-                : `${orgMembers.members.length} member${orgMembers.members.length === 1 ? "" : "s"} on Door43`}
+                ? `${t("adminPages.team.degradedRead", { error: orgMembers.error })}${orgMembers.partial ? ` ${t("adminPages.team.partialRosterSuffix")}` : ""}`
+                : t("adminPages.team.memberCount", { count: orgMembers.members.length })}
           </Typography>
         }
       >
@@ -801,33 +816,33 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
             <Box sx={{ p: 2, pb: 0 }}>
               {!orgMembers.org && (
                 <Alert severity="info" sx={{ mb: 1.5 }}>
-                  No Door43 org is configured for this workspace yet, so there is no roster to
-                  reconcile against — an empty list below is not evidence that anyone is missing
-                  from an org.
+                  {t("adminPages.team.noOrgConfigured")}
                 </Alert>
               )}
               {rosterDegraded && !orgMembers.partial && orgMembers.error && (
                 <Alert severity="warning" sx={{ mb: 1.5 }}>
-                  Door43 roster read failed ({orgMembers.error}) — the list below may be empty or
-                  incomplete; this is not evidence that the org has no members.
+                  {t("adminPages.team.rosterReadFailed", { error: orgMembers.error })}
                 </Alert>
               )}
               {orgMembers.partial && (
                 <Alert severity="info" sx={{ mb: 1.5 }}>
-                  Showing the public-members fallback ({orgMembers.error ?? "team roles unavailable"})
-                  — team roles may be missing for some members.
+                  {t("adminPages.team.publicFallback", {
+                    reason: orgMembers.error ?? t("adminPages.team.teamRolesUnavailable"),
+                  })}
                 </Alert>
               )}
               {orgMembers.truncated && (
                 <Alert severity="info" sx={{ mb: 1.5 }}>
-                  The roster exceeded the page cap and is incomplete.
+                  {t("adminPages.team.rosterTruncated")}
                 </Alert>
               )}
             </Box>
             )}
             {orgMembers.members.length === 0 ? (
               <Typography color="text.secondary" sx={{ p: 2, pt: 1.5 }}>
-                No members returned{orgMembers.error ? ` (${orgMembers.error})` : ""}.
+                {orgMembers.error
+                  ? t("adminPages.team.noMembersReturnedWithError", { error: orgMembers.error })
+                  : t("adminPages.team.noMembersReturned")}
               </Typography>
             ) : (
               <Box sx={{ overflowX: "auto" }}>
@@ -838,13 +853,13 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                   <Box component="thead">
                     <Box component="tr">
                       <Box component="th" sx={thSx}>
-                        Member
+                        {t("adminPages.team.colMember")}
                       </Box>
                       <Box component="th" sx={thSx}>
-                        Door43 team role
+                        {t("adminPages.team.colTeamRole")}
                       </Box>
                       <Box component="th" sx={thSx}>
-                        Access here
+                        {t("adminPages.team.colAccessHere")}
                       </Box>
                     </Box>
                   </Box>
@@ -878,11 +893,16 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
                           <Box component="td" sx={{ ...tdSx, color: "text.secondary" }}>
                             {here
                               ? here.role === "admin"
-                                ? "Admin"
-                                : "Editor"
+                                ? t("adminPages.common.roleAdmin")
+                                : t("adminPages.common.roleEditor")
                               : m.teamRole
-                                ? `Hasn't signed in yet — will be ${m.teamRole === "admin" ? "Admin" : "Editor"} on first sign-in`
-                                : "Viewer (read-only)"}
+                                ? t("adminPages.team.willBeOnFirstSignIn", {
+                                    role:
+                                      m.teamRole === "admin"
+                                        ? t("adminPages.common.roleAdmin")
+                                        : t("adminPages.common.roleEditor"),
+                                  })
+                                : t("adminPages.team.viewerReadOnly")}
                           </Box>
                         </Box>
                       );
@@ -905,32 +925,28 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
               }}
             >
               <Box component="strong" sx={{ color: "text.primary" }}>
-                How precedence works:
+                {t("adminPages.team.precedenceHeading")}
               </Box>{" "}
-              Door43 team membership decides the role at each sign-in. A manual change to a
-              team-managed row takes effect immediately, but the team re-takes it the next time
-              that person signs in — removal only sticks once they leave the team on Door43. The
-              last remaining admin can never be demoted.
+              {t("adminPages.team.precedenceBody")}
             </Box>
           </>
         )}
       </Panel>
 
       <Dialog open={purgeOpen} onClose={() => !purging && setPurgeOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Purge manual grants?</DialogTitle>
+        <DialogTitle>{t("adminPages.team.purgeDialogTitle")}</DialogTitle>
         <DialogContent>
           {manualUsers.length === 0 ? (
-            <Typography variant="body2">No manually-granted rows to purge.</Typography>
+            <Typography variant="body2">{t("adminPages.team.purgeNothing")}</Typography>
           ) : (
             <Typography variant="body2">
-              Purges every manually-granted role ({manualUsers.length}). Door43-team-derived rows
-              are kept, and at least one admin always survives.
+              {t("adminPages.team.purgeDialogBody", { count: manualUsers.length })}
             </Typography>
           )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPurgeOpen(false)} disabled={purging}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             color="warning"
@@ -939,7 +955,7 @@ export default function AdminTeamScreen({ role, me }: AdminTeamScreenProps) {
             disabled={purging || manualUsers.length === 0}
             startIcon={purging ? <CircularProgress size={16} color="inherit" /> : <DeleteOutlineIcon />}
           >
-            Purge
+            {t("adminPages.team.purgeConfirmButton")}
           </Button>
         </DialogActions>
       </Dialog>

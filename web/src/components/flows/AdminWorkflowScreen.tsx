@@ -1,5 +1,5 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
+// i18n: user-visible strings use t() with keys under the `adminPages`
+// namespace (en/ar values pending merge into web/src/i18n/locales/*.json).
 //
 // AdminWorkflowScreen — the redesigned admin "Workflow" screen, rendered inside
 // the coordinator-owned AdminDesk chrome (route #/admin/workflow). Desktop-first
@@ -111,6 +111,7 @@
 // overflow-x:auto wrapper so the page body never scrolls horizontally.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -170,15 +171,22 @@ function fmtDateTime(unixSeconds: number | null | undefined): string {
 
 // ── the 8 steps (descriptive only — no backend state, see header) ───────────
 
-const STEPS: Array<{ name: string; blurb: string }> = [
-  { name: "Draft", blurb: "AI or a translator produces the first pass of every content type." },
-  { name: "Peer check", blurb: "A second translator reads the draft against the source." },
-  { name: "Source check", blurb: "Checked back against the original-language text." },
-  { name: "Align", blurb: "Target words are linked to the original-language words." },
-  { name: "Translate resources", blurb: "Notes, Word links, Questions, and referenced articles." },
-  { name: "Harmonize", blurb: "Terms and style reconciled across the whole package." },
-  { name: "Final validation", blurb: "Nothing publishes with untranslated referenced articles." },
-  { name: "Publish", blurb: "The package ships downstream for community checking." },
+// i18n key names only — translated at render via t().
+const STEPS: Array<{ nameKey: string; blurbKey: string }> = [
+  { nameKey: "adminPages.workflow.stepDraft", blurbKey: "adminPages.workflow.stepDraftBlurb" },
+  { nameKey: "adminPages.workflow.stepPeerCheck", blurbKey: "adminPages.workflow.stepPeerCheckBlurb" },
+  { nameKey: "adminPages.workflow.stepSourceCheck", blurbKey: "adminPages.workflow.stepSourceCheckBlurb" },
+  { nameKey: "adminPages.workflow.stepAlign", blurbKey: "adminPages.workflow.stepAlignBlurb" },
+  {
+    nameKey: "adminPages.workflow.stepTranslateResources",
+    blurbKey: "adminPages.workflow.stepTranslateResourcesBlurb",
+  },
+  { nameKey: "adminPages.workflow.stepHarmonize", blurbKey: "adminPages.workflow.stepHarmonizeBlurb" },
+  {
+    nameKey: "adminPages.workflow.stepFinalValidation",
+    blurbKey: "adminPages.workflow.stepFinalValidationBlurb",
+  },
+  { nameKey: "adminPages.workflow.stepPublish", blurbKey: "adminPages.workflow.stepPublishBlurb" },
 ];
 
 // ── shared chrome (Panel / table sx — mirrors AdminTeamScreen.tsx:170-272) ──
@@ -322,12 +330,22 @@ function Kv({ rows }: { rows: Array<[string, ReactNode]> }) {
 // positions on the forward path).
 const LIFECYCLE_STEPS = ["reserved", "staging", "ready", "completed"] as const;
 
+// Display labels for the lifecycle statuses — the status values themselves are
+// API enums and stay untranslated in logic.
+const LIFECYCLE_LABEL_KEYS: Record<(typeof LIFECYCLE_STEPS)[number], string> = {
+  reserved: "adminPages.workflow.lifecycleReserved",
+  staging: "adminPages.workflow.lifecycleStaging",
+  ready: "adminPages.workflow.lifecycleReady",
+  completed: "adminPages.workflow.lifecycleCompleted",
+};
+
 function LifecycleStrip({ status }: { status: string }) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const { ok, skip } = theme.palette.flows;
   const curIdx = (LIFECYCLE_STEPS as readonly string[]).indexOf(status);
   if (curIdx === -1) {
-    return <FlowStatusChip kind="warn" label={`Replacement ${status}`} />;
+    return <FlowStatusChip kind="warn" label={t("adminPages.workflow.replacementStatusChip", { status })} />;
   }
   return (
     <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>
@@ -367,7 +385,7 @@ function LifecycleStrip({ status }: { status: string }) {
                   color: current ? INSPIRE_DEEP : "text.secondary",
                 }}
               >
-                {s.charAt(0).toUpperCase() + s.slice(1)}
+                {t(LIFECYCLE_LABEL_KEYS[s])}
               </Typography>
             </Box>
           </Box>
@@ -387,6 +405,7 @@ type LaneKey = "lit" | "sim";
 const LANES: LaneKey[] = ["lit", "sim"];
 
 export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
 
@@ -430,9 +449,13 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       setCfg(res.config);
       setCfgError(null);
     } catch (e) {
-      setCfgError(e instanceof ApiError ? `Config load failed (HTTP ${e.status})` : "Config load failed");
+      setCfgError(
+        e instanceof ApiError
+          ? t("adminPages.workflow.configLoadFailedHttp", { status: e.status })
+          : t("adminPages.workflow.configLoadFailed"),
+      );
     }
-  }, []);
+  }, [t]);
 
   const loadSnapshots = useCallback(async () => {
     try {
@@ -443,11 +466,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       setSnapshots(null);
       setSnapshotsError(
         e instanceof ApiError && e.status === 403
-          ? "Export history is admin-only."
-          : "Failed to load export history.",
+          ? t("adminPages.workflow.exportHistoryAdminOnly")
+          : t("adminPages.workflow.exportHistoryLoadFailed"),
       );
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -526,21 +549,25 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       setMsg(
         field === "textReadOnly"
           ? next
-            ? "Text is now read-only for this lane."
-            : "Text editing re-enabled for this lane."
+            ? t("adminPages.workflow.msgTextReadOnly")
+            : t("adminPages.workflow.msgTextEditingEnabled")
           : next
-            ? "Alignment editing enabled for this lane."
-            : "Alignment is now read-only for this lane.",
+            ? t("adminPages.workflow.msgAlignmentEnabled")
+            : t("adminPages.workflow.msgAlignmentReadOnly"),
       );
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as { error?: string } | null) : null;
       if (body?.error === "config_revision_mismatch") {
-        setMsg("Lane settings changed elsewhere — reloaded the latest state; try again.");
+        setMsg(t("adminPages.workflow.msgRevisionMismatch"));
         await loadConfig();
       } else if (body?.error === "lane_frozen") {
-        setMsg("This lane is frozen for a replacement — settings can't change until it settles.");
+        setMsg(t("adminPages.workflow.msgLaneFrozen"));
       } else {
-        setMsg(e instanceof ApiError ? `Update failed (HTTP ${e.status})` : "Update failed");
+        setMsg(
+          e instanceof ApiError
+            ? t("adminPages.workflow.msgUpdateFailedHttp", { status: e.status })
+            : t("adminPages.workflow.msgUpdateFailed"),
+        );
       }
     } finally {
       setLaneBusy(null);
@@ -556,7 +583,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       // Fencing token guards a split-brain export completing a stale render
       // after the flip (api.ts:2230-2231); same pattern as BooksLanePanel.tsx:305.
       await api.laneActivate(lane, jobId, crypto.randomUUID());
-      setMsg("Replacement activated — the lane now reads from the new source.");
+      setMsg(t("adminPages.workflow.msgReplacementActivated"));
       await loadConfig();
       try {
         const res = await api.laneGetJob(lane, jobId);
@@ -565,7 +592,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
         /* job row may already be settled/pruned — config reload is the truth */
       }
     } catch (e) {
-      setMsg(e instanceof ApiError ? `Activate failed (HTTP ${e.status})` : "Activate failed");
+      setMsg(
+        e instanceof ApiError
+          ? t("adminPages.workflow.msgActivateFailedHttp", { status: e.status })
+          : t("adminPages.workflow.msgActivateFailed"),
+      );
     } finally {
       setLaneBusy(null);
       setConfirmActivate(null);
@@ -590,15 +621,15 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       const res = await api.exportsRun(exportBook !== "all" ? { book: exportBook } : undefined);
       setRunInfo(res);
       setInstanceStatus(null);
-      setMsg(`Export queued (run ${res.id}).`);
+      setMsg(t("adminPages.workflow.msgExportQueued", { id: res.id }));
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as { error?: string } | null) : null;
       setMsg(
         body?.error === "workflow_create_failed"
-          ? "An export run with this id already exists — wait a moment and try again."
+          ? t("adminPages.workflow.msgExportRunExists")
           : e instanceof ApiError
-            ? `Export start failed (HTTP ${e.status})`
-            : "Export start failed",
+            ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
+            : t("adminPages.workflow.msgExportStartFailed"),
       );
     } finally {
       setRunBusy(false);
@@ -613,7 +644,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       const s = res.status as { status?: string } | null;
       setInstanceStatus(typeof s?.status === "string" ? s.status : JSON.stringify(res.status));
     } catch {
-      setInstanceStatus("status lookup failed");
+      setInstanceStatus(t("adminPages.workflow.statusLookupFailed"));
     }
   };
 
@@ -639,7 +670,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   if (!isAdmin) {
     return (
       <AdminDesk current="workflow">
-        <Alert severity="info">Workflow is admin-only. Your current role is {role}.</Alert>
+        <Alert severity="info">{t("adminPages.workflow.adminOnlyAlert", { role })}</Alert>
       </AdminDesk>
     );
   }
@@ -650,7 +681,10 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     if (!cfg?.laneState) return null;
     const state: LanePublicState = cfg.laneState[lane];
     const label =
-      state.config.label || (lane === "lit" ? cfg.litLabel || "Literal" : cfg.simLabel || "Simplified");
+      state.config.label ||
+      (lane === "lit"
+        ? cfg.litLabel || t("adminPages.workflow.laneLiteral")
+        : cfg.simLabel || t("adminPages.workflow.laneSimplified"));
     const src = state.config.source;
     const pending = state.pendingTarget;
     const job = laneJobs[lane]?.job ?? null;
@@ -674,25 +708,29 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mb: 1.5 }}>
           <Typography sx={{ fontWeight: 700, fontSize: "0.95rem" }}>{label}</Typography>
           <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
-            {lane === "lit" ? "literal lane" : "simplified lane"}
+            {lane === "lit"
+              ? t("adminPages.workflow.laneLiteralTag")
+              : t("adminPages.workflow.laneSimplifiedTag")}
           </Typography>
-          {state.replacementRequired && <FlowStatusChip kind="warn" label="Replacement required" />}
-          {frozen && <FlowStatusChip kind="edited" label="Replacement in progress" />}
+          {state.replacementRequired && (
+            <FlowStatusChip kind="warn" label={t("adminPages.workflow.replacementRequired")} />
+          )}
+          {frozen && <FlowStatusChip kind="edited" label={t("adminPages.workflow.replacementInProgress")} />}
         </Box>
 
         <Kv
           rows={[
-            ["Current source", `${src.owner}/${src.repo} @ ${src.ref}`],
+            [t("adminPages.workflow.kvCurrentSource"), `${src.owner}/${src.repo} @ ${src.ref}`],
             [
-              "Export target",
+              t("adminPages.workflow.kvExportTarget"),
               state.config.export
                 ? `${state.config.export.owner}/${state.config.export.repo} (base ${state.config.export.baseRef})`
-                : "— (no export configured)",
+                : t("adminPages.workflow.kvNoExportConfigured"),
             ],
             ...(pending
               ? ([
                   [
-                    "Staged target",
+                    t("adminPages.workflow.kvStagedTarget"),
                     `${pending.source.owner}/${pending.source.repo} @ ${pending.source.ref}`,
                   ],
                 ] as Array<[string, ReactNode]>)
@@ -706,14 +744,14 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             [
               {
                 field: "textReadOnly" as const,
-                label: "Text read-only",
-                help: "Blocks new edits to this lane's scripture text.",
+                label: t("adminPages.workflow.toggleTextReadOnly"),
+                help: t("adminPages.workflow.toggleTextReadOnlyHelp"),
                 on: state.config.textReadOnly,
               },
               {
                 field: "alignmentWritable" as const,
-                label: "Alignment writable",
-                help: "Lets translators keep aligning while the text is locked.",
+                label: t("adminPages.workflow.toggleAlignmentWritable"),
+                help: t("adminPages.workflow.toggleAlignmentWritableHelp"),
                 on: state.config.alignmentWritable,
               },
             ]
@@ -737,8 +775,10 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
               <Tooltip
                 title={
                   frozen
-                    ? "Locked while a replacement is in progress"
-                    : `Click to turn ${row.on ? "off" : "on"} (asks to confirm)`
+                    ? t("adminPages.workflow.toggleLockedTip")
+                    : row.on
+                      ? t("adminPages.workflow.toggleTurnOffTip")
+                      : t("adminPages.workflow.toggleTurnOnTip")
                 }
               >
                 <Box component="span" sx={{ display: "inline-flex" }}>
@@ -768,17 +808,19 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                 mb: 1,
               }}
             >
-              Staged replacement · generation {job.generation}
+              {t("adminPages.workflow.stagedReplacementHeading", { generation: job.generation })}
             </Typography>
             <LifecycleStrip status={job.status} />
             {books.length > 0 && (
               <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 1 }}>
-                {okBooks.length}/{books.length} books staged
+                {t("adminPages.workflow.booksStaged", { ok: okBooks.length, total: books.length })}
                 {failedBooks.length > 0 && (
                   <>
                     {" · "}
                     <Box component="span" sx={{ color: theme.palette.flows.warn.ink, fontWeight: 600 }}>
-                      failed: {failedBooks.map((b) => b.book).join(", ")}
+                      {t("adminPages.workflow.failedBooks", {
+                        books: failedBooks.map((b) => b.book).join(", "),
+                      })}
                     </Box>
                   </>
                 )}
@@ -786,12 +828,12 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             )}
             <Typography sx={{ fontSize: "0.78rem", color: "text.secondary", mt: 0.5 }}>
               {job.status === "ready"
-                ? "Ready to activate — the lane will switch to the new source."
+                ? t("adminPages.workflow.jobReadyHint")
                 : job.status === "staging" || job.status === "reserved"
-                  ? "Staging — retry, waive, cancel, and back-out live on the Books screen's lane panel."
+                  ? t("adminPages.workflow.jobStagingHint")
                   : job.status === "completed"
-                    ? "This replacement is complete."
-                    : "This replacement needs attention on the Books screen's lane panel."}
+                    ? t("adminPages.workflow.jobCompletedHint")
+                    : t("adminPages.workflow.jobNeedsAttentionHint")}
             </Typography>
             {job.status === "ready" && (
               <Button
@@ -801,7 +843,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                 onClick={() => setConfirmActivate({ lane, jobId: job.job_id })}
                 sx={{ mt: 1.25, bgcolor: theme.palette.flows.ok.ink, fontWeight: 700 }}
               >
-                Activate…
+                {t("adminPages.workflow.activateButton")}
               </Button>
             )}
           </Box>
@@ -813,31 +855,34 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   return (
     <AdminDesk current="workflow">
       <AdminPageHeader
-        eyebrow={cfg ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}` : "Workspace"}
-        title="Workflow"
-        subtitle="How book packages move from draft to publish, and the machinery underneath them."
+        eyebrow={
+          cfg
+            ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
+            : t("adminPages.common.workspace")
+        }
+        title={t("adminPages.workflow.title")}
+        subtitle={t("adminPages.workflow.subtitle")}
       />
 
       {/* ── The 8 steps — descriptive chrome only (no step-state backend) ── */}
       <Panel
-        title="The 8 steps"
-        chip={<FlowStatusChip kind="skip" label="Descriptive" />}
-        sub="How a book package moves from draft to publish. No step-state backend yet, so no counts."
+        title={t("adminPages.workflow.stepsTitle")}
+        chip={<FlowStatusChip kind="skip" label={t("adminPages.workflow.chipDescriptive")} />}
+        sub={t("adminPages.workflow.stepsSub")}
         foot={
           <Typography variant="caption">
-            No community-check step here (that's downstream); a package isn't done until every
-            referenced article is translated too.
+            {t("adminPages.workflow.stepsFoot")}
           </Typography>
         }
       >
         <Box
           role="list"
-          aria-label="Workflow steps"
+          aria-label={t("adminPages.workflow.stepsAria")}
           sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}
         >
           {STEPS.map((s, i) => (
             <Box
-              key={s.name}
+              key={s.nameKey}
               role="listitem"
               sx={{
                 flex: "none",
@@ -874,10 +919,10 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                   {i + 1}
                 </Box>
                 <Typography sx={{ fontSize: "0.8125rem", fontWeight: 700, letterSpacing: "-0.01em" }}>
-                  {s.name}
+                  {t(s.nameKey)}
                 </Typography>
               </Box>
-              <Typography sx={{ fontSize: "0.72rem", color: "text.secondary" }}>{s.blurb}</Typography>
+              <Typography sx={{ fontSize: "0.72rem", color: "text.secondary" }}>{t(s.blurbKey)}</Typography>
             </Box>
           ))}
         </Box>
@@ -885,9 +930,9 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
       {/* ── AI pipeline — live jobs from the shared store ── */}
       <Panel
-        title="AI pipeline"
-        chip={<FlowStatusChip kind="ok" label="Live" />}
-        sub="Per-chapter AI jobs across this workspace — everyone's active and queued runs, plus your own recent finished ones. Refreshes itself every two minutes."
+        title={t("adminPages.workflow.aiPipelineTitle")}
+        chip={<FlowStatusChip kind="ok" label={t("adminPages.workflow.chipLive")} />}
+        sub={t("adminPages.workflow.aiPipelineSub")}
         topAction={
           <Button
             size="small"
@@ -898,38 +943,47 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
               void pipelineStore.reload().finally(() => setPipelineRefreshing(false));
             }}
           >
-            Refresh
+            {t("adminPages.common.refresh")}
           </Button>
         }
       >
         <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
-          {jobCounts.running} running · {jobCounts.queued} queued · {jobCounts.paused} paused ·{" "}
-          {jobCounts.failed} failed · {jobCounts.done} done
+          {t("adminPages.workflow.jobCounts", {
+            running: jobCounts.running,
+            queued: jobCounts.queued,
+            paused: jobCounts.paused,
+            failed: jobCounts.failed,
+            done: jobCounts.done,
+          })}
         </Typography>
         <Link component="button" type="button" variant="body2" onClick={() => { location.hash = "#/ai"; }} sx={{ mt: 1, display: "inline-block" }}>
-          Open AI studio
+          {t("adminPages.workflow.openAiStudio")}
         </Link>
       </Panel>
 
       {/* ── Scripture source — real lane state, conservative verbs ── */}
       <Panel
-        title="Scripture source"
-        chip={<FlowStatusChip kind="ok" label="Live" />}
-        sub="Where each scripture lane's text comes from, its write locks, and any staged source replacement. Starting a replacement (with its per-book checklist) lives on the Books screen's lane panel and in Preferences → Setup — this desk shows the state and offers Activate when a job is ready."
+        title={t("adminPages.workflow.scriptureSourceTitle")}
+        chip={<FlowStatusChip kind="ok" label={t("adminPages.workflow.chipLive")} />}
+        sub={t("adminPages.workflow.scriptureSourceSub")}
         foot={
           <>
             <Typography variant="caption">
               {cfg?.laneState
                 ? [
-                    cfg.laneState.lit.replacementJobId ? "Literal lane has a replacement in flight" : null,
-                    cfg.laneState.sim.replacementJobId ? "Simplified lane has a replacement in flight" : null,
+                    cfg.laneState.lit.replacementJobId
+                      ? t("adminPages.workflow.litReplacementInFlight")
+                      : null,
+                    cfg.laneState.sim.replacementJobId
+                      ? t("adminPages.workflow.simReplacementInFlight")
+                      : null,
                   ]
                     .filter(Boolean)
-                    .join(" · ") || "No replacement in flight"
+                    .join(" · ") || t("adminPages.workflow.noReplacementInFlight")
                 : "—"}
             </Typography>
             <Box sx={{ marginInlineStart: "auto" }} />
-            <Typography variant="caption">Source swaps are guarded — every change here asks first</Typography>
+            <Typography variant="caption">{t("adminPages.workflow.sourceSwapsGuarded")}</Typography>
           </>
         }
       >
@@ -938,7 +992,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             severity="error"
             action={
               <Button size="small" onClick={() => void loadConfig()}>
-                Retry
+                {t("common.retry")}
               </Button>
             }
           >
@@ -950,8 +1004,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
           </Box>
         ) : !cfg.laneState ? (
           <Alert severity="info">
-            This server didn't report per-lane state (older API response) — lane sources and locks
-            can't be shown here.
+            {t("adminPages.workflow.noLaneStateReported")}
           </Alert>
         ) : (
           <Box
@@ -969,41 +1022,48 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
       {/* ── Publishing — nightly export, real history, manual run ── */}
       <Panel
-        title="Publishing"
-        chip={<FlowStatusChip kind="ok" label="Live" />}
-        sub="The nightly export renders the database to TSV + USFM and commits to a Door43 branch. History below is real; the schedule is configuration (api/wrangler.toml crons), not live data — there's no endpoint that lists registered crons."
+        title={t("adminPages.workflow.publishingTitle")}
+        chip={<FlowStatusChip kind="ok" label={t("adminPages.workflow.chipLive")} />}
+        sub={t("adminPages.workflow.publishingSub")}
         foot={
           <>
             <Typography variant="caption">
               {lastCommitted
-                ? `Latest commit: ${lastCommitted.book} · ${lastCommitted.resource} — ${fmtDateTime(lastCommitted.committed_at)}`
+                ? t("adminPages.workflow.latestCommit", {
+                    book: lastCommitted.book,
+                    resource: lastCommitted.resource,
+                    date: fmtDateTime(lastCommitted.committed_at),
+                  })
                 : snapshotsError
-                  ? "History unavailable"
-                  : "No export history yet"}
+                  ? t("adminPages.workflow.historyUnavailable")
+                  : t("adminPages.workflow.noExportHistory")}
             </Typography>
             <Box sx={{ marginInlineStart: "auto" }} />
             <Typography variant="caption">
               {me?.nightlyExportsEnabled
-                ? "Exports run automatically at 05:30 UTC"
-                : "Automatic nightly exports are not enabled on this deployment — use Run export now"}
+                ? t("adminPages.workflow.exportsRunAutomatically")
+                : t("adminPages.workflow.nightlyExportsDisabled")}
             </Typography>
           </>
         }
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", mb: 2 }}>
           <Button variant="contained" size="small" disabled={runBusy} onClick={handleOpenRunConfirm}>
-            Run export now…
+            {t("adminPages.workflow.runExportNow")}
           </Button>
           {runInfo && (
             <>
               <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
-                Run {runInfo.id} — {instanceStatus ?? runInfo.status}
+                {t("adminPages.workflow.runStatusLine", {
+                  id: runInfo.id,
+                  status: instanceStatus ?? runInfo.status,
+                })}
               </Typography>
               <Link component="button" type="button" variant="caption" onClick={() => void handleCheckInstance()}>
-                Check status
+                {t("adminPages.workflow.checkStatus")}
               </Link>
               <Link component="button" type="button" variant="caption" onClick={() => void loadSnapshots()}>
-                Reload history
+                {t("adminPages.workflow.reloadHistory")}
               </Link>
             </>
           )}
@@ -1014,7 +1074,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             severity="error"
             action={
               <Button size="small" onClick={() => void loadSnapshots()}>
-                Retry
+                {t("common.retry")}
               </Button>
             }
           >
@@ -1026,18 +1086,18 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
           </Box>
         ) : snapshots.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No export snapshots recorded yet — the first nightly run (or a manual run) will appear here.
+            {t("adminPages.workflow.noSnapshotsYet")}
           </Typography>
         ) : (
           <Box sx={{ overflowX: "auto", border: "1px solid", borderColor: "divider", borderRadius: "9px" }}>
             <Table size="small" sx={{ minWidth: 640 }}>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={thSx}>Book · resource</TableCell>
-                  <TableCell sx={thSx}>State</TableCell>
-                  <TableCell sx={{ ...thSx, textAlign: "end" }}>Rows</TableCell>
-                  <TableCell sx={thSx}>Branch</TableCell>
-                  <TableCell sx={thSx}>Committed</TableCell>
+                  <TableCell sx={thSx}>{t("adminPages.workflow.colBookResource")}</TableCell>
+                  <TableCell sx={thSx}>{t("adminPages.workflow.colState")}</TableCell>
+                  <TableCell sx={{ ...thSx, textAlign: "end" }}>{t("adminPages.workflow.colRows")}</TableCell>
+                  <TableCell sx={thSx}>{t("adminPages.workflow.colBranch")}</TableCell>
+                  <TableCell sx={thSx}>{t("adminPages.workflow.colCommitted")}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1049,7 +1109,14 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                         {s.book} · {s.resource}
                       </TableCell>
                       <TableCell sx={tdSx}>
-                        <FlowStatusChip kind={bad ? "warn" : "ok"} label={bad ? "Needs attention" : "Committed"} />
+                        <FlowStatusChip
+                          kind={bad ? "warn" : "ok"}
+                          label={
+                            bad
+                              ? t("adminPages.workflow.chipNeedsAttention")
+                              : t("adminPages.workflow.chipCommitted")
+                          }
+                        />
                         {bad && (
                           <Typography
                             variant="caption"
@@ -1064,7 +1131,9 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                       </TableCell>
                       <TableCell sx={{ ...tdSx, color: "text.secondary", whiteSpace: "nowrap" }}>
                         {s.branch ?? "—"}
-                        {s.pr_number != null ? ` · PR #${s.pr_number}` : ""}
+                        {s.pr_number != null
+                          ? ` · ${t("adminPages.workflow.prNumber", { number: s.pr_number })}`
+                          : ""}
                       </TableCell>
                       <TableCell sx={{ ...tdSx, color: "text.secondary", whiteSpace: "nowrap" }}>
                         {fmtDateTime(s.committed_at)}
@@ -1084,27 +1153,27 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
         <DialogTitle>
           {confirmToggle?.field === "textReadOnly"
             ? confirmToggle.next
-              ? "Make text read-only?"
-              : "Re-enable text editing?"
+              ? t("adminPages.workflow.confirmTextReadOnlyTitle")
+              : t("adminPages.workflow.confirmTextEditTitle")
             : confirmToggle?.next
-              ? "Enable alignment editing?"
-              : "Make alignment read-only?"}
+              ? t("adminPages.workflow.confirmAlignmentEditTitle")
+              : t("adminPages.workflow.confirmAlignmentReadOnlyTitle")}
         </DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
             {confirmToggle?.field === "textReadOnly"
               ? confirmToggle.next
-                ? "Translators will be blocked from editing this lane's scripture text (the server enforces this on every save)."
-                : "Translators will be able to edit this lane's scripture text again."
+                ? t("adminPages.workflow.confirmTextReadOnlyBody")
+                : t("adminPages.workflow.confirmTextEditBody")
               : confirmToggle?.next
-                ? "Translators will be able to edit word alignments in this lane."
-                : "Translators will be blocked from editing word alignments in this lane."}
+                ? t("adminPages.workflow.confirmAlignmentEditBody")
+                : t("adminPages.workflow.confirmAlignmentReadOnlyBody")}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmToggle(null)}>Keep as is</Button>
+          <Button onClick={() => setConfirmToggle(null)}>{t("adminPages.workflow.keepAsIs")}</Button>
           <Button variant="contained" disabled={laneBusy != null} onClick={() => void handleToggleConfirmed()}>
-            Apply
+            {t("adminPages.workflow.applyButton")}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1116,18 +1185,21 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
           setActivateAck(false);
         }}
       >
-        <DialogTitle>Activate the staged source?</DialogTitle>
+        <DialogTitle>{t("adminPages.workflow.activateDialogTitle")}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            The {confirmActivate?.lane === "sim" ? "simplified" : "literal"} lane switches to the new
-            source immediately for every staged book. Books that were carried forward keep their current
-            text. This is the point of no easy return — backing out afterwards means another replacement.
+            {t("adminPages.workflow.activateDialogBody", {
+              lane:
+                confirmActivate?.lane === "sim"
+                  ? t("adminPages.workflow.laneWordSimplified")
+                  : t("adminPages.workflow.laneWordLiteral"),
+            })}
           </Typography>
           <FormControlLabel
             control={<Checkbox checked={activateAck} onChange={(e) => setActivateAck(e.target.checked)} />}
             label={
               <Typography variant="body2">
-                I understand translators will start reading the new source.
+                {t("adminPages.workflow.activateAckLabel")}
               </Typography>
             }
           />
@@ -1139,7 +1211,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
               setActivateAck(false);
             }}
           >
-            Not now
+            {t("adminPages.workflow.notNow")}
           </Button>
           <Button
             variant="contained"
@@ -1147,29 +1219,27 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             onClick={() => void handleActivateConfirmed()}
             sx={{ bgcolor: theme.palette.flows.ok.ink, fontWeight: 700 }}
           >
-            Activate
+            {t("adminPages.workflow.activateConfirmButton")}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={confirmRun} onClose={() => setConfirmRun(false)}>
-        <DialogTitle>Run the export now?</DialogTitle>
+        <DialogTitle>{t("adminPages.workflow.runDialogTitle")}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            Renders every book and resource to TSV + USFM and commits to the Door43 export branch —
-            the same work the 05:30 UTC nightly does, except a manual run never auto-merges. Safe to
-            run, but it takes several minutes and commits real snapshots.
+            {t("adminPages.workflow.runDialogBody")}
           </Typography>
           <TextField
             select
             fullWidth
             size="small"
-            label="Export scope"
+            label={t("adminPages.workflow.exportScopeLabel")}
             value={exportBook}
             onChange={(e) => setExportBook(e.target.value)}
             sx={{ mt: 2 }}
           >
-            <MenuItem value="all">All books</MenuItem>
+            <MenuItem value="all">{t("adminPages.workflow.allBooks")}</MenuItem>
             {(exportBooks ?? []).map((b) => (
               <MenuItem key={b.book} value={b.book}>
                 {bookName(b.book)}
@@ -1177,13 +1247,13 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             ))}
           </TextField>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-            Scoping to one book exports just that book's files and skips the shared articles export.
+            {t("adminPages.workflow.scopeHint")}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmRun(false)}>Not now</Button>
+          <Button onClick={() => setConfirmRun(false)}>{t("adminPages.workflow.notNow")}</Button>
           <Button variant="contained" disabled={runBusy} onClick={() => void handleRunConfirmed()}>
-            Run export
+            {t("adminPages.workflow.runExportButton")}
           </Button>
         </DialogActions>
       </Dialog>
