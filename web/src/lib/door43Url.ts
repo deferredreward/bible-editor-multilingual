@@ -19,6 +19,22 @@ function isIdent(s: string): boolean {
   return /^[A-Za-z0-9._~-]+$/.test(s);
 }
 
+/**
+ * Canonical comparison form for a DCS owner (org/user) or repo NAME — mirrors
+ * `dcsName` in api/src/repoUrl.ts. Gitea resolves org and repo names
+ * case-insensitively, so any UI decision that asks "is this the same org?" must
+ * compare these forms. Git refs are NOT covered (branch names are
+ * case-sensitive).
+ */
+export function dcsName(s: string | undefined | null): string {
+  return (s ?? "").trim().toLowerCase();
+}
+
+/** Two DCS owner (or repo) names denote the same thing. */
+export function sameDcsName(a: string | undefined | null, b: string | undefined | null): boolean {
+  return dcsName(a) === dcsName(b);
+}
+
 export type ParsedSourceRef =
   | { ok: true; org: string; repo: string }
   | { ok: false; error: string };

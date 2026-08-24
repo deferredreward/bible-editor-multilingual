@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseDoor43SourceRef } from "./door43Url.ts";
+import { parseDoor43SourceRef, dcsName, sameDcsName } from "./door43Url.ts";
 
 test("full URL → { org, repo }", () => {
   const r = parseDoor43SourceRef("https://git.door43.org/BibleAquifer/ar_tn");
@@ -72,4 +72,20 @@ test("PARITY: parseDoor43SourceRef matches the api table exactly", () => {
       assert.deepEqual({ org: r.org, repo: r.repo }, expected, JSON.stringify(input));
     }
   }
+});
+
+// DCS/Gitea resolves org and repo NAMES case-insensitively, so every "is this the
+// same org/repo?" decision must fold case. A workspace whose lane source was
+// persisted as `bsoj` while detect() reports `BSOJ` is ONE org — reading it as two
+// permanently blocked the Setup wizard.
+test("dcsName folds case and trims; sameDcsName matches across casing", () => {
+  assert.equal(dcsName("  BSOJ "), "bsoj");
+  assert.equal(dcsName(undefined), "");
+  assert.equal(dcsName(null), "");
+  assert.equal(sameDcsName("BSOJ", "bsoj"), true);
+  assert.equal(sameDcsName("unfoldingWord", "unfoldingword"), true);
+  assert.equal(sameDcsName(" ar_ta", "AR_TA "), true);
+  assert.equal(sameDcsName("BSOJ", "unfoldingWord"), false);
+  // Empty is never "the same as" a real name.
+  assert.equal(sameDcsName("", "bsoj"), false);
 });

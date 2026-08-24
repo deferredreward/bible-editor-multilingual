@@ -17,7 +17,7 @@
 
 import type { Env } from "./index";
 import { PRESETS, DEFAULT_PRESET, presetForOrg, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
-import { isIdent } from "./repoUrl.ts";
+import { dcsName, isIdent } from "./repoUrl.ts";
 import {
   configHash,
   desiredLaneConfig,
@@ -176,8 +176,13 @@ export function dataExportIdentity(
   env: { DCS_EXPORT_OWNER?: string },
   cfg: ProjectConfig,
 ): string {
-  const repos = NON_LANE_REPO_KEYS.map((k) => `${k}=${cfg.repos[k] ?? ""}`).join(",");
-  return `org=${cfg.org}|export=${exportOwnerFor(env, cfg)}|${repos}`;
+  // Case-folded: DCS/Gitea resolves owner and repo names case-insensitively, so
+  // `bsoj` and `BSOJ` (or `ar_ta` and `AR_TA`) are the SAME data/export target.
+  // Comparing raw strings made a pure letter-case difference read as a tenancy
+  // violation and return the hard `project_not_empty` stop (whose UI guidance is
+  // "recreate the database") for a config that repointed nothing.
+  const repos = NON_LANE_REPO_KEYS.map((k) => `${k}=${dcsName(cfg.repos[k])}`).join(",");
+  return `org=${dcsName(cfg.org)}|export=${dcsName(exportOwnerFor(env, cfg))}|${repos}`;
 }
 
 /**

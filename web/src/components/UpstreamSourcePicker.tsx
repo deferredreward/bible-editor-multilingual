@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import { RESOURCE_KEYS, UW_UPSTREAM_ORG, type ResourceKey } from "../lib/orgDraft";
+import { sameDcsName } from "../lib/door43Url";
 import { RepoRef, SourceOverrideField } from "./SourceOverrideField";
 import { upstreamLanguageOf, pendingOverrideSelection } from "../lib/setupWizard";
 
@@ -127,7 +128,7 @@ export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
   // The well-known default upstream is known-good — mark it verified without a
   // round-trip so the happy path is never gated behind a network call.
   useEffect(() => {
-    if (state.upstreamOrg === UW_UPSTREAM_ORG && !state.upstreamVerified) {
+    if (sameDcsName(state.upstreamOrg, UW_UPSTREAM_ORG) && !state.upstreamVerified) {
       state.setUpstreamVerified(true);
     }
   }, [state]);
@@ -136,13 +137,19 @@ export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
     const org = orgInput.trim();
     setErrKind(null);
     if (!org) return;
-    state.setUpstreamOrg(org);
-    if (org === UW_UPSTREAM_ORG) {
+    // Case-insensitive: DCS resolves org names that way, so a typed
+    // "unfoldingword" is the known-good default upstream, not an unknown org
+    // needing a round-trip. Store the CANONICAL spelling, not what was typed —
+    // this value ends up in translationSource.org and in every raw DCS URL built
+    // from it.
+    if (sameDcsName(org, UW_UPSTREAM_ORG)) {
+      state.setUpstreamOrg(UW_UPSTREAM_ORG);
       state.setUpstreamVerified(true);
       state.setUpstreamLanguageCode("en");
       return;
     }
-    if (org === state.upstreamOrg && state.upstreamVerified) return;
+    state.setUpstreamOrg(org);
+    if (sameDcsName(org, state.upstreamOrg) && state.upstreamVerified) return;
     state.setUpstreamVerified(false);
     setVerifying(true);
     try {
@@ -167,7 +174,7 @@ export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
     }
   };
 
-  const showBlockingGate = !state.upstreamVerified && state.upstreamOrg !== UW_UPSTREAM_ORG;
+  const showBlockingGate = !state.upstreamVerified && !sameDcsName(state.upstreamOrg, UW_UPSTREAM_ORG);
 
   return (
     <Stack spacing={2}>

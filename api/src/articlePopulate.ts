@@ -32,6 +32,7 @@ import type { Env } from "./index";
 import { getProjectConfig, type TranslationSourceRef } from "./projectConfig.ts";
 import { dcsRawUrl, fetchTextWithStatus, resolveSourceRef, type FetchTextResult, type SourceRef } from "./dcsSources.ts";
 import { gitBlobSha } from "./articleExport.ts";
+import { sameDcsName } from "./repoUrl.ts";
 
 export type ArticleResource = "tw" | "ta";
 
@@ -221,13 +222,13 @@ export function planWork(
     const unit = existing.get(k);
     if (unit) {
       if (unit.deleted_at != null) continue; // present (soft-deleted) — never revived by reconciler
-      const identOk = unit.source_org === srcRef.org && unit.source_repo === srcRef.repo;
+      const identOk = sameDcsName(unit.source_org, srcRef.org) && sameDcsName(unit.source_repo, srcRef.repo);
       if (identOk) continue; // present & fresh
       mismatched.push(ref);
       continue;
     }
     const st = state.get(k);
-    if (st && st.source_org === srcRef.org && st.source_repo === srcRef.repo && stateBlocks(st)) {
+    if (st && sameDcsName(st.source_org, srcRef.org) && sameDcsName(st.source_repo, srcRef.repo) && stateBlocks(st)) {
       continue; // blocked by same-source terminal/capped fetch-state
     }
     missing.push(ref);
@@ -553,7 +554,7 @@ export async function populateReferencedArticles(
     const ref = s.resource === "tw" || s.resource === "ta"
       ? refForResource(src, s.resource)
       : undefined;
-    if (ref != null && s.source_org === ref.org && s.source_repo === ref.repo) liveState.push(s);
+    if (ref != null && sameDcsName(s.source_org, ref.org) && sameDcsName(s.source_repo, ref.repo)) liveState.push(s);
     else voidKeys.push(s);
   }
   if (voidKeys.length > 0) {
@@ -783,7 +784,8 @@ export async function refreshFromSource(env: Env, opts: RefreshOptions = {}): Pr
     params.push(ref.repo);
     const repoIdx = params.length;
     // `r` is a compile-time literal ('tw'|'ta'), never user input — safe to inline.
-    orClauses.push(`(resource = '${r}' AND source_org = ?${orgIdx} AND source_repo = ?${repoIdx})`);
+    // COLLATE NOCASE: source_org/source_repo are DCS names (case-insensitive).
+    orClauses.push(`(resource = '${r}' AND source_org = ?${orgIdx} COLLATE NOCASE AND source_repo = ?${repoIdx} COLLATE NOCASE)`);
   }
   let where = `deleted_at IS NULL AND (${orClauses.join(" OR ")})`;
   if (opts.resource) {

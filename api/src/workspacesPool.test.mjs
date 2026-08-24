@@ -189,6 +189,46 @@ console.log("[claimWorkspace] pre-existing claimed row for the org short-circuit
   assert(rowBySlug(db, "pool2").status === "available", "available slot not consumed for an org already claimed");
 }
 
+// ── claimWorkspace: org lookup is case-insensitive (DCS org names) ──────────
+// Regression: the org lookup lacked COLLATE NOCASE, so a differently-cased
+// org (e.g. detect path canonicalizes to "BSOJ" while the stored row is
+// "bsoj") missed the existing claimed row and claimed a SECOND workspace for
+// the same org — a duplicate-tenancy bug.
+console.log("[claimWorkspace] org lookup is case-insensitive — no duplicate claim on a case-only mismatch");
+{
+  const db = freshDb();
+  const env = makeEnv(db);
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('existing', 'Existing', 'bsoj', 'DB_POOL1', 'claimed')").run();
+  await registerPoolSlot(env, { binding: "DB_POOL2" }); // an available slot that must NOT be consumed
+
+  const claim = await claimWorkspace(env, { org: "BSOJ", label: "Whatever" });
+  assert(claim && claim.alreadyClaimed && claim.workspace.slug === "existing", "case-only org difference still short-circuits to the existing slot");
+  assert(rowBySlug(db, "pool2").status === "available", "available slot not consumed on a case-only org match");
+}
+
+// ── claimWorkspace: a pre-existing case-variant PAIR resolves deterministically ──
+// `workspaces.org` is UNIQUE under BINARY collation, so the pre-fix code could
+// have left both "bsoj" and "BSOJ" claimed. The case-insensitive lookup must not
+// pick between them arbitrarily — resolving to the wrong row would hand the org
+// another tenant's D1 binding. The exact-case row wins.
+console.log("[claimWorkspace] a case-variant pair resolves to the EXACT-case row");
+{
+  const db = freshDb();
+  const env = makeEnv(db);
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('lower', 'Lower', 'bsoj', 'DB_POOL1', 'claimed')").run();
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('upper', 'Upper', 'BSOJ', 'DB_POOL2', 'claimed')").run();
+
+  const upper = await claimWorkspace(env, { org: "BSOJ", label: "x" });
+  assert(upper && upper.alreadyClaimed && upper.workspace.slug === "upper", "exact-case BSOJ resolves to the BSOJ row");
+  const lower = await claimWorkspace(env, { org: "bsoj", label: "x" });
+  assert(lower && lower.alreadyClaimed && lower.workspace.slug === "lower", "exact-case bsoj resolves to the bsoj row");
+  // A casing that matches NEITHER row exactly still resolves (to one of them),
+  // deterministically rather than arbitrarily.
+  const mixed = await claimWorkspace(env, { org: "BsOj", label: "x" });
+  assert(mixed && mixed.alreadyClaimed, "a third casing still short-circuits to an existing claim");
+  assert(mixed.workspace.slug === "lower", "no exact match -> lowest slug, deterministic");
+}
+
 // ── claimWorkspace: input validation throws (never persists a bad row) ──────
 
 console.log("[claimWorkspace] rejects invalid org/label without touching the pool");
