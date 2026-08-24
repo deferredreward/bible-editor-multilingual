@@ -1253,5 +1253,43 @@
     "3JN": { "name": "3 John", "abbr": "3 John" },
     "JUD": { "name": "Jude", "abbr": "Jude" },
     "REV": { "name": "Revelation", "abbr": "Rev" }
+  },
+  "adminDesk": {
+    "nav": {
+      "books": "Books",
+      "progress": "Progress",
+      "workflow": "Workflow",
+      "team": "Team & roles",
+      "setup": "Setup",
+      "ai": "AI studio",
+      "style": "Style",
+      "templates": "Templates",
+      "observe": "Observe"
+    },
+    "groups": {
+      "admin": "Admin",
+      "moreTools": "More tools"
+    },
+    "a11y": {
+      "adminSections": "Admin sections"
+    },
+    "flowNav": {
+      "screens": "Screens",
+      "groups": {
+        "translator": "Translator",
+        "lead": "Lead"
+      },
+      "items": {
+        "home": "Home",
+        "review": "Review",
+        "scripture": "Scripture",
+        "verse": "Verse",
+        "align": "Align",
+        "articles": "Articles",
+        "words": "Words",
+        "ai": "AI",
+        "team": "Team"
+      }
+    }
   }
 }
