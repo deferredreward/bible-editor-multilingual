@@ -126,6 +126,8 @@
       "fromChapter": "from ch",
       "toChapter": "to ch",
       "urlLabel": "Door43 repo URL",
+      "sourceUpstream": "{{org}} upstream ({{repo}})",
+      "sourceOther": "Other Door43 repo…",
       "add": "Add override",
       "verifying": "Verifying…",
       "overlap": "That chapter range overlaps an existing override. Adjust the range or remove the other one first.",

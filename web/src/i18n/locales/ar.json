@@ -126,6 +126,8 @@
       "fromChapter": "من أصحاح",
       "toChapter": "إلى أصحاح",
       "urlLabel": "رابط مستودع Door43",
+      "sourceUpstream": "أصل {{org}} ({{repo}})",
+      "sourceOther": "مستودع Door43 آخر…",
       "add": "إضافة تجاوز",
       "verifying": "جارٍ التحقق…",
       "overlap": "يتداخل نطاق الأصحاحات هذا مع تجاوز موجود. عدّل النطاق أو أزل الآخر أولًا.",
