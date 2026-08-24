@@ -197,7 +197,12 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
     () => spanVerseObjects(sourceIndex, span.start, span.end),
     [sourceIndex, span],
   );
-  const words = useMemo(() => collectOriginalWords(sourceVO), [sourceVO]);
+  // `t` is a dep because collectOriginalWords bakes translated morphology
+  // glosses into each word; without it a language switch leaves them stale in
+  // the previous language until the verse data changes. Safe here — this memo
+  // is pure derivation, no fetch (contrast the loader effects, which must NOT
+  // depend on `t` or they refire on every language change).
+  const words = useMemo(() => collectOriginalWords(sourceVO), [sourceVO, t]);
 
   const lit = useMemo(
     () => buildLane("ULT", spanVerseObjects(litIndex, span.start, span.end), sourceVO, words),

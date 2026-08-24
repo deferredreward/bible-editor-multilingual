@@ -4006,5 +4006,214 @@
     "outbox": {
       "laneQuarantined": "تم العزل: مسار {{version}} مجمَّد"
     }
+  },
+  "morph": {
+    "pos": {
+      "adjective": "صفة",
+      "conjunction": "أداة ربط",
+      "adverb": "ظرف",
+      "noun": "اسم",
+      "pronoun": "ضمير",
+      "preposition": "حرف جر",
+      "suffix": "لاحقة",
+      "particle": "أداة",
+      "verb": "فعل",
+      "determiner": "مُحدِّد",
+      "interjection": "أداة تعجب",
+      "foreignWord": "كلمة أجنبية"
+    },
+    "person": {
+      "first": "متكلم",
+      "second": "مخاطب",
+      "third": "غائب"
+    },
+    "gender": {
+      "masculine": "مذكر",
+      "feminine": "مؤنث",
+      "bothGenders": "مذكر ومؤنث",
+      "common": "مشترك",
+      "neuter": "محايد"
+    },
+    "number": {
+      "singular": "مفرد",
+      "plural": "جمع",
+      "dual": "مثنى"
+    },
+    "state": {
+      "absolute": "مطلق",
+      "construct": "مضاف",
+      "determined": "معرَّف"
+    },
+    "adjType": {
+      "cardinalNumber": "عدد أصلي",
+      "ordinalNumber": "عدد ترتيبي"
+    },
+    "nounType": {
+      "gentilic": "اسم نسبة",
+      "properName": "اسم علم"
+    },
+    "pronounType": {
+      "demonstrative": "إشارة",
+      "indefinite": "مبهم",
+      "interrogative": "استفهام",
+      "personal": "شخصي",
+      "relative": "موصول"
+    },
+    "prepType": {
+      "definiteArticle": "أداة تعريف"
+    },
+    "suffixType": {
+      "directional": "اتجاه",
+      "paragogic": "زائدة"
+    },
+    "particleType": {
+      "affirmation": "توكيد",
+      "definiteArticle": "أداة تعريف",
+      "exhortation": "حث",
+      "interrogative": "استفهام",
+      "interjection": "تعجب",
+      "demonstrative": "إشارة",
+      "negative": "نفي",
+      "directObjectMarker": "علامة المفعول به",
+      "relative": "موصول"
+    },
+    "aspect": {
+      "perfect": "ماضٍ",
+      "sequentialPerfect": "ماضٍ متتابع",
+      "imperfect": "مضارع",
+      "sequentialImperfect": "مضارع متتابع",
+      "cohortative": "صيغة الحث",
+      "jussive": "مجزوم",
+      "imperative": "أمر",
+      "participle": "اسم فاعل",
+      "passiveParticiple": "اسم مفعول",
+      "infinitiveAbsolute": "مصدر مطلق",
+      "infinitiveConstruct": "مصدر مضاف"
+    },
+    "stem": {
+      "qal": "قَل",
+      "niphal": "نِفْعَل",
+      "piel": "بِعيل",
+      "pual": "بُعَل",
+      "hiphil": "هِفْعيل",
+      "hophal": "هُفْعَل",
+      "hithpael": "هِتْبَعيل",
+      "polel": "بولِل",
+      "polal": "بولَل",
+      "hithpolel": "هِتْبولِل",
+      "poel": "بوعِل",
+      "poal": "بوعَل",
+      "palel": "بالِل",
+      "pulal": "بُلَل",
+      "qalPassive": "قَل مبني للمجهول",
+      "pilpel": "بِلْبِل",
+      "polpal": "بولْبَل",
+      "hithpalpel": "هِتْبَلْبِل",
+      "nithpael": "نِتْبَعيل",
+      "pealal": "بَعْلَل",
+      "pilel": "بِلِل",
+      "hothpaal": "هُتْبَعَل",
+      "tiphil": "تِفْعيل",
+      "hishtaphel": "هِشْتَفْعيل",
+      "nithpalel": "نِتْبالِل",
+      "nithpoel": "نِتْبوعِل",
+      "hithpoel": "هِتْبوعِل",
+      "peal": "بْعَل",
+      "peil": "بْعيل",
+      "hithpeel": "هِتْبْعيل",
+      "pael": "بَعِّل",
+      "ithpaal": "إتْبَعَّل",
+      "hithpaal": "هِتْبَعَّل",
+      "aphel": "أَفْعِل",
+      "haphel": "هَفْعِل",
+      "saphel": "سَفْعِل",
+      "shaphel": "شَفْعِل",
+      "ithpeel": "إتْبْعيل",
+      "ishtaphel": "إشْتَفْعِل",
+      "hithaphel": "هِتَفْعِل",
+      "ithpoel": "إتْبوعِل",
+      "hephal": "هِفْعَل",
+      "tiphel": "تِفْعِل",
+      "palpel": "بَلْبِل",
+      "ithpalpel": "إتْبَلْبِل",
+      "ithpolel": "إتْبولِل",
+      "ittaphal": "إتَّفْعَل"
+    },
+    "pronoun": {
+      "me": "ـني",
+      "my": "ـي",
+      "us": "ـنا",
+      "our": "ـنا",
+      "you": "ـك",
+      "your": "ـك",
+      "him": "ـه",
+      "his": "ـه",
+      "herObject": "ـها",
+      "herPossessive": "ـها",
+      "it": "ـه",
+      "its": "ـه",
+      "them": "ـهم",
+      "their": "ـهم"
+    },
+    "posType": {
+      "substantive": "اسمي",
+      "predicate": "خبر",
+      "ascriptive": "نعت",
+      "restrictive": "تخصيص",
+      "article": "أداة تعريف",
+      "demonstrative": "إشارة",
+      "differential": "تفريق",
+      "possessive": "ملكية",
+      "quantifier": "كمية",
+      "number": "عدد",
+      "ordinal": "ترتيبي",
+      "relative": "موصول",
+      "interrogative": "استفهام",
+      "personal": "شخصي",
+      "reflexive": "انعكاسي",
+      "reciprocal": "تبادلي",
+      "indefinite": "مبهم",
+      "exclamation": "تعجب",
+      "directive": "توجيه",
+      "response": "جواب",
+      "improperPreposition": "حرف جر غير أصلي",
+      "correlative": "متلازم",
+      "coordinating": "عاطف",
+      "subordinating": "تبعي"
+    },
+    "mood": {
+      "indicative": "إخباري",
+      "imperative": "أمر",
+      "subjunctive": "شرطي",
+      "optative": "تمنٍّ",
+      "infinitive": "مصدر",
+      "participle": "اسم فاعل"
+    },
+    "tense": {
+      "present": "مضارع",
+      "imperfect": "ماضٍ ناقص",
+      "future": "مستقبل",
+      "aorist": "أوريست",
+      "perfect": "تام",
+      "pluperfect": "تام سابق"
+    },
+    "voice": {
+      "active": "مبني للمعلوم",
+      "middle": "متوسط",
+      "passive": "مبني للمجهول"
+    },
+    "case": {
+      "nominative": "مرفوع",
+      "genitive": "مجرور",
+      "dative": "مفعول غير مباشر",
+      "accusative": "منصوب",
+      "vocative": "منادى"
+    },
+    "other": {
+      "comparative": "صيغة المقارنة",
+      "superlative": "صيغة التفضيل",
+      "diminutive": "تصغير",
+      "indeclinable": "مبني"
+    }
   }
 }

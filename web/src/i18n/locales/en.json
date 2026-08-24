@@ -3582,5 +3582,214 @@
     "outbox": {
       "laneQuarantined": "Quarantined: {{version}} lane is frozen"
     }
+  },
+  "morph": {
+    "pos": {
+      "adjective": "adjective",
+      "conjunction": "conjunction",
+      "adverb": "adverb",
+      "noun": "noun",
+      "pronoun": "pronoun",
+      "preposition": "preposition",
+      "suffix": "suffix",
+      "particle": "particle",
+      "verb": "verb",
+      "determiner": "determiner",
+      "interjection": "interjection",
+      "foreignWord": "foreign word"
+    },
+    "person": {
+      "first": "1st person",
+      "second": "2nd person",
+      "third": "3rd person"
+    },
+    "gender": {
+      "masculine": "masculine",
+      "feminine": "feminine",
+      "bothGenders": "both genders",
+      "common": "common",
+      "neuter": "neuter"
+    },
+    "number": {
+      "singular": "singular",
+      "plural": "plural",
+      "dual": "dual"
+    },
+    "state": {
+      "absolute": "absolute",
+      "construct": "construct",
+      "determined": "determined"
+    },
+    "adjType": {
+      "cardinalNumber": "cardinal number",
+      "ordinalNumber": "ordinal number"
+    },
+    "nounType": {
+      "gentilic": "gentilic",
+      "properName": "proper name"
+    },
+    "pronounType": {
+      "demonstrative": "demonstrative",
+      "indefinite": "indefinite",
+      "interrogative": "interrogative",
+      "personal": "personal",
+      "relative": "relative"
+    },
+    "prepType": {
+      "definiteArticle": "definite article"
+    },
+    "suffixType": {
+      "directional": "directional",
+      "paragogic": "paragogic"
+    },
+    "particleType": {
+      "affirmation": "affirmation",
+      "definiteArticle": "definite article",
+      "exhortation": "exhortation",
+      "interrogative": "interrogative",
+      "interjection": "interjection",
+      "demonstrative": "demonstrative",
+      "negative": "negative",
+      "directObjectMarker": "direct object marker",
+      "relative": "relative"
+    },
+    "aspect": {
+      "perfect": "perfect",
+      "sequentialPerfect": "sequential perfect",
+      "imperfect": "imperfect",
+      "sequentialImperfect": "sequential imperfect",
+      "cohortative": "cohortative",
+      "jussive": "jussive",
+      "imperative": "imperative",
+      "participle": "participle",
+      "passiveParticiple": "passive participle",
+      "infinitiveAbsolute": "infinitive absolute",
+      "infinitiveConstruct": "infinitive construct"
+    },
+    "stem": {
+      "qal": "qal",
+      "niphal": "niphal",
+      "piel": "piel",
+      "pual": "pual",
+      "hiphil": "hiphil",
+      "hophal": "hophal",
+      "hithpael": "hithpael",
+      "polel": "polel",
+      "polal": "polal",
+      "hithpolel": "hithpolel",
+      "poel": "poel",
+      "poal": "poal",
+      "palel": "palel",
+      "pulal": "pulal",
+      "qalPassive": "qal passive",
+      "pilpel": "pilpel",
+      "polpal": "polpal",
+      "hithpalpel": "hithpalpel",
+      "nithpael": "nithpael",
+      "pealal": "pealal",
+      "pilel": "pilel",
+      "hothpaal": "hothpaal",
+      "tiphil": "tiphil",
+      "hishtaphel": "hishtaphel",
+      "nithpalel": "nithpalel",
+      "nithpoel": "nithpoel",
+      "hithpoel": "hithpoel",
+      "peal": "peal",
+      "peil": "peil",
+      "hithpeel": "hithpeel",
+      "pael": "pael",
+      "ithpaal": "ithpaal",
+      "hithpaal": "hithpaal",
+      "aphel": "aphel",
+      "haphel": "haphel",
+      "saphel": "saphel",
+      "shaphel": "shaphel",
+      "ithpeel": "ithpeel",
+      "ishtaphel": "ishtaphel",
+      "hithaphel": "hithaphel",
+      "ithpoel": "ithpoel",
+      "hephal": "hephal",
+      "tiphel": "tiphel",
+      "palpel": "palpel",
+      "ithpalpel": "ithpalpel",
+      "ithpolel": "ithpolel",
+      "ittaphal": "ittaphal"
+    },
+    "pronoun": {
+      "me": "me",
+      "my": "my",
+      "us": "us",
+      "our": "our",
+      "you": "you",
+      "your": "your",
+      "him": "him",
+      "his": "his",
+      "herObject": "her",
+      "herPossessive": "her",
+      "it": "it",
+      "its": "its",
+      "them": "them",
+      "their": "their"
+    },
+    "posType": {
+      "substantive": "substantive",
+      "predicate": "predicate",
+      "ascriptive": "ascriptive",
+      "restrictive": "restrictive",
+      "article": "article",
+      "demonstrative": "demonstrative",
+      "differential": "differential",
+      "possessive": "possessive",
+      "quantifier": "quantifier",
+      "number": "number",
+      "ordinal": "ordinal",
+      "relative": "relative",
+      "interrogative": "interrogative",
+      "personal": "personal",
+      "reflexive": "reflexive",
+      "reciprocal": "reciprocal",
+      "indefinite": "indefinite",
+      "exclamation": "exclamation",
+      "directive": "directive",
+      "response": "response",
+      "improperPreposition": "improper preposition",
+      "correlative": "correlative",
+      "coordinating": "coordinating",
+      "subordinating": "subordinating"
+    },
+    "mood": {
+      "indicative": "indicative",
+      "imperative": "imperative",
+      "subjunctive": "subjunctive",
+      "optative": "optative",
+      "infinitive": "infinitive",
+      "participle": "participle"
+    },
+    "tense": {
+      "present": "present",
+      "imperfect": "imperfect",
+      "future": "future",
+      "aorist": "aorist",
+      "perfect": "perfect",
+      "pluperfect": "pluperfect"
+    },
+    "voice": {
+      "active": "active",
+      "middle": "middle",
+      "passive": "passive"
+    },
+    "case": {
+      "nominative": "nominative",
+      "genitive": "genitive",
+      "dative": "dative",
+      "accusative": "accusative",
+      "vocative": "vocative"
+    },
+    "other": {
+      "comparative": "comparative",
+      "superlative": "superlative",
+      "diminutive": "diminutive",
+      "indeclinable": "indeclinable"
+    }
   }
 }
