@@ -1736,15 +1736,22 @@ function DropTargetCard({
   // card body aligns them here — the keyboard/trackpad/touch path that mirrors
   // dragging, routed through the SAME onTargetsDrop as the drop handler. Guarded
   // to a no-op when nothing is selected (so click behaviour is unchanged) and
-  // when the click lands on an inner control (× clear-group, unalign buttons),
-  // which keep their own handlers.
+  // when the click lands on an inner control (× clear-group, unalign buttons,
+  // the ghost-suggestion chip), which keep their own handlers.
+  //
+  // The guard has to match role="button" as well as <button>: MUI renders a
+  // clickable Chip through ButtonBase with component="div" (Chip.js:408,421 —
+  // ButtonBase.js then sets role="button" rather than emitting a <button>), so
+  // a bare closest("button") misses GhostChip. Without this, accepting a ghost
+  // suggestion while words are tap-selected ALSO ran this handler and aligned
+  // the selection to the card instead — a silent wrong alignment.
   const hasSelection = selectedWordIds.length > 0;
   return (
     <Paper
       elevation={0}
       onClick={(e) => {
         if (!hasSelection) return;
-        if ((e.target as HTMLElement).closest("button")) return;
+        if ((e.target as HTMLElement).closest('button,[role="button"]')) return;
         onTargetsDrop(selectedWordIds);
         onClearSelection();
       }}
