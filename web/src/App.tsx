@@ -275,7 +275,7 @@ type AuthState =
   | { kind: "loading" }
   | { kind: "ready"; me: MeResponse | null; role: Role }
   | { kind: "missing" }                            // not signed in — show "Sign in with Door43"
-  | { kind: "denied"; username: string | null }    // signed in but not on editor allowlist
+  | { kind: "denied"; username: string | null; orgName: string | null }    // signed in but not on editor allowlist
   | { kind: "error"; message: string };
 
 function isSignedOut(): boolean {
@@ -300,8 +300,9 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
     // Step 1: OAuth callback rejected this account (not on the allowlist).
     if (params.get("_auth_denied")) {
       const username = params.get("u");
+      const orgName = params.get("org");
       history.replaceState(null, "", location.pathname + location.hash);
-      return { kind: "denied", username };
+      return { kind: "denied", username, orgName };
     }
     return { kind: "loading" };
   });
@@ -323,7 +324,9 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
           return;
         }
         if (me && !me.role) {
-          setState({ kind: "denied", username: me.username });
+          // /api/auth/me carries no rejecting-org name; only the _auth_denied
+          // OAuth redirect does (see useAuthGate initializer).
+          setState({ kind: "denied", username: me.username, orgName: null });
           return;
         }
         // me === null → 401, no cookie. Decide whether to silent-mint (dev)
@@ -336,7 +339,7 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
           const devMe = await devSignIn("dev");
           if (cancelled) return;
           if (devMe.role !== "admin" && devMe.role !== "editor" && devMe.role !== "viewer") {
-            setState({ kind: "denied", username: devMe.username });
+            setState({ kind: "denied", username: devMe.username, orgName: null });
             return;
           }
           clearSignedOutFlag();
@@ -358,7 +361,7 @@ function useAuthGate(): [AuthState, (s: AuthState) => void] {
         if (cancelled) return;
         const status = (err as { status?: number })?.status;
         if (status === 403) {
-          setState({ kind: "denied", username: null });
+          setState({ kind: "denied", username: null, orgName: null });
         } else {
           setState({ kind: "error", message: String(err) });
         }
@@ -571,9 +574,13 @@ export function App() {
       >
         <Typography variant="h6">{t("appShell.auth.notAuthorizedTitle")}</Typography>
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 480 }}>
-          {auth.username
-            ? t("appShell.auth.notAllowlistedNamed", { username: auth.username })
-            : t("appShell.auth.notAllowlisted")}
+          {auth.orgName
+            ? auth.username
+              ? t("appShell.auth.notAllowlistedNamedOrg", { username: auth.username, org: auth.orgName })
+              : t("appShell.auth.notAllowlistedOrg", { org: auth.orgName })
+            : auth.username
+              ? t("appShell.auth.notAllowlistedNamed", { username: auth.username })
+              : t("appShell.auth.notAllowlisted")}
           {" "}{t("appShell.auth.askAdmin")}
         </Typography>
         <Button

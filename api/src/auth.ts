@@ -751,8 +751,13 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     if (isMember) {
       role = "viewer";
     } else {
+      // Name the workspace that rejected them so a user with access to several
+      // orgs can tell WHERE the mismatch is (issue #288). `resolution.workspace`
+      // is the org login just resolved against; its `label` is the same
+      // human-facing name the workspace switcher shows.
+      const org = resolution.workspace.label;
       return c.redirect(
-        `${origin}/?_auth_denied=1&u=${encodeURIComponent(dcsUser.login)}`,
+        `${origin}/?_auth_denied=1&u=${encodeURIComponent(dcsUser.login)}&org=${encodeURIComponent(org)}`,
         302,
       );
     }

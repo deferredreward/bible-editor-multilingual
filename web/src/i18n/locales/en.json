@@ -3251,6 +3251,8 @@
       "notAuthorizedTitle": "Not authorized",
       "notAllowlistedNamed": "Your DCS account \"{{username}}\" isn't on the editor allowlist for this app yet.",
       "notAllowlisted": "Your DCS account isn't on the editor allowlist for this app yet.",
+      "notAllowlistedNamedOrg": "Your DCS account \"{{username}}\" isn't on the editor allowlist for the {{org}} workspace yet.",
+      "notAllowlistedOrg": "Your DCS account isn't on the editor allowlist for the {{org}} workspace yet.",
       "askAdmin": "If you should have access, ask an admin to add you.",
       "signInDifferentAccount": "Sign in with a different Door43 account",
       "authFailed": "auth failed: {{message}}"
