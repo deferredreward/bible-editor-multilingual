@@ -3562,6 +3562,34 @@
         "questions_one": "{{count}} question",
         "questions_other": "{{count}} questions"
       }
+    },
+    "lifecycle": {
+      "title": "Book lifecycle",
+      "notesApproved": "Notes approved",
+      "questionsApproved": "Questions approved",
+      "versesDone": "Verses done",
+      "ofTotal": "{{done}} of {{total}}",
+      "publishButton": "Publish this book",
+      "confirmTitle": "Publish {{book}}?",
+      "confirmBody": "This renders the approved content of {{book}} and opens or updates the Door43 pull requests for each resource. Rows still awaiting review are held back automatically and stay here unpublished.",
+      "confirmRun": "Publish",
+      "queuedMsg": "Publish run queued",
+      "runningLine": "Publishing — {{status}}",
+      "alreadyRunning": "An export run is already in progress. Try again in a few minutes.",
+      "startFailed": "Could not start the publish run",
+      "startFailedHttp": "Could not start the publish run (HTTP {{status}})",
+      "doneMsg": "Publish run finished",
+      "failedMsg": "The publish run did not finish cleanly — see the admin workflow screen.",
+      "timeoutMsg": "The publish run is still going — results will appear here when it finishes.",
+      "latestResults": "Latest publish results",
+      "notPublished": "Not published yet",
+      "historyLoadFailed": "Could not load publish results",
+      "chipHeld": "Held for review",
+      "chipUpToDate": "Up to date",
+      "rowsCommitted_one": "{{count}} row committed",
+      "rowsCommitted_other": "{{count}} rows committed",
+      "heldRows_one": "{{count}} row awaiting review",
+      "heldRows_other": "{{count}} rows awaiting review"
     }
   },
   "messages": {
