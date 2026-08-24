@@ -5,7 +5,7 @@
 import type { Env } from "./index";
 import type { ProjectConfig } from "./projectConfig.ts";
 import { getProjectConfig, PRESETS } from "./projectConfig.ts";
-import type { RepoRef } from "./repoUrl.ts";
+import { repoRefEquals, type RepoRef } from "./repoUrl.ts";
 
 export type LaneKey = "lit" | "sim";
 
@@ -138,11 +138,16 @@ export function desiredLaneConfig(cfg: ProjectConfig, lane: LaneKey): ScriptureL
   return cfg.preset === "ar-bsoj" ? bsojLaneConfig(lane) : defaultLaneConfig(cfg, lane);
 }
 
+// Two lane configs point at the SAME DCS repo. Owner and repo compare
+// case-INSENSITIVELY (via repoRefEquals) because Gitea/DCS resolves both
+// case-insensitively: a lane stored as `bsoj/ar_avd` and a desired `BSOJ/ar_avd`
+// are one repo, and treating them as different sources permanently blocked the
+// Setup wizard and looped the lane_source_change_requires_migration 409 on
+// exactly that mismatch. Git REFS stay case-sensitive (`master` != `Master`).
 export function sameLaneSource(a: ScriptureLaneConfig, b: ScriptureLaneConfig): boolean {
-  return (
-    a.source.owner === b.source.owner &&
-    a.source.repo === b.source.repo &&
-    (a.source.ref || "master") === (b.source.ref || "master")
+  return repoRefEquals(
+    { ...a.source, ref: a.source.ref || "master" },
+    { ...b.source, ref: b.source.ref || "master" },
   );
 }
 

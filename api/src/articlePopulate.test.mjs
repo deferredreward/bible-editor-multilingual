@@ -247,6 +247,17 @@ console.log("planWork");
     { resource: "tw", path: "bible/kt/grace.md", source_org: "OtherOrg", source_repo: "x_tw", status: "not_found", attempts: 1 },
   ], src);
   assert.equal(otherSrc.length, 1, "other-source state does not block");
+
+  // Case-only org/repo difference is a match, not a mismatch (DCS names are
+  // case-insensitive) — a row stamped "UNFOLDINGWORD"/"EN_TW" is fresh against
+  // a source configured as "unfoldingWord"/"en_tw".
+  const caseOnly = planWork(
+    referenced.slice(0, 1),
+    [{ resource: "tw", path: "bible/kt/god.md", source_org: "UNFOLDINGWORD", source_repo: "EN_TW", deleted_at: null }],
+    [],
+    src,
+  );
+  assert.equal(caseOnly.length, 0, "case-only org/repo difference is treated as fresh, not mismatched");
   console.log("  ✓ planWork ordering + fetch-state blocking");
 }
 

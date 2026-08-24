@@ -277,8 +277,11 @@ async function invalidateAndReprime(env: Env): Promise<void> {
 async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<Workspace | null> {
   const row = await db
     .prepare(
+      // COLLATE NOCASE: Door43 org names are case-insensitive, so a lookup for
+      // "BSOJ" must find an existing "bsoj" row — otherwise a second workspace
+      // gets claimed for the same org (duplicate-claim hole).
       `SELECT slug, label, org, binding, export_owner AS exportOwner
-         FROM workspaces WHERE org = ?1 AND status = 'claimed' LIMIT 1`,
+         FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed' LIMIT 1`,
     )
     .bind(org)
     .first<WorkspaceRow>();

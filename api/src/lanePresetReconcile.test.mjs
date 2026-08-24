@@ -72,4 +72,35 @@ assert.equal(
   console.log("  ✓ matching source + content → install (clear sticky quarantine)");
 }
 
+{
+  // DCS/Gitea resolves owner and repo names case-insensitively. A real BSOJ
+  // workspace had its lane source persisted as owner "bsoj" while the preset
+  // (and the detect path) say "BSOJ" — the raw-string compare called that a
+  // source CHANGE, so a populated lane quarantined and the config PUT 409'd
+  // lane_source_change_requires_migration with no way out of the loop.
+  const desiredAvd = bsojLaneConfig("lit");
+  const miscased = {
+    ...desiredAvd,
+    source: { ...desiredAvd.source, owner: "bsoj", repo: "AR_AVD" },
+  };
+  assert.equal(sameLaneSource(miscased, desiredAvd), true, "case-only owner/repo difference is the same source");
+  // A missing ref still defaults to master on BOTH sides.
+  assert.equal(
+    sameLaneSource({ ...miscased, source: { owner: "bsoj", repo: "ar_avd" } }, desiredAvd),
+    true,
+    "absent ref defaults to master",
+  );
+  // Git refs stay case-SENSITIVE — branch names are.
+  assert.equal(
+    sameLaneSource({ ...desiredAvd, source: { ...desiredAvd.source, ref: "Master" } }, desiredAvd),
+    false,
+    "a differently-cased git ref is NOT the same source",
+  );
+  // And a populated lane whose source differs only in case must INSTALL (adopt
+  // the canonical casing), never quarantine.
+  const plan = planLaneReconcile(miscased, desiredAvd, 42);
+  assert.equal(plan.action, "install");
+  console.log("  ✓ case-only owner/repo difference → same source, install (no 409 loop)");
+}
+
 console.log("lanePresetReconcile.test.mjs: all passed");

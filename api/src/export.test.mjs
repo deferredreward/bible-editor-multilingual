@@ -732,6 +732,23 @@ function utf8Base64(s) {
     const found6 = await findDcsOpenPr(cfg);
     assert(found6 === null, `same-repo guard: a fork-head PR with a matching head.ref/base.ref is not matched`);
 
+    // Case-only owner/repo casing regression: DCS returns canonical casing in
+    // full_name ("O/R") even though our config is lowercase ("o"/"r") — this
+    // must still match the same-repo guard, not be mistaken for a fork.
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      if (isLookup(u, m)) return okJson({ message: "Not Found" }, 404);
+      if (isList(u, m)) {
+        return okJson([
+          { number: 6600, state: "open", head: { ref: "DAN-be-justplainjane47", repo: { full_name: "O/R" } }, base: { ref: "master" } },
+        ]);
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const found6b = await findDcsOpenPr(cfg);
+    assert(found6b === 6600, `same-repo guard is case-insensitive: canonical-cased full_name from DCS still matches`);
+
     // A non-OK list response throws rather than silently returning null —
     // a silent null is exactly what hid the DAN bug for a week.
     globalThis.fetch = async (url, init = {}) => {

@@ -64,6 +64,7 @@ import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchDcsMasterText, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
+import { sameDcsName } from "./repoUrl.ts";
 import { listRangeHeldOutKeys } from "./bookSource.ts";
 import {
   laneForBibleVersion,
@@ -2047,8 +2048,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const destOwner = dest?.owner ?? src.owner;
     const destRepo = dest?.repo ?? src.repo;
     const baseRef = dest?.baseRef ?? src.ref;
+    // Owner/repo names are case-insensitive on DCS; baseRef vs src.ref stays
+    // an exact git-ref comparison.
     const sameIdentity =
-      destOwner === src.owner && destRepo === src.repo && baseRef === src.ref;
+      sameDcsName(destOwner, src.owner) && sameDcsName(destRepo, src.repo) && baseRef === src.ref;
 
     if (sameIdentity) {
       const watermark = await storedResourceSha(this.env, book, resource, src);
@@ -2068,8 +2071,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
     const tipSha = await fileCommitSha(this.env, destOwner, destRepo, path, baseRef);
     const baseline = await this.env.DB.prepare(
+      // owner/repo are DCS names (case-insensitive); lane/base_ref/book are not.
       `SELECT base_sha FROM scripture_export_baselines
-        WHERE lane = ?1 AND owner = ?2 AND repo = ?3 AND base_ref = ?4 AND book = ?5`,
+        WHERE lane = ?1 AND owner = ?2 COLLATE NOCASE AND repo = ?3 COLLATE NOCASE AND base_ref = ?4 AND book = ?5`,
     )
       .bind(lane, destOwner, destRepo, baseRef, book)
       .first<{ base_sha: string | null }>();

@@ -11,6 +11,7 @@ import { normalizeUsfmFormatting } from "./usfmFormat.ts";
 import { normalizeNoteText, sortRowsByReference } from "./tsvFormat.ts";
 import { orderTwlRows } from "./twlCanonicalOrder.ts";
 import { gitBlobSha, shrinkRefused, type ArticleFile } from "./articleExport.ts";
+import { dcsName } from "./repoUrl.ts";
 
 export type Resource = "tn" | "tq" | "twl" | "ult" | "ust";
 
@@ -1220,7 +1221,8 @@ export async function findDcsOpenPr(config: DcsPrConfig): Promise<number | null>
   // page; `maxPages` is the real backstop against an unbounded loop.
   const limit = 50;
   const maxPages = 20;
-  const sameRepo = `${config.owner}/${config.repo}`;
+  // DCS returns canonical casing in full_name; fold both sides for comparison.
+  const sameRepo = dcsName(`${config.owner}/${config.repo}`);
   for (let page = 1; page <= maxPages; page++) {
     const listRes = await fetch(
       `${apiBase}/pulls?state=open&limit=${limit}&page=${page}`,
@@ -1259,7 +1261,7 @@ export async function findDcsOpenPr(config: DcsPrConfig): Promise<number | null>
         pr.state === "open" &&
         pr.head?.ref === config.branch &&
         pr.base?.ref === base &&
-        pr.head?.repo?.full_name === sameRepo,
+        dcsName(pr.head?.repo?.full_name) === sameRepo,
     );
     if (match && typeof match.number === "number") return match.number;
     if (items.length === 0) break;

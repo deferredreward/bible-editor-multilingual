@@ -71,6 +71,7 @@ import { shouldRecordResourceSync } from "./reimportSyncGate.ts";
 import { computeTwlSortOrderUpdates } from "./twlCanonicalOrder.ts";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply.ts";
 import type { TwlRow, VerseRow } from "./types";
+import { sameDcsName } from "./repoUrl.ts";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -1629,8 +1630,9 @@ async function verifyVerseWriteIdentity(
   if (intended) {
     if (
       live.generation !== intended.generation ||
-      live.owner !== intended.owner ||
-      live.repo !== intended.repo ||
+      // owner/repo are DCS names (case-insensitive); ref stays exact.
+      !sameDcsName(live.owner, intended.owner) ||
+      !sameDcsName(live.repo, intended.repo) ||
       live.ref !== intended.ref
     ) {
       return null;
@@ -2362,10 +2364,12 @@ export async function storedResourceSha(
   source: ResourceSourceRef,
 ): Promise<string | null> {
   const row = await env.DB.prepare(
+    // source_owner/source_repo are DCS names (case-insensitive);
+    // source_generation and source_ref (a git ref) are NOT.
     `SELECT source_sha FROM book_resource_syncs
       WHERE book = ?1 AND resource = ?2
-        AND source_generation = ?3 AND source_owner = ?4
-        AND source_repo = ?5 AND source_ref = ?6`,
+        AND source_generation = ?3 AND source_owner = ?4 COLLATE NOCASE
+        AND source_repo = ?5 COLLATE NOCASE AND source_ref = ?6`,
   )
     .bind(book, resource, source.generation, source.owner, source.repo, source.ref)
     .first<{ source_sha: string | null }>();

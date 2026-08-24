@@ -27,6 +27,7 @@ import { decryptApiKey } from "./aiKeyCrypto.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents.ts";
+import { sameDcsName } from "./repoUrl.ts";
 import {
   assertLaneWritable,
   type LaneKey,
@@ -339,8 +340,9 @@ async function assertPipelineStampStillValid(
     if (!gate.ok) return { ok: false, error: gate.error };
     if (
       gate.generation !== stamp.generation ||
-      gate.config.source.owner !== stamp.owner ||
-      gate.config.source.repo !== stamp.repo ||
+      // owner/repo are DCS names (case-insensitive); ref stays exact.
+      !sameDcsName(gate.config.source.owner, stamp.owner) ||
+      !sameDcsName(gate.config.source.repo, stamp.repo) ||
       gate.config.source.ref !== stamp.ref
     ) {
       return { ok: false, error: "pipeline_source_generation_mismatch" };

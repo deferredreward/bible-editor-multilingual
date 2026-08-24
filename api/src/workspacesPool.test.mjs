@@ -189,6 +189,23 @@ console.log("[claimWorkspace] pre-existing claimed row for the org short-circuit
   assert(rowBySlug(db, "pool2").status === "available", "available slot not consumed for an org already claimed");
 }
 
+// ── claimWorkspace: org lookup is case-insensitive (DCS org names) ──────────
+// Regression: the org lookup lacked COLLATE NOCASE, so a differently-cased
+// org (e.g. detect path canonicalizes to "BSOJ" while the stored row is
+// "bsoj") missed the existing claimed row and claimed a SECOND workspace for
+// the same org — a duplicate-tenancy bug.
+console.log("[claimWorkspace] org lookup is case-insensitive — no duplicate claim on a case-only mismatch");
+{
+  const db = freshDb();
+  const env = makeEnv(db);
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('existing', 'Existing', 'bsoj', 'DB_POOL1', 'claimed')").run();
+  await registerPoolSlot(env, { binding: "DB_POOL2" }); // an available slot that must NOT be consumed
+
+  const claim = await claimWorkspace(env, { org: "BSOJ", label: "Whatever" });
+  assert(claim && claim.alreadyClaimed && claim.workspace.slug === "existing", "case-only org difference still short-circuits to the existing slot");
+  assert(rowBySlug(db, "pool2").status === "available", "available slot not consumed on a case-only org match");
+}
+
 // ── claimWorkspace: input validation throws (never persists a bad row) ──────
 
 console.log("[claimWorkspace] rejects invalid org/label without touching the pool");
