@@ -8,9 +8,26 @@
 // safety without needing to lift ownership to a shell-level owner.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import i18n from "../i18n";
 import { ApiError, api, type TemplateUnit } from "../sync/api";
 
-function mapTemplateDraftError(err: unknown): string {
+/** Stable, NEVER-translated classification of a draft failure. This is the
+ *  logic value: CurateEditor keys its "AI is disabled for this screen" latch
+ *  off `"disabled"` here. It used to sniff the English prose out of `error`
+ *  (`error.startsWith("AI not configured")`), which silently stopped matching
+ *  the moment that prose was localized — hence the split into a stable id
+ *  (`errorCode`) plus a display-only label (`error`). */
+export type TemplateDraftErrorCode =
+  | "disabled"
+  | "service_unavailable"
+  | "too_large"
+  | "version_mismatch"
+  | "unauthorized"
+  | "http"
+  | "network";
+
+/** Classify only — no user-visible text. */
+function classifyTemplateDraftError(err: unknown): TemplateDraftErrorCode | null {
   if (err instanceof ApiError) {
     const code =
       err.body && typeof err.body === "object" && "error" in err.body
@@ -18,27 +35,57 @@ function mapTemplateDraftError(err: unknown): string {
         : "";
     switch (code) {
       case "template_draft_disabled":
-        return "AI not configured — admin must set BT_API_TOKEN.";
+        return "disabled";
       case "model_call_failed":
-        return "AI service unavailable.";
+        return "service_unavailable";
       case "body_too_large":
-        return "Template too large for the AI request.";
+        return "too_large";
       case "version_mismatch":
-        return "Someone else updated this template — reload and try again.";
+        return "version_mismatch";
       case "unauthorized":
-        return "Session expired — sign in again.";
+        return "unauthorized";
       default:
-        return `AI request failed (HTTP ${err.status}).`;
+        return "http";
     }
   }
-  if (err instanceof DOMException && err.name === "AbortError") return "";
-  if (err instanceof Error && err.message) return err.message;
-  return "Network error.";
+  if (err instanceof DOMException && err.name === "AbortError") return null;
+  return "network";
+}
+
+// DISPLAY ONLY — rendered as the workspace's error banner. Translated on every
+// call (never at module load) so the active UI language wins. HTTP statuses and
+// BT_API_TOKEN are interpolated/literal, never translated.
+function describeTemplateDraftError(code: TemplateDraftErrorCode, err: unknown): string {
+  switch (code) {
+    case "disabled":
+      return i18n.t("messages.aiDraft.notConfiguredToken");
+    case "service_unavailable":
+      return i18n.t("messages.aiDraft.serviceUnavailable");
+    case "too_large":
+      return i18n.t("messages.templateDraft.tooLarge");
+    case "version_mismatch":
+      return i18n.t("messages.templateDraft.versionMismatch");
+    case "unauthorized":
+      return i18n.t("messages.aiDraft.sessionExpired");
+    case "http":
+      return i18n.t("messages.aiDraft.requestFailed", {
+        status: err instanceof ApiError ? err.status : 0,
+      });
+    case "network":
+      // A thrown Error's own message (e.g. api.ts's "request timeout") is a
+      // diagnostic, kept verbatim; the bare fallback is localized.
+      if (err instanceof Error && err.message) return err.message;
+      return i18n.t("messages.aiDraft.networkError");
+  }
 }
 
 export interface UseTemplateAiDraftAPI {
   drafting: boolean;
+  /** Localized, DISPLAY-ONLY message. Never branch on this — use `errorCode`. */
   error: string | null;
+  /** Stable id for the same failure, safe to compare against. Set/cleared in
+   *  lockstep with `error`. */
+  errorCode: TemplateDraftErrorCode | null;
   clearError: () => void;
   /** Set when a draft request 409s — the fresh server row from the error
    *  body, same as handleSave's conflict rebase. The caller should apply it
@@ -52,10 +99,14 @@ export interface UseTemplateAiDraftAPI {
 export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
   const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<TemplateDraftErrorCode | null>(null);
   const [conflictUnit, setConflictUnit] = useState<TemplateUnit | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    setError(null);
+    setErrorCode(null);
+  }, []);
   const clearConflict = useCallback(() => setConflictUnit(null), []);
 
   const draft = useCallback(async (unit: TemplateUnit) => {
@@ -64,6 +115,7 @@ export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
     controllerRef.current = controller;
     setDrafting(true);
     setError(null);
+    setErrorCode(null);
     try {
       const updated = await api.draftTemplate(unit.template_id, unit.version, controller.signal);
       return updated;
@@ -73,8 +125,14 @@ export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
         const fresh = (err.body as { current?: TemplateUnit } | undefined)?.current;
         if (fresh) setConflictUnit(fresh);
       }
-      const message = mapTemplateDraftError(err);
-      if (message) setError(message);
+      const code = classifyTemplateDraftError(err);
+      if (code) {
+        const message = describeTemplateDraftError(code, err);
+        if (message) {
+          setError(message);
+          setErrorCode(code);
+        }
+      }
       return null;
     } finally {
       if (controllerRef.current === controller) setDrafting(false);
@@ -86,5 +144,5 @@ export function useTemplateAiDraft(): UseTemplateAiDraftAPI {
   // prop in TemplateWorkspace.tsx).
   useEffect(() => () => controllerRef.current?.abort(), []);
 
-  return { drafting, error, clearError, conflictUnit, clearConflict, draft };
+  return { drafting, error, errorCode, clearError, conflictUnit, clearConflict, draft };
 }

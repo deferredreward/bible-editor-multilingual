@@ -21,6 +21,7 @@ import {
   devSignIn,
   fetchAuthMe,
   onAuthError,
+  onAuthRefreshed,
   setReadOnly,
   setIsAdmin,
   updateLastLocation,
@@ -134,6 +135,10 @@ const SIGNED_OUT_KEY = "bible-editor.signed_out";
 // agree so a later genuine mismatch (e.g. a stale cookie from another tab)
 // still gets one reconciliation attempt.
 const WS_RECONCILED_KEY = "bible-editor.ws-reconciled";
+
+// Organization name shown (bold) inside the read-only viewer banner. A brand
+// name, so it is deliberately NOT a translatable string.
+const VIEWER_ORG = "unfoldingWord";
 
 function parseHash(): Location {
   const pm = location.hash.match(/^#\/preferences(?:\/(\w+))?$/);
@@ -405,6 +410,12 @@ export function App() {
   }, []);
 
   useEffect(() => onAuthError(() => setSessionExpired(true)), []);
+  // Clear the banner once a subsequent auth attempt succeeds — a silent
+  // refresh, or (in dev) the first-load silent mint that lands after the
+  // initial /api/auth/me + /api/auth/refresh 401s already raised it. Both
+  // fire onAuthRefreshed, so the banner no longer sticks until a manual
+  // reload (issue #283).
+  useEffect(() => onAuthRefreshed(() => setSessionExpired(false)), []);
 
   const navigate = (book: string, chapter: number, verse?: number) => {
     location.hash =
@@ -517,7 +528,7 @@ export function App() {
         spacing={2}
       >
         <CircularProgress />
-        <Typography variant="body2" color="text.secondary">signing in…</Typography>
+        <Typography variant="body2" color="text.secondary">{t("appShell.auth.signingIn")}</Typography>
       </Stack>
     );
   }
@@ -539,19 +550,19 @@ export function App() {
         spacing={2}
       >
         <Typography variant="h6">
-          {wasSignedOut ? "You're signed out" : "Sign in to continue"}
+          {wasSignedOut ? t("appShell.auth.signedOutTitle") : t("appShell.auth.signInToContinue")}
         </Typography>
         {wasSignedOut && (
           <Typography variant="body2" color="text.secondary">
-            Queued edits stay in your browser until you sign back in.
+            {t("appShell.auth.queuedEditsSafe")}
           </Typography>
         )}
         <Button variant="contained" href="/api/auth/dcs/start" size="large">
-          Sign in with Door43
+          {t("appShell.auth.signInWithDoor43")}
         </Button>
         {import.meta.env.DEV && (
           <Button variant="text" size="small" onClick={devSignInClick}>
-            Sign in (dev)
+            {t("appShell.auth.signInDev")}
           </Button>
         )}
       </Stack>
@@ -565,12 +576,12 @@ export function App() {
         sx={{ height: "100vh", "@supports (height: 100dvh)": { height: "100dvh" }, px: 4 }}
         spacing={2}
       >
-        <Typography variant="h6">Not authorized</Typography>
+        <Typography variant="h6">{t("appShell.auth.notAuthorizedTitle")}</Typography>
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 480 }}>
           {auth.username
-            ? `Your DCS account "${auth.username}" isn't on the editor allowlist for this app yet.`
-            : `Your DCS account isn't on the editor allowlist for this app yet.`}
-          {" "}If you should have access, ask an admin to add you.
+            ? t("appShell.auth.notAllowlistedNamed", { username: auth.username })
+            : t("appShell.auth.notAllowlisted")}
+          {" "}{t("appShell.auth.askAdmin")}
         </Typography>
         <Button
           variant="outlined"
@@ -584,7 +595,7 @@ export function App() {
           }}
           size="small"
         >
-          Sign in with a different Door43 account
+          {t("appShell.auth.signInDifferentAccount")}
         </Button>
       </Stack>
     );
@@ -592,7 +603,7 @@ export function App() {
   if (auth.kind === "error") {
     return (
       <Box sx={{ p: 4 }}>
-        <Alert severity="error">auth failed: {auth.message}</Alert>
+        <Alert severity="error">{t("appShell.auth.authFailed", { message: auth.message })}</Alert>
       </Box>
     );
   }
@@ -675,7 +686,7 @@ export function App() {
                     color="inherit"
                     underline="always"
                   >
-                    view run
+                    {t("appShell.alerts.viewRun")}
                   </Link>
                 </>
               )}
@@ -685,8 +696,11 @@ export function App() {
       )}
       {isViewer && (
         <Alert severity="info" variant="filled" sx={{ borderRadius: 0, py: 0.5 }}>
-          You're signed in as an <strong>unfoldingWord</strong> member — read-only access.
-          Edits won't be saved. Ask an admin to add you to the editor allowlist if you need to edit.
+          {/* Split around the org name so it can stay bold: the org is a brand
+              name and is never translated, while the surrounding sentence is. */}
+          {t("appShell.viewer.readOnlyBannerBefore")}
+          <strong>{VIEWER_ORG}</strong>
+          {t("appShell.viewer.readOnlyBannerAfter")}
         </Alert>
       )}
       <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -932,11 +946,11 @@ export function App() {
           variant="filled"
           action={
             <Button color="inherit" size="small" onClick={handleSessionExpired}>
-              Sign in
+              {t("appShell.session.signIn")}
             </Button>
           }
         >
-          Your session expired — sign in to keep saving. Queued edits will sync after sign-in.
+          {t("appShell.session.expired")}
         </Alert>
       </Snackbar>
       {chooseWs && <WorkspaceChoiceDialog onClose={() => setChooseWs(false)} />}

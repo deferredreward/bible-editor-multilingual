@@ -8,6 +8,7 @@
 // AiCompletionToasts. Aggregates above 3 entries.
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, IconButton, Stack, Button, Box, Typography } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { drafts, type DraftRecord } from "../sync/drafts";
@@ -34,6 +35,7 @@ interface Props {
 }
 
 export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
+  const { t } = useTranslation();
   const [draftList, setDraftList] = useState<DraftRecord[]>([]);
   const [ops, setOps] = useState<OutboxOp[]>([]);
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
@@ -113,11 +115,11 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
           sx={{ boxShadow: 3, alignItems: "center" }}
           action={
             <Button color="inherit" size="small" onClick={() => setExpanded(true)}>
-              Review
+              {t("widgets.toasts.review")}
             </Button>
           }
         >
-          {offscreenDrafts.length} unsaved edits off-screen
+          {t("widgets.toasts.unsavedOffscreen", { count: offscreenDrafts.length })}
         </Alert>
       </Box>
     );
@@ -143,7 +145,7 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
             onClick={() => setExpanded(false)}
             sx={{ alignSelf: "flex-start", bgcolor: "background.paper" }}
           >
-            collapse
+            {t("widgets.toasts.collapse")}
           </Button>
         )}
         {offscreenDrafts.map((d) => {
@@ -163,7 +165,7 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
                     onClick={() => onSaveVerseDraft(book, chapter, verse, bibleVersion)}
                     sx={{ fontWeight: 600 }}
                   >
-                    Save
+                    {t("common.save")}
                   </Button>
                   <IconButton
                     size="small"
@@ -175,7 +177,7 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
                         return next;
                       })
                     }
-                    aria-label="dismiss"
+                    aria-label={t("widgets.toasts.dismiss")}
                   >
                     <CloseIcon fontSize="small" />
                   </IconButton>
@@ -191,7 +193,12 @@ export function UnsavedToasts({ book, onSaveVerseDraft, onJumpTo }: Props) {
                   fontSize: 13,
                 }}
               >
-                Save {book} {chapter}:{verse} {bibleVersion}?
+                {t("widgets.toasts.saveVerseRef", {
+                  book,
+                  chapter,
+                  verse,
+                  version: bibleVersion,
+                })}
               </Typography>
             </Alert>
           );

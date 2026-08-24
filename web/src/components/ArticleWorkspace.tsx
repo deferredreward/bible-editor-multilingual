@@ -810,22 +810,51 @@ function ArticleEditor({
       </Stack>
 
       {collapsedValidated ? (
-        <Box
-          onClick={() => setExpanded(true)}
-          title={t("translation.showSource")}
-          sx={{
-            cursor: "pointer",
-            border: "1.5px solid",
-            borderColor: "success.main",
-            bgcolor: (theme) => alpha(theme.palette.success.main, 0.09),
-            borderRadius: 1,
-            px: 2,
-            py: 1.5,
-            color: "text.secondary",
-          }}
-        >
-          {t("translation.stateApproved")} — {t("translation.showSource")}
-        </Box>
+        // Approved article: show the translated text read-only by default so a
+        // finished article never renders as a blank page (#272). Only the
+        // English source is collapsed, behind the full-width expander below;
+        // clicking it (setExpanded) reveals the full source+target grid.
+        <Stack spacing={2.5}>
+          {parts.map((part) => (
+            <Box
+              key={part.path}
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 1,
+                overflow: "hidden",
+                p: 2,
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  mb: 1,
+                  fontFamily: "monospace",
+                  color: "text.disabled",
+                  textTransform: "uppercase",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  letterSpacing: "0.09em",
+                }}
+              >
+                {partLabel(part)}
+              </Typography>
+              <MarkdownView markdown={drafts[part.path] ?? part.target_md ?? ""} dir={direction} />
+            </Box>
+          ))}
+          <Button
+            fullWidth
+            variant="outlined"
+            color="inherit"
+            startIcon={<VisibilityIcon sx={{ fontSize: "18px !important" }} />}
+            onClick={() => setExpanded(true)}
+            sx={{ color: "text.secondary", minHeight: 44 }}
+          >
+            {t("translation.showSource")}
+          </Button>
+        </Stack>
       ) : (
         <Stack spacing={2.5}>
           {parts.map((part) => {

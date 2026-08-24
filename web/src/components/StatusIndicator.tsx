@@ -22,6 +22,7 @@ import { PipelineStatusBar, pipelineHasAnything } from "./PipelineStatusBar";
 import { BookLintIndicator } from "./BookLintIndicator";
 import { useAppVersion } from "../hooks/useAppVersion";
 import { pipelineStore } from "../sync/pipelineStore";
+import { formatDateTime } from "../lib/formatDate";
 import type { PipelineJobRow, BookLintIssue } from "../sync/api";
 
 // Kindle warning accent, matching the other "needs attention" affordances
@@ -49,9 +50,8 @@ interface Props {
 }
 
 function formatBuiltAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
+  // Unparseable input still falls back to the raw string, as before.
+  return formatDateTime(iso) || iso;
 }
 
 export function StatusIndicator({

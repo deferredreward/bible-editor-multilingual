@@ -3,6 +3,7 @@
 // renders it with react-markdown; internal links resolve to Door43 (new tab).
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +32,7 @@ function titleFromMarkdown(md: string, fallback: string): string {
 
 
 export function TwArticleDialog({ articleId, onClose }: Props) {
+  const { t } = useTranslation();
   const cfg = useProjectConfig();
   // A GL project reads tW articles from its translationSource (source repo, which
   // may live in a DIFFERENT org than translationSource.org); non-translation
@@ -95,10 +97,10 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
           {dcsUrl && (
             <Link href={dcsUrl} target="_blank" rel="noopener noreferrer" variant="body2" underline="hover">
-              View on DCS
+              {t("dialogs.twArticle.viewOnDcs")}
             </Link>
           )}
-          <IconButton size="small" onClick={onClose} aria-label="close">
+          <IconButton size="small" onClick={onClose} aria-label={t("dialogs.common.close")}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Box>
@@ -106,14 +108,14 @@ export function TwArticleDialog({ articleId, onClose }: Props) {
       <DialogContent dividers>
         {noSource ? (
           <Typography color="text.secondary" variant="body2">
-            No Translation Words source is configured for this project.
+            {t("dialogs.twArticle.noSource")}
           </Typography>
         ) : error ? (
           <Typography color="error" variant="body2">
-            Couldn&rsquo;t load this article.{" "}
+            {t("dialogs.twArticle.loadFailed")}{" "}
             {dcsUrl && (
               <Link href={dcsUrl} target="_blank" rel="noopener noreferrer">
-                Open on Door43
+                {t("dialogs.twArticle.openOnDoor43")}
               </Link>
             )}
           </Typography>

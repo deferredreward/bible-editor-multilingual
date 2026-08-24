@@ -28,6 +28,20 @@ import {
   targetKey,
 } from "./outboxTargeting.ts";
 import { workspaceDbName } from "./workspace";
+import i18n from "../i18n";
+
+// DISPLAY-ONLY fallback for the freeze reason stamped on a quarantined op —
+// SyncStatusBar renders `op.quarantined` / `op.lastError` verbatim. The
+// predicates in outboxTargeting.ts only compare `lastError` against
+// MAX_ATTEMPTS_SENTINEL, so this prose is never a logic value. Built per call
+// (never at module load) so the active UI language wins; `bibleVersion` is a
+// role code and is interpolated, never translated.
+function laneQuarantineReason(bibleVersion: string): string {
+  return (
+    laneFreezeReason(bibleVersion) ??
+    i18n.t("messages.outbox.laneQuarantined", { version: bibleVersion })
+  );
+}
 
 // Namespaced per workspace so switching Door43 orgs can never drain one org's
 // queued edits into another org's D1 database — without this, an edit queued
@@ -357,8 +371,7 @@ export const outbox = {
     // Lane freeze: refuse to ship — park as a failed/quarantined recovery copy
     // with no network attempt. Covers the window before projectConfig refresh.
     if (isLaneFrozen(bibleVersion)) {
-      const reason =
-        laneFreezeReason(bibleVersion) ?? `Quarantined: ${bibleVersion} lane is frozen`;
+      const reason = laneQuarantineReason(bibleVersion);
       const op: OutboxOp = {
         id: uid(),
         target: { kind: "verse", book, chapter, verse, bibleVersion },
@@ -996,9 +1009,7 @@ async function drainPass() {
       fresh.target.kind === "verse" &&
       isLaneFrozen(fresh.target.bibleVersion)
     ) {
-      const reason =
-        laneFreezeReason(fresh.target.bibleVersion) ??
-        `Quarantined: ${fresh.target.bibleVersion} lane is frozen`;
+      const reason = laneQuarantineReason(fresh.target.bibleVersion);
       fresh.status = "failed";
       fresh.lastError = reason;
       fresh.quarantined = reason;
