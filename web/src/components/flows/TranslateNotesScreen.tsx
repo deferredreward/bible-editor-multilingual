@@ -97,7 +97,7 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
-import { unescapeNewlines, waitForOp } from "./translateShared";
+import { isAquiferDraftRow, unescapeNewlines, waitForOp } from "./translateShared";
 import { useSwipeNav } from "./useSwipeNav";
 import type { FlowScreenContext } from "./types";
 
@@ -951,6 +951,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   ).length;
   const skippedCount = queueIds.filter((id) => statuses[id] === "skipped").length;
 
+  const aiDrafted = row?.translation_state === "ai_draft" || row?.latest_source === "ai_pipeline";
+  // Aquifer-imported rows land as ai_draft with draft_meta_json.source==="aquifer".
+  // They are neither AI-bot drafts nor human drafts — surface their provenance so
+  // the header and chips don't mislabel them "DRAFT · AI" (issue #295).
+  const isAquiferDraft = row?.translation_state === "ai_draft" && isAquiferDraftRow(row);
+
   const cardStatus = row ? statuses[row.id] : undefined;
   const chip: { kind: FlowStatusKind; label: string } =
     cardStatus === "approved"
@@ -959,9 +965,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         ? { kind: "skip", label: t("flowTranslate.notNeeded") }
         : hasDiff || row?.translation_state === "edited"
           ? { kind: "edited", label: t("flowTranslate.status.edited") }
-          : { kind: "draft", label: t("flowTranslate.status.draft") };
-
-  const aiDrafted = row?.translation_state === "ai_draft" || row?.latest_source === "ai_pipeline";
+          : isAquiferDraft
+            ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
+            : { kind: "draft", label: t("flowTranslate.status.draft") };
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
@@ -1258,7 +1264,15 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               />
             </Box>
 
-            {/* English source note */}
+            {(() => {
+              // Intro notes (row.verse === 0) render the source + target cards
+              // side-by-side on wide screens, mirroring the tA/tW article
+              // editor's responsive split (ArticleWorkspace.tsx); per-verse
+              // notes keep the original vertical stack (a fragment — no extra
+              // DOM node, so their layout is untouched). The grid's column
+              // order follows the document direction, so this is RTL-safe.
+              const englishSourceCard = (
+            /* English source note */
             <Box sx={cardSx}>
               <Typography component="p" sx={labelSx}>
                 <Box
@@ -1283,17 +1297,20 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 </Typography>
               )}
             </Box>
-
-            {/* target draft — the centrepiece */}
+              );
+              const targetDraftCard = (
+            /* target draft — the centrepiece */
             <Box ref={editorContainerRef} sx={cardSx}>
               <Typography component="p" sx={labelSx}>
                 <Box
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
                 />
-                {aiDrafted
-                  ? t("flowTranslate.targetDraftAi", { target: targetLabel })
-                  : t("flowTranslate.targetDraft", { target: targetLabel })}
+                {isAquiferDraft
+                  ? t("flowTranslate.targetDraftAquifer", { target: targetLabel })
+                  : aiDrafted
+                    ? t("flowTranslate.targetDraftAi", { target: targetLabel })
+                    : t("flowTranslate.targetDraft", { target: targetLabel })}
                 <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 0.75 }}>
                   {/* read-only article type — classification, not a verb */}
                   {rowTypeSlug && typePill(rowTypeSlug)}
@@ -1391,6 +1408,26 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 </Typography>
               )}
             </Box>
+              );
+              return row.verse === 0 ? (
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                    gap: 1.5,
+                    alignItems: "start",
+                  }}
+                >
+                  {englishSourceCard}
+                  {targetDraftCard}
+                </Box>
+              ) : (
+                <>
+                  {englishSourceCard}
+                  {targetDraftCard}
+                </>
+              );
+            })()}
 
             {/* previous / next — hidden in phone focus mode (keyboard-up
                 editing) so the editor gets the room */}
@@ -1449,7 +1486,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
           ? { kind: "skip", label: t("flowTranslate.notNeeded") }
           : (id === currentId && hasDiff) || r.translation_state === "edited"
             ? { kind: "edited", label: t("flowTranslate.status.edited") }
-            : { kind: "draft", label: t("flowTranslate.status.draft") };
+            : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
+              ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
+              : { kind: "draft", label: t("flowTranslate.status.draft") };
     const isSelected = !done && idx === cursor;
     // Preview the TARGET text — what the translator wrote (their live draft
     // for the open card, else the row's saved note), falling back to the

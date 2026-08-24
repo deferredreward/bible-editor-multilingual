@@ -157,6 +157,14 @@ const CONTEXT_PACK_LABEL_KEYS: Record<string, string> = {
   shrink_refused: "moreTools.observe.contextPackStatus.shrinkRefused",
 };
 
+// A nightly-export snapshot under book "CONTEXT" is the translation-context pack
+// (exportWorkflow.ts), not a published book; show a human label instead of the
+// raw "CONTEXT · ctx".
+const CONTEXT_SNAPSHOT_BOOK = "CONTEXT";
+function snapshotTargetLabel(book: string, resource: string, contextLabel: string, sep = " · "): string {
+  return book === CONTEXT_SNAPSHOT_BOOK ? contextLabel : `${book}${sep}${resource}`;
+}
+
 // ── Small presentational helpers ────────────────────────────────────────────
 
 function Panel({ title, subtitle, action, children, foot }: {
@@ -477,7 +485,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         <StatTile
           label={t("moreTools.observe.lastNightlyExportTile")}
           value={latestSnapshot ? fmtTime(latestSnapshot.committed_at) : snapshots ? t("moreTools.observe.none") : exportsError ? "—" : <Skeleton width={80} />}
-          sub={latestSnapshot ? `${latestSnapshot.book}·${latestSnapshot.resource}${latestSnapshot.error ? ` — ${latestSnapshot.error}` : ` — ${t("moreTools.observe.rowsShort", { count: latestSnapshot.rows_exported })}`}` : "—"}
+          sub={latestSnapshot ? `${snapshotTargetLabel(latestSnapshot.book, latestSnapshot.resource, t("moreTools.observe.contextPackTile"), "·")}${latestSnapshot.error ? ` — ${latestSnapshot.error}` : ` — ${t("moreTools.observe.rowsShort", { count: latestSnapshot.rows_exported })}`}` : "—"}
         />
       </Box>
 
@@ -507,7 +515,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
                   <Box key={r.id} sx={{ py: 1.125 }}>
                     <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {r.book} · {r.resource} — {fmtTime(r.committed_at)}
+                        {snapshotTargetLabel(r.book, r.resource, t("moreTools.observe.contextPackTile"))} — {fmtTime(r.committed_at)}
                       </Typography>
                       <FlowStatusChip kind={hasError ? "warn" : "approved"} label={hasError ? t("moreTools.observe.needsAttention") : t("moreTools.observe.committed")} />
                     </Stack>

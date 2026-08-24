@@ -172,6 +172,13 @@ export interface BookSummary {
     tn: number;
     tq: number;
     twl: number;
+    // Review rollup (docs/ux-simplification.md A2): live rows with
+    // translation_state='validated' and verses flagged done. Optional because
+    // an older API build omits them — consumers must treat absence as
+    // "rollup unavailable", not as zero progress.
+    tnValidated?: number;
+    tqValidated?: number;
+    versesDone?: number;
   }>;
 }
 
@@ -804,6 +811,12 @@ export async function devSignIn(username = "dev"): Promise<MeResponse> {
     }
     throw new ApiError(res.status, `HTTP ${res.status}`, body);
   }
+  // A successful dev mint means we now hold a fresh access cookie — the same
+  // condition change a silent refresh represents. Fire onAuthRefreshed so the
+  // outbox revives parked ops AND any "session expired" banner raised by the
+  // boot-time 401s (before this mint landed) clears. Without this the banner
+  // stuck until a manual reload (issue #283).
+  emitAuthRefreshed();
   return (await res.json()) as MeResponse;
 }
 
@@ -1487,6 +1500,11 @@ export interface ExportSnapshot {
   error: string | null;
   pr_number: number | null;
   pr_error: string | null;
+  // Server-derived Door43 web URL for pr_number (api/src/exportPrUrl.ts) —
+  // resolved from the CURRENT export destination config, absent/null when the
+  // destination can't be resolved or on an older API build. Fall back to
+  // plain "PR #n" text when missing.
+  prUrl?: string | null;
 }
 
 // Per-project source configuration (api/src/projectConfig.ts). Drives UI
@@ -2202,11 +2220,17 @@ export const api = {
   // AdminProgressScreen.tsx's adminGet, AdminWorkflowScreen.tsx's adminFetch)
   // with duplicated CSRF logic and none of request()'s silent 401-refresh —
   // see issue #166.
-  exportsList: (limit?: number, signal?: AbortSignal) =>
-    request<{ snapshots: ExportSnapshot[] }>(
-      limit != null ? `/api/exports?limit=${limit}` : `/api/exports`,
-      { signal },
-    ),
+  // Accepts either the legacy bare limit or an options object — the server
+  // supports a book filter (api/src/exports.ts GET /) used by the package
+  // hub's lifecycle card.
+  exportsList: (opts?: number | { limit?: number; book?: string }, signal?: AbortSignal) => {
+    const o = typeof opts === "number" ? { limit: opts } : (opts ?? {});
+    const qs = new URLSearchParams();
+    if (o.limit != null) qs.set("limit", String(o.limit));
+    if (o.book) qs.set("book", o.book);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<{ snapshots: ExportSnapshot[] }>(`/api/exports${suffix}`, { signal });
+  },
 
   exportsRun: (opts?: { shrinkOverride?: boolean; book?: string }, signal?: AbortSignal) => {
     const body: { shrinkOverride?: boolean; book?: string } = {};

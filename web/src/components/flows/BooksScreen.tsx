@@ -45,8 +45,6 @@ import {
   Popover,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
   useMediaQuery,
 } from "@mui/material";
@@ -63,23 +61,20 @@ import {
   type BookLintReport,
   type BookListEntry,
   type BookSummary,
-  type ImportHasLocalEditsBody,
   type Role,
 } from "../../sync/api";
 import { BOOKS, bookName } from "../../lib/bookNames";
 import {
   classifyAiTranslateResult,
-  defaultIntent,
-  importActionFor,
   mainPaneState,
   repullDefaultRange,
   type BooksFetchStatus,
-  type ImportIntent,
 } from "../../lib/importIntent";
 import { startBookAiTranslate } from "../../lib/aiTranslate";
 import { realChapterNumbers } from "../../lib/bookSummary";
 import { isTranslationProject, useProjectConfig } from "../../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "../ImportFromDoor43Dialog";
+import { BringInBookDialog } from "./BringInBookDialog";
 import { FlowStatusChip } from "./FlowStatusChip";
 import { Panel, PanelBody, PanelFoot, PanelTop } from "./BooksPanel";
 import { BooksActivityPanel, BooksPendingPanel } from "./BooksActivityPanels";
@@ -382,17 +377,16 @@ function BookDetailPanel({
   const isTranslation = isTranslationProject(cfg);
 
   const [summary, setSummary] = useState<BookSummary | null>(null);
-  const [intent, setIntent] = useState<ImportIntent>(() => defaultIntent(imported));
-  const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [justImported, setJustImported] = useState(false);
   const [repullOpen, setRepullOpen] = useState(false);
+  // The "Bring in this book" source sheet (docs/ux-simplification.md §1.3).
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const effectiveImported = imported || justImported;
-  const action = importActionFor(effectiveImported, intent);
 
   const loadSummary = useCallback(async (): Promise<BookSummary | null> => {
     try {
@@ -409,42 +403,23 @@ function BookDetailPanel({
     void loadSummary();
   }, [loadSummary]);
 
-  const runImport = async (translateFromSource: boolean) => {
-    setBusy(true);
+  // Import runs inside the "Bring in this book" sheet (BringInBookDialog) —
+  // sources first, then the POST, including the has_local_edits discard
+  // confirm. This callback is the shared post-import path.
+  const handleImported = (res: Awaited<ReturnType<typeof api.importBook>>) => {
     setError(null);
     setWarning(null);
-    setMessage(null);
-    try {
-      const res = await api.importBook(book, translateFromSource ? { translateFromSource: true } : undefined);
-      const sources = importedSourceRepos(res.sources);
-      setMessage(
-        sources.length
-          ? t("flowBooks.detail.importedFrom", { book, sources: sources.join(", ") })
-          : t("flowBooks.detail.importedBook", { book }),
-      );
-      setJustImported(true);
+    const sources = importedSourceRepos(res.sources);
+    setMessage(
+      sources.length
+        ? t("flowBooks.detail.importedFrom", { book, sources: sources.join(", ") })
+        : t("flowBooks.detail.importedBook", { book }),
+    );
+    setJustImported(true);
+    void (async () => {
       await onImported();
       await loadSummary();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        const body = e.body as Partial<ImportHasLocalEditsBody> | undefined;
-        if (body?.error === "has_local_edits") {
-          setError(
-            t("flowBooks.detail.hasLocalEdits", {
-              book,
-              tn: body.tn ?? 0,
-              tq: body.tq ?? 0,
-              twl: body.twl ?? 0,
-              verses: body.verses ?? 0,
-            }),
-          );
-          return;
-        }
-      }
-      setError(t("flowBooks.detail.importFailed", { book, error: errorText(e) }));
-    } finally {
-      setBusy(false);
-    }
+    })();
   };
 
   const runAiTranslate = async () => {
@@ -519,46 +494,14 @@ function BookDetailPanel({
             )
           ) : (
             <>
-              <Typography
-                variant="caption"
-                sx={{
-                  display: "block",
-                  fontWeight: 700,
-                  letterSpacing: "0.06em",
-                  textTransform: "uppercase",
-                  color: "text.secondary",
-                  mb: 0.75,
-                }}
-              >
-                {t("flowBooks.detail.intent")}
-              </Typography>
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={intent}
-                onChange={(_, v) => {
-                  if (v) setIntent(v as ImportIntent);
-                }}
-                sx={{ flexWrap: "wrap" }}
-              >
-                <ToggleButton value="translate" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-                  {t("import.intentTranslate")}
-                </ToggleButton>
-                <ToggleButton value="load" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-                  {t("import.intentLoad")}
-                </ToggleButton>
-              </ToggleButtonGroup>
-
-              <Stack direction="row" spacing={1.5} sx={{ mt: 2, flexWrap: "wrap", rowGap: 1 }}>
-                {action.kind === "import" ? (
-                  <Button
-                    variant="contained"
-                    disabled={busy}
-                    onClick={() => void runImport(action.translateFromSource)}
-                    startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
-                    sx={{ minHeight: 40 }}
-                  >
-                    {busy ? t("flowBooks.detail.importingBook", { book }) : t("flowBooks.detail.importBook", { book })}
+              <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+                {!effectiveImported ? (
+                  // SAFETY: the destructive bootstrap is offered only for a book
+                  // with no content (same invariant lib/importIntent encodes).
+                  // The button opens the "Bring in this book" source sheet, which
+                  // owns intent + per-resource sources + the import itself.
+                  <Button variant="contained" onClick={() => setSheetOpen(true)} sx={{ minHeight: 40 }}>
+                    {t("flowBooks.detail.bringInBook", { book })}
                   </Button>
                 ) : (
                   <>
@@ -584,19 +527,12 @@ function BookDetailPanel({
                 )}
               </Stack>
 
-              {busy && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                  {t("flowBooks.detail.importRunsServerSide")}
-                </Typography>
-              )}
-
               <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
                 {t("flowBooks.detail.importInfo")}
               </Alert>
 
-              {/* 2026-08-11: the per-book source-overrides editor that used to sit
-                  here (duplicated with the admin Setup screen) now lives on
-                  Admin → Setup only. */}
+              {/* Source choices live in the import sheet now; Admin → Setup
+                  remains the AFTER-import edit path for override rows. */}
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
                 {t("flowBooks.detail.sourceOverridesMovedPrefix")}{" "}
                 <Link href="#/admin/setup">{t("flowBooks.detail.adminSetup")}</Link>.
@@ -624,6 +560,15 @@ function BookDetailPanel({
       </Panel>
 
       {isAdmin && <BooksActivityPanel book={book} />}
+
+      {isAdmin && (
+        <BringInBookDialog
+          open={sheetOpen}
+          onClose={() => setSheetOpen(false)}
+          book={book}
+          onSuccess={handleImported}
+        />
+      )}
 
       {isAdmin && (
         <ImportFromDoor43Dialog

@@ -88,7 +88,7 @@ import CheckIcon from "@mui/icons-material/Check";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
-import { unescapeNewlines, waitForOp } from "./translateShared";
+import { isAquiferDraftRow, unescapeNewlines, waitForOp } from "./translateShared";
 import { useSwipeNav } from "./useSwipeNav";
 import type { FlowScreenContext } from "./types";
 
@@ -832,6 +832,12 @@ export default function TranslateQuestionsScreen({
     if (s === "approved") return { kind: "approved" as FlowStatusKind, label: t("translation.stateApproved") };
     if (dirty || rowForChip?.translation_state === "edited" || editedIds.has(id)) {
       return { kind: "edited" as FlowStatusKind, label: t("translation.stateEdited") };
+    }
+    // Parity with the notes screen: an untouched Aquifer import (ai_draft with
+    // draft_meta_json.source==="aquifer") is provenance, not an AI-bot draft. tq
+    // is not an Aquifer target today, so this is a defensive parallel guard (#295).
+    if (rowForChip?.translation_state === "ai_draft" && isAquiferDraftRow(rowForChip)) {
+      return { kind: "aquifer" as FlowStatusKind, label: t("flowTranslate.status.aquiferImport") };
     }
     const aiDrafted =
       rowForChip?.translation_state === "ai_draft" || rowForChip?.latest_source === "ai_pipeline";
