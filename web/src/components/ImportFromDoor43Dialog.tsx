@@ -125,7 +125,10 @@ export function ImportFromDoor43Dialog({
     }
   }, [open, currentChapter, initialRef]);
 
-  const refParsed = useMemo(() => parseChapterRange(refInput, book), [refInput, book]);
+  // `t` is a dep because parseChapterRange returns a translated error message;
+  // without it the message stays in the previous language after a switch. Safe
+  // here — pure derivation, no fetch.
+  const refParsed = useMemo(() => parseChapterRange(refInput, book), [refInput, book, t]);
   const nothingSelected = !opts.ult && !opts.ust && !opts.tn && !opts.tq && !opts.twl;
   const canSubmit = !submitting && refParsed.ok && !nothingSelected;
 
