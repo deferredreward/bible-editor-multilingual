@@ -3962,5 +3962,49 @@
         "questions_other": "{{count}} سؤال"
       }
     }
+  },
+  "messages": {
+    "sourceMode": {
+      "text": "بحث نصي",
+      "strong": "رقم سترونج {{strong}}",
+      "hebrewVowels": "العبرية (مع الحركات)",
+      "hebrewConsonants": "حروف العبرية الساكنة",
+      "greekAccents": "اليونانية (مع علامات النبر)",
+      "greekAccentInsensitive": "اليونانية (دون اعتبار النبر)"
+    },
+    "chapterRef": {
+      "enterChapter": "أدخل أصحاحًا (مثل 130 أو 130-135)",
+      "format": "الصيغة: أصحاح أو أصحاح-أصحاح (مثل 130-135)",
+      "mustBePositive": "يجب أن يكون رقم الأصحاح عددًا موجبًا",
+      "endBeforeStart": "يجب أن يكون أصحاح النهاية ≥ أصحاح البداية"
+    },
+    "reference": {
+      "empty": "فارغ",
+      "format": "الصيغة: 5 | 5:5 | zec 5:5",
+      "unknownBook": "سفر غير معروف: «{{book}}»"
+    },
+    "aiDraft": {
+      "unknownIssueType": "نوع المسألة غير معروف.",
+      "unknownBook": "رمز السفر غير معروف.",
+      "noHebrew": "الاقتباس لا يحتوي على أحرف عبرية.",
+      "hebrewNotValidated": "تعذّر التحقق من العبرية مقابل الآية.",
+      "contextTooLarge": "سياق الآية كبير جدًا.",
+      "rateLimited": "تم تجاوز حد الطلبات — انتظر 30 ثانية.",
+      "serviceUnavailable": "خدمة الذكاء الاصطناعي غير متاحة.",
+      "notConfiguredToken": "الذكاء الاصطناعي غير مُهيأ — يجب على المسؤول تعيين BT_API_TOKEN.",
+      "notConfiguredKey": "الذكاء الاصطناعي غير مُهيأ — يجب على المسؤول تعيين مفتاح Anthropic API.",
+      "cacheUnavailable": "ذاكرة التخزين المؤقت للذكاء الاصطناعي غير متاحة — أعد المحاولة بعد قليل.",
+      "uhbMissing": "المصدر العبري غير متوفر لهذه الآية.",
+      "sessionExpired": "انتهت الجلسة — سجّل الدخول مرة أخرى.",
+      "requestFailed": "فشل طلب الذكاء الاصطناعي (HTTP {{status}}).",
+      "networkError": "خطأ في الشبكة."
+    },
+    "templateDraft": {
+      "tooLarge": "القالب كبير جدًا على طلب الذكاء الاصطناعي.",
+      "versionMismatch": "حدّث شخص آخر هذا القالب — أعد التحميل وحاول مرة أخرى."
+    },
+    "outbox": {
+      "laneQuarantined": "تم العزل: مسار {{version}} مجمَّد"
+    }
   }
 }

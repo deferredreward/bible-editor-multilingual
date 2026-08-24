@@ -17,6 +17,7 @@
 // expectation is "click sparkles, stay in this chapter until it lands."
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import i18n from "../i18n";
 import { ApiError, api, type TnRow, type TnQuickRequest, type TnQuickResponse } from "../sync/api";
 
 const PULSE_MS = 4000;
@@ -27,7 +28,11 @@ export interface AiDraftNotification {
   rowId: string;
   verse: number;
   kind: "success" | "error";
-  message: string;       // for errors; for success it's a fixed "AI draft ready"
+  // Rendered verbatim by AiCompletionToasts, but ONLY for kind === "error";
+  // the success toast is built from the `widgets.toasts.aiDraftReady` i18n key
+  // instead, so the fixed "AI draft ready" below is never displayed and is
+  // deliberately left untranslated.
+  message: string;
   bornAt: number;
 }
 
@@ -64,6 +69,12 @@ export interface StartOptions {
   getIsVisible: (rowId: string) => boolean;
 }
 
+// DISPLAY ONLY — the returned text lands in AiDraftNotification.message, which
+// AiCompletionToasts renders verbatim for `kind: "error"`. The API error *code*
+// stays the logic value (see the 502/model_call_failed retry branch in start()),
+// so nothing ever branches on this prose. Translated inside the function on
+// every call (never at module load) so the active UI language wins; HTTP status
+// codes and BT_API_TOKEN are interpolated/literal, never translated.
 function mapAiError(err: unknown): string {
   if (err instanceof ApiError) {
     const code =
@@ -72,36 +83,36 @@ function mapAiError(err: unknown): string {
         : "";
     switch (code) {
       case "unknown_issue_type":
-        return "Issue type not recognized.";
+        return i18n.t("messages.aiDraft.unknownIssueType");
       case "unknown_book":
-        return "Unknown book code.";
+        return i18n.t("messages.aiDraft.unknownBook");
       case "no_rtl":
-        return "Quote has no Hebrew characters.";
+        return i18n.t("messages.aiDraft.noHebrew");
       case "hebrew_words_not_in_verse":
-        return "Couldn't validate Hebrew against the verse.";
+        return i18n.t("messages.aiDraft.hebrewNotValidated");
       case "body_too_large":
-        return "Verse context too large.";
+        return i18n.t("messages.aiDraft.contextTooLarge");
       case "rate_limited":
-        return "Rate limited — wait 30 s.";
+        return i18n.t("messages.aiDraft.rateLimited");
       case "model_call_failed":
-        return "AI service unavailable.";
+        return i18n.t("messages.aiDraft.serviceUnavailable");
       case "tn_quick_disabled":
-        return "AI not configured — admin must set BT_API_TOKEN.";
+        return i18n.t("messages.aiDraft.notConfiguredToken");
       case "anthropic_api_key_missing":
-        return "AI not configured — admin must set the Anthropic API key.";
+        return i18n.t("messages.aiDraft.notConfiguredKey");
       case "cache_unavailable":
-        return "AI cache unavailable — try again shortly.";
+        return i18n.t("messages.aiDraft.cacheUnavailable");
       case "uhb_missing_for_verse":
-        return "Hebrew source not available for this verse.";
+        return i18n.t("messages.aiDraft.uhbMissing");
       case "unauthorized":
-        return "Session expired — sign in again.";
+        return i18n.t("messages.aiDraft.sessionExpired");
       default:
-        return `AI request failed (HTTP ${err.status}).`;
+        return i18n.t("messages.aiDraft.requestFailed", { status: err.status });
     }
   }
   if (err instanceof DOMException && err.name === "AbortError") return "";
   if (err instanceof Error && err.message) return err.message;
-  return "Network error.";
+  return i18n.t("messages.aiDraft.networkError");
 }
 
 export function useAiDrafts(): UseAiDraftsAPI {

@@ -3538,5 +3538,49 @@
         "questions_other": "{{count}} questions"
       }
     }
+  },
+  "messages": {
+    "sourceMode": {
+      "text": "text search",
+      "strong": "Strong's {{strong}}",
+      "hebrewVowels": "Hebrew (with vowels)",
+      "hebrewConsonants": "Hebrew consonants",
+      "greekAccents": "Greek (with accents)",
+      "greekAccentInsensitive": "Greek (accent-insensitive)"
+    },
+    "chapterRef": {
+      "enterChapter": "enter a chapter (e.g. 130 or 130-135)",
+      "format": "format: CH or CH-CH (e.g. 130-135)",
+      "mustBePositive": "chapter must be a positive number",
+      "endBeforeStart": "end chapter must be ≥ start chapter"
+    },
+    "reference": {
+      "empty": "empty",
+      "format": "format: 5 | 5:5 | zec 5:5",
+      "unknownBook": "unknown book: \"{{book}}\""
+    },
+    "aiDraft": {
+      "unknownIssueType": "Issue type not recognized.",
+      "unknownBook": "Unknown book code.",
+      "noHebrew": "Quote has no Hebrew characters.",
+      "hebrewNotValidated": "Couldn't validate Hebrew against the verse.",
+      "contextTooLarge": "Verse context too large.",
+      "rateLimited": "Rate limited — wait 30 s.",
+      "serviceUnavailable": "AI service unavailable.",
+      "notConfiguredToken": "AI not configured — admin must set BT_API_TOKEN.",
+      "notConfiguredKey": "AI not configured — admin must set the Anthropic API key.",
+      "cacheUnavailable": "AI cache unavailable — try again shortly.",
+      "uhbMissing": "Hebrew source not available for this verse.",
+      "sessionExpired": "Session expired — sign in again.",
+      "requestFailed": "AI request failed (HTTP {{status}}).",
+      "networkError": "Network error."
+    },
+    "templateDraft": {
+      "tooLarge": "Template too large for the AI request.",
+      "versionMismatch": "Someone else updated this template — reload and try again."
+    },
+    "outbox": {
+      "laneQuarantined": "Quarantined: {{version}} lane is frozen"
+    }
   }
 }
