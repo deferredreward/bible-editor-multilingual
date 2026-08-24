@@ -9,7 +9,6 @@ import { SyncStatusBar } from "./components/SyncStatusBar";
 import { PipelineStatusBar } from "./components/PipelineStatusBar";
 import { AccountMenu } from "./components/AccountMenu";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
-import { ImportWorkspace } from "./components/ImportWorkspace";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { LocalizationInspector } from "./components/LocalizationInspector";
@@ -40,7 +39,6 @@ type Location =
   | { view: "chapter"; book: string; chapter: number; verse: number }
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
   | { view: "templates"; templateId: string | null }
-  | { view: "import"; book: string | null; chapter: number | null; verse: number | null }
   | { view: "preferences"; section: PrefsSection }
   | { view: "review"; book: string; chapter: number }
   | { view: "home" }
@@ -52,7 +50,7 @@ type Location =
   | { view: "style" }
   | { view: "curate"; templateId: string | null }
   | { view: "setup" }
-  | { view: "books" }
+  | { view: "books"; book: string | null }
   | { view: "team" }
   | { view: "observe" }
   | { view: "verse"; book: string; chapter: number; verse: number }
@@ -158,14 +156,20 @@ function parseHash(): Location {
   if (tm) {
     return { view: "templates", templateId: decodeURIComponent(tm[1] ?? "") || null };
   }
-  const im = location.hash.match(/^#\/import(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/);
+  // Legacy #/import[/BOOK[/CH[/VERSE]]] — the standalone IMPORT surface was
+  // retired once BooksScreen's "Bring in this book" sheet landed (PR #305's
+  // A3; docs/ux-simplification.md §2.1). The book carries over to #/books/:book
+  // so a reference-box nav to an un-imported book still lands on that book;
+  // the chapter/verse tail is dropped because the new flow opens a book at its
+  // package hub (#/package/:book), which is not verse-addressable.
+  const im = location.hash.match(/^#\/import(?:\/([A-Za-z0-9]+)(?:\/\d+)?(?:\/\d+)?)?$/);
   if (im) {
-    return {
-      view: "import",
-      book: im[1] ? im[1].toUpperCase() : null,
-      chapter: im[2] ? parseInt(im[2], 10) : null,
-      verse: im[3] ? parseInt(im[3], 10) : null,
-    };
+    const book = im[1] ? im[1].toUpperCase() : null;
+    const next = book ? `#/books/${book}` : "#/books";
+    // replaceState doesn't fire hashchange, so the returned Loc below is what
+    // renders — this only stops the stale #/import URL from sticking around.
+    history.replaceState(null, "", location.pathname + next);
+    return { view: "books", book };
   }
   const rv = location.hash.match(/^#\/review\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
   if (rv) {
@@ -191,7 +195,8 @@ function parseHash(): Location {
   if (/^#\/ai$/.test(location.hash)) return { view: "ai" };
   if (/^#\/style$/.test(location.hash)) return { view: "style" };
   if (/^#\/setup$/.test(location.hash)) return { view: "setup" };
-  if (/^#\/books$/.test(location.hash)) return { view: "books" };
+  const bk = location.hash.match(/^#\/books(?:\/([A-Za-z0-9]+))?$/);
+  if (bk) return { view: "books", book: bk[1] ? bk[1].toUpperCase() : null };
   if (/^#\/team$/.test(location.hash)) return { view: "team" };
   if (/^#\/observe$/.test(location.hash)) return { view: "observe" };
   const cu = location.hash.match(/^#\/curate(?:\/(.+))?$/);
@@ -248,7 +253,7 @@ function parseHash(): Location {
     };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
-  if (!m) return { view: "books" };
+  if (!m) return { view: "books", book: null };
   return {
     view: "chapter",
     book: m[1].toUpperCase(),
@@ -623,7 +628,7 @@ export function App() {
     // into React state (replaceState doesn't fire hashchange) so the next
     // sign-in lands on the default Books screen instead of a stale deep link.
     history.replaceState(null, "", location.pathname);
-    setLoc({ view: "books" });
+    setLoc({ view: "books", book: null });
     setAuth({ kind: "missing" });
   };
 
@@ -754,16 +759,6 @@ export function App() {
               location.hash = id ? `#/templates/${encodeURIComponent(id)}` : `#/templates`;
             }}
           />
-        ) : loc.view === "import" ? (
-          <ImportWorkspace
-            book={loc.book}
-            target={loc.chapter ? { chapter: loc.chapter, verse: loc.verse ?? 1 } : null}
-            onBack={backToScripture}
-            onNavigate={(b) => {
-              location.hash = b ? `#/import/${b}` : `#/import`;
-            }}
-            onOpenBook={(b, chapter, verse) => navigate(b, chapter ?? 1, verse ?? undefined)}
-          />
         ) : loc.view === "review" ? (
           <ReviewQueue book={loc.book} chapter={loc.chapter} onNavigate={navigate} />
         ) : loc.view === "home" ||
@@ -884,6 +879,7 @@ export function App() {
                 role={auth.role}
                 me={auth.me}
                 onNavigate={navigate}
+                book={loc.book}
                 lastPosition={
                   livePosition ??
                   (auth.me?.lastBook && auth.me.lastChapter != null && auth.me.lastVerse != null

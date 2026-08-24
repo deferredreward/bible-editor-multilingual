@@ -161,7 +161,7 @@ facts; the fix column is the smallest change that removes the friction.
 |---|---|---|
 | **Three parallel navigation chromes** (FlowNav pill bar, AdminDesk rail, bare back-chevron screens) plus classic TopBar — and two screens with none. | `FlowNav.tsx`, `AdminDesk.tsx`, `PackageHubScreen.tsx:350`, `Shell.tsx` | Pick one chrome for the redesign surfaces; give chevron-only screens the global strip. |
 | **Route arity silently picks which editor you get**: `#/scripture/JON/2` → redesign, `#/scripture/JON/2/3` → legacy flow screen; same for words/align. FlowNav links to the **legacy** 3-segment forms (`FlowNav.tsx:57-61`) while Books→Package lands in the redesign — two editors for the same verse, no indication which you're in. | `App.tsx:203-248` | Point FlowNav at the redesign routes; make legacy arities redirect. |
-| **Duplicate surfaces**: `#/setup` and `#/admin/setup` mount the same `SetupWizard`; `#/team`/`#/admin/team` likewise; `ImportWorkspace` (`#/import`) duplicates BooksScreen's import *and* still embeds the overrides panel that Books says "moved to Admin → Setup". | `App.tsx`, `ImportWorkspace.tsx:472-484` | Redirect the duplicates; delete `ImportWorkspace` once the source sheet lands (Part 1). |
+| **Duplicate surfaces**: `#/setup` and `#/admin/setup` mount the same `SetupWizard`; `#/team`/`#/admin/team` likewise; `ImportWorkspace` (`#/import`) duplicates BooksScreen's import *and* still embeds the overrides panel that Books says "moved to Admin → Setup". | `App.tsx`, `ImportWorkspace.tsx:472-484` | Redirect the duplicates; delete `ImportWorkspace` once the source sheet lands (Part 1). **Done for `ImportWorkspace`:** deleted, `#/import[/BOOK]` → `#/books[/BOOK]`. `#/setup` / `#/team` duplicates remain. |
 | **The review queue is a dead end**: `#/review` renders classic TopBar with navigation off and **no route back to Books or Home** — only More-menu items and `#/preferences`. The avatar shows "?" and Sign out is a no-op (no `username`/`onLogout` passed). This is the primary approval destination — Home's tN and tQ queue cards both point here. | `App.tsx:760-761`, `ReviewQueue.tsx:1222`, `TopBar.tsx:212-221,1035,1086`, `HomeScreen.tsx:451,461` | Give ReviewQueue the flow chrome (or at minimum a back-to-package chevron). |
 
 ### 2.2 Journey friction (desktop)
@@ -196,7 +196,7 @@ AdminDesk at 900), so between 700-900 the chrome is half-collapsed.
 
 | Surface | Problem at phone width | Fix |
 |---|---|---|
-| `PreferencesWorkspace` / `ImportWorkspace` / `TemplateWorkspace` | Hard-coded 240-280px `flexShrink:0` rails, zero media queries — rail eats 64-75% of a 375px viewport | Collapse rail to a drawer (or delete `ImportWorkspace`, §2.1). |
+| `PreferencesWorkspace` / ~~`ImportWorkspace`~~ (deleted) / `TemplateWorkspace` | Hard-coded 240-280px `flexShrink:0` rails, zero media queries — rail eats 64-75% of a 375px viewport | Collapse rail to a drawer (or delete `ImportWorkspace`, §2.1). |
 | ReviewQueue | Rail dropped on phone (`ReviewQueue.tsx:1282`) and **Approve-all lives in the rail** (`ReviewRail.tsx:119`) — bulk approve unreachable on phones | Move bulk action into the `FlowActionBar`. |
 | Classic Shell | Phone shows one region (scripture *or* resources, `WorkspaceLayout.tsx:320-326`); Timeline rail force-collapsed with its toggle removed (`Shell.tsx:497,3828`) — per-verse lane check-off has **no mobile affordance** | Lane check-off needs a home in the translate screens' action bar. |
 | AdminSetupScreen | Section jump strip hidden below `md` (`AdminSetupScreen.tsx:304`) on the longest admin page | Keep the strip as horizontally scrollable chips. |
@@ -226,7 +226,8 @@ are exactly the ones with no nav chrome, which is why fixing §2.1 pays twice.
   `upstreamSourceForResource`) / Aquifer / URL, optional chapter ranges;
   writes `PUT /sources` then imports; surfaces the `has_local_edits` 409 with
   an explicit admin confirm. Retires the Setup placement (keep panel as edit
-  path initially) and deletes `ImportWorkspace`.
+  path initially) and deletes `ImportWorkspace`. *(Shipped in PR #305, except the
+  `ImportWorkspace` deletion, which is the follow-up.)*
 - **A4. "Publish this book"** on the package hub lifecycle card:
   `exportsRun({book})`, per-resource results, Door43 PR links from
   `pr_number`, readiness from A2.
