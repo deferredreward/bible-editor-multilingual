@@ -3037,7 +3037,8 @@
       "trash": "Trash",
       "restoreTooltip": "Bring this note back out of the trash",
       "trashTooltip": "Move this note to the visible, restorable trash",
-      "deleteQuestionTooltip": "Questions are deleted outright — there is no question trash"
+      "deleteQuestionTooltip": "Questions are deleted outright — there is no question trash",
+      "approveTrashedTooltip": "This note is in the trash — restore it before approving."
     },
     "conflictNotice": {
       "rowGone": "That row is no longer in this chapter — the other editor may have deleted it.",
