@@ -17,9 +17,9 @@
 // Real data only. The book grid's imported/not-imported state comes from
 // GET /api/books; a FAILED list load renders an explicit error + retry and
 // never collapses into an all-"not imported" list (that would re-expose the
-// destructive import path for an already-imported book — the same safety rule
-// ImportWorkspace enforces, and the shared decision logic in lib/importIntent
-// is reused here rather than re-derived).
+// destructive import path for an already-imported book — the safety rule the
+// retired ImportWorkspace enforced, now carried by the shared decision logic in
+// lib/importIntent, which is reused here rather than re-derived).
 //
 // Breakpoints: only the system bands (theme `tablet` = 560, `md` = 900). The
 // mockup mixed 700/820/900; those are not reproduced. The mobile canonical
@@ -86,6 +86,13 @@ export interface BooksScreenProps extends FlowScreenContext {
   // session's navigation over the (potentially stale) `me.lastBook` snapshot
   // fetched once at boot. `null` when there is no last position at all.
   lastPosition: { book: string; chapter: number; verse: number } | null;
+  /**
+   * Book selected by the route (#/books/:book), or null on the bare #/books.
+   * The retired #/import/:book surface redirects here (App.tsx), so a
+   * reference-box nav to an un-imported book still opens that book's detail
+   * pane — which is where "Bring in this book" now lives.
+   */
+  book: string | null;
 }
 
 const OT_COUNT = 39;
@@ -588,7 +595,7 @@ function BookDetailPanel({
   );
 }
 
-export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScreenProps) {
+export default function BooksScreen({ role, onNavigate, lastPosition, book: routeBook }: BooksScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
   const { skip } = theme.palette.flows;
@@ -602,7 +609,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   const [booksStatus, setBooksStatus] = useState<BooksFetchStatus>("loading");
   const [listError, setListError] = useState<string | null>(null);
   const statusRef = useRef<BooksFetchStatus>("loading");
-  const [selected, setSelected] = useState<string>("GEN");
+  const [selected, setSelected] = useState<string>(routeBook ?? "GEN");
   const [search, setSearch] = useState("");
   // Phone accordion tree: which testament / sub-group disclosures are open.
   // Fully controlled so a search-driven force-open can't flip the component
@@ -611,6 +618,9 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   // Only auto-jump the selection to a real imported book on the FIRST load —
   // afterwards the user's click wins.
   const seededRef = useRef(false);
+  // Read inside refetchBooks without making the callback depend on the route.
+  const routeBookRef = useRef(routeBook);
+  routeBookRef.current = routeBook;
 
   const setStatus = useCallback((s: BooksFetchStatus) => {
     statusRef.current = s;
@@ -626,7 +636,10 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
       setStatus("loaded");
       if (!seededRef.current && r.books.length > 0) {
         seededRef.current = true;
-        if (!r.books.some((b) => b.book === "GEN")) setSelected(r.books[0].book);
+        // An explicit #/books/:book wins over the auto-seed — including for a
+        // book that is NOT imported yet, which is exactly the case that used to
+        // route to #/import/:book.
+        if (!routeBookRef.current && !r.books.some((b) => b.book === "GEN")) setSelected(r.books[0].book);
       }
     } catch (e) {
       // A background-refresh failure keeps the last known-good list; an INITIAL
@@ -642,6 +655,20 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   useEffect(() => {
     void refetchBooks();
   }, [refetchBooks]);
+
+  useEffect(() => {
+    if (routeBook) setSelected(routeBook);
+  }, [routeBook]);
+
+  // Keep the URL truthful once the user picks a different book, so a reload or
+  // a shared link reopens the pane they were looking at rather than the book
+  // the route seeded. replaceState (not `location.hash =`) so browsing the grid
+  // doesn't pile up history entries — and it fires no hashchange, which would
+  // otherwise re-enter parseHash and fight this component's own state.
+  const selectBook = useCallback((code: string) => {
+    setSelected(code);
+    history.replaceState(null, "", `${location.pathname}#/books/${code}`);
+  }, []);
 
   const importedSet = useMemo(() => new Set(books.map((b) => b.book)), [books]);
 
@@ -798,7 +825,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                     code={code}
                     imported={importedSet.has(code)}
                     selected={selected === code}
-                    onSelect={setSelected}
+                    onSelect={selectBook}
                   />
                 ))}
               </Box>
@@ -838,7 +865,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                       code={code}
                       imported={importedSet.has(code)}
                       selected={selected === code}
-                      onSelect={setSelected}
+                      onSelect={selectBook}
                     />
                   ));
                   if (!group.name) return <Box key="bare">{rows}</Box>;

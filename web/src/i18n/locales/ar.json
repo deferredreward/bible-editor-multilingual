@@ -87,19 +87,10 @@
     "draftDisabledValidated": "ألغِ الاعتماد أولًا للصياغة فوق ترجمة معتمدة."
   },
   "import": {
-    "title": "استيراد الأسفار",
-    "navTitle": "استيراد الأسفار",
-    "backToScripture": "العودة إلى النص الكتابي",
     "searchPlaceholder": "البحث في الأسفار",
     "importedCount": "{{n}}/{{total}} مستوردًا",
     "imported": "مستورد",
     "notImported": "غير مستورد",
-    "notImportedYet": "لم يُستورد بعد.",
-    "selectBook": "اختر سفرًا لاستيراده.",
-    "loadFailed": "تعذّر تحميل قائمة الأسفار.",
-    "retry": "إعادة المحاولة",
-    "summaryHint": "{{chapters}} أصحاحات · {{tn}} ملاحظات · {{tq}} أسئلة",
-    "intentLegend": "ماذا تريد أن تفعل؟",
     "intentTranslate": "ترجمة سفر جديد",
     "intentTranslateDesc": "استورد المصدر الإنجليزي (ULT/UST + الملاحظات والأسئلة) لتتمكن من ترجمته وتشغيل الترجمة بالذكاء الاصطناعي.",
     "intentLoad": "تحميل عملي الحالي",
@@ -134,22 +125,7 @@
       "rangeNeedsBoth": "أدخل أصحاح البداية والنهاية معًا، أو اتركهما فارغين للسفر بأكمله.",
       "saveFailed": "تعذّر حفظ التجاوز.",
       "removeFailed": "تعذّرت إزالة التجاوز."
-    },
-    "importButton": "استيراد {{book}}",
-    "importing": "جارٍ الاستيراد…",
-    "importedOk": "تم استيراد {{book}}.",
-    "importedFromSource": "تم استيراد {{book}} — الملاحظات/الأسئلة من {{repos}}.",
-    "importFailed": "تعذّر استيراد {{book}}: {{message}}",
-    "openButton": "فتح في المحرر",
-    "repullButton": "إعادة السحب من Door43…",
-    "alreadyImported": "هذا السفر مستورد بالفعل. افتحه للتحرير، أو أعد سحب الأحدث من Door43 (تعديلاتك محفوظة).",
-    "aiTranslate": "ترجمة بالذكاء الاصطناعي (الملاحظات + الأسئلة)",
-    "aiTranslateDesc": "أنشئ مسودة ملاحظات وأسئلة الترجمة للسفر بأكمله بالذكاء الاصطناعي. يمكنك مراجعة كل أصحاح في المحرر.",
-    "aiTranslateStarted": "بدأت الترجمة بالذكاء الاصطناعي: {{started}} عملية في قائمة الانتظار{{suffix}}.",
-    "aiTranslateSkipped": " ({{skipped}} قيد التشغيل بالفعل)",
-    "aiTranslatePartial": "بدأت {{started}} من عمليات الترجمة بالذكاء الاصطناعي، لكن فشل بدء {{failed}} من عمليات الأصحاحات — أعد المحاولة لإضافة الباقي إلى قائمة الانتظار.",
-    "aiTranslateNone": "لا شيء للترجمة — لم يُعثر على أصحاحات.",
-    "aiTranslateFailedAll": "تعذّر بدء الترجمة بالذكاء الاصطناعي."
+    }
   },
   "topbar": {
     "showVerseList": "إظهار قائمة الآيات",
