@@ -804,6 +804,12 @@ export async function devSignIn(username = "dev"): Promise<MeResponse> {
     }
     throw new ApiError(res.status, `HTTP ${res.status}`, body);
   }
+  // A successful dev mint means we now hold a fresh access cookie — the same
+  // condition change a silent refresh represents. Fire onAuthRefreshed so the
+  // outbox revives parked ops AND any "session expired" banner raised by the
+  // boot-time 401s (before this mint landed) clears. Without this the banner
+  // stuck until a manual reload (issue #283).
+  emitAuthRefreshed();
   return (await res.json()) as MeResponse;
 }
 
