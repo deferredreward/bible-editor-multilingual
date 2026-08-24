@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // Editor pane for CurateScreen.tsx (l3-templates). Reuses the exact server
 // contract and drafts-store wiring TemplateWorkspace.tsx already established
 // for note templates — this is a re-skin (FlowNav chrome, mobile Back arrow,
@@ -28,6 +26,8 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import CheckIcon from "@mui/icons-material/Check";
@@ -41,10 +41,10 @@ import { useTemplateAiDraft } from "../../hooks/useTemplateAiDraft";
 import { drafts as draftStore, templateKey } from "../../sync/drafts";
 import { ApiError, api, type TemplateUnit } from "../../sync/api";
 
-export const CURATE_STATE_LABEL: Record<string, string> = {
-  ai_draft: "AI draft",
-  edited: "edited",
-  validated: "validated",
+export const CURATE_STATE_LABEL_KEYS: Record<string, string> = {
+  ai_draft: "moreTools.curate.stateAiDraft",
+  edited: "moreTools.curate.stateEdited",
+  validated: "moreTools.curate.stateValidated",
 };
 
 export function curateStateChipKind(state: TemplateUnit["translation_state"]): FlowStatusKind {
@@ -54,8 +54,10 @@ export function curateStateChipKind(state: TemplateUnit["translation_state"]): F
   return "skip";
 }
 
-export function curateStateLabel(state: TemplateUnit["translation_state"]): string {
-  return state ? CURATE_STATE_LABEL[state] ?? state : "not started";
+export function curateStateLabel(state: TemplateUnit["translation_state"], t: TFunction): string {
+  if (!state) return t("moreTools.curate.stateNotStarted");
+  const key = CURATE_STATE_LABEL_KEYS[state];
+  return key ? t(key) : state;
 }
 
 export interface CurateEditorProps {
@@ -78,6 +80,7 @@ export function CurateEditor({
   onServerChange,
   onBack,
 }: CurateEditorProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const [unit, setUnit] = useState<TemplateUnit | null>(null);
   const [loading, setLoading] = useState(false);
@@ -250,12 +253,12 @@ export function CurateEditor({
     return (
       <Box sx={{ p: 3 }}>
         {onBack && (
-          <IconButton size="small" onClick={onBack} sx={{ mb: 1, minWidth: 44, minHeight: 44 }} aria-label="Back to template list">
+          <IconButton size="small" onClick={onBack} sx={{ mb: 1, minWidth: 44, minHeight: 44 }} aria-label={t("moreTools.curate.backToList")}>
             <ArrowBackIcon fontSize="small" />
           </IconButton>
         )}
         <Alert severity="error">
-          {errorMsg ?? `Couldn't load ${templateId}.`}
+          {errorMsg ?? t("moreTools.curate.unitLoadFailed", { id: templateId })}
         </Alert>
       </Box>
     );
@@ -266,18 +269,18 @@ export function CurateEditor({
   // fresh seed). Approve stays visible so the feature doesn't look missing,
   // but is disabled with the real reason rather than left always-on.
   const approveDisabledReason = dirty
-    ? "Save your edit first."
+    ? t("moreTools.curate.saveFirst")
     : saving
       ? null
       : state === null
-        ? "Nothing to approve yet — the server requires a translation before Approve works. Write a translation or draft one with AI first."
+        ? t("moreTools.curate.nothingToApprove")
         : null;
 
   return (
     <Box sx={{ p: { xs: 1.5, md: 2.5 }, maxWidth: 1000, mx: "auto" }}>
       <Stack direction="row" alignItems="flex-start" spacing={1} sx={{ mb: 2 }}>
         {onBack && (
-          <IconButton size="small" onClick={onBack} sx={{ mt: 0.25, minWidth: 44, minHeight: 44 }} aria-label="Back to template list">
+          <IconButton size="small" onClick={onBack} sx={{ mt: 0.25, minWidth: 44, minHeight: 44 }} aria-label={t("moreTools.curate.backToList")}>
             <ArrowBackIcon fontSize="small" />
           </IconButton>
         )}
@@ -286,13 +289,13 @@ export function CurateEditor({
             {unit.template_id}
           </Typography>
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.5, flexWrap: "wrap" }}>
-            <FlowStatusChip kind={curateStateChipKind(state)} label={curateStateLabel(state)} />
+            <FlowStatusChip kind={curateStateChipKind(state)} label={curateStateLabel(state, t)} />
             <Typography variant="caption" color="text.secondary">
-              {approvedTally} approved
+              {approvedTally}
             </Typography>
           </Stack>
         </Box>
-        <Tooltip title="Version history">
+        <Tooltip title={t("moreTools.curate.versionHistory")}>
           <IconButton size="small" onClick={() => setHistoryOpen(true)} sx={{ color: "text.secondary", minWidth: 44, minHeight: 44 }}>
             <HistoryIcon fontSize="small" />
           </IconButton>
@@ -301,7 +304,7 @@ export function CurateEditor({
 
       {aiDisabledGlobal && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          AI not configured for this workspace — Draft with AI is unavailable (an admin needs to set BT_API_TOKEN). Editing and Approve still work normally.
+          {t("moreTools.curate.aiUnavailableInfo")}
         </Alert>
       )}
 
@@ -324,7 +327,7 @@ export function CurateEditor({
             mb: 2,
           }}
         >
-          Validated — click to expand and edit
+          {t("moreTools.curate.validatedExpand")}
         </Box>
       ) : (
         <Box
@@ -352,7 +355,7 @@ export function CurateEditor({
                 variant="caption"
                 sx={{ display: "block", mb: 1, fontFamily: "monospace", color: "text.disabled", textTransform: "uppercase", fontSize: 10, fontWeight: 600, letterSpacing: "0.09em" }}
               >
-                Source (English, read-only)
+                {t("moreTools.curate.sourceLabel")}
               </Typography>
               <MarkdownView markdown={unit.source_md} dir="ltr" />
             </Box>
@@ -364,7 +367,7 @@ export function CurateEditor({
                   variant="caption"
                   sx={{ flex: 1, fontFamily: "monospace", color: "text.disabled", textTransform: "uppercase", fontSize: 10, fontWeight: 600, letterSpacing: "0.09em" }}
                 >
-                  Target (translated template)
+                  {t("moreTools.curate.targetLabel")}
                 </Typography>
                 <ToggleButtonGroup
                   size="small"
@@ -375,8 +378,8 @@ export function CurateEditor({
                   }}
                   sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1.25, minHeight: 32 } }}
                 >
-                  <ToggleButton value="edit">Edit</ToggleButton>
-                  <ToggleButton value="preview">Preview</ToggleButton>
+                  <ToggleButton value="edit">{t("common.edit")}</ToggleButton>
+                  <ToggleButton value="preview">{t("moreTools.common.preview")}</ToggleButton>
                 </ToggleButtonGroup>
               </Stack>
               {preview ? (
@@ -410,15 +413,19 @@ export function CurateEditor({
       )}
       {isDraftState && !collapsedValidated && (
         <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 1.5 }}>
-          This draft came from AI — review it before approving.
+          {t("moreTools.curate.aiDraftReview")}
         </Typography>
       )}
 
       <Stack direction="row" alignItems="center" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-          {dirty ? "1 unsaved" : unit.updated_at ? `Saved ${new Date(unit.updated_at * 1000).toLocaleString()}` : "Not saved yet"}
+          {dirty
+            ? t("moreTools.curate.oneUnsaved")
+            : unit.updated_at
+              ? t("moreTools.curate.savedAt", { time: new Date(unit.updated_at * 1000).toLocaleString() })
+              : t("moreTools.curate.notSavedYet")}
         </Typography>
-        <Tooltip title={isValidated ? "Approved templates can't be re-drafted — un-approve first." : aiDisabledGlobal ? "AI not configured for this workspace." : ""}>
+        <Tooltip title={isValidated ? t("moreTools.curate.approvedNoRedraft") : aiDisabledGlobal ? t("moreTools.curate.aiNotConfigured") : ""}>
           <span>
             <Button
               size="small"
@@ -428,7 +435,7 @@ export function CurateEditor({
               onClick={handleDraftWithAi}
               sx={{ minHeight: 44 }}
             >
-              Draft with AI
+              {t("moreTools.curate.draftWithAi")}
             </Button>
           </span>
         </Tooltip>
@@ -440,13 +447,13 @@ export function CurateEditor({
           onClick={handleSave}
           sx={{ minHeight: 44 }}
         >
-          Save
+          {t("common.save")}
         </Button>
         {isValidated ? (
-          <Tooltip title={dirty ? "Save your edit first." : ""}>
+          <Tooltip title={dirty ? t("moreTools.curate.saveFirst") : ""}>
             <span>
               <Button size="small" variant="text" color="warning" disabled={dirty} onClick={() => handleValidate(false)} sx={{ minHeight: 44 }}>
-                Un-approve
+                {t("moreTools.curate.unapprove")}
               </Button>
             </span>
           </Tooltip>
@@ -462,7 +469,7 @@ export function CurateEditor({
                 onClick={() => handleValidate(true)}
                 sx={{ minHeight: 44 }}
               >
-                Approve
+                {t("common.approve")}
               </Button>
             </span>
           </Tooltip>
@@ -483,12 +490,12 @@ export function CurateEditor({
 
       <Snackbar open={staleDraft} onClose={() => setStaleDraft(false)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="warning" onClose={() => setStaleDraft(false)}>
-          Your unsaved draft is from an older version of this template — saving will overwrite the newer server text with your draft.
+          {t("moreTools.curate.staleDraftWarning")}
         </Alert>
       </Snackbar>
       <Snackbar open={conflict} autoHideDuration={10000} onClose={() => setConflict(false)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="warning" onClose={() => setConflict(false)}>
-          Someone else saved this template first — your draft is kept, Save again to apply it on top.
+          {t("moreTools.curate.saveConflict")}
         </Alert>
       </Snackbar>
       <Snackbar open={errorMsg !== null} autoHideDuration={6000} onClose={() => setErrorMsg(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>

@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // a3-team: Admin — team & access. Port of docs/flows/ui/a3-team.html.
 // Real allowlist management (add / edit role / remove / purge-manual),
 // reusing the client calls already proven in UserManagementSection.tsx.
@@ -29,6 +27,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { FlowNav } from "./FlowNav";
 import { WorkspaceSwitcher } from "../WorkspaceSwitcher";
@@ -37,27 +37,29 @@ import { api, ApiError, type AdminUser, type OrgMembersResponse } from "../../sy
 
 export interface TeamScreenProps extends FlowScreenContext {}
 
-const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; label: string }> = [
-  { value: "editor", label: "Editor" },
-  { value: "admin", label: "Admin" },
+const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; labelKey: string }> = [
+  { value: "editor", labelKey: "moreTools.team.roleEditor" },
+  { value: "admin", labelKey: "moreTools.team.roleAdmin" },
 ];
 
 // Bare allowlist error codes (api/src/adminUserRoutes.ts) rendered as plain
-// English — same codes UserManagementSection.tsx maps, kept in sync here
-// rather than shared, since this screen has no i18n keys yet either.
-function errorMessage(e: unknown): string {
+// language — same codes UserManagementSection.tsx maps, kept in sync here
+// rather than shared.
+function errorMessage(e: unknown, t: TFunction): string {
   const code = e instanceof ApiError ? (e.body as { error?: string } | undefined)?.error : undefined;
   switch (code) {
     case "invalid_username":
-      return "400 — invalid username";
+      return t("moreTools.team.errInvalidUsername");
     case "dcs_user_not_found":
-      return "404 — no such Door43 user";
+      return t("moreTools.team.errNoUser");
     case "last_admin":
-      return "409 — can't do that to the only remaining admin";
+      return t("moreTools.team.errLastAdmin");
     case "not_found":
-      return "404 — not found";
+      return t("moreTools.team.errNotFound");
     default:
-      return e instanceof ApiError ? `${e.status} — ${code ?? "request failed"}` : "request failed";
+      return e instanceof ApiError
+        ? t("moreTools.team.errGeneric", { status: e.status, code: code ?? t("moreTools.team.requestFailed") })
+        : t("moreTools.team.requestFailed");
   }
 }
 
@@ -123,6 +125,7 @@ function Panel({
 }
 
 export default function TeamScreen({ role }: TeamScreenProps) {
+  const { t } = useTranslation();
   const isAdmin = role === "admin";
 
   const [users, setUsers] = useState<AdminUser[] | null>(null);
@@ -178,19 +181,22 @@ export default function TeamScreen({ role }: TeamScreenProps) {
   // member" on an unconfigured workspace.
   const rosterUsable = !!orgMembers && !!orgMembers.org && !rosterDegraded;
 
+  const roleDisplay = (r: "admin" | "editor") =>
+    r === "admin" ? t("moreTools.team.roleAdmin") : t("moreTools.team.roleEditor");
+
   const handleAdd = async () => {
     const username = newUsername.trim();
     if (!username) return;
     setAdding(true);
     try {
       const res = await api.adminSetUserRole(username, newRole);
-      let text = `Added ${username} as ${newRole}`;
-      if (!res.dcsVerified) text += " (unverified — Door43 lookup failed, added anyway)";
+      let text = t("moreTools.team.addedAs", { username, role: roleDisplay(newRole) });
+      if (!res.dcsVerified) text += ` ${t("moreTools.team.unverifiedSuffix")}`;
       setMsg(text);
       setNewUsername("");
       setNewRole("editor");
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(e, t));
     } finally {
       setAdding(false);
     }
@@ -201,11 +207,11 @@ export default function TeamScreen({ role }: TeamScreenProps) {
     setRowBusy(username);
     try {
       const res = await api.adminSetUserRole(username, roleValue);
-      let text = `${username} is now ${roleValue}`;
-      if (res.wasTeamManaged) text += " (Door43 team sync will re-take this on next login)";
+      let text = t("moreTools.team.nowRole", { username, role: roleDisplay(roleValue) });
+      if (res.wasTeamManaged) text += ` ${t("moreTools.team.teamRetakeSuffix")}`;
       setMsg(text);
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(e, t));
     } finally {
       setRowBusy(null);
     }
@@ -213,17 +219,17 @@ export default function TeamScreen({ role }: TeamScreenProps) {
   };
 
   const handleRemove = async (username: string) => {
-    if (!window.confirm(`Remove ${username} from the allowlist?`)) return;
+    if (!window.confirm(t("preferences.users.confirmRemove", { username }))) return;
     setRowBusy(username);
     try {
       const res = await api.adminRemoveUser(username);
       setMsg(
         res.wasTeamDerived
-          ? `Removed ${username} (Door43 team sync will re-add on next login)`
-          : `Removed ${username}`,
+          ? t("moreTools.team.removedTeamDerived", { username })
+          : t("moreTools.team.removed", { username }),
       );
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(e, t));
     } finally {
       setRowBusy(null);
     }
@@ -238,11 +244,11 @@ export default function TeamScreen({ role }: TeamScreenProps) {
       const res = await api.adminPurgeManualGrants();
       setMsg(
         res.kept.length
-          ? `Removed ${res.removed.length}; kept ${res.kept.join(", ")} (last-admin guard)`
-          : `Removed ${res.removed.length}`,
+          ? t("moreTools.team.purgedKept", { count: res.removed.length, kept: res.kept.join(", ") })
+          : t("moreTools.team.purged", { count: res.removed.length }),
       );
     } catch (e) {
-      setMsg(errorMessage(e));
+      setMsg(errorMessage(e, t));
     } finally {
       setPurging(false);
       setPurgeOpen(false);
@@ -255,7 +261,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
         <FlowNav current="team" role={role} />
         <Alert severity="info" sx={{ mt: 2 }}>
-          Team &amp; access is admin-only. Your current role is {role}.
+          {t("moreTools.team.adminOnlyAlert", { role })}
         </Alert>
       </Box>
     );
@@ -270,13 +276,13 @@ export default function TeamScreen({ role }: TeamScreenProps) {
           variant="caption"
           sx={{ fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "primary.main" }}
         >
-          Bundle A/team · Org access administration
+          {t("moreTools.team.eyebrow")}
         </Typography>
         <Typography variant="h5" sx={{ mt: 0.5 }}>
-          Team &amp; user management
+          {t("moreTools.team.title")}
         </Typography>
         <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          Manual role grants layered on top of your Door43 org&apos;s team roles. Admin only.
+          {t("moreTools.team.subtitle")}
         </Typography>
       </Box>
 
@@ -284,12 +290,12 @@ export default function TeamScreen({ role }: TeamScreenProps) {
         <WorkspaceSwitcher variant="expanded" />
       </Box>
 
-      <Panel title="Add a person" sub="Grants a manual role. An unverified Door43 username still gets added, with an info note.">
+      <Panel title={t("moreTools.team.addPerson")} sub={t("moreTools.team.addPersonSub")}>
         <Stack direction="row" spacing={1.5} alignItems="flex-end" flexWrap="wrap" useFlexGap>
           <TextField
             size="small"
-            label="Door43 username"
-            placeholder="e.g. maria_traductora"
+            label={t("moreTools.team.door43Username")}
+            placeholder={t("moreTools.team.usernamePlaceholder")}
             value={newUsername}
             onChange={(e) => setNewUsername(e.target.value)}
             sx={{ minWidth: 220 }}
@@ -297,14 +303,14 @@ export default function TeamScreen({ role }: TeamScreenProps) {
           <TextField
             select
             size="small"
-            label="Role"
+            label={t("moreTools.team.roleLabel")}
             value={newRole}
             onChange={(e) => setNewRole(e.target.value as "admin" | "editor")}
             sx={{ minWidth: 140 }}
           >
             {ROLE_OPTIONS.map((opt) => (
               <MenuItem key={opt.value} value={opt.value}>
-                {opt.label}
+                {t(opt.labelKey)}
               </MenuItem>
             ))}
           </TextField>
@@ -314,22 +320,22 @@ export default function TeamScreen({ role }: TeamScreenProps) {
             disabled={adding || !newUsername.trim()}
             startIcon={adding ? <CircularProgress size={16} color="inherit" /> : undefined}
           >
-            Add
+            {t("moreTools.team.add")}
           </Button>
         </Stack>
       </Panel>
 
       <Panel
-        title="Allowlist"
-        sub="Owners on Door43 are not automatically admins here — role is granted explicitly, and where a Door43 team also manages this user, team assignment wins over a manual grant on next sync."
+        title={t("moreTools.team.allowlist")}
+        sub={t("moreTools.team.allowlistSub")}
         foot={
           <>
             <Typography variant="caption" sx={{ fontVariantNumeric: "tabular-nums" }}>
               {users === null
                 ? usersError
-                  ? "Load failed"
-                  : "Loading…"
-                : `Loaded via GET /api/admin/users — ${users.length} user(s)`}
+                  ? t("moreTools.team.loadFailedCap")
+                  : t("common.loading")
+                : t("moreTools.team.allowlistLoaded", { count: users.length })}
             </Typography>
             <Box sx={{ flex: 1 }} />
             <Button
@@ -339,7 +345,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
               onClick={() => setPurgeOpen(true)}
               disabled={manualUsers.length === 0}
             >
-              Purge manual grants…
+              {t("moreTools.team.purgeManualBtn")}
             </Button>
           </>
         }
@@ -350,17 +356,17 @@ export default function TeamScreen({ role }: TeamScreenProps) {
               severity="error"
               action={
                 <Button size="small" onClick={() => void loadAllowlist()}>
-                  Retry
+                  {t("common.retry")}
                 </Button>
               }
             >
-              Failed to load the allowlist.
+              {t("moreTools.team.allowlistLoadFailed")}
             </Alert>
           ) : (
             <CircularProgress size={22} />
           )
         ) : users.length === 0 ? (
-          <Typography color="text.secondary">No allowlisted users.</Typography>
+          <Typography color="text.secondary">{t("moreTools.team.noAllowlisted")}</Typography>
         ) : (
           <Box sx={{ overflowX: "auto" }}>
             <Box
@@ -369,10 +375,10 @@ export default function TeamScreen({ role }: TeamScreenProps) {
             >
               <Box component="thead">
                 <Box component="tr">
-                  {["User", "Role", "Added by", "Source", ""].map((h) => (
+                  {[t("moreTools.team.colUser"), t("moreTools.team.colRole"), t("moreTools.team.colAddedBy"), t("moreTools.team.colSource"), ""].map((h, i) => (
                     <Box
                       component="th"
-                      key={h}
+                      key={`${h}#${i}`}
                       sx={{
                         textAlign: "start",
                         fontSize: "0.7rem",
@@ -399,8 +405,8 @@ export default function TeamScreen({ role }: TeamScreenProps) {
                       <Box component="td" sx={{ py: 1, px: 1.5, borderBlockEnd: 1, borderColor: "divider" }}>
                         {u.username}
                         {notMember && (
-                          <Tooltip title="Not currently a member of the Door43 org">
-                            <Chip size="small" variant="outlined" color="warning" label="not org member" sx={{ ml: 1 }} />
+                          <Tooltip title={t("moreTools.team.notOrgMemberTip")}>
+                            <Chip size="small" variant="outlined" color="warning" label={t("moreTools.team.notOrgMember")} sx={{ ml: 1 }} />
                           </Tooltip>
                         )}
                       </Box>
@@ -415,7 +421,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
                         >
                           {ROLE_OPTIONS.map((opt) => (
                             <MenuItem key={opt.value} value={opt.value}>
-                              {opt.label}
+                              {t(opt.labelKey)}
                             </MenuItem>
                           ))}
                         </TextField>
@@ -424,7 +430,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
                         {u.addedBy ?? "—"}
                       </Box>
                       <Box component="td" sx={{ py: 1, px: 1.5, borderBlockEnd: 1, borderColor: "divider", color: "text.secondary" }}>
-                        {u.source === "dcs_team" ? "Door43 team" : "manual grant"}
+                        {u.source === "dcs_team" ? t("moreTools.team.sourceTeam") : t("moreTools.team.sourceManual")}
                       </Box>
                       <Box component="td" sx={{ py: 1, px: 1.5, borderBlockEnd: 1, borderColor: "divider" }}>
                         <Button
@@ -433,7 +439,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
                           disabled={rowBusy === u.username}
                           onClick={() => void handleRemove(u.username)}
                         >
-                          Remove
+                          {t("moreTools.team.remove")}
                         </Button>
                       </Box>
                     </Box>
@@ -446,14 +452,16 @@ export default function TeamScreen({ role }: TeamScreenProps) {
       </Panel>
 
       <Panel
-        title="Live Door43 org roster"
-        sub="Read-only reconciliation view — never writes a role. Falls back through admin token → shared service token → public members, so it always renders something."
+        title={t("moreTools.team.rosterTitle")}
+        sub={t("moreTools.team.rosterSub")}
         foot={
           <Typography variant="caption" sx={{ fontVariantNumeric: "tabular-nums" }}>
             {orgMembers === null
-              ? "Loading…"
-              : `Loaded via GET /api/admin/users/org-members${
-                  orgMembers.error ? ` — degraded: ${orgMembers.error}${orgMembers.partial ? " (partial roster)" : ""}` : ` — ${orgMembers.members.length} member(s)`
+              ? t("common.loading")
+              : `${t("moreTools.team.rosterLoaded")}${
+                  orgMembers.error
+                    ? ` — ${t("moreTools.team.degraded", { error: orgMembers.error })}${orgMembers.partial ? ` ${t("moreTools.team.partialRoster")}` : ""}`
+                    : ` — ${t("moreTools.team.memberCount", { count: orgMembers.members.length })}`
                 }`}
           </Typography>
         }
@@ -464,33 +472,31 @@ export default function TeamScreen({ role }: TeamScreenProps) {
           <>
             {!orgMembers.org && (
               <Alert severity="info" sx={{ mb: 1.5 }}>
-                No Door43 org is configured for this workspace yet, so there is no roster to reconcile
-                against — the empty list below is not evidence that any allowlisted user is missing from
-                an org.
+                {t("moreTools.team.noOrgConfigured")}
               </Alert>
             )}
             {rosterDegraded && (
               <Alert severity="warning" sx={{ mb: 1.5 }}>
-                Door43 roster read failed ({orgMembers.error}) — the table below may be empty or incomplete;
-                this is not evidence that the org has no members.
+                {t("moreTools.team.rosterReadFailed", { error: orgMembers.error })}
               </Alert>
             )}
             {orgMembers.partial && !rosterDegraded && (
               <Alert severity="info" sx={{ mb: 1.5 }}>
-                Showing the public-members fallback ({orgMembers.error ?? "team roles unavailable"}) — team
-                roles may be missing for some members.
+                {t("moreTools.team.publicFallback", { reason: orgMembers.error ?? t("moreTools.team.teamRolesUnavailable") })}
               </Alert>
             )}
             {orgMembers.members.length === 0 ? (
               <Typography color="text.secondary">
-                No members returned{orgMembers.error ? ` (${orgMembers.error})` : ""}.
+                {orgMembers.error
+                  ? t("moreTools.team.noMembersWithError", { error: orgMembers.error })
+                  : t("moreTools.team.noMembers")}
               </Typography>
             ) : (
               <Box sx={{ overflowX: "auto" }}>
                 <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem", minWidth: 400 }}>
                   <Box component="thead">
                     <Box component="tr">
-                      {["Door43 username", "Team role"].map((h) => (
+                      {[t("moreTools.team.colDoor43Username"), t("moreTools.team.colTeamRole")].map((h) => (
                         <Box
                           component="th"
                           key={h}
@@ -531,30 +537,29 @@ export default function TeamScreen({ role }: TeamScreenProps) {
         )}
       </Panel>
 
-      <Panel title="Read-only vs editor gating" sub="Notes on access, not editable here.">
+      <Panel title={t("moreTools.team.gatingTitle")} sub={t("moreTools.team.gatingSub")}>
         <Typography variant="body2" color="text.secondary">
-          Viewer-role sessions get a global read-only banner and every mutating request outside a small
-          self-scoped allowlist is 403&apos;d server-side (<code>blockViewerWrites</code>). Templates and
-          tW/tA articles have <strong>no client-side role gating today</strong> — enforcement, if any, is
-          server-side only and not surfaced in those editors; that gap is intentionally mirrored here, not
-          silently fixed.
+          {t("moreTools.team.gatingBody1")}
+          <code>blockViewerWrites</code>
+          {t("moreTools.team.gatingBody2")} <strong>{t("moreTools.team.gatingStrong")}</strong>{" "}
+          {t("moreTools.team.gatingBody3")}
         </Typography>
       </Panel>
 
       <Dialog open={purgeOpen} onClose={() => !purging && setPurgeOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Purge manual grants?</DialogTitle>
+        <DialogTitle>{t("moreTools.team.purgeDialogTitle")}</DialogTitle>
         <DialogContent>
           {manualUsers.length === 0 ? (
-            <Typography variant="body2">No manually-granted rows to purge.</Typography>
+            <Typography variant="body2">{t("moreTools.team.noManualRows")}</Typography>
           ) : (
             <Typography variant="body2">
-              Purges every manually-granted role ({manualUsers.length}). Door43-team-derived rows are kept.
+              {t("moreTools.team.purgeConfirmBody", { count: manualUsers.length })}
             </Typography>
           )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPurgeOpen(false)} disabled={purging}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             color="warning"
@@ -563,7 +568,7 @@ export default function TeamScreen({ role }: TeamScreenProps) {
             disabled={purging || manualUsers.length === 0}
             startIcon={purging ? <CircularProgress size={16} color="inherit" /> : <DeleteOutlineIcon />}
           >
-            Purge
+            {t("moreTools.team.purge")}
           </Button>
         </DialogActions>
       </Dialog>
