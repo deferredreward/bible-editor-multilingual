@@ -20,6 +20,7 @@ import {
 } from "./importParsers";
 import { requireAuth, requireEditor, requireAdmin, currentUserId, currentUserRole } from "./auth";
 import { aquiferDrafts, AQUIFER_SOURCE, pickId } from "./aquiferImport.ts";
+import { aquiferRepairFormatting } from "./aquiferRepair.ts";
 import { convertAquiferBook, type EnRow, type ResolvedNote } from "./aquiferConvert.ts";
 import { aquiferJsonUrl, aquiferLangFor } from "./aquiferSources.ts";
 import {
@@ -128,6 +129,11 @@ books.get("/:book/lint", requireAuth, async (c) => {
 // POST /api/books/:book/aquifer-drafts — re-source this book's tN from Aquifer as
 // unapproved drafts merged onto the en_tn skeleton (admin-only).
 books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
+
+// POST /api/books/:book/aquifer-repair — rewrite the markdown formatting of notes
+// already imported from Aquifer, for the rows the import itself cannot repair
+// (approved/edited ones). `?dryRun=1` reports the counts without writing.
+books.post("/:book/aquifer-repair", requireAdmin, aquiferRepairFormatting);
 
 // ── Per-book / per-chapter-range source overrides (issue #103) ─────────────
 // GET  /api/books/:book/sources — list this book's per-resource source ranges.

@@ -15,6 +15,7 @@ import {
   aquiferRef,
   htmlToMarkdown,
   nfc,
+  planFormattingRepair,
 } from "./aquiferConvert.ts";
 
 const en = (Reference, ID, SupportReference, Quote, Occurrence, Note) => ({
@@ -60,6 +61,28 @@ test("htmlToMarkdown strips leading quote + trailing See-link, keeps prose", () 
   assert.ok(!md.includes("πρεσβύτερος"), "orig-language quote paragraph removed");
   assert.ok(!md.includes("resourceReference") && !md.includes("Assumed Knowledge"), "trailing See:TA removed");
   assert.ok(md.includes("John assumes Gaius knows who he is."), "prose kept");
+  assert.ok(md.includes('**"the elder"**'), "split-strong gloss is one bold run");
+});
+
+// Regression: arb MRK 3:1 (Aquifer note 197002) imported as
+// `…ترك****ثُمَّ من دون…` — the quotation marks around the gloss are their own
+// <strong> runs, and the padding space is an emphasised space, so converting
+// each run on its own emitted stray `****` and glued two words together.
+test("htmlToMarkdown merges split/whitespace-only emphasis instead of emitting ****", () => {
+  const md = htmlToMarkdown(
+    "<p><strong><span style='direction: ltr;'>καὶ</span></strong></p>" +
+      "<p><strong>&quot;ثُمَّ&quot;</strong></p>" +
+      "<p>تُقدّم كلمة <span><strong>ثُمَّ</strong></span> هنا، أو يمكنك ترك<strong> </strong><span>ثُمَّ</span> من دون ترجمة.</p>",
+  );
+  assert.ok(!md.includes("****"), `no stray asterisk run: ${md}`);
+  assert.ok(md.includes("ترك ثُمَّ من دون"), "emphasised padding space survives as a space");
+  assert.ok(md.includes("**ثُمَّ**"), "real bold survives");
+});
+
+test("htmlToMarkdown keeps emphasis markers hugging their text", () => {
+  assert.equal(htmlToMarkdown("<p>a<strong> bold </strong>b</p>"), "a **bold** b");
+  assert.equal(htmlToMarkdown("<p><strong>&quot;</strong><strong>x</strong><strong>&quot;</strong></p>"), '**"x"**');
+  assert.equal(htmlToMarkdown("<p>a<em> </em>b</p>"), "a b");
 });
 
 test("htmlToMarkdown keeps headings/lists for intros", () => {
@@ -153,4 +176,67 @@ test("intro note attaches to front:intro / N:intro rows without a flag", () => {
   assert.equal(notes.find((n) => n.enId === "i1").reviewReason, null);
   assert.equal(report.matchedIntro, 2);
   assert.equal(report.flagged, 0);
+});
+
+// ---------- formatting repair of already-imported rows ----------
+
+// The real arb MRK 3:1 markup (Aquifer note 197002): a bold gloss whose quote
+// marks are their own runs, and an emphasised space between two words.
+const REPAIR_HTML =
+  "<p><strong><span style='direction: ltr;'>καὶ</span></strong></p>" +
+  "<p><strong>&quot;</strong><span><strong>then</strong></span><strong>&quot;</strong></p>" +
+  "<p>Mark introduces the next event. You may leave<strong> </strong><span>then</span> untranslated.</p>";
+const REPAIR_ITEM = {
+  content_id: "197002",
+  index_reference: "41003001",
+  content: REPAIR_HTML,
+  associations: { passage: [{ start_ref_usfm: "MRK 3:1", end_ref_usfm: "MRK 3:1" }] },
+};
+// What the pre-fix converter wrote into D1 for that note.
+const DAMAGED = '**"****then****"**\n\nMark introduces the next event. You may leave****then untranslated.';
+const FIXED = '**"then"**\n\nMark introduces the next event. You may leave then untranslated.';
+const aqMeta = (contentId) => JSON.stringify({ source: "aquifer", aqLang: "arb", aquiferContentId: contentId, joinMethod: "quote" });
+const storedRow = (over) => ({ id: "bm6z", version: 3, note: DAMAGED, draftMetaJson: aqMeta("197002"), preDraftJson: null, ...over });
+
+test("planFormattingRepair rewrites a row whose text is still the converter's own output", () => {
+  const { repairs, report } = planFormattingRepair([storedRow()], [REPAIR_ITEM]);
+  assert.equal(report.repaired, 1);
+  assert.equal(repairs[0].id, "bm6z");
+  assert.equal(repairs[0].version, 3, "carries the version for the CAS guard");
+  assert.equal(repairs[0].note, FIXED);
+});
+
+test("planFormattingRepair never touches a note a human reworded", () => {
+  const reworded = DAMAGED.replace("next event", "following event");
+  const { repairs, report } = planFormattingRepair([storedRow({ note: reworded })], [REPAIR_ITEM]);
+  assert.deepEqual(repairs, []);
+  assert.equal(report.humanEdited, 1);
+  assert.equal(report.repaired, 0);
+});
+
+test("planFormattingRepair skips clean rows, non-Aquifer rows, and unknown content ids", () => {
+  const { repairs, report } = planFormattingRepair([
+    storedRow({ id: "aaaa", note: FIXED }),
+    { id: "bbbb", version: 1, note: DAMAGED, draftMetaJson: JSON.stringify({ source: "ai" }), preDraftJson: null },
+    { id: "cccc", version: 1, note: DAMAGED, draftMetaJson: null, preDraftJson: null },
+    storedRow({ id: "dddd", draftMetaJson: aqMeta("999999") }),
+  ], [REPAIR_ITEM]);
+  assert.deepEqual(repairs, []);
+  assert.equal(report.aquiferRows, 2, "only rows stamped source=aquifer are considered");
+  assert.equal(report.alreadyClean, 1);
+  assert.equal(report.noSource, 1);
+});
+
+test("planFormattingRepair repairs the approval snapshot but leaves the empty draft one", () => {
+  const approved = planFormattingRepair(
+    [storedRow({ preDraftJson: JSON.stringify({ note: DAMAGED, tags: null }) })],
+    [REPAIR_ITEM],
+  );
+  assert.deepEqual(JSON.parse(approved.repairs[0].preDraftJson), { note: FIXED, tags: null });
+
+  const draft = planFormattingRepair(
+    [storedRow({ preDraftJson: JSON.stringify({ note: "", tags: null }) })],
+    [REPAIR_ITEM],
+  );
+  assert.equal(draft.repairs[0].preDraftJson, null, "empty snapshot is left alone");
 });

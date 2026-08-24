@@ -152,6 +152,16 @@ export function htmlToMarkdown(html: string, opts?: { isIntro?: boolean }): stri
     } while (s !== prev);
   }
 
+  // Aquifer's editor splits one emphasised phrase across several inline runs and
+  // wraps them in decorative <span>s — e.g.
+  //   <strong>&quot;</strong><span><strong>word</strong></span><strong>&quot;</strong>
+  // and pads with emphasised whitespace (<strong> </strong>). Converting each run
+  // on its own emitted `**"****word****"**` and dropped the padding space, gluing
+  // the neighbouring words together (arb MRK 3:1, note 197002). Normalise first,
+  // so one phrase becomes one pair of markers.
+  s = unwrapSpans(s);
+  s = normalizeEmphasis(s);
+
   s = s
     .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, (_m, t) => `\n# ${strip(t)}\n\n`)
     .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (_m, t) => `\n## ${strip(t)}\n\n`)
@@ -168,10 +178,42 @@ export function htmlToMarkdown(html: string, opts?: { isIntro?: boolean }): stri
   return s.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// Drop <span> wrappers (styling only — the direction spans are read off the raw
+// HTML by embeddedQuote and by the quote-paragraph strip, both of which run
+// earlier) so adjacent emphasis runs become literally adjacent and can merge.
+function unwrapSpans(s: string): string {
+  return s.replace(/<\/?span[^>]*>/gi, "");
+}
+
+// Collapse emphasis that wraps only whitespace back to plain whitespace, then
+// merge same-kind runs separated by nothing but whitespace.
+function normalizeEmphasis(s: string): string {
+  let prev: string;
+  do {
+    prev = s;
+    s = s
+      .replace(/<(strong|b|em|i)[^>]*>((?:\s|&nbsp;)*)<\/\1>/gi, (_m, _tag, ws) =>
+        String(ws).replace(/&nbsp;/gi, " ") || " ")
+      .replace(/<\/(?:strong|b)>(\s*)<(?:strong|b)[^>]*>/gi, (_m, gap) => gap)
+      .replace(/<\/(?:em|i)>(\s*)<(?:em|i)[^>]*>/gi, (_m, gap) => gap);
+  } while (s !== prev);
+  return s;
+}
+
+// Markers must hug the text — markdown ignores `** word **` — and the padding
+// whitespace has to survive outside them or neighbouring words run together.
+function emphasize(marker: string, inner: string): string {
+  const text = strip(inner);
+  if (!text) return /\s/.test(inner) ? " " : "";
+  const lead = /^\s/.test(inner) ? " " : "";
+  const trail = /\s$/.test(inner) ? " " : "";
+  return `${lead}${marker}${text}${marker}${trail}`;
+}
+
 function inline(s: string): string {
   return s
-    .replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, t) => `**${strip(t).trim()}**`)
-    .replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, t) => `*${strip(t).trim()}*`);
+    .replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, t) => emphasize("**", t))
+    .replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, t) => emphasize("*", t));
 }
 function strip(s: string): string {
   return decodeEntities(inline(s).replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
@@ -290,4 +332,113 @@ export function convertAquiferBook(
   }
 
   return { notes, report };
+}
+
+// ---------- formatting repair of already-imported notes ----------
+
+// Notes imported before the emphasis fix above carry stray `****` runs and words
+// glued together by a swallowed space. Re-running the import repairs untouched
+// drafts, but a row a translator has approved or edited is protected there and
+// keeps the damage. This plans an in-place rewrite for exactly the rows whose
+// text is still, word for word, the converter's own output.
+
+export type StoredAquiferRow = {
+  id: string;
+  version: number;
+  note: string | null;
+  draftMetaJson: string | null;
+  preDraftJson: string | null;
+};
+
+export type NoteRepair = {
+  id: string;
+  version: number;
+  note: string; // corrected markdown
+  preDraftJson: string | null; // rewritten approval snapshot, or null to leave it
+};
+
+export type RepairReport = {
+  aquiferRows: number;
+  repaired: number;
+  alreadyClean: number;
+  humanEdited: number; // wording differs — never rewritten, needs a human
+  noSource: number; // no Aquifer item for the stored content id
+};
+
+// Same words, ignoring emphasis markers and whitespace. This is the proof that a
+// stored note is still the converter's own output: a note whose wording a
+// translator changed will not match, so the repair leaves it alone.
+export function sameWords(a: string | null, b: string | null): boolean {
+  const bare = (s: string | null) => (s || "").replace(/[*\s]/g, "");
+  return bare(a) === bare(b);
+}
+
+// The approval snapshot holds its own copy of the damaged text for rows the
+// import auto-approved, and a revert would restore it. Rewrite it under the same
+// proof; leave anything else (including the empty snapshot the importer writes)
+// alone.
+function repairPreDraft(preDraftJson: string | null, fresh: string): string | null {
+  if (!preDraftJson) return null;
+  let parsed: { note?: string | null } | null = null;
+  try {
+    parsed = JSON.parse(preDraftJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const note = parsed.note ?? "";
+  if (!note || note === fresh || !sameWords(note, fresh)) return null;
+  return JSON.stringify({ ...parsed, note: fresh });
+}
+
+export function planFormattingRepair(
+  rows: StoredAquiferRow[],
+  aqItems: AquiferItem[],
+): { repairs: NoteRepair[]; report: RepairReport } {
+  const byContentId = new Map<string, AquiferItem>();
+  for (const it of aqItems) {
+    const id = it.content_id == null ? "" : String(it.content_id);
+    if (id) byContentId.set(id, it);
+  }
+
+  const repairs: NoteRepair[] = [];
+  const report: RepairReport = { aquiferRows: 0, repaired: 0, alreadyClean: 0, humanEdited: 0, noSource: 0 };
+
+  for (const row of rows) {
+    let meta: { source?: string; aquiferContentId?: string | null } | null = null;
+    try {
+      meta = row.draftMetaJson ? JSON.parse(row.draftMetaJson) : null;
+    } catch {
+      meta = null;
+    }
+    if (!meta || meta.source !== "aquifer") continue;
+    report.aquiferRows++;
+
+    const item = meta.aquiferContentId ? byContentId.get(String(meta.aquiferContentId)) : undefined;
+    if (!item) {
+      report.noSource++;
+      continue;
+    }
+
+    const fresh = htmlToMarkdown(item.content || "", { isIntro: aquiferRef(item)?.isIntro ?? false });
+    const stored = row.note ?? "";
+    if (stored === fresh) {
+      report.alreadyClean++;
+      continue;
+    }
+    if (!sameWords(stored, fresh)) {
+      report.humanEdited++;
+      continue;
+    }
+
+    repairs.push({
+      id: row.id,
+      version: row.version,
+      note: fresh,
+      preDraftJson: repairPreDraft(row.preDraftJson, fresh),
+    });
+    report.repaired++;
+  }
+
+  return { repairs, report };
 }
