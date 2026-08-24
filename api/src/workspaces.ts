@@ -280,8 +280,15 @@ async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<
       // COLLATE NOCASE: Door43 org names are case-insensitive, so a lookup for
       // "BSOJ" must find an existing "bsoj" row — otherwise a second workspace
       // gets claimed for the same org (duplicate-claim hole).
+      //
+      // `org` is UNIQUE under BINARY collation, so a case-variant pair could
+      // already exist (the pre-fix code is what would have created it). Prefer
+      // the exact-case row and then the oldest slot, so the org always resolves
+      // to ONE deterministic binding rather than an arbitrary one — resolving to
+      // the wrong binding would serve another tenant's database.
       `SELECT slug, label, org, binding, export_owner AS exportOwner
-         FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed' LIMIT 1`,
+         FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed'
+         ORDER BY (org = ?1) DESC, slug ASC LIMIT 1`,
     )
     .bind(org)
     .first<WorkspaceRow>();

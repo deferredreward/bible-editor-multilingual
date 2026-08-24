@@ -206,6 +206,29 @@ console.log("[claimWorkspace] org lookup is case-insensitive — no duplicate cl
   assert(rowBySlug(db, "pool2").status === "available", "available slot not consumed on a case-only org match");
 }
 
+// ── claimWorkspace: a pre-existing case-variant PAIR resolves deterministically ──
+// `workspaces.org` is UNIQUE under BINARY collation, so the pre-fix code could
+// have left both "bsoj" and "BSOJ" claimed. The case-insensitive lookup must not
+// pick between them arbitrarily — resolving to the wrong row would hand the org
+// another tenant's D1 binding. The exact-case row wins.
+console.log("[claimWorkspace] a case-variant pair resolves to the EXACT-case row");
+{
+  const db = freshDb();
+  const env = makeEnv(db);
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('lower', 'Lower', 'bsoj', 'DB_POOL1', 'claimed')").run();
+  db.prepare("INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('upper', 'Upper', 'BSOJ', 'DB_POOL2', 'claimed')").run();
+
+  const upper = await claimWorkspace(env, { org: "BSOJ", label: "x" });
+  assert(upper && upper.alreadyClaimed && upper.workspace.slug === "upper", "exact-case BSOJ resolves to the BSOJ row");
+  const lower = await claimWorkspace(env, { org: "bsoj", label: "x" });
+  assert(lower && lower.alreadyClaimed && lower.workspace.slug === "lower", "exact-case bsoj resolves to the bsoj row");
+  // A casing that matches NEITHER row exactly still resolves (to one of them),
+  // deterministically rather than arbitrarily.
+  const mixed = await claimWorkspace(env, { org: "BsOj", label: "x" });
+  assert(mixed && mixed.alreadyClaimed, "a third casing still short-circuits to an existing claim");
+  assert(mixed.workspace.slug === "lower", "no exact match -> lowest slug, deterministic");
+}
+
 // ── claimWorkspace: input validation throws (never persists a bad row) ──────
 
 console.log("[claimWorkspace] rejects invalid org/label without touching the pool");

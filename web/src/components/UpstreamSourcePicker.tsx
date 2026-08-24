@@ -137,15 +137,18 @@ export function UpstreamSourcePicker({ state }: { state: OrgDraftState }) {
     const org = orgInput.trim();
     setErrKind(null);
     if (!org) return;
-    state.setUpstreamOrg(org);
     // Case-insensitive: DCS resolves org names that way, so a typed
     // "unfoldingword" is the known-good default upstream, not an unknown org
-    // needing a round-trip (and must not be persisted as a distinct org).
+    // needing a round-trip. Store the CANONICAL spelling, not what was typed —
+    // this value ends up in translationSource.org and in every raw DCS URL built
+    // from it.
     if (sameDcsName(org, UW_UPSTREAM_ORG)) {
+      state.setUpstreamOrg(UW_UPSTREAM_ORG);
       state.setUpstreamVerified(true);
       state.setUpstreamLanguageCode("en");
       return;
     }
+    state.setUpstreamOrg(org);
     if (sameDcsName(org, state.upstreamOrg) && state.upstreamVerified) return;
     state.setUpstreamVerified(false);
     setVerifying(true);

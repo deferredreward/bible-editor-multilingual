@@ -2072,8 +2072,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const tipSha = await fileCommitSha(this.env, destOwner, destRepo, path, baseRef);
     const baseline = await this.env.DB.prepare(
       // owner/repo are DCS names (case-insensitive); lane/base_ref/book are not.
+      // The baseline upsert keys on a BINARY primary key, so a case-only drift can
+      // leave two rows for one repo: prefer the exact-case row (pre-NOCASE
+      // behaviour) and fall back to a case variant only when none exists.
       `SELECT base_sha FROM scripture_export_baselines
-        WHERE lane = ?1 AND owner = ?2 COLLATE NOCASE AND repo = ?3 COLLATE NOCASE AND base_ref = ?4 AND book = ?5`,
+        WHERE lane = ?1 AND owner = ?2 COLLATE NOCASE AND repo = ?3 COLLATE NOCASE AND base_ref = ?4 AND book = ?5
+        ORDER BY (owner = ?2 AND repo = ?3) DESC
+        LIMIT 1`,
     )
       .bind(lane, destOwner, destRepo, baseRef, book)
       .first<{ base_sha: string | null }>();
